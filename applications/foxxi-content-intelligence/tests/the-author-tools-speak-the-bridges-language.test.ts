@@ -22,7 +22,7 @@ import { compositionPayload, contentKeyOf, contentKindOf, missingFromComposition
 import { readFileSync } from 'node:fs';
 import { SHELF_MAX, readShelf, shelfKey, shelve, unshelve, type ShelfItem } from '../dashboard-app/src/author/shelf.js';
 import { cellLine, hasOutcomes, leaningLine, type CompositionEfficacy } from '../dashboard-app/src/author/efficacy.js';
-import { exportLinks, resolutionLine, stepLine, type ResolvedStepView } from '../dashboard-app/src/author/resolution.js';
+import { exportFileNames, exportLinks, resolutionLine, stepLine, type ResolvedStepView } from '../dashboard-app/src/author/resolution.js';
 import { fragmentForLearner } from '../src/content-fragments.js';
 import { draftFor, matchTo, move, pick, repliesFor, type Draft, type LearnerQuestion } from '../dashboard-app/src/learn/answers.js';
 
@@ -263,5 +263,37 @@ describe("a composition's page: how it resolves, and where it can be taken", () 
     const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
     expect(server).toContain("app.get('/ns/foxxi/composition/:hash/cmi5.xml'");
     expect(server).toContain("app.get('/ns/foxxi/composition/:hash/scorm.zip'");
+    // Saved under the name the bridge gives the package it serves.
+    expect(exportFileNames(hash)).toEqual({ cmi5: `composition-${'a'.repeat(12)}-cmi5.xml`, scorm: `composition-${'a'.repeat(12)}-scorm.zip` });
+    expect(server).toContain('attachment; filename="composition-${hash.slice(0, 12)}-scorm.zip"');
+  });
+
+  it('saves each export from the page, so following it never takes the tab, and a pasted key, away', () => {
+    const panel = readFileSync(new URL('../dashboard-app/src/components/EfficacyPanel.tsx', import.meta.url), 'utf8');
+    const card = panel.slice(panel.indexOf('function ExportCard'));
+    expect(card).toContain("<a href={links.cmi5} onClick={save('cmi5')}>");
+    expect(card).toContain("<a href={links.scorm} onClick={save('scorm')}>");
+    expect(card).not.toMatch(/\sdownload>/);
+    const save = card.slice(card.indexOf('const save ='), card.indexOf('return (', card.indexOf('const save =')));
+    // A click meant for another tab or window is left to the browser; a plain one is taken here, before anything is fetched.
+    expect(save).toMatch(/if \(e\.button !== 0 \|\| e\.metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.altKey\) return;/);
+    expect(save.indexOf('e.preventDefault();')).toBeGreaterThan(-1);
+    expect(save.indexOf('e.preventDefault();')).toBeLessThan(save.indexOf('await fetch(links[which])'));
+    expect(save).toMatch(/if \(!r\.ok\) throw new Error/);
+    expect(save).toMatch(/a\.href = url; a\.download = names\[which\];/);
+  });
+
+  it('resolves and exports while what it has learned is being read, or cannot be read', () => {
+    const panel = readFileSync(new URL('../dashboard-app/src/components/EfficacyPanel.tsx', import.meta.url), 'utf8');
+    // Made once the bridge's base is known, which their links are made from.
+    expect(panel).toMatch(/const actions = base \? <><ResolveCard session=\{session\} iri=\{compositionIriOn\(base, hash\)\} \/><ExportCard base=\{base\} hash=\{hash\} \/><\/> : null;/);
+    // Offered while the tally is read, however long that takes, and when it cannot be.
+    expect(panel).not.toMatch(/if \(read\.at === 'loading'\) return/);
+    const pending = panel.slice(panel.indexOf("if (read.at === 'loading' || read.at === 'failed') {"), panel.indexOf('const view = read.view;'));
+    expect(pending).toContain("{read.at === 'loading' ? <div style={{ color: 'var(--text-dim)' }}>Reading…</div> : <div role=\"alert\" style={{ color: 'var(--bad)' }}>{read.why}</div>}</Card>");
+    expect(pending).toMatch(/<\/Card>\s+\{actions\}\s+<\/div>/);
+    expect(panel.slice(panel.indexOf('const view = read.view;'))).toMatch(/<\/Card>\s+\{actions\}\s+\{view\.positions\.map/);
+    // Only a composition the bridge does not hold goes without them.
+    expect(panel.indexOf("if (read.at === 'absent')")).toBeLessThan(panel.indexOf('const actions ='));
   });
 });

@@ -26,6 +26,27 @@ Sixteen mutants each fail a named test.
 
 Not in this change: the agent-activity and SCORM play emitters (`emitAgentActivity` and the play helpers) still store with `storeStatementInternal`. They check its null, but not a write that fails later.
 
+## 2026-09-27 — Foxxi dashboard: a composition's exports are saved from its page, and offered while its tally cannot be read
+
+Codex found two things in the composition page (#534) after it merged.
+
+- **Each export is saved from the page.** A browser ignores a link's `download` when the link is to another origin, as the bridge is, and the bridge serves the cmi5 course structure to be read. So following the link took the tab away from the dashboard, and a pasted key, held only in that tab's memory, with it. Now:
+  - both exports are fetched and saved from the page, under the name the bridge gives its SCORM package (`composition-<first 12 of the hash>-…`, `exportFileNames`);
+  - an answer the bridge refused is said, not saved;
+  - the links stay links, to copy for an LMS that imports by URL, and a click meant for another tab is left to the browser.
+- **Resolving and exporting do not wait on what the composition has learned.** They were drawn only once its efficacy tally was read. So a slow read, or the 503 the bridge answers while the tally cannot be read, hid both. Now both are offered while the tally is being read, however long that takes, and when it cannot be read, and the page says which. They wait only for the bridge's base, which their links are made from. Only a composition the bridge does not hold goes without them.
+
+In `tests/the-author-tools-speak-the-bridges-language.test.ts`:
+- the export test also checks the file names against the bridge's name for its package;
+- two new tests pin the save flow, and the actions shown while the tally is read, when it cannot be, and with it.
+
+Eleven mutants each fail a named test.
+
+In a browser against the deployed bridge, as the demo learner Joshua Liu:
+- both exports were saved from the page with the tab kept, as `composition-da9ddee6ae0e-cmi5.xml` (its `courseStructure`) and `composition-da9ddee6ae0e-scorm.zip` (2927 bytes); they were caught before the browser saved them;
+- with the efficacy read made to answer 503, the page said so and still offered resolving and both exports.
+
+
 ## 2026-09-27 — Foxxi: every door that takes a duration refuses a bad one, and a course completion is kept whole or not at all
 
 A caller's `duration_iso` becomes a statement's `result.duration`, which xAPI requires to be an ISO 8601 duration. #535 made the two record-performance doors refuse a bad one as a 400, naming it, before anything is fetched or kept (`durationRefusalOf`). Three more doors took one unchecked, and each went wrong its own way:
@@ -72,6 +93,7 @@ A read failure does not fail the recording. The page shows the note as a warning
 
 The census in `subject-kind-not-caller-controlled.test.ts` still holds: the raw evidence reader has one caller, the shared classifier. Ten mutants each fail a named test.
 
+
 ## 2026-09-27 — Foxxi Work page: recording as an agent is an informed choice, and the page refuses what the bridge would
 
 Codex found three things in the Work page (#533) after it merged, and one also needed a fix on the bridge behind it. The last item below was missed alongside them.
@@ -104,6 +126,7 @@ The page was run in a browser against the deployed bridge, as the demo learner J
 - choosing an agent showed what it does, and Record waited for the confirmation, which a change of mind cleared.
 
 The other doors that take a caller's duration (an external agent run, a cmi5 session, a course completion) are left for a follow-up.
+
 
 ## 2026-09-27 — Foxxi dashboard: a composition's page resolves it for its author, and takes it elsewhere
 
