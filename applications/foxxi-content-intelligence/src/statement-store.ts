@@ -445,10 +445,18 @@ export class FileStatementStore implements StatementStore {
     this.loaded = true;
   }
 
+  /**
+   * ★ WRITTEN, THEN INDEXED. The memory index took the statement before the append, so a write that
+   * failed left it readable here (get, query) though the file never held it: the caller was told it
+   * was not kept, and a retry made it twice (Codex, on #541). The conflict check still comes first
+   * (an id stored with other content is refused before anything is written); an identical re-put is
+   * a no-op, and no longer appends the line again.
+   */
   async put(record: StoredStatement): Promise<void> {
     await this.ensureLoaded();
-    await this.memory.put(record);
+    if (await this.memory.get(record.id)) { await this.memory.put(record); return; }
     await fs.appendFile(join(this.dir, 'statements.jsonl'), JSON.stringify(record) + '\n', 'utf8');
+    await this.memory.put(record);
   }
   async get(id: string): Promise<StoredStatement | null> {
     await this.ensureLoaded();
@@ -489,8 +497,14 @@ export class PrimaryForwardStatementStore implements StatementStore {
     private readonly auth: { user: string; pass: string },
     private readonly version: string = '2.0.0',
   ) {}
+  /**
+   * ★ SENT, THEN CACHED. The cache took the statement before the primary did, so a statement the
+   * primary refused, or never got, was served from here as if kept (Codex, on #541). The primary is
+   * the source of truth: the cache takes a statement once the primary has. The conflict check still
+   * comes first, and an identical re-put of a cached statement is a no-op, as the primary has it.
+   */
   async put(record: StoredStatement): Promise<void> {
-    await this.cache.put(record);
+    if (await this.cache.get(record.id)) { await this.cache.put(record); return; }
     // Transient-network retry: the external primary LRS is the source of
     // truth; a 5xx or socket blip should retry rather than silently
     // diverging the local cache from the primary. 4xx (incl. 409
@@ -513,6 +527,7 @@ export class PrimaryForwardStatementStore implements StatementStore {
     if (!r.ok && r.status !== 204 && r.status !== 409) {
       throw new Error(`primary LRS rejected statement (HTTP ${r.status})`);
     }
+    await this.cache.put(record);
   }
   async get(id: string): Promise<StoredStatement | null> { return this.cache.get(id); }
   async markVoided(id: string, voidingStatementId: string, onlyIf?: (target: StoredStatement) => boolean): Promise<boolean> { return this.cache.markVoided(id, voidingStatementId, onlyIf); }
