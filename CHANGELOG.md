@@ -4,11 +4,12 @@
 
 A review of #520 found its account of a leading composition half wrong ([Codex](https://github.com/markjspivey-xwisee/interego/pull/520#discussion_r4114979366)). A composition's efficacy view says, at a level where a nested composition comes first, that learners go into it when it resolves. It added that outcomes among the fragments decide when it does not.
 
-They do not. Resolution weighs no outcomes once a composition leads: where the composition does not resolve for a learner, it takes the next alternative as ranked, by the author's order among those pitched alike (`src/compositions.ts`). Now the leaning names that alternative (`otherwise`, `src/composition-efficacy.ts`) and says outcomes decide nothing at that level. `PERFORMANCE-ARCHITECTURE.md` §5 says so.
+They do not. Resolution weighs no outcomes once a composition leads. Where the composition does not resolve for a learner, it tries the alternatives after it in rank order: a composition is taken when it resolves, and the first fragment always (`src/compositions.ts`). Now the leaning lists those alternatives, in that order, up to and including the first fragment (`otherwise`, `src/composition-efficacy.ts`), and says outcomes decide nothing at that level. The first commit named only the next alternative, which may be another composition that does not resolve either ([Codex review of this change](https://github.com/markjspivey-xwisee/interego/pull/521#discussion_r4115014161)). `PERFORMANCE-ARCHITECTURE.md` §5 says so.
 
-`applications/foxxi-content-intelligence/tests/a-composition-shows-what-it-has-learned.test.ts` pins the alternative named and the reason given. Two mutants were checked, and each fails it:
-- the alternative not named;
-- the alternative named as the last rather than the next.
+`applications/foxxi-content-intelligence/tests/a-composition-shows-what-it-has-learned.test.ts` pins the alternatives listed, including two compositions ahead of a fragment, and the reason given. Each of these mutants fails it:
+- the alternatives not listed;
+- the first fragment left off the list;
+- only the next alternative listed.
 
 ## 2026-09-27 — Foxxi: a composition's leaning is resolution's own choice, for each kind of learner
 
