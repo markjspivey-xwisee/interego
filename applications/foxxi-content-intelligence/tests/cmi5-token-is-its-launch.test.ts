@@ -150,6 +150,20 @@ describe('a cmi5 auth-token is bound to its launch', () => {
     expect(await (await scope(tokenC, C.registration)).json()).toEqual(['LMS.LaunchData']);
   });
 
+  it('takes its auth-token under the Basic scheme, as cmi5 has an AU send it, held to its launch the same way', async () => {
+    // cmi5 §8.2.2: the token goes in the Authorization header as RFC 1945 Basic, the token itself.
+    const basic = (token: string) => ({ Authorization: `Basic ${token}`, 'X-Experience-API-Version': '2.0.0', 'Content-Type': 'application/json' });
+    const send = (token: string, body: unknown) => fetch(`${base}/xapi/statements`, { method: 'POST', headers: basic(token), body: JSON.stringify(body) });
+    expect((await send(tokenA, statement(A.registration, 'initialized'))).status).toBe(200);
+    expect((await send(tokenA, statement(B.registration, 'passed'))).status).toBe(403);
+    expect((await fetch(`${base}/xapi/statements?registration=${B.registration}`, { headers: basic(tokenA) })).status).toBe(403);
+    const mine = await (await fetch(`${base}/xapi/statements?limit=50`, { headers: basic(tokenA) })).json() as { statements: Array<{ context?: { registration?: string } }> };
+    expect(mine.statements.every((s) => s.context?.registration === A.registration)).toBe(true);
+    // A Basic value that is neither a credential nor a launch's token is refused, as a Bearer one is.
+    expect((await send('cmi5-0-not-a-launch', statement(A.registration, 'initialized'))).status).toBe(401);
+    expect((await send(Buffer.from('user:guess').toString('base64'), statement(A.registration, 'initialized'))).status).toBe(401);
+  });
+
   it('keeps the launch\'s whole actor for the pod: its type and both account fields', () => {
     expect(signedLaunchLearner(A.registration, tenant)).toEqual({ did: learner.id, podUrl: 'https://pod.example/eth-222222222222/', homePage: 'did:web:bridge.example' });
   });

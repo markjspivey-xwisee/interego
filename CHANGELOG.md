@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a cmi5 auth-token travels under the Basic scheme, as the spec has an AU send it
+
+cmi5 §8.2.2 has an AU put the auth-token its fetch URL returned into the Authorization header under the Basic scheme (RFC 1945), as the token itself. Foxxi had it the other way round on both sides, so neither half of a launch across vendors worked.
+
+- **The LRS** (`src/xapi-lrs.ts`) took a launch's token only as `Bearer`, so an AU from another vendor, launched by Foxxi's LMS, was refused its every statement. A `Basic` value that is no LRS credential is now tried as a launch's auth-token, held to its tenant and its launch exactly as the Bearer form is. Bearer is still taken. A Basic value that is neither a credential nor a token is refused (401), as before.
+- **The AU page Foxxi generates** (`src/content-package.ts`) sent its token as `Bearer`, so an LMS that follows the spec refused it. It now sends `Basic`.
+- **Docs.** `LMS-CONFORMANCE.md` says the token is taken under both schemes.
+
+`tests/cmi5-token-is-its-launch.test.ts` adds a Basic token writing and reading only its own launch, and an unknown Basic value refused. `tests/au-explained-answers.test.ts` adds the generated page sending Basic. Four mutants were checked, and each fails a named test:
+- a token taken only as Bearer;
+- a Basic token not held to its launch;
+- any Basic value taken as a token;
+- the page sending Bearer.
+
 ## 2026-09-27 — Foxxi: a fold blinds its checks under the bridge's own key
 
 The automated review of #507 found one problem, fixed here.

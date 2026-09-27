@@ -128,6 +128,20 @@ describe('the pages and packages a course becomes', () => {
     return { statements, feedback: dom.window.document.querySelector('.feedback')?.textContent ?? '' };
   }
 
+  it('send the auth-token under the Basic scheme, as cmi5 has an AU send it', async () => {
+    const sent: string[] = [];
+    const html = generateAuHtml('Course', { id: 'basic', title: 'Basic', competency: 'Check', fragments: [{ modality: 'concept', level: 'test', body: 'Read this.' }] });
+    const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'https://foxxi.example/au?fetch=https://foxxi.example/token&endpoint=https://lrs.example/&activityId=https://course.example/basic', beforeParse(w) {
+      Object.defineProperty(w, 'fetch', { value: async (url: string, init?: RequestInit) => {
+        if (String(url).includes('/token')) return { ok: true, json: async () => ({ 'auth-token': 'test-token' }) };
+        sent.push(String((init?.headers as Record<string, string> | undefined)?.Authorization));
+        return { ok: true, status: 204 };
+      } });
+    } }); windows.push(dom);
+    await expect.poll(() => sent.length).toBeGreaterThan(0);
+    expect(sent.every(h => h === 'Basic test-token')).toBe(true);
+  });
+
   it('pass a right reply to an explained question in the cmi5 page, and say why', async () => {
     const { statements, feedback } = await submit('Who authorises it? ::: a team lead — the $250 would carry the customer past the $1,000 cap', 'Team lead');
     expect(statements.find(s => s.verb.id.endsWith('/passed'))?.result).toMatchObject({ success: true, score: { scaled: 1 } });
