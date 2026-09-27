@@ -28,17 +28,23 @@ const course: Course = composeCourse({ title: 'Refund disputes', competency: 're
 const blindFor = (id: string): string => createHash('sha256').update(`a bridge secret\n${id}`).digest('hex');
 const folded = foldEmergentCourse(course, { blindFor });
 const byIri = new Map<string, Fragment | Composition>(folded.items.map(x => [x['@id'], x]));
-const at = <T extends Fragment | Composition>(olderId: string): T => byIri.get(folded.mapped[olderId]!) as T;
+/** The one IRI an older id became; every id in this course names one thing. */
+const iri = (olderId: string, from = folded): string => {
+  const became = from.mapped[olderId] ?? [];
+  if (became.length !== 1) throw new Error(`${olderId} became ${became.length} IRIs`);
+  return became[0]!;
+};
+const at = <T extends Fragment | Composition>(olderId: string): T => byIri.get(iri(olderId)) as T;
 
 describe('an emergent course folds into compositions', () => {
   it('keeps every syntagm and paradigm in the author\'s order, a composition at each level', () => {
     const root = folded.root;
     expect(root.title).toBe('Refund disputes');
-    expect(root.positions.map(p => p.paradigm)).toEqual([[folded.mapped[module.id]]]);
+    expect(root.positions.map(p => p.paradigm)).toEqual([[iri(module.id)]]);
     const m = at<Composition>(module.id);
-    expect(m.positions.map(p => p.paradigm)).toEqual([[folded.mapped[lesson.id]]]);
+    expect(m.positions.map(p => p.paradigm)).toEqual([[iri(lesson.id)]]);
     const l = at<Composition>(lesson.id);
-    expect(l.positions.map(p => p.paradigm)).toEqual([[folded.mapped[told.id], folded.mapped[shown.id]], [folded.mapped[check.id]]]);
+    expect(l.positions.map(p => p.paradigm)).toEqual([[iri(told.id), iri(shown.id)], [iri(check.id)]]);
     expect(folded.items.at(-1)).toBe(root);
     for (const x of folded.items) expect('positions' in x ? compositionIsIntact(x as Composition) : fragmentIsIntact(x as Fragment), x['@id']).toBe(true);
     expect(Object.keys(folded.mapped).sort()).toEqual([told.id, shown.id, check.id, lesson.id, module.id, course.id].sort());
@@ -63,14 +69,35 @@ describe('an emergent course folds into compositions', () => {
 
   it('folds the same course to the same IRIs with the same blinding', () => {
     expect(foldEmergentCourse(course, { blindFor }).root['@id']).toBe(folded.root['@id']);
-    expect(foldEmergentCourse(course).mapped[told.id]).toBe(folded.mapped[told.id]);   // teaching carries no secret
+    expect(iri(told.id, foldEmergentCourse(course))).toBe(iri(told.id));   // teaching carries no secret
+  });
+
+  it('maps an id the older model gave several things to each of them, once, in the order met', () => {
+    // A lesson's id is its course's competency and its own title, so two lessons titled alike
+    // share one (POST /content/compose-course titles an untitled lesson "Lesson").
+    const alike = (body: string) => authorLesson({ title: 'Lesson', competency: point, audience: 'human' as never, authoredBy: author,
+      positions: [{ competencyPoint: point, fragments: [authorFragment({ modality: 'concept', competencyPoint: point, body, level: 'working', authoredBy: author })] }] });
+    const first = alike('Agents refund up to $250.');
+    const second = alike('Leads approve up to $1,000.');
+    expect(first.id).toBe(second.id);
+    const inModule = (title: string, lessons: ReturnType<typeof alike>[]) => authorModule({ title, competency: point, authoredBy: author, positions: [{ competencyPoint: point, lessons }] });
+    const twice = foldEmergentCourse(composeCourse({ title: 'Twice', competency: point, audience: 'human' as never, authoredBy: author, positions: [
+      { competencyPoint: point, modules: [inModule('One', [first])] },
+      { competencyPoint: point, modules: [inModule('Two', [second, first])] },
+    ] }));
+    const lessons = twice.mapped[first.id]!;
+    expect(lessons).toHaveLength(2);
+    const byId = new Map<string, Fragment | Composition>(twice.items.map(x => [x['@id'], x]));
+    const [one, two] = twice.root.positions.map(p => byId.get(p.paradigm[0]!) as Composition);
+    expect(one!.positions[0]!.paradigm).toEqual([lessons[0]]);
+    expect(two!.positions[0]!.paradigm).toEqual([lessons[1], lessons[0]]);
   });
 
   it('resolves and plays like any composition', () => {
     const learner = { id: 'did:web:learner.example', kind: 'agent' as const };
     const r = resolveComposition({ composition: folded.root, learner, lookup: iri => byIri.get(iri) });
     // A learner with no record is pitched at foundational, so the foundational alternative is chosen.
-    expect(r.steps.map(s => s.fragment['@id'])).toEqual([folded.mapped[told.id], folded.mapped[check.id]]);
+    expect(r.steps.map(s => s.fragment['@id'])).toEqual([iri(told.id), iri(check.id)]);
     const ctx = { actor: { objectType: 'Agent', account: { homePage: 'did:web:bridge.example', name: learner.id } }, now: new Date().toISOString(), newId: () => crypto.randomUUID() };
     const play = startPlay(r, folded.root.title, learner, { session: 's', registration: 'r' }, ctx.now)!;
     advancePlay(play, undefined, ctx);

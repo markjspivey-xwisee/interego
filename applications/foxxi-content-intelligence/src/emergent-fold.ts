@@ -24,7 +24,7 @@
  *
  * ★ WHAT IS NOT CARRIED. The audience a course was composed for, since a composition serves a
  * person and an agent alike; its moveOn, since a play grades each step; and its ids, which named
- * nothing checkable (the fold answers which IRI each one became). A fragment's suitability for a
+ * nothing checkable (the fold answers which IRIs each one became). A fragment's suitability for a
  * disposition is carried as a suit.
  */
 import { COMPOSITION_LIMITS, compositionFrom, type Composition } from './compositions.js';
@@ -40,8 +40,13 @@ export interface FoldedEmergent {
   root: Composition;
   /** Every fragment and composition the fold made, the course last; each once. */
   items: Array<Fragment | Composition>;
-  /** Which IRI each of the older model's ids became. */
-  mapped: Record<string, string>;
+  /**
+   * Which IRIs each of the older model's ids became, in the order the fold met them: usually one.
+   * The older model's ids are not one per thing. A lesson's or a module's is its course's
+   * competency and its own title, so two lessons titled alike share one; a fragment's leaves out
+   * its level. Such an id maps to everything it named.
+   */
+  mapped: Record<string, string[]>;
 }
 
 const isObject = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
@@ -66,7 +71,7 @@ export function foldEmergentCourse(raw: unknown, opts: { blindFor?: (fragmentId:
   if (!isObject(raw)) throw new ContentError('an emergent course is an object, as POST /content/compose-course returns one');
   const course = raw as unknown as Course;
   const items = new Map<string, Fragment | Composition>();
-  const mapped: Record<string, string> = {};
+  const mapped = new Map<string, string[]>();
   let fragments = 0;
   let compositions = 0;
   const keep = <T extends Fragment | Composition>(item: T, olderId: unknown): T => {
@@ -75,7 +80,11 @@ export function foldEmergentCourse(raw: unknown, opts: { blindFor?: (fragmentId:
       else if (++fragments > EMERGENT_FOLD_LIMITS.fragments) throw new ContentError(`a fold makes at most ${EMERGENT_FOLD_LIMITS.fragments} fragments`);
     }
     items.set(item['@id'], item);
-    if (typeof olderId === 'string' && olderId) mapped[olderId] = item['@id'];
+    if (typeof olderId === 'string' && olderId) {
+      const became = mapped.get(olderId);
+      if (!became) mapped.set(olderId, [item['@id']]);
+      else if (!became.includes(item['@id'])) became.push(item['@id']);
+    }
     return item;
   };
 
@@ -128,5 +137,5 @@ export function foldEmergentCourse(raw: unknown, opts: { blindFor?: (fragmentId:
   };
   const root = composition(course as unknown as Record<string, unknown>, 'the course', (m, at) => module(m as Module, at));
   items.delete(root['@id']);
-  return { root, items: [...items.values(), root], mapped };
+  return { root, items: [...items.values(), root], mapped: Object.fromEntries(mapped) };
 }

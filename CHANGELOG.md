@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a folded course maps each older id to everything it named
+
+An emergent course folded by `POST /agent/content/fold-course` (#513) answers `mapped`: which IRI each of the older model's ids became. But the older model's ids are not one per thing. A lesson's id is its course's competency and its own title, and `POST /content/compose-course` gives every lesson the course's competency and titles an untitled one "Lesson". So two lessons titled alike share an id, and so can two fragments that differ only in level. `mapped` kept the last and lost the rest, though the folded course still holds them all.
+
+- **`mapped` is now a list per id** (`Record<string, string[]>`): each IRI the id became, once, in the order the fold met them. Usually one.
+- The affordance, `PERFORMANCE-ARCHITECTURE.md` §5 and `docs/skills` say so.
+
+`applications/foxxi-content-intelligence/tests/emergent-fold.test.ts` folds two modules whose lessons share an id, the repeated one twice. It checks both IRIs are kept, the repeated one once, in the order met.
+
+Three mutants were checked, and each fails that test: the id mapped to the last IRI only, to the first only, and to a repeat twice.
+
 ## 2026-09-27 — Foxxi: an emergent course folds into compositions too
 
 The older course model (`src/emergent-content.ts`) already had the right shape: a course is a syntagm of modules, a module of lessons, a lesson of grounding fragments, and every position a paradigm of alternatives. But it lived in memory, under ids nothing could check, and the packages published from it graded in the browser. Now an emergent course folds into composable content like an authored one (#507), and resolves, plays, learns and projects like any composition.

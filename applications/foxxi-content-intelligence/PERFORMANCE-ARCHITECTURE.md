@@ -284,8 +284,9 @@ works.
   - A competency's id is the free text its author wrote, exactly.
   - A "question ::: answer — why" check is graded on the bridge: the answer
     as written, and without a leading article.
-  - Its audience and moveOn are not carried, and the fold answers which
-    IRI each older id became.
+  - Its audience and moveOn are not carried. The fold answers which IRIs
+    each older id became: one each, unless the older model gave several
+    things one id, as it does two lessons titled alike.
 
 Anything read back is checked against its hash
 ([`src/content-store.ts`](src/content-store.ts)), so a wrong or hostile
