@@ -13,16 +13,19 @@ The first and the last are best-effort, and said nothing when they fell short. S
 
 Each reader now says whether it read the whole:
 - `latticeReadWhole(label)` (in `src/foundation-shared-lattice.ts`): the lattice is resident and not fenced as unreadable. It is false before a load, and while the pod copy could not be read (no key, a body that would not decrypt, a load that threw);
+- a fenced lattice that reads its pod copy again now merges it in (`mergeReseat`, the CAS path's own merge) before it un-fences, so "not fenced" does mean whole. It used to keep its in-memory instance unmerged and record the pod's current etag. That was not only a partial read (Codex, on this change) but a loss: the next write's If-Match then succeeded and put the in-memory instance over the pod's, and what only the pod held was gone;
 - `readDurableRecordedStatementsDetailed` (in `src/durable-records.ts`): `complete` is false when the pod did not answer, or a record it lists could not be fetched or decoded. Entries that are not Statement records do not count against it. `readDurableRecordedStatements` is unchanged for its other callers.
 
 The bridge's `learnerStatementsReadWhole` joins the two. After an agent-kind write the record is classified only from a whole read. A partial one gets the "could not be read just now" answer (the rule, the assumption that protects the performer, `readFromRecord: false`).
+
+`tests/a-lattice-that-recovers-holds-its-pod-copy.test.ts` (2 tests) drives the real lattice through the fence and back, against a stand-in pod read: what was composed while fenced and what only the pod held are both held after recovery.
 
 `tests/a-record-read-in-part-is-not-read-whole.test.ts` (7 tests) runs the real readers against a stand-in pod:
 - a whole read, a pod that does not answer, a record whose descriptor or graph could not be fetched, and one that would not decode;
 - a lattice before it is loaded, and one without a key;
 - where the route decides.
 
-Nine mutants each fail a named test.
+Ten mutants each fail a named test, one of them keeping a recovered lattice unmerged again.
 
 The review gates read the same union to decide whether a record is private, and partial reads can mislead them the same way. That changes who may read what, so it is left for its own change.
 
