@@ -78,6 +78,11 @@ describe('a composition shows what it has learned', () => {
     const twice = compositionFrom({ title: 'Two ways first', competency: c, positions: [{ competency: c, paradigm: [nested['@id'], other['@id'], told['@id'], shown['@id']] }] });
     expect(compositionEfficacy(twice, tally, iri => store.get(iri)).positions[0]!.leansTo.find(l => l.level === 'foundational'))
       .toMatchObject({ into: nested['@id'], otherwise: [other['@id'], told['@id']] });
+    // Content that is not what its IRI says is refused before ranking, as resolution refuses it, so it ends no list.
+    const tampered = new Map(store);
+    tampered.set(told['@id'], { ...told, body: 'Agents refund anything.' });
+    expect(compositionEfficacy(twice, tally, iri => tampered.get(iri)).positions[0]!.leansTo.find(l => l.level === 'foundational'))
+      .toMatchObject({ into: nested['@id'], otherwise: [other['@id'], shown['@id']] });
     // A composition is pitched at every level, so for working learners it is nearer than the foundational fragments.
     expect(view.positions[0]!.leansTo.find(l => l.level === 'working')).toMatchObject({ into: nested['@id'] });
   });

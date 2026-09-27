@@ -445,9 +445,10 @@ Nobody declares which explanation of a competency works; the plays show it.
   each position it sets the alternatives side by side: each one's cells at
   the position's competency, by the same rule as a fragment's. At each
   level it says which alternative the composition leans to, and why.
-  - The alternatives are ranked as resolution ranks them: those meant for
-    the learner, pitched nearest their level, then in the author's order,
-    with a composition counting as pitched at every level.
+  - The alternatives are ranked as resolution ranks them: those that are
+    what their IRIs say and are meant for the learner, pitched nearest
+    their level, then in the author's order, with a composition counting
+    as pitched at every level.
   - Where a composition comes first, learners go into it when it resolves.
     Otherwise the alternatives after it are tried in rank order up to the
     first fragment (`otherwise`): a composition is taken when it resolves,
