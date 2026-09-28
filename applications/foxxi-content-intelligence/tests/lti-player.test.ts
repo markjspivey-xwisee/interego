@@ -22,13 +22,24 @@ describe('the pages a learner reads', () => {
   });
 
   it('says where the grade went, or that it did not get there', () => {
-    const posted = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: true, score: 1, recordedStatements: 2, gradebook: { posted: true, scoreGiven: 100, scoreMaximum: 100 } } });
+    const posted = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: true, score: 1, recordedStatements: 2, recorded: true, gradebook: { posted: true, scoreGiven: 100, scoreMaximum: 100 } } });
     expect(posted).toContain('Your LMS has the grade: 100 of 100');
-    const refused = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: false, score: 0.5, recordedStatements: 2, gradebook: { posted: false, why: 'line item URL rejected: <target URL must be https>' } } });
+    expect(posted).toContain('The attempt is in your learner record: 2 statements');
+    const refused = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: false, score: 0.5, recordedStatements: 2, recorded: true, gradebook: { posted: false, why: 'line item URL rejected: <target URL must be https>' } } });
     expect(refused).toContain('The grade did not reach your LMS: line item URL rejected: &lt;target URL must be https&gt;');
     expect(refused).not.toContain('Send the grade again');
-    const retry = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: true, score: 1, recordedStatements: 2, gradebook: { posted: false, why: 'the platform answered 503' } }, retry: true });
+    const retry = renderOutcomePage({ courseTitle: 'C', outcome: { completed: true, passed: true, score: 1, recordedStatements: 2, recorded: true, gradebook: { posted: false, why: 'the platform answered 503' } }, retry: { record: false, grade: true } });
     expect(retry).toContain('<form method="POST"><button type="submit">Send the grade again</button></form>');
+  });
+
+  it('says so when the learner record does not hold the attempt, and offers to record it again', () => {
+    const unrecorded = { completed: true, passed: true, score: 1, recordedStatements: 1, recorded: false } as const;
+    const withGrade = renderOutcomePage({ courseTitle: 'C', outcome: { ...unrecorded, gradebook: { posted: true, scoreGiven: 100, scoreMaximum: 100 } }, retry: { record: true, grade: false } });
+    expect(withGrade).toContain('The attempt is not in your learner record yet');
+    expect(withGrade).not.toContain('The attempt is in your learner record');
+    expect(withGrade).toContain('<button type="submit">Record the attempt again</button>');
+    const neither = renderOutcomePage({ courseTitle: 'C', outcome: { ...unrecorded, gradebook: { posted: false, why: 'the platform answered 503' } }, retry: { record: true, grade: true } });
+    expect(neither).toContain('<button type="submit">Record the attempt and send the grade again</button>');
   });
 });
 
@@ -71,10 +82,12 @@ describe('the bridge wires its own LMS to its own Tool', () => {
     expect(src).toMatch(/launch\.ags\?\.scope\.includes\(AGS_SCOPE\.score\)/);
   });
 
-  it('keeps an ended attempt until its grade is in, so a failed passback is sent again, not lost', () => {
+  it('keeps an ended attempt until its grade is in and the record holds it, so neither is lost', () => {
     const post = src.slice(src.indexOf("app.post('/lti/play/:id'"), src.indexOf("app.post('/agent/lti/launch'"));
-    expect(post).toMatch(/if \(lp\.ended\) \{ await answerEndedAttempt\(req, res, id, lp, lp\.ended\); return; \}/);
+    expect(post).toMatch(/if \(lp\.ended\) \{ await keepEndedAgain\(lp, lp\.ended\); await answerEndedAttempt\(req, res, id, lp, lp\.ended\); return; \}/);
     expect(post).not.toMatch(/ltiPlays\.delete\(id\)/);
-    expect(src).toMatch(/if \(gradebook\.posted \|\| !lp\.lineItem\) ltiPlays\.delete\(id\);/);
+    expect(src).toMatch(/if \(\(gradebook\.posted \|\| !lp\.lineItem\) && ended\.recorded\) ltiPlays\.delete\(id\);/);
+    // A grade the platform has taken is not sent twice while the record is kept again.
+    expect(src).toMatch(/const gradebook = ended\.gradebook\?\.posted \? ended\.gradebook : await passGradeBack\(lp, ended\);/);
   });
 });

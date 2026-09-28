@@ -52,6 +52,8 @@ export interface PlayOutcome {
   readonly passed: boolean;
   readonly score: number;
   readonly recordedStatements: number;
+  /** Whether the learner's record holds the outcome: every statement that records it. */
+  readonly recorded: boolean;
   readonly gradebook: GradePassback;
 }
 
@@ -141,19 +143,26 @@ ${args.error ? `<div class="card bad" role="alert">${htmlEscape(args.error)}</di
   return page(`${sco.title} · ${args.courseTitle}`, `${args.courseTitle} · launched from your LMS over LTI 1.3`, inner);
 }
 
-/** The end of the attempt: the engine's outcome and what happened to the grade. */
-export function renderOutcomePage(args: { courseTitle: string; outcome: PlayOutcome; graded?: GradedView; retry?: boolean }): string {
-  const { outcome } = args;
+/**
+ * The end of the attempt: the engine's outcome, whether the learner's record holds it, and what
+ * happened to the grade. `retry` names what sending the page again would still do.
+ */
+export function renderOutcomePage(args: { courseTitle: string; outcome: PlayOutcome; graded?: GradedView; retry?: { record: boolean; grade: boolean } }): string {
+  const { outcome, retry } = args;
   const pct = Math.round(outcome.score * 100);
   const gb = outcome.gradebook;
   const grade = gb.posted
     ? `<p class="ok">Your LMS has the grade: ${gb.scoreGiven ?? pct} of ${gb.scoreMaximum ?? 100}, posted to its gradebook over LTI Assignment and Grade Services.</p>`
     : `<p class="bad">The grade did not reach your LMS: ${htmlEscape(gb.why ?? 'no gradebook was offered for this launch')}.</p>`;
+  const record = outcome.recorded
+    ? `<p>The attempt is in your learner record: ${outcome.recordedStatements} statement${outcome.recordedStatements === 1 ? '' : 's'}, graded by the SCORM engine.</p>`
+    : '<p class="bad">The attempt is not in your learner record yet: the record did not keep its outcome.</p>';
+  const again = retry?.record ? (retry.grade ? 'Record the attempt and send the grade again' : 'Record the attempt again') : 'Send the grade again';
   const inner = `${gradedCard(args.graded)}
 <h1>${outcome.passed ? 'Passed' : 'Not passed yet'}: ${pct}%</h1>
 ${grade}
-<p>The attempt is in your learner record: ${outcome.recordedStatements} statement${outcome.recordedStatements === 1 ? '' : 's'}, graded by the SCORM engine.</p>
-${args.retry ? '<form method="POST"><button type="submit">Send the grade again</button></form>' : '<p class="muted">You can close this window.</p>'}`;
+${record}
+${retry && (retry.record || retry.grade) ? `<form method="POST"><button type="submit">${again}</button></form>` : '<p class="muted">You can close this window.</p>'}`;
   return page(`${outcome.passed ? 'Passed' : 'Not passed'} · ${args.courseTitle}`, `${args.courseTitle} · launched from your LMS over LTI 1.3`, inner);
 }
 

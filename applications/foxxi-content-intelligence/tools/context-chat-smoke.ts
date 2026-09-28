@@ -20,7 +20,7 @@ import {
   attachContextChatRoutes, classifyContextIntent, answerContextQuestion, mergeDiscovered,
   type NetworkedContext,
 } from '../src/context-chat.js';
-import { storeStatementInternal } from '../src/xapi-lrs.js';
+import { storeStatementDurably, storeStatementInternal } from '../src/xapi-lrs.js';
 
 let pass = 0, fail = 0;
 const check = (label: string, cond: boolean, detail?: unknown) => {
@@ -108,7 +108,7 @@ async function testRoutes(): Promise<void> {
   attachContextChatRoutes(app, {
     selfBaseUrl: 'http://localhost',
     authoritativeSource: 'did:web:test',
-    emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
+    emitStatement: (stmt, tenant) => storeStatementDurably(stmt, tenant),
     // A stub for the substrate pass-through — descriptors that exist in
     // the wider Interego context but NOT in the Foxxi vertical. The first
     // is surfaced at the metadata level; the second is deep-fetched —

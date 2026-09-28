@@ -146,7 +146,7 @@ describe('delivery claims require an actual delivery', () => {
   it.each([undefined, {}])('does not report delivery or record experience with transport=%j', async transport => {
     const statements: unknown[] = [];
     const app = express(); app.use(express.json());
-    attachContentDeliveryRoutes(app, { selfBaseUrl: 'https://foxxi.example', authoritativeSource: 'https://owner.example', transport, authorizeInstrumentation: () => true, emitStatement: s => { statements.push(s); } });
+    attachContentDeliveryRoutes(app, { selfBaseUrl: 'https://foxxi.example', authoritativeSource: 'https://owner.example', transport, authorizeInstrumentation: () => true, emitStatement: async s => { statements.push(s); return null; } });
     const base = await serve(app);
     const r = await fetch(base + '/content/deliver', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ channel: 'chat', learner: 'did:web:tester.example', unit: { title: 'A reference', kind: 'reference', blocks: [{ text: 'Read this.' }] } }) });
     expect(r.status).toBe(200);

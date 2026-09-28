@@ -3389,7 +3389,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       fetch: guardedFetchFn(globalThis.fetch) as never,
     });
     const credentialId = result.vc.id ?? achievementId;
-    const credentialed = recordCredentialed({ learnerDid: subject.did, podUrl: subject.podUrl, credentialId, courseTitle: entry.title, evidenceIds: decision.evidence.map((e) => statementIri(e.id)) });
+    const credentialed = await recordCredentialed({ learnerDid: subject.did, podUrl: subject.podUrl, credentialId, courseTitle: entry.title, evidenceIds: decision.evidence.map((e) => statementIri(e.id)) });
     return {
       kind: 'credential-claim', decision: 'issued', courseId, credentialId, descriptorUrl: result.publishResult.descriptorUrl, graphUrl: result.publishResult.graphUrl,
       issuer: result.vc.issuer, validUntil: decision.validUntil, evidence: decision.evidence, ...(credentialed ? { credentialedStatement: credentialed } : {}),
@@ -6058,7 +6058,7 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       authoritativeSource,
       ...operatorAuth,
-      emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
+      emitStatement: (stmt, tenant) => storeStatementDurably(stmt, tenant),
       // Authorize instrumenting a statement attributed to `learner`: a
       // verified operator (LRS admin) may instrument anyone; otherwise the
       // caller must sign the request (rev-196 envelope) and the recovered
@@ -6103,7 +6103,7 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       authoritativeSource,
       ...operatorAuth,
-      emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
+      emitStatement: (stmt, tenant) => storeStatementDurably(stmt, tenant),
       llmApiKey: (process.env.FOXXI_LLM_API_KEY ?? process.env.ANTHROPIC_API_KEY)?.trim(),
       checkLlmRateLimit: (clientIp) => {
         const rl = checkAgenticRateLimit(clientIp);
@@ -7655,7 +7655,7 @@ app.post('/agent/issue-credential', async (req, res) => {
     // The VC's id is optional on the type; an activity statement whose object has
     // no IRI is worse than no statement, so skip the emit rather than assert.
     const credentialIri = result.vc.id;
-    const credentialedStatementId = credentialIri ? emitAgentActivity({
+    const credentialedStatementId = credentialIri ? await emitAgentActivity({
       actorDid: callerDid, verbIri: CREDENTIALED_VERB, verbDisplay: 'credentialed',
       objectId: credentialIri, objectName: `${competencyName} → ${recipientDid}`,
       objectType: `${FOXXI_NS}activities/credential`,
@@ -9803,6 +9803,22 @@ interface ScormPlay {
   learnerPod?: string;
   /** xAPI context an LMS launch adds to the outcome: the platform, and the course context the attempt ran in. */
   xapiContext?: { platform: string; grouping: Array<Record<string, unknown>> };
+  /** Set once sequencing has ended: the attempt's outcome, and whether the learner's record holds it. */
+  ended?: ScormEnded;
+}
+/**
+ * An attempt's outcome, with the statements that record it. They are built once, when the attempt
+ * ends, so submitting to it again keeps these same statements (a store holds an id once) rather
+ * than new ones; `recorded` once the store holds them all.
+ */
+interface ScormEnded {
+  statements: Array<Record<string, unknown> & { id: string }>;
+  completed: boolean; passed: boolean; score: number; graded?: GradedView;
+  /** The ids the store holds, of the statements above. */
+  statementIds: string[];
+  recorded: boolean;
+  /** Why the record does not hold the outcome, while it does not. */
+  unrecorded?: string;
 }
 const agentScormCourses = new Map<string, AgentScormCourse>();
 /** How large an authored course may be: sections, questions in a section, and characters of a section's text. */
@@ -9856,14 +9872,16 @@ function scoViewForLearner(sco: AgentScormSco | undefined): unknown {
  *  — ending the 'performed' monoculture for the teacher side — without manufacturing
  *  a learned competency: stamped as production work, it lands in the ELR's work leg,
  *  and its verb keys no competency there (MAKING_VERBS in learner-record.ts). Best-effort
- *  side effect; returns the statement id (or null if the actor pod can't be resolved). */
-function emitAgentActivity(args: {
+ *  side effect; returns the statement id once the store holds it, or null when it does not (the
+ *  statement refused, the write failed, or the actor pod unresolvable). Nothing the store did not
+ *  keep is composed or forwarded, and no caller reports an id for it. */
+async function emitAgentActivity(args: {
   actorDid: string;
   verbIri: string; verbDisplay: string;
   objectId: string; objectName: string; objectType: string;
   result?: Record<string, unknown>;
   contextKind?: string;
-}): string | null {
+}): Promise<string | null> {
   try {
     const actorPod = resolveSubjectPodUrl(args.actorDid);
     const label = actorForPod(actorPod, MESH_ACTOR_LABELS);
@@ -9877,7 +9895,8 @@ function emitAgentActivity(args: {
       context: { extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
       timestamp: new Date().toISOString(),
     };
-    const id = storeStatementInternal(statement, lens);
+    const id = await storeStatementDurably(statement, lens);
+    if (!id) return null;
     // Foundation-first: PGSL canonical — compose the activity statement into the
     // actor's shared lattice (lossless), no hand-authored RDF.
     void composeIntoSharedLattice({
@@ -10026,8 +10045,12 @@ async function trustedIssuerDids(): Promise<string[]> {
   return [issuer.did];
 }
 
-/** The credentialed statement in the learner's own record: who earned what, when, from which evidence. Best effort. */
-function recordCredentialed(args: { learnerDid: string; podUrl: string; credentialId: string; courseTitle: string; evidenceIds: readonly string[] }): string | null {
+/**
+ * The credentialed statement in the learner's own record: who earned what, when, from which
+ * evidence. Best effort: its id once the store holds it, or null, and then it is neither forwarded
+ * nor reported.
+ */
+async function recordCredentialed(args: { learnerDid: string; podUrl: string; credentialId: string; courseTitle: string; evidenceIds: readonly string[] }): Promise<string | null> {
   try {
     const label = actorForPod(args.podUrl, MESH_ACTOR_LABELS);
     const statement: Record<string, unknown> = {
@@ -10039,16 +10062,18 @@ function recordCredentialed(args: { learnerDid: string; podUrl: string; credenti
       timestamp: new Date().toISOString(),
     };
     const lens = lensTenantFor(label);
-    const id = storeStatementInternal(statement, lens);
+    const id = await storeStatementDurably(statement, lens);
+    if (!id) return null;
     forwardToTargets(lens, { ...statement, id }).catch(() => {});
     return id;
   } catch { return null; }
 }
 
-function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: boolean, score: number): string[] {
+/** The statements that record an attempt's outcome, graded by the bridge: completed, then passed or failed. */
+function scormCompletionStatements(play: ScormPlay, course: AgentScormCourse, passed: boolean, score: number): Array<Record<string, unknown> & { id: string }> {
   const ADL = 'http://adlnet.gov/expapi/verbs/';
   const courseObj = { objectType: 'Activity', id: courseIri(course.courseId), definition: { name: { en: course.title }, type: 'http://adlnet.gov/expapi/activities/course' } };
-  const base = (verb: string, name: string, result: Record<string, unknown>): Record<string, unknown> => ({
+  const base = (verb: string, name: string, result: Record<string, unknown>): Record<string, unknown> & { id: string } => ({
     id: randomUUID(), version: '2.0.0',
     actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: play.learnerDid } },
     verb: { id: ADL + verb, display: { en: name } }, object: courseObj, result,
@@ -10059,29 +10084,42 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
     timestamp: new Date().toISOString(),
   });
   // The bridge graded these: its tag lets a credential tell them from a learner's own report.
-  const graded = (verb: string, name: string, result: Record<string, unknown>): Record<string, unknown> => (gradedKey ? withGradedTag(base(verb, name, result), gradedKey) : base(verb, name, result));
-  const stmts: Array<Record<string, unknown>> = [ graded('completed', 'completed', { completion: true }) ];
+  const graded = (verb: string, name: string, result: Record<string, unknown>): Record<string, unknown> & { id: string } => {
+    const s = base(verb, name, result);
+    return gradedKey ? { ...withGradedTag(s, gradedKey), id: s.id } : s;
+  };
+  const stmts: Array<Record<string, unknown> & { id: string }> = [ graded('completed', 'completed', { completion: true }) ];
   stmts.push(passed
     ? graded('passed', 'passed', { success: true, completion: true, score: { scaled: score } })
     : graded('failed', 'failed', { success: false, completion: true, score: { scaled: score } }));
-  const ids: string[] = [];
-  const learnerPod = play.learnerPod ?? resolveSubjectPodUrl(play.learnerDid);
-  for (const s of stmts) {
-    const sid = storeStatementInternal(s, play.lens);
-    if (sid) ids.push(sid);   // a refused statement has no retrievable id
-  }
+  return stmts;
+}
+
+/**
+ * Keep an ended attempt's outcome in the learner's record: all of its statements, or it is not
+ * recorded. Its ids are the ones the store holds. Only once the store holds them all are they
+ * composed into the learner's shared lattice. Kept again from the same statements when the attempt
+ * is submitted again, so a store that fell short once loses nothing, and holds nothing twice.
+ */
+async function recordScormCompletion(play: ScormPlay, ended: ScormEnded): Promise<void> {
+  const kept = await keepStatementsWhole(ended.statements, play.lens);
+  ended.statementIds = kept.status === 'refused' ? [] : kept.keptIds;
+  ended.recorded = kept.status === 'whole';
+  if (kept.status === 'refused') { ended.unrecorded = `the LRS refused the statements the bridge built: ${kept.refusals.join('; ')}`; return; }
+  if (kept.status === 'partial') { ended.unrecorded = `the store kept ${kept.keptIds.length} of its ${ended.statements.length} statements`; return; }
+  delete ended.unrecorded;
   // Foundation-first: PGSL canonical — compose the ACTUAL completion xAPI
   // statements into the learner's shared lattice (lossless), no hand-authored RDF.
+  const learnerPod = play.learnerPod ?? resolveSubjectPodUrl(play.learnerDid);
   const learnerLabel = actorForPod(learnerPod, MESH_ACTOR_LABELS);
-  for (const s of stmts) {
+  for (const s of ended.statements) {
     void composeIntoSharedLattice({
       podUrl: learnerPod, agentDid: play.learnerDid, label: learnerLabel,
-      terms: [play.learnerDid, String((s.verb as { id?: string }).id ?? ''), courseObj.id],
+      terms: [play.learnerDid, String((s.verb as { id?: string }).id ?? ''), String((s.object as { id?: string }).id ?? '')],
       content: s, contentType: 'xapi:Statement',
       ts: String((s as { timestamp?: string }).timestamp ?? ''), projections: ['rdf', 'vc', 'activity'],
     });
   }
-  return ids;
 }
 
 app.get('/agent/scorm/affordances', (req, res) => {
@@ -10587,7 +10625,7 @@ app.post('/agent/credentials/claim', async (req, res) => {
       fetch: guardedFetchFn(globalThis.fetch) as never,
     });
     const credentialId = result.vc.id ?? achievementId;
-    const credentialed = recordCredentialed({ learnerDid: learner.did, podUrl: learner.podUrl, credentialId, courseTitle: course.title, evidenceIds: decision.evidence.map((e) => statementIri(e.id)) });
+    const credentialed = await recordCredentialed({ learnerDid: learner.did, podUrl: learner.podUrl, credentialId, courseTitle: course.title, evidenceIds: decision.evidence.map((e) => statementIri(e.id)) });
     res.json({
       ok: true, kind: 'credential-claim', decision: 'issued', courseId, credentialId, descriptorUrl: result.publishResult.descriptorUrl, graphUrl: result.publishResult.graphUrl,
       issuer: result.vc.issuer, validUntil: decision.validUntil, evidence: decision.evidence, ...(credentialed ? { credentialedStatement: credentialed } : {}),
@@ -10751,7 +10789,7 @@ async function keepAuthoredContent(item: ContentItem, authorDid: string, subject
   contentStore.put(item);
   const ref = contentRefOf(item['@id'])!;
   recordContentLocation(`${ref.type}:${ref.hash}`, authorDid, authorPod);
-  const authoredStatementId = emitAgentActivity({
+  const authoredStatementId = await emitAgentActivity({
     actorDid: authorDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored', objectId: item['@id'],
     objectName: isComposition ? item.title : (item.title ?? `${item.kind} fragment`),
     objectType: `${FOXXI_NS}activities/${isComposition ? 'composition' : 'fragment'}`, result: { completion: true },
@@ -10784,7 +10822,7 @@ async function keepContentBundle(root: Composition, items: readonly ContentItem[
     const ref = contentRefOf(item['@id'])!;
     recordContentLocation(`${ref.type}:${ref.hash}`, authorDid, authorPod);
   }
-  const authoredStatementId = emitAgentActivity({
+  const authoredStatementId = await emitAgentActivity({
     actorDid: authorDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored', objectId: root['@id'], objectName: root.title,
     objectType: `${FOXXI_NS}activities/composition`, result: { completion: true },
   });
@@ -11483,7 +11521,7 @@ app.post('/agent/scorm/author', async (req, res) => {
     recordCourseAuthor(course.courseId, auth.callerDid);
     const courseIriUrl = courseIri(course.courseId);
     // Record the AUTHOR's own work as first-class activity (expressive verb).
-    const authoredStatementId = emitAgentActivity({
+    const authoredStatementId = await emitAgentActivity({
       actorDid: auth.callerDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored',
       objectId: courseIriUrl, objectName: course.title,
       objectType: 'http://adlnet.gov/expapi/activities/course', result: { completion: true },
@@ -11571,30 +11609,47 @@ app.post('/agent/scorm/submit', async (req, res) => {
     const play = agentScormPlays.get(sessionId);
     if (!play) { res.status(404).json({ error: 'no SCORM play session — launch first' }); return; }
     if (play.learnerDid !== callerDid) { res.status(403).json({ error: 'not your SCORM session' }); return; }
-    const step = advanceScormPlay(play, p.answers);
+    const step = await advanceScormPlay(play, p.answers);
     if (!step.ok) { res.status(step.status).json(step.body); return; }
     if (!step.done) {
       sendActionResult(req, res, { ok: true, sessionId, done: false, ...(step.graded ? { graded: step.graded } : {}), sco: step.sco }, bridgeBaseUrl, 'Next SCO', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
       return;
     }
+    const outcome = { ...(step.graded ? { graded: step.graded } : {}), course: { id: play.courseId, title: play.course.title }, completed: step.completed, passed: step.passed, score: Number(step.score.toFixed(3)), recordedStatements: step.statementIds.length, recorded: step.recorded };
+    if (!step.recorded) {
+      // Graded, and not in the learner's record. The session keeps the outcome, and a submit to it
+      // keeps the same statements again: the attempt is not lost, and not recorded twice.
+      res.status(503).json({ error: `the attempt ended and was graded, but your record does not hold its outcome: ${step.unrecorded ?? 'the store did not keep it'}. Submit to this session again to record it.`, sessionId, done: true, ...outcome });
+      return;
+    }
     agentScormPlays.delete(sessionId);
-    sendActionResult(req, res, { ok: true, sessionId, done: true, ...(step.graded ? { graded: step.graded } : {}), course: { id: play.courseId, title: play.course.title }, completed: step.completed, passed: step.passed, score: Number(step.score.toFixed(3)), recordedStatements: step.statementIds.length, lens: play.lens, note: 'The SCORM 2004 SN runtime rolled up this outcome from your committed SCO tracking — recorded to your ELR.' }, bridgeBaseUrl, 'SCORM attempt outcome', activeAffordances.filter(a => a.toolName === 'foxxi.review_record'));
+    sendActionResult(req, res, { ok: true, sessionId, done: true, ...outcome, lens: play.lens, note: 'The SCORM 2004 SN runtime rolled up this outcome from your committed SCO tracking — recorded to your ELR.' }, bridgeBaseUrl, 'SCORM attempt outcome', activeAffordances.filter(a => a.toolName === 'foxxi.review_record'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
 type ScormStep =
   | { ok: false; status: number; body: Record<string, unknown> }
   | { ok: true; done: false; graded?: GradedView; sco: unknown }
-  | { ok: true; done: true; graded?: GradedView; completed: boolean; passed: boolean; score: number; statementIds: string[] };
+  | { ok: true; done: true; graded?: GradedView; completed: boolean; passed: boolean; score: number; statementIds: string[]; recorded: boolean; unrecorded?: string };
+
+/** The step an ended attempt answers with: its outcome, and what the record holds of it. */
+function endedStep(e: ScormEnded): ScormStep {
+  return { ok: true, done: true, ...(e.graded ? { graded: e.graded } : {}), completed: e.completed, passed: e.passed, score: e.score, statementIds: e.statementIds, recorded: e.recorded, ...(e.unrecorded ? { unrecorded: e.unrecorded } : {}) };
+}
 
 /**
  * One step of an attempt, whoever is playing it: grade the current SCO's answers against their
  * hashes, commit the tracking to the SN engine, and move on. When sequencing ends, the engine's
- * rollup on the root is the course outcome, recorded to the learner's record.
+ * rollup on the root is the course outcome, kept in the learner's record. An attempt that has
+ * ended takes no answers: a step on it keeps its outcome again if the record does not hold it yet.
  */
-function advanceScormPlay(play: ScormPlay, answersGiven: unknown): ScormStep {
+async function advanceScormPlay(play: ScormPlay, answersGiven: unknown): Promise<ScormStep> {
   const course = play.course;   // resolved at launch (cache or durable pod)
   if (!course) return { ok: false, status: 410, body: { error: 'course no longer available' } };
+  if (play.ended) {
+    if (!play.ended.recorded) await recordScormCompletion(play, play.ended);
+    return endedStep(play.ended);
+  }
   const cur = play.seq.current;
   if (!cur) return { ok: false, status: 409, body: { error: 'no current SCO to submit' } };
   const sco = scoForActivity(course, cur.id);
@@ -11642,8 +11697,9 @@ function advanceScormPlay(play: ScormPlay, answersGiven: unknown): ScormStep {
   const completed = root.completion === 'completed';
   const passed = root.success === 'satisfied';
   const score = typeof root.normalizedMeasure === 'number' ? root.normalizedMeasure : (passed ? 1 : 0);
-  const statementIds = emitScormCompletion(play, course, passed, score);
-  return { ok: true, done: true, ...(graded ? { graded } : {}), completed, passed, score, statementIds };
+  play.ended = { statements: scormCompletionStatements(play, course, passed, score), completed, passed, score, ...(graded ? { graded } : {}), statementIds: [], recorded: false };
+  await recordScormCompletion(play, play.ended);
+  return endedStep(play.ended);
 }
 
 // ── Foxxi's own LMS: a course launched over LTI 1.3 ──────────────────────────────────────────
@@ -11665,7 +11721,7 @@ function advanceScormPlay(play: ScormPlay, answersGiven: unknown): ScormStep {
  * score request the platform did not answer) is sent again from the same URL, not lost with it.
  */
 interface LtiPlay { play: ScormPlay; issuer: string; clientId: string; sub: string; lineItem?: string; expiresAt: number; ended?: EndedAttempt }
-interface EndedAttempt { completed: boolean; passed: boolean; score: number; recordedStatements: number; graded?: GradedView; gradebook?: GradePassback }
+interface EndedAttempt { completed: boolean; passed: boolean; score: number; recordedStatements: number; recorded: boolean; graded?: GradedView; gradebook?: GradePassback }
 const ltiPlays = new Map<string, LtiPlay>();
 /** Bound the in-process LTI attempts: each holds a course and an SN tree (the same bound as SCORM plays). */
 const LTI_PLAYS_MAX = 5000;
@@ -11727,22 +11783,33 @@ async function passGradeBack(lp: LtiPlay, outcome: { passed: boolean; score: num
 
 /**
  * Send an ended attempt's grade, and answer with its outcome. The attempt is forgotten only once the
- * grade is in, or when no gradebook was offered; until then the same URL sends the grade again.
+ * grade is in (or no gradebook was offered) and the learner's record holds the outcome; until then
+ * the same URL does what is left: keeps the outcome again, sends the grade again. A grade the
+ * platform has taken is not sent twice.
  */
 async function answerEndedAttempt(req: import('express').Request, res: import('express').Response, id: string, lp: LtiPlay, ended: EndedAttempt): Promise<void> {
-  const gradebook = await passGradeBack(lp, ended);
+  const gradebook = ended.gradebook?.posted ? ended.gradebook : await passGradeBack(lp, ended);
   ended.gradebook = gradebook;
-  if (gradebook.posted || !lp.lineItem) ltiPlays.delete(id);
+  if ((gradebook.posted || !lp.lineItem) && ended.recorded) ltiPlays.delete(id);
   sendEndedAttempt(req, res, id, lp, ended);
+}
+
+/** An ended attempt the learner's record does not hold yet, kept again from the statements it was built with. */
+async function keepEndedAgain(lp: LtiPlay, ended: EndedAttempt): Promise<void> {
+  if (ended.recorded) return;
+  const step = await advanceScormPlay(lp.play, undefined);
+  if (step.ok && step.done) { ended.recorded = step.recorded; ended.recordedStatements = step.statementIds.length; }
 }
 
 function sendEndedAttempt(req: import('express').Request, res: import('express').Response, id: string, lp: LtiPlay, ended: EndedAttempt): void {
   const gradebook = ended.gradebook ?? { posted: false, why: 'the grade has not been sent yet' };
-  const retry = !gradebook.posted && lp.lineItem ? { method: 'POST', href: `${bridgeBaseUrl}/lti/play/${id}` } : undefined;
+  // What a POST to the same URL would still do: keep the outcome in the record, send the grade.
+  const left = { record: !ended.recorded, grade: !gradebook.posted && !!lp.lineItem };
+  const retry = left.record || left.grade ? { method: 'POST', href: `${bridgeBaseUrl}/lti/play/${id}`, ...left } : undefined;
   const course = { id: lp.play.courseId, title: lp.play.course.title };
-  const outcome = { completed: ended.completed, passed: ended.passed, score: ended.score, recordedStatements: ended.recordedStatements, gradebook };
+  const outcome = { completed: ended.completed, passed: ended.passed, score: ended.score, recordedStatements: ended.recordedStatements, recorded: ended.recorded, gradebook };
   if (wantsJson(req)) { res.json({ kind: 'lti-play', done: true, ...(ended.graded ? { graded: ended.graded } : {}), course, ...outcome, ...(retry ? { retry } : {}), learner: lp.sub, lens: lp.play.lens }); return; }
-  res.type('html').send(renderOutcomePage({ courseTitle: course.title, outcome, ...(ended.graded ? { graded: ended.graded } : {}), ...(retry ? { retry: true } : {}) }));
+  res.type('html').send(renderOutcomePage({ courseTitle: course.title, outcome, ...(ended.graded ? { graded: ended.graded } : {}), ...(retry ? { retry: left } : {}) }));
 }
 
 const ltiPlayGone = 'This launch has ended, or it expired. Launch the course again from your LMS.';
@@ -11768,10 +11835,11 @@ app.post('/lti/play/:id', express.urlencoded({ extended: false, limit: '64kb' })
     const lp = ltiPlayAt(id);
     res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer');
     if (!lp) { if (wantsJson(req)) res.status(404).json({ error: ltiPlayGone }); else res.status(404).type('html').send(renderGonePage(ltiPlayGone)); return; }
-    // An attempt that has ended takes no answers; a POST to it sends its grade again.
-    if (lp.ended) { await answerEndedAttempt(req, res, id, lp, lp.ended); return; }
+    // An attempt that has ended takes no answers. A POST to it keeps its outcome again if the
+    // record does not hold it, and sends its grade again if the platform did not take it.
+    if (lp.ended) { await keepEndedAgain(lp, lp.ended); await answerEndedAttempt(req, res, id, lp, lp.ended); return; }
     const current = lp.play.seq.current ? scoForActivity(lp.play.course, lp.play.seq.current.id) : undefined;
-    const step = advanceScormPlay(lp.play, answersFrom(req.body, current?.assessment?.map((q, i) => questionForLearner(q, i)) ?? 0));
+    const step = await advanceScormPlay(lp.play, answersFrom(req.body, current?.assessment?.map((q, i) => questionForLearner(q, i)) ?? 0));
     if (!step.ok) {
       if (wantsJson(req) || !current) { res.status(step.status).json(step.body); return; }
       res.status(step.status).type('html').send(renderScoPage({ courseTitle: lp.play.course.title, sco: scoViewForLearner(current) as ScoView, error: String(step.body.error ?? 'That did not go through.') }));
@@ -11783,7 +11851,7 @@ app.post('/lti/play/:id', express.urlencoded({ extended: false, limit: '64kb' })
       res.type('html').send(renderScoPage({ courseTitle: course.title, sco: step.sco as ScoView, ...(step.graded ? { graded: step.graded } : {}) }));
       return;
     }
-    lp.ended = { completed: step.completed, passed: step.passed, score: Number(step.score.toFixed(3)), recordedStatements: step.statementIds.length, ...(step.graded ? { graded: step.graded } : {}) };
+    lp.ended = { completed: step.completed, passed: step.passed, score: Number(step.score.toFixed(3)), recordedStatements: step.statementIds.length, recorded: step.recorded, ...(step.graded ? { graded: step.graded } : {}) };
     await answerEndedAttempt(req, res, id, lp, lp.ended);
   } catch (err) { sendServerError(res, err, 'lti-play'); }
 });

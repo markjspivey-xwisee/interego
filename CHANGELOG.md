@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: what the bridge records on its own behalf, it reports only once the store holds it
+
+The doors that take a caller's statements now wait for the store. The bridge's own emitters did not: each wrote with the unawaited `storeStatementInternal` and reported at once. A store that did not keep the write left each of these claims false:
+- an author's `authored` and an issuer's `credentialed` statement ids, cited in the response;
+- a learner's `credentialed` statement, cited beside the credential it records;
+- a SCORM attempt's outcome: "recorded to your ELR" with a count of statements, and on the LTI outcome page "The attempt is in your learner record";
+- a content delivery's and a Context Companion ask's `instrumented: true`, and "recorded in the LRS".
+
+Now:
+- `emitAgentActivity` and `recordCredentialed` wait for `storeStatementDurably`, return an id only once the store holds it, and compose and forward nothing it does not. Every caller awaits them;
+- content delivery's and the Context Companion's `emitStatement` resolve to the kept id or null, and a delivery or ask is instrumented only on an id;
+- a SCORM attempt's outcome statements are built once, when the attempt ends, and kept whole with `keepStatementsWhole`, or the outcome is unrecorded. They are composed into the learner's lattice only once all are kept. The attempt keeps its statements, so a later submit keeps those same ones again (a store holds an id once): nothing is lost or recorded twice;
+- the agent route answers an unrecorded outcome 503 and keeps the session for that submit;
+- an LTI attempt is forgotten only once the platform has the grade and the record holds the outcome. A POST to it does what is left, and a grade the platform took is not sent again. The outcome page says whether the record holds the attempt, and its button names what it will do.
+
+Two unawaited writes remain, and both report nothing: the mesh's re-projected lens view, and the cmi5 LMS's own statements, which it also keeps on the learner's pod. `tests/an-emitter-reports-only-what-the-store-kept.test.ts` pins that list. It also drives content delivery and the Context Companion with a store that keeps and one that does not. Fourteen mutants each turn a named test red.
+
 ## 2026-09-27 — Foxxi: a learner record read only in part is not classified, or served, for anyone but its subject
 
 Whether a learner record is private (a person's) or public (an agent's capability record) is decided from all of its own work: `classifySubjectKind` makes it an agent's only when none of it says a person did it. Three privacy gates decide it:
@@ -24,6 +41,7 @@ The rule is in `src/whole-record-gate.ts` (new): `servedInPart`, and the refusal
 
 `subject-kind-not-caller-controlled.test.ts` still holds. Fifteen mutants each fail a named test.
 
+
 ## 2026-09-27 — Foxxi: a learner reads their own profile, with their assignments
 
 A learner's home page reads their assigned courses from their own profile, `GET /api/foxxi/v1/profiles/:id`. That route was operator-only, because a profile carries directory PII (email, employee id, hire date, manager). So every learner who was not an operator got a 401 where their assigned courses belong.
@@ -36,6 +54,7 @@ Now:
 - the bridge passes the check to the hypermedia routes as `callerUserId`, next to `isOperator`. The dashboard's probe for whether the bridge takes a session's token stays at the LRS gate, since the profile's answer also depends on whose profile it is.
 
 `tests/a-learner-reads-their-own-profile.test.ts` runs the real routes over the tenant's real directory, with wallets from a test seed. It covers a learner, another user, anonymous, a public-seed token (with a control showing the directory does bind the wallet that signed it), both kinds of operator, an unknown id, and the collection. Seven mutants each turn it red.
+
 
 ## 2026-09-27 — Foxxi: a door that records statements reports only what the store kept, and refuses before it keeps
 
