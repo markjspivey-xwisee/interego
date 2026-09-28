@@ -6,9 +6,11 @@
  * a claim about what happens when they are not there. An import graph says what a test module
  * names; it does not say what it reads at run time (a source pin reading a vertical's file, a
  * gate walking `applications/`), and it cannot say that the build, the typecheck and the
- * relay's own suite still hold. So CI deletes `applications/`, `integrations/` and `examples/`
- * and runs the base: the packages build, the relay and stdio typechecks, the relay's own test
- * scripts, and every root and stdio test module whose closure stays inside the base.
+ * relay's own suite still hold. So CI deletes `applications/`, `integrations/` and `examples/`,
+ * and every package under `packages/` that a vertical owns, and runs the base: the base packages
+ * build, the relay, stdio, identity and validator services typecheck, identity passes its own
+ * tests, the relay its own test scripts, and every root and stdio test module whose closure
+ * stays inside the base passes too.
  *
  * ★ WHICH TESTS ARE BASE IS DERIVED, AND THE REST ARE COUNTED. A test module is base when neither
  * it nor any test-side module it imports (under `tests/`, `tools/` or a relay test script) names a
@@ -34,6 +36,25 @@ import { VERTICAL_OWNED, forbiddenPackages, forbiddenReason } from './base-neutr
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const REMOVED = ['applications', 'integrations', 'examples'];
+/**
+ * Everything the run deletes: the three trees, and every package under `packages/` that belongs to a
+ * vertical, so the run shows independence from all of them (Codex, on #563).
+ */
+export const DELETED = [...REMOVED, ...VERTICAL_OWNED.map(v => v.dir)];
+
+/**
+ * The base's own build, as `npm run build --workspace` steps: the root's `build:core` and
+ * `build:leaves` workspaces, less the vertical-owned packages the run deletes. Read from the
+ * root's scripts, so a package added to the build is built here too.
+ */
+export function baseBuildWorkspaces() {
+  const scripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts;
+  const owned = new Set(VERTICAL_OWNED.map(v => {
+    try { return JSON.parse(readFileSync(join(ROOT, v.dir, 'package.json'), 'utf8')).name; } catch { return undefined; }
+  }).filter(Boolean));
+  return [scripts['build:core'], scripts['build:leaves']].join(' && ')
+    .split('&&').map(step => /--workspace\s+(\S+)/.exec(step)?.[1]).filter(Boolean).filter(name => !owned.has(name));
+}
 const RELAY = 'deploy/mcp-relay';
 
 /**
@@ -262,7 +283,7 @@ function main() {
       // Classified while the trees are still here, so nothing about the classification depends
       // on files the run is about to delete.
       mkdirSync(PLAN_DIR, { recursive: true });
-      writeFileSync(PLAN_FILE, JSON.stringify({ vitest: set.vitest, relay: set.relay }, null, 2));
+      writeFileSync(PLAN_FILE, JSON.stringify({ build: baseBuildWorkspaces(), vitest: set.vitest, relay: set.relay }, null, 2));
       writeFileSync(join(ROOT, RELAY, BASE_RELAY_TESTS_PROGRAM), JSON.stringify({
         extends: `./${RELAY_TESTS_PROGRAM}`, exclude: ['node_modules', 'dist', ...set.reachingProgram.map(t => t.file)],
       }, null, 2));
@@ -274,15 +295,20 @@ function main() {
     return;
   }
   if (mode !== '--run') { console.error('usage: node tools/base-without-verticals.mjs --list | --plan | --run'); process.exit(2); }
-  const present = REMOVED.filter(t => existsSync(join(ROOT, t)));
+  const present = DELETED.filter(t => existsSync(join(ROOT, t)));
   if (present.length > 0) {
-    console.error(`★ refusing: ${present.join(', ')} still present. This run proves the base without them; delete them first (CI does).`);
+    console.error(`★ refusing: ${present.join(', ')} still present. This run proves the base without them; delete them first (CI does: rm -rf ${DELETED.join(' ')}).`);
     process.exit(2);
   }
   if (!existsSync(PLAN_FILE)) { console.error('★ refusing: no plan. Run --plan while the trees are present.'); process.exit(2); }
   const plan = JSON.parse(readFileSync(PLAN_FILE, 'utf8'));
-  run('npm', ['run', 'build']);
+  for (const workspace of plan.build) run('npm', ['run', 'build', '--workspace', workspace]);
   run('npx', ['tsc', '--noEmit', '-p', 'mcp-server/tsconfig.json']);
+  // The other base services (spec/LAYERS.md 6.2): identity builds and passes its own tests, and
+  // the validator typechecks (Codex, on #563).
+  run('npx', ['tsc', '--noEmit', '-p', 'deploy/identity/tsconfig.json']);
+  run('npm', ['test', '--workspace', '@interego/identity']);
+  run('npx', ['tsc', '--noEmit', '-p', 'deploy/validator/tsconfig.json']);
   for (const step of plan.relay) {
     const [cmd, ...args] = step.split(/\s+/);
     run(cmd, args, join(ROOT, RELAY));
@@ -291,7 +317,7 @@ function main() {
   // run deleted): the same compiler options, over exactly the modules this run executes.
   run('npx', ['tsc', '--noEmit', '-p', '.base-without-verticals/tsconfig.json']);
   run('npx', ['vitest', 'run', '-c', 'vitest.base.config.ts']);
-  console.log(`\nbase without verticals: built, typechecked, ${plan.relay.length} relay steps and ${plan.vitest.length} test modules green, with ${REMOVED.join(', ')} absent.`);
+  console.log(`\nbase without verticals: built, typechecked, ${plan.relay.length} relay steps and ${plan.vitest.length} test modules green, with ${DELETED.join(', ')} absent.`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();

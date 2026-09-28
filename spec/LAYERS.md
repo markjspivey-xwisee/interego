@@ -293,10 +293,11 @@ directory has no row.
 **And it runs without them.** `.github/workflows/base-without-verticals.yml` first shows that the
 emergence the verticals exist for still happens with every tree present: Release Control's governed
 release, and the FOXXI × AGP readiness showcase, both composed from signed artifacts. It then deletes
-`applications/`, `integrations/` and `examples/`, and builds, typechecks and tests the base:
-- the packages build;
-- the relay and the stdio server typecheck;
-- the relay passes its own scripts;
+`applications/`, `integrations/`, `examples/` and every vertical-owned package under `packages/`,
+and builds, typechecks and tests the base:
+- the base packages build;
+- the relay, the stdio server, identity and the validator typecheck;
+- identity passes its own tests, and the relay its own scripts;
 - every root and stdio test module whose closure stays inside the base passes.
 
 No vertical's configuration is involved, because nothing that could supply one is left.

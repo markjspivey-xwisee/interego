@@ -8,10 +8,11 @@ name: Base without verticals
 #   1. with every tree present, the emergence the verticals are for still happens — Release
 #      Control's governed release and the FOXXI × AGP readiness showcase, both composed from
 #      signed artifacts rather than from code joining them;
-#   2. then applications/, integrations/ and examples/ are deleted, and the base builds,
-#      typechecks, and passes the relay's own suite and every root and stdio test module whose
-#      closure stays inside the base — with no vertical's configuration anywhere, because nothing
-#      that could supply one is left.
+#   2. then applications/, integrations/, examples/ and every vertical-owned package under
+#      packages/ are deleted, and the base builds, typechecks (packages, relay, stdio, identity,
+#      validator), and passes identity's tests, the relay's own suite and every root and stdio test
+#      module whose closure stays inside the base — with no vertical's configuration anywhere,
+#      because nothing that could supply one is left.
 #
 # Which tests are base is classified by the tool while the trees are present (step 1), and the
 # number that reach a vertical is pinned there, so a domain-heavy fixture added to the base's
@@ -26,6 +27,8 @@ on:
     paths:
       - 'packages/**'
       - 'deploy/mcp-relay/**'
+      - 'deploy/identity/**'
+      - 'deploy/validator/**'
       - 'mcp-server/**'
       - 'tests/**'
       - 'tools/**'
@@ -42,6 +45,8 @@ on:
     paths:
       - 'packages/**'
       - 'deploy/mcp-relay/**'
+      - 'deploy/identity/**'
+      - 'deploy/validator/**'
       - 'mcp-server/**'
       - 'tests/**'
       - 'tools/**'
@@ -83,7 +88,7 @@ jobs:
         run: node tools/base-without-verticals.mjs --plan
 
       # ── 2. Without them: the base on its own ─────────────────────────────────────────────
-      - name: Delete every vertical, integration and example
-        run: rm -rf applications integrations examples
+      - name: Delete every vertical, integration and example, and the packages verticals own
+        run: rm -rf applications integrations examples packages/workspace-client
       - name: Build, typecheck and test the base
         run: node tools/base-without-verticals.mjs --run

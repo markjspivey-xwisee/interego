@@ -10,10 +10,40 @@
  * the ordinary suite, and not only in the job that deletes things.
  */
 
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ROOT, baseTestSet, judgeReaching, reachesVertical, relaySteps } from '../tools/base-without-verticals.mjs';
+import { DELETED, ROOT, baseBuildWorkspaces, baseTestSet, judgeReaching, reachesVertical, relaySteps } from '../tools/base-without-verticals.mjs';
+import { VERTICAL_OWNED } from '../tools/base-neutrality-lint.mjs';
+
+describe('what the run deletes, builds and checks (Codex, on #563)', () => {
+  const workflow = readFileSync(join(ROOT, '.github/workflows/base-without-verticals.yml'), 'utf8');
+
+  it('deletes the trees and every vertical-owned package, and the workflow deletes exactly that', () => {
+    expect(DELETED).toEqual(['applications', 'integrations', 'examples', ...VERTICAL_OWNED.map(v => v.dir)]);
+    expect(DELETED).toContain('packages/workspace-client');
+    expect(workflow).toContain(`run: rm -rf ${DELETED.join(' ')}\n`);
+  });
+
+  it('builds the root\'s own build list, less the packages a vertical owns', () => {
+    const scripts = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).scripts as Record<string, string>;
+    const named = `${scripts['build:core']} && ${scripts['build:leaves']}`.match(/--workspace \S+/g)!.map(s => s.slice('--workspace '.length));
+    const build = baseBuildWorkspaces();
+    expect(build[0]).toBe('@interego/core');
+    expect(build).not.toContain('@interego/workspace-client');
+    expect(build).toEqual(named.filter(name => name !== '@interego/workspace-client'));
+  });
+
+  it('checks the other base services, and runs when they change', () => {
+    const tool = readFileSync(join(ROOT, 'tools/base-without-verticals.mjs'), 'utf8');
+    expect(tool).toContain("run('npx', ['tsc', '--noEmit', '-p', 'deploy/identity/tsconfig.json']);");
+    expect(tool).toContain("run('npm', ['test', '--workspace', '@interego/identity']);");
+    expect(tool).toContain("run('npx', ['tsc', '--noEmit', '-p', 'deploy/validator/tsconfig.json']);");
+    for (const path of ['deploy/identity/**', 'deploy/validator/**']) {
+      expect(workflow.split(`      - '${path}'\n`).length - 1, path).toBe(2);
+    }
+  });
+});
 
 describe('the classifier', () => {
   const dir = mkdtempSync(join(ROOT, 'tests', '.classifier-'));

@@ -6,6 +6,10 @@
 export declare const ROOT: string;
 /** The trees the base must run without. */
 export declare const REMOVED: readonly string[];
+/** Everything the run deletes: those trees and every vertical-owned package under `packages/`. */
+export declare const DELETED: readonly string[];
+/** The base's build, as workspace names: the root's `build:core` and `build:leaves`, less the vertical-owned packages. */
+export declare function baseBuildWorkspaces(): string[];
 /** Tests in base directories that reach a vertical, pinned per runner. */
 export declare const REACHING_PINS: Readonly<{ vitest: number; relay: number; program: number }>;
 /** Where `--plan` writes the classified set and its tsconfig. */

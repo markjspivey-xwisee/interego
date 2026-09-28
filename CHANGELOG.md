@@ -19,7 +19,12 @@ The rest of #366: the publication trust the relay decided for every installed co
   - Release Control's governed release (`tests/application-simulation.test.ts`);
   - the Application Lab's evidence-gated transition;
   - the FOXXI × AGP release showcase and AGP's readiness evidence.
-- **Then it deletes `applications/`, `integrations/` and `examples/`,** and `tools/base-without-verticals.mjs --run` builds the packages, typechecks the stdio server and the relay, and runs the relay's own scripts and every base test module. Each base module is also typechecked on its own, with the full program's options. No vertical's configuration is involved, because nothing that could supply one is left.
+- **Then it deletes `applications/`, `integrations/`, `examples/` and the vertical-owned `packages/workspace-client`,** and `tools/base-without-verticals.mjs --run` checks the base on its own:
+  - it builds the base packages, which are the root's own build list less the vertical-owned ones;
+  - it typechecks the stdio server, the relay, identity and the validator;
+  - it runs identity's tests, the relay's own scripts and every base test module. Each base module is also typechecked on its own, with the full program's options.
+
+  No vertical's configuration is involved, because nothing that could supply one is left. Codex found that the first version left the vertical-owned package and the two smaller services out of the run; now they are in it, and changes to identity or the validator trigger the workflow.
 
 Which tests are base is derived, not listed.
 - A test module is base when neither it nor a test-side module it imports:
