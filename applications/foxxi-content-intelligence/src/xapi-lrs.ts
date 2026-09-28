@@ -205,7 +205,14 @@ export async function keepStatementsWhole(statements: ReadonlyArray<Record<strin
     if (!id) return { status: 'partial', keptIds };
     keptIds.push(id);
   }
-  return { status: 'whole', keptIds };
+  // A store that makes room as it writes can let an earlier statement go while it takes a later
+  // one: an in-memory store over the process-wide resident budget evicts its oldest (Codex, on
+  // #544). So every write having settled does not make the set whole; every statement still
+  // being held does. What is still held is what is reported kept.
+  const store = statementStores.for(tenant);
+  const held: string[] = [];
+  for (const id of keptIds) if (await store.get(id)) held.push(id);
+  return held.length === keptIds.length ? { status: 'whole', keptIds } : { status: 'partial', keptIds: held };
 }
 
 /**

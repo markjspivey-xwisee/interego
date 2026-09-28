@@ -7,13 +7,14 @@
  *  - a wallet extension signs in the extension, as the account it holds. The dashboard never holds
  *    that key.
  *
- * ★ A WALLET EXTENSION ASKS FOR EACH SIGNATURE. The bridge takes a request signed by its actor's
- * own key (the DIRECT branch) or by the anchor of a delegation kept on the actor's pod, and nothing
- * in between: no session key the extension could authorize once. So each signed request is one
- * approval in the wallet, and a page says so before it asks.
+ * ★ A WALLET EXTENSION ASKS BEFORE IT SIGNS. Where a bridge takes session keys for this page
+ * (auth/session-key.ts), it asks once: to let a key this tab makes sign that bridge's requests as
+ * its account, for an hour at most. Where a bridge takes none, each signed request is one approval.
+ * Until the tab holds a session, a page says a wallet will ask, and waits for a click to read.
  */
 import { ethers } from 'ethers';
 import { deriveUserWallet, type MessageSigner } from './session-token.js';
+import { holdsSession, sessionFor } from './session-key.js';
 
 export type { MessageSigner } from './session-token.js';
 
@@ -44,7 +45,7 @@ export async function extensionAccount(provider: ethers.Eip1193Provider): Promis
  * that account, as when its owner switched accounts.
  */
 export function extensionSigner(address: string, provider: ethers.Eip1193Provider | undefined = walletExtension()): MessageSigner {
-  return {
+  const self: MessageSigner = {
     address,
     async signMessage(message: string): Promise<string> {
       if (!provider) throw new Error('No wallet extension is available in this browser now; sign in again.');
@@ -53,7 +54,11 @@ export function extensionSigner(address: string, provider: ethers.Eip1193Provide
       catch { throw new Error(`Your wallet did not offer ${address} for signing; switch back to it, or sign in again.`); }
       return signer.signMessage(message);
     },
+    // The grant is signed in the wallet, as everything this account signs is; the key it grants
+    // signs the bridge's requests after.
+    session: (audience: string) => sessionFor(self, audience),
   };
+  return self;
 }
 
 /** The signer for a session: its wallet extension, its connected key, or its demo wallet. */
@@ -63,7 +68,10 @@ export function signerFor(identity: SigningIdentity): MessageSigner {
   return deriveUserWallet(identity.userId);
 }
 
-/** Whether a session's signer asks a person to approve each signed request. */
+/**
+ * Whether a session's signer will ask a person before its next signed request: a wallet extension
+ * that holds no session key with time left. Once it holds one, pages read without waiting for a click.
+ */
 export function signerAsks(identity: SigningIdentity): boolean {
-  return identity.signingMode === 'extension' && !!identity.extensionAddress;
+  return identity.signingMode === 'extension' && !!identity.extensionAddress && !holdsSession(identity.extensionAddress);
 }

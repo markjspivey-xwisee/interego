@@ -146,7 +146,7 @@ export function CompositionPlayer({ session }: { session: FoxxiSession }) {
               </div>
             )}
             <Button primary disabled={lookup === 'absent'} onClick={() => { void start(); }}>Start</Button>
-            {asks && <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 8 }}>Your wallet will ask you to approve starting, and each step you send.</div>}
+            {asks && <div style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 8 }}>Your wallet will ask you to approve: once for this tab where the bridge takes session keys, or else starting and each step you send.</div>}
           </div>
         )}
         {phase.at === 'starting' && <div style={{ color: 'var(--text-dim)' }}>{asks ? 'Approve the request in your wallet…' : 'Resolving it for you…'}</div>}

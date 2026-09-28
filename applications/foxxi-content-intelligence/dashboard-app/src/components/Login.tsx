@@ -72,8 +72,9 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
 
             <div style={{ color: 'var(--text-dim)', fontSize: 12, margin: '18px 0 10px' }}>
               Or sign in with <strong>a wallet extension</strong> in this browser. Your key stays in the wallet:
-              it signs your session now, and asks you to approve each signed request after (every step you play,
-              everything you author), because the bridge takes no signature but your own.
+              it signs your session now. After that, where the bridge takes session keys, it asks you once an hour
+              to let this tab sign for you with a key that never leaves the tab; otherwise it asks you to approve
+              each signed request (every step you play, everything you author).
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <Button primary disabled={!hasExtension || walletBusy} onClick={() => { void (async () => {
