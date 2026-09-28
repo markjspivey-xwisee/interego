@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: what a partial keep holds is named by id; a sign-out forgets a grant still being asked for; a dashboard on an IPv6 literal gets session keys
+
+Three findings of Codex's, on #545 and #546 after they merged.
+
+**#546: a partial keep is not a prefix.** Once `keepStatementsWhole` reads back what the store still holds, a store that made room can have let an earlier statement go and kept a later one. The callers still counted:
+- the course completion named the first *n* statements kept and the rest not kept;
+- the run and trajectory refusals said the store "then did not keep the next", and the run's said its performance was not kept.
+
+Under memory pressure each could contradict its own `keptStatementIds`. Now the completion matches statements by id. The refusals say how many the store holds and no more, and a run's refusal says whether its performance is among them (`performanceKept`).
+
+**#545: a grant approved after sign-out was kept.** Signing out cleared the tab's session keys, but a wallet approval still pending finished afterwards and put its key back for the signed-out wallet. Sign-out now moves on a generation that every pending grant checks before it is kept, and forgets the pending grants too.
+
+**#545: an IPv6 dashboard got a grant the bridge always refused.** `sessionKeyPolicyFor` published `[::1]:5173`, the dashboard signed that host, and the grant check's pattern refused the brackets. So every signed request failed instead of falling back to the wallet. A grant's domain is now read as a URL authority and must come back exactly as it went in, which takes IPv6 literals and still takes nothing that could break the message's lines.
+
+Tests: the doors' by-id answers, a sign-out while the wallet is asking, an IPv6 dashboard, and domains carrying a line break, a path, user info, a query or a space. Seven mutants each turn a named test red.
+
 ## 2026-09-27 — Foxxi: a set of statements is kept whole only while the store still holds all of it
 
 `keepStatementsWhole` called a set whole once every write had settled. An in-memory store over the process-wide resident budget makes room as it writes, evicting its oldest statement. So storing a SCORM attempt's `passed` could evict its `completed`: the attempt was reported recorded, its session was let go, and one of its statements was already gone (Codex, on #544). The helper now reads every id back before it says whole. What is still held is what it reports kept, and anything less is `partial`, which every door that uses it answers as not recorded.

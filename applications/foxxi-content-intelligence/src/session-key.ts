@@ -61,7 +61,17 @@ export const SESSION_KEY_CHAIN_ID = 1;
 const CLOCK_SKEW_MS = 60_000;
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
-const DOMAIN = /^[A-Za-z0-9.-]+(?::\d{1,5})?$/;
+/**
+ * An EIP-4361 domain: an authority (a host, and a port if any) exactly as a page's `location.host`
+ * gives it, IPv6 literals included (Codex, on #545: `[::1]:5173` was refused though the policy
+ * published it). Parsed as a URL's authority, it must come back exactly as it went in: a URL parser
+ * drops a line break or tab, and reads a path, query, fragment or user info out of the host, so a
+ * domain carrying any of them comes back otherwise, and nothing can break the message's lines.
+ */
+function isAuthority(domain: string): boolean {
+  if (!domain) return false;
+  try { return new URL(`http://${domain}`).host === domain.toLowerCase(); } catch { return false; }
+}
 const NONCE = /^[A-Za-z0-9]{8,64}$/;
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
@@ -106,7 +116,7 @@ export function checkSessionKeyGrant(grant: unknown, policy: SessionKeyPolicy, n
   }
   const s = g as unknown as SessionKeyGrant;
   if (!ADDRESS.test(s.actor) || !ADDRESS.test(s.key)) return { ok: false, reason: 'the session grant names an actor or key that is not an address' };
-  if (!DOMAIN.test(s.domain)) return { ok: false, reason: 'the session grant names no domain' };
+  if (!isAuthority(s.domain)) return { ok: false, reason: 'the session grant names no domain' };
   if (!NONCE.test(s.nonce)) return { ok: false, reason: 'the session grant nonce is not eight to sixty-four letters and digits' };
   if (!INSTANT.test(s.issuedAt) || !INSTANT.test(s.expiresAt)) return { ok: false, reason: 'the session grant times are not UTC instants' };
   const audience = originOf(s.audience);

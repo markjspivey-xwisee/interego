@@ -28,6 +28,8 @@ const RENEW_BEFORE_MS = 5 * 60 * 1000;
 const policies = new Map<string, Promise<SessionKeyPolicyDoc | null>>();
 const sessions = new Map<string, Session>();
 const asking = new Map<string, Promise<Session | null>>();
+/** Moves on at every sign-out: a grant asked for before it is not kept after it. */
+let generation = 0;
 
 /** Where this page is: the EIP-4361 domain a wallet checks the grant against. */
 function pageHost(): string | undefined {
@@ -72,6 +74,7 @@ export async function sessionFor(wallet: MessageSigner, audienceUrl: string, opt
   if (held && Date.parse(held.grant.expiresAt) - now() > RENEW_BEFORE_MS) return held;
   const pending = asking.get(k);
   if (pending) return pending;
+  const asked = generation;
   const ask = (async (): Promise<Session | null> => {
     const host = opts.host ?? pageHost();
     const policy = await sessionKeyPolicyAt(audience, host, opts.fetchImpl);
@@ -85,12 +88,14 @@ export async function sessionFor(wallet: MessageSigner, audienceUrl: string, opt
       nonce: ethers.hexlify(ethers.randomBytes(16)).slice(2),
     };
     const grant: SessionKeyGrant = { ...body, signature: await wallet.signMessage(sessionKeyMessage(body)) };
+    // Signed out while the wallet was asking (Codex, on #545): the grant is not kept for anyone.
+    if (asked !== generation) return null;
     const session = { key, grant };
     sessions.set(k, session);
     return session;
   })();
   asking.set(k, ask);
-  try { return await ask; } finally { asking.delete(k); }
+  try { return await ask; } finally { if (asking.get(k) === ask) asking.delete(k); }
 }
 
 /** Whether `address` holds a session with time left on some bridge: its reads need not wait for a click. */
@@ -102,6 +107,8 @@ export function holdsSession(address: string, now: number = Date.now()): boolean
 
 /** Forget every session key this tab holds, and every policy it read: on sign-out. */
 export function forgetSessionKeys(): void {
+  generation++;
   sessions.clear();
   policies.clear();
+  asking.clear();
 }
