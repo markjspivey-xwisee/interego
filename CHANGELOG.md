@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-09-28 — The substrate names no vertical, and a gate keeps it that way (#366, part 1)
+
+The base — `packages/*`, the MCP relay, the stdio server, identity and the validator — is meant to know no vertical: a vertical reaches it through published descriptors, affordances and operator configuration. #366 found it knew one in four places, each a reasonable default where it was written, and nothing measured the sum.
+
+**Moved out of the base.**
+- **The relay's tier-2 lattice resolver** (`PGSL_NODE_RESOLVER`) defaulted to one vertical's lattice route. It now has no default: `tierTwoResolver` accepts only an absolute http(s) URL, and a relay with none answers tier 3's uniform 404. An empty setting used to redirect to the relative `/atom/<hash>`, which landed on the relay's own HTML 404.
+- **The relay's action roster** (`IEP_ACTION_VERTICALS`) had that vertical's manifest built in beside the relay's own. `relayActionRoster` now builds in only the relay's operations catalog.
+- **The reference image composes both.** `deploy/Dockerfile.relay`'s `reference` stage, which production builds, sets both variables to the values the code used to default to, so the live relay keeps resolving the ids it resolved before. The neutral `runtime` image sets neither. A platform-set value still replaces either one; a platform-set `IEP_ACTION_VERTICALS` must now name every vertical the deployment composes.
+- **The Solid client's manifest scan** probed one vertical's credential container on every pod, for every caller. It now reads the default container and whatever the pod root lists, plus the containers its caller names: `rebuildManifestFromPod` takes `containers`, and `publish`, recovering a lost manifest, names the container it just wrote to. Foxxi's void-credential route names the voided credential's container and its wallet default (`WALLET_CONTAINER`, now exported from `src/credentials.ts`).
+- **Tool descriptions and hints.** The relay's and the stdio server's `invoke_affordance`, the relay's `sign_request` and `record_trajectory_step` descriptions, its instructions text and `sign_request`'s hint named verticals as examples. They now describe what to look for instead: an affordance takes a signed request when its declared inputs are `_signed_payload` and `_signature`. The old `sign_request` example also named an action id the urn→URL migration had retired.
+
+**The gate.** `tools/base-neutrality-lint.mjs` (`npm run lint:base-neutrality`, a step in `lint.yml`) scans the base's production source with the TypeScript parser, so a vertical named in a string on a line that also carries a comment counts as code:
+- **dependencies**: hard zero on anything reaching `applications/`, `integrations/`, `examples/` or a package published from them;
+- **code**: hard zero on every vertical's vocabulary outside a counted allowlist: one credential-standard name in a generic union, and the relay's alias loader for promoted tools, which #367 removes;
+- **comments**: a two-sided pin per root.
+
+Run against master's versions of the files this changes, it reports each of the defaults above.
+
+**Who owns what.** `spec/LAYERS.md` §6.2 tables every package, deployment, integration, vertical and example: which layer it implements, and whether it is base, a composition, a deployment, a vertical or an example. `tests/every-code-path-has-an-owner.test.ts` fails when a directory has no row or when the rows marked base differ from what the gate scans. `packages/workspace-client` is recorded as the shared-workspace vertical's.
+
+Tests:
+- the relay's `pgsl-node-authority` and `action-authority` (resolver parsing, the unconfigured 404, the exact redirect, the built-in roster), with their fixtures renamed away from a vertical;
+- `a-rebuild-scans-the-containers-its-caller-names` (three mutants, each caught);
+- `the-reference-image-names-the-verticals-it-composes`;
+- `base-neutrality-lint`.
+
 ## 2026-09-28 — Foxxi: the dashboard's image builds again, so master deploys again
 
 `Auto-deploy master` had failed on every merge since #535, and nothing merged since #533 had reached Railway. The #534 run was a Docker Hub 502, but every run from #535 on failed the same way.

@@ -91,7 +91,7 @@ import { assertPublicPodUrl } from './url-rewrite.js';
 import { PUBLIC_LINKED_DATA_CORS } from './cors-allowlist.js';
 // The action naming authority: the roster and the resolution rule. See action-authority.ts for
 // the Object.prototype defect that being inline hid — `GET /ns/iep/action/constructor/x` 302'd.
-import { buildActionRoster, resolveActionTarget } from './action-authority.js';
+import { relayActionRoster, resolveActionTarget } from './action-authority.js';
 import * as publishedNodes from './pgsl-node-store.js';
 
 /**
@@ -103,8 +103,12 @@ export interface NsDereferenceDeps {
   readonly cssUrl: string;
   /** The relay's public origin (server.ts's PUBLIC_BASE_URL); '' when unset. */
   readonly publicBaseUrl: string;
-  /** Tier-2 fail-closed public-lattice resolver base (server.ts's PGSL_NODE_RESOLVER). */
-  readonly pgslNodeResolver: string;
+  /**
+   * Tier-2 fail-closed public-lattice resolver base (server.ts's PGSL_NODE_RESOLVER), or
+   * undefined when the deployment configures none — then tier 2 is skipped and an unpublished
+   * id gets tier 3's uniform 404.
+   */
+  readonly pgslNodeResolver: string | undefined;
   /** The relay's screened outbound fetch (server.ts's solidFetch, from createEgress). */
   readonly solidFetch: FetchFn;
 }
@@ -719,8 +723,9 @@ export function createNsDereference(deps: NsDereferenceDeps): NsDereference {
     //
     // THE INVARIANT: resolvable ⟺ PUBLISHED. Three tiers:
     //   1. the relay's durable published-node store — 200
-    //   2. PGSL_NODE_RESOLVER, a fail-closed public-lattice resolver holding a DISJOINT
-    //      corpus (the Foxxi bridge's ontology terms + memory commons) — 302
+    //   2. PGSL_NODE_RESOLVER, when the deployment configures one: a fail-closed
+    //      public-lattice resolver holding a DISJOINT corpus (a composed vertical's
+    //      ontology terms and memory commons) — 302. None configured: straight to 3.
     //   3. uniform 404, byte-identical for never-minted, minted-but-unpublished, and
     //      private — no existence signal.
     // Tier 1 reads the DURABLE store (its in-memory commons is a strict subset), so a
@@ -754,12 +759,12 @@ export function createNsDereference(deps: NsDereferenceDeps): NsDereference {
      * `Object.prototype` answered as a registered vertical. Measured on the live relay,
      * `GET /ns/iep/action/constructor/publish_context` returned 302 rather than 404. See that module
      * for the full measurement and `tests/action-authority.test.ts` for the cases.
+     *
+     * The relay's own entry is the only one built in (see `relayActionRoster`); every vertical
+     * is the deployment's statement, made in `IEP_ACTION_VERTICALS`.
      */
-    const IEP_ACTION_VERTICALS: Record<string, string> = buildActionRoster(
-      {
-        foxxi: 'https://foxxi-bridge.interego.xwisee.com/affordances',
-        relay: `${(publicBaseUrl || '').replace(/\/$/, '')}/.well-known/operations`,
-      },
+    const IEP_ACTION_VERTICALS: Record<string, string> = relayActionRoster(
+      publicBaseUrl || '',
       process.env.IEP_ACTION_VERTICALS,
     );
     app.get('/ns/iep/action/:vertical/:verb', (req, res) => {

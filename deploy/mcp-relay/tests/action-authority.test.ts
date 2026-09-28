@@ -20,7 +20,7 @@
  *
  * Run from deploy/mcp-relay/:  npx tsx tests/action-authority.test.ts
  */
-import { buildActionRoster, resolveActionTarget } from '../action-authority.js';
+import { buildActionRoster, relayActionRoster, resolveActionTarget } from '../action-authority.js';
 
 let pass = 0;
 let fail = 0;
@@ -32,7 +32,7 @@ const ok = (name: string, cond: boolean, detail = ''): void => {
 
 const ROSTER = buildActionRoster(
   {
-    foxxi: 'https://foxxi-bridge.interego.xwisee.com/affordances',
+    composed: 'https://vertical.example/affordances',
     relay: 'https://relay.interego.xwisee.com/.well-known/operations',
   },
   undefined,
@@ -41,9 +41,9 @@ const ROSTER = buildActionRoster(
 // ── 1. The registered verticals still resolve ────────────────────────────────
 // Paired with every refusal below: a guard that refuses everything passes those and fails these.
 {
-  const r = resolveActionTarget(ROSTER, 'foxxi', 'publish_context');
-  ok('foxxi resolves', r.ok, String(r.reason));
-  ok('foxxi target is the manifest', r.target === 'https://foxxi-bridge.interego.xwisee.com/affordances', r.target);
+  const r = resolveActionTarget(ROSTER, 'composed', 'publish_context');
+  ok('a composed vertical resolves', r.ok, String(r.reason));
+  ok('…and its target is its manifest', r.target === 'https://vertical.example/affordances', r.target);
 
   const s = resolveActionTarget(ROSTER, 'relay', 'get_descriptor');
   ok('relay resolves', s.ok, String(s.reason));
@@ -86,7 +86,7 @@ for (const bad of ['../etc', 'a/b', 'a.b', '%2e%2e', '-leading', '']) {
   ok(`vertical ${JSON.stringify(bad)} refused`, !r.ok && r.reason === 'bad-vertical', String(r.reason));
 }
 for (const bad of ['../etc', 'a/b', 'a.b', '-leading', '']) {
-  const r = resolveActionTarget(ROSTER, 'foxxi', bad);
+  const r = resolveActionTarget(ROSTER, 'composed', bad);
   ok(`verb ${JSON.stringify(bad)} refused`, !r.ok && r.reason === 'bad-verb', String(r.reason));
 }
 
@@ -125,7 +125,7 @@ for (const bad of ['../etc', 'a/b', 'a.b', '-leading', '']) {
 // section 2 and 3. Recorded so nobody reads these cases as proof of three separate protections.
 {
   const polluted = buildActionRoster(
-    { foxxi: 'https://foxxi-bridge.interego.xwisee.com/affordances' },
+    { composed: 'https://vertical.example/affordances' },
     JSON.stringify({ __proto__: { evil: 'https://attacker.example/' }, extra: 'https://ok.example/m' }),
   );
   ok('override adds a legitimate vertical', resolveActionTarget(polluted, 'extra', 'x').ok);
@@ -139,6 +139,23 @@ for (const bad of ['../etc', 'a/b', 'a.b', '-leading', '']) {
 
   const malformed = buildActionRoster({ a: 'https://a.example/m' }, '{not json');
   ok('a malformed override keeps the defaults', resolveActionTarget(malformed, 'a', 'x').ok);
+}
+
+// ── 7. The relay's own roster names no vertical ──────────────────────────────
+// One vertical's manifest used to be built in, so every relay answered as the naming authority
+// for that vertical's actions whether its deployment composed it or not. Only the relay's own
+// operations catalog is built in; a vertical is present exactly when the deployment names it.
+{
+  const bare = relayActionRoster('https://relay.test/', undefined);
+  ok('the built-in roster is the relay\'s own entry and nothing else',
+    JSON.stringify(Object.keys(bare)) === '["relay"]', Object.keys(bare).join(','));
+  ok('…which points at its operations catalog',
+    resolveActionTarget(bare, 'relay', 'publish_context').target === 'https://relay.test/.well-known/operations');
+
+  const composed = relayActionRoster('https://relay.test', JSON.stringify({ composed: 'https://vertical.example/affordances' }));
+  ok('a deployment composes a vertical by naming it',
+    resolveActionTarget(composed, 'composed', 'verb').target === 'https://vertical.example/affordances');
+  ok('…and the relay\'s own entry is still there', resolveActionTarget(composed, 'relay', 'publish_context').ok);
 }
 
 console.log(`action-authority: ${pass} passed, ${fail} failed`);

@@ -332,6 +332,30 @@ export async function resolvePublished(iri: string, base: string): Promise<Resol
 export const PGSL_NODE_404 = { error: 'no such pgsl node' } as const;
 
 /**
+ * The tier-2 resolver base, read from configuration and nothing else.
+ *
+ * ★ THE BASE HAS NO DEFAULT. This used to fall back to one vertical's lattice route, so every
+ * relay that set nothing forwarded unpublished node ids to that vertical's host. Which public
+ * lattice (if any) stands behind this relay is a property of the deployment, not of the relay:
+ * the reference image names it (`deploy/Dockerfile.relay`), and a relay configured with none
+ * answers the uniform 404 of tier 3.
+ *
+ * ★ AND AN EMPTY OR RELATIVE VALUE IS "NONE", NOT A BASE. The old code redirected to
+ * `${''}/atom/<hash>` for an empty setting, a relative Location that landed on this relay's
+ * own default HTML 404 rather than the uniform JSON one. Only an absolute http(s) URL is a
+ * resolver; anything else is reported by the caller and treated as unset.
+ */
+export function tierTwoResolver(raw: string | undefined): string | undefined {
+  const value = (raw ?? '').trim();
+  if (value === '') return undefined;
+  let url: URL;
+  try { url = new URL(value); } catch { return undefined; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
+  if (url.search !== '' || url.hash !== '') return undefined;
+  return url.toString().replace(/\/+$/, '');
+}
+
+/**
  * The `GET /ns/pgsl/:kind/:hash` handler, as a factory.
  *
  * ★ EXPORTED AS A FACTORY SO THE TEST CAN MOUNT THE REAL THING. server.ts registers
@@ -340,7 +364,7 @@ export const PGSL_NODE_404 = { error: 'no such pgsl node' } as const;
  * 302-to-a-foreign-404 survived a suite that already contained a test literally named
  * "…resolves at its authority".
  */
-export function nodeRouteHandler(opts: { resolverBase: string; publicBase: string }) {
+export function nodeRouteHandler(opts: { resolverBase: string | undefined; publicBase: string }) {
   return async function pgslNodeRoute(req: Request, res: Response): Promise<void> {
     // CORS (ACAO:*) is applied upstream by the /ns/* public linked-data carve-out.
     // Whole body in try/catch: this is an async Express 4 route, and an uncaught throw
@@ -382,7 +406,14 @@ export function nodeRouteHandler(opts: { resolverBase: string; publicBase: strin
       // Tier 2. no-store, because this id may be published here a second from now and a
       // heuristically-cached negative (RFC 9111 §4.2.2) would keep 404ing it.
       res.setHeader('Cache-Control', 'no-store');
-      res.redirect(302, `${opts.resolverBase}/${kind}/${hash}`);
+      // Tier 3 when no resolver is configured: the same uniform 404 as a malformed id, so an
+      // unconfigured relay says nothing about whether the id was ever minted anywhere.
+      const resolverBase = tierTwoResolver(opts.resolverBase);
+      if (resolverBase === undefined) {
+        res.status(404).json(PGSL_NODE_404);
+        return;
+      }
+      res.redirect(302, `${resolverBase}/${kind}/${hash}`);
     } catch {
       res.setHeader('Cache-Control', 'no-store');
       res.status(503).json({ error: 'pgsl node store unavailable' });

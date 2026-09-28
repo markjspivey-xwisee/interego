@@ -3014,12 +3014,12 @@ const handleListTools = async () => ({
     // ── Generic affordance follower (Path A — reach any vertical) ──
     {
       name: 'invoke_affordance',
-      description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a iep:action IRI, this fetches the descriptor, finds the matching iep:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
+      description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a iep:action IRI, this fetches the descriptor, finds the matching iep:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical that publishes affordances is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          descriptor_url: { type: 'string', description: 'URL of the Context Descriptor containing the affordance (e.g., a Foxxi course descriptor URL).' },
-          action_iri: { type: 'string', description: 'The iep:action IRI of the affordance to invoke (e.g., urn:iep:action:foxxi:discover-assigned-courses). Discover available actions via discover_context + get_descriptor.' },
+          descriptor_url: { type: 'string', description: 'URL of the Context Descriptor containing the affordance.' },
+          action_iri: { type: 'string', description: 'The iep:action IRI of the affordance to invoke, as the descriptor\'s iep:Affordance block declares it. Discover available actions via discover_context + get_descriptor.' },
           payload: { type: 'object', additionalProperties: true, description: 'Arguments to POST to the affordance target. Shape depends on the specific affordance — read the descriptor or the affordance\'s inputs metadata to learn what fields are required.' },
           authorization: { type: 'string', description: 'Optional Authorization header value to forward (e.g., Bearer <token>). Use when the target requires auth. The relay caller\'s own bearer token is NOT auto-forwarded — supply it explicitly if needed.' },
         },

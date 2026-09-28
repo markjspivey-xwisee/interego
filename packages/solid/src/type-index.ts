@@ -11,7 +11,7 @@
  *          solid:forClass <shape> ;
  *          solid:instanceContainer <…/where/this/shape/lives/> .
  *
- * An app (the TTT game, Foxxi) references only the SHAPE; the substrate reads the
+ * An app (a game, a vertical) references only the SHAPE; the substrate reads the
  * subject agent's OWN profile to resolve placement — so johnny may store a shape
  * somewhere/however differently than boozer, each self-sovereign.
  *
@@ -83,7 +83,8 @@ export interface ResolveStorageOptions {
   /**
    * Container (relative to the pod root) to use when the agent has not
    * registered this shape. Preserves prior hardcoded placement for a
-   * non-breaking migration — e.g. 'foxxi-wallet/' for credentials.
+   * non-breaking migration — e.g. the container an app wrote this shape to before
+   * agents registered it.
    */
   readonly defaultContainer?: string;
 }

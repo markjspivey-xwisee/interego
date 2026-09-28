@@ -101,3 +101,22 @@ export function buildActionRoster(
   } catch { /* malformed override: keep the defaults rather than fail the boot */ }
   return roster;
 }
+
+/**
+ * The relay's roster: its own operations catalog, plus the verticals its deployment composes
+ * through `IEP_ACTION_VERTICALS` (a JSON object of vertical → manifest URL).
+ *
+ * ★ THE RELAY'S OWN ENTRY IS THE ONLY ONE BUILT IN. One vertical's manifest used to be a
+ * default here too, so every relay answered as the naming authority for that vertical's actions
+ * whether or not its deployment composed that vertical. Which verticals stand behind a relay is
+ * the deployment's statement; the reference image makes it in `deploy/Dockerfile.relay`.
+ */
+export function relayActionRoster(
+  publicBaseUrl: string,
+  overrideJson: string | undefined,
+): Record<string, string> {
+  return buildActionRoster(
+    { relay: `${publicBaseUrl.replace(/\/$/, '')}/.well-known/operations` },
+    overrideJson,
+  );
+}

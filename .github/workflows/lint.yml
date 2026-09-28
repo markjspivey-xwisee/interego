@@ -126,6 +126,16 @@ jobs:
       # let the commit that breaks it skip the check.
       - name: Emergence boundary (neither demo program names the other vertical)
         run: node tools/emergence-boundary-lint.mjs
+      # ★ THE SAME KIND OF CLAIM, ONE LEVEL DOWN. The substrate — packages/*, the MCP relay, the stdio
+      # server, identity and the validator — names no vertical: a vertical reaches it through published
+      # descriptors, affordances and operator configuration. #366 found that false in four places, each
+      # a reasonable default where it was written (a relay resolver and action roster that defaulted to
+      # one vertical's host, a Solid scan that probed its credential container on every pod, tool
+      # descriptions naming verticals to every client). Hard zero for dependencies and for vertical
+      # vocabulary in code outside a counted allowlist; a two-sided pin on comments. Unfiltered by
+      # `paths:`, like everything above.
+      - name: Base neutrality (the substrate names no vertical)
+        run: node tools/base-neutrality-lint.mjs
       # ★★ THE THIRD GATE IN THIS REPOSITORY THAT RAN IN NO WORKFLOW AT ALL. The other two are
       # two steps above — the conformance runner, "called by nothing" — and in ontology-lint.yml,
       # whose note records the security-txt expiry helper being red at HEAD while CI ran the

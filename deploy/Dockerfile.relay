@@ -279,6 +279,14 @@ COPY --from=reference-build /composition/dist/applications/llm-telemetry/relay-o
 COPY --from=build /app/dist/client-authorization.js /app/dist/client-registration.js ./dist/deploy/mcp-relay/
 ENV INTEREGO_RESOURCE_COMPOSITIONS='["./compositions/application-runtime/resource-composition.js","./compositions/affordance-surface/resource-composition.js"]'
 ENV INTEREGO_REQUEST_OBSERVERS='["./compositions/llm-telemetry/relay-observer.js"]'
+# The verticals this deployment composes. The relay's code names none: which public lattice
+# stands behind its node ids (tier 2 of /ns/pgsl/:kind/:hash) and which vertical manifests its
+# /ns/iep/action/<vertical>/<verb> ids redirect to are statements this deployment makes here.
+# A platform-set PGSL_NODE_RESOLVER replaces this one, as it replaced the code default. A
+# platform-set IEP_ACTION_VERTICALS replaces this whole roster (the relay adds only its own
+# entry), so it must name every vertical the deployment composes.
+ENV PGSL_NODE_RESOLVER=https://foxxi-bridge.interego.xwisee.com/agent/lattice
+ENV IEP_ACTION_VERTICALS='{"foxxi":"https://foxxi-bridge.interego.xwisee.com/affordances"}'
 
 # A plain docker build ships no application interpreter.
 FROM base-runtime AS runtime

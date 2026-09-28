@@ -168,6 +168,7 @@ import {
   deriveTenantIssuer,
   issueCourseCompletionCredential,
   type CourseCompletionSubject,
+  WALLET_CONTAINER,
 } from '../src/credentials.js';
 import { exportClr, fetchCredentialAt } from '../src/clr.js';
 import { claimDecision, courseIdsInRecord, courseStandings, masteryEvidence, verifyCredentialChecks, type CourseIdentity, type HeldCredential, type MasteryEvidence } from '../src/earned-credentials.js';
@@ -8234,7 +8235,13 @@ app.post('/agent/void-credential', async (req, res) => {
     // simply absent (no ghost), written with ABSOLUTE urls via PUT (not PATCH,
     // which CSS re-serializes relative).
     let manifest: { written: number; scanned: number } | undefined;
-    try { const m = await rebuildManifestFromPod(pod, { fetch: guardedFetchFn(globalThis.fetch) as never }); manifest = { written: m.written, scanned: m.scanned }; }
+    // The scan follows the pod root's listing; the voided credential's own container and the
+    // wallet default are named too, so a root that cannot be listed still reaches them.
+    try {
+      const containers = [new URL('.', descOnOrigin).toString(), WALLET_CONTAINER];
+      const m = await rebuildManifestFromPod(pod, { fetch: guardedFetchFn(globalThis.fetch) as never, containers });
+      manifest = { written: m.written, scanned: m.scanned };
+    }
     catch (e) { console.warn('[void-credential] manifest rebuild failed:', (e as Error).message); }
     res.json({ ok: true, voidedBy: callerDid, descriptor: descriptorUrl, deletions, manifest: manifest ?? 'rebuild-failed' });
   } catch (err) { sendServerError(res, err, 'route-handler'); }
