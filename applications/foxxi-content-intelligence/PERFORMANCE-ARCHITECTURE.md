@@ -485,10 +485,14 @@ Nobody declares which explanation of a competency works; the plays show it.
   only once the stored tally has been read, so it is never replaced by one
   process's view.
 
+A SCORM package hosted on the bridge folds into this model
+(`foxxi.content_fold_course` with `package_sha256`, `src/package-import.ts`):
+its pages become concept fragments, a folder of pages a topic composition,
+and the questions it declares in its own scripts a check graded here.
+
 Not yet wired:
-- importing SCORM packages and authoring-tool exports (packages are
-  unzipped in the browser today, and the server sees only their manifest
-  and extracted text);
+- importing an authoring tool's own project export, or questions a package
+  keeps in a form other than a constructor it declares;
 - reading the regime from work recorded elsewhere (the tenant-scoped
   `foxxi.record_agent_trajectory` store, or trajectory steps an agent
   publishes to its own pod) when a failure is answered.
