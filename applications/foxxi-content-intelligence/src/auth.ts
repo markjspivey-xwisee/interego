@@ -21,6 +21,7 @@
  */
 
 import { ethers } from 'ethers';
+import { checkSessionKeyGrant, sessionKeyPolicy } from './session-key.js';
 
 const DEFAULT_DEMO_SEED = 'foxxi-demo-acme-training-2026-05-17-v1';
 
@@ -278,7 +279,8 @@ const AGENT_SIG_REPLAY_WINDOW_MS = (() => {
 })();
 
 export type RecoveredSignedRequest =
-  | { ok: true; signer: string; agentId: string; payload: Record<string, unknown> }
+  /** `sessionKey` when a session key signed it for `signer`, the wallet that granted it (src/session-key.ts). */
+  | { ok: true; signer: string; agentId: string; payload: Record<string, unknown>; sessionKey?: string }
   | { ok: false; reason: string };
 
 /**
@@ -318,6 +320,24 @@ export function recoverSignedRequest(body: unknown): RecoveredSignedRequest {
     recovered = ethers.verifyMessage(message, signature);
   } catch (err) {
     return { ok: false, reason: `signature recovery threw: ${(err as Error).message}` };
+  }
+  // ★ A SESSION KEY (src/session-key.ts). Signed by a key a wallet granted, the request is signed
+  // as that wallet: it is its signer, and every DIRECT check downstream reads it so. A grant is
+  // checked in full, each time, and one that fails refuses the request outright.
+  if (b._session !== undefined) {
+    const policy = sessionKeyPolicy();
+    if (!policy) return { ok: false, reason: 'this bridge takes no session keys: sign the request with your own key' };
+    const grant = checkSessionKeyGrant(b._session, policy);
+    if (!grant.ok) return { ok: false, reason: `session key refused: ${grant.reason}` };
+    if (recovered.toLowerCase() !== grant.key.toLowerCase()) {
+      return { ok: false, reason: 'session key refused: the request was not signed by the key its grant names' };
+    }
+    // Only as the wallet itself: a session key never signs as an agent the wallet delegates to.
+    const actingAs = /^did:ethr:(0x[0-9a-f]{40})$/.exec(agentId.toLowerCase())?.[1];
+    if (actingAs !== grant.actor.toLowerCase()) {
+      return { ok: false, reason: `session key refused: it signs only as the wallet that granted it, so agent_id must be did:ethr:${grant.actor}` };
+    }
+    return { ok: true, signer: grant.actor, agentId, payload, sessionKey: grant.key };
   }
   return { ok: true, signer: recovered, agentId, payload };
 }

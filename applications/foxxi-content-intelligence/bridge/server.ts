@@ -193,6 +193,7 @@ import { mintSessionToken, deriveUserWallet } from '../src/auth.js';
 import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
+import { acceptSessionKeys, sessionKeyPolicy, sessionKeyPolicyFor, SESSION_KEY_CHAIN_ID } from '../src/session-key.js';
 import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
@@ -5754,6 +5755,17 @@ const ALLOWED_ORIGINS: ReadonlySet<string> = new Set(
     .split(',').map(s => s.trim()).filter(Boolean),
 );
 
+// Session keys (src/session-key.ts): a wallet lets one tab's key sign as it, on this bridge, for a
+// while, so a person approves one grant rather than every request. Grants are taken only from the
+// dashboards above (their hosts are the EIP-4361 domains a wallet checks the page against), for this
+// bridge alone, and for at most FOXXI_SESSION_KEY_MAX_TTL_S seconds (twelve hours unless set, a
+// week at most). FOXXI_SESSION_KEYS=off takes none, and a request carrying a grant is then refused.
+const SESSION_KEY_MAX_TTL_MS = (() => {
+  const seconds = Number(process.env.FOXXI_SESSION_KEY_MAX_TTL_S);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 7 * 24 * 3600) * 1000 : 12 * 3600 * 1000;
+})();
+acceptSessionKeys(process.env.FOXXI_SESSION_KEYS === 'off' ? null : sessionKeyPolicyFor(bridgeBaseUrl, ALLOWED_ORIGINS, SESSION_KEY_MAX_TTL_MS));
+
 // Instrumentation wrapper — every handler call timed + recorded; specific
 // failure modes (rate limit, auth) routed to dedicated counters. No
 // behavior change beyond /metrics visibility.
@@ -6655,6 +6667,22 @@ const app = createVerticalBridge({
       next();
     });
   },
+});
+
+/**
+ * What this bridge takes as a session key (src/session-key.ts): the audience a grant must name, the
+ * dashboard domains it may be asked from, and how long it may run. A page reads it to decide whether
+ * to ask a wallet once for a grant, or once for each request; 404 when this bridge takes none.
+ */
+app.get('/.well-known/foxxi-session-key', (_req, res) => {
+  const p = sessionKeyPolicy();
+  if (!p) { res.status(404).json({ error: 'this bridge takes no session keys: sign each request with your own key' }); return; }
+  res.json({
+    kind: 'foxxi-session-key-policy', version: 1,
+    audience: p.audience, domains: p.domains, maxTtlSeconds: Math.floor(p.maxTtlMs / 1000),
+    chainId: SESSION_KEY_CHAIN_ID, envelopeField: '_session',
+    message: 'an EIP-4361 (Sign-In with Ethereum) message, as sessionKeyMessage in src/session-key.ts builds it',
+  });
 });
 
 /**
