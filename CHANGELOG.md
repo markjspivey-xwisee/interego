@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-28 — A Railway read survives a gateway answer that is not an answer
+
+Railway's API was flaky all afternoon. #561's deploy verified its new WSP bridge build on `/health`, then went red when the check after it (`railway-deploy-check.ts`) got "upstream connect error…" as text where JSON belonged. A plain re-run turned it green, and nothing about the deploy had been wrong.
+
+`railwayGql` (`tools/railway-pins.mjs`) is what the deploy check, the fleet audit and several operator tools read Railway through.
+- It now retries a `query` on a transport failure or an unparsable body, up to three times, waiting 1 and then 2 seconds.
+- It never retries a mutation: an unreadable answer leaves unknown whether the mutation ran. The redeploy script's one retried mutation has its own, narrower rule (#562).
+
+Tests: `a-refused-deploy-trigger-is-retried` covers a non-JSON answer to a query retried to the real answer, and a mutation never retried. A mutant that never retries a read is caught.
+
 ## 2026-09-28 — The deploy trigger is retried only when Railway refused it, and never over a deployment in flight (#560 follow-up)
 
 #560 retried `serviceInstanceDeployV2` after any failure the tolerant GraphQL helper called transient. That included a response that was lost or could not be parsed, where Railway may already have accepted the trigger. `railway-redeploy.mjs`'s own rule is "DO NOT RETRY": re-triggering while a deploy is in flight SIGTERMs the healthy container, and its successors die before logging. So a lost response could have turned a successful deploy into an outage (Codex, on #560).

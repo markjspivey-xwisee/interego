@@ -106,17 +106,40 @@ const DEFAULT_TOKEN_FILE = join(ROOT, '.interego', 'railway-token.txt');
  * from sending no credential at all — so the header is fixed here and the env var is
  * named for the token type rather than for the service.
  */
-export function railwayGql(token, endpoint = ENDPOINT) {
+export function railwayGql(token, endpoint = ENDPOINT, {
+  attempts = 3,
+  baseMs = 1000,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  /**
+   * ★ A READ IS RETRIED WHEN RAILWAY'S GATEWAY ANSWERS WITH SOMETHING THAT IS NOT AN ANSWER.
+   * Measured 2026-09-28: a deploy that had already verified its new build on /health was marked
+   * failed because the check that followed got "upstream connect error…" as text where JSON
+   * belonged. A `query` is idempotent, so a transport failure or an unparsable body is tried
+   * again, a bounded number of times. A mutation is never retried here: whether it ran is
+   * exactly what an unreadable answer leaves unknown (the redeploy script has its own, narrower
+   * rule for its one mutation that is retried).
+   */
+  const isRead = (query) => /^\s*query\b/.test(query);
   return async function gql(query, variables = {}) {
-    const r = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Project-Access-Token': token },
-      body: JSON.stringify({ query, variables }),
-    });
-    const j = await r.json();
-    if (j?.errors?.length) throw new Error(j.errors.map((e) => e.message).join('; '));
-    if (!j?.data) throw new Error(`no data in response (HTTP ${r.status})`);
-    return j.data;
+    for (let attempt = 1; ; attempt++) {
+      let r;
+      let j;
+      try {
+        r = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Project-Access-Token': token },
+          body: JSON.stringify({ query, variables }),
+        });
+        j = await r.json();
+      } catch (e) {
+        if (isRead(query) && attempt < attempts) { await sleep(baseMs * 2 ** (attempt - 1)); continue; }
+        throw e;
+      }
+      if (j?.errors?.length) throw new Error(j.errors.map((e) => e.message).join('; '));
+      if (!j?.data) throw new Error(`no data in response (HTTP ${r.status})`);
+      return j.data;
+    }
   };
 }
 
