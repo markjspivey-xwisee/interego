@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-28 — Foxxi: a failure's regime is read from work its performer recorded elsewhere too
+
+A failed unit of work is answered with the plan its regime implies (#516). That regime was read only from the trajectories kept with the latest work at the competency. A performer who recorded how their work went apart from it, through `foxxi.record_agent_trajectory` or as steps published to their own pod, was told no trajectory had been kept, and got no offer. Now:
+- **Trajectories recorded apart from the work are read too**, cut to its competency (`trajectoryAt`, beside `workAt` in `src/learner-record.ts`).
+  - A task step names a competency by the learner record's own rule: by the domain activity type of what it acted on (a step's new `objectType`), or else by the task it names with an outcome.
+  - Only that task and the steps below it are read, however they are ordered, so a run that also did other work says nothing about this work's regime from that other work.
+  - Neither the id of what a step acted on (an instance, as a statement's object id is) nor a task named without an outcome names a competency, just as a record without an outcome names no skill.
+- **Where the bridge looks** (`trajectoriesRecordedApart`):
+  - the performer's trajectory recorded with the tool, against this tenant or their own pod;
+  - the steps they published to their pod, as the mesh sweep keeps them under their lens.
+
+  A partition is looked in only if it exists, so a read creates none.
+- **A step names its type.** `foxxi.record_agent_trajectory` takes `object_type` on each step. A step the mesh sweep projects from a descriptor carries the type its statement names, so the same work counts toward the same competency in the record and in the regime read.
+- **The offer says what it read.** Its evidence lists the trajectories recorded apart (`recordedApart`), and its situation's provenance counts them. When there is neither kind, the answer says both ways a regime could be read.
+- **Docs.** `PERFORMANCE-ARCHITECTURE.md` §5 describes the answer and takes this off its not-yet-wired list. The trajectory tool's affordance describes `object_type`, and `docs/skills` is regenerated.
+
+Tests: `work-that-fails-is-answered-with-its-plan.test.ts` covers:
+- the cut: a task named by name with an outcome, a typed task, a grandchild recorded before its parent, and a call named like a task, which does not count;
+- a failure with no trajectory of its own, answered from one recorded apart;
+- a run whose other task would have made the regime Emergent, read as Knowable once cut.
+
+`work-keeps-its-trajectory.test.ts` covers the bridge's wiring, the three places it looks, the tool's `object_type`, and a mesh step read at its domain type's competency.
+
 ## 2026-09-28 — Foxxi: the census reads the SCORM upload's declines again, and a package a launch described is not read twice
 
 **The census reads the upload's declines again.** CI's mutation gate ("Every refusal gate fails on its own defect") has failed on every pull request since #548:

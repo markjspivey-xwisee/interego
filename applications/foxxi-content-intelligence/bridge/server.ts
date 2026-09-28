@@ -182,7 +182,7 @@ import {
   NON_PROJECTABLE_LOCALNAMES,
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
-import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT, WorkStepError, durationRefusalOf, labelCompetencyIri, performanceCompetency, recordVisibilityAfterAgentWork, workAt, workStepsFrom, type RecordVisibility, type WorkStep } from '../src/learner-record.js';
+import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT, WorkStepError, durationRefusalOf, labelCompetencyIri, performanceCompetency, recordVisibilityAfterAgentWork, trajectoryAt, workAt, workStepsFrom, type RecordVisibility, type WorkStep } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, latticeArtifacts, ensureResident, loadArtifactFromLattice, loadCourseFromLattice, resolvePublicNode, markLatticePublic, isLabelPublic, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, buildConceptNavGraph, type AgentScormCourseLike } from '../src/course-graph.js';
@@ -3800,6 +3800,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       verb: (s.verb as string) ?? 'acted',
       objectId: (s.object_id as string) ?? `urn:foxxi:trajectory-object:${Date.now()}`,
       objectName: (s.object_name as string) ?? 'step',
+      // The type of what it acted on: a task step's domain activity type names the competency
+      // its work counts toward, so a failure recorded there reads this run's regime.
+      ...(typeof s.object_type === 'string' && s.object_type.trim() ? { objectType: s.object_type.trim() } : {}),
       parentId: s.parent_id as string | undefined,
       supersedesId: s.supersedes_id as string | undefined,
       wasDerivedFrom: s.was_derived_from as string[] | undefined,
@@ -10038,10 +10041,24 @@ function appliedVoidsOf(label: string): Set<string> {
 }
 
 /**
+ * The trajectories a performer recorded apart from their work: through foxxi.record_agent_trajectory,
+ * against this tenant or their own pod (keyed by their DID), and the steps they published to their
+ * own pod, as the mesh sweep keeps them (under their lens, keyed by their label). Each partition is
+ * looked in only if it exists, so reading makes none.
+ */
+function trajectoriesRecordedApart(did: string, pod: string): AgentTrajectory[] {
+  const label = actorForPod(pod, MESH_ACTOR_LABELS);
+  const where: Array<[TenantId, string]> = [[tenantIdOf(tenantPodUrl), did], [tenantIdOf(pod), did], [lensTenantFor(label), label]];
+  const found = where.map(([tenant, key]) => (agentTrajectoriesByTenant.has(tenant) ? agentTrajectoriesByTenant.for(tenant).get(key) : undefined));
+  return [...new Set(found.filter((t): t is AgentTrajectory => t !== undefined))];
+}
+
+/**
  * What a failed unit of a performer's own work offers them (offerFromWork, the performance
- * practice's rule): the work recorded at its competency, read back from their own record, and what
- * they already keep there. Nothing here is kept. What they keep could not be read: no offer, rather
- * than one that may repeat it.
+ * practice's rule): the work recorded at its competency, read back from their own record, with the
+ * trajectories they recorded apart from it where a task names that competency (trajectoryAt), and
+ * what they already keep there. Nothing here is kept. What they keep could not be read: no offer,
+ * rather than one that may repeat it.
  */
 async function workOfferFor(performer: { id: string; kind: 'human' | 'agent' }, subjectPod: string, unit: { taskType: string; taskName: string }): Promise<WorkOffer> {
   const named = performanceCompetency({ taskType: unit.taskType, taskName: unit.taskName, success: false });
@@ -10059,7 +10076,10 @@ async function workOfferFor(performer: { id: string; kind: 'human' | 'agent' }, 
     ...(w.record.observedBy ? { observedBy: w.record.observedBy } : {}),
     ...(w.steps ? { steps: w.steps } : {}),
   }));
-  return offerFromWork({ performer, competency, label: named.label, work, standing: admissionFor(kept.standing, competency), base: bridgeBaseUrl });
+  const elsewhere = trajectoriesRecordedApart(performer.id, subjectPod)
+    .map(t => trajectoryAt(t, named.key))
+    .filter((t): t is AgentTrajectory => t !== null);
+  return offerFromWork({ performer, competency, label: named.label, work, standing: admissionFor(kept.standing, competency), elsewhere, base: bridgeBaseUrl });
 }
 
 /** Every credential the learner's wallet holds, read and verified the way the CLR export reads them. */

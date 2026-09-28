@@ -773,6 +773,43 @@ export function workAt(statements: readonly StoredStatement[], competencyKey: st
   return [...byTask.values()].sort((a, b) => when(b.record.timestamp) - when(a.record.timestamp)).slice(0, limit);
 }
 
+/** A step of a trajectory recorded apart from its work, as much of it as reading it at a competency needs. */
+export interface RecordedTrajectoryStep {
+  id: string;
+  granularity: string;
+  parentId?: string;
+  objectId: string;
+  objectName: string;
+  objectType?: string;
+  result?: { success?: boolean };
+}
+
+/**
+ * The part of a trajectory recorded apart from its work (foxxi.record_agent_trajectory, or steps a
+ * performer published to their own pod) that is work at one competency, by the rule the record
+ * counts work by (performanceCompetency): each task step that names it, by the type of what it
+ * acted on or by the task it names with an outcome, and every step below that task. Null when no
+ * task step names it: a trajectory of other work says nothing about this work's regime.
+ *
+ * The type is the step's `objectType`, never its `objectId`: what a step acted on is an instance,
+ * as a statement's object id is, and the record reads a statement's type, not its id. Read as a
+ * type, almost any IRI would name a competency of its own, and the task's name never would.
+ */
+export function trajectoryAt<S extends RecordedTrajectoryStep, T extends { steps: readonly S[] }>(trajectory: T, competencyKey: string): (Omit<T, 'steps'> & { steps: S[] }) | null {
+  const tasks = trajectory.steps.filter(s => s.granularity === 'task'
+    && performanceCompetency({ taskType: s.objectType, taskName: s.objectName, success: s.result?.success })?.key === competencyKey);
+  if (!tasks.length) return null;
+  const within = new Set(tasks.map(s => s.id));
+  // Each pass takes in the steps one level further down, until none is left to take.
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const s of trajectory.steps) {
+      if (!within.has(s.id) && s.parentId !== undefined && within.has(s.parentId)) { within.add(s.id); grew = true; }
+    }
+  }
+  return { ...trajectory, steps: trajectory.steps.filter(s => within.has(s.id)) };
+}
+
 function buildCompetencies(
   clr: ClrEnvelope | null,
   experiences: readonly ElrExperience[],

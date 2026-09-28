@@ -8,11 +8,12 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { StoredStatement } from '../src/statement-store.js';
 import {
-  AUTHORED_VERB, PERF_EXT, PERFORMED_VERB, WORK_STEP_LIMITS, WorkStepError, assembleEnterpriseLearnerRecord, labelCompetencyIri, performanceCompetency, workAt, workStepsFrom, workStepsOf,
+  AUTHORED_VERB, PERF_EXT, PERFORMED_VERB, WORK_STEP_LIMITS, WorkStepError, assembleEnterpriseLearnerRecord, labelCompetencyIri, performanceCompetency, trajectoryAt, workAt, workStepsFrom, workStepsOf,
 } from '../src/learner-record.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
 import { competencyIri, competencyOfTerm } from '../src/competency-identity.js';
 import { competencyRef } from '../src/content-fragments.js';
+import { projectMeshEntry } from '../src/mesh-event-projector.js';
 
 const good = { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'ran', objectId: 'urn:x:tests', objectName: ' the tests ', result: { success: false, quality: -0.5, note: 'two failed' }, extra: 'dropped' };
 
@@ -127,6 +128,30 @@ describe('the bridge answers a failed unit with what the work there implies', ()
     expect(route).toMatch(/if \(p\.success === false\) \{\s+try \{\s+workOffer = await workOfferFor\(\{ id: callerDid, kind: p\.actor_kind === 'human' \? 'human' : 'agent' \}, subjectPod, \{ taskType: activityType, taskName \}\);/);
     expect(route).toMatch(/workOffer = \{ offered: false, because: 'your recorded work could not be read, so no offer is made' \};/);
     expect(route).toMatch(/\.\.\.\(workOffer \? \(workOffer\.offered \? \{ offer: workOffer\.offer \} : \{ offerWithheld: workOffer\.because \}\) : \{\}\),/);
+  });
+
+  it('reads the regime from trajectories the performer recorded apart from the work, cut to its competency', () => {
+    expect(helper).toMatch(/const elsewhere = trajectoriesRecordedApart\(performer\.id, subjectPod\)\s+\.map\(t => trajectoryAt\(t, named\.key\)\)\s+\.filter\(\(t\): t is AgentTrajectory => t !== null\);/);
+    expect(helper).toMatch(/standing: admissionFor\(kept\.standing, competency\), elsewhere, base: bridgeBaseUrl \}\);/);
+    // Where a performer's trajectories are kept: recorded with the tool, against this tenant or their
+    // own pod, and published to their pod as the mesh sweep keeps it. A read makes no partition.
+    const apart = src.slice(src.indexOf('function trajectoriesRecordedApart('), src.indexOf('\n}\n', src.indexOf('function trajectoriesRecordedApart(')));
+    expect(apart).toContain('const where: Array<[TenantId, string]> = [[tenantIdOf(tenantPodUrl), did], [tenantIdOf(pod), did], [lensTenantFor(label), label]];');
+    expect(apart).toContain('agentTrajectoriesByTenant.has(tenant) ? agentTrajectoriesByTenant.for(tenant).get(key) : undefined');
+    // The tool takes the type of what a step acted on, so its task names a typed competency.
+    const tool = src.slice(src.indexOf("'foxxi.record_agent_trajectory': async"), src.indexOf("'foxxi.get_agent_trajectory': async"));
+    expect(tool).toContain("...(typeof s.object_type === 'string' && s.object_type.trim() ? { objectType: s.object_type.trim() } : {}),");
+  });
+
+  it('keeps with a step the performer published the type its statement names, so its work is read at that competency', () => {
+    const DOMAIN = 'https://ops.example/ns/work#RefundDecision';
+    const ev = projectMeshEntry({
+      descriptorUrl: 'https://pod.example/p/context-graphs/1790000000000.ttl', describes: ['urn:graph:refund-1790000000000'],
+      conformsTo: ['https://w3id.org/interego/ns/iep#TemporalFacet', DOMAIN], modalStatus: 'Asserted',
+    } as never, 'https://pod.example/p/');
+    expect(ev?.step.objectType).toBe(DOMAIN);
+    const run = { steps: [{ id: ev!.step.id!, granularity: ev!.step.granularity, objectId: ev!.step.objectId, objectName: ev!.step.objectName, objectType: ev!.step.objectType }] };
+    expect(trajectoryAt(run, competencyOfTerm(DOMAIN))?.steps).toHaveLength(1);
   });
 
   it('reads the performer\'s own record and what they keep, and makes no offer it could repeat', () => {
