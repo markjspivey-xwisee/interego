@@ -82,6 +82,9 @@ COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
 COPY docs/ns/ ./docs/ns/
 COPY applications/_shared/ ./applications/_shared/
 COPY applications/foxxi-content-intelligence/ ./applications/foxxi-content-intelligence/
+# The SCORM runtime (window.API / API_1484_11) the bridge puts into the documents of the SCORM
+# packages it hosts (src/scorm-hosting.ts): the SCORM player's own file, so there is one runtime.
+COPY deploy/foxxi-scorm-player/site/scorm-rte.js ./deploy/foxxi-scorm-player/site/scorm-rte.js
 COPY applications/llm-telemetry/ ./applications/llm-telemetry/
 # The agentic-performance (agp:) vertical: Foxxi composes its relocated engine
 # (transitional re-export shims) + the agp standards-extension capability it

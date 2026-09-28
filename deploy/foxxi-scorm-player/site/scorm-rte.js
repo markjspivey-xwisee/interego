@@ -229,7 +229,7 @@
   // ── xAPI emission ──
   function buildBaseContext() {
     const cfg = (window.__foxxiPlayerConfig || {});
-    return {
+    const context = {
       registration: cfg.registration,
       contextActivities: {
         category: [
@@ -247,9 +247,29 @@
           : 'IEEE 1484.11.2 (SCORM 2004 4th Ed)',
       },
     };
+    return withContextTemplate(context, cfg.contextTemplate);
+  }
+  // Launched as a cmi5 AU (a package the bridge hosts): the LMS's contextTemplate (LMS.LaunchData,
+  // cmi5 §10.2) goes into every statement, including one made before the template arrived, so it
+  // is applied again as each is sent. The object is then the AU itself, so the course parent and
+  // grouping (which would name the object) give way to the template's own.
+  function withContextTemplate(context, template) {
+    if (!template || typeof template !== 'object') return context;
+    const out = { ...context, contextActivities: { ...(context.contextActivities || {}) }, extensions: { ...(context.extensions || {}), ...(template.extensions || {}) } };
+    delete out.contextActivities.parent;
+    delete out.contextActivities.grouping;
+    const activities = template.contextActivities || {};
+    for (const kind of ['parent', 'grouping', 'category', 'other']) {
+      if (!Array.isArray(activities[kind])) continue;
+      const have = out.contextActivities[kind] || [];
+      out.contextActivities[kind] = have.concat(activities[kind].filter(a => a && !have.some(h => h.id === a.id)));
+    }
+    return out;
   }
   function buildActor() {
     const cfg = (window.__foxxiPlayerConfig || {});
+    // A cmi5 launch names its actor, and an AU's statements must carry exactly that one (cmi5 §9.2).
+    if (cfg.actor && typeof cfg.actor === 'object') return cfg.actor;
     const learnerId = activeSpec === '12' ? cmi12['core.student_id'] : cmi2004.learner_id;
     const learnerName = activeSpec === '12' ? cmi12['core.student_name'] : cmi2004.learner_name;
     return {
@@ -358,13 +378,19 @@
     flushing = (async () => {
       openOutbox();
       const cfg = window.__foxxiPlayerConfig || {};
-      if (!cfg.bridge) { if (outbox.length) throw new Error('No LRS is configured; completion is saved locally only.'); return; }
+      // A launch that is still fetching its credentials (a cmi5 auth-token and LMS.LaunchData) says
+      // so with `ready`: nothing is sent before it settles, and nothing is sent without it.
+      if (cfg.ready) await cfg.ready;
+      const lrs = cfg.lrs || (cfg.bridge ? cfg.bridge + '/xapi' : '');
+      if (!lrs) { if (outbox.length) throw new Error('No LRS is configured; completion is saved locally only.'); return; }
       while (outbox.length) {
-        const item = outbox[0], stmt = item.statement;
+        const item = outbox[0];
+        const stmt = cfg.contextTemplate ? { ...item.statement, context: withContextTemplate(item.statement.context || {}, cfg.contextTemplate) } : item.statement;
         try {
           const headers = { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0' };
-          if (cfg.bearer) headers.Authorization = 'Bearer ' + cfg.bearer;
-          const response = await fetch(cfg.bridge + '/xapi/statements?statementId=' + encodeURIComponent(stmt.id), {
+          if (cfg.authorization) headers.Authorization = cfg.authorization;
+          else if (cfg.bearer) headers.Authorization = 'Bearer ' + cfg.bearer;
+          const response = await fetch(lrs + '/statements?statementId=' + encodeURIComponent(stmt.id), {
             method: 'PUT', headers, body: JSON.stringify(stmt), signal: AbortSignal.timeout(15000),
           });
           if (!response.ok) throw new Error('LRS HTTP ' + response.status);
