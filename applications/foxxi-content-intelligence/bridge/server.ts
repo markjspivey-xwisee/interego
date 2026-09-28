@@ -5097,17 +5097,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // authoring role. Was: any directory MEMBER of any role (e.g. a plain learner)
     // could write a SCORM package into the acme tenant pod (round-26).
     if (!isAdminEquivalent(ctx.role)) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — uploading a SCORM package to the tenant requires an admin or delegated admin (caller role: ${ctx.role})` };
-    const upload = await uploadScormPackage({
+    // A parsed package is kept, by its sha-256, and played: a cmi5 course whose AUs are its SCOs,
+    // served here each in a sandbox of its own (src/scorm-hosting.ts). The upload's answer is
+    // returned as it is, a tail call, so the census of handler answers reads its declines as this
+    // handler's (tests/handler-delegation-reach.ts).
+    return uploadScormPackage({
       tenantPodUrl: tenantPodUrl,
       zipBase64: args.zip_base64 as string,
       hintedTitle: args.hinted_title as string | undefined,
       uploaderDid: ctx.webId,
+      host: (bytes, parsed) => hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable),
     });
-    if (upload.status !== 'parsed' || !upload.parsed) return upload;
-    // A parsed package is kept, by its sha-256, and played: a cmi5 course whose AUs are its SCOs,
-    // served here each in a sandbox of its own (src/scorm-hosting.ts).
-    const hosted = await hostUploadedPackage(Buffer.from(args.zip_base64 as string, 'base64'), upload.parsed.packageTitle, upload.parsed.launchable);
-    return { ...upload, ...hosted };
   },
 
   'foxxi.derive_adaptive_policy': async (args) => {

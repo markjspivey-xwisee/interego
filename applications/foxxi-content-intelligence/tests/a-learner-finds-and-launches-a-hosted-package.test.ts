@@ -90,7 +90,12 @@ describe('the operator\'s LMS content panel', () => {
     expect(isAdminEquivalent('admin')).toBe(true);
     expect(isAdminEquivalent('learning-engineer')).toBe(false);
     const server = read('../bridge/server.ts');
-    const guard = server.slice(server.indexOf("'foxxi.upload_scorm_package': async"), server.indexOf('const upload = await uploadScormPackage({'));
+    const from = server.indexOf("'foxxi.upload_scorm_package': async");
+    const to = server.indexOf('return uploadScormPackage({', from);
+    // Both ends must be found, or the slice would run on past the handler (Codex, on #552).
+    expect(from).toBeGreaterThan(0);
+    expect(to).toBeGreaterThan(from);
+    const guard = server.slice(from, to);
     expect(guard).toContain('if (!isAdminEquivalent(ctx.role))');
     expect(guard).toContain('requires an admin or delegated admin (caller role: ${ctx.role})');
     expect(guard).not.toContain('learning-engineer');
