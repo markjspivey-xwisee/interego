@@ -255,3 +255,37 @@ describe('a profile is held to the contract', () => {
     expect(await refusal(loadExtensionCatalog(POD, profile({ id: 'Operation' }), { fetch: makePod().fetch }))).toBe('invalid');
   });
 });
+
+describe('no one document can exhaust memory (Codex, on #558)', () => {
+  it('refuses a manifest, a descriptor or a payload larger than the per-document bound', async () => {
+    const pod = makePod();
+    const published = await offer(pod, 'a', 'https://vertical.example/actions/a', 'First');
+    expect(await refusal(loadExtensionCatalog(POD, profile(), { fetch: pod.fetch, maxDocumentBytes: 1 << 20 }))).toBe('loaded');
+    const padding = '#'.repeat(4096);
+    for (const [url, what] of [[MANIFEST, 'manifest'], [published.descriptorUrl, 'descriptor'], [published.graphUrl, 'payload']] as const) {
+      const fresh = makePod();
+      for (const [k, v] of pod.store) fresh.store.set(k, v);
+      fresh.store.set(url, `${fresh.store.get(url)!}\n# ${padding}\n`);
+      expect(await refusal(loadExtensionCatalog(POD, profile(), { fetch: fresh.fetch, maxDocumentBytes: 4000 })), what).toBe('over-bound');
+    }
+  });
+
+  it('stops reading a streamed body at the chunk that crosses the bound', async () => {
+    let pulled = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) { pulled++; controller.enqueue(new TextEncoder().encode('#'.repeat(1024))); },
+    }, { highWaterMark: 0 });
+    const fetchFn = vi.fn(async () => new Response(endless, { status: 200, headers: { 'content-type': 'text/turtle' } }));
+    expect(await refusal(loadExtensionCatalog(POD, profile(), { fetch: fetchFn as never, maxDocumentBytes: 8 * 1024 }))).toBe('over-bound');
+    expect(pulled).toBeLessThan(20);
+  });
+
+  it('refuses a declared length over the bound before reading the body at all', async () => {
+    let read = false;
+    // A high-water mark of 0: the stream pulls only when something reads it, not on construction.
+    const body = new ReadableStream<Uint8Array>({ pull() { read = true; } }, { highWaterMark: 0 });
+    const fetchFn = vi.fn(async () => new Response(body, { status: 200, headers: { 'content-length': String(1 << 30) } }));
+    expect(await refusal(loadExtensionCatalog(POD, profile(), { fetch: fetchFn as never, maxDocumentBytes: 8 * 1024 }))).toBe('over-bound');
+    expect(read).toBe(false);
+  });
+});
