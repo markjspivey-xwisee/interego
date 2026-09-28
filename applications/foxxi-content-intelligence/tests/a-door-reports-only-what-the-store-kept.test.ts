@@ -184,6 +184,18 @@ describe('the doors that record statements', () => {
       expect(door(name)).toContain('the performance was not recorded — the LRS refused the emitted xAPI statement, or its store did not write it');
     }
   });
+
+  it('say which statements the store holds by their ids, since those need not be the first ones written', () => {
+    // Codex, on #546: a store making room lets an earlier statement go while it takes a later one,
+    // so a partial keep is not a prefix. Nothing counts its way to what was kept.
+    const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
+    expect(server).not.toMatch(/\.slice\(0, kept\.keptIds\.length\)/);
+    expect(server).not.toContain('then did not keep the next');
+    const completion = door('/agent/record-course-completion');
+    expect(completion).toContain('const held = new Set(kept.keptIds);\n      const keptPart = session.filter(s => held.has(s.id));');
+    expect(completion).toContain("kept: keptPart.map(verbOf), notKept: session.filter(s => !held.has(s.id)).map(verbOf), passedKept: keptPart.some(s => verbOf(s) === 'passed'),");
+    expect(door('foxxi.record_external_agent_run')).toContain('performanceKept: kept.keptIds.includes(ingested.performance.id as string),');
+  });
 });
 
 describe('an external agent run is refused before any of it is kept, and kept whole', () => {

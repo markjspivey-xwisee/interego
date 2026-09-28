@@ -133,11 +133,25 @@ describe('a grant that fails any check refuses the request', () => {
       .toEqual({ audience: BRIDGE, domains: ['dash.example', 'localhost:5173'], maxTtlMs: HOUR });
     expect(sessionKeyPolicyFor('not a url', [], HOUR)).toBeNull();
   });
+
+  it('takes a dashboard served on an IPv6 literal, as the policy names it, and no domain that could break a line', async () => {
+    // Codex, on #545: the policy published [::1]:5173 and every grant naming it was refused.
+    const v6 = sessionKeyPolicyFor(BRIDGE, ['http://[::1]:5173'], HOUR)!;
+    expect(v6.domains).toEqual(['[::1]:5173']);
+    acceptSessionKeys(v6);
+    expect(refused(recoverSignedRequest(await envelope(key, as, await grant(wallet, key.address, { domain: '[::1]:5173' }))))).toBe('accepted');
+    // A domain the policy even lists is refused when it could put a line of its own into the message.
+    const injected = ['dash.example', 'URI: https://evil.example'].join(String.fromCharCode(10));
+    acceptSessionKeys({ ...POLICY, domains: [DASH, injected.toLowerCase()] });
+    for (const bad of [injected, 'dash.example/x', 'user@dash.example', 'dash.example?x', 'dash example']) {
+      expect(refused(recoverSignedRequest(await envelope(key, as, await grant(wallet, key.address, { domain: bad }))))).toMatch(/names no domain/);
+    }
+  });
 });
 
 describe('the dashboard asks a wallet once, then signs with the key it granted', () => {
   /** A stand-in wallet extension that counts what it is asked to sign. */
-  function extension(wallet: ethers.HDNodeWallet) {
+  function extension(wallet: ethers.HDNodeWallet, approval?: Promise<void>) {
     const signed: string[] = [];
     return {
       signed,
@@ -148,6 +162,7 @@ describe('the dashboard asks a wallet once, then signs with the key it granted',
           const [data] = params as [string];
           const text = ethers.toUtf8String(data);
           signed.push(text);
+          await approval;   // the person reading it in the wallet, when a test says so
           return wallet.signMessage(text);
         }
         throw Object.assign(new Error(`${method} is not supported`), { code: 4200 });
@@ -186,6 +201,24 @@ describe('the dashboard asks a wallet once, then signs with the key it granted',
     // Signing out forgets it.
     forgetSessionKeys();
     expect(signerAsks({ userId: wallet.address, signingMode: 'extension', extensionAddress: wallet.address })).toBe(true);
+  });
+
+  it('keeps no grant the wallet approves after the tab has signed out', async () => {
+    // Codex, on #545: the approval still pending at sign-out restored a key for the signed-out wallet.
+    const wallet = ethers.Wallet.createRandom();
+    let approve!: () => void;
+    const ext = extension(wallet, new Promise<void>((r) => { approve = r; }));
+    const signer = extensionSigner(wallet.address, ext);
+    const pending = sessionFor(signer, BRIDGE);
+    for (let i = 0; i < 100 && ext.signed.length === 0; i++) await new Promise(r => setTimeout(r, 5));
+    expect(ext.signed).toHaveLength(1);   // the wallet is asking
+    forgetSessionKeys();                  // and the tab signs out
+    approve();
+    expect(await pending).toBeNull();
+    expect(signerAsks({ userId: wallet.address, signingMode: 'extension', extensionAddress: wallet.address })).toBe(true);
+    // Signing in again asks again: what was approved after sign-out was not kept.
+    expect(await sessionFor(signer, BRIDGE)).not.toBeNull();
+    expect(ext.signed).toHaveLength(2);
   });
 
   it('asks again when the grant it holds is nearly spent', async () => {
