@@ -139,11 +139,14 @@ const attr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quo
 /**
  * A document with the runtime put into it, as bytes: after `<head>`, or else after `<html>` or the
  * doctype, or at the very start. The document is handled as latin-1, one character a byte, so
- * whatever its own encoding, every byte of it goes out as it came in.
+ * whatever its own encoding, every byte of it goes out as it came in. A document parsed as XML
+ * (XHTML) gets the bootstrap in a CDATA section, since its `<` and `&&` are not text an XML parser
+ * takes bare (Codex, on #548).
  */
-export function withRuntime(document: Buffer, runtimeUrl: string): Buffer {
+export function withRuntime(document: Buffer, runtimeUrl: string, opts: { xml?: boolean } = {}): Buffer {
   const text = document.toString('latin1');
-  const tags = `<script>${SANDBOX_BOOTSTRAP}</script><script src="${attr(runtimeUrl)}"></script>`;
+  const bootstrap = opts.xml ? `<![CDATA[${SANDBOX_BOOTSTRAP}]]>` : SANDBOX_BOOTSTRAP;
+  const tags = `<script>${bootstrap}</script><script src="${attr(runtimeUrl)}"></script>`;
   const at = /<head\b[^>]*>/i.exec(text) ?? /<html\b[^>]*>/i.exec(text) ?? /^\s*<!doctype[^>]*>/i.exec(text);
   const cut = at ? at.index + at[0].length : 0;
   return Buffer.from(text.slice(0, cut) + tags + text.slice(cut), 'latin1');
@@ -205,7 +208,16 @@ export class HostedPackages {
   async keep(bytes: Buffer): Promise<{ sha256: string; url: string }> {
     const sha256 = sha256Of(bytes);
     const url = this.urlOf(sha256);
-    const r = await (this.opts.fetch ?? globalThis.fetch)(url, { method: 'PUT', headers: { 'Content-Type': 'application/zip' }, body: new Blob([new Uint8Array(bytes)], { type: 'application/zip' }) });
+    const fetchFn = this.opts.fetch ?? globalThis.fetch;
+    // A Solid store does not always make the parent of a PUT, and on a fresh tenant pod nothing has
+    // made this one (Codex, on #548). Make it first, as the shared lattice does its own: best
+    // effort, since a container that already exists answers however it does.
+    try {
+      await fetchFn(url.slice(0, url.lastIndexOf('/') + 1), {
+        method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '',
+      });
+    } catch { /* best effort */ }
+    const r = await fetchFn(url, { method: 'PUT', headers: { 'Content-Type': 'application/zip' }, body: new Blob([new Uint8Array(bytes)], { type: 'application/zip' }) });
     if (!r.ok) throw new Error(`the pod did not keep the package (HTTP ${r.status})`);
     this.hold(sha256, new AdmZip(bytes), bytes.length);
     return { sha256, url };
@@ -299,7 +311,7 @@ export function attachHostedPackageRoutes(app: Express, deps: {
         .set('Referrer-Policy', 'no-referrer')
         .set('Content-Type', contentTypeOf(entry.entryName));
       if (isHtmlDocument(entry.entryName)) {
-        res.set('Cache-Control', 'no-store').send(withRuntime(entry.getData(), runtimeUrl));
+        res.set('Cache-Control', 'no-store').send(withRuntime(entry.getData(), runtimeUrl, { xml: contentTypeOf(entry.entryName) === 'application/xhtml+xml' }));
         return;
       }
       res.set('Cache-Control', 'public, max-age=31536000, immutable').send(entry.getData());

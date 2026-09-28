@@ -35,6 +35,7 @@ const PAGE = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>
 /** A page in another encoding: its bytes must go out as they came in. */
 const LATIN1_PAGE = Buffer.concat([Buffer.from('<html><head><meta charset="windows-1252"></head><body>caf', 'latin1'), Buffer.from([0xe9]), Buffer.from('</body></html>', 'latin1')]);
 
+const XHTML_PAGE = '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>x</title></head><body><p>x</p></body></html>';
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function makePackage(): Buffer {
@@ -45,6 +46,7 @@ function makePackage(): Buffer {
   zip.addFile('media/Diagram.svg', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'utf8'));
   zip.addFile('old.htm', LATIN1_PAGE);
   zip.addFile('media/big picture.png', PNG);
+  zip.addFile('page.xhtml', Buffer.from(XHTML_PAGE, 'utf8'));
   return zip.toBuffer();
 }
 const PACKAGE = makePackage();
@@ -56,7 +58,8 @@ function standInPod() {
   const asked: string[] = [];
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    asked.push(`${init?.method ?? 'GET'} ${url}`);
+    const link = new Headers(init?.headers).get('Link');
+    asked.push(`${init?.method ?? 'GET'} ${url}${link ? ` ${link}` : ''}`);
     if (init?.method === 'PUT') { kept.set(url, Buffer.from(await new Response(init.body as BodyInit).arrayBuffer())); return new Response(null, { status: 201 }); }
     const bytes = kept.get(url);
     return bytes ? new Response(new Uint8Array(bytes), { status: 200 }) : new Response('', { status: 404 });
@@ -116,7 +119,22 @@ describe('the sandbox and the files a package serves', () => {
   });
 
   it('bootstraps with nothing that could end its script or change as it is sent', () => {
-    for (const unsafe of ['\\', '`', '${', '</script', '<!--']) expect(SANDBOX_BOOTSTRAP.includes(unsafe), unsafe).toBe(false);
+    for (const unsafe of ['\\', '`', '${', '</script', '<!--', ']]>']) expect(SANDBOX_BOOTSTRAP.includes(unsafe), unsafe).toBe(false);
+  });
+
+  it('keeps an XHTML document well-formed XML, the bootstrap in a CDATA section', () => {
+    // Codex, on #548: served as application/xhtml+xml, a document is parsed as XML, and the
+    // bootstrap's bare `<` and `&&` stopped the parser before any script ran.
+    const xhtml = '<?xml version="1.0" encoding="UTF-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>x</title></head><body><p>x</p></body></html>';
+    const { DOMParser } = new JSDOM('').window;
+    const parse = (s: string) => new DOMParser().parseFromString(s, 'application/xhtml+xml');
+    const out = withRuntime(Buffer.from(xhtml), `${BRIDGE}/scorm/runtime/scorm-rte.js`, { xml: true }).toString('utf8');
+    expect(out.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
+    const doc = parse(out);
+    expect(doc.getElementsByTagName('parsererror')).toHaveLength(0);
+    expect(doc.getElementsByTagName('script')[0]!.textContent).toBe(SANDBOX_BOOTSTRAP);
+    // Put in bare, the same bootstrap is not XML: the reason for the CDATA.
+    expect(parse(withRuntime(Buffer.from(xhtml), `${BRIDGE}/scorm/runtime/scorm-rte.js`).toString('utf8')).getElementsByTagName('parsererror').length).toBeGreaterThan(0);
   });
 });
 
@@ -140,6 +158,12 @@ describe('a package is a cmi5 course of its SCOs, and is kept by what it is', ()
     const pod = standInPod();
     const kept = await new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl }).keep(PACKAGE);
     expect(kept).toEqual({ sha256: SHA, url: `${POD}foxxi-uploads/packages/${SHA}.zip` });
+    // The container is made first: a fresh tenant pod has none, and a Solid store does not always
+    // make a PUT's parent (Codex, on #548).
+    expect(pod.asked.slice(0, 2)).toEqual([
+      `PUT ${POD}foxxi-uploads/packages/ <http://www.w3.org/ns/ldp#BasicContainer>; rel="type"`,
+      `PUT ${POD}foxxi-uploads/packages/${SHA}.zip`,
+    ]);
     expect(pod.kept.get(kept.url)!.equals(PACKAGE)).toBe(true);
     // A process that did not keep it reads it from the pod.
     const later = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl });
@@ -214,6 +238,12 @@ describe('the routes a hosted package is reached by', () => {
     expect(script.headers.get('content-type')).toMatch(/^text\/javascript/);
     expect(script.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
     expect(await script.text()).toBe('window.appLoaded = true;');
+    // An XHTML document goes out as XML that still parses, the runtime in it.
+    const xhtml = await fetch(`${base}/scorm/packages/${SHA}/files/page.xhtml`);
+    expect(xhtml.headers.get('content-type')).toMatch(/^application\/xhtml\+xml/);
+    const parsed = new (new JSDOM('').window.DOMParser)().parseFromString(await xhtml.text(), 'application/xhtml+xml');
+    expect(parsed.getElementsByTagName('parsererror')).toHaveLength(0);
+    expect(parsed.getElementsByTagName('script')[0]!.textContent).toBe(SANDBOX_BOOTSTRAP);
     // A path is decoded once: a file named with a space is found by its encoded name.
     const picture = await fetch(`${base}/scorm/packages/${SHA}/files/media/big%20picture.png`);
     expect(picture.status).toBe(200);

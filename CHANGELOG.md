@@ -14,6 +14,8 @@ No second origin is needed (`src/scorm-hosting.ts`):
 
 Single-document SCOs, which current authoring tools export, run. Content whose frames script each other does not, since each document is its own opaque origin.
 
+Codex, on this PR's first push: the package's container is made before the zip is written, since a fresh tenant pod has none and a Solid store does not always make a PUT's parent. An XHTML document, parsed as XML, gets the bootstrap in a CDATA section, since its bare `<` and `&&` stopped the parser. Also, Codex on #547: a run's refusal said `performanceKept: false` whatever was held, because it looked for an id on the ingested statement; it now uses the id minted for it where it is written last.
+
 `tests/a-scorm-package-plays-in-a-sandbox-of-its-own.test.ts` covers:
 - the pieces: the sandbox, paths, injection that keeps every byte, and the course;
 - the store against a stand-in pod;
