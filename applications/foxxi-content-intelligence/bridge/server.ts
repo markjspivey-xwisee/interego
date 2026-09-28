@@ -397,6 +397,8 @@ import {
   composeDpia,
   buildManagerTeamView,
   uploadScormPackage,
+  declaredUncompressedBytes,
+  uncompressedBudget,
   buildTenantDidDocument,
   backupTenantPod,
 } from '../src/composed-extensions.js';
@@ -434,7 +436,7 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { attachXapiLrsRoutes, internalRefusalOf, keepStatementsWhole, listStoredStatements, storeStatementDurably, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
-import { HostedPackages, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf } from '../src/scorm-hosting.js';
+import { HostedPackages, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
@@ -5093,7 +5095,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // Writes course content into the configured tenant pod — restrict to an
     // authoring role. Was: any directory MEMBER of any role (e.g. a plain learner)
     // could write a SCORM package into the acme tenant pod (round-26).
-    if (!isAdminEquivalent(ctx.role)) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — uploading a SCORM package to the tenant requires an admin / learning-engineer (caller role: ${ctx.role})` };
+    if (!isAdminEquivalent(ctx.role)) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — uploading a SCORM package to the tenant requires an admin or delegated admin (caller role: ${ctx.role})` };
     const upload = await uploadScormPackage({
       tenantPodUrl: tenantPodUrl,
       zipBase64: args.zip_base64 as string,
@@ -10688,15 +10690,27 @@ app.post('/agent/credentials/claim', async (req, res) => {
 // with foxxi.upload_scorm_package; kept on the tenant pod by sha-256; played as a cmi5 course
 // through the signed launch below, the SCOs' statements sent with that launch's auth-token.
 
-const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl });
+const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage });
 
-/** Keep a parsed package and register it as a cmi5 course; say how to launch it, or why it is not kept. */
+/**
+ * What a kept package's bytes say it is, parsed as an upload is and under the same inflation
+ * budget: its title and launchable SCOs, or null when it is no package with any.
+ */
+function describeHostedPackage(bytes: Buffer): PackageAbout | null {
+  if (declaredUncompressedBytes(bytes) > uncompressedBudget(bytes.length)) return null;
+  const pkg = unwrapScormPackage(bytes);
+  const launchable = pkg.resources.filter(r => r.isLaunchable).map(r => r.path).filter(isPackagePath);
+  return launchable.length ? { title: pkg.title, launchable } : null;
+}
+
+/** Keep a parsed package, and what it is beside it, and register it as a cmi5 course; say how to launch it, or why it is not kept. */
 async function hostUploadedPackage(bytes: Buffer, title: string, launchable: readonly string[]): Promise<Record<string, unknown>> {
-  if (!launchable.length) return { hosted: false, hostedWhy: 'the package names no launchable SCO, so there is nothing to play' };
+  const about: PackageAbout = { title, launchable: launchable.filter(isPackagePath) };
+  if (!about.launchable.length) return { hosted: false, hostedWhy: 'the package names no launchable SCO inside it, so there is nothing to play' };
   let kept: { sha256: string; url: string };
-  try { kept = await hostedPackages.keep(bytes); }
+  try { kept = await hostedPackages.keep(bytes, about); }
   catch (e) { return { hosted: false, hostedWhy: `the package could not be kept: ${(e as Error).message}` }; }
-  const course = hostedPackageCourse(bridgeBaseUrl, kept.sha256, { title, launchable });
+  const course = hostedPackageCourse(bridgeBaseUrl, kept.sha256, about);
   registerCmi5Course(DEFAULT_TENANT, course);
   return {
     hosted: true,
@@ -10706,17 +10720,15 @@ async function hostUploadedPackage(bytes: Buffer, title: string, launchable: rea
   };
 }
 
-/** A hosted package's course, registered again from the package kept on the pod (after a restart). */
+/**
+ * A hosted package's course, registered again after a restart from what is kept beside the
+ * package, or from the package itself when nothing is (it is then described, once).
+ */
 async function restoreHostedPackage(courseId: string): Promise<void> {
   const sha = hostedPackageOf(bridgeBaseUrl, courseId);
   if (!sha) return;
-  const zip = await hostedPackages.open(sha);
-  if (!zip) return;
-  try {
-    const pkg = unwrapScormPackage(zip.toBuffer());
-    const launchable = pkg.resources.filter(r => r.isLaunchable).map(r => r.path);
-    if (launchable.length) registerCmi5Course(DEFAULT_TENANT, hostedPackageCourse(bridgeBaseUrl, sha, { title: pkg.title, launchable }));
-  } catch { /* not a package any more: answered as absent */ }
+  const about = await hostedPackages.aboutNow(sha);
+  if (about) registerCmi5Course(DEFAULT_TENANT, hostedPackageCourse(bridgeBaseUrl, sha, about));
 }
 
 attachHostedPackageRoutes(app, {

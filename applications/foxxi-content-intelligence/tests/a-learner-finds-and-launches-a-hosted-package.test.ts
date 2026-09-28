@@ -17,8 +17,9 @@ import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
-import { hostedPackagesFrom, launchUrlFrom } from '../dashboard-app/src/learn/hosted-packages.js';
+import { hostedPackagesFrom, launchUrlFrom, unlistedFrom } from '../dashboard-app/src/learn/hosted-packages.js';
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
+import { isAdminEquivalent } from '../src/policy.js';
 
 const SHA = 'a'.repeat(64);
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8');
@@ -38,6 +39,11 @@ describe('what the Learn page reads of the bridge', () => {
     expect(hostedPackagesFrom(null)).toEqual([]);
   });
 
+  it('says how many packages are kept but not listed yet, and nothing when a listing does not say', () => {
+    expect(unlistedFrom({ packages: [], unlisted: 3 })).toBe(3);
+    for (const body of [{ unlisted: 0 }, { unlisted: -2 }, { unlisted: 1.5 }, { unlisted: '4' }, {}, null]) expect(unlistedFrom(body)).toBe(0);
+  });
+
   it('opens only an http(s) launch URL', () => {
     expect(launchUrlFrom({ launchUrl: `https://b.example/scorm/packages/${SHA}/files/index.html?endpoint=x` })).toBe(`https://b.example/scorm/packages/${SHA}/files/index.html?endpoint=x`);
     for (const bad of [{ launchUrl: 'javascript:alert(1)' }, { launchUrl: 'data:text/html,x' }, { launchUrl: 7 }, {}, null]) expect(launchUrlFrom(bad)).toBeNull();
@@ -55,6 +61,12 @@ describe('the Learn page', () => {
     expect(read('../dashboard-app/src/components/LearnPanel.tsx')).toContain('<HostedPackagesCard session={session} />');
   });
 
+  it('says so when the bridge is still reading packages it has not listed, rather than that none are hosted', () => {
+    expect(card).toContain('setPackages(hostedPackagesFrom(body)); setUnlisted(unlistedFrom(body));');
+    expect(card).toContain('{packages && packages.length === 0 && !unlisted && <div');
+    expect(card).toContain('{unlisted > 0 && (');
+  });
+
   it('opens a launch in a tab of its own, handing it no opener and no referrer', () => {
     expect(card).toContain('<a href={l.url} target="_blank" rel="noopener noreferrer">');
     expect(card).not.toMatch(/window\.open|<iframe/);
@@ -62,12 +74,26 @@ describe('the Learn page', () => {
 });
 
 describe('the operator\'s LMS content panel', () => {
+  const panel = read('../dashboard-app/src/components/LmsContentPanel.tsx');
   it('hosts a package with foxxi.upload_scorm_package, and says so, or why not', () => {
-    const panel = read('../dashboard-app/src/components/LmsContentPanel.tsx');
     expect(panel).toContain("type Tool = 'upload' | 'host' | 'oneroster' | 'launch';");
-    expect(panel).toContain("{origin && tool === 'host' && <HostPackage origin={origin} bearer={bearer} />}");
     expect(panel).toMatch(/mcpCall\(origin, bearer, 'foxxi\.upload_scorm_package', \{ zip_base64: await fileToBase64\(file\),/);
     expect(panel).toContain("{result?.hosted === false && <div style={{ color: 'var(--bad)', fontSize: 12 }}>Read, but not hosted: {result.hostedWhy ?? 'the bridge did not say why'}</div>}");
+  });
+
+  it('offers hosting to an admin alone, since the bridge refuses anyone else, a learning engineer included (Codex, on #550)', () => {
+    expect(panel).toContain("const canHost = session.role === 'admin';");
+    expect(panel).toContain("const tools: readonly Tool[] = canHost ? ['upload', 'host', 'oneroster', 'launch'] : ['upload', 'oneroster', 'launch'];");
+    expect(panel).toContain('{tools.map(t => (');
+    expect(panel).toContain("{origin && canHost && tool === 'host' && <HostPackage origin={origin} bearer={bearer} />}");
+    // What the bridge allows, and says it allows.
+    expect(isAdminEquivalent('admin')).toBe(true);
+    expect(isAdminEquivalent('learning-engineer')).toBe(false);
+    const server = read('../bridge/server.ts');
+    const guard = server.slice(server.indexOf("'foxxi.upload_scorm_package': async"), server.indexOf('const upload = await uploadScormPackage({'));
+    expect(guard).toContain('if (!isAdminEquivalent(ctx.role))');
+    expect(guard).toContain('requires an admin or delegated admin (caller role: ${ctx.role})');
+    expect(guard).not.toContain('learning-engineer');
   });
 });
 

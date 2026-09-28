@@ -12,7 +12,7 @@ import { linkOf, useAffordance, useHypermedia } from '../hypermedia.js';
 import type { FoxxiSession } from '../auth/session.js';
 import { signerAsks, signerFor } from '../auth/signer.js';
 import { postSigned } from '../auth/signed-request.js';
-import { hostedPackagesFrom, launchUrlFrom, type HostedPackage } from '../learn/hosted-packages.js';
+import { hostedPackagesFrom, launchUrlFrom, unlistedFrom, type HostedPackage } from '../learn/hosted-packages.js';
 
 type Launch = { state: 'launching' } | { state: 'ready'; url: string } | { state: 'failed'; error: string };
 
@@ -27,6 +27,7 @@ export function HostedPackagesCard({ session }: { session: FoxxiSession }) {
   const launcher = useAffordance('foxxi.cmi5_launch_signed');
   const asks = signerAsks(session);
   const [packages, setPackages] = useState<HostedPackage[] | null>(null);
+  const [unlisted, setUnlisted] = useState(0);
   const [listError, setListError] = useState<string | null>(null);
   const [launches, setLaunches] = useState<Record<string, Launch>>({});
 
@@ -35,7 +36,7 @@ export function HostedPackagesCard({ session }: { session: FoxxiSession }) {
     let cancel = false;
     fetch(listHref, { headers: { Accept: 'application/json' } })
       .then(r => { if (!r.ok) throw new Error(`the bridge answered ${r.status}`); return r.json() as Promise<unknown>; })
-      .then(body => { if (!cancel) setPackages(hostedPackagesFrom(body)); })
+      .then(body => { if (!cancel) { setPackages(hostedPackagesFrom(body)); setUnlisted(unlistedFrom(body)); } })
       .catch((e: unknown) => { if (!cancel) setListError((e as Error).message); });
     return () => { cancel = true; };
   }, [listHref]);
@@ -61,7 +62,13 @@ export function HostedPackagesCard({ session }: { session: FoxxiSession }) {
       </div>
       {listError && <div role="alert" style={{ color: 'var(--bad)', fontSize: 13 }}>The packages could not be listed: {listError}</div>}
       {!packages && !listError && <div style={{ color: 'var(--text-dim)' }}>Listing the packages…</div>}
-      {packages && packages.length === 0 && <div style={{ color: 'var(--text-dim)', fontSize: 14 }}>No packages are hosted here yet.</div>}
+      {packages && packages.length === 0 && !unlisted && <div style={{ color: 'var(--text-dim)', fontSize: 14 }}>No packages are hosted here yet.</div>}
+      {unlisted > 0 && (
+        <div style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 6 }}>
+          {unlisted === 1 ? '1 more package is' : `${unlisted} more packages are`} kept here but not listed yet: the bridge is
+          still reading {unlisted === 1 ? 'it' : 'them'}. Reload in a moment to see {unlisted === 1 ? 'it' : 'them'}.
+        </div>
+      )}
       {packages?.map(p => {
         const l = launches[p.packageSha256];
         return (

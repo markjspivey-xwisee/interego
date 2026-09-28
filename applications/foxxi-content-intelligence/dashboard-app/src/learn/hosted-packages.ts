@@ -36,6 +36,15 @@ export function hostedPackagesFrom(body: unknown): HostedPackage[] {
   return out;
 }
 
+/**
+ * How many packages a listing says are kept but not listed yet: ones the bridge is still reading
+ * in the background, which a later listing lists.
+ */
+export function unlistedFrom(body: unknown): number {
+  const n = (body as { unlisted?: unknown } | null)?.unlisted;
+  return typeof n === 'number' && Number.isInteger(n) && n > 0 ? n : 0;
+}
+
 /** The URL a signed cmi5 launch answers with, when it is one a browser should open. */
 export function launchUrlFrom(body: unknown): string | null {
   const url = (body as { launchUrl?: unknown } | null)?.launchUrl;

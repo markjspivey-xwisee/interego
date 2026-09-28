@@ -21,8 +21,8 @@ import { readFileSync } from 'node:fs';
 import AdmZip from 'adm-zip';
 import { JSDOM } from 'jsdom';
 import {
-  HostedPackages, PACKAGE_SANDBOX, SANDBOX_BOOTSTRAP, attachHostedPackageRoutes, contentTypeOf, hostedPackageCourse,
-  hostedPackageOf, isHtmlDocument, packageEntry, scormRuntimeSource, sha256Of, withRuntime,
+  HostedPackages, PACKAGE_SANDBOX, SANDBOX_BOOTSTRAP, aboutFrom, attachHostedPackageRoutes, contentTypeOf, hostedPackageCourse,
+  hostedPackageOf, isHtmlDocument, packageEntry, scormRuntimeSource, sha256Of, withRuntime, type PackageAbout,
 } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 
@@ -51,6 +51,24 @@ function makePackage(): Buffer {
 }
 const PACKAGE = makePackage();
 const SHA = sha256Of(PACKAGE);
+const ABOUT: PackageAbout = { title: 'Refunds, hosted', launchable: ['index.html'] };
+
+/** The same package titled otherwise: another package, with another sha-256. */
+function makeRetitled(title: string): Buffer {
+  const zip = new AdmZip(PACKAGE);
+  zip.updateFile('imsmanifest.xml', Buffer.from(MANIFEST.replace('Refunds, hosted', title), 'utf8'));
+  return zip.toBuffer();
+}
+
+/** What a package's bytes say it is, as the bridge describes one (bridge/server.ts). */
+function describePackage(bytes: Buffer): PackageAbout | null {
+  const pkg = unwrapScormPackage(bytes);
+  const launchable = pkg.resources.filter(r => r.isLaunchable).map(r => r.path);
+  return launchable.length ? { title: pkg.title, launchable } : null;
+}
+
+/** How many times a package's zip was read from the stand-in pod. */
+const zipReads = (asked: readonly string[], sha = SHA): number => asked.filter(a => a === `GET ${POD}foxxi-uploads/packages/${sha}.zip`).length;
 
 /** A stand-in pod: a map of resources, and a record of what was asked of it. */
 function standInPod() {
@@ -159,6 +177,12 @@ describe('a package is a cmi5 course of its SCOs, and is kept by what it is', ()
     expect(hostedPackageOf(BRIDGE, 'refund-course')).toBeNull();
   });
 
+  it('makes no AU of a SCO whose path would leave the package: its launch URL, resolved, would be another of the bridge\'s routes', () => {
+    const course = hostedPackageCourse(BRIDGE, SHA, { title: 'x', launchable: ['../../../agent/cmi5/launch', 'sco/../../../x.html', '/abs.html', 'a//b.html', 'a\\b.html', './index.html', 'index.html'] });
+    expect(course.structure.map(a => (a.kind === 'au' ? a.url : a.kind))).toEqual([`${BRIDGE}/scorm/packages/${SHA}/files/index.html`]);
+    expect(course.structure[0]!.title).toBe('x');
+  });
+
   it('is kept on the pod under its sha-256, and read back only when its bytes still hash to it', async () => {
     const pod = standInPod();
     const kept = await new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl }).keep(PACKAGE);
@@ -222,6 +246,99 @@ describe('the packages kept here are listed', () => {
   });
 });
 
+describe('what a package is, kept beside it, so a listing opens none (Codex, on #550)', () => {
+  it('is kept beside the package, and read back by another process without opening the package', async () => {
+    const pod = standInPod();
+    await new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl }).keep(PACKAGE, ABOUT);
+    expect(JSON.parse(pod.kept.get(`${POD}foxxi-uploads/packages/${SHA}.json`)!.toString('utf8'))).toEqual({ packageSha256: SHA, ...ABOUT });
+    const later = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl });
+    expect(await later.about(SHA)).toEqual(ABOUT);
+    expect(zipReads(pod.asked)).toBe(0);
+    // A description is not a package: it is not listed as one.
+    expect(await later.list()).toEqual([SHA]);
+    // What is kept names only paths inside the package, and nothing at all when none are.
+    await later.keepAbout(SHA, { title: 'Refunds', launchable: ['../../agent/x.html', 'index.html'] });
+    expect(JSON.parse(pod.kept.get(`${POD}foxxi-uploads/packages/${SHA}.json`)!.toString('utf8')).launchable).toEqual(['index.html']);
+    await later.keepAbout(SHA, { title: 'Nothing', launchable: ['../x.html'] });
+    expect(await later.about(SHA)).toEqual({ title: 'Refunds', launchable: ['index.html'] });
+  });
+
+  it('takes a description only of the package it is kept beside, naming only paths inside it', () => {
+    expect(aboutFrom(SHA, { packageSha256: SHA, ...ABOUT })).toEqual(ABOUT);
+    expect(aboutFrom(SHA, { packageSha256: 'b'.repeat(64), ...ABOUT })).toBeNull();
+    expect(aboutFrom(SHA, { packageSha256: SHA, title: 'x', launchable: ['../../agent/cmi5/launch', '/etc/x.html', 'a//b.html', 'a\\b.html', 7] })).toBeNull();
+    expect(aboutFrom(SHA, { packageSha256: SHA, title: 'x', launchable: ['../x.html', 'sco/one.html'] })).toEqual({ title: 'x', launchable: ['sco/one.html'] });
+    expect(aboutFrom(SHA, { packageSha256: SHA, launchable: ['index.html'] })).toBeNull();
+    expect(aboutFrom(SHA, null)).toBeNull();
+  });
+
+  it('reads a package from the pod once, however many ask for it at once', async () => {
+    const pod = standInPod();
+    await new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl }).keep(PACKAGE);
+    const later = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl });
+    const zips = await Promise.all([later.open(SHA), later.open(SHA), later.open(SHA)]);
+    expect(zips[0]).not.toBeNull();
+    expect(zips.every(z => z === zips[0])).toBe(true);
+    expect(zipReads(pod.asked)).toBe(1);
+  });
+
+  it('describes packages kept with nothing beside them in the background, one at a time and each once, and keeps what it found', async () => {
+    const pod = standInPod();
+    const first = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl });
+    const other = makeRetitled('Returns, hosted');
+    await first.keep(PACKAGE);
+    await first.keep(other);
+    let reading = 0;
+    let most = 0;
+    const slow = (async (input: string | URL | Request, init?: RequestInit) => {
+      const zip = String(input).endsWith('.zip') && (init?.method ?? 'GET') === 'GET';
+      if (zip) { reading++; most = Math.max(most, reading); await new Promise(r => setTimeout(r, 5)); }
+      try { return await pod.fetchImpl(input, init); } finally { if (zip) reading--; }
+    }) as typeof fetch;
+    const later = new HostedPackages({ podUrl: POD, fetch: slow, describePackage });
+    // Nothing describes them yet: null now, and each queued once, however often asked, whether it
+    // is being read (the first) or waiting its turn (the second).
+    const asked = [SHA, SHA, sha256Of(other), sha256Of(other)];
+    expect(await Promise.all(asked.map(sha => later.aboutOrLater(sha)))).toEqual([null, null, null, null]);
+    await later.whenDescribed();
+    expect(most).toBe(1);
+    expect(zipReads(pod.asked)).toBe(1);
+    expect(zipReads(pod.asked, sha256Of(other))).toBe(1);
+    expect(await later.aboutOrLater(SHA)).toEqual(ABOUT);
+    expect(await later.aboutOrLater(sha256Of(other))).toEqual({ title: 'Returns, hosted', launchable: ['index.html'] });
+    // What it found is kept beside each package: another process reads that, and opens neither.
+    const third = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl, describePackage });
+    expect(await third.aboutOrLater(SHA)).toEqual(ABOUT);
+    await third.whenDescribed();
+    expect(zipReads(pod.asked)).toBe(1);
+  });
+
+  it('leaves a package it could not describe until it may try again, rather than opening it once a listing', async () => {
+    const pod = standInPod();
+    const notAPackage = makeWith(['notes.txt']);
+    const sha = sha256Of(notAPackage);
+    await new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl }).keep(notAPackage);
+    const later = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl, describePackage });
+    for (let i = 0; i < 3; i++) { expect(await later.aboutOrLater(sha)).toBeNull(); await later.whenDescribed(); }
+    expect(zipReads(pod.asked, sha)).toBe(1);
+    // Once it may be tried again, it is.
+    const eager = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl, describePackage, retryAfterMs: 0 });
+    for (let i = 0; i < 2; i++) { expect(await eager.aboutOrLater(sha)).toBeNull(); await eager.whenDescribed(); }
+    expect(zipReads(pod.asked, sha)).toBe(3);
+  });
+
+  it('describes a package now for someone about to play it, and keeps that for the listing', async () => {
+    const pod = standInPod();
+    await new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl }).keep(PACKAGE);
+    const later = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl, describePackage });
+    expect(await later.aboutNow(SHA)).toEqual(ABOUT);
+    expect(zipReads(pod.asked)).toBe(1);
+    expect(JSON.parse(pod.kept.get(`${POD}foxxi-uploads/packages/${SHA}.json`)!.toString('utf8'))).toEqual({ packageSha256: SHA, ...ABOUT });
+    // Without a way to describe one, nothing is made up.
+    expect(await new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl }).aboutNow(sha256Of(makeRetitled('Unkept')))).toBeNull();
+  });
+});
+
 function makeTampered(): Buffer {
   const zip = new AdmZip(PACKAGE);
   zip.updateFile('app.js', Buffer.from('steal()', 'utf8'));
@@ -234,11 +351,11 @@ describe('the routes a hosted package is reached by', () => {
   beforeAll(async () => {
     const pod = standInPod();
     const packages = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl });
-    await packages.keep(PACKAGE);
+    await packages.keep(PACKAGE, ABOUT);
     const app = express();
     attachHostedPackageRoutes(app, {
       packages, bridgeBaseUrl: BRIDGE,
-      courseFor: async (sha) => (sha === SHA ? hostedPackageCourse(BRIDGE, SHA, { title: 'Refunds, hosted', launchable: ['index.html'] }) : undefined),
+      courseFor: async (sha) => (sha === SHA ? hostedPackageCourse(BRIDGE, SHA, ABOUT) : undefined),
       onError: (res, err) => { res.status(500).json({ error: String(err) }); },
     });
     server = app.listen(0, '127.0.0.1');
@@ -310,6 +427,47 @@ describe('the routes a hosted package is reached by', () => {
     expect(record.aus).toHaveLength(1);
     expect(record.launch).toMatchObject({ target: `${BRIDGE}/agent/cmi5/launch`, payload: { course_id: record.course.id } });
     expect((await fetch(`${base}/scorm/packages/${'1'.repeat(64)}`)).status).toBe(404);
+  });
+});
+
+describe('the listing answers without opening a package (Codex, on #550)', () => {
+  type Listing = { packages: Array<{ course: { title: string } }>; unlisted?: number; unlistedWhy?: string };
+  let server: Server;
+  let base = '';
+  let release: () => void = () => {};
+  let packages: HostedPackages;
+  const pod = standInPod();
+  beforeAll(async () => {
+    const first = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl });
+    await first.keep(PACKAGE);
+    await first.keep(makeRetitled('Returns, hosted'), { title: 'Returns, hosted', launchable: ['index.html'] });
+    // Every read of a package's zip waits until the test lets it through.
+    const gate = new Promise<void>(r => { release = r; });
+    const gated = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('.zip') && (init?.method ?? 'GET') === 'GET') await gate;
+      return pod.fetchImpl(input, init);
+    }) as typeof fetch;
+    packages = new HostedPackages({ podUrl: POD, fetch: gated, describePackage });
+    const app = express();
+    attachHostedPackageRoutes(app, { packages, bridgeBaseUrl: BRIDGE, courseFor: async () => undefined, onError: (res, err) => { res.status(500).json({ error: String(err) }); } });
+    server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server.once('listening', () => r()));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterAll(async () => { release(); await new Promise<void>((r) => server.close(() => r())); });
+
+  it('lists what is described while a package with nothing beside it waits to be read, and lists that one once it has been', async () => {
+    // The zip cannot be read yet, so a listing that waited on it would not answer.
+    const cold = await (await fetch(`${base}/scorm/packages`)).json() as Listing;
+    expect(cold.packages.map(p => p.course.title)).toEqual(['Returns, hosted']);
+    expect(cold.unlisted).toBe(1);
+    expect(cold.unlistedWhy).toMatch(/in the background/);
+    release();
+    await packages.whenDescribed();
+    const warm = await (await fetch(`${base}/scorm/packages`)).json() as Listing;
+    expect(warm.packages.map(p => p.course.title).sort()).toEqual(['Refunds, hosted', 'Returns, hosted']);
+    expect(warm.unlisted).toBeUndefined();
+    expect(zipReads(pod.asked)).toBe(1);
   });
 });
 
@@ -412,7 +570,20 @@ describe('the bridge hosts what is uploaded, and restores it after a restart', (
     const launch = server.slice(server.indexOf("app.post('/agent/cmi5/launch'"), server.indexOf("app.post('/agent/cmi5/launch'") + 1500);
     expect(launch).toMatch(/restorePublishedCourse\(DEFAULT_TENANT, courseId\);[^\n]*\n\s+if \(!getCmi5Course\(DEFAULT_TENANT, courseId\)\) await restoreHostedPackage\(courseId\);\n\s+const course = getCmi5Course\(DEFAULT_TENANT, courseId\);/);
     expect(server).toMatch(/attachHostedPackageRoutes\(app, \{\n\s+packages: hostedPackages,\n\s+bridgeBaseUrl,/);
-    expect(server).toContain('const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl });');
+    expect(server).toContain('const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage });');
+  });
+
+  it('keeps what an upload is beside it, and restores from that, describing a package itself as an upload is parsed', () => {
+    const host = server.slice(server.indexOf('async function hostUploadedPackage('), server.indexOf('async function restoreHostedPackage('));
+    expect(host).toContain('const about: PackageAbout = { title, launchable: launchable.filter(isPackagePath) };');
+    expect(host).toContain('try { kept = await hostedPackages.keep(bytes, about); }');
+    expect(host).toContain('const course = hostedPackageCourse(bridgeBaseUrl, kept.sha256, about);');
+    const restore = server.slice(server.indexOf('async function restoreHostedPackage('), server.indexOf('attachHostedPackageRoutes(app, {'));
+    expect(restore).toContain('const about = await hostedPackages.aboutNow(sha);');
+    expect(restore).not.toContain('unwrapScormPackage');
+    // Described as an upload is parsed: under the same inflation budget, before anything is inflated.
+    const describe = server.slice(server.indexOf('function describeHostedPackage('), server.indexOf('async function hostUploadedPackage('));
+    expect(describe).toMatch(/if \(declaredUncompressedBytes\(bytes\) > uncompressedBudget\(bytes\.length\)\) return null;\n\s+const pkg = unwrapScormPackage\(bytes\);/);
   });
 
   it('lets the runtime PUT its statements from another origin, and grants no credentials to any', () => {
