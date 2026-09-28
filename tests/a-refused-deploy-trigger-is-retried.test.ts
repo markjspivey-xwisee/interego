@@ -29,7 +29,18 @@ describe('the deploy trigger', () => {
     expect(await triggerWithRetry(trigger, { sleep, reconcile })).toEqual({ serviceInstanceDeployV2: 'deployment-1' });
     expect(trigger).toHaveBeenCalledTimes(3);
     expect(sleep.mock.calls.map(c => c[0])).toEqual([5000, 10000]);
-    expect(reconcile).toHaveBeenCalledTimes(2);
+    // Reconciled before each wait and again right before each re-trigger.
+    expect(reconcile).toHaveBeenCalledTimes(4);
+  });
+
+  it('follows a deployment that appears during the wait, instead of triggering over it (Codex, on #562)', async () => {
+    const trigger = vi.fn(async () => { throw refusal(); });
+    const sleep = vi.fn(async (_ms: number) => undefined);
+    const seen = [undefined, 'deployment-published-late'];
+    const reconcile = vi.fn(async () => seen.shift());
+    expect(await triggerWithRetry(trigger, { sleep, reconcile })).toEqual({ serviceInstanceDeployV2: 'deployment-published-late' });
+    expect(trigger).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledTimes(1);
   });
 
   it('does not retry an ambiguous failure, where the trigger may have been accepted', async () => {
