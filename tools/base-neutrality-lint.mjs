@@ -214,24 +214,31 @@ export function scanSource(text, fileName = 'file.ts') {
   return { code, comments, specifiers };
 }
 
-/** Package names published from anywhere a base root may not depend on. */
+/**
+ * Package names published from anywhere a base root may not depend on: every `package.json` under
+ * `applications/`, `integrations/` and `examples/`, at any depth, and the vertical-owned packages.
+ *
+ * ★ FOUND BY WALKING, NOT BY NAMING. This first read three second-level directory names (bridge,
+ * desktop, discord), so the Foxxi dashboard, microsite and reports packages were importable from
+ * the base without a word (Codex, on #556). A list of places a package might be is the list that
+ * goes stale; the tree is the authority.
+ */
 export function forbiddenPackages(root = ROOT) {
   const names = new Set();
-  const addFrom = dir => {
-    const p = join(root, dir, 'package.json');
-    if (!existsSync(p)) return;
-    try { const name = JSON.parse(readFileSync(p, 'utf8')).name; if (name) names.add(name); } catch { /* unreadable: not a package */ }
-  };
-  for (const top of ['applications', 'integrations', 'examples']) {
-    const base = join(root, top);
-    if (!existsSync(base)) continue;
-    for (const name of readdirSync(base)) {
-      if (!statSync(join(base, name)).isDirectory()) continue;
-      addFrom(`${top}/${name}`);
-      for (const sub of ['bridge', 'desktop', 'discord']) addFrom(`${top}/${name}/${sub}`);
+  const walk = dir => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (e.name === 'node_modules' || e.name === 'dist' || e.name.startsWith('.')) continue;
+        walk(join(dir, e.name));
+      } else if (e.name === 'package.json') {
+        try { const name = JSON.parse(readFileSync(join(dir, e.name), 'utf8')).name; if (name) names.add(name); } catch { /* unreadable: not a package */ }
+      }
     }
-  }
-  for (const v of VERTICAL_OWNED) addFrom(v.dir);
+  };
+  for (const top of ['applications', 'integrations', 'examples']) walk(join(root, top));
+  for (const v of VERTICAL_OWNED) walk(join(root, v.dir));
   return names;
 }
 
