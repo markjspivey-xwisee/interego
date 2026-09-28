@@ -16,6 +16,7 @@
  */
 
 import { ethers } from 'ethers';
+import type { SessionKeyGrant } from '../../../src/session-key.js';
 
 const DEFAULT_DEMO_SEED = 'foxxi-demo-acme-training-2026-05-17-v1';
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
@@ -90,6 +91,12 @@ export async function mintSessionToken(args: {
 export interface MessageSigner {
   readonly address: string;
   signMessage(message: string): Promise<string>;
+  /**
+   * A signer that asks its owner for each signature (a wallet extension) may instead hold a session
+   * key for a bridge (auth/session-key.ts): the key signs that bridge's requests as this signer, and
+   * the grant goes with each. Null when the bridge takes none; then this signer signs itself.
+   */
+  session?(audience: string): Promise<{ key: MessageSigner; grant: SessionKeyGrant } | null>;
 }
 
 /**

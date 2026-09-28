@@ -6,6 +6,25 @@
 
 `tests/a-door-reports-only-what-the-store-kept.test.ts` pins the budget at one statement and shows the first write evicted by the second; saying whole on writes alone turns it red.
 
+## 2026-09-27 — Foxxi: a wallet approves one session key for a tab, not every request
+
+The bridge took a signed request only when the actor's own key signed it (the DIRECT branch), or the anchor of a delegation on the actor's pod. A person whose key stays in a wallet extension therefore approved every request in the wallet: every step they played, every fragment they wrote, every read of their own work.
+
+Now a wallet can grant a session key (`src/session-key.ts`):
+- the tab makes a key and keeps it in memory. The wallet signs one grant for it, an EIP-4361 (Sign-In with Ethereum) message naming the page it was asked from, the bridge, the key, and an expiry. The key then signs that bridge's requests as the wallet, and each request carries the grant as `_session` beside the signed payload;
+- the bridge keeps no session. `recoverSignedRequest` checks every grant in full, every time:
+  - the wallet it names signed it;
+  - it is for this bridge, asked for on one of this bridge's dashboards (the hosts of `FOXXI_DASHBOARD_ORIGIN`, which is what a wallet checks the page against);
+  - it has not expired, was not made in the future, and runs no longer than the bridge allows (twelve hours unless `FOXXI_SESSION_KEY_MAX_TTL_S`);
+  - its key signed the request, made as the wallet itself (`agent_id` is its did:ethr), so a session key never acts through a delegation.
+
+  A grant that fails any check refuses the request, and is never read as signed some other way. One that passes makes the wallet the request's signer, so every door downstream reads it as the wallet's own;
+- `GET /.well-known/foxxi-session-key` publishes the policy (404 with `FOXXI_SESSION_KEYS=off`);
+- the dashboard's wallet signer asks for a grant, an hour at most, only from a bridge whose policy names that bridge and lists this page. It asks once however many requests wait, renews a grant with five minutes left, and forgets its keys on sign-out. With any other bridge it signs each request in the wallet, as before. Once it holds a key, pages read without waiting for a click, and the pages that said a wallet asks for every request now say when it asks.
+
+`tests/a-session-key-signs-only-as-the-wallet-that-granted-it.test.ts` drives the bridge's verifier with real signatures, including every refusal, and drives the dashboard's signer against it through a stand-in wallet extension that counts what it signs. Twenty mutants each turn a named test red.
+
+
 ## 2026-09-27 — Foxxi: what the bridge records on its own behalf, it reports only once the store holds it
 
 The doors that take a caller's statements now wait for the store. The bridge's own emitters did not: each wrote with the unawaited `storeStatementInternal` and reported at once. A store that did not keep the write left each of these claims false:
@@ -22,6 +41,7 @@ Now:
 - an LTI attempt is forgotten only once the platform has the grade and the record holds the outcome. A POST to it does what is left, and a grade the platform took is not sent again. The outcome page says whether the record holds the attempt, and its button names what it will do.
 
 Two unawaited writes remain, and both report nothing: the mesh's re-projected lens view, and the cmi5 LMS's own statements, which it also keeps on the learner's pod. `tests/an-emitter-reports-only-what-the-store-kept.test.ts` pins that list. It also drives content delivery and the Context Companion with a store that keeps and one that does not. Fourteen mutants each turn a named test red.
+
 
 ## 2026-09-27 — Foxxi: a learner record read only in part is not classified, or served, for anyone but its subject
 
