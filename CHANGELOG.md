@@ -12,6 +12,26 @@ Tests (`extension-catalog`):
 
 A mutant for each is caught.
 
+## 2026-09-28 — A deploy trigger Railway refuses once is tried again, not left written but unshipped
+
+`tools/railway-redeploy.mjs` repoints a service's image (`serviceInstanceUpdate`) and then ships it (`serviceInstanceDeployV2`). The first alone changes what the service's source names, not what runs.
+
+**What failed.** Two consecutive `Auto-deploy master` runs failed at the trigger with "GraphQL: Problem processing request", seconds after the repoint had succeeded: first the Discord worker (#557's merge), then the relay (#558's merge).
+- The relay went on serving #557's build under a source that named #558's.
+- A plain re-run of each failed job shipped it, so the refusal was transient.
+
+**The fix.** The trigger now goes through `triggerWithRetry` (`tools/railway-deploy-trigger.mjs`): up to four attempts, waiting 5, 10 and 20 seconds between them.
+- A trigger still refused after that fails the job as before, with the refusal in the message.
+- Triggering again is safe: the service is already repointed, and another trigger either starts the deployment the first did not, or supersedes one it did.
+
+Tests: `a-refused-deploy-trigger-is-retried` covers:
+- refusals then success, with the waits doubling;
+- no wait when the first trigger is accepted;
+- failure once the attempts are spent;
+- the redeploy script shipping through it.
+
+The lint gate's floor moves to 600, the number it named for the new files.
+
 ## 2026-09-28 — The extension loader bounds every document; agent-collective's bridge guards the pods callers name (#558 follow-up)
 
 Codex, on #558:
