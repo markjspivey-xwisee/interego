@@ -119,6 +119,8 @@ An uploaded SCORM package (`foxxi.upload_scorm_package`) is played from the brid
 
 Single-document SCOs, which current authoring tools export, run. Content whose frames script each other does not, because each document is its own origin.
 
+The bridge lists what it hosts at `GET /scorm/packages`, linked from its entry point as `scorm-packages`. In the dashboard, an operator hosts a package from the LMS content panel ("Host a package"). A learner finds it on the Learn page, launches it signed as themselves, and plays it in a tab of its own.
+
 ## Layering discipline
 
 Per [`applications/README.md`](../README.md):

@@ -402,6 +402,8 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
         'statements-admin': { href: `${config.selfBaseUrl}/xapi/admin/statements`, templated: false, title: 'Admin statement browser (paginated, filterable)' },
         'statements-aggregates': { href: `${config.selfBaseUrl}/xapi/admin/aggregates` },
         'statements-conformance': { href: `${config.selfBaseUrl}/xapi/admin/conformance` },
+        // SCORM packages hosted here (src/scorm-hosting.ts), each playable as a cmi5 course.
+        'scorm-packages': { href: `${config.selfBaseUrl}/scorm/packages`, title: 'SCORM packages hosted here, each played as a cmi5 course with the signed launch' },
         'lrs-config': { href: `${config.selfBaseUrl}/xapi/admin/config` },
         'launch-codes': { href: `${base}/launch-codes`, title: 'Mint a one-time out-of-band launch code (POST, bearer-authenticated)' },
         affordances: { href: `${config.selfBaseUrl}/affordances` },
