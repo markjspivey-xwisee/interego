@@ -183,7 +183,7 @@ An inventory of the primary artifacts and their layers, for review and gradual c
 | `docs/developer-guide.md` | L3 | Implementation guide. Explicitly targets `@interego/core`. |
 | `docs/architecture-context-layer-and-harness.md` | L2 | Applicability note on the context layer / harness duality. |
 | `deploy/**` | L3 | Reference deployment only. Not normative. |
-| `src/**` | L3 | Reference implementation. Not normative. |
+| `packages/**`, `mcp-server/**`, `integrations/**`, `applications/**` | L3 | Reference implementation. Not normative. Which layer each package implements, and which paths form the domain-neutral base, is tabled in §6.2. |
 | `examples/**` | L3 | Worked examples. Illustrative only. |
 
 Gradual migration is acceptable. New work MUST be layer-tagged from the start.
@@ -223,6 +223,68 @@ requires you to show your work: either the term specializes an L1
 type (a/b), or it's constructible at runtime from L1 primitives
 (c, with an actual function in `src/model/derivation.ts`), or
 you've declared it primitive (d) and taken responsibility for why.
+
+### 6.2 Who owns each code path
+
+All code in this repository is Layer 3 — a reference implementation — but it does not all play
+the same part. Each path either implements the protocol (L1) or a pattern over it (L2) as part of
+the **base**, which every deployment carries and which names no vertical; or it is a **composition**,
+**deployment** or **vertical** that is allowed to name the verticals it composes, because naming them
+is its job. "L1" and "L2" here mean this document's layers. Some vertical documents also number
+their own tiers (a standards tier and a theory tier); those are tiers inside `applications/`, not
+these layers.
+
+| Path | Implements | Role | Rule |
+|---|---|---|---|
+| `packages/core` | L1 | base | The kernel: descriptors, facets, composition, kernel verbs, manifests. |
+| `packages/pgsl` | L1 | base | The content-addressed lattice. |
+| `packages/pgsl-store` | L3 | base | A durable store for the lattice. |
+| `packages/solid` | L3 binding of L1 | base | Solid/LDP publish, discover and subscribe. |
+| `packages/abac` | L2 | base | The `abac:` pattern's runtime. |
+| `packages/registry` | L2 | base | The `registry:` pattern's runtime. |
+| `packages/passport` | L2 | base | The `passport:` pattern's runtime. |
+| `packages/agent-interop` | L2 | base | A spec-blind engagement engine; profiles are data. |
+| `packages/constitutional` | L2 | base | Self-amending policy over the modal algebra. |
+| `packages/transactions` | L2 | base | Saga-style transactions over descriptors. |
+| `packages/compliance` | L3 | base | Regulatory control mappings (`eu-ai-act:`, `nist-rmf:`, `soc2:`). |
+| `packages/ops` | L3 | base | SOC 2 operational evidence builders. |
+| `packages/p2p` | L3 | base | Relay-mediated federation transport. |
+| `packages/privacy` | L3 | base | Pre-publish sensitivity screening. |
+| `packages/extractors` | L3 | base | Content extraction for ingestion. |
+| `packages/connectors` | L3 | base | Notion, Slack and web source bindings. |
+| `packages/mdvault` | L3 | base | Markdown-vault projection. |
+| `packages/skills` | L3 | base | agentskills.io ↔ `iep:Affordance` translation. |
+| `packages/security-txt` | L3 | base | RFC 9116 body builder. |
+| `packages/workspace-client` | vertical | vertical | The shared-workspace vertical's client library, kept under `packages/` for workspace resolution. |
+| `deploy/mcp-relay` | L3 deployment of L1 + L2 | base | The MCP relay. Which verticals stand behind it is configuration (see `deploy/Dockerfile.relay`). |
+| `deploy/identity` | L3 | base | DID resolution and signature verification. |
+| `deploy/validator` | L3 | base | The validator service. |
+| `mcp-server` | L3 | base | The stdio MCP server. |
+| `deploy/css-gate` | L3 | deployment | The pod server's gate. |
+| `deploy/acme-id` | L3 | deployment | A demonstration identity service. |
+| `deploy/railway` | L3 | deployment | Platform configuration for the hosted fleet. |
+| `deploy/foxxi-scorm-player` | vertical | deployment | A vertical's static site. |
+| `integrations/application-runtime` | L3 | composition | The optional application interpreter the reference relay image installs. |
+| `integrations/affordance-surface` | L3 | composition | An optional resource interpreter the reference relay image installs. |
+| `integrations/compliance-overlay` | L3 | composition | Agent action → compliance descriptor translation. |
+| `integrations/hermes-memory` | L3 | composition | A memory provider for another agent runtime. |
+| `integrations/openclaw-memory` | L3 | composition | A memory engine for another agent runtime. |
+| `integrations/pgsl-css-accessor` | L3 | composition | The lattice behind the pod server. |
+| `integrations/procedure-runner` | L3 | composition | Runs published procedures. |
+| `integrations/python-verifier` | L3 | composition | A second-language verifier. |
+| `integrations/tests` | — | composition | Tests that compose verticals and examples on purpose. |
+| `applications/*` | vertical | vertical | Each vertical, in its own namespace outside the protocol's. |
+| `examples/*` | L3 | example | Worked examples and showcases. |
+
+**The rule for the base.** A base path carries no vertical's vocabulary in its code and depends on
+nothing under `applications/`, `integrations/` or `examples/`. A vertical reaches the base only
+through published descriptors, affordances and operator configuration: which vertical's lattice
+stands behind the relay's node ids, and which vertical manifests its action ids redirect to, are
+settings the reference image makes, not defaults the relay's code holds. The rows marked **base**
+are exactly what `tools/base-neutrality-lint.mjs` scans (a hard zero on dependencies and on
+vertical vocabulary in code outside a counted allowlist; a two-sided pin on comments), and
+`tests/every-code-path-has-an-owner.test.ts` fails when this table and that gate disagree, or when a
+directory has no row.
 
 ---
 

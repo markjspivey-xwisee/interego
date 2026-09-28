@@ -62,6 +62,13 @@ import { tesc, iesc } from './turtle-escape.js';
 const FXA = FOXXI_NS;
 const FXS = FOXXI_NS;
 
+/**
+ * The container a learner's credentials go to when their Type Index registers none for the
+ * credential shape. Exported because the manifest rebuild after a void names it: the
+ * substrate's scan knows no vertical's containers, so this vertical passes its own.
+ */
+export const WALLET_CONTAINER = 'foxxi-wallet/';
+
 export const CREDENTIAL_TYPES = {
   CourseCompletionCredential: `${FXA}CourseCompletionCredential` as IRI,
   CompetencyAssertion: `${FXA}CompetencyAssertion` as IRI,
@@ -230,11 +237,11 @@ export async function issueCourseCompletionCredential(
   const placement = await resolveStorageForShape(
     args.learnerPodUrl,
     CREDENTIAL_TYPES.CourseCompletionCredential,
-    { fetch: args.fetch, defaultContainer: 'foxxi-wallet/' },
+    { fetch: args.fetch, defaultContainer: WALLET_CONTAINER },
   );
   const containerPath = placement.target.startsWith(placement.podRoot)
     ? placement.target.slice(placement.podRoot.length)
-    : 'foxxi-wallet/';
+    : WALLET_CONTAINER;
   const stamp = Date.now();
   const slug = `cred-${args.subject.courseId}-${slugDid(args.subject.learnerDid)}-${stamp}`;
   // The exact on-pod URL publish() will write to (podRoot + containerPath + slug.ttl) —
@@ -275,7 +282,7 @@ export async function issueCourseCompletionCredential(
     podUrl: args.learnerPodUrl,
     agentDid: issuer.did,
     shapeClass: CREDENTIAL_TYPES.CourseCompletionCredential,
-    defaultContainer: 'foxxi-wallet/',
+    defaultContainer: WALLET_CONTAINER,
     fetch: args.fetch,
     build: (pgsl, prov) => {
       const lersCred = {

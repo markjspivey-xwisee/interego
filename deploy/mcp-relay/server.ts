@@ -542,11 +542,15 @@ const toolTarget = (name: string): string =>
   `${(PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com').replace(/\/$/, '')}/tool/${name}`;
 // TIER-2 fallback resolver. The relay is the naming authority AND the tier-1 resolver
 // for nodes PUBLISHED here (see /ns/pgsl/:kind/:hash below). This is the second tier: a
-// fail-closed public-lattice resolver holding a DISJOINT corpus — the Foxxi bridge's
+// fail-closed public-lattice resolver holding a DISJOINT corpus — a composed vertical's
 // ontology terms and memory commons, which it composed itself and which the relay's
-// store does not contain. Config-driven so the substrate authority never hardcodes a
-// vertical host in code.
-const PGSL_NODE_RESOLVER = (process.env['PGSL_NODE_RESOLVER'] ?? 'https://foxxi-bridge.interego.xwisee.com/agent/lattice').replace(/\/+$/, '');
+// store does not contain. Configuration only, with no default: the deployment says which
+// lattice stands behind it (the reference image does, in deploy/Dockerfile.relay), and a
+// relay that names none answers tier 3's uniform 404.
+const PGSL_NODE_RESOLVER = publishedNodes.tierTwoResolver(process.env['PGSL_NODE_RESOLVER']);
+if (PGSL_NODE_RESOLVER === undefined && (process.env['PGSL_NODE_RESOLVER'] ?? '').trim() !== '') {
+  log('PGSL_NODE_RESOLVER is not an absolute http(s) URL without query or fragment; tier 2 is off');
+}
 // Operator bearer for POST /amep/acts (AMEP engine). Unset ⇒ operator path
 // disabled; OAuth bearers with mcp:write scope still work.
 const AMEP_ACT_SECRET = process.env['AMEP_ACT_SECRET'] ?? '';
@@ -9064,14 +9068,20 @@ async function handleSignRequest(args: ToolArgs): Promise<string> {
        * ★ AND IT NOW NAMES WHERE THE AFFORDANCE IS DECLARED, not only the action. The other half
        * of that delegate's failure was invoking against a pod graph that declares no affordance
        * blocks at all; an action IRI with no descriptor to find it in is unusable, so the hint
-       * hands over both. Both are URLs you can dereference — which is the point of the migration
-       * and the reason a `urn:` here was a defect and not a style.
+       * says where both are read. Both are URLs you can dereference — which is the point of the
+       * migration and the reason a `urn:` here was a defect and not a style.
+       *
+       * ★ AND IT NAMES THE PROPERTY, NOT ONE VERTICAL'S ENDPOINT. The hint used to cite a single
+       * vertical's affordance URL and action id as its example, so the relay's answer depended
+       * on which vertical was deployed and went stale whenever that one moved. Every affordance
+       * that takes a signed request declares the envelope's two fields, `_signed_payload` and
+       * `_signature`, as its inputs, which is what a delegate can actually look for in whatever
+       * descriptor it holds.
        */
-      hint: 'Pass this object as the `payload` of `act` on a rev-196 signed-request affordance. '
-        + 'Foxxi performance review, for example, declares one at '
-        + 'https://foxxi-bridge.interego.xwisee.com/agent/review-record/affordance with '
-        + 'iep:action https://relay.interego.xwisee.com/ns/iep/action/foxxi/review-record — '
-        + 'dereference the descriptor to read the action rather than composing an identifier by hand. '
+      hint: 'Pass this object as the `payload` of `act` on a rev-196 signed-request affordance: '
+        + 'one whose declared inputs are `_signed_payload` and `_signature`. Dereference the '
+        + 'descriptor that declares it and read the affordance\'s iep:action (a URL) from there '
+        + 'rather than composing an identifier by hand. '
         + 'The endpoint verifies your delegation on your own pod — no key material leaves the relay.',
     });
   } catch (err) {
@@ -11808,7 +11818,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'record_trajectory_step',
-    description: 'Record one step of the calling agent\'s OODA trajectory as a substrate-native ContextDescriptor. Each step lands on the agent\'s own pod, signed (sign_authorship default true), discoverable via discover_context with `graph_iri: "urn:graph:trajectory:<agentSlug>"`, and consumable by verifyCapabilityTransfer / the Foxxi calibration loop. Use Hypothetical when recording intent BEFORE acting, then call again with Asserted + supersedes_step_id pointing at the Hypothetical to mark it executed. The `verb` + `object_name` pair is what verifyCapabilityTransfer pattern-matches against signal/anti-signal markers, so write them as the action you took, e.g. verb: "ratified", object_name: "g3 agreement v2 CID anchor". This is the smallest possible "I write loops" dogfood — every tool call your loop makes becomes a discoverable, attestable trajectory step.',
+    description: 'Record one step of the calling agent\'s OODA trajectory as a substrate-native ContextDescriptor. Each step lands on the agent\'s own pod, signed (sign_authorship default true), discoverable via discover_context with `graph_iri: "urn:graph:trajectory:<agentSlug>"`, and consumable by verifyCapabilityTransfer and any calibration loop that reads trajectories. Use Hypothetical when recording intent BEFORE acting, then call again with Asserted + supersedes_step_id pointing at the Hypothetical to mark it executed. The `verb` + `object_name` pair is what verifyCapabilityTransfer pattern-matches against signal/anti-signal markers, so write them as the action you took, e.g. verb: "ratified", object_name: "g3 agreement v2 CID anchor". This is the smallest possible "I write loops" dogfood — every tool call your loop makes becomes a discoverable, attestable trajectory step.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -12155,7 +12165,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'sign_request',
-    description: 'Sign a payload AS your bound identity, producing a rev-196 signed-request envelope { _signature, _signed_payload }. This is your signing primitive: relay-mediated agents hold no key of their own, so to invoke an affordance that authenticates via a signed request (e.g. the Foxxi performance-record review, iep:action urn:iep:action:foxxi:review-record) you call sign_request with your intended args as `payload`, then pass the returned envelope as the `payload` of `act` on that affordance. The relay signs with its delegation key, binding YOUR authenticated identity (derived from your session — you cannot sign as anyone else); the target verifies your delegation against your own pod. No key material is exposed. WHAT IS SIGNED: the canonical message commits to your IDENTITY (agent_id), your pod, and a fresh timestamp (replay protection) — these are the security boundary, and the target binds the acted-on subject to this signed identity, so a caller can never reach another subject\'s data. Response-affecting options you pass (e.g. include_clr) are folded into the signed payload on a best-effort basis (object or JSON-string `payload`); treat them as ADVISORY — they only ever shape your OWN response and are never a cross-subject authority.',
+    description: 'Sign a payload AS your bound identity, producing a rev-196 signed-request envelope { _signature, _signed_payload }. This is your signing primitive: relay-mediated agents hold no key of their own, so to invoke an affordance that authenticates via a signed request (its declared inputs are _signed_payload and _signature) you call sign_request with your intended args as `payload`, then pass the returned envelope as the `payload` of `act` on that affordance. The relay signs with its delegation key, binding YOUR authenticated identity (derived from your session — you cannot sign as anyone else); the target verifies your delegation against your own pod. No key material is exposed. WHAT IS SIGNED: the canonical message commits to your IDENTITY (agent_id), your pod, and a fresh timestamp (replay protection) — these are the security boundary, and the target binds the acted-on subject to this signed identity, so a caller can never reach another subject\'s data. Response-affecting options you pass (e.g. include_clr) are folded into the signed payload on a best-effort basis (object or JSON-string `payload`); treat them as ADVISORY — they only ever shape your OWN response and are never a cross-subject authority.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -12377,12 +12387,12 @@ const TOOL_SCHEMAS = [
   // ── Generic affordance follower (Path A — reach any vertical) ──
   {
     name: 'invoke_affordance',
-    description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a iep:action IRI, this fetches the descriptor, finds the matching iep:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
+    description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a iep:action IRI, this fetches the descriptor, finds the matching iep:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical that publishes affordances is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
     inputSchema: {
       type: 'object',
       properties: {
         descriptor_url: { type: 'string', description: 'Descriptor URL or derived resource reference containing the affordance. Use the exact reference returned by discovery or a resource view.' },
-        action_iri: { type: 'string', description: 'The iep:action IRI of the affordance to invoke (e.g., urn:iep:action:foxxi:discover-assigned-courses). Discover available actions via discover_context + get_descriptor.' },
+        action_iri: { type: 'string', description: 'The iep:action IRI of the affordance to invoke, as the descriptor\'s iep:Affordance block declares it. Discover available actions via discover_context + get_descriptor.' },
         payload: { type: 'object', additionalProperties: true, description: 'Arguments to POST to the affordance target. Shape depends on the specific affordance — read the descriptor or the affordance\'s inputs metadata to learn what fields are required.' },
         authorization: { type: 'string', description: 'Optional Authorization header value to forward (e.g., Bearer <token>). Use when the target requires auth. The relay caller\'s own bearer token is NOT auto-forwarded — supply it explicitly if needed.' },
       },
@@ -12481,9 +12491,9 @@ your descriptor and what they need to be sure of:
   the agent is, but no cryptographic proof. The relay's OAuth gate already
   authenticated the principal, so for memory / scratchpad / inferences this
   is the right tier (and matches Hypothetical's neutrality discipline).
-- ThirdPartyAttested: another agent vouches for the claim. Emitted by the
-  attestation-issuing verticals (lrs-adapter, learner-performer-companion)
-  rather than requested by an arg on publish_context.
+- ThirdPartyAttested: another agent vouches for the claim. Emitted by
+  attestation-issuing verticals rather than requested by an arg on
+  publish_context.
 - CryptographicallyVerified — the TOP rung, reached two independent ways:
   * \`sign_authorship: true\` embeds a iep:authorshipProof signed with the
     calling agent's delegation key (ECDSA-secp256k1), verifiable from the

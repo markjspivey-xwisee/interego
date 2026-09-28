@@ -35,7 +35,9 @@ const ok = (cond: boolean, name: string, detail = ''): void => {
 };
 
 const BASE = 'https://relay.interego.xwisee.com';
-const RESOLVER = 'https://foxxi-bridge.interego.xwisee.com/agent/lattice';
+// A neutral stand-in: which lattice (if any) stands behind a relay is its deployment's
+// statement, so the base's tests name none of them.
+const RESOLVER = 'https://resolver.test/lattice';
 
 // One Express app mounting the REAL handler, exactly as server.ts does.
 const app = express();
@@ -134,8 +136,9 @@ try {
     const r = await GET(never);
     // Tier 2 redirects unknown-but-well-formed ids to the fail-closed public resolver;
     // what must never happen is a 200 or a distinguishable "exists here but hidden".
-    ok(r.status === 302 || r.status === 404,
-      'a never-published id yields a uniform non-answer (302 to tier 2, or 404)', `got ${r.status}`);
+    ok(r.status === 302, 'a never-published id goes to the configured tier-2 resolver', `got ${r.status}`);
+    ok(r.headers.get('location') === `${RESOLVER}/atom/${'a'.repeat(40)}`,
+      '…at exactly the configured base, kind and hash', String(r.headers.get('location')));
     ok(r.headers.get('cache-control') === 'no-store',
       '…and is never cached, so publishing it later is not shadowed by a cached negative',
       String(r.headers.get('cache-control')));
@@ -187,6 +190,39 @@ try {
     ok(c.nodes.size === 0,
       'a fresh commons starts EMPTY — nothing is admitted except from a durable read',
       `had ${c.nodes.size}`);
+  }
+
+  // ── 11. a relay that configures no tier 2 answers tier 3 ─────────────────
+  // The base names no vertical's lattice. Unset, empty and unusable settings all mean "no
+  // resolver": the uniform JSON 404, never a redirect. An empty setting used to redirect to
+  // the RELATIVE `/atom/<hash>`, which landed on the relay's own HTML 404.
+  {
+    ok(store.tierTwoResolver(undefined) === undefined, 'tierTwoResolver: unset is none');
+    for (const raw of ['', '   ', '/lattice', 'lattice', 'ftp://resolver.test/lattice',
+      'https://resolver.test/lattice?x=1', 'https://resolver.test/lattice#top', 'not a url']) {
+      ok(store.tierTwoResolver(raw) === undefined, `tierTwoResolver: ${JSON.stringify(raw)} is none`);
+    }
+    ok(store.tierTwoResolver(' https://resolver.test/lattice/ ') === RESOLVER,
+      'tierTwoResolver: an absolute URL is trimmed of whitespace and trailing slashes');
+
+    const hash = 'a'.repeat(40);
+    for (const resolverBase of [undefined, '', '/lattice']) {
+      const bare = express();
+      bare.get('/ns/pgsl/:kind/:hash', store.nodeRouteHandler({ resolverBase, publicBase: BASE }));
+      const bareServer = await listenLoopback(bare);
+      try {
+        const r = await fetch(`${bareServer.base}/ns/pgsl/atom/${hash}`, { redirect: 'manual' });
+        const b = await r.json().catch(() => ({}));
+        ok(r.status === 404 && (b as Record<string, unknown>)['error'] === 'no such pgsl node',
+          `resolver ${JSON.stringify(resolverBase)}: an unpublished id gets the uniform JSON 404`,
+          `got ${r.status} ${JSON.stringify(b)}`);
+        ok(r.headers.get('location') === null, `resolver ${JSON.stringify(resolverBase)}: no redirect`);
+        ok(r.headers.get('cache-control') === 'no-store',
+          `resolver ${JSON.stringify(resolverBase)}: …and it is not cached either`);
+      } finally {
+        await bareServer.close();
+      }
+    }
   }
 } finally {
   await server.close();

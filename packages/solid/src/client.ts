@@ -1786,16 +1786,48 @@ function ldpContainsMembers(body: string, base: string): string[] {
   return out;
 }
 
-async function listDescriptorUrls(pod: string, fetchFn: FetchFn): Promise<string[]> {
+/**
+ * A caller-named container as an absolute URL inside `pod`, or undefined when it is not one:
+ * outside the pod, the pod root itself, one of the known non-descriptor containers, or a URL
+ * with a query or fragment. A seed is a path relative to the pod ('my-records/') or an
+ * absolute URL under it.
+ */
+function containerUnderPod(pod: string, seed: string): string | undefined {
+  let u: URL;
+  try { u = new URL(seed, pod); } catch { return undefined; }
+  if (u.search !== '' || u.hash !== '') return undefined;
+  const href = u.toString();
+  const url = href.endsWith('/') ? href : `${href}/`;
+  if (!url.startsWith(pod) || url === pod) return undefined;
+  if (NON_DESCRIPTOR_CONTAINERS.has(url.slice(pod.length))) return undefined;
+  return url;
+}
+
+async function listDescriptorUrls(
+  pod: string,
+  fetchFn: FetchFn,
+  seeds: readonly string[] = [],
+): Promise<string[]> {
   // Membership comes from each container's advertised `ldp:contains`, NOT a
   // filename regex. Enumerate the pod's child containers from the root's
-  // ldp:contains (minus known system ones), always including the two we know
-  // hold manifest content, then read each container's ldp:contains members.
+  // ldp:contains (minus known system ones), always including the default
+  // container and any the CALLER names as holding its descriptors, then read
+  // each container's ldp:contains members.
   // Non-descriptor members are filtered downstream by
   // manifestEntryFromDescriptorTurtle (it reads each member's declared type), so
   // the only filename heuristic left is distinguishing a descriptor (`.ttl`)
   // from its own graph payload (`-graph.trig`) — both are real declared members.
-  const containers = new Set<string>([`${pod}${DEFAULT_CONTAINER}`, `${pod}foxxi-wallet/`]);
+  //
+  // ★ THE SEEDS ARE THE CALLER'S, NOT THIS PACKAGE'S. The scan used to probe one
+  // vertical's credential container on every pod, for every caller. A container
+  // only matters here when the root listing cannot be read, and the caller that
+  // wrote into it is the one that knows it exists: `publish` seeds the container it
+  // just wrote to, and `rebuildManifestFromPod` takes `containers` from its caller.
+  const containers = new Set<string>([`${pod}${DEFAULT_CONTAINER}`]);
+  for (const seed of seeds) {
+    const url = containerUnderPod(pod, seed);
+    if (url) containers.add(url);
+  }
   try {
     const root = await fetchFn(pod, { method: 'GET', headers: { Accept: TURTLE_CONTENT_TYPE } });
     if (root.ok) {
@@ -1813,7 +1845,7 @@ async function listDescriptorUrls(pod: string, fetchFn: FetchFn): Promise<string
     let r: Awaited<ReturnType<FetchFn>>;
     try { r = await fetchFn(containerUrl, { method: 'GET', headers: { Accept: TURTLE_CONTENT_TYPE } }); }
     catch (e) { throw new Error(`container GET <${containerUrl}> failed: ${(e as Error).message}`); }
-    if (r.status === 404) continue;                       // missing container (e.g. no foxxi-wallet yet) — fine
+    if (r.status === 404) continue;                       // missing container (e.g. a seed not written yet) — fine
     // Any non-404 failure aborts the rebuild rather than PUT a PARTIAL manifest
     // (a transient 5xx must not silently drop a whole container's entries).
     if (!r.ok) throw new Error(`container GET <${containerUrl}> -> ${r.status} ${r.statusText}`);
@@ -1832,8 +1864,9 @@ async function listDescriptorUrls(pod: string, fetchFn: FetchFn): Promise<string
 async function buildManifestBodyFromPod(
   pod: string,
   fetchFn: FetchFn,
+  seeds: readonly string[] = [],
 ): Promise<{ body: string; scanned: number; written: number }> {
-  const descriptorUrls = await listDescriptorUrls(pod, fetchFn);
+  const descriptorUrls = await listDescriptorUrls(pod, fetchFn, seeds);
   const entries: string[] = [];
   await Promise.allSettled(descriptorUrls.map(async durl => {
     try {
@@ -1931,16 +1964,20 @@ async function buildManifestFromPGSL(
  * MANIFEST_HOT_LIMIT entries each, so healing a 653-descriptor pod is a sequence of ~2-second
  * PUTs rather than the single 6-second-lock-losing PUT it used to be. Before this change
  * `rebuild_manifest` could not complete on the maintainer's pod at all.
+ *
+ * `containers` names containers the caller knows hold its descriptors (paths relative to the
+ * pod, or URLs under it). The scan finds every container the pod root lists anyway; a named
+ * one is still scanned when the root listing cannot be read.
  */
 export async function rebuildManifestFromPod(
   podUrl: string,
-  opts: { fetch?: FetchFn; log?: (m: string) => void } = {},
+  opts: { fetch?: FetchFn; log?: (m: string) => void; containers?: readonly string[] } = {},
 ): Promise<{ scanned: number; written: number; manifestUrl: string; archives: string[]; archivesDeleted: string[] }> {
   const fetchFn = opts.fetch ?? _fetchFallback;
   const log = opts.log ?? (() => {});
   const pod = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
-  const { body, scanned, written } = await buildManifestBodyFromPod(pod, fetchFn);
+  const { body, scanned, written } = await buildManifestBodyFromPod(pod, fetchFn, opts.containers ?? []);
 
   // Every segment the CURRENT index links, so the rebuild can retire the ones it no longer
   // needs. Read before anything is written; a failure to read them is not fatal (they are
@@ -3016,7 +3053,9 @@ export async function publish(
       }
       if (rebuiltBody === null) {
         try {
-          const rebuilt = await buildManifestBodyFromPod(pod, fetchFn);
+          // Seeded with the container this publish just wrote to, so the scan reaches the
+          // caller's own descriptors even when the pod root listing cannot be read.
+          const rebuilt = await buildManifestBodyFromPod(pod, fetchFn, [container]);
           if (rebuilt.written > 0) {
             rebuiltBody = rebuilt.body.includes(`<${descriptorUrl}>`)
               ? rebuilt.body
