@@ -432,7 +432,9 @@ import {
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { attachXapiLrsRoutes, internalRefusalOf, keepStatementsWhole, listStoredStatements, storeStatementDurably, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
+import { HostedPackages, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf } from '../src/scorm-hosting.js';
+import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
@@ -5086,12 +5088,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // authoring role. Was: any directory MEMBER of any role (e.g. a plain learner)
     // could write a SCORM package into the acme tenant pod (round-26).
     if (!isAdminEquivalent(ctx.role)) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — uploading a SCORM package to the tenant requires an admin / learning-engineer (caller role: ${ctx.role})` };
-    return uploadScormPackage({
+    const upload = await uploadScormPackage({
       tenantPodUrl: tenantPodUrl,
       zipBase64: args.zip_base64 as string,
       hintedTitle: args.hinted_title as string | undefined,
       uploaderDid: ctx.webId,
     });
+    if (upload.status !== 'parsed' || !upload.parsed) return upload;
+    // A parsed package is kept, by its sha-256, and played: a cmi5 course whose AUs are its SCOs,
+    // served here each in a sandbox of its own (src/scorm-hosting.ts).
+    const hosted = await hostUploadedPackage(Buffer.from(args.zip_base64 as string, 'base64'), upload.parsed.packageTitle, upload.parsed.launchable);
+    return { ...upload, ...hosted };
   },
 
   'foxxi.derive_adaptive_policy': async (args) => {
@@ -5870,7 +5877,12 @@ const app = createVerticalBridge({
         // affordances directly.
         res.setHeader('Access-Control-Allow-Origin', '*');
       }
-      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      // PUT and DELETE for the xAPI resources: a statement is PUT with its id, and the State and
+      // Profile documents are PUT and DELETEd. The SCORM runtime sends its statements by PUT, from
+      // the player's origin and from a hosted package's sandbox, and a preflight that did not list
+      // PUT refused every one of them. Nothing here is ambient (no credentials, as above), so a
+      // method allowed grants nothing a caller does not already hold.
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
       // Mcp-Method / Mcp-Name are REQUIRED on protocol revision 2026-07-28, which this
       // bridge now serves. A browser cannot send a header the preflight did not allow,
       // so omitting them leaves the modern era unreachable from the dashboard and the
@@ -10634,6 +10646,54 @@ app.post('/agent/credentials/claim', async (req, res) => {
   } catch (err) { sendServerError(res, err, 'credentials-claim'); }
 });
 
+// ── SCORM packages hosted here, each document in a sandbox of its own ─────────────────────────
+//
+// src/scorm-hosting.ts says why no second origin is needed and what the sandbox costs. Uploaded
+// with foxxi.upload_scorm_package; kept on the tenant pod by sha-256; played as a cmi5 course
+// through the signed launch below, the SCOs' statements sent with that launch's auth-token.
+
+const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl });
+
+/** Keep a parsed package and register it as a cmi5 course; say how to launch it, or why it is not kept. */
+async function hostUploadedPackage(bytes: Buffer, title: string, launchable: readonly string[]): Promise<Record<string, unknown>> {
+  if (!launchable.length) return { hosted: false, hostedWhy: 'the package names no launchable SCO, so there is nothing to play' };
+  let kept: { sha256: string; url: string };
+  try { kept = await hostedPackages.keep(bytes); }
+  catch (e) { return { hosted: false, hostedWhy: `the package could not be kept: ${(e as Error).message}` }; }
+  const course = hostedPackageCourse(bridgeBaseUrl, kept.sha256, { title, launchable });
+  registerCmi5Course(DEFAULT_TENANT, course);
+  return {
+    hosted: true,
+    packageSha256: kept.sha256, packageUrl: kept.url,
+    course: { id: course.id, title: course.title, aus: course.structure.map(a => ({ id: a.id, title: a.title })) },
+    launch: { method: 'POST', target: `${bridgeBaseUrl}/agent/cmi5/launch`, affordance: actionUrl('urn:iep:action:foxxi:cmi5-launch-signed' as IRI), payload: { course_id: course.id } },
+  };
+}
+
+/** A hosted package's course, registered again from the package kept on the pod (after a restart). */
+async function restoreHostedPackage(courseId: string): Promise<void> {
+  const sha = hostedPackageOf(bridgeBaseUrl, courseId);
+  if (!sha) return;
+  const zip = await hostedPackages.open(sha);
+  if (!zip) return;
+  try {
+    const pkg = unwrapScormPackage(zip.toBuffer());
+    const launchable = pkg.resources.filter(r => r.isLaunchable).map(r => r.path);
+    if (launchable.length) registerCmi5Course(DEFAULT_TENANT, hostedPackageCourse(bridgeBaseUrl, sha, { title: pkg.title, launchable }));
+  } catch { /* not a package any more: answered as absent */ }
+}
+
+attachHostedPackageRoutes(app, {
+  packages: hostedPackages,
+  bridgeBaseUrl,
+  courseFor: async (sha) => {
+    const courseId = `${bridgeBaseUrl}/scorm/packages/${sha}`;
+    if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
+    return getCmi5Course(DEFAULT_TENANT, courseId);
+  },
+  onError: sendServerError,
+});
+
 // ── cmi5 for a signed learner ─────────────────────────────────────────────────────────────────
 //
 // GET /cmi5/launch names any learner, so it is the operator's. This is the learner's own, signed
@@ -10668,6 +10728,7 @@ app.post('/agent/cmi5/launch', async (req, res) => {
     if (!courseId) { res.status(400).json({ error: 'course_id is required: a cmi5 course published on this bridge (POST /content/publish-course)' }); return; }
     // Published courses are registered in the default tenant, and come back from the pod after a restart.
     if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent below */ } }
+    if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
     const course = getCmi5Course(DEFAULT_TENANT, courseId);
     if (!course) { res.status(404).json({ error: `no cmi5 course ${courseId} is published on this bridge` }); return; }
     const learner = await signedLearner(auth);

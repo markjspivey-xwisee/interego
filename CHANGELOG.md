@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: an uploaded SCORM package is played from the bridge, each document in a sandbox of its own
+
+`foxxi.upload_scorm_package` read a package (its title, SCOs, standard and authoring tool) and kept a record of it, but not the package. Nothing uploaded could be played. Serving someone else's HTML and script from the bridge's origin as it is would hand it that origin, and the way out on record was a second origin just for content.
+
+No second origin is needed (`src/scorm-hosting.ts`):
+- a parsed package is kept on the tenant pod under its sha-256, and read back only while its bytes still hash to it;
+- each file is served from `/scorm/packages/<sha-256>/files/<path>` with `Content-Security-Policy: sandbox` and no `allow-same-origin`, plus `nosniff` and no referrer. Every document runs in an opaque origin of its own, so it cannot read the bridge origin's storage or script its pages. A path never leaves the package: no dot or empty segments, no backslashes, and an entry named so in a crafted zip is refused too;
+- content that cannot reach an LMS in a parent window gets the runtime put into each HTML document: the SCORM player's own `scorm-rte.js`, served from the bridge (one runtime, which the bridge image now ships). A bootstrap goes before it. It stands in for `localStorage` and `sessionStorage`, which a sandboxed page may not use. It also reads the cmi5 launch the page was opened with, fetches its auth-token once, and reads `LMS.LaunchData`. Every byte of the document goes out as it came in, whatever its encoding;
+- the runtime sends nothing until it holds the token. Each statement names the launch's actor and the AU, and carries the launch's registration and session, including a statement made before the launch data arrived. The credential is bound to one registration, never the learner's own;
+- the package becomes a cmi5 course of its SCOs, launched with the signed `POST /agent/cmi5/launch`. Its statements land in the learner's record as experience, and after a restart the course is restored from the package kept on the pod;
+- the bridge's CORS preflight now allows PUT and DELETE. A statement is PUT with its id, and a preflight listing only GET and POST refused every statement the runtime sent, from the player's origin as much as from a sandbox. No credentials are allowed cross-origin, so no authority comes with the methods.
+
+Single-document SCOs, which current authoring tools export, run. Content whose frames script each other does not, since each document is its own opaque origin.
+
+`tests/a-scorm-package-plays-in-a-sandbox-of-its-own.test.ts` covers:
+- the pieces: the sandbox, paths, injection that keeps every byte, and the course;
+- the store against a stand-in pod;
+- the routes over HTTP, headers included;
+- the bootstrap and the runtime together in a page whose storage throws, as a sandboxed page's does;
+- the bridge's wiring.
+
+Twenty-two mutants each turn a named test red.
+
 ## 2026-09-27 — Foxxi: what the bridge records on its own behalf, it reports only once the store holds it
 
 The doors that take a caller's statements now wait for the store. The bridge's own emitters did not: each wrote with the unawaited `storeStatementInternal` and reported at once. A store that did not keep the write left each of these claims false:

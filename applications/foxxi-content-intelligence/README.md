@@ -109,6 +109,16 @@ glue references them but does NOT re-implement them.
 | `transcripts.json` | Whisper-transcribed audio narration |
 | `foxxi_admin_v01.jsx` + `foxxi_dashboard{,_v03}.jsx` | React admin + dashboard UIs |
 
+## Hosted SCORM packages
+
+An uploaded SCORM package (`foxxi.upload_scorm_package`) is played from the bridge itself, with no second origin ([`src/scorm-hosting.ts`](src/scorm-hosting.ts)):
+- it is kept on the tenant pod under its sha-256, and read back only while its bytes still hash to it;
+- each of its files is served from `/scorm/packages/<sha-256>/files/<path>` with `Content-Security-Policy: sandbox` and no `allow-same-origin`, so every document runs in an opaque origin of its own and cannot reach anything of the bridge's;
+- each HTML document gets the SCORM runtime put into it (the player's own `scorm-rte.js`), after a bootstrap that stands in for web storage and takes the cmi5 launch's auth-token. The content's commits become that AU's cmi5 statements, sent with a credential bound to one registration;
+- the package is a cmi5 course of its SCOs, launched with the signed `POST /agent/cmi5/launch` (`course_id` is `<bridge>/scorm/packages/<sha-256>`), and its statements land in the learner's record as experience.
+
+Single-document SCOs, which current authoring tools export, run. Content whose frames script each other does not, because each document is its own origin.
+
 ## Layering discipline
 
 Per [`applications/README.md`](../README.md):

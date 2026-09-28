@@ -65,6 +65,7 @@ authenticates to the LRS with the issued token.
 | SCORM 1.2 + 2004 Run-Time Environment (the JS API, full CMI data model, error codes, suspend_data limits) | **Conformant (RTE)** | `deploy/foxxi-scorm-player/site/scorm-rte.js` |
 | SCORM → cmi5 auto-translation (RTE emits cmi5 statements on Commit/Terminate) | **Implemented** | `scorm-rte.js` |
 | Package parsing (SCORM 1.2 / 2004 / cmi5 detection) | **Implemented** | `applications/_shared/scorm/` |
+| Hosting uploaded packages: kept by sha-256 on the tenant pod, each document served in its own sandbox (`Content-Security-Policy: sandbox` without `allow-same-origin`, so no second origin is needed), the runtime put into each document, and played as a cmi5 course through the signed launch. Single-document SCOs run; frames that script each other do not, since every document is its own opaque origin | **Implemented** | `src/scorm-hosting.ts` |
 | LOM metadata + sequencing-rule extraction (audit trail) | **Implemented** | `src/lom-sequencing.ts` |
 | **SCORM 2004 Sequencing & Navigation — runtime enforcement**: activity tree, control modes (choice/choiceExit/flow/forwardOnly), the Flow + Choice subprocesses, pre/post-condition rules, limit conditions (attemptLimit), the Rollup process (measure / objective-satisfied incl. satisfiedByMeasure / completion; default + custom rules), objective maps | **Implemented** | `src/scorm-sequencing.ts`; `POST /scorm/sequencing/session` · `.../navigate` · `.../commit` · `GET .../:id`; verified by `tools/lms-conformance-smoke.ts` |
 
