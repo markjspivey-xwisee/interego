@@ -194,7 +194,11 @@ describe('the doors that record statements', () => {
     const completion = door('/agent/record-course-completion');
     expect(completion).toContain('const held = new Set(kept.keptIds);\n      const keptPart = session.filter(s => held.has(s.id));');
     expect(completion).toContain("kept: keptPart.map(verbOf), notKept: session.filter(s => !held.has(s.id)).map(verbOf), passedKept: keptPart.some(s => verbOf(s) === 'passed'),");
-    expect(door('foxxi.record_external_agent_run')).toContain('performanceKept: kept.keptIds.includes(ingested.performance.id as string),');
+    // By the id minted for it in inOrder, where it is written last; the ingested statement has none (Codex, on #547).
+    const run = door('foxxi.record_external_agent_run');
+    expect(run).toContain('const inOrder = [...ingested.statements.filter(s => s !== ingested.performance), ingested.performance]');
+    expect(run).toContain('.map((stmt): Record<string, unknown> & { id: string } => ({ id: randomUUID(), ...stmt }));');
+    expect(run).toContain('performanceKept: kept.keptIds.includes(inOrder[inOrder.length - 1]!.id),');
   });
 });
 
