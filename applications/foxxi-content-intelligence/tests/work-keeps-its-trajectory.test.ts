@@ -143,15 +143,37 @@ describe('the bridge answers a failed unit with what the work there implies', ()
     expect(tool).toContain("...(typeof s.object_type === 'string' && s.object_type.trim() ? { objectType: s.object_type.trim() } : {}),");
   });
 
-  it('keeps with a step the performer published the type its statement names, so its work is read at that competency', () => {
+  it('keeps with a step the performer published what its statement names the work by, so the step is read at the competency the statement counts toward', () => {
     const DOMAIN = 'https://ops.example/ns/work#RefundDecision';
-    const ev = projectMeshEntry({
-      descriptorUrl: 'https://pod.example/p/context-graphs/1790000000000.ttl', describes: ['urn:graph:refund-1790000000000'],
-      conformsTo: ['https://w3id.org/interego/ns/iep#TemporalFacet', DOMAIN], modalStatus: 'Asserted',
-    } as never, 'https://pod.example/p/');
-    expect(ev?.step.objectType).toBe(DOMAIN);
-    const run = { steps: [{ id: ev!.step.id!, granularity: ev!.step.granularity, objectId: ev!.step.objectId, objectName: ev!.step.objectName, objectType: ev!.step.objectType }] };
-    expect(trajectoryAt(run, competencyOfTerm(DOMAIN))?.steps).toHaveLength(1);
+    /** A published descriptor's step, and the competency its own statement counts toward, by the record's rule. */
+    const projected = (entry: Record<string, unknown>) => {
+      const ev = projectMeshEntry({ descriptorUrl: 'https://pod.example/p/context-graphs/1790000000000.ttl', describes: ['urn:graph:refund-1790000000000'], modalStatus: 'Asserted', ...entry } as never, 'https://pod.example/p/')!;
+      const object = ev.statement.object as { definition: { type: string; name: { en: string } } };
+      const success = (ev.statement.result as { success?: boolean } | undefined)?.success;
+      const key = performanceCompetency({ taskType: object.definition.type, taskName: object.definition.name.en, success })?.key;
+      const run = { steps: [{ ...ev.step, id: ev.step.id! }] };
+      return { step: ev.step, key, read: key ? trajectoryAt(run, key) : null };
+    };
+    // A domain type names the competency.
+    const typed = projected({ conformsTo: ['https://w3id.org/interego/ns/iep#TemporalFacet', DOMAIN] });
+    expect(typed.step.objectType).toBe(DOMAIN);
+    expect(typed.key).toBe(competencyOfTerm(DOMAIN));
+    expect(typed.read?.steps).toHaveLength(1);
+    // With no domain type, the named task does once an outcome was published, and the step keeps
+    // that outcome, so it names the same competency (Codex, on #554).
+    const named = projected({ conformsTo: ['https://w3id.org/interego/ns/iep#TemporalFacet'], success: false });
+    expect(named.step.result).toEqual({ success: false });
+    expect(named.key).toMatch(/^label:/);
+    expect(named.read?.steps).toHaveLength(1);
+    // Without an outcome, neither the statement nor the step names one.
+    const bare = projected({ conformsTo: ['https://w3id.org/interego/ns/iep#TemporalFacet'] });
+    expect(bare.key).toBeUndefined();
+    expect(bare.step.result).toBeUndefined();
+  });
+
+  it('reads a trajectory back with the type each step was recorded with (Codex, on #554)', () => {
+    const getter = src.slice(src.indexOf("'foxxi.get_agent_trajectory': async"), src.indexOf('\n  },', src.indexOf("'foxxi.get_agent_trajectory': async")));
+    expect(getter).toContain('object: { id: s.objectId, name: s.objectName, ...(s.objectType ? { type: s.objectType } : {}) },');
   });
 
   it('reads the performer\'s own record and what they keep, and makes no offer it could repeat', () => {

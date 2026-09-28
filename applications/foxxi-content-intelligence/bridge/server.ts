@@ -3884,7 +3884,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         modalStatus: s.modalStatus,
         granularity: s.granularity,
         verb: s.verb,
-        object: { id: s.objectId, name: s.objectName },
+        // Its type too: it names the competency a task's work counts toward (trajectoryAt), so a
+        // trajectory read back says what it was recorded to say (Codex, on #554).
+        object: { id: s.objectId, name: s.objectName, ...(s.objectType ? { type: s.objectType } : {}) },
         parentId: s.parentId,
         supersedesId: s.supersedesId,
         result: s.result,

@@ -285,9 +285,12 @@ export function projectMeshEntry(
   // The trajectory step carries only structural signals: the modal MODE of the
   // act and (via supersedesId) plan-revision — what agent-disposition reads. No
   // fabricated success; the tool-call-success lens stays dark unless a real
-  // outcome signal exists (honest). It carries the type the statement names
-  // too, so a failure at the competency a domain type names reads this work's
-  // regime (learner-record.ts trajectoryAt), as the statement counts toward it.
+  // outcome signal exists (honest), and this is a task step, which that lens
+  // does not read. It carries what the statement names the work by: the type,
+  // and the outcome when the envelope carried one, so a failure at the
+  // competency the statement counts toward (a domain type's, or else its named
+  // task's, which only an outcome makes one) reads this work's regime too
+  // (learner-record.ts trajectoryAt; Codex, on #554).
   const step: TrajectoryStepInput = {
     id: entry.descriptorUrl,
     modalStatus: mode.trajModal,
@@ -296,6 +299,7 @@ export function projectMeshEntry(
     objectId: graph,
     objectName: label,
     objectType,
+    ...(typeof result?.success === 'boolean' ? { result: { success: result.success } } : {}),
     ...(superseded ? { supersedesId: superseded } : {}),
   };
 

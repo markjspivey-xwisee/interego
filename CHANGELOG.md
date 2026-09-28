@@ -12,7 +12,8 @@ A failed unit of work is answered with the plan its regime implies (#516). That 
   - the steps they published to their pod, as the mesh sweep keeps them under their lens.
 
   A partition is looked in only if it exists, so a read creates none.
-- **A step names its type.** `foxxi.record_agent_trajectory` takes `object_type` on each step. A step the mesh sweep projects from a descriptor carries the type its statement names, so the same work counts toward the same competency in the record and in the regime read.
+- **A step names its type.** `foxxi.record_agent_trajectory` takes `object_type` on each step, and `foxxi.get_agent_trajectory` returns it (`object.type`), so a trajectory reads back as it was recorded (Codex, on this PR).
+- **A published step carries what its statement names the work by.** A step the mesh sweep projects from a descriptor carries the type the statement names, and the outcome when the envelope carried one. So an untyped, name-keyed piece of published work is read at the competency its statement counts toward too (Codex, on this PR). Only tool-call steps' outcomes feed the disposition's ratios, so this changes nothing else a trajectory is read for.
 - **The offer says what it read.** Its evidence lists the trajectories recorded apart (`recordedApart`), and its situation's provenance counts them. When there is neither kind, the answer says both ways a regime could be read.
 - **Docs.** `PERFORMANCE-ARCHITECTURE.md` §5 describes the answer and takes this off its not-yet-wired list. The trajectory tool's affordance describes `object_type`, and `docs/skills` is regenerated.
 
