@@ -184,3 +184,17 @@ export type {
   SearchResult,
   PublishResult as SDKPublishResult,
 } from './sdk.js';
+
+// Extensions — capabilities a vertical publishes as descriptors, read through one neutral
+// contract: complete, bounded, verified, unambiguous, content-identified. The vertical supplies
+// the profile (its vocabulary); nothing here names one. See extensions.ts.
+export { loadExtensionCatalog, ExtensionLoadRefused } from './extensions.js';
+export type {
+  ExtensionProfile,
+  ExtensionCandidate,
+  ExtensionOperationDraft,
+  ExtensionOperation,
+  ExtensionCatalog,
+  ExtensionRefusal,
+  LoadExtensionCatalogOptions,
+} from './extensions.js';

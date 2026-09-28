@@ -1,6 +1,6 @@
 # Agent collective: every affordance
 
-Derived from `applications/agent-collective/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 5 affordances.
+Derived from `applications/agent-collective/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 6 affordances.
 
 ## `ac.author_tool`
 
@@ -60,6 +60,19 @@ Promote Hypothetical tool to Asserted. REFUSES unless attestation threshold is m
 | `enforce_constitutional_constraints` | boolean | no | When true, the publisher consults active ieh:PromotionConstraint descriptors on the pod and enforces them in addition to the threshold policy. Substrate-enforced downward causation rather than agent-mediated. |
 | `pod_url` | string | no | Pod URL. |
 | `authoring_agent_did` | string | no | Promoting agent DID. |
+
+## `ac.discover_promoted_tools`
+
+**Discover the tools a pod has promoted**
+
+Read every tool promoted to Asserted in a pod, through the substrate's neutral extension contract: the whole manifest is read, archives included; each promotion is checked against its manifest row and resolved to the tool it attests; and a pod that cannot be read completely, or that offers one action from two tools, is REFUSED rather than answered in part. Each tool comes back with its action, title, description, the promotion's descriptor and the authored descriptor that defines it (its source is there) — dereference those through the generic verbs; the relay never runs a pod's code. The catalog carries a content digest: read again and compare digests to learn whether anything changed.
+
+- Action: `urn:iep:action:ac:discover-promoted-tools`
+- HTTP: `POST {base}/ac/discover_promoted_tools`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `pod_url` | string | no | Pod to read. Defaults to the bridge's configured pod. |
 
 ## `ac.bundle_teaching_package`
 

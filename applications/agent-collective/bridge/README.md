@@ -4,7 +4,7 @@
 
 ## What this is
 
-Small Express + MCP server exposing the agent-collective's 5 affordances (tool authoring, attestation, promotion, teaching package bundling, cross-agent audit) as named MCP tools (`ac.*`). Independent per-vertical bridge, separate from the generic personal-bridge.
+Small Express + MCP server exposing the agent-collective's 6 affordances (tool authoring, attestation, promotion, discovery of promoted tools, teaching package bundling, cross-agent audit) as named MCP tools (`ac.*`). Independent per-vertical bridge, separate from the generic personal-bridge.
 
 ## Two reachability paths
 
@@ -22,7 +22,7 @@ export AC_DEFAULT_AGENT_DID=did:web:agent.example
 PORT=6040 BRIDGE_DEPLOYMENT_URL=http://localhost:6040 npm start
 ```
 
-Connect any MCP client to `http://localhost:6040/mcp` for the 5 named tools.
+Connect any MCP client to `http://localhost:6040/mcp` for the 6 named tools.
 
 ## Configuration
 

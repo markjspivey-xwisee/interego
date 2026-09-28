@@ -266,9 +266,12 @@ console.log('\n11. R1 — the relay key is never handed to a caller-supplied URL
 check('recipientKeyFor() exists and is own-pod-scoped + fail-closed',
   /async function recipientKeyFor\(/.test(SERVER)
   && /recipientKeyFor[\s\S]{0,900}callerOwnPod\(args\)/.test(SERVER));
+// The last raw sink was the alias loader's handler (#367). It was labelled "startup-internal"
+// here, but it ran on every call, anonymously on two transports; the loader is gone, and so is
+// the allowance.
 const rawKeySinks = SERVER.match(/recipientKeyPair: relayAgentKey/g) ?? [];
-check('at most ONE raw relayAgentKey sink remains (loadDynamicTools, startup-internal)',
-  rawKeySinks.length <= 1, `found ${rawKeySinks.length}`);
+check('no raw relayAgentKey sink remains',
+  rawKeySinks.length === 0, `found ${rawKeySinks.length}`);
 check('get_descriptor decrypts only via recipientKeyFor',
   /handleGetDescriptor[\s\S]{0,3000}recipientKeyPair: await recipientKeyFor\(args, url\)/.test(SERVER));
 check('the followed dcat:accessURL is scoped too',

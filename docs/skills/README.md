@@ -12,7 +12,7 @@ One agentskills.io skill per vertical, each derived from that vertical's `afford
 | `interego-learner-performer-companion` | Learner-performer companion | 11 | not public | [SKILL.md](learner-performer-companion/SKILL.md), [reference.md](learner-performer-companion/reference.md) |
 | `interego-organizational-working-memory` | Organizational working memory | 14 | not public | [SKILL.md](organizational-working-memory/SKILL.md), [reference.md](organizational-working-memory/reference.md) |
 | `interego-agent-development-practice` | Agent development practice | 8 | not public | [SKILL.md](agent-development-practice/SKILL.md), [reference.md](agent-development-practice/reference.md) |
-| `interego-agent-collective` | Agent collective | 5 | not public | [SKILL.md](agent-collective/SKILL.md), [reference.md](agent-collective/reference.md) |
+| `interego-agent-collective` | Agent collective | 6 | not public | [SKILL.md](agent-collective/SKILL.md), [reference.md](agent-collective/reference.md) |
 | `interego-lrs-adapter` | LRS adapter | 4 | not public | [SKILL.md](lrs-adapter/SKILL.md), [reference.md](lrs-adapter/reference.md) |
 | `interego-shared-workspace` | Shared workspace | 1 | `https://wsp-bridge-production.up.railway.app` | [SKILL.md](shared-workspace/SKILL.md), [reference.md](shared-workspace/reference.md) |
 

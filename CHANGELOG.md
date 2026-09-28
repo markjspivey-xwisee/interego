@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-09-28 — The relay dispatches only what it declares; a vertical's capabilities are read through one neutral contract (#367)
+
+The relay carried a loader for one vertical's promoted tools. It scanned `RELAY_DYNAMIC_TOOLS_POD` for `urn:graph:ac:tool:` rows and read the newest 200, silently. It regexed each descriptor for `a ac:AgentTool`, a label and an action, and registered each hit as a `dynamic:<label>` alias.
+- **The aliases sat outside the declared surface.** They were callable on `/mcp`, `/tool/:name` and `/messages` (anonymously on the last two), and listed by no catalog, tool list, operation schema or health check.
+- **Each alias decrypted with the relay's own key** and echoed the caller's injected session bearer back in its result.
+- **It matched nothing the vertical publishes.** Promotions describe `urn:graph:ac:tool-attested:` graphs, authored tools are Hypothetical, and the type, label and action are in the graph payload, never in the descriptor.
+
+**The relay.**
+- **The loader is gone,** with its registry, its startup load and its two admin routes.
+- **One resolver.** Every transport resolves a tool through `declaredToolResolver(TOOLS)`, so what can be called is exactly what `TOOL_SURFACE` publishes: `/mcp`, the request observer, the interop surface, `/tool/:name` and `/messages`. It answers own members only. `TOOLS` is a plain object, so the old bare index also resolved `constructor`, `toString` and the rest of `Object.prototype`, which failed as a TypeError rather than as an unknown tool.
+- **One source for every published name.** `/health`'s count and the `/sse` connection frame now come from `TOOL_SURFACE`, as the lists, `GET /tools`, the operations catalog and the interop card already did.
+- **The relay declares `tools.listChanged: false`.** Its surface is fixed for the life of a process, and a client learns of a new one by comparing digests.
+- The last raw relay-key decryption sink went with the loader, so the identity gates now allow none.
+
+**The contract.** `loadExtensionCatalog(pod, profile)` in `@interego/solid` does the parts no vertical should rewrite, and names no vertical:
+- **Complete and bounded.** It reads the whole manifest chain, archives included. An unreadable segment, a pod past the row or operation bound, or an unreadable selected descriptor or payload refuses the load (`ExtensionLoadRefused`); a catalog never silently lacks an operation.
+- **Verified.** A candidate's descriptor must sit inside the pod, and is read from the pod's own origin whatever host the stored IRI names. It must describe every graph its row claims and hash to its row's content id.
+- **Unambiguous.** Identity is the action, compared scheme-independently. Two current descriptors offering one action refuse the load, and a superseded row is not current.
+- **Content-identified.** A catalog carries a digest; refresh is explicit, by loading again and comparing.
+
+A vertical supplies an `ExtensionProfile`: which rows are candidates, and what one verified candidate offers. Publication is descriptor- and affordance-driven: clients follow operations with the generic verbs, and nothing is installed into any tool list.
+
+**The vertical.** Agent-collective's reading moved to `applications/agent-collective/src/promoted-tools.ts`, as a profile over what `promoteTool` and `authorTool` actually write. A new affordance, `ac.discover_promoted_tools`, answers the catalog. It refuses an unreadable pod with 502, and a pod that offers one action from two tools with 422. `docs/skills` is regenerated.
+
+**The gate.** The base-neutrality gate's allowlist entries for the loader are removed, so agent-collective vocabulary in base code is now a hard zero like every other vertical's. The relay's comment pin falls from 69 to 60.
+
+Tests:
+- `tests/extension-catalog.test.ts`: the contract, with a made-up vertical's profile over descriptors the real `publish()` wrote.
+- `promoted-tools-are-read-through-the-extension-contract.test.ts`: the profile over the real publisher, and the bridge's statuses. Three mutants, each caught.
+- The relay's `tool-surface.test.ts`:
+  - the resolver refuses prototype members;
+  - all five dispatch sites resolve through it;
+  - no bare `TOOLS[` index and no `Object.keys(TOOLS)` remain;
+  - every projection reads `TOOL_SURFACE`;
+  - `listChanged: false`.
+
 ## 2026-09-28 — The substrate names no vertical, and a gate keeps it that way (#366, part 1)
 
 The base — `packages/*`, the MCP relay, the stdio server, identity and the validator — is meant to know no vertical: a vertical reaches it through published descriptors, affordances and operator configuration. #366 found it knew one in four places, each a reasonable default where it was written, and nothing measured the sum.

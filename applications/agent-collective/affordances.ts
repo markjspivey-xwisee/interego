@@ -103,6 +103,34 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     },
   },
   {
+    action: 'urn:iep:action:ac:discover-promoted-tools' as IRI,
+    toolName: 'ac.discover_promoted_tools',
+    title: 'Discover the tools a pod has promoted',
+    description: 'Read every tool promoted to Asserted in a pod, through the substrate\'s neutral extension contract: the whole manifest is read, archives included; each promotion is checked against its manifest row and resolved to the tool it attests; and a pod that cannot be read completely, or that offers one action from two tools, is REFUSED rather than answered in part. Each tool comes back with its action, title, description, the promotion\'s descriptor and the authored descriptor that defines it (its source is there) — dereference those through the generic verbs; the relay never runs a pod\'s code. The catalog carries a content digest: read again and compare digests to learn whether anything changed.',
+    method: 'POST',
+    targetTemplate: '{base}/ac/discover_promoted_tools',
+    annotations: { title: 'Discover the tools a pod has promoted', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'pod_url', type: 'string', required: false, description: 'Pod to read. Defaults to the bridge\'s configured pod.' },
+    ],
+    outputs: {
+      description: 'ExtensionCatalog — every promoted tool in the pod, sorted by action, with the digest that changes exactly when what the pod offers does.',
+      properties: {
+        profile: { type: 'string', description: 'The profile the pod was read under (ac:AgentTool).' },
+        pod: { type: 'string', description: 'The pod that was read.' },
+        operations: {
+          type: 'array',
+          description: 'One entry per promoted tool: action, title, description, descriptorUrl (the promotion), definedBy (the authored tool), cid when the manifest records one.',
+          items: { type: 'object' },
+        },
+        digest: { type: 'string', description: 'sha256 over the canonical JSON of the profile and its operations.' },
+        rows: { type: 'integer', description: 'Manifest rows read, archives included.' },
+        selected: { type: 'integer', description: 'Rows that were promotions.' },
+      },
+      required: ['profile', 'pod', 'operations', 'digest', 'rows', 'selected'],
+    },
+  },
+  {
     action: 'urn:iep:action:ac:bundle-teaching-package' as IRI,
     toolName: 'ac.bundle_teaching_package',
     title: 'Bundle a teaching package (artifact + practice)',

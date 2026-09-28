@@ -280,7 +280,11 @@ these layers.
 nothing under `applications/`, `integrations/` or `examples/`. A vertical reaches the base only
 through published descriptors, affordances and operator configuration: which vertical's lattice
 stands behind the relay's node ids, and which vertical manifests its action ids redirect to, are
-settings the reference image makes, not defaults the relay's code holds. The rows marked **base**
+settings the reference image makes, not defaults the relay's code holds. A vertical's own
+capabilities reach clients as descriptors and affordances: the vertical states how to read them as
+an `ExtensionProfile`, and `@interego/solid`'s `loadExtensionCatalog` reads them completely, verified
+and unambiguously, or refuses. The relay's declared tool surface is fixed for the life of a process
+and is the only thing it dispatches. The rows marked **base**
 are exactly what `tools/base-neutrality-lint.mjs` scans (a hard zero on dependencies and on
 vertical vocabulary in code outside a counted allowlist; a two-sided pin on comments), and
 `tests/every-code-path-has-an-owner.test.ts` fails when this table and that gate disagree, or when a
