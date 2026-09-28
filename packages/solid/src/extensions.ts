@@ -115,11 +115,70 @@ export class ExtensionLoadRefused extends Error {
 }
 
 export interface LoadExtensionCatalogOptions {
+  /**
+   * The fetch every read goes through. A caller that loads a pod its own caller named must pass
+   * one that refuses private and link-local targets at every redirect hop (`guardedFetchFn` from
+   * `@interego/core`): this function reads whatever the manifest links to inside that pod.
+   */
   readonly fetch?: FetchFn;
   /** Most manifest rows read before refusing as over-bound. Default 5000. */
   readonly maxRows?: number;
   /** Most operations one catalog holds before refusing as over-bound. Default 500. */
   readonly maxOperations?: number;
+  /**
+   * Most bytes any one document may hold (a manifest segment, a descriptor, a payload) before the
+   * load refuses as over-bound. Default 4 MiB. Enforced while the body is read, so a single huge
+   * document cannot exhaust memory before any row or operation count is reached.
+   */
+  readonly maxDocumentBytes?: number;
+}
+
+/**
+ * Wrap a fetch so no response body it hands back can exceed `maxBytes`.
+ *
+ * ★ ROW AND OPERATION BOUNDS DO NOT BOUND MEMORY (Codex, on #558). The manifest reader buffers a
+ * whole segment with `text()` before it counts a single row, so one enormous document from a pod
+ * a caller named could exhaust the heap before `maxRows` was ever consulted. The cap is applied
+ * while the body streams: a declared `content-length` over it refuses before reading, and a body
+ * that streams past it is cancelled at the chunk that crosses it. A response with no stream (a
+ * test double) is measured after `text()`.
+ */
+function cappedFetch(fetchFn: FetchFn, maxBytes: number): FetchFn {
+  const tooBig = (url: string) =>
+    new ExtensionLoadRefused('over-bound', `${url} is larger than the ${maxBytes}-byte bound on one document`);
+  return (async (url: string, init?: Parameters<FetchFn>[1]) => {
+    const resp = await fetchFn(url, init) as Awaited<ReturnType<FetchFn>> & { body?: unknown };
+    const declared = Number(resp.headers?.get?.('content-length') ?? Number.NaN);
+    if (Number.isFinite(declared) && declared > maxBytes) throw tooBig(url);
+    let read: Promise<string> | undefined;
+    const text = (): Promise<string> => (read ??= (async () => {
+      const body = resp.body as { getReader?: () => { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(): Promise<void> } } | null | undefined;
+      if (body && typeof body.getReader === 'function') {
+        const reader = body.getReader();
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          total += value.byteLength;
+          if (total > maxBytes) { await reader.cancel().catch(() => undefined); throw tooBig(url); }
+          chunks.push(value);
+        }
+        const all = new Uint8Array(total);
+        let at = 0;
+        for (const c of chunks) { all.set(c, at); at += c.byteLength; }
+        return new TextDecoder().decode(all);
+      }
+      const whole = await resp.text();
+      if (new TextEncoder().encode(whole).byteLength > maxBytes) throw tooBig(url);
+      return whole;
+    })());
+    return Object.assign(Object.create(null) as object, {
+      ok: resp.ok, status: resp.status, statusText: resp.statusText, headers: resp.headers,
+      text, json: async () => JSON.parse(await text()) as unknown,
+    }) as Awaited<ReturnType<FetchFn>>;
+  }) as FetchFn;
 }
 
 const MANIFEST_PATH = '.well-known/context-graphs';
@@ -171,7 +230,7 @@ export async function loadExtensionCatalog(
   options: LoadExtensionCatalogOptions = {},
 ): Promise<ExtensionCatalog> {
   if (!absoluteIri(profile.id)) throw new ExtensionLoadRefused('invalid', 'a profile is named by an absolute IRI');
-  const fetchFn = options.fetch ?? getDefaultFetch();
+  const fetchFn = cappedFetch(options.fetch ?? getDefaultFetch(), options.maxDocumentBytes ?? 4 * 1024 * 1024);
   const maxRows = options.maxRows ?? 5000;
   const maxOperations = options.maxOperations ?? 500;
   const pod = new URL(withSlash(podUrl));
@@ -181,6 +240,7 @@ export async function loadExtensionCatalog(
   try {
     chain = await fetchAllManifestEntries(manifestUrl, fetchFn, { stopAfterEntries: maxRows + 1 });
   } catch (e) {
+    if (e instanceof ExtensionLoadRefused) throw e;
     throw new ExtensionLoadRefused('incomplete', `the pod's manifest could not be read: ${(e as Error).message}`);
   }
   const empty = chain.hotStatus === 404 && chain.entries.length === 0;
@@ -211,7 +271,10 @@ export async function loadExtensionCatalog(
       if (!target) throw new ExtensionLoadRefused('unverified', `${descriptorUrl} is outside the pod ${pod.href}`);
       let resp: Awaited<ReturnType<FetchFn>>;
       try { resp = await fetchFn(target, { method: 'GET', headers: { Accept: 'text/turtle' } }); }
-      catch (e) { throw new ExtensionLoadRefused('incomplete', `${descriptorUrl} could not be read: ${(e as Error).message}`); }
+      catch (e) {
+        if (e instanceof ExtensionLoadRefused) throw e;
+        throw new ExtensionLoadRefused('incomplete', `${descriptorUrl} could not be read: ${(e as Error).message}`);
+      }
       if (!resp.ok) throw new ExtensionLoadRefused('incomplete', `${descriptorUrl} answered ${resp.status}`);
       const turtle = await resp.text();
       const mismatch = verifyAgainstRow(entry, turtle);
@@ -229,7 +292,10 @@ export async function loadExtensionCatalog(
     if (!target) throw new ExtensionLoadRefused('unverified', `${descriptorUrl}'s payload ${link.accessURL} is outside the pod`);
     let got: Awaited<ReturnType<typeof fetchGraphContent>>;
     try { got = await fetchGraphContent(target, { fetch: fetchFn }); }
-    catch (e) { throw new ExtensionLoadRefused('incomplete', `${descriptorUrl}'s payload could not be read: ${(e as Error).message}`); }
+    catch (e) {
+      if (e instanceof ExtensionLoadRefused) throw e;
+      throw new ExtensionLoadRefused('incomplete', `${descriptorUrl}'s payload could not be read: ${(e as Error).message}`);
+    }
     if (got.content === null || got.encrypted) throw new ExtensionLoadRefused('incomplete', `${descriptorUrl}'s payload could not be read as plaintext`);
     return got.content;
   };

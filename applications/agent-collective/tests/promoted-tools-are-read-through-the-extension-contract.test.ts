@@ -153,3 +153,29 @@ describe('the bridge answers the catalog, and a refusal with a refusing status',
     });
   });
 });
+
+describe('a pod a caller names is read through the SSRF guard (Codex, on #558)', () => {
+  it('refuses a loopback or private pod before any request reaches it', async () => {
+    const { podFetch } = await import('../src/pod-fetch.js');
+    for (const pod of ['http://127.0.0.1:9/p/', 'http://169.254.169.254/latest/', 'http://10.0.0.5/p/', 'http://localhost:3000/p/']) {
+      const base = vi.fn(async () => new Response('', { status: 200 }));
+      const guarded = podFetch(pod, undefined, base as never);
+      expect(guarded, pod).toBeTypeOf('function');
+      // The guard refuses the target itself, before the base fetch is ever called…
+      await expect(guarded!(`${pod}.well-known/context-graphs`)).rejects.toThrow(/private|loopback|link-local/);
+      // …and the discovery answer is that refusal, not a failed connection.
+      const answer = await promotedToolsAnswer(pod, guarded);
+      expect(answer, pod).toMatchObject({ kind: 'refusal', reason: 'incomplete' });
+      expect(String((answer as { error?: string }).error), pod).toMatch(/private|loopback|link-local/);
+      expect(base, pod).not.toHaveBeenCalled();
+    }
+  });
+
+  it('uses the plain fetch only for the pod the operator configured', async () => {
+    const { podFetch } = await import('../src/pod-fetch.js');
+    expect(podFetch('http://css.internal:3456/collective/', 'http://css.internal:3456/collective/')).toBeUndefined();
+    expect(podFetch('http://css.internal:3456/other/', 'http://css.internal:3456/collective/')).toBeUndefined();
+    expect(podFetch('https://pod.example/collective/', 'http://css.internal:3456/collective/')).toBeTypeOf('function');
+    expect(podFetch('https://pod.example/collective/', undefined)).toBeTypeOf('function');
+  });
+});
