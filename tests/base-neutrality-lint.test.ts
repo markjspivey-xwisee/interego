@@ -71,6 +71,12 @@ describe('the dependency rule', () => {
     const published = gate.forbiddenPackages();
     expect(published.has('@interego/foxxi-content-intelligence')).toBe(true);
     expect(published.has('@interego/workspace-client')).toBe(true);
+    // Found by walking the tree, at any depth — not by a list of subdirectory names, which
+    // missed these three (Codex, on #556).
+    for (const nested of ['@interego/foxxi-dashboard', '@interego/foxxi-microsite', '@interego/foxxi-reports-ui', '@interego/workspace-desktop']) {
+      expect(published.has(nested), nested).toBe(true);
+      expect(gate.forbiddenReason(nested, RELAY_FILE), nested).toMatch(/outside the base/);
+    }
     expect(gate.forbiddenReason('@interego/workspace-client', RELAY_FILE)).toMatch(/outside the base/);
     expect(gate.forbiddenReason('@interego/core', RELAY_FILE)).toBeUndefined();
     expect(gate.forbiddenReason('@interego/core/http', RELAY_FILE)).toBeUndefined();

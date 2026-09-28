@@ -36,6 +36,21 @@ Tests:
   - every projection reads `TOOL_SURFACE`;
   - `listChanged: false`.
 
+## 2026-09-28 — A manifest rebuild refuses when it cannot list the pod; the neutrality gate finds every vertical package (#556 follow-up)
+
+Codex, on #556:
+- **A rebuild could overwrite an index with part of it.** When a pod's root listing could not be read, `rebuildManifestFromPod` fell back to the containers it happened to know and PUT an index of only those. That silently dropped every entry in the rest. On master before #556 that was every container but two; after it, every container but the default.
+  - The rebuild now refuses instead, named containers or not, and writes nothing. The relay's `rebuild_manifest` and `tools/css-rebuild-manifest.mjs` report the refusal.
+  - `containers` now reaches what the root does not list, such as a container nested below a child.
+  - `publish`'s recovery of a manifest that is already gone stays best-effort, and still reaches the container it just wrote to.
+- **The gate missed nested vertical packages.** `tools/base-neutrality-lint.mjs` read `package.json` from three named subdirectories only. So `@interego/foxxi-dashboard`, `@interego/foxxi-microsite` and `@interego/foxxi-reports-ui` were importable from the base without a failure. It now walks `applications/`, `integrations/` and `examples/` at any depth.
+
+Tests: `a-rebuild-scans-the-containers-its-caller-names` covers:
+- a root answering 500, 403 or 401, and one that fails outright, each refused with the old index left as it was;
+- a nested container reached only by naming it.
+
+`base-neutrality-lint` now names the three packages. A mutant for each fix is caught.
+
 ## 2026-09-28 — The substrate names no vertical, and a gate keeps it that way (#366, part 1)
 
 The base — `packages/*`, the MCP relay, the stdio server, identity and the validator — is meant to know no vertical: a vertical reaches it through published descriptors, affordances and operator configuration. #366 found it knew one in four places, each a reasonable default where it was written, and nothing measured the sum.

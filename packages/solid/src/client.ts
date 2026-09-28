@@ -1807,6 +1807,7 @@ async function listDescriptorUrls(
   pod: string,
   fetchFn: FetchFn,
   seeds: readonly string[] = [],
+  opts: { requireRootListing?: boolean } = {},
 ): Promise<string[]> {
   // Membership comes from each container's advertised `ldp:contains`, NOT a
   // filename regex. Enumerate the pod's child containers from the root's
@@ -1819,15 +1820,24 @@ async function listDescriptorUrls(
   // from its own graph payload (`-graph.trig`) — both are real declared members.
   //
   // ★ THE SEEDS ARE THE CALLER'S, NOT THIS PACKAGE'S. The scan used to probe one
-  // vertical's credential container on every pod, for every caller. A container
-  // only matters here when the root listing cannot be read, and the caller that
-  // wrote into it is the one that knows it exists: `publish` seeds the container it
-  // just wrote to, and `rebuildManifestFromPod` takes `containers` from its caller.
+  // vertical's credential container on every pod, for every caller. The caller
+  // that wrote into a container is the one that knows it exists: `publish` seeds
+  // the container it just wrote to, and `rebuildManifestFromPod` takes `containers`
+  // from its caller, which reaches a container the root does not list (one nested
+  // below a child) as well.
   const containers = new Set<string>([`${pod}${DEFAULT_CONTAINER}`]);
   for (const seed of seeds) {
     const url = containerUnderPod(pod, seed);
     if (url) containers.add(url);
   }
+  // ★ A ROOT THAT CANNOT BE LISTED IS A SCAN THAT CANNOT BE COMPLETE. The rebuild
+  // OVERWRITES the manifest, so it refuses (`requireRootListing`) rather than write
+  // an index of only the containers it happened to know, which silently drops every
+  // entry in the rest; the per-container rule below already refuses a partial PUT
+  // for the same reason. `publish`'s recovery of a manifest that is already gone is
+  // best-effort and still falls back to the known containers.
+  let rootListed = false;
+  let rootProblem = 'no answer';
   try {
     const root = await fetchFn(pod, { method: 'GET', headers: { Accept: TURTLE_CONTENT_TYPE } });
     if (root.ok) {
@@ -1837,8 +1847,14 @@ async function listDescriptorUrls(
           containers.add(member);
         }
       }
+      rootListed = true;
+    } else {
+      rootProblem = `${root.status} ${root.statusText}`.trim();
     }
-  } catch { /* fall back to the known containers below */ }
+  } catch (e) { rootProblem = (e as Error).message; }
+  if (!rootListed && opts.requireRootListing) {
+    throw new Error(`pod root ${pod} could not be listed (${rootProblem}); refusing to rebuild its manifest from a scan that cannot see every container`);
+  }
 
   const urls = new Set<string>();
   for (const containerUrl of containers) {
@@ -1865,8 +1881,9 @@ async function buildManifestBodyFromPod(
   pod: string,
   fetchFn: FetchFn,
   seeds: readonly string[] = [],
+  opts: { requireRootListing?: boolean } = {},
 ): Promise<{ body: string; scanned: number; written: number }> {
-  const descriptorUrls = await listDescriptorUrls(pod, fetchFn, seeds);
+  const descriptorUrls = await listDescriptorUrls(pod, fetchFn, seeds, opts);
   const entries: string[] = [];
   await Promise.allSettled(descriptorUrls.map(async durl => {
     try {
@@ -1966,8 +1983,10 @@ async function buildManifestFromPGSL(
  * `rebuild_manifest` could not complete on the maintainer's pod at all.
  *
  * `containers` names containers the caller knows hold its descriptors (paths relative to the
- * pod, or URLs under it). The scan finds every container the pod root lists anyway; a named
- * one is still scanned when the root listing cannot be read.
+ * pod, or URLs under it). The scan reads every container the pod root lists anyway; a named one
+ * reaches a container the root does not list, such as one nested below a child. A pod root that
+ * cannot be listed refuses the rebuild: this call overwrites the manifest, and an index of only
+ * the containers it happened to know would silently drop the rest.
  */
 export async function rebuildManifestFromPod(
   podUrl: string,
@@ -1977,7 +1996,7 @@ export async function rebuildManifestFromPod(
   const log = opts.log ?? (() => {});
   const pod = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
-  const { body, scanned, written } = await buildManifestBodyFromPod(pod, fetchFn, opts.containers ?? []);
+  const { body, scanned, written } = await buildManifestBodyFromPod(pod, fetchFn, opts.containers ?? [], { requireRootListing: true });
 
   // Every segment the CURRENT index links, so the rebuild can retire the ones it no longer
   // needs. Read before anything is written; a failure to read them is not fatal (they are
