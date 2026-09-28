@@ -3,6 +3,7 @@
  *
  * Three ways in: a link, IRI or hash someone handed them; the ones they opened lately in this
  * browser; and the ones their own record says they played or made, read with foxxi.content_mine.
+ * Below them, the SCORM packages this bridge hosts, each launched as a cmi5 course.
  * The first two need no signature. The third is signed as the learner, so with a wallet extension
  * it waits for them to ask, as every prompt should.
  */
@@ -16,6 +17,7 @@ import { postSigned } from '../auth/signed-request.js';
 import { compositionRefFrom, hashOfComposition } from '../learn/composition-ref.js';
 import { readRecents, recentsKey, type RecentComposition } from '../learn/recents.js';
 import type { AuthoredComposition, Mine, PlayedComposition } from '../learn/play.js';
+import { HostedPackagesCard } from './HostedPackagesCard.js';
 
 const row: React.CSSProperties = {
   display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px',
@@ -142,8 +144,10 @@ export function LearnPanel({ session }: { session: FoxxiSession }) {
         )}
       </Card>
 
+      <HostedPackagesCard session={session} />
+
       <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>
-        An agent finds the same list with <code>foxxi.content_mine</code>, signed as itself.
+        An agent finds the same list with <code>foxxi.content_mine</code>, signed as itself, and the hosted packages at the entry point's <code>scorm-packages</code> link.
       </div>
     </div>
   );

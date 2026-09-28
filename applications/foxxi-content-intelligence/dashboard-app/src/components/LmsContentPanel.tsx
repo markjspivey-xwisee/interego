@@ -3,6 +3,8 @@
  * and launching it. Three tools over existing bridge endpoints:
  *
  *   Upload package   POST {base}/mcp foxxi.ingest_content_package (base64 zip)
+ *   Host a package   POST {base}/mcp foxxi.upload_scorm_package (base64 zip): kept on the tenant
+ *                    pod, served sandboxed, and played by learners as a cmi5 course
  *   OneRoster import POST {base}/ims/oneroster/v1p2/import (CSV bundle)
  *   cmi5 launch      GET  {base}/cmi5/launch (build a conformant AU launch URL)
  *                    GET  {base}/cmi5/registration/:reg (inspect progress)
@@ -16,7 +18,7 @@ import { useHypermedia } from '../hypermedia.js';
 import { Card, Button } from './common.js';
 import type { FoxxiSession } from '../auth/session.js';
 
-type Tool = 'upload' | 'oneroster' | 'launch';
+type Tool = 'upload' | 'host' | 'oneroster' | 'launch';
 
 function bridgeOrigin(entry: { '@id'?: string; _links?: Record<string, { href: string }> } | null): string {
   const candidate = entry?.['@id'] ?? entry?._links?.['statements-admin']?.href ?? entry?._links?.['self']?.href;
@@ -48,14 +50,15 @@ export function LmsContentPanel({ session }: { session: FoxxiSession }) {
   return (
     <Card title="LMS content & launch">
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
-        {(['upload', 'oneroster', 'launch'] as const).map(t => (
+        {(['upload', 'host', 'oneroster', 'launch'] as const).map(t => (
           <Button key={t} primary={tool === t} small onClick={() => setTool(t)}>
-            {t === 'upload' ? 'Upload package' : t === 'oneroster' ? 'OneRoster import' : 'cmi5 launch'}
+            {t === 'upload' ? 'Upload package' : t === 'host' ? 'Host a package' : t === 'oneroster' ? 'OneRoster import' : 'cmi5 launch'}
           </Button>
         ))}
       </div>
       {!origin && <div style={{ color: 'var(--bad)', fontSize: 12 }}>✗ bridge endpoint not resolved (hypermedia entry unavailable)</div>}
       {origin && tool === 'upload' && <UploadPackage origin={origin} bearer={bearer} session={session} />}
+      {origin && tool === 'host' && <HostPackage origin={origin} bearer={bearer} />}
       {origin && tool === 'oneroster' && <OneRosterImport origin={origin} bearer={bearer} session={session} />}
       {origin && tool === 'launch' && <Cmi5Launch origin={origin} bearer={bearer} session={session} />}
     </Card>
@@ -131,6 +134,54 @@ function UploadPackage({ origin, bearer, session }: { origin: string; bearer: st
       </div>
       <div><Button primary small disabled={busy || !file} onClick={submit}>{busy ? 'Ingesting…' : 'Ingest package'}</Button></div>
       {err && <div style={{ color: 'var(--bad)', fontSize: 12 }}>✗ {err}</div>}
+      <ResultBox result={result} />
+    </div>
+  );
+}
+
+// ── Host a SCORM package for learners to play ────────────────────────
+
+/** What the bridge says of a package it now hosts, or why it does not. */
+interface Hosted { hosted?: boolean; hostedWhy?: string; packageSha256?: string; course?: { id: string; title: string; aus?: Array<{ title: string }> } }
+
+function HostPackage({ origin, bearer }: { origin: string; bearer: string }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<(Hosted & Record<string, unknown>) | null>(null);
+
+  async function submit() {
+    if (!file) return;
+    setBusy(true); setErr(null); setResult(null);
+    try {
+      const r = await mcpCall(origin, bearer, 'foxxi.upload_scorm_package', { zip_base64: await fileToBase64(file), hinted_title: file.name.replace(/\.zip$/i, '') }) as Hosted & Record<string, unknown>;
+      if (typeof r.error === 'string') throw new Error(r.error);
+      setResult(r);
+    } catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+        Host a SCORM 1.2 / 2004 .zip for learners to play. The bridge keeps it on the tenant pod by its
+        sha-256, serves each of its documents in a sandbox of its own, and makes it a cmi5 course of its
+        SCOs; learners launch it from their Learn page, and what it reports lands in their record.
+      </div>
+      <div>
+        <span style={label}>Package (.zip)</span>
+        <input type="file" accept=".zip,application/zip" onChange={e => setFile(e.target.files?.[0] ?? null)} style={{ fontSize: 12 }} />
+      </div>
+      <div><Button primary small disabled={busy || !file} onClick={submit}>{busy ? 'Hosting…' : 'Host package'}</Button></div>
+      {err && <div style={{ color: 'var(--bad)', fontSize: 12 }}>✗ {err}</div>}
+      {result?.hosted === true && result.course && (
+        <div style={{ fontSize: 13 }}>
+          ✓ Hosted <strong>{result.course.title}</strong>
+          {result.course.aus ? ` (${result.course.aus.length === 1 ? '1 part' : `${result.course.aus.length} parts`})` : ''}:
+          {' '}<a href={result.course.id} target="_blank" rel="noopener noreferrer">its record</a>. Learners find it on Learn.
+        </div>
+      )}
+      {result?.hosted === false && <div style={{ color: 'var(--bad)', fontSize: 12 }}>Read, but not hosted: {result.hostedWhy ?? 'the bridge did not say why'}</div>}
       <ResultBox result={result} />
     </div>
   );

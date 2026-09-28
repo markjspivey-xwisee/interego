@@ -61,6 +61,11 @@ function standInPod() {
     const link = new Headers(init?.headers).get('Link');
     asked.push(`${init?.method ?? 'GET'} ${url}${link ? ` ${link}` : ''}`);
     if (init?.method === 'PUT') { kept.set(url, Buffer.from(await new Response(init.body as BodyInit).arrayBuffer())); return new Response(null, { status: 201 }); }
+    // A container answers with what it contains, as an LDP container does.
+    if (url.endsWith('/')) {
+      const members = [...kept.keys()].filter(k => k.startsWith(url) && k !== url).map(k => `<${k.slice(url.length)}>`);
+      return new Response(`<> a <http://www.w3.org/ns/ldp#BasicContainer>${members.length ? `; <http://www.w3.org/ns/ldp#contains> ${members.join(', ')}` : ''} .`, { status: 200, headers: { 'Content-Type': 'text/turtle' } });
+    }
     const bytes = kept.get(url);
     return bytes ? new Response(new Uint8Array(bytes), { status: 200 }) : new Response('', { status: 404 });
   }) as typeof fetch;
@@ -194,6 +199,29 @@ function renamed(zip: Buffer, from: string, to: string): Buffer {
   return out;
 }
 
+describe('the packages kept here are listed', () => {
+  it('from the pod\'s package container, with any held in memory, and from memory alone when the pod does not answer', async () => {
+    const pod = standInPod();
+    const first = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl });
+    await first.keep(PACKAGE);
+    const other = makeWith(['imsmanifest.xml']);
+    await first.keep(other);
+    // Another process, holding nothing, lists both from the pod.
+    expect((await new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl }).list()).sort()).toEqual([SHA, sha256Of(other)].sort());
+    // A pod that stops answering leaves what this process holds.
+    let up = true;
+    const flaky = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (!up) throw new Error('the pod did not answer');
+      return pod.fetchImpl(input, init);
+    }) as typeof fetch;
+    const holder = new HostedPackages({ podUrl: POD, fetch: flaky });
+    await holder.keep(PACKAGE);
+    up = false;
+    expect(await holder.list()).toEqual([SHA]);
+    expect(await first.list(1)).toHaveLength(1);
+  });
+});
+
 function makeTampered(): Buffer {
   const zip = new AdmZip(PACKAGE);
   zip.updateFile('app.js', Buffer.from('steal()', 'utf8'));
@@ -258,6 +286,19 @@ describe('the routes a hosted package is reached by', () => {
       expect(r.status, path).toBeLessThan(500);
     }
     expect((await fetch(`${base}/scorm/packages/${'0'.repeat(64)}/files/index.html`)).status).toBe(404);
+  });
+
+  it('lists the packages hosted here, each with its course, and one way to launch any of them', async () => {
+    const listing = await (await fetch(`${base}/scorm/packages`)).json() as {
+      kind: string; packages: Array<{ packageSha256: string; href: string; course: { id: string; title: string }; aus: unknown[] }>;
+      launch: { toolName: string; target: string };
+    };
+    expect(listing.kind).toBe('hosted-scorm-packages');
+    expect(listing.packages).toEqual([{
+      packageSha256: SHA, href: `${BRIDGE}/scorm/packages/${SHA}`,
+      course: { id: `${BRIDGE}/scorm/packages/${SHA}`, title: 'Refunds, hosted' }, aus: [{ id: `${BRIDGE}/scorm/packages/${SHA}/au/0`, title: 'Refunds, hosted' }],
+    }]);
+    expect(listing.launch).toMatchObject({ toolName: 'foxxi.cmi5_launch_signed', target: `${BRIDGE}/agent/cmi5/launch` });
   });
 
   it('serves the runtime, and the package\'s own record says how to launch it', async () => {

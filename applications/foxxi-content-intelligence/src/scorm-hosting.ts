@@ -199,9 +199,14 @@ export class HostedPackages {
 
   constructor(private readonly opts: { podUrl: string; fetch?: typeof fetch; maxHeldBytes?: number }) {}
 
+  /** The pod container packages are kept in. */
+  containerUrl(): string {
+    return `${this.opts.podUrl.replace(/\/*$/, '/')}foxxi-uploads/packages/`;
+  }
+
   /** The pod resource a package is kept at. */
   urlOf(sha256: string): string {
-    return `${this.opts.podUrl.replace(/\/*$/, '/')}foxxi-uploads/packages/${sha256}.zip`;
+    return `${this.containerUrl()}${sha256}.zip`;
   }
 
   /** Keep a package's bytes on the pod, under their sha-256. Throws when the pod does not take them. */
@@ -213,7 +218,7 @@ export class HostedPackages {
     // made this one (Codex, on #548). Make it first, as the shared lattice does its own: best
     // effort, since a container that already exists answers however it does.
     try {
-      await fetchFn(url.slice(0, url.lastIndexOf('/') + 1), {
+      await fetchFn(this.containerUrl(), {
         method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '',
       });
     } catch { /* best effort */ }
@@ -237,6 +242,20 @@ export class HostedPackages {
     const zip = new AdmZip(bytes);
     this.hold(sha256, zip, bytes.length);
     return zip;
+  }
+
+  /**
+   * The packages kept here: those the pod's package container lists, and any held in memory, at most
+   * `max`. A pod that cannot be read gives the held ones.
+   */
+  async list(max = 200): Promise<string[]> {
+    const shas = new Set<string>();
+    try {
+      const r = await (this.opts.fetch ?? globalThis.fetch)(this.containerUrl(), { headers: { Accept: 'text/turtle' } });
+      if (r.ok) for (const m of (await r.text()).matchAll(/([0-9a-f]{64})\.zip\b/g)) shas.add(m[1]!);
+    } catch { /* the pod did not answer: what is held is what can be listed */ }
+    for (const sha of this.held.keys()) shas.add(sha);
+    return [...shas].slice(0, max);
   }
 
   private hold(sha256: string, zip: AdmZip, bytes: number): void {
@@ -272,6 +291,32 @@ export function attachHostedPackageRoutes(app: Express, deps: {
   app.get('/scorm/runtime/scorm-rte.js', (_req, res) => {
     res.set('Content-Type', 'text/javascript; charset=utf-8').set('X-Content-Type-Options', 'nosniff').set('Cache-Control', 'public, max-age=3600');
     res.send(scormRuntimeSource());
+  });
+
+  /**
+   * The packages hosted here, each with its course, and one way to launch any of them: the signed
+   * cmi5 launch, for the signer, naming the package's course. Read by a learner's page and by an
+   * agent alike; nothing in it is anyone's record.
+   */
+  app.get('/scorm/packages', async (_req, res) => {
+    try {
+      const packages: Array<Record<string, unknown>> = [];
+      for (const sha of await deps.packages.list()) {
+        const course = await deps.courseFor(sha);
+        if (!course) continue;
+        packages.push({
+          packageSha256: sha, href: `${base}/scorm/packages/${sha}`,
+          course: { id: course.id, title: course.title }, aus: course.structure.map(a => ({ id: a.id, title: a.title })),
+        });
+      }
+      res.json({
+        kind: 'hosted-scorm-packages', packages,
+        launch: {
+          toolName: 'foxxi.cmi5_launch_signed', method: 'POST', target: `${base}/agent/cmi5/launch`, payload: '{ course_id: <a package\'s course.id> }',
+          note: 'Signed as the learner: the launch is for the signer, and answers with the launchUrl to open. What the package reports lands in their own record, as experience.',
+        },
+      });
+    } catch (err) { deps.onError(res, err, 'hosted-packages'); }
   });
 
   app.get(PACKAGE_RECORD, async (req, res) => {

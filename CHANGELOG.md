@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-09-28 — Foxxi: a learner finds and plays a hosted SCORM package from their Learn page; an operator hosts one from the dashboard
+
+The bridge hosted uploaded packages and played them through the signed cmi5 launch, but a person could not reach any of it. The upload was an MCP tool, nothing listed what was hosted, and the launch was a signed POST.
+
+Now:
+- the bridge lists what it hosts at `GET /scorm/packages`, each package with its course and AUs, and one way to launch any of them (`foxxi.cmi5_launch_signed`). The list comes from the pod's package container, plus whatever this process holds, so it survives a restart; a pod that does not answer leaves what is held. The entry point links it as `scorm-packages`, so a page and an agent find it the same way;
+- the Learn page lists the packages without asking for a signature, and launches one with the signed cmi5 launch, as the learner (a wallet asks first; with a session key, it does not). The launch opens in a tab of its own, since a package is sandboxed on the bridge and cannot be framed here, with no opener and no referrer handed to it. Only an http(s) launch URL is opened, and only well-formed packages are listed;
+- the operator's LMS content panel has a "Host a package" tool, calling `foxxi.upload_scorm_package`. It says what was hosted and links the package's record, or says why a package was read but not hosted.
+
+`tests/a-learner-finds-and-launches-a-hosted-package.test.ts` (new) and additions to `a-scorm-package-plays-in-a-sandbox-of-its-own.test.ts` cover:
+- the listing, from the pod and from memory;
+- the route and the entry point's link;
+- the page's parsing of what it opens;
+- the card, the Learn page and the operator panel.
+
+Nine mutants each turn a named test red.
+
 ## 2026-09-28 — Foxxi: a hosted package's container is made first, an XHTML document stays XML, and a run says whether its performance is held
 
 Three of Codex's findings, on #548 and #547 after they merged:
