@@ -17,17 +17,24 @@
 
 import { ethers } from 'ethers';
 import { deriveUserWallet, type MessageSigner } from './session-token.js';
+import { originOf, type SessionKeyGrant } from '../../../src/session-key.js';
 
 const enc = new TextEncoder();
 const sha256Hex = (s: string): string => ethers.sha256(enc.encode(s)).slice(2);
 
-export interface SignedEnvelope { _signed_payload: string; _signature: string; }
+export interface SignedEnvelope { _signed_payload: string; _signature: string; _session?: SessionKeyGrant; }
 
-/** Sign `args` as `signer` — the DIRECT-branch envelope (agent_id = did:ethr:<its address>). */
-export async function signAgentRequestAs(signer: MessageSigner, args: Record<string, unknown>, now: Date = new Date()): Promise<SignedEnvelope> {
-  const _signed_payload = JSON.stringify({ agent_id: `did:ethr:${signer.address}`, timestamp: now.toISOString(), ...args });
-  const _signature = await signer.signMessage(`sha256:${sha256Hex(_signed_payload)}`);
-  return { _signed_payload, _signature };
+/**
+ * Sign `args` as `signer` — the DIRECT-branch envelope (agent_id = did:ethr:<its address>). Given
+ * the bridge it goes to (`audience`), a signer that holds a session key there signs with the key and
+ * sends its grant beside the payload (auth/session-key.ts); the request is still the signer's own.
+ * The timestamp is taken once the signing key is in hand, since a wallet may have asked first.
+ */
+export async function signAgentRequestAs(signer: MessageSigner, args: Record<string, unknown>, now?: Date, audience?: string): Promise<SignedEnvelope> {
+  const session = audience && signer.session ? await signer.session(audience) : null;
+  const _signed_payload = JSON.stringify({ agent_id: `did:ethr:${signer.address}`, timestamp: (now ?? new Date()).toISOString(), ...args });
+  const _signature = await (session?.key ?? signer).signMessage(`sha256:${sha256Hex(_signed_payload)}`);
+  return { _signed_payload, _signature, ...(session ? { _session: session.grant } : {}) };
 }
 
 /**
@@ -47,7 +54,7 @@ export async function signAgentRequest(
  * bridge's own words, and carries its status and body for the caller to read.
  */
 export async function postSigned<T = unknown>(href: string, signer: MessageSigner, args: Record<string, unknown>): Promise<T> {
-  const body = await signAgentRequestAs(signer, args);
+  const body = await signAgentRequestAs(signer, args, undefined, originOf(href) ?? undefined);
   const r = await fetch(href, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

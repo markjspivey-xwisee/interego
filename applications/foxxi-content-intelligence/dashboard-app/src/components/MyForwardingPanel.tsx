@@ -42,7 +42,8 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
   // Signed as the session itself: its wallet extension, its connected key (so forwarding keys to
   // the real identity's lens), or else its demo wallet.
   const signer = signerFor(session);
-  // A wallet extension asks for each signature: its reads wait for a click, one signature at a time.
+  // A wallet extension asks before it signs (once for a session key, or each time where the bridge takes
+  // none): until it holds one, its reads wait for a click, one signature at a time.
   const asks = signerAsks(session);
   const [targets, setTargets] = useState<TargetView[] | null>(null);
   const [creds, setCreds] = useState<CredView[] | null>(null);

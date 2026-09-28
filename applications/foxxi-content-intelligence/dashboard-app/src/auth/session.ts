@@ -18,6 +18,7 @@ import { SAMPLE_ADMIN_PAYLOAD } from '../sample/data.js';
 import { ethers } from 'ethers';
 import { mintSessionToken, mintSessionTokenWithSigner, mintSessionTokenWithWallet } from './session-token.js';
 import { extensionAccount, extensionSigner, walletExtension } from './signer.js';
+import { forgetSessionKeys } from './session-key.js';
 
 export type SessionRole = 'learner' | 'admin';
 
@@ -120,6 +121,8 @@ export function saveSession(s: FoxxiSession): void {
 
 export function clearSession(): void {
   localStorage.removeItem(STORAGE_KEY);
+  // A session key signs as whoever granted it: signing out forgets every one this tab holds.
+  forgetSessionKeys();
 }
 
 // The admin's userId is u-admin (Jordan Doe in the demo sample —
