@@ -347,6 +347,11 @@ export class HostedPackages {
     return this.drained;
   }
 
+  /** How many packages wait their turn to be described in the background. */
+  get waiting(): number {
+    return this.queue.length;
+  }
+
   /** A package, from memory or the pod, or null when it is not kept or its bytes are not what its id says. */
   async open(sha256: string): Promise<AdmZip | null> {
     if (!PACKAGE_SHA.test(sha256)) return null;
@@ -379,6 +384,9 @@ export class HostedPackages {
     const describe = this.opts.describePackage;
     if (!describe || !PACKAGE_SHA.test(sha256)) return Promise.resolve(null);
     return once(this.describing, sha256, async () => {
+      // Described already: a launch described it while it waited its turn here (Codex, on #551).
+      const known = this.abouts.get(sha256);
+      if (known) return known;
       // Bytes only for describing are not held: holding them would push out packages being played.
       const held = this.held.get(sha256);
       const bytes = held ? held.zip.toBuffer() : await this.read(sha256);
