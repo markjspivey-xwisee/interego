@@ -119,7 +119,9 @@ An uploaded SCORM package (`foxxi.upload_scorm_package`) is played from the brid
 
 Single-document SCOs, which current authoring tools export, run. Content whose frames script each other does not, because each document is its own origin.
 
-The bridge lists what it hosts at `GET /scorm/packages`, linked from its entry point as `scorm-packages`. In the dashboard, an operator hosts a package from the LMS content panel ("Host a package"). A learner finds it on the Learn page, launches it signed as themselves, and plays it in a tab of its own.
+The bridge lists what it hosts at `GET /scorm/packages`, linked from its entry point as `scorm-packages`. In the dashboard, an admin hosts a package from the LMS content panel ("Host a package"; the bridge refuses anyone else). A learner finds it on the Learn page, launches it signed as themselves, and plays it in a tab of its own.
+
+The listing opens no package. What each package is (its title and SCOs) is kept beside it on the pod as `<sha-256>.json`, and the listing reads that. A package kept with none, for example one uploaded before descriptions were kept, is counted as `unlisted`. The bridge then reads it once, in the background and one package at a time, keeps its description, and lists it from then on. However many requests ask for the same package at once, it is read from the pod once. A SCO whose path would leave the package is never made an AU.
 
 ## Layering discipline
 

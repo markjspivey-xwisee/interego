@@ -4,7 +4,9 @@
  *
  *   Upload package   POST {base}/mcp foxxi.ingest_content_package (base64 zip)
  *   Host a package   POST {base}/mcp foxxi.upload_scorm_package (base64 zip): kept on the tenant
- *                    pod, served sandboxed, and played by learners as a cmi5 course
+ *                    pod, served sandboxed, and played by learners as a cmi5 course. Offered to an
+ *                    admin alone: the bridge refuses anyone else, a learning engineer included
+ *                    (Codex, on #550)
  *   OneRoster import POST {base}/ims/oneroster/v1p2/import (CSV bundle)
  *   cmi5 launch      GET  {base}/cmi5/launch (build a conformant AU launch URL)
  *                    GET  {base}/cmi5/registration/:reg (inspect progress)
@@ -46,11 +48,13 @@ export function LmsContentPanel({ session }: { session: FoxxiSession }) {
   const origin = bridgeOrigin(entry);
   const bearer = session.bearerToken;
   const [tool, setTool] = useState<Tool>('upload');
+  const canHost = session.role === 'admin';
+  const tools: readonly Tool[] = canHost ? ['upload', 'host', 'oneroster', 'launch'] : ['upload', 'oneroster', 'launch'];
 
   return (
     <Card title="LMS content & launch">
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
-        {(['upload', 'host', 'oneroster', 'launch'] as const).map(t => (
+        {tools.map(t => (
           <Button key={t} primary={tool === t} small onClick={() => setTool(t)}>
             {t === 'upload' ? 'Upload package' : t === 'host' ? 'Host a package' : t === 'oneroster' ? 'OneRoster import' : 'cmi5 launch'}
           </Button>
@@ -58,7 +62,7 @@ export function LmsContentPanel({ session }: { session: FoxxiSession }) {
       </div>
       {!origin && <div style={{ color: 'var(--bad)', fontSize: 12 }}>✗ bridge endpoint not resolved (hypermedia entry unavailable)</div>}
       {origin && tool === 'upload' && <UploadPackage origin={origin} bearer={bearer} session={session} />}
-      {origin && tool === 'host' && <HostPackage origin={origin} bearer={bearer} />}
+      {origin && canHost && tool === 'host' && <HostPackage origin={origin} bearer={bearer} />}
       {origin && tool === 'oneroster' && <OneRosterImport origin={origin} bearer={bearer} session={session} />}
       {origin && tool === 'launch' && <Cmi5Launch origin={origin} bearer={bearer} session={session} />}
     </Card>

@@ -31,7 +31,8 @@
  * script each other does not.
  *
  * ★ KEPT BY WHAT IT IS. A package is kept on the tenant pod under its sha-256, and read back only
- * when its bytes still hash to it.
+ * when its bytes still hash to it. What it is (its title and SCOs) is kept beside it, so the
+ * packages here are listed without opening any of them.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -77,14 +78,21 @@ export function isHtmlDocument(path: string): boolean {
 }
 
 /**
- * The entry a request names, or null. The path is taken once decoded, and must be relative, with
- * no dot segments, empty segments, backslashes or NULs: a path never leaves the package. It names
- * an entry exactly, or case-folded when exactly one entry matches that way (packages made on
- * case-insensitive disks often link with other casing).
+ * Whether a path is one inside a package: relative, with no dot segments, empty segments,
+ * backslashes or NULs. A path that is not never leaves the package, served or launched.
+ */
+export function isPackagePath(path: string): boolean {
+  if (!path || path.includes('\0') || path.includes('\\') || path.startsWith('/')) return false;
+  return !path.split('/').some(s => s === '' || s === '.' || s === '..');
+}
+
+/**
+ * The entry a request names, or null. The path is taken once decoded, and must be a package path
+ * (above). It names an entry exactly, or case-folded when exactly one entry matches that way
+ * (packages made on case-insensitive disks often link with other casing).
  */
 export function packageEntry(zip: AdmZip, path: string): AdmZip.IZipEntry | null {
-  if (!path || path.includes('\0') || path.includes('\\') || path.startsWith('/')) return null;
-  if (path.split('/').some(s => s === '' || s === '.' || s === '..')) return null;
+  if (!isPackagePath(path)) return null;
   const files = zip.getEntries().filter(e => !e.isDirectory);
   const exact = files.find(e => e.entryName === path);
   if (exact) return exact;
@@ -161,15 +169,18 @@ export function scormRuntimeSource(): string {
 
 /**
  * A package as a cmi5 course: one AU per launchable SCO, each launched from its file here, moving
- * on when the SCO says it completed or passed. The course's id is the package's own address.
+ * on when the SCO says it completed or passed. The course's id is the package's own address. A SCO
+ * whose path is not a package path is not an AU: its launch URL, resolved, would leave the
+ * package's files for another of the bridge's routes.
  */
-export function hostedPackageCourse(bridgeBaseUrl: string, sha256: string, pkg: { title: string; launchable: readonly string[] }): Cmi5Course {
+export function hostedPackageCourse(bridgeBaseUrl: string, sha256: string, pkg: PackageAbout): Cmi5Course {
   const root = `${bridgeBaseUrl.replace(/\/+$/, '')}/scorm/packages/${sha256}`;
-  const n = pkg.launchable.length;
+  const launchable = pkg.launchable.filter(isPackagePath);
+  const n = launchable.length;
   return {
     id: root,
     title: pkg.title,
-    structure: pkg.launchable.map((href, i) => ({
+    structure: launchable.map((href, i) => ({
       kind: 'au' as const,
       id: `${root}/au/${i}`,
       title: n > 1 ? `${pkg.title} (${i + 1} of ${n})` : pkg.title,
@@ -189,15 +200,61 @@ export function hostedPackageOf(bridgeBaseUrl: string, courseId: string): string
 }
 
 /**
+ * What a package is, kept beside it on the pod so it can be listed without being opened: its title
+ * and the SCOs it launches. It describes the package and is not the package: files are served only
+ * from bytes that hash to the package's id, and a description names only package paths, so the
+ * most one could misstate is a title, or which of the package's own files a launch opens.
+ */
+export interface PackageAbout { title: string; launchable: readonly string[] }
+
+/** A description read back from beside a package, when it is one of that package, with something to launch. */
+export function aboutFrom(sha256: string, body: unknown): PackageAbout | null {
+  const b = body as { packageSha256?: unknown; title?: unknown; launchable?: unknown } | null;
+  if (!b || b.packageSha256 !== sha256 || typeof b.title !== 'string' || !Array.isArray(b.launchable)) return null;
+  const launchable = b.launchable.filter((p): p is string => typeof p === 'string' && isPackagePath(p));
+  return launchable.length ? { title: b.title, launchable } : null;
+}
+
+/** The answer already on its way for a key, or new work, forgotten once it arrives. */
+function once<T>(inFlight: Map<string, Promise<T>>, key: string, work: () => Promise<T>): Promise<T> {
+  const had = inFlight.get(key);
+  if (had) return had;
+  const p = work().finally(() => inFlight.delete(key));
+  inFlight.set(key, p);
+  return p;
+}
+
+/**
  * Where packages are kept (the tenant pod, under their sha-256) and the ones in hand. What is read
  * back is checked against its id before it is used; a zip that does not hash to it is not the
  * package, and is treated as absent.
+ *
+ * ★ A LISTING OPENS NO PACKAGE (Codex, on #550). Each package's description is kept beside it, and
+ * a listing reads that. A package kept with none (before descriptions were kept, or when the pod
+ * did not take one) is described from the package itself in the background, one package at a
+ * time, and its description kept, so it is opened for that once rather than once a listing. However
+ * many ask for the same package at once, it is read from the pod once.
  */
 export class HostedPackages {
   private readonly held = new Map<string, { zip: AdmZip; bytes: number }>();
   private heldBytes = 0;
+  private readonly reading = new Map<string, Promise<Buffer | null>>();
+  private readonly abouts = new Map<string, PackageAbout>();
+  private readonly aboutReads = new Map<string, Promise<PackageAbout | null>>();
+  private readonly describing = new Map<string, Promise<PackageAbout | null>>();
+  /** Packages the background could not describe, and when it may try each again. */
+  private readonly undescribed = new Map<string, number>();
+  private readonly queue: string[] = [];
+  private drained: Promise<void> = Promise.resolve();
+  private draining = false;
 
-  constructor(private readonly opts: { podUrl: string; fetch?: typeof fetch; maxHeldBytes?: number }) {}
+  constructor(private readonly opts: {
+    podUrl: string; fetch?: typeof fetch; maxHeldBytes?: number;
+    /** What a package's bytes say it is, or null when they are no package with anything to launch. */
+    describePackage?: (bytes: Buffer) => PackageAbout | null;
+    /** How long the background leaves a package it could not describe before trying it again. */
+    retryAfterMs?: number;
+  }) {}
 
   /** The pod container packages are kept in. */
   containerUrl(): string {
@@ -209,8 +266,16 @@ export class HostedPackages {
     return `${this.containerUrl()}${sha256}.zip`;
   }
 
-  /** Keep a package's bytes on the pod, under their sha-256. Throws when the pod does not take them. */
-  async keep(bytes: Buffer): Promise<{ sha256: string; url: string }> {
+  /** The pod resource a package's description is kept at, beside it. */
+  aboutUrlOf(sha256: string): string {
+    return `${this.containerUrl()}${sha256}.json`;
+  }
+
+  /**
+   * Keep a package's bytes on the pod, under their sha-256, and what it is beside it when that is
+   * given. Throws when the pod does not take the package.
+   */
+  async keep(bytes: Buffer, about?: PackageAbout): Promise<{ sha256: string; url: string }> {
     const sha256 = sha256Of(bytes);
     const url = this.urlOf(sha256);
     const fetchFn = this.opts.fetch ?? globalThis.fetch;
@@ -225,7 +290,61 @@ export class HostedPackages {
     const r = await fetchFn(url, { method: 'PUT', headers: { 'Content-Type': 'application/zip' }, body: new Blob([new Uint8Array(bytes)], { type: 'application/zip' }) });
     if (!r.ok) throw new Error(`the pod did not keep the package (HTTP ${r.status})`);
     this.hold(sha256, new AdmZip(bytes), bytes.length);
+    if (about) await this.keepAbout(sha256, about);
     return { sha256, url };
+  }
+
+  /**
+   * Keep what a package is beside it, and in hand. Best effort on the pod: a package whose
+   * description the pod did not take is described again from the package, once.
+   */
+  async keepAbout(sha256: string, about: PackageAbout): Promise<void> {
+    const launchable = about.launchable.filter(isPackagePath);
+    if (!PACKAGE_SHA.test(sha256) || !launchable.length) return;
+    const kept = { title: about.title, launchable };
+    this.abouts.set(sha256, kept);
+    try {
+      await (this.opts.fetch ?? globalThis.fetch)(this.aboutUrlOf(sha256), {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ packageSha256: sha256, ...kept }),
+      });
+    } catch { /* best effort */ }
+  }
+
+  /** What a package is: in hand, or read from beside it on the pod. Null when neither has it; the package is not opened. */
+  async about(sha256: string): Promise<PackageAbout | null> {
+    if (!PACKAGE_SHA.test(sha256)) return null;
+    const had = this.abouts.get(sha256);
+    if (had) return had;
+    return once(this.aboutReads, sha256, async () => {
+      try {
+        const r = await (this.opts.fetch ?? globalThis.fetch)(this.aboutUrlOf(sha256), { headers: { Accept: 'application/json' } });
+        if (!r.ok) return null;
+        const about = aboutFrom(sha256, await r.json());
+        if (about) this.abouts.set(sha256, about);
+        return about;
+      } catch { return null; }
+    });
+  }
+
+  /** What a package is, from the package itself when nothing describes it: for one package someone is about to play. */
+  async aboutNow(sha256: string): Promise<PackageAbout | null> {
+    return (await this.about(sha256)) ?? this.describeFromPackage(sha256);
+  }
+
+  /**
+   * What a package is, when something describes it. When nothing does, the package is queued to
+   * be described in the background and null is answered meanwhile: a listing opens no package
+   * while its request waits.
+   */
+  async aboutOrLater(sha256: string): Promise<PackageAbout | null> {
+    const about = await this.about(sha256);
+    if (!about && PACKAGE_SHA.test(sha256)) this.later(sha256);
+    return about;
+  }
+
+  /** Settles once every package queued to be described has been. */
+  whenDescribed(): Promise<void> {
+    return this.drained;
   }
 
   /** A package, from memory or the pod, or null when it is not kept or its bytes are not what its id says. */
@@ -233,15 +352,62 @@ export class HostedPackages {
     if (!PACKAGE_SHA.test(sha256)) return null;
     const had = this.held.get(sha256);
     if (had) { this.held.delete(sha256); this.held.set(sha256, had); return had.zip; }
-    let r: Response;
-    try { r = await (this.opts.fetch ?? globalThis.fetch)(this.urlOf(sha256), { headers: { Accept: 'application/zip' } }); }
-    catch { return null; }
-    if (!r.ok) return null;
-    const bytes = Buffer.from(await r.arrayBuffer());
-    if (sha256Of(bytes) !== sha256) return null;
+    const bytes = await this.read(sha256);
+    if (!bytes) return null;
+    // Another open that shared this read may have held it already.
+    const again = this.held.get(sha256);
+    if (again) return again.zip;
     const zip = new AdmZip(bytes);
     this.hold(sha256, zip, bytes.length);
     return zip;
+  }
+
+  /** A package's bytes from the pod, read once however many ask at once, or null when they are not the package. */
+  private read(sha256: string): Promise<Buffer | null> {
+    return once(this.reading, sha256, async () => {
+      try {
+        const r = await (this.opts.fetch ?? globalThis.fetch)(this.urlOf(sha256), { headers: { Accept: 'application/zip' } });
+        if (!r.ok) return null;
+        const bytes = Buffer.from(await r.arrayBuffer());
+        return sha256Of(bytes) === sha256 ? bytes : null;
+      } catch { return null; }
+    });
+  }
+
+  /** Describe a package from its own bytes and keep the description: once however many ask at once. */
+  private describeFromPackage(sha256: string): Promise<PackageAbout | null> {
+    const describe = this.opts.describePackage;
+    if (!describe || !PACKAGE_SHA.test(sha256)) return Promise.resolve(null);
+    return once(this.describing, sha256, async () => {
+      // Bytes only for describing are not held: holding them would push out packages being played.
+      const held = this.held.get(sha256);
+      const bytes = held ? held.zip.toBuffer() : await this.read(sha256);
+      let about: PackageAbout | null = null;
+      try { about = bytes ? describe(bytes) : null; } catch { about = null; }
+      if (about) await this.keepAbout(sha256, about);
+      const kept = this.abouts.get(sha256) ?? null;
+      if (kept) this.undescribed.delete(sha256);
+      else this.undescribed.set(sha256, Date.now() + (this.opts.retryAfterMs ?? 10 * 60_000));
+      return kept;
+    });
+  }
+
+  /** Queue a package to be described in the background, unless it is queued, or was just tried and could not be. */
+  private later(sha256: string): void {
+    if (!this.opts.describePackage || this.queue.includes(sha256) || this.describing.has(sha256)) return;
+    if ((this.undescribed.get(sha256) ?? 0) > Date.now()) return;
+    this.queue.push(sha256);
+    if (!this.draining) this.drained = this.drain();
+  }
+
+  /** Describe the queued packages, one at a time. */
+  private async drain(): Promise<void> {
+    this.draining = true;
+    try {
+      for (let sha = this.queue.shift(); sha !== undefined; sha = this.queue.shift()) {
+        try { await this.describeFromPackage(sha); } catch { /* described again when next listed */ }
+      }
+    } finally { this.draining = false; }
   }
 
   /**
@@ -271,6 +437,17 @@ export class HostedPackages {
   }
 }
 
+/** Each item mapped, in order, with at most `limit` in flight at once. */
+async function mapLimited<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < items.length; i = next++) out[i] = await fn(items[i]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
 const PACKAGE_RECORD = /^\/scorm\/packages\/([0-9a-f]{64})$/;
 const PACKAGE_FILE = /^\/scorm\/packages\/([0-9a-f]{64})\/files\/(.+)$/;
 
@@ -296,21 +473,31 @@ export function attachHostedPackageRoutes(app: Express, deps: {
   /**
    * The packages hosted here, each with its course, and one way to launch any of them: the signed
    * cmi5 launch, for the signer, naming the package's course. Read by a learner's page and by an
-   * agent alike; nothing in it is anyone's record.
+   * agent alike; nothing in it is anyone's record. It is made from what is kept beside each
+   * package, and opens none (Codex, on #550): one with nothing beside it yet is counted as
+   * unlisted, and listed once the background has described it.
    */
   app.get('/scorm/packages', async (_req, res) => {
     try {
+      const shas = await deps.packages.list();
+      const abouts = await mapLimited(shas, 8, sha => deps.packages.aboutOrLater(sha));
       const packages: Array<Record<string, unknown>> = [];
-      for (const sha of await deps.packages.list()) {
-        const course = await deps.courseFor(sha);
-        if (!course) continue;
+      let unlisted = 0;
+      shas.forEach((sha, i) => {
+        const about = abouts[i];
+        const course = about ? hostedPackageCourse(base, sha, about) : undefined;
+        if (!course?.structure.length) { unlisted++; return; }
         packages.push({
           packageSha256: sha, href: `${base}/scorm/packages/${sha}`,
           course: { id: course.id, title: course.title }, aus: course.structure.map(a => ({ id: a.id, title: a.title })),
         });
-      }
+      });
       res.json({
         kind: 'hosted-scorm-packages', packages,
+        ...(unlisted ? {
+          unlisted,
+          unlistedWhy: 'kept here with nothing yet describing them: each is read once, in the background, and listed when it has been. One that is no package with anything to launch stays unlisted.',
+        } : {}),
         launch: {
           toolName: 'foxxi.cmi5_launch_signed', method: 'POST', target: `${base}/agent/cmi5/launch`, payload: '{ course_id: <a package\'s course.id> }',
           note: 'Signed as the learner: the launch is for the signer, and answers with the launchUrl to open. What the package reports lands in their own record, as experience.',

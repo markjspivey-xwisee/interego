@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-28 — Foxxi: listing hosted packages opens none of them, and hosting is offered to admins alone
+
+Two of Codex's findings on #550, after it merged.
+
+**A listing opens no package.** After a restart, `GET /scorm/packages` rebuilt each package's course by downloading and parsing its whole zip. It did this one package after another, up to 200, while the request stayed open, and concurrent Learn-page requests repeated the same work. Now:
+- what each package is (its title and SCOs) is kept beside it on the pod as `<sha-256>.json`, and the listing reads only that, at most 8 at a time;
+- a package kept with none (uploaded before descriptions were kept, or one whose description the pod did not take) is counted as `unlisted`. It is read once in the background, one package at a time, and its description is kept, so it is opened once rather than on every listing;
+- one that cannot be described is left for ten minutes before it is tried again;
+- however many requests ask for the same package at once, it is read from the pod once;
+- a launch after a restart restores the course from the description too, and reads the package itself only when there is none. A kept package is described as an upload is parsed, under the same inflation budget.
+
+The Learn page now says when packages are kept but not yet listed, instead of saying none are hosted.
+
+**Hosting is offered to an admin alone.** The LMS content panel offered "Host a package" to learning engineers, but the bridge refuses every role except admin and delegated admin. The tab is now shown to an admin alone. The bridge's refusal also named learning engineers as allowed; it now says what it actually checks.
+
+**Also fixed.** A SCO whose manifest path leaves the package (`..`, an absolute path, a backslash) is no longer made an AU; its launch URL, once resolved, would have opened another of the bridge's routes. A description names only paths inside its package, and a description of a different package is not taken.
+
+Tests: the description kept and read back without the zip; reads shared; the background describer, one at a time, each package once, with its retry window; a listing that answers while every zip read is held; the upload and restore wiring; the panel and the card. Twenty mutants each turn a named test red.
+
 ## 2026-09-28 — Foxxi: a learner finds and plays a hosted SCORM package from their Learn page; an operator hosts one from the dashboard
 
 The bridge hosted uploaded packages and played them through the signed cmi5 launch, but a person could not reach any of it. The upload was an MCP tool, nothing listed what was hosted, and the launch was a signed POST.
