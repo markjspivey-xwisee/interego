@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-09-28 — Foxxi: a hosted SCORM package folds into composable content
+
+A package from any authoring tool could be hosted and played whole, but not taken apart. None of it could be resolved per learner, offered another way in at one position, or measured for what works. Now `foxxi.content_fold_course` takes a third input, `package_sha256`, naming a package hosted here, and folds it into the fragments and compositions an author writes here (`src/package-import.ts`):
+- **Pages** are read in the order the manifest gives. Each HTML page outside the folders packages keep their shared chrome in becomes a concept fragment. Its HTML becomes the Markdown `course-markdown.ts` renders:
+  - headings one level down, under the page's title (its first top-level heading);
+  - paragraphs, line breaks, lists, tables (a one-row or one-column layout table read as paragraphs), quotes, code, emphasis;
+  - links and images; its images are the package's own files as this bridge hosts them.
+
+  A page's text is read in the charset it declares, else as UTF-8, else as windows-1252.
+- **Topics.** A folder of pages is a topic, titled by the organization item whose launch page is there, else by the folder's name. A topic of more than one part becomes a composition, pages then check, and the package a composition of its topics.
+- **Questions** are read only as the package declares them: calls to a `Question` constructor it declares in its own scripts, read by its own parameter names and type constants. Choice, true-false and numeric questions become a check graded on this bridge, blinded under the bridge's secret as a course's checks are, so the same package folds to the same IRIs. The response says the answer key is as open as the package was.
+- **What is not read** is listed with why: shared templates, a page with no text of its own, a question whose answer does not fit it, a page longer than a fragment holds, more questions than a check holds.
+- **Errors.** A package that cannot be folded (no manifest, nothing with text, more than 500 fragments) answers 422. A bad competency, level or language the caller named answers 400.
+- **Where it is kept.** Anyone may fold a hosted package, since it is served to anyone. The bundle is kept on the signer's pod with `derivedFrom`, the package's IRI.
+- **In the dashboard.** The Author page gains a "Fold a package" tab. It lists the hosted packages, folds one signed as the author, puts the composition on their shelf with links to play it and to what it has learned, and shows what was not read.
+
+Tests: `tests/a-scorm-package-folds-into-composable-content.test.ts` (new) covers:
+- the page reader, rendered through `course-markdown.ts`;
+- charsets and character references;
+- the question reader, against the package's own declarations;
+- `imported/golf-explained.zip` read and folded whole: 4 topics, 14 pages, 15 questions, each graded as the package says;
+- packages built to show ordering, titles, links and what is left out;
+- the fold's limits and errors;
+- the route's wiring, the affordance, and the Author page.
+
+Forty-eight mutants each turn a named test red.
+
 ## 2026-09-28 — Foxxi: listing hosted packages opens none of them, and hosting is offered to admins alone
 
 Two of Codex's findings on #550, after it merged.

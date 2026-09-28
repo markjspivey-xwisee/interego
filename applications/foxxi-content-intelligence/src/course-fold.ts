@@ -68,7 +68,7 @@ export interface FoldedCourse {
 }
 
 /** A title shortened, at a word where it can be, to fit `max` characters. */
-function fitted(title: string, max: number): string {
+export function fitted(title: string, max: number): string {
   const t = title.trim();
   if (t.length <= max) return t;
   const cut = t.slice(0, max - 1);

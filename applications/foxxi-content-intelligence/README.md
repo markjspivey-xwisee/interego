@@ -123,6 +123,16 @@ The bridge lists what it hosts at `GET /scorm/packages`, linked from its entry p
 
 The listing opens no package. What each package is (its title and SCOs) is kept beside it on the pod as `<sha-256>.json`, and the listing reads that. A package kept with none, for example one uploaded before descriptions were kept, is counted as `unlisted`. The bridge then reads it once, in the background and one package at a time, keeps its description, and lists it from then on. However many requests ask for the same package at once, it is read from the pod once. A SCO whose path would leave the package is never made an AU.
 
+## Folding a SCORM package into composable content
+
+A hosted package can also be taken apart, into the same fragments and compositions an author writes here ([`src/package-import.ts`](src/package-import.ts)). Anyone may fold one, since a hosted package is served to anyone. Send `package_sha256` to `foxxi.content_fold_course` (`POST /agent/content/fold-course`), or use the Author page's "Fold a package" tab. What it makes is kept on the signer's pod, with the package it was derived from.
+- **Pages.** The manifest gives the order: each organization item's resource, its launch page and then its files. Every HTML page outside the folders packages keep their shared chrome in becomes a concept fragment in Markdown: headings, paragraphs, lists, tables, quotes, code, emphasis, links and images. A page's first top-level heading is its title, and its images are the package's own files as this bridge hosts them.
+- **Topics.** The pages in one folder are a topic, titled by the organization item whose launch page is there, else by the folder's name. A topic of more than one part becomes a composition, pages then check, and the package a composition of its topics.
+- **Questions.** Questions are read only as the package declares them: calls to a `Question` constructor the package declares in its own scripts, read by its own parameter names and type constants. Choice, true-false and numeric questions become a check for their topic, graded on this bridge. The package serves the same answers to every browser it runs in, so such a check is only as closed-book as the package was.
+- **What is not read** is listed with why: shared templates, a page with no text of its own, a question whose answer does not fit it, a page longer than a fragment holds.
+
+The same package folds to the same IRIs on this bridge. The sample in `imported/golf-explained.zip` folds into four topics: 14 pages, and 15 questions in 4 checks.
+
 ## Layering discipline
 
 Per [`applications/README.md`](../README.md):
