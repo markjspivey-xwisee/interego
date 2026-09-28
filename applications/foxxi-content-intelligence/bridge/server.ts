@@ -3827,7 +3827,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         kind: 'refusal' as const,
         'iep:refusalStatus': 503,
         'iep:refusalReason': 'the statement store did not keep all of the trajectory\'s projection',
-        error: `the trajectory was not recorded: the store kept ${kept.keptIds.length} of its ${projection.statements.length} projected statements and then did not keep the next, so the trajectory was not set; try again.`,
+        error: `the trajectory was not recorded: the store holds ${kept.keptIds.length} of its ${projection.statements.length} projected statements, so the trajectory was not set; try again.`,
         keptStatementIds: kept.keptIds,
       };
     }
@@ -4136,8 +4136,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         kind: 'refusal' as const,
         'iep:refusalStatus': 503,
         'iep:refusalReason': 'the statement store did not keep all of the run',
-        error: `the run was not recorded whole: the store kept ${kept.keptIds.length} of its ${inOrder.length} statements, not its performance, and then did not keep the next. Nothing was set or bound; try again.`,
+        error: `the run was not recorded whole: the store holds ${kept.keptIds.length} of its ${inOrder.length} statements. Nothing was set or bound; try again.`,
         keptStatementIds: kept.keptIds,
+        // Which ones, by id: a store making room can let an earlier statement go, so what it holds
+        // need not be the first ones written (Codex, on #546).
+        performanceKept: kept.keptIds.includes(ingested.performance.id as string),
       };
     }
     const keptIds = kept.keptIds;
@@ -9455,11 +9458,14 @@ app.post('/agent/record-course-completion', async (req, res) => {
      * records a session of its own.
      */
     if (kept.status === 'partial') {
-      const keptPart = session.slice(0, kept.keptIds.length);
+      // By id, not by count: a store making room can let an earlier statement go while it takes a
+      // later one, so what it holds need not be the session's first statements (Codex, on #546).
+      const held = new Set(kept.keptIds);
+      const keptPart = session.filter(s => held.has(s.id));
       res.status(503).json({
         ok: false, error: 'the completion was not recorded whole: the statement store kept only part of its cmi5 session, so none of it was composed or forwarded; try again',
         completedBy: callerDid, courseId, courseActivityId,
-        kept: keptPart.map(verbOf), notKept: session.slice(keptPart.length).map(verbOf), passedKept: keptPart.some(s => verbOf(s) === 'passed'),
+        kept: keptPart.map(verbOf), notKept: session.filter(s => !held.has(s.id)).map(verbOf), passedKept: keptPart.some(s => verbOf(s) === 'passed'),
         statementIds: kept.keptIds, durable: subjectPod, lensTenant: lensTenantFor(label),
       });
       return;
@@ -10146,7 +10152,7 @@ async function recordScormCompletion(play: ScormPlay, ended: ScormEnded): Promis
   ended.statementIds = kept.status === 'refused' ? [] : kept.keptIds;
   ended.recorded = kept.status === 'whole';
   if (kept.status === 'refused') { ended.unrecorded = `the LRS refused the statements the bridge built: ${kept.refusals.join('; ')}`; return; }
-  if (kept.status === 'partial') { ended.unrecorded = `the store kept ${kept.keptIds.length} of its ${ended.statements.length} statements`; return; }
+  if (kept.status === 'partial') { ended.unrecorded = `the store holds ${kept.keptIds.length} of its ${ended.statements.length} statements`; return; }
   delete ended.unrecorded;
   // Foundation-first: PGSL canonical — compose the ACTUAL completion xAPI
   // statements into the learner's shared lattice (lossless), no hand-authored RDF.
