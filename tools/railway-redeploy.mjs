@@ -340,6 +340,12 @@ if (currentRepo && currentRepo !== repoOf(image)) {
       `         serviceInstanceUpdate(${serviceId}, ${environmentId}, { source: { image: "<repo>:<tag>" } })`);
 }
 
+// The service's newest deployment before the repoint: after a refused trigger, a deployment that
+// is not this one exists since the repoint and is followed rather than triggered over.
+const LATEST_DEPLOYMENT = 'query($s:String!,$e:String!){ deployments(first:1,input:{serviceId:$s,environmentId:$e}){ edges{ node{ id } } } }';
+const latestDeploymentId = async () => (await gql(LATEST_DEPLOYMENT, { s: serviceId, e: environmentId })).deployments?.edges?.[0]?.node?.id;
+const deploymentBeforeRepoint = await latestDeploymentId();
+
 // ── 3. Repoint. No registryCredentials: omitting them preserves the stored
 //       private-registry credentials rather than clearing them.
 await gql(
@@ -347,11 +353,18 @@ await gql(
   { s: serviceId, e: environmentId, in: { source: { image } } });
 console.log('image repointed');
 
-// ── 4. Ship it. Retried: a refused trigger leaves the service repointed but still running the
-//       old image, and Railway's API refuses it transiently (see railway-deploy-trigger.mjs).
+// ── 4. Ship it. A refused trigger leaves the service repointed but still running the old image,
+//       and Railway's API refuses it transiently; only an answered refusal is retried, and never
+//       over a deployment that exists since the repoint (see railway-deploy-trigger.mjs).
 const dep = await triggerWithRetry(() => gql(
   'mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s,environmentId:$e) }',
-  { s: serviceId, e: environmentId }, { tolerant: true }), { log: m => console.log(m) });
+  { s: serviceId, e: environmentId }), {
+  log: m => console.log(m),
+  reconcile: async () => {
+    const now = await latestDeploymentId();
+    return now && now !== deploymentBeforeRepoint ? now : undefined;
+  },
+});
 const deployId = dep.serviceInstanceDeployV2;
 console.log(`deploy triggered: ${deployId}`);
 

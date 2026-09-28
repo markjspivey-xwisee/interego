@@ -9,13 +9,16 @@ export interface TriggerRetryOptions {
   baseMs?: number;
   sleep?: (ms: number) => Promise<void>;
   log?: (message: string) => void;
+  /** A deployment that exists since the repoint, which is followed instead of triggering again. */
+  reconcile?: () => Promise<string | undefined>;
 }
 
 /**
- * Call `trigger` until it answers without `_transient`, at most `attempts` times, with doubling
- * waits between calls; throw with the last refusal once they are spent.
+ * Call `trigger`, retrying only an answered refusal (`GraphQL: …`), at most `attempts` times with
+ * doubling waits; an ambiguous failure is rethrown at once, and a deployment `reconcile` reports is
+ * followed, never triggered over.
  */
 export declare function triggerWithRetry<T>(
-  trigger: () => Promise<T | { _transient: string }>,
+  trigger: () => Promise<T>,
   options?: TriggerRetryOptions,
-): Promise<T>;
+): Promise<T | { serviceInstanceDeployV2: string }>;
