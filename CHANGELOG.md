@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-09-28 — The base decides no composition's trust, and runs with the verticals deleted (#366, part 2)
+
+The rest of #366: the publication trust the relay decided for every installed composition, the domain-heavy Application Lab fixture in the relay's own suite, and a demonstration of the base without verticals. #556 stated the demonstration as a table; this one runs it.
+
+**A composition declares the trust of what it publishes.**
+- **What the relay did.** Its generic write path, `resourceWriteContext`, published every composition's output as `Asserted` with confidence 1. So what an installed interpreter's transition was worth was a constant in the base, not a statement the interpreter made.
+- **The new contract.** `ResourceWriteContext.publish` now takes a required `trust` (`ResourcePublicationTrust`: a modal status and a confidence).
+  - The audience gate refuses a publication that declares none, or declares an unknown modal status or a confidence outside [0, 1], before anything is written.
+  - It carries a frozen copy of the declared trust to the write, so later mutation cannot change what is published.
+- **What each composition declares.** The application runtime and the affordance surface each declare `Asserted` / 1, with the reasons their own verification earns it, so what they publish is unchanged.
+- **What stays in the base.** Signing, the CAS on the expected head, and the audience rule: they are how any publication is made verifiable.
+
+**The Application Lab fixture left the relay's suite.** `deploy/mcp-relay/_application-lab-test.ts` exercised `integrations/application-runtime`, not the relay. Its fixture is a release-readiness transition gated on a signed AGP performance-readiness document carrying xAPI and LER evidence. It is now `integrations/tests/application-lab-runtime.test.ts`, run by vitest.
+
+**The base, without the verticals.** A new workflow, `base-without-verticals.yml`, runs two stages.
+- **With every tree present,** the emergence the verticals are for:
+  - Release Control's governed release (`tests/application-simulation.test.ts`);
+  - the Application Lab's evidence-gated transition;
+  - the FOXXI × AGP release showcase and AGP's readiness evidence.
+- **Then it deletes `applications/`, `integrations/` and `examples/`,** and `tools/base-without-verticals.mjs --run` builds the packages, typechecks the stdio server and the relay, and runs the relay's own scripts and every base test module. Each base module is also typechecked on its own, with the full program's options. No vertical's configuration is involved, because nothing that could supply one is left.
+
+Which tests are base is derived, not listed.
+- A test module is base when neither it nor a test-side module it imports:
+  - names a path in those trees, by import or by a string rooted there;
+  - enumerates the tracked tree (`git ls-files`);
+  - runs a script that reaches one;
+  - imports a package published from them.
+- `--plan` classifies while the trees are present, so nothing depends on deleted files.
+- It pins the tests in base directories that reach a vertical, so the next domain-heavy fixture goes to its vertical or to `integrations/tests`, where it belongs:
+  - 121 root and stdio modules;
+  - 4 relay scripts that read a vertical's source or run a file that does;
+  - 4 files in the relay's test program, which the run typechecks as a derived program without them. One is a Playwright spec that imports the application runtime.
+- Run locally in a worktree with the three trees deleted, the job is green end to end: 69 relay steps and 187 test modules, before this branch was rebased onto the newer master's tests. Getting there found three ways a base test reached a vertical that its imports did not show, and the classifier now covers each:
+  - through a Playwright spec the relay's test program compiles;
+  - through a script it runs;
+  - through `git ls-files`.
+
+  It also found that the relay's chain must run the repository's own `tsc`, not a global one.
+
+`vitest.base.config.ts` runs only that plan. It refuses to load while the trees are present, so it is no way round the full config's typecheck gate or module floor.
+
+Tests:
+- **`resource-publication`:**
+  - refusals for a missing, unknown or out-of-range trust;
+  - each modal status carried unchanged;
+  - a mutated trust not reaching the write;
+  - the runtime's declared trust on a real transition.
+- **`the-base-runs-without-verticals`:** the classifier's rules (imports, rooted strings, helpers, packages; not IRIs or `docs/` paths), the pins in both directions, and known classifications.
+
 ## 2026-09-28 — The byte bound releases what it refuses, and names an oversized archive as over the bound (#559 follow-up)
 
 Codex, on #559:

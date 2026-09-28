@@ -96,10 +96,12 @@ describe('the test-file set is derived from what runs, not from filenames', () =
   it('★ finds the relay scripts whose names end -test.ts rather than .test.ts', () => {
     // These are why the derivation exists: run by the relay's own `npm test`, sitting beside the
     // server rather than under tests/, and missed by both filename exclusions.
+    // (A third, `_application-lab-test.ts`, left the relay for integrations/tests in #366: it
+    // exercised an optional interpreter, not the relay.)
     const named = [...testRun].filter((p) => p.endsWith('/_note-view-test.ts')
-      || p.endsWith('/_hmd-app-test.ts') || p.endsWith('/_application-lab-test.ts'));
+      || p.endsWith('/_hmd-app-test.ts'));
     expect(named.length, 'the underscore-prefixed relay test scripts are not in the derived set:\n  '
-      + [...testRun].slice(0, 10).join('\n  ')).toBe(3);
+      + [...testRun].slice(0, 10).join('\n  ')).toBe(2);
   });
 });
 

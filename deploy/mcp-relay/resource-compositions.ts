@@ -69,7 +69,24 @@ export interface ResourceWriteContext extends ResourceContext {
   /** Session-bound, signed, synchronous CAS publication through the existing substrate gates. */
   readonly publish: (request: {
     podUrl: string; graphIri: string; graphContent: string; expectedHead: string; actor: string;
+    /** What the composition asserts about what it publishes. Required: the relay decides none. */
+    trust: ResourcePublicationTrust;
   }) => Promise<Record<string, unknown>>;
+}
+/**
+ * The modal status and confidence a composition declares for a state it publishes.
+ *
+ * ★ THE RELAY DECIDES NO TRUST OF ITS OWN (#366). Its generic write path used to publish every
+ * composition's output as `Asserted` with confidence 1, so what an installed interpreter's
+ * transition was worth was a constant in the base rather than a statement its interpreter made.
+ * A composition now names it; the relay applies it after the audience and CAS gates, and a
+ * publication that declares none, or declares an unknown modal status or a confidence outside
+ * [0, 1], is refused before anything is written. Signing, CAS and the audience rule stay in the
+ * base: they are how any publication is made verifiable, whoever makes it.
+ */
+export interface ResourcePublicationTrust {
+  readonly modalStatus: 'Asserted' | 'Hypothetical' | 'Counterfactual';
+  readonly confidence: number;
 }
 export interface ResourceView {
   readonly descriptorUrl: string;

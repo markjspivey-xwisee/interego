@@ -5080,14 +5080,18 @@ function resourceContext(args: ToolArgs): ResourceContext {
 
 function resourceWriteContext(args: ToolArgs): ResourceWriteContext {
   const context = resourceContext(args);
-  const publication = protectResourcePublication(context.reads, context.principal, async (request, visibility) => {
+  // Signing, CAS and the audience are the base's: they are how any publication is made
+  // verifiable. The modal status and confidence are the composition's: `trust` is what its
+  // interpreter declares its transition is worth, and the audience gate has already refused a
+  // publication that declares none (#366).
+  const publication = protectResourcePublication(context.reads, context.principal, async (request, visibility, trust) => {
     const podName = podNameOf(request.podUrl);
     if (!podName) throw new Error('publication requires an explicit pod');
     return JSON.parse(await handlePublishContext({
       ...resourcePodArgs(args, request.podUrl), _session_agent_did: context.principal,
       pod_name: podName, graph_iri: request.graphIri, graph_content: request.graphContent,
       if_match: request.expectedHead, auto_supersede_prior: true, sync: true,
-      modal_status: 'Asserted', confidence: 1, visibility, sign_authorship: true,
+      modal_status: trust.modalStatus, confidence: trust.confidence, visibility, sign_authorship: true,
       valid_from: context.now,
     })) as Record<string, unknown>;
   });

@@ -44,8 +44,8 @@ Run the adversarial verification:
 
 ```bash
 npx vitest run integrations/tests/foxxi-agp-release-showcase.test.ts \
-  applications/agentic-performance-practice/tests/readiness-evidence.test.ts
-node --import tsx deploy/mcp-relay/_application-lab-test.ts
+  applications/agentic-performance-practice/tests/readiness-evidence.test.ts \
+  integrations/tests/application-lab-runtime.test.ts
 ```
 
 This proof prepares unsigned graphs locally. Publishing/signing is intentionally a

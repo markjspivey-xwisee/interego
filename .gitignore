@@ -106,3 +106,7 @@ applications/shared-workspace/desktop/release/
 
 # jev-harness vertical: judgments, outcomes and follower artifacts written next to the repo it judges
 .jev-harness/
+
+# tools/base-without-verticals.mjs --plan: the classified base set and the derived tsconfigs
+.base-without-verticals/
+.base-without-verticals.*

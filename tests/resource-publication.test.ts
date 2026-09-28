@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEncryptedEnvelope, generateKeyPair, openEncryptedEnvelope } from '@interego/core';
 import { protectResourcePublication } from '../deploy/mcp-relay/resource-publication.js';
-import { ResourceCompositions, type ResourceDescriptor, type ResourceReads, type ResourceWriteContext } from '../deploy/mcp-relay/resource-compositions.js';
+import { ResourceCompositions, type ResourceDescriptor, type ResourcePublicationTrust, type ResourceReads, type ResourceWriteContext } from '../deploy/mcp-relay/resource-compositions.js';
 import application from '../integrations/application-runtime/resource-composition.js';
 import { parseSignedJsonDocument, signedJsonGraph } from '../integrations/application-runtime/application-lab-runtime.js';
 import { fixtureStore } from '../examples/application-simulation/fixture-store.js';
 import { releaseControl } from '../examples/application-simulation/rule-packs.js';
 
 const actor = 'did:example:alice';
+/** Where and what, without the composition's trust: what the gate hands its sink first. */
+type Addressing = Omit<Parameters<ResourceWriteContext['publish']>[0], 'trust'>;
+const TRUST: ResourcePublicationTrust = Object.freeze({ modalStatus: 'Asserted', confidence: 1 });
+const addressing = ({ trust: _trust, ...rest }: Parameters<ResourceWriteContext['publish']>[0]): Addressing => rest;
 const podUrl = 'https://pod.example/simulation/';
 const graphIri = 'urn:test:state';
 const sourceUrl = podUrl + 'context-graphs/state.ttl';
@@ -27,11 +31,11 @@ function descriptor(visibility: Visibility = 'public'): ResourceDescriptor {
       effectiveTrustLevel: 'CryptographicallyVerified', signedBy: actor } };
 }
 function harness(source = descriptor()) {
-  const sink = vi.fn(async (_request: Parameters<ResourceWriteContext['publish']>[0], visibility: 'public' | 'private') => ({ published: true, visibility }));
+  const sink = vi.fn(async (_request: Addressing, visibility: 'public' | 'private', _trust: ResourcePublicationTrust) => ({ published: true, visibility }));
   const reads: ResourceReads = { discover: async () => [], discoverGraph: async () => [],
     currentHead: async () => ({ head: { descriptorUrl: sourceUrl, cid: 'source-cid' } }), descriptor: async () => source };
   const guarded = protectResourcePublication(reads, actor, sink);
-  const request = { podUrl, graphIri, graphContent: '<urn:derived> <urn:value> "result" .', expectedHead: 'source-cid', actor };
+  const request = { podUrl, graphIri, graphContent: '<urn:derived> <urn:value> "result" .', expectedHead: 'source-cid', actor, trust: TRUST };
   return { source, sink, reads, guarded, request };
 }
 
@@ -40,7 +44,7 @@ describe('derived resource audience enforcement', () => {
     const h = harness(descriptor(visibility));
     await h.guarded.reads.descriptor(sourceUrl);
     expect(await h.guarded.publish(h.request)).toMatchObject({ published: true, visibility });
-    expect(h.sink).toHaveBeenCalledWith(h.request, visibility);
+    expect(h.sink).toHaveBeenCalledWith(addressing(h.request), visibility, TRUST);
   });
 
   it.each([
@@ -116,6 +120,29 @@ describe('derived resource audience enforcement', () => {
     expect(h.sink).not.toHaveBeenCalled();
   });
 
+  // ★ THE RELAY DECIDES NO TRUST OF ITS OWN (#366). The modal status and confidence of what a
+  // composition publishes are the composition's statement; the base only carries and checks it.
+  it.each([
+    ['no trust at all', undefined],
+    ['an unknown modal status', { modalStatus: 'Certain', confidence: 1 }],
+    ['a confidence above one', { modalStatus: 'Asserted', confidence: 1.5 }],
+    ['a negative confidence', { modalStatus: 'Asserted', confidence: -0.1 }],
+    ['a confidence that is not a number', { modalStatus: 'Asserted', confidence: Number.NaN }],
+  ] as const)('refuses a publication that declares %s, before any write', async (_label, trust) => {
+    const h = harness();
+    await h.guarded.reads.descriptor(sourceUrl);
+    const request = { ...h.request, trust } as unknown as Parameters<ResourceWriteContext['publish']>[0];
+    expect(await h.guarded.publish(request)).toMatchObject({ error: 'resource_audience_refused', published: false, committed: false });
+    expect(h.sink).not.toHaveBeenCalled();
+  });
+
+  it.each(['Asserted', 'Hypothetical', 'Counterfactual'] as const)('carries a declared %s trust to the write unchanged', async modalStatus => {
+    const h = harness();
+    await h.guarded.reads.descriptor(sourceUrl);
+    expect(await h.guarded.publish({ ...h.request, trust: { modalStatus, confidence: 0.25 } })).toMatchObject({ published: true });
+    expect(h.sink).toHaveBeenCalledWith(addressing(h.request), 'public', { modalStatus, confidence: 0.25 });
+  });
+
   it('uses source binding guarantees without adding a delegation trust-label requirement', async () => {
     const source = descriptor();
     const h = harness({ ...source, authorship: { ...source.authorship!, effectiveTrustLevel: 'SelfAsserted' } });
@@ -129,12 +156,15 @@ describe('derived resource audience enforcement', () => {
     const pendingHead = new Promise<Awaited<ReturnType<ResourceReads['currentHead']>>>(resolve => { finishHead = resolve; });
     const guarded = protectResourcePublication({ ...h.reads, currentHead: async () => pendingHead }, actor, h.sink);
     await guarded.reads.descriptor(sourceUrl);
-    const original = { ...h.request };
-    const publication = guarded.publish(h.request);
-    Object.assign(h.request, { actor: 'did:example:bob', podUrl: 'https://other.example/', graphIri: 'urn:other', graphContent: 'changed', expectedHead: 'changed' });
+    const trust = { modalStatus: 'Hypothetical', confidence: 0.4 } as ResourcePublicationTrust;
+    const request = { ...h.request, trust };
+    const original = addressing({ ...request });
+    const publication = guarded.publish(request);
+    Object.assign(request, { actor: 'did:example:bob', podUrl: 'https://other.example/', graphIri: 'urn:other', graphContent: 'changed', expectedHead: 'changed' });
+    Object.assign(trust, { modalStatus: 'Asserted', confidence: 1 });
     finishHead({ head: { descriptorUrl: sourceUrl, cid: 'source-cid' } });
     expect(await publication).toMatchObject({ published: true });
-    expect(h.sink).toHaveBeenCalledWith(original, 'public');
+    expect(h.sink).toHaveBeenCalledWith(original, 'public', { modalStatus: 'Hypothetical', confidence: 0.4 });
   });
 });
 
@@ -166,7 +196,7 @@ async function applicationFixture(initialVisibility: Visibility, evidenceVisibil
   const ownerKey = generateKeyPair();
   const otherKey = generateKeyPair();
   const writes: { visibility: 'public' | 'private'; content: string; stored: string }[] = [];
-  const sink = vi.fn(async (request: Parameters<ResourceWriteContext['publish']>[0], visibility: 'public' | 'private') => {
+  const sink = vi.fn(async (request: Addressing, visibility: 'public' | 'private', _trust: ResourcePublicationTrust) => {
     const parsed = parseSignedJsonDocument(request.graphContent);
     const previous = store.heads.get(store.graphs.state)!.head!;
     expect(request.expectedHead).toBe(previous.cid);
@@ -211,6 +241,13 @@ describe('application state and receipt publication', () => {
     expect(openEncryptedEnvelope(JSON.parse(h.writes[0]!.stored), h.otherKey)).toBeNull();
     expect(await h.invoke('Finish')).toMatchObject({ committed: true });
     expect(h.writes.map(write => write.visibility)).toEqual(['private', 'private']);
+  });
+
+  it('publishes each application transition with the trust the runtime declares for it', async () => {
+    const h = await applicationFixture('public', 'public');
+    expect(await h.invoke('Accept evidence', { proof: h.proofUrl })).toMatchObject({ committed: true });
+    expect(h.sink).toHaveBeenCalledTimes(1);
+    expect(h.sink.mock.calls[0]![2]).toEqual({ modalStatus: 'Asserted', confidence: 1 });
   });
 
   it('preserves public behavior only when all consulted sources are explicitly public', async () => {

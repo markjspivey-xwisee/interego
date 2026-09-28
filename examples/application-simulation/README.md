@@ -8,8 +8,8 @@ dispatch, game callbacks, approval policy, or infrastructure adapter.
 
 ```bash
 node --import tsx examples/application-simulation/run.ts
-npx vitest run tests/application-simulation.test.ts tests/application-effects-purity.test.ts
-node --import tsx deploy/mcp-relay/_application-lab-test.ts
+npx vitest run tests/application-simulation.test.ts tests/application-effects-purity.test.ts \
+  integrations/tests/application-lab-runtime.test.ts
 ```
 
 The demo prints both frontiers and their source bindings. All fixture writes
