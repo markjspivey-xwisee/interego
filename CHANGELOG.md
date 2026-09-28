@@ -15,6 +15,12 @@ A package from any authoring tool could be hosted and played whole, but not take
 - **Errors.** A package that cannot be folded (no manifest, nothing with text, more than 500 fragments) answers 422. A bad competency, level or language the caller named answers 400.
 - **Where it is kept.** Anyone may fold a hosted package, since it is served to anyone. The bundle is kept on the signer's pod with `derivedFrom`, the package's IRI.
 - **In the dashboard.** The Author page gains a "Fold a package" tab. It lists the hosted packages, folds one signed as the author, puts the composition on their shelf with links to play it and to what it has learned, and shows what was not read.
+- **Four findings from Codex, and one from CI, fixed on this PR:**
+  - **Text that looks like Markdown is shown as written.** `<p>- Important</p>` stays a paragraph, and `*literal*` stays asterisks. The importer escapes what Markdown would read, and `course-markdown.ts` now reads CommonMark's backslash escapes for all course text. An escaped character is held while inline markup is read, so it cannot open or close emphasis, and it is always given back HTML-escaped, so `\<script\>` is text, never a tag. Code shows what it holds, backslash and all.
+  - **`xml:base` at every level.** A resource's references resolve under its own `xml:base`, under the `<resources>` element's, under the manifest's. A base or reference that leads off the package names nothing in it.
+  - **Only calls that run are read.** A `new Question(…)` written in a comment or inside a string is not taken for one, and a constructor declared only in a comment declares nothing.
+  - **A script belongs to the page that loads it.** A page's `<script src>` gives that script's questions to the page's topic, wherever the script is kept (`js/` included). A script no page loads, one a template reads by name, belongs to its own folder's topic, as before.
+  - **windows-1252 is decoded here.** Node 20's `TextDecoder` reads that label as ISO-8859-1, so 0x80 to 0x9F came out as control characters in CI.
 
 Tests: `tests/a-scorm-package-folds-into-composable-content.test.ts` (new) covers:
 - the page reader, rendered through `course-markdown.ts`;

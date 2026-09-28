@@ -100,6 +100,17 @@ function utf8(bytes: Buffer): string {
   return text.startsWith(BOM) ? text.slice(1) : text;
 }
 
+/** The labels the web reads as windows-1252 (the Encoding Standard's list for that encoding). */
+const WINDOWS_1252_LABELS = new Set(['ansi_x3.4-1968', 'ascii', 'cp1252', 'cp819', 'csisolatin1', 'ibm819', 'iso-8859-1', 'iso-ir-100', 'iso8859-1', 'iso88591', 'iso_8859-1', 'iso_8859-1:1987', 'l1', 'latin1', 'us-ascii', 'windows-1252', 'x-cp1252']);
+
+/**
+ * Bytes as windows-1252, decoded here rather than by TextDecoder: Node 20's TextDecoder reads that
+ * label as ISO-8859-1, so 0x80 to 0x9F came out as control characters (CI, on #553).
+ */
+function windows1252(bytes: Buffer): string {
+  return bytes.toString('latin1').replace(/[\x80-\x9f]/g, c => String.fromCharCode(C1[c.charCodeAt(0) - 0x80]!));
+}
+
 /** A page's bytes as text: in the charset it declares, else as UTF-8, else (not being UTF-8) as windows-1252. */
 export function pageText(bytes: Buffer): string {
   const head = bytes.subarray(0, 4096).toString('latin1');
@@ -107,13 +118,13 @@ export function pageText(bytes: Buffer): string {
     ?? /^\s*<\?xml\b[^>]*encoding\s*=\s*["']([A-Za-z0-9._:-]+)["']/i.exec(head)?.[1];
   const hasBom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
   const decode = (label: string, fatal: boolean): string | null => {
+    if (WINDOWS_1252_LABELS.has(label.toLowerCase())) return windows1252(bytes);
     try { return new TextDecoder(label, { fatal }).decode(bytes); } catch { return null; }
   };
   const text = (hasBom ? decode('utf-8', false) : null)
     ?? (declared ? decode(declared, false) : null)
     ?? decode('utf-8', true)
-    ?? decode('windows-1252', false)
-    ?? bytes.toString('latin1');
+    ?? windows1252(bytes);
   return text.startsWith(BOM) ? text.slice(1) : text;
 }
 
@@ -235,12 +246,32 @@ function webUrl(raw: string): string | null {
   } catch { return null; }
 }
 
-/** Markdown's own markers taken out of a line, for a title that is plain text. */
+/**
+ * A page's text as Markdown shows it as it is: each character inline syntax reads, escaped
+ * (course-markdown.ts reads a backslash escape). `<p>*as written*</p>` is asterisks, not emphasis
+ * (Codex, on #553). An underscore inside a word is no syntax, and is left as it is.
+ */
+function literal(text: string): string {
+  return text.replace(/[\\`*[\]|]/g, c => `\\${c}`).replace(/(?<![A-Za-z0-9])_|_(?![A-Za-z0-9])/g, '\\_');
+}
+
+/** A line of a page's text as Markdown shows it as it is: a start block syntax reads, escaped. */
+function literalStart(line: string): string {
+  return line
+    .replace(/^(\s*)(#{1,6}|[-+])(?=\s|$)/, '$1\\$2')
+    .replace(/^(\s*)>/, '$1\\>')
+    .replace(/^(\s*)-(?=(?:\s*-){2,}\s*$)/, '$1\\-')
+    .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, '$1\\$2')
+    .replace(/^(\s*)~~~/, '$1\\~~~');
+}
+
+/** Markdown's own markers taken out of a line, and its escapes read, for a title that is plain text. */
 function plain(markdown: string): string {
   return markdown
     .replace(/!\[[^\]\n]*\]\([^)\s]*\)/g, '')
-    .replace(/\[([^\]\n]*)\]\([^)\s]*\)/g, '$1')
-    .replace(/\*\*|\*|`/g, '')
+    .replace(/(?<!\\)\[([^\]\n]*)\]\([^)\s]*\)/g, '$1')
+    .replace(/(?<!\\)(\*\*|\*|`)/g, '')
+    .replace(/\\([!-/:-@[-`{-~])/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -252,6 +283,8 @@ export interface HtmlPage {
   body: string;
   /** The page's own scripts (not those it loads), in order. */
   scripts: string[];
+  /** Where the scripts it loads are, as written (`<script src>`), in order. */
+  scriptSrcs: string[];
 }
 
 /**
@@ -265,10 +298,12 @@ export function htmlPage(html: string, opts: { image?: (src: string) => string |
   const tokens = htmlTokens(html);
   let docTitle: string | undefined;
   const scripts: string[] = [];
+  const scriptSrcs: string[] = [];
   for (const t of tokens) {
     if (t.kind !== 'raw') continue;
     if (t.name === 'title' && docTitle === undefined) docTitle = decodeEntities(t.text).replace(/\s+/g, ' ').trim() || undefined;
-    if (t.name === 'script' && !t.attrs.has('src') && t.text.trim()) scripts.push(t.text);
+    if (t.name === 'script' && t.attrs.get('src')?.trim()) scriptSrcs.push(t.attrs.get('src')!.trim());
+    else if (t.name === 'script' && t.text.trim()) scripts.push(t.text);
   }
 
   /** Each block, and for a list item the list it is in: items of one list are written together. */
@@ -301,7 +336,7 @@ export function htmlPage(html: string, opts: { image?: (src: string) => string |
       return;
     }
     if (item !== null) { push(`${item}${t.replace(/\n/g, '\n  ')}`, true); item = null; return; }
-    push(t);
+    push(t.split('\n').map(literalStart).join('\n'));
   };
   const inline = (s: string): void => {
     if (pre !== null) pre += s;
@@ -318,18 +353,19 @@ export function htmlPage(html: string, opts: { image?: (src: string) => string |
     const lead = inner.slice(0, inner.length - inner.trimStart().length);
     const trail = inner.slice(inner.trimEnd().length);
     let made: string | null = null;
-    if (name === 'strong' && !body.includes('*')) made = `**${body}**`;
-    else if (name === 'em' && !body.includes('*')) made = `*${body}*`;
-    else if (name === 'code' && !body.includes('`')) made = `\`${body}\``;
+    const asWritten = body.replace(/\\([!-/:-@[-`{-~])/g, '$1');
+    if (name === 'strong' && !/(?<!\\)\*/.test(body)) made = `**${body}**`;
+    else if (name === 'em' && !/(?<!\\)\*/.test(body)) made = `*${body}*`;
+    else if (name === 'code' && !asWritten.includes('`')) made = `\`${asWritten}\``;
     else if (name === 'a' && m.href) {
-      const words = body.replace(/[*`]/g, '').replace(/[[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+      const words = body.replace(/(?<!\\)[*`]/g, '').replace(/(?<!\\)[[\]]/g, ' ').replace(/\s+/g, ' ').trim();
       if (words) made = `[${words}](${m.href})`;
     }
     if (made) text = text.slice(0, m.at) + lead + made + trail;
   };
   const endCell = (): void => {
     if (!table?.cell) return;
-    (table.row ??= []).push(text.replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|'));
+    (table.row ??= []).push(text.replace(/\s+/g, ' ').trim());
     text = '';
     marks = [];
     table.cell = false;
@@ -346,7 +382,7 @@ export function htmlPage(html: string, opts: { image?: (src: string) => string |
     const width = Math.max(0, ...rows.map(r => r.length));
     // A table of one row or one column lays a page out; its cells are read as paragraphs.
     if (rows.length < 2 || width < 2) {
-      for (const cell of rows.flat()) if (cell) push(cell.replace(/\\\|/g, '|'));
+      for (const cell of rows.flat()) if (cell) push(literalStart(cell));
       return;
     }
     const line = (r: string[]): string => `| ${[...r, ...Array<string>(width - r.length).fill('')].join(' | ')} |`;
@@ -363,7 +399,7 @@ export function htmlPage(html: string, opts: { image?: (src: string) => string |
     if (t.kind === 'raw') continue;
     if (t.kind === 'text') {
       const s = decodeEntities(t.text);
-      inline(pre !== null ? s : s.replace(/\s+/g, ' '));
+      inline(pre !== null ? s : literal(s.replace(/\s+/g, ' ')));
       continue;
     }
     const { name } = t;
@@ -379,7 +415,7 @@ export function htmlPage(html: string, opts: { image?: (src: string) => string |
         case 'img': {
           const src = t.attrs.get('src');
           const url = src && !heading ? image(src) : null;
-          if (url) inline(` ![${(t.attrs.get('alt') ?? '').replace(/[[\]\n]/g, ' ').replace(/\s+/g, ' ').trim()}](${url}) `);
+          if (url) inline(` ![${literal((t.attrs.get('alt') ?? '').replace(/\s+/g, ' ').trim())}](${url}) `);
           continue;
         }
         case 'br': inline(heading ? ' ' : '\n'); continue;
@@ -443,7 +479,7 @@ export function htmlPage(html: string, opts: { image?: (src: string) => string |
 
   let body = '';
   blocks.forEach((b, k) => { body += (k === 0 ? '' : b.list && b.list === blocks[k - 1]!.list ? '\n' : '\n\n') + b.text; });
-  return { ...(title ?? docTitle ? { title: title ?? docTitle } : {}), body, scripts };
+  return { ...(title ?? docTitle ? { title: title ?? docTitle } : {}), body, scripts, scriptSrcs };
 }
 
 // ── Questions a package declares ─────────────────────────────────────
@@ -554,9 +590,49 @@ function readList(s: string, i: number, closer: string): { items: Literal[]; end
   }
 }
 
-/** The arguments of each `new Question(…)` in a script, in order: its values, or null for a call with any other argument. */
+/**
+ * A script with its comments, and the insides of its strings, blanked to spaces, every character
+ * where it was: what is left is code, so a call written in a comment or inside a string is not
+ * taken for one that runs (Codex, on #553). A regular expression holding a quote may blank a little
+ * code after it on its line, which can miss a call but never invents one.
+ */
+function codeOf(script: string): string {
+  const out = script.split('');
+  const blank = (from: number, to: number): void => { for (let k = from; k < to; k++) if (out[k] !== '\n') out[k] = ' '; };
+  for (let i = 0; i < script.length;) {
+    const c = script[i]!;
+    if (c === '/' && (script[i + 1] === '/' || script[i + 1] === '*')) {
+      const end = script[i + 1] === '/' ? script.indexOf('\n', i) : script.indexOf('*/', i + 2);
+      const to = end < 0 ? script.length : script[i + 1] === '/' ? end : end + 2;
+      blank(i, to);
+      i = to;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1;
+      for (; j < script.length && script[j] !== c; j++) {
+        if (script[j] === '\\') j++;
+        else if (c !== '`' && script[j] === '\n') break;
+      }
+      blank(i + 1, Math.min(j, script.length));
+      i = j + 1;
+      continue;
+    }
+    i++;
+  }
+  return out.join('');
+}
+
+/** A page's own scripts, as written: the text of each <script> that loads none. */
+function inlineScripts(html: string): string[] {
+  return htmlTokens(html)
+    .filter((t): t is Extract<Token, { kind: 'raw' }> => t.kind === 'raw' && t.name === 'script' && !t.attrs.get('src')?.trim() && !!t.text.trim())
+    .map(t => t.text);
+}
+
+/** The arguments of each `new Question(…)` the script runs, in order: its values, or null for a call with any other argument. */
 export function questionCalls(script: string): Array<Literal[] | null> {
-  return [...script.matchAll(/\bnew\s+Question\s*\(/g)].map(m => readList(script, m.index! + m[0].length, ')')?.items ?? null);
+  return [...codeOf(script).matchAll(/\bnew\s+Question\s*\(/g)].map(m => readList(script, m.index! + m[0].length, ')')?.items ?? null);
 }
 
 /** How a package declares its questions: its constructor's parameter names, and the constants it names things by. */
@@ -567,11 +643,14 @@ export function questionForm(scripts: readonly string[]): QuestionForm | null {
   let params: string[] | null = null;
   const constants = new Map<string, string>();
   for (const s of scripts) {
+    // Read from the code alone, so a declaration in a comment declares nothing; a constant's value
+    // is read from the script itself, where the string still holds it.
+    const code = codeOf(s);
     if (!params) {
-      const m = /\bfunction\s+Question\s*\(([^)]*)\)/.exec(s) ?? /\bQuestion\s*=\s*function\s*\(([^)]*)\)/.exec(s);
+      const m = /\bfunction\s+Question\s*\(([^)]*)\)/.exec(code) ?? /\bQuestion\s*=\s*function\s*\(([^)]*)\)/.exec(code);
       if (m) params = m[1]!.split(',').map(p => p.replace(/=[\s\S]*$/, '').trim()).filter(Boolean);
     }
-    for (const c of s.matchAll(/\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*(?=["'])/g)) {
+    for (const c of code.matchAll(/\b(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*(?=["'])/g)) {
       const value = readString(s, c.index! + c[0].length);
       if (value && !constants.has(c[1]!)) constants.set(c[1]!, value.value);
     }
@@ -635,8 +714,25 @@ export function questionOf(args: readonly Literal[], form: QuestionForm): Import
 
 interface Resource { href: string | undefined; base: string; files: string[] }
 
-/** The manifest's resources, in its order: each one's launch page, its base, and the files it lists. */
+/** The root a package's references resolve under; nothing outside it is the package's. */
+const PACKAGE_ROOT = 'https://package.invalid/';
+
+/** A base, resolved against the one it sits under, as xml:base resolves. */
+function underBase(base: string, parent: string): string {
+  if (!base.trim()) return parent;
+  try { return new URL(base.trim(), parent).href; } catch { return parent; }
+}
+
+/**
+ * The manifest's resources, in its order: each one's launch page, the base its references resolve
+ * against, and the files it lists. The base is the resource's xml:base under the <resources>
+ * element's, under the manifest's, as the content packaging model lets each level set one
+ * (Codex, on #553).
+ */
 function resourcesOf(manifest: string): Map<string, Resource> {
+  const manifestBase = attributesOf(/<(?:[\w-]+:)?manifest\b([^>]*)>/i.exec(manifest)?.[1] ?? '').get('xml:base') ?? '';
+  const resourcesBase = attributesOf(/<(?:[\w-]+:)?resources\b([^>]*)>/i.exec(manifest)?.[1] ?? '').get('xml:base') ?? '';
+  const inherited = underBase(resourcesBase, underBase(manifestBase, PACKAGE_ROOT));
   const out = new Map<string, Resource>();
   for (const m of manifest.matchAll(/<(?:[\w-]+:)?resource\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:[\w-]+:)?resource\s*>)/gi)) {
     const attrs = attributesOf(m[1]!);
@@ -645,10 +741,13 @@ function resourcesOf(manifest: string): Map<string, Resource> {
     const files = [...(m[2] ?? '').matchAll(/<(?:[\w-]+:)?file\b([^>]*?)\/?>/gi)]
       .map(f => attributesOf(f[1]!).get('href'))
       .filter((h): h is string => !!h);
-    out.set(id, { href: attrs.get('href'), base: attrs.get('xml:base') ?? '', files });
+    out.set(id, { href: attrs.get('href'), base: underBase(attrs.get('xml:base') ?? '', inherited), files });
   }
   return out;
 }
+
+/** Where a file of the package sits, as a URL its own references resolve against. */
+const fileUrlIn = (path: string): string => `${PACKAGE_ROOT}${path.split('/').map(encodeURIComponent).join('/')}`;
 
 const PAGE = /\.(?:x?html?)$/i;
 const SCRIPT = /\.m?js$/i;
@@ -668,12 +767,16 @@ export function readPackage(files: PackageFiles, opts: { fileUrl: (path: string)
     const same = folded.get(path.toLowerCase());
     return same?.length === 1 ? same[0]! : null;
   };
-  /** The file a reference in `from` (a page's path, or a base folder ending in /) names, or null. */
-  const inPackage = (ref: string, from: string): string | null => {
+  /**
+   * The file a reference names, resolved against `base` (a file's URL, or a base folder's), or
+   * null. A reference, or a base, that leads off the package names nothing in it.
+   */
+  const inPackage = (ref: string, base: string): string | null => {
     const clean = ref.trim().split('#')[0]!.split('?')[0]!;
     if (!clean || /^[a-z][a-z0-9+.-]*:/i.test(clean) || clean.startsWith('//')) return null;
     try {
-      const url = new URL(clean, `https://package.invalid/${from.split('/').map(encodeURIComponent).join('/')}`);
+      const url = new URL(clean, base);
+      if (`${url.origin}/` !== PACKAGE_ROOT) return null;
       let path = url.pathname.slice(1);
       try { path = decodeURIComponent(path); } catch { /* a name with a bare % */ }
       return entryFor(path);
@@ -713,41 +816,55 @@ export function readPackage(files: PackageFiles, opts: { fileUrl: (path: string)
     return t;
   };
   const unread: LeftOut[] = [];
-  const pageScripts: Array<{ path: string; text: string }> = [];
+  /** Scripts that may hold questions, each with the file whose topic its questions belong to. */
+  const pageScripts: Array<{ path: string; text: string; topicOf: string }> = [];
+  /** Script files that may hold questions, in the order met, and the first content page that loads each. */
+  const scriptFiles: string[] = [];
+  const loadedBy = new Map<string, string>();
 
   for (const entry of ordered) {
     if (NONCONTENT.test(entry)) {
       if (PAGE.test(entry)) unread.push({ path: entry, why: 'kept with the package\'s shared files: chrome, not a page of teaching' });
       continue;
     }
-    if (SCRIPT.test(entry)) { pageScripts.push({ path: entry, text: utf8(files.read(entry) ?? Buffer.alloc(0)) }); continue; }
+    if (SCRIPT.test(entry)) { if (!scriptFiles.includes(entry)) scriptFiles.push(entry); continue; }
     if (!PAGE.test(entry)) continue;
+    const at = fileUrlIn(entry);
     const page = htmlPage(pageText(files.read(entry) ?? Buffer.alloc(0)), {
-      image: src => webUrl(src) ?? (() => { const f = inPackage(src, entry); return f ? markdownUrl(opts.fileUrl(f)) : null; })(),
+      image: src => webUrl(src) ?? (() => { const f = inPackage(src, at); return f ? markdownUrl(opts.fileUrl(f)) : null; })(),
       // Another page of the package is a fragment of its own now: its link keeps only its text.
-      link: href => webUrl(href) ?? (() => { const f = inPackage(href, entry); return f && !PAGE.test(f) ? markdownUrl(opts.fileUrl(f)) : null; })(),
+      link: href => webUrl(href) ?? (() => { const f = inPackage(href, at); return f && !PAGE.test(f) ? markdownUrl(opts.fileUrl(f)) : null; })(),
     });
-    for (const text of page.scripts) pageScripts.push({ path: entry, text });
+    for (const text of page.scripts) pageScripts.push({ path: entry, text, topicOf: entry });
+    // A script a page loads is that page's, wherever it is kept, js/ included (Codex, on #553).
+    for (const src of page.scriptSrcs) {
+      const f = inPackage(src, at);
+      if (!f || !SCRIPT.test(f)) continue;
+      if (!loadedBy.has(f)) loadedBy.set(f, entry);
+      if (!scriptFiles.includes(f)) scriptFiles.push(f);
+    }
     if (!page.body.trim()) { unread.push({ path: entry, why: 'no text of its own: what it shows, its script draws' }); continue; }
     topicFor(entry).pages.push({ path: entry, title: page.title ?? launchTitle.get(entry) ?? humanize(entry), body: page.body });
   }
+  // A script no page loads (a template may read it by name) belongs to its own folder's topic.
+  for (const f of scriptFiles) pageScripts.push({ path: f, text: utf8(files.read(f) ?? Buffer.alloc(0)), topicOf: loadedBy.get(f) ?? f });
 
   // Questions, read as the package declares them. The declaration may be anywhere in the package,
-  // in a script or in a page's own (a declaration reads the same in a page's text as in its script).
+  // in a script or in a page's own.
   const declared: string[] = [];
   for (const name of files.names) {
     if (SCRIPT.test(name)) declared.push(utf8(files.read(name) ?? Buffer.alloc(0)));
-    else if (PAGE.test(name)) declared.push(pageText(files.read(name) ?? Buffer.alloc(0)));
+    else if (PAGE.test(name)) declared.push(...inlineScripts(pageText(files.read(name) ?? Buffer.alloc(0))));
   }
   const form = questionForm(declared);
-  for (const { path, text } of pageScripts) {
+  for (const { path, text, topicOf } of pageScripts) {
     const calls = questionCalls(text);
     if (!calls.length) continue;
     if (!form) { unread.push({ path, why: 'its questions call a constructor the package does not declare, so which value is which cannot be read' }); continue; }
     calls.forEach((args, i) => {
       const q = args ? questionOf(args, form) : 'its values are not all written out';
       if (typeof q === 'string') unread.push({ path, why: `question ${i + 1}: ${q}` });
-      else topicFor(path).questions.push(q);
+      else topicFor(topicOf).questions.push(q);
     });
   }
 

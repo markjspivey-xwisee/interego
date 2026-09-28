@@ -56,13 +56,14 @@ describe('a page, read as Markdown', () => {
     expect(page.body).toBe([
       '- one\n- two\n- nested',
       '3. three\n4. four',
-      'A **bold** word, an *aside*, `x = 1` and a*b.',
+      `A **bold** word, an *aside*, \`x = 1\` and *a${BACKSLASH}*b*.`,
       '> Quoted.',
       '---',
       '```\n  line one\n    line two\n```',
       '~~~\nhas ``` in it\n~~~',
     ].join('\n\n'));
     const html = courseMarkdownHtml(page.body);
+    expect(html).toContain('and <em>a*b</em>.');
     expect(html).toContain('<ul><li>one</li><li>two</li><li>nested</li></ul>');
     expect(html).toContain('<ol start="3"><li>three</li><li>four</li></ol>');
     expect(html).toContain('<strong>bold</strong>');
@@ -72,10 +73,11 @@ describe('a page, read as Markdown', () => {
   it('keeps a web link and a web image, and by default only the text of any other link, and no other image', () => {
     const page = htmlPage('<body><p>See <a href="https://example.org/rules?a=1">the rules [2019]</a>, <a href="other.html">the next page</a> and <a href="javascript:alert(1)">this</a>.</p>'
       + '<p><img src="https://example.org/a b(1).png" alt="a ]tricky[ alt"> <img src="local.png" alt="gone"> <img src="javascript:x()"></p></body>');
-    expect(page.body).toBe('See [the rules 2019](https://example.org/rules?a=1), the next page and this.\n\n![a tricky alt](https://example.org/a%20b%281%29.png)');
+    expect(page.body).toBe(`See [the rules ${BACKSLASH}[2019${BACKSLASH}]](https://example.org/rules?a=1), the next page and this.\n\n![a ${BACKSLASH}]tricky${BACKSLASH}[ alt](https://example.org/a%20b%281%29.png)`);
     const html = courseMarkdownHtml(page.body);
     expect(html).toContain('<a href="https://example.org/rules?a=1"');
-    expect(html).toContain('<img src="https://example.org/a%20b%281%29.png" alt="a tricky alt"');
+    expect(html).toContain('<img src="https://example.org/a%20b%281%29.png" alt="a ]tricky[ alt"');
+    expect(html).toContain('>the rules [2019]</a>');
     expect(html).not.toMatch(/javascript:/);
   });
 
@@ -96,6 +98,19 @@ describe('a page, read as Markdown', () => {
       + '<svg><text>drawn</text></svg><p>Kept.</p><input type="radio"> Label kept</body></html>');
     expect(page.body).toBe('Kept.\n\nLabel kept');
     expect(page.scripts).toEqual(['var inHead = 1;', 'test.AddQuestion(new Question("q"));']);
+    expect(page.scriptSrcs).toEqual(['lib.js']);
+  });
+
+  it('says what the page says: text that looks like Markdown is shown as it is written (Codex, on #553)', () => {
+    const page = htmlPage('<body><p>- Important</p><p>*literal* and **not bold** and `not code`</p><p>1. Not numbered</p><p># Not a heading</p>'
+      + '<p>&gt; Not a quote</p><p>---</p><p>[not](a link) and snake_case and _edge_ and a \\ backslash</p><p>One<br>- two</p></body>');
+    const html = courseMarkdownHtml(page.body);
+    expect(html).toBe([
+      '<p>- Important</p>', '<p>*literal* and **not bold** and `not code`</p>', '<p>1. Not numbered</p>', '<p># Not a heading</p>',
+      '<p>&gt; Not a quote</p>', '<p>---</p>', '<p>[not](a link) and snake_case and _edge_ and a \\ backslash</p>', '<p>One<br>- two</p>',
+    ].join('\n'));
+    // An underscore inside a word is no syntax, and the source stays as it was written there.
+    expect(page.body).toContain('snake_case');
   });
 
   it('decodes each character reference once, and leaves one that names nothing as it is', () => {
@@ -143,6 +158,19 @@ describe('the questions a package declares', () => {
     expect(calls[2]![4]).toEqual({ k: 'num', v: 18 });
     // An argument that is not a value written out: the call is not read.
     expect(calls[3]).toBeNull();
+  });
+
+  it('are only calls the script runs: none written in a comment or inside a string (Codex, on #553)', () => {
+    const script = [
+      '// test.AddQuestion(new Question("c1", "In a line comment?", QUESTION_TYPE_TF, null, true, "o"));',
+      '/* test.AddQuestion(new Question("c2", "In a block comment?", QUESTION_TYPE_TF, null, true, "o")); */',
+      'var example = "new Question(\'s1\', \'In a string?\', QUESTION_TYPE_TF, null, true, \'o\')";',
+      'var shown = `new Question("t1", "In a template?", QUESTION_TYPE_TF, null, true, "o")`;',
+      'test.AddQuestion(new Question("real", "Is this one asked?", QUESTION_TYPE_TF, null, true, "o"));',
+    ].join('\n');
+    expect(questionCalls(script).map(c => c?.[0])).toEqual([str('real')]);
+    // A constructor declared only in a comment declares nothing.
+    expect(questionForm(['// function Question(id, text, type, answers, correctAnswer) {}'])).toBeNull();
   });
 
   it('are read by the parameter names and constants the package itself declares', () => {
@@ -280,6 +308,45 @@ describe('a package, read', () => {
     const read = readPackage(filesOfZip(zip), { fileUrl });
     // `../outside.html` resolves within the package, to the file of that name at its root.
     expect(read.topics.map(t => t.pages.map(p => p.path))).toEqual([['lesson/my page.html'], ['outside.html']]);
+  });
+
+  it('resolves references under the bases a manifest sets at each level, and none off the package (Codex, on #553)', () => {
+    const based = (bases: { manifest?: string; resources?: string; resource?: string }): ImportedPackage => readPackage(filesOfZip(zipOf({
+      'imsmanifest.xml': '<?xml version="1.0"?><manifest identifier="m" xmlns="http://www.imsglobal.org/xsd/imscp_v1p1" xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_v1p3"'
+        + `${bases.manifest ? ` xml:base="${bases.manifest}"` : ''}><organizations default="o"><organization identifier="o"><title>Based</title>`
+        + '<item identifier="i" identifierref="r"><title>Based</title></item></organization></organizations>'
+        + `<resources${bases.resources ? ` xml:base="${bases.resources}"` : ''}><resource identifier="r" type="webcontent" adlcp:scormType="sco" href="start.html"${bases.resource ? ` xml:base="${bases.resource}"` : ''}><file href="start.html"/></resource></resources></manifest>`,
+      'course/lessons/one/start.html': page('Nested', 'Under three bases.'),
+      'start.html': page('Root', 'At the root.'),
+    })), { fileUrl });
+    expect(based({ manifest: 'course/', resources: 'lessons/', resource: 'one/' }).topics.map(t => t.pages.map(p => p.path))).toEqual([['course/lessons/one/start.html']]);
+    expect(based({}).topics.map(t => t.pages.map(p => p.path))).toEqual([['start.html']]);
+    // A base that leads off the package names nothing in it, though a file there has the same path.
+    expect(based({ manifest: 'https://cdn.example/course/', resources: 'lessons/', resource: 'one/' }).topics).toEqual([]);
+    expect(readPackage(filesOfZip(zipOf({
+      'imsmanifest.xml': manifest('<title>Off</title><item identifier="i" identifierref="r"><title>Off</title></item>',
+        '<resource identifier="r" type="webcontent" adlcp:scormType="sco" href="https://cdn.example/start.html"><file href="//cdn.example/start.html"/></resource>'),
+      'start.html': page('Root', 'x'),
+    })), { fileUrl }).topics).toEqual([]);
+  });
+
+  it('gives a script\'s questions to the page that loads it, wherever it is kept, and one no page loads to its folder (Codex, on #553)', () => {
+    const declaration = 'var QUESTION_TYPE_TF = "true-false"; function Question(id, text, type, answers, correctAnswer) { this.Id = id; }';
+    const ask = (id: string) => `test.AddQuestion(new Question("${id}", "Is ${id} asked?", QUESTION_TYPE_TF, null, true));`;
+    const read = readPackage(filesOfZip(zipOf({
+      'imsmanifest.xml': manifest('<title>Scripts</title><item identifier="i" identifierref="r"><title>Scripts</title></item>',
+        '<resource identifier="r" type="webcontent" adlcp:scormType="sco" href="index.html"><file href="index.html"/><file href="js/questions.js"/>'
+        + '<file href="lesson/page.html"/><file href="lesson/bank.js"/><file href="js/declare.js"/></resource>'),
+      'index.html': '<html><head><title>Start</title><script src="js/declare.js"></script><script src="js/questions.js"></script></head><body><h1>Start</h1><p>Begin here.</p></body></html>',
+      'js/declare.js': declaration,
+      'js/questions.js': ask('loaded'),
+      'lesson/page.html': page('Lesson', 'Read this.'),
+      'lesson/bank.js': ask('by-folder'),
+    })), { fileUrl });
+    expect(read.topics.map(t => [t.id, t.pages.map(p => p.path), t.questions.map(q => q.question)])).toEqual([
+      ['index.html', ['index.html'], ['Is loaded asked?']],
+      ['lesson', ['lesson/page.html'], ['Is by-folder asked?']],
+    ]);
   });
 
   it('is no package without a manifest', () => {
