@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-28 — A retried deploy trigger reconciles right before it is sent (#562 follow-up)
+
+Codex, on #562: the deploy trigger reconciled against the pre-repoint deployment before its retry wait, not after it. A deployment Railway publishes late, or another deploy started during the 5 to 20 seconds, would have been triggered over inside the very window the wait widens. Re-triggering an in-flight deploy SIGTERMs the healthy container. `triggerWithRetry` now checks both before the wait and again immediately before each re-trigger, and follows a deployment that has appeared.
+
+Tests: `a-refused-deploy-trigger-is-retried` covers a deployment that appears during the wait, which is followed with the trigger sent only once, and the reconciliation count per refusal. A mutant that skips the check after the wait is caught.
+
 ## 2026-09-28 — A Railway read survives a gateway answer that is not an answer
 
 Railway's API was flaky all afternoon. #561's deploy verified its new WSP bridge build on `/health`, then went red when the check after it (`railway-deploy-check.ts`) got "upstream connect error…" as text where JSON belonged. A plain re-run turned it green, and nothing about the deploy had been wrong.
