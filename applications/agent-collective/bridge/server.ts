@@ -23,6 +23,7 @@ import {
   bundleTeachingPackage,
   recordCrossAgentAudit,
 } from '../src/pod-publisher.js';
+import { promotedToolsAnswer } from '../src/promoted-tools.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -34,6 +35,13 @@ function ctx(args: Record<string, unknown>): Ctx {
   if (!podUrl) throw new Error('pod_url is required (or set AC_DEFAULT_POD_URL)');
   if (!authoringAgentDid) throw new Error('authoring_agent_did is required (or set AC_DEFAULT_AGENT_DID)');
   return { podUrl, authoringAgentDid };
+}
+
+/** The pod a read names, or the bridge's default; a read needs no authoring agent. */
+function podOf(args: Record<string, unknown>): string {
+  const podUrl = (args.pod_url as string | undefined) ?? process.env.AC_DEFAULT_POD_URL;
+  if (!podUrl) throw new Error('pod_url is required (or set AC_DEFAULT_POD_URL)');
+  return podUrl;
 }
 
 const handlers = {
@@ -62,6 +70,8 @@ const handlers = {
     thresholdAxes: args.threshold_axes as number | undefined,
     enforceConstitutionalConstraints: args.enforce_constitutional_constraints as boolean | undefined,
   }, ctx(args)),
+
+  'ac.discover_promoted_tools': async (args: Record<string, unknown>) => promotedToolsAnswer(podOf(args)),
 
   'ac.bundle_teaching_package': async (args: Record<string, unknown>) => bundleTeachingPackage({
     toolIri: String(args.tool_iri) as IRI,

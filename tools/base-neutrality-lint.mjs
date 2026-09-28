@@ -85,24 +85,6 @@ export const ALLOWED_CODE_TOKENS = [
     count: 1,
     why: 'one member of the generic `ExternalCredentialType` union, beside W3C_VC and OpenBadge: the name of a public credential standard a pod may import, not a vertical\'s code path',
   },
-  {
-    file: 'deploy/mcp-relay/server.ts',
-    text: 'urn:graph:ac:',
-    count: 1,
-    why: 'the experimental alias loader for one vertical\'s promoted tools, which #367 removes from the relay; listed so the gate can go on now and the entry must go with the loader',
-  },
-  {
-    file: 'deploy/mcp-relay/server.ts',
-    text: 'ac:AgentTool',
-    count: 5,
-    why: 'the same loader (#367)',
-  },
-  {
-    file: 'deploy/mcp-relay/server.ts',
-    text: 'ac:promote_tool',
-    count: 1,
-    why: 'the same loader (#367)',
-  },
 ];
 
 /**
@@ -111,7 +93,7 @@ export const ALLOWED_CODE_TOKENS = [
  */
 export const COMMENT_PINS = {
   packages: 127,
-  'deploy/mcp-relay': 69,
+  'deploy/mcp-relay': 60,
   'deploy/identity': 0,
   'deploy/validator': 0,
   'mcp-server': 5,

@@ -67,6 +67,27 @@ export function buildToolSurface(
   return Object.freeze({ tools: Object.freeze(tools), digest });
 }
 
+/**
+ * The one resolver every transport dispatches through: a name resolves exactly when it is a
+ * declared tool, an own member of the registry the surface was built from.
+ *
+ * ★ THE SURFACE IS FIXED FOR THE LIFE OF A PROCESS. Nothing adds or removes a tool after boot, so
+ * the relay declares `tools.listChanged: false`, and a client learns of a new surface by comparing
+ * the digest (`tools/list` `_meta`, `/health`, the `GET /tools` identifier): explicit polling.
+ * Capabilities a vertical publishes are not tools here. They are descriptors and affordances,
+ * read through `@interego/solid`'s extension contract and followed with the generic verbs.
+ *
+ * ★ TWO DEFECTS THIS CLOSED (#367). Four transports resolved `TOOLS[name] ?? aliases.get(name)`,
+ * so an alias registry outside the declared surface was callable while no catalog, list or health
+ * check listed it. And `TOOLS` is a plain object, so the bare index also answered for
+ * `constructor`, `toString` and the rest of `Object.prototype`: a name no catalog lists resolved
+ * to a function with no `handler`, and the call failed as a TypeError rather than as an unknown
+ * tool.
+ */
+export function declaredToolResolver<T>(registry: Readonly<Record<string, T>>): (name: string) => T | undefined {
+  return name => (Object.prototype.hasOwnProperty.call(registry, name) ? registry[name] : undefined);
+}
+
 /** A changed public tool contract produces a distinguishable MCP server identity. */
 export function mcpServerVersion(toolSurfaceDigest: string): string {
   if (!/^[a-f0-9]{64}$/.test(toolSurfaceDigest)) throw new Error('tool surface digest must be sha256 hex');

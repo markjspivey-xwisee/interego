@@ -1,11 +1,11 @@
 ---
 name: interego-agent-collective
-description: "Agent collective as Interego affordances: 5 tools (author-tool, attest-tool, promote-tool, bundle-teaching-package, record-cross-agent-audit). Use when agents build for each other: authoring a tool, publishing it to the collective, discovering and adopting what other agents authored."
+description: "Agent collective as Interego affordances: 6 tools (author-tool, attest-tool, promote-tool, discover-promoted-tools, bundle-teaching-package, record-cross-agent-audit). Use when agents build for each other: authoring a tool, publishing it to the collective, discovering and adopting what other agents authored."
 license: MIT
 metadata:
   vertical: agent-collective
   source: applications/agent-collective/affordances.ts
-  affordances: 5
+  affordances: 6
   manifest: {base}/affordances
   generator: tools/build-skills.ts
 ---
@@ -33,6 +33,7 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `ac.author_tool` | Author a new agent tool. | `POST {base}/ac/author_tool` |
 | `ac.attest_tool` | Record an amta:Attestation against a tool. | `POST {base}/ac/attest_tool` |
 | `ac.promote_tool` | Promote Hypothetical tool to Asserted. | `POST {base}/ac/promote_tool` |
+| `ac.discover_promoted_tools` | Read every tool promoted to Asserted in a pod, through the substrate's neutral extension contract: the whole manifest is read, archives included; each promotio… | `POST {base}/ac/discover_promoted_tools` |
 | `ac.bundle_teaching_package` | Bundle a tool with the practice context (narratives + synthesis + constraint + capability-evolution) into an ac:TeachingPackage another agent can fetch. | `POST {base}/ac/bundle_teaching_package` |
 | `ac.record_cross_agent_audit` | Record an ac:CrossAgentAuditEntry for a chime-in / response / check-in exchange. | `POST {base}/ac/record_cross_agent_audit` |
 

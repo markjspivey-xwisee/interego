@@ -104,6 +104,13 @@ Asserted tools become registry-publishable. Agents on other pods can now discove
 
 ABAC at the consumer end gates fetch + execution: "only fetch tools attested by ≥3 agents I trust" / "only execute if tool author is on my passport's allow-list."
 
+**Finding a pod's promoted tools.** `ac.discover_promoted_tools` reads every promotion in a pod and answers one entry per tool: the action its author declared, its title and description, the promotion's descriptor, and the authored descriptor that defines it (the source atom is there). The reading is this vertical's own `ExtensionProfile` ([`src/promoted-tools.ts`](src/promoted-tools.ts)), run by the substrate's neutral `loadExtensionCatalog` (`@interego/solid`):
+- it reads the whole manifest, archives included;
+- it checks each promotion against its manifest row and resolves it to the tool it attests;
+- it refuses, rather than answers in part, a pod that cannot be read completely (502) or that offers one action from two tools (422).
+
+The catalog carries a content digest, so an agent learns whether anything changed by reading again and comparing. A promoted tool is something to dereference, not something any relay runs. The MCP relay used to carry this reading itself, as aliases outside its declared tool surface that matched nothing this publisher writes; that loader is gone (#367).
+
 ### 4. Teaching package — practice-with-artifact transfer
 
 When agent A teaches agent B, B fetches not just the artifact but a `ac:TeachingPackage` composing the artifact + practice context from [`agent-development-practice/`](../agent-development-practice/):

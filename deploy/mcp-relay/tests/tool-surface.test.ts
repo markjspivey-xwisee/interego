@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   buildToolSurface,
+  declaredToolResolver,
   MCP_RELAY_VERSION,
   mcpServerVersion,
 } from '../tool-surface.js';
@@ -123,5 +124,54 @@ assert.match(server, /toolSurfaceDigest:\s*TOOL_SURFACE_DIGEST/);
 assert.match(server, /mcpServerVersion:\s*MCP_SERVER_VERSION/);
 assert.match(server, /Cache-Control', 'no-cache'/);
 assert.doesNotMatch(server, /ETag[^\n]*TOOL_SURFACE_DIGEST/);
+
+// ── #367: what can be CALLED is exactly what is PUBLISHED ────────────────────────
+// The resolver answers own members only: a declared name, and nothing a plain object's
+// prototype holds. `constructor` and `toString` used to resolve on every transport.
+const resolve = declaredToolResolver(registry);
+assert.equal(resolve('act'), registry.act);
+for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf', 'dynamic:anything', '']) {
+  assert.equal(resolve(name), undefined, `${JSON.stringify(name)} is not a declared tool`);
+}
+
+// Every transport dispatches through that one resolver over the declared table, and no second
+// registry sits beside it. An alias registry was callable on four transports while listed on none.
+const DISPATCH_SITES = [
+  ['/mcp tools/call', 'async function callWithSession(', 'const tool = declaredTool(name);'],
+  ['/mcp request observer', "server.setRequestHandler('tools/call'", 'declaredTool(req.params.name)'],
+  ['interop invokeCapability', 'const verb = capability.split', 'const tool = declaredTool(verb);'],
+  ['POST /tool/:name', "app.post('/tool/:name'", 'const tool = declaredTool(toolName);'],
+  ['/messages tools/call', "if (method === 'tools/call')", 'const tool = declaredTool(toolName);'],
+] as const;
+for (const [site, start, call] of DISPATCH_SITES) {
+  const at = server.indexOf(start);
+  assert.ok(at >= 0, `${site}: its region is still where this pin looks`);
+  assert.ok(server.indexOf(call, at) >= 0 && server.indexOf(call, at) - at < 6000, `${site} resolves through declaredTool`);
+}
+assert.equal((server.match(/declaredTool\(/g) ?? []).length, DISPATCH_SITES.length + 1,
+  'every resolution is one of the five dispatch sites or the per-operation schema route');
+assert.match(server, /const declaredTool = declaredToolResolver\(TOOLS\);/);
+assert.doesNotMatch(server, /\bTOOLS\[/, 'a bare index into TOOLS resolves prototype members too');
+assert.doesNotMatch(server, /Object\.keys\(TOOLS\)/, 'every published name list comes from TOOL_SURFACE');
+for (const gone of ['dynamicTools', 'loadDynamicTools', 'RELAY_DYNAMIC_TOOLS_POD', 'reload-dynamic-tools', 'dynamic-tools-status']) {
+  assert.ok(!server.includes(gone), `the alias registry is gone: ${gone}`);
+}
+
+// Every projection reads the one surface: the MCP and legacy lists and GET /tools (pinned above),
+// the operations catalog and its per-operation schemas, health, the interop card and the SSE frame.
+const operationsStart = server.indexOf("app.get('/.well-known/operations'");
+assert.ok(operationsStart >= 0);
+assert.match(server.slice(operationsStart, operationsStart + 4000), /TOOL_SURFACE\.tools\.map/);
+const operationSchemaStart = server.indexOf("app.get('/.well-known/operations/:name/:kind'");
+assert.ok(operationSchemaStart >= 0);
+const operationSchema = server.slice(operationSchemaStart, operationSchemaStart + 2000);
+assert.match(operationSchema, /if \(!declaredTool\(name\)\)/);
+assert.match(operationSchema, /TOOL_SURFACE\.tools\.find/);
+assert.match(server, /tools:\s*TOOL_SURFACE\.tools\.length,/, 'health counts the published surface');
+assert.match(server, /type: 'connection', tools: TOOL_SURFACE\.tools\.map\(t => t\.name\)/, 'the SSE frame names the published surface');
+assert.match(server, /return TOOL_SURFACE\.tools\.map\(t => \(\{/, 'the interop card lists the published surface');
+
+// The surface never changes during a process, and says so: no list_changed is ever sent.
+assert.match(server, /capabilities:\s*\{\s*tools:\s*\{\s*listChanged:\s*false\s*\}/);
 
 console.log('tool-surface: one fail-closed declared schema projection, content identity, and transport parity verified');

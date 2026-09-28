@@ -259,6 +259,7 @@ const resourceCompositions = await loadResourceCompositions(process.env.INTEREGO
 const requestObservers = await loadRequestObservers(process.env.INTEREGO_REQUEST_OBSERVERS);
 import {
   buildToolSurface,
+  declaredToolResolver,
   mcpServerVersion,
   TOOL_SURFACE_META_KEY,
 } from './tool-surface.js';
@@ -10768,7 +10769,7 @@ type ToolEntry = { description: string; handler: (args: ToolArgs) => Promise<str
  *
  * FOUR transports dispatch tool calls — `/mcp` (`setRequestHandler('tools/call')`), the
  * `act`/verb router, `/tool/:name`, and `/messages` — and all four resolve the handler the
- * same way: `TOOLS[name] ?? dynamicTools.get(name)`, then call `.handler(args)`. Wrapping
+ * same way: `declaredTool(name)`, then call `.handler(args)`. Wrapping
  * once here is therefore the only edit that cannot be transport-shaped: a guard added to
  * one dispatcher would have left the other three answering with the TypeError, which is
  * exactly the class of half-applied fix this file keeps re-learning.
@@ -10930,153 +10931,16 @@ const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   resolve_linked_data: { description: 'Resolve a published /ns ontology/graph as content-negotiated linked data (Turtle/JSON-LD) — for MCP-only clients that cannot GET the URL directly', handler: handleResolveLinkedData },
 });
 
-// ── Tier-4: dynamic relay-tool registry over ac:AgentTool ────
+// ── Tool resolution: the declared surface and nothing beside it ────
 //
-// Tools authored via ac.author_tool, attested to threshold, and
-// promoted to Asserted via ac.promote_tool can be loaded into an
-// experimental alias registry — without a redeploy. They do not alter the
-// declared MCP schema surface; clients discover their source descriptors and
-// follow their affordances through the generic kernel verbs.
-//
-// Trust boundary: only ONE pod is scanned (RELAY_DYNAMIC_TOOLS_POD,
-// default = the relay's own service pod). The pod owner controls
-// what lives there; attestations are the gate-keeping mechanism, not
-// the relay. Asserted modal status is REQUIRED — Hypothetical tools
-// (newly authored, not yet attested to threshold) are not loaded.
-//
-// Handlers proxy through the affordance machinery: when a dynamic
-// tool is invoked, the handler dereferences the descriptor and
-// returns its iep:affordance block + body so the caller can follow it
-// (or, when hydra:target is present, invokes it directly via
-// kernelAct). Either way the relay never executes arbitrary code
-// from a pod — the affordance is itself a hypermedia operation, not
-// raw JS.
-interface DynamicToolEntry {
-  readonly description: string;
-  readonly handler: (args: ToolArgs) => Promise<string>;
-  readonly descriptorUrl: string;
-  readonly affordanceAction?: string;
-}
-const dynamicTools = new Map<string, DynamicToolEntry>();
-let dynamicToolsLastLoadedAt: string | null = null;
-let dynamicToolsLastLoadCount = 0;
-const RELAY_DYNAMIC_TOOLS_POD = process.env['RELAY_DYNAMIC_TOOLS_POD'];
-
-/**
- * Discover Asserted ac:AgentTool descriptors on the configured pod
- * and register them as runtime-loaded MCP tools. Idempotent: re-runs
- * replace the existing dynamicTools registry wholesale. Returns the
- * count of tools loaded.
- *
- * The discovery uses the same primitives the substrate already
- * exposes: discover_context for manifest listing, get_descriptor for
- * each ac:AgentTool descriptor body. No new wire surface; the relay
- * is consuming its own MCP capabilities to grow itself.
- */
-async function loadDynamicTools(): Promise<number> {
-  if (!RELAY_DYNAMIC_TOOLS_POD) return 0;
-  const podUrl = RELAY_DYNAMIC_TOOLS_POD.endsWith('/') ? RELAY_DYNAMIC_TOOLS_POD : `${RELAY_DYNAMIC_TOOLS_POD}/`;
-  let entries: Awaited<ReturnType<typeof discover>>;
-  try {
-    // Newest-first sort + reasonable limit so initial load is bounded.
-    // No graph_iri filter here — we want every Asserted AgentTool, and
-    // by-convention they describe graphs prefixed `urn:graph:ac:tool:`.
-    // Filtering by that prefix client-side keeps the wire request simple.
-    entries = await discover(podUrl, { sort: 'newest-first', limit: 200 }, { fetch: solidFetch });
-  } catch (err) {
-    log(`[dynamic-tools] discover failed: ${(err as Error).message}`);
-    return 0;
-  }
-  const candidates = entries.filter(e => e.describes.some(g => g.startsWith('urn:graph:ac:tool:')));
-  dynamicTools.clear();
-  let loaded = 0;
-  for (const entry of candidates) {
-    try {
-      const resp = await solidFetch(entry.descriptorUrl, {
-        method: 'GET',
-        headers: { 'Accept': 'text/turtle' },
-      });
-      if (!resp.ok) continue;
-      const turtle = await resp.text();
-      // Only Asserted, only ac:AgentTool.
-      if (!/iep:modalStatus\s+iep:Asserted/i.test(turtle)) continue;
-      if (!/\ba ac:AgentTool\b|\ba\s+ac:AgentTool/.test(turtle)) continue;
-      const labelMatch = turtle.match(/rdfs:label\s+"([^"]+)"/);
-      const actionMatch = turtle.match(/iep:action\s+<([^>]+)>/);
-      const commentMatch = turtle.match(/iep:affordance\s+\[[\s\S]*?rdfs:comment\s+"([^"]+)"/);
-      if (!labelMatch) continue;
-      const rawName = labelMatch[1]!;
-      const toolName = `dynamic:${rawName.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase()}`;
-      const description =
-        `[Dynamic, pod-loaded ac:AgentTool] ${commentMatch?.[1] ?? rawName}. `
-        + `Promoted to Asserted via ac:promote_tool attestations. `
-        + `Source descriptor: ${entry.descriptorUrl}. `
-        + (actionMatch ? `Affordance action: ${actionMatch[1]} (follow via act/invoke_affordance).` : 'No callable affordance — descriptor-only introspection.');
-      const descriptorUrl = entry.descriptorUrl;
-      const affordanceAction = actionMatch?.[1];
-      const handler = async (args: ToolArgs): Promise<string> => {
-        // The dynamic tool's handler is a thin wrapper: dereference the
-        // descriptor and return its representation + affordances. The
-        // caller decides how to follow them (act / invoke_affordance /
-        // publish_context). This is the substrate-honest "execution
-        // model": the descriptor IS the tool definition; calling it
-        // surfaces its callable affordances rather than running code.
-        try {
-          const r = await kernelDereference(descriptorUrl, {
-            fetch: solidFetch,
-            recipientKeyPair: relayAgentKey,
-          });
-          return JSON.stringify({
-            tool: toolName,
-            sourceDescriptor: descriptorUrl,
-            affordanceAction: affordanceAction ?? null,
-            dereference: r,
-            args,
-            note:
-              `This is a dynamic tool loaded from the relay's configured ac:AgentTool pod. `
-              + `Its handler dereferences the source descriptor and returns its affordances; `
-              + `follow them via the \`act\` or \`invoke_affordance\` tools. The relay does NOT `
-              + `execute arbitrary code from pods — the descriptor IS the executable definition `
-              + `(as a hypermedia affordance), and following the affordance is how the tool runs.`,
-          });
-        } catch (err) {
-          return JSON.stringify({
-            tool: toolName,
-            error: 'dynamic tool handler threw',
-            message: (err as Error).message,
-            sourceDescriptor: descriptorUrl,
-          });
-        }
-      };
-      dynamicTools.set(toolName, {
-        description,
-        handler,
-        descriptorUrl,
-        ...(affordanceAction ? { affordanceAction } : {}),
-      });
-      loaded++;
-    } catch (err) {
-      log(`[dynamic-tools] failed to load ${entry.descriptorUrl}: ${(err as Error).message}`);
-    }
-  }
-  dynamicToolsLastLoadedAt = new Date().toISOString();
-  dynamicToolsLastLoadCount = loaded;
-  log(`[dynamic-tools] loaded ${loaded} ac:AgentTool descriptor(s) from ${podUrl} (scanned ${candidates.length} candidate entries)`);
-  return loaded;
-}
-
-// Dynamic aliases are an experimental, descriptor-discovery path kept separate
-// from the relay's declared MCP contract. They remain reachable by an informed
-// caller, while portable clients discover and follow the underlying affordance
-// through the generic act/invoke_affordance path. Replacing this AC-specific
-// loader with a neutral extension contract is tracked separately.
-if (RELAY_DYNAMIC_TOOLS_POD) {
-  void loadDynamicTools().catch(err => {
-    log(`[dynamic-tools] initial load failed: ${(err as Error).message}`);
-  });
-} else {
-  log(`[dynamic-tools] RELAY_DYNAMIC_TOOLS_POD not set; static TOOLS only`);
-}
+// Every transport resolves a tool name here, so what can be CALLED is exactly what TOOL_SURFACE
+// PUBLISHES (buildToolSurface already fails the boot if a handler and a schema disagree). An
+// experimental alias registry for one vertical's promoted tools used to answer here too: callable
+// on four transports, listed on none, loaded from a pod by that vertical's vocabulary, and
+// decrypting with the relay's own key. It is gone (#367). A vertical's capabilities are
+// descriptors and affordances: its own profile reads them through @interego/solid's extension
+// contract, and clients follow them with the generic verbs (dereference, act, invoke_affordance).
+const declaredTool = declaredToolResolver(TOOLS);
 
 // ── MCP Tool Schemas ────────────────────────────────────────
 // Input schemas for each tool. Claude's LLM uses these to know how to call
@@ -12779,7 +12643,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
   const server = new Server(
     { name: '@interego/mcp-relay', version: MCP_SERVER_VERSION },
     {
-      capabilities: { tools: {}, resources: {}, prompts: {} },
+      capabilities: { tools: { listChanged: false }, resources: {}, prompts: {} },
       instructions: SERVER_INSTRUCTIONS,
       requestState: { verify: async (state, ctx) => {
         const auth = ctx.http?.authInfo;
@@ -12946,7 +12810,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     const reference = raw.descriptor_url ?? raw.target ?? raw.iri;
     const action = raw.action_iri ?? raw.action;
     const observation = sessionAuth?.oauthScopes && hasWriteOauthScope(sessionAuth.oauthScopes)
-      && sessionAuth.agentId && (TOOLS[req.params.name] ?? dynamicTools.get(req.params.name)) ? {
+      && sessionAuth.agentId && declaredTool(req.params.name) ? {
         principal: sessionAuth.agentId, tool: req.params.name,
         ...(typeof reference === 'string' ? { selector: { reference, ...(typeof action === 'string' ? { action } : {}) } } : {}),
         now: () => new Date().toISOString(),
@@ -12960,7 +12824,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     return requestObservers.run(observation, () => callWithSession(sessionAuth));
     async function callWithSession(authContext: Parameters<typeof buildMcpServer>[0]) {
     const { name, arguments: rawArgs } = req.params;
-    const tool = TOOLS[name] ?? dynamicTools.get(name);
+    const tool = declaredTool(name);
     if (!tool) {
       return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
     }
@@ -13646,7 +13510,7 @@ app.get('/.well-known/operations/:name/:kind', (req, res) => {
   }
   // Own-key only, and only for an operation this relay actually serves — the same lesson as the
   // action authority: a bare index into an object answers for every Object.prototype member.
-  if (!Object.prototype.hasOwnProperty.call(TOOLS, name)) {
+  if (!declaredTool(name)) {
     res.status(404).json({ error: 'no_such_operation', detail: `this relay serves no operation named ${name}` });
     return;
   }
@@ -14750,7 +14614,7 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     css: CSS_URL,
-    tools: Object.keys(TOOLS).length,
+    tools: TOOL_SURFACE.tools.length,
     auth: 'bearer-token',
     x402: true,
     build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset',
@@ -15003,7 +14867,7 @@ mountAgentInterop(app, {
     // proved why, by echoing an internal "Cannot read properties of undefined" to
     // an external peer when this contract still used exceptions for both.
     const verb = capability.split('/').pop() ?? '';
-    const tool = TOOLS[verb] ?? dynamicTools.get(verb);
+    const tool = declaredTool(verb);
     if (!tool) return { ok: false as const, reason: `unknown capability: ${verb}` };
     if (AUTH_REQUIRED_TOOLS.has(verb) || isWriteSideTool(verb)) {
       return { ok: false as const, reason:
@@ -15608,79 +15472,6 @@ app.post('/verify-token', verifyTokenLimiter, async (req, res) => {
  * so a concurrent publisher's update is detected and reported rather
  * than clobbered.
  */
-// POST /admin/reload-dynamic-tools — re-scan the configured
-// RELAY_DYNAMIC_TOOLS_POD for Asserted ac:AgentTool descriptors and
-// rebuild the dynamicTools registry. Same auth model as
-// /admin/backfill-manifest-cid (introspection-secret-gated). The
-// substrate-honest descriptor-alias loader: a new tool gets authored +
-// attested on a pod, and this endpoint makes its alias directly callable.
-// It deliberately does not rewrite the relay's declared MCP tools/list;
-// portable discovery remains descriptor → affordance → act.
-app.post('/admin/reload-dynamic-tools', async (req, res) => {
-  if (!RELAY_INTROSPECTION_SECRET) {
-    res.status(503).json({ ok: false, reason: 'RELAY_INTROSPECTION_SECRET not configured on relay; admin endpoints disabled' });
-    return;
-  }
-  const auth = req.headers.authorization ?? '';
-  if (!auth.startsWith('Bearer ')) {
-    res.status(401).json({ ok: false, reason: 'introspection bearer required' });
-    return;
-  }
-  const presented = auth.slice(7);
-  const a = Buffer.from(presented, 'utf8');
-  const b = Buffer.from(RELAY_INTROSPECTION_SECRET, 'utf8');
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    res.status(401).json({ ok: false, reason: 'introspection bearer rejected' });
-    return;
-  }
-  if (!RELAY_DYNAMIC_TOOLS_POD) {
-    res.status(503).json({ ok: false, reason: 'RELAY_DYNAMIC_TOOLS_POD not configured; no pod to scan' });
-    return;
-  }
-  const loaded = await loadDynamicTools();
-  res.status(200).json({
-    ok: true,
-    podUrl: RELAY_DYNAMIC_TOOLS_POD,
-    loaded,
-    tools: [...dynamicTools.keys()],
-    lastLoadedAt: dynamicToolsLastLoadedAt,
-  });
-});
-
-// GET /admin/dynamic-tools-status — read-only view of the dynamic
-// registry's current state (count + names + last-load timestamp).
-// Same introspection-secret gate. Useful for ops monitoring without
-// triggering a rescan.
-app.get('/admin/dynamic-tools-status', async (req, res) => {
-  if (!RELAY_INTROSPECTION_SECRET) {
-    res.status(503).json({ ok: false, reason: 'RELAY_INTROSPECTION_SECRET not configured' });
-    return;
-  }
-  const auth = req.headers.authorization ?? '';
-  if (!auth.startsWith('Bearer ')) {
-    res.status(401).json({ ok: false, reason: 'introspection bearer required' });
-    return;
-  }
-  const presented = auth.slice(7);
-  const a = Buffer.from(presented, 'utf8');
-  const b = Buffer.from(RELAY_INTROSPECTION_SECRET, 'utf8');
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    res.status(401).json({ ok: false, reason: 'introspection bearer rejected' });
-    return;
-  }
-  res.status(200).json({
-    ok: true,
-    configuredPod: RELAY_DYNAMIC_TOOLS_POD ?? null,
-    lastLoadedAt: dynamicToolsLastLoadedAt,
-    lastLoadCount: dynamicToolsLastLoadCount,
-    tools: [...dynamicTools.entries()].map(([name, t]) => ({
-      name,
-      descriptorUrl: t.descriptorUrl,
-      affordanceAction: t.affordanceAction ?? null,
-    })),
-  });
-});
-
 app.post('/admin/backfill-manifest-cid', async (req, res) => {
   if (!RELAY_INTROSPECTION_SECRET) {
     res.status(503).json({ ok: false, reason: 'RELAY_INTROSPECTION_SECRET not configured on relay; admin endpoints disabled' });
@@ -16336,7 +16127,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
   // _session_user_id / _session_agent_did straight into the handler.
   stripReservedWireFields(req.body);
   const toolName = req.params.name as string;
-  const tool = TOOLS[toolName] ?? dynamicTools.get(toolName);
+  const tool = declaredTool(toolName);
   if (!tool) {
     res.status(404).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
@@ -16592,7 +16383,7 @@ app.get('/sse', (req, res, next) => mcpGate(req, res, next), (req, res) => {
   res.flushHeaders();
 
   // Send initial connection event
-  res.write(`data: ${JSON.stringify({ type: 'connection', tools: Object.keys(TOOLS) })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: 'connection', tools: TOOL_SURFACE.tools.map(t => t.name) })}\n\n`);
 
   // ── Forward notification events — THIS CONNECTION'S OWN POD ONLY ───────────
   //
@@ -16781,7 +16572,7 @@ app.post('/messages', messagesLimiter, async (req, res) => {
 
   if (method === 'tools/call') {
     const toolName = params?.name;
-    const tool = TOOLS[toolName] ?? dynamicTools.get(toolName);
+    const tool = declaredTool(toolName);
     if (!tool) {
       res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${toolName}` } });
       return;
