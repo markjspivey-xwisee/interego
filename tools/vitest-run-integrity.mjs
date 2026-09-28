@@ -263,7 +263,12 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 437 -> 459, measured by CI on the tree that tripped the allowance: the SCORM projection's
 // module (`composition-scorm`) used the last of it. The twenty-one before it are Foxxi's
 // composable-content, cmi5-launch and LTI rounds since the last pin, and none was removed.
-export const MIN_TEST_MODULES = 459;
+// 459 -> 482, measured on the tree that tripped the allowance: the SCORM package importer's
+// module (`a-scorm-package-folds-into-composable-content`) used the last of it. The twenty-two
+// before it are Foxxi's rounds since the last pin (the dashboard's Learn, Work and Author pages
+// and its browser bundle, the record's voids and partial reads, what the store kept, session
+// keys, and hosted SCORM packages), and none was removed.
+export const MIN_TEST_MODULES = 482;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a
