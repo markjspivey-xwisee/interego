@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-28 — The byte bound releases what it refuses, and names an oversized archive as over the bound (#559 follow-up)
+
+Codex, on #559:
+- **A declared length over the bound now cancels the body before the load refuses.** Before, it threw with the body unread and uncancelled. In Node's fetch, a pod that declares a huge body and then trickles it kept the connection and the stream open after the catalog request had refused, so repeated unauthenticated bridge calls could exhaust outbound connections despite the bound.
+- **An oversized archive segment is now reported as over the bound.** The manifest reader turns any error from an archive segment into "unreachable", so the refusal the bound raised never reached the loader. The same oversized document was reported as `incomplete` (502 on the bridge) where a hot manifest, descriptor or payload reported `over-bound` (422). The bound now remembers every document it refuses, and the load reports that before any incompleteness.
+
+Tests (`extension-catalog`):
+- a declared-length refusal cancels the body, checked through a stream's `cancel` hook;
+- an oversized archive segment is refused as `over-bound`.
+
+A mutant for each is caught.
+
 ## 2026-09-28 — A deploy trigger Railway refuses once is tried again, not left written but unshipped
 
 `tools/railway-redeploy.mjs` repoints a service's image (`serviceInstanceUpdate`) and then ships it (`serviceInstanceDeployV2`). The first alone changes what the service's source names, not what runs.

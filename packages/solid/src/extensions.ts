@@ -143,13 +143,22 @@ export interface LoadExtensionCatalogOptions {
  * that streams past it is cancelled at the chunk that crosses it. A response with no stream (a
  * test double) is measured after `text()`.
  */
-function cappedFetch(fetchFn: FetchFn, maxBytes: number): FetchFn {
-  const tooBig = (url: string) =>
-    new ExtensionLoadRefused('over-bound', `${url} is larger than the ${maxBytes}-byte bound on one document`);
+function cappedFetch(fetchFn: FetchFn, maxBytes: number, overBound: Set<string>): FetchFn {
+  // Every document refused here is remembered: the manifest reader swallows an archive segment's
+  // error into "unreachable", and the load must still report the bound, not a failed read.
+  const tooBig = (url: string) => {
+    overBound.add(url);
+    return new ExtensionLoadRefused('over-bound', `${url} is larger than the ${maxBytes}-byte bound on one document`);
+  };
   return (async (url: string, init?: Parameters<FetchFn>[1]) => {
     const resp = await fetchFn(url, init) as Awaited<ReturnType<FetchFn>> & { body?: unknown };
     const declared = Number(resp.headers?.get?.('content-length') ?? Number.NaN);
-    if (Number.isFinite(declared) && declared > maxBytes) throw tooBig(url);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      // Release the connection: a pod that declares a huge body and trickles it must not keep it
+      // (Codex, on #559).
+      await (resp.body as { cancel?: () => Promise<void> } | null | undefined)?.cancel?.().catch(() => undefined);
+      throw tooBig(url);
+    }
     let read: Promise<string> | undefined;
     const text = (): Promise<string> => (read ??= (async () => {
       const body = resp.body as { getReader?: () => { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(): Promise<void> } } | null | undefined;
@@ -230,7 +239,8 @@ export async function loadExtensionCatalog(
   options: LoadExtensionCatalogOptions = {},
 ): Promise<ExtensionCatalog> {
   if (!absoluteIri(profile.id)) throw new ExtensionLoadRefused('invalid', 'a profile is named by an absolute IRI');
-  const fetchFn = cappedFetch(options.fetch ?? getDefaultFetch(), options.maxDocumentBytes ?? 4 * 1024 * 1024);
+  const overBound = new Set<string>();
+  const fetchFn = cappedFetch(options.fetch ?? getDefaultFetch(), options.maxDocumentBytes ?? 4 * 1024 * 1024, overBound);
   const maxRows = options.maxRows ?? 5000;
   const maxOperations = options.maxOperations ?? 500;
   const pod = new URL(withSlash(podUrl));
@@ -247,6 +257,9 @@ export async function loadExtensionCatalog(
   if (!empty) {
     if (chain.hotStatus < 200 || chain.hotStatus >= 300) {
       throw new ExtensionLoadRefused('incomplete', `the pod's manifest answered ${chain.hotStatus}`);
+    }
+    if (overBound.size > 0) {
+      throw new ExtensionLoadRefused('over-bound', `${[...overBound][0]} is larger than the bound on one document`);
     }
     if (!chain.complete || chain.archivesUnreachable.length > 0) {
       throw new ExtensionLoadRefused('incomplete', `${chain.archivesUnreachable.length || 'some'} archive segment(s) of the manifest could not be read`);
