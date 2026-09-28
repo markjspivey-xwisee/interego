@@ -1,7 +1,8 @@
 /**
- * Author: write fragments, compose them, and see what each composition has learned. Everything
- * here is an affordance an agent uses the same way (foxxi.content_fragment, foxxi.content_compose,
- * foxxi.content_mine, and a composition's efficacy), signed as the author.
+ * Author: write fragments, compose them, fold a hosted SCORM package into them, and see what each
+ * composition has learned. Everything here is an affordance an agent uses the same way
+ * (foxxi.content_fragment, foxxi.content_compose, foxxi.content_fold_course, foxxi.content_mine,
+ * and a composition's efficacy), signed as the author.
  *
  * The shelf is what the author made or picked up in this browser, to compose from. What they made
  * anywhere is in their record, read under "What you made".
@@ -11,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Card, Pill, TextInput } from './common.js';
 import { FragmentEditor } from './FragmentEditor.js';
 import { CompositionEditor } from './CompositionEditor.js';
+import { FoldPackageCard } from './FoldPackageCard.js';
 import { useAffordance, useHypermedia } from '../hypermedia.js';
 import type { FoxxiSession } from '../auth/session.js';
 import { signerAsks, signerFor } from '../auth/signer.js';
@@ -21,9 +23,9 @@ import type { Mine } from '../learn/play.js';
 import { contentKindOf } from '../author/compose.js';
 import { readShelf, shelfKey, shelve, unshelve, type ShelfItem } from '../author/shelf.js';
 
-type Tab = 'write' | 'compose' | 'shelf' | 'made';
+type Tab = 'write' | 'compose' | 'fold' | 'shelf' | 'made';
 const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
-  { tab: 'write', label: 'Write a fragment' }, { tab: 'compose', label: 'Compose' },
+  { tab: 'write', label: 'Write a fragment' }, { tab: 'compose', label: 'Compose' }, { tab: 'fold', label: 'Fold a package' },
   { tab: 'shelf', label: 'Your shelf' }, { tab: 'made', label: 'What you made' },
 ];
 
@@ -47,10 +49,11 @@ export function AuthorPanel({ session }: { session: FoxxiSession }) {
       </div>
       {tab === 'write' && <FragmentEditor session={session} onAuthored={put} />}
       {tab === 'compose' && <CompositionEditor session={session} shelf={shelf} onComposed={put} />}
+      {tab === 'fold' && <FoldPackageCard session={session} onFolded={put} />}
       {tab === 'shelf' && <ShelfCard shelf={shelf} onPut={put} onRemove={iri => keep(unshelve(shelf, iri))} />}
       {tab === 'made' && <MadeCard session={session} />}
       <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>
-        An agent authors the same way: <code>foxxi.content_fragment</code>, <code>foxxi.content_compose</code>, signed as itself.
+        An agent authors the same way: <code>foxxi.content_fragment</code>, <code>foxxi.content_compose</code>, <code>foxxi.content_fold_course</code>, signed as itself.
       </div>
     </div>
   );

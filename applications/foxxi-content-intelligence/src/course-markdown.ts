@@ -28,8 +28,30 @@ function safeUrl(raw: string): string | null {
   } catch { return null; }
 }
 
+/**
+ * ★ A BACKSLASH BEFORE ASCII PUNCTUATION SHOWS THAT CHARACTER AS IT IS, as in CommonMark: `\*`
+ * is an asterisk, not emphasis, and `\- ` at a line's start is no list item (the block rules
+ * never match a line that starts with a backslash). Text taken from elsewhere, such as a page of
+ * an imported package (package-import.ts), relies on it to say what it said. While inline markup
+ * is read, an escaped character is held as a private-use character no syntax matches, so it
+ * cannot open or close anything, and it is given back escaped like all other text. In a code
+ * span it is given back as written, backslash and all, since code shows exactly what it holds.
+ */
+const HOLD = 0xe000;
+const ESCAPED = /\\([!-/:-@[-`{-~])/g;
+const HELD = new RegExp(`[${String.fromCharCode(HOLD + 0x21)}-${String.fromCharCode(HOLD + 0x7e)}]`, 'g');
+const hold = (text: string): string => text.replace(ESCAPED, (_, c: string) => String.fromCharCode(HOLD + c.charCodeAt(0)));
+const given = (text: string, asWritten = false): string =>
+  text.replace(HELD, ch => `${asWritten ? '\\' : ''}${String.fromCharCode(ch.charCodeAt(0) - HOLD)}`);
+
 /** Inline markup: code spans, images, typed links, bold and italics. The rest is escaped text. */
 export function courseInlineHtml(text: string): string {
+  // What is still held sits in escaped text, so it goes back escaped too: `\<` is text, never a tag.
+  return inlineHtml(hold(text)).replace(HELD, ch => esc(String.fromCharCode(ch.charCodeAt(0) - HOLD)));
+}
+
+/** Inline markup over text whose escaped characters are held (see HOLD); what is held is given back by the caller. */
+function inlineHtml(text: string): string {
   // Emphasis needs no space just inside its markers, as CommonMark's flanking rule has it, so
   // "2 * 3 * 4" stays arithmetic; an underscore inside a word (snake_case) is not emphasis.
   const token = /`([^`\n]+)`|!\[([^\]\n]*)\]\(([^\s)]+)\)|\[([^\]\n]+)\]\(([^\s)]+)\)(?:\{([^{}\n]*)\})?|\*\*(?!\s)([^*\n]+?)(?<!\s)\*\*|(?<![\w])__(?!\s)([^_\n]+?)(?<!\s)__(?![\w])|\*(?!\s)([^*\n]+?)(?<!\s)\*|(?<![\w])_(?!\s)([^_\n]+?)(?<!\s)_(?![\w])/g;
@@ -38,23 +60,25 @@ export function courseInlineHtml(text: string): string {
   for (const m of text.matchAll(token)) {
     out += esc(text.slice(last, m.index));
     last = m.index! + m[0].length;
-    if (m[1] !== undefined) { out += `<code>${esc(m[1])}</code>`; continue; }
+    // Code shows what it holds as written: a held character goes back with its backslash, and is
+    // escaped here, so the caller's giving back finds nothing left to give.
+    if (m[1] !== undefined) { out += `<code>${esc(given(m[1], true))}</code>`; continue; }
     if (m[3] !== undefined) {
-      const src = safeUrl(m[3]);
+      const src = safeUrl(given(m[3]));
       out += src ? `<img src="${esc(src)}" alt="${esc(m[2] ?? '')}" loading="lazy">` : esc(m[0]);
       continue;
     }
     if (m[5] !== undefined) {
-      const href = safeUrl(m[5]);
+      const href = safeUrl(given(m[5]));
       if (!href) { out += esc(m[0]); continue; }
-      const attrs = m[6] ?? '';
+      const attrs = given(m[6] ?? '');
       const rel = /(?:^|\s)rel=["']([^"']*)["']/.exec(attrs)?.[1] ?? 'related';
       const type = /(?:^|\s)type=["']([^"']*)["']/.exec(attrs)?.[1];
       out += `<a href="${esc(href)}" rel="${esc(rel)} noopener noreferrer" target="_blank"${type ? ` type="${esc(type)}"` : ''}>${esc(m[4] ?? '')}</a>`;
       continue;
     }
-    if (m[7] !== undefined || m[8] !== undefined) { out += `<strong>${courseInlineHtml(m[7] ?? m[8] ?? '')}</strong>`; continue; }
-    out += `<em>${courseInlineHtml(m[9] ?? m[10] ?? '')}</em>`;
+    if (m[7] !== undefined || m[8] !== undefined) { out += `<strong>${inlineHtml(m[7] ?? m[8] ?? '')}</strong>`; continue; }
+    out += `<em>${inlineHtml(m[9] ?? m[10] ?? '')}</em>`;
   }
   return out + esc(text.slice(last));
 }

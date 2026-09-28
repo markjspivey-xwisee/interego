@@ -18,6 +18,22 @@ const seed = (i: number) => `rich-course\nSCO-1\n${i}`;
 const letter = (i: number) => String.fromCharCode(65 + i);
 
 describe('a section is Markdown, rendered safely', () => {
+  it('shows a character a backslash escapes as it is, never as syntax and never as a tag', () => {
+    const B = String.fromCharCode(92);
+    expect(courseMarkdownHtml(`${B}- item? no`)).toBe('<p>- item? no</p>');
+    expect(courseMarkdownHtml(`1${B}. step? no`)).toBe('<p>1. step? no</p>');
+    expect(courseMarkdownHtml(`${B}# heading? no`)).toBe('<p># heading? no</p>');
+    expect(courseMarkdownHtml(`${B}> quote? no`)).toBe('<p>&gt; quote? no</p>');
+    // An escaped asterisk neither opens nor closes emphasis.
+    expect(courseMarkdownHtml(`${B}*kept${B}* and *em ${B}* inside*`)).toBe('<p>*kept* and <em>em * inside</em></p>');
+    // A held character goes back escaped: text, never markup.
+    expect(courseMarkdownHtml(`${B}<script${B}>alert(1)${B}</script${B}>`)).toBe('<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>');
+    expect(courseMarkdownHtml(`[a ${B}] b](https://example.org/x${B}_y)`)).toContain('<a href="https://example.org/x_y" rel="related noopener noreferrer" target="_blank">a ] b</a>');
+    // Code shows what it holds as written; a backslash before a letter is no escape.
+    expect(courseMarkdownHtml('`a ' + B + '* b`')).toBe(`<p><code>a ${B}* b</code></p>`);
+    expect(courseMarkdownHtml(`C:${B}Users${B}file`)).toBe(`<p>C:${B}Users${B}file</p>`);
+  });
+
   it('renders what an author writes: headings, lists, tables, code, quotes, images and links', () => {
     const html = courseMarkdownHtml([
       '# Refund authority', '', 'Agents refund **up to $250**; a *team lead* approves more.', 'Same paragraph, new line.', '',
