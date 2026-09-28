@@ -43,14 +43,22 @@ export async function triggerWithRetry(trigger, {
       const message = String(error?.message ?? error);
       if (!message.startsWith('GraphQL: ')) throw error;
       if (attempt >= attempts) throw new Error(`${message} (the deploy trigger was refused ${attempt} times)`);
-      const existing = await reconcile();
-      if (existing) {
-        log(`  … deploy trigger refused (${message}); deployment ${existing} exists since the repoint, following it`);
-        return { serviceInstanceDeployV2: existing };
-      }
+      const following = async () => {
+        const existing = await reconcile();
+        if (existing) log(`  … deploy trigger refused (${message}); deployment ${existing} exists since the repoint, following it`);
+        return existing;
+      };
+      // Checked now, so a deployment that already exists is followed without waiting…
+      const existing = await following();
+      if (existing) return { serviceInstanceDeployV2: existing };
       const wait = baseMs * 2 ** (attempt - 1);
       log(`  … deploy trigger refused (${message}); no deployment since the repoint, retrying in ${wait / 1000}s`);
       await sleep(wait);
+      // …and checked AGAIN after the wait, immediately before the trigger is sent. A deployment
+      // Railway publishes late, or another deploy started meanwhile, would otherwise be triggered
+      // over inside the very window the wait widens (Codex, on #562).
+      const appeared = await following();
+      if (appeared) return { serviceInstanceDeployV2: appeared };
     }
   }
 }
