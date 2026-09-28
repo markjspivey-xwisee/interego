@@ -20,6 +20,29 @@ Tests: `a-refused-deploy-trigger-is-retried` covers:
 
 The lint gate's floor moves to 600, the number it named for the new files.
 
+## 2026-09-28 — The extension loader bounds every document; agent-collective's bridge guards the pods callers name (#558 follow-up)
+
+Codex, on #558:
+- **No single document can exhaust memory.** `loadExtensionCatalog`'s row and operation bounds did not bound memory: the manifest reader buffers a whole segment before it counts a row. So one enormous document from a pod a caller named could exhaust the heap first. Every read now goes through a per-document byte bound (`maxDocumentBytes`, 4 MiB by default), which covers manifest segments, descriptors and payloads.
+  - A declared `content-length` over the bound refuses before the body is read.
+  - A body that streams past it is cancelled at the chunk that crosses it.
+  - A refusal from the bound now passes through the loader's catch blocks unchanged, instead of becoming "could not be read".
+- **The agent-collective bridge guards the pods callers name.** Its direct routes are unauthenticated, and `ac.discover_promoted_tools` read a caller's `pod_url` with the process-wide fetch. So a loopback, link-local or private host, or a public manifest that redirects to one, would be read server-side and reported back.
+  - Every handler now reaches a caller-named pod through `guardedFetchFn`, which refuses such a target at the first request and at every redirect hop (`src/pod-fetch.ts`).
+  - Only the operator's own `AC_DEFAULT_POD_URL` origin uses the plain fetch.
+  - The loader's docs now say a caller that loads a pod its own caller named must pass a guarded fetch.
+
+Tests:
+- **`extension-catalog`:**
+  - a manifest, a descriptor and a payload over the bound;
+  - a streamed body stopped within a few chunks;
+  - a declared length refused without reading.
+- **The agent-collective test:** loopback, link-local, private and `localhost` pods, each refused by the guard itself before the base fetch is called, with the guard's reason in the refusal; and the configured pod's origin, which is exempt.
+- **Mutants, each caught:**
+  - the declared-length check removed;
+  - the guard removed;
+  - the bound removed entirely, which drove the test worker to 4.6 GB on the endless stream before it was stopped.
+
 ## 2026-09-28 — The relay dispatches only what it declares; a vertical's capabilities are read through one neutral contract (#367)
 
 The relay carried a loader for one vertical's promoted tools. It scanned `RELAY_DYNAMIC_TOOLS_POD` for `urn:graph:ac:tool:` rows and read the newest 200, silently. It regexed each descriptor for `a ac:AgentTool`, a label and an action, and registered each hit as a `dynamic:<label>` alias.

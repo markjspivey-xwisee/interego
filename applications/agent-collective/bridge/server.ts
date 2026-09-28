@@ -24,17 +24,20 @@ import {
   recordCrossAgentAudit,
 } from '../src/pod-publisher.js';
 import { promotedToolsAnswer } from '../src/promoted-tools.js';
+import { podFetch } from '../src/pod-fetch.js';
 import type {
   IRI,
 } from '@interego/core';
 
-interface Ctx { podUrl: string; authoringAgentDid: IRI }
+interface Ctx { podUrl: string; authoringAgentDid: IRI; fetch?: typeof globalThis.fetch }
 function ctx(args: Record<string, unknown>): Ctx {
   const podUrl = (args.pod_url as string | undefined) ?? process.env.AC_DEFAULT_POD_URL;
   const authoringAgentDid = ((args.authoring_agent_did as string | undefined) ?? process.env.AC_DEFAULT_AGENT_DID) as IRI | undefined;
   if (!podUrl) throw new Error('pod_url is required (or set AC_DEFAULT_POD_URL)');
   if (!authoringAgentDid) throw new Error('authoring_agent_did is required (or set AC_DEFAULT_AGENT_DID)');
-  return { podUrl, authoringAgentDid };
+  // A pod the caller named is written through the SSRF guard; the configured pod is not (src/pod-fetch.ts).
+  const fetch = podFetch(podUrl, process.env.AC_DEFAULT_POD_URL);
+  return { podUrl, authoringAgentDid, ...(fetch ? { fetch } : {}) };
 }
 
 /** The pod a read names, or the bridge's default; a read needs no authoring agent. */
@@ -71,7 +74,10 @@ const handlers = {
     enforceConstitutionalConstraints: args.enforce_constitutional_constraints as boolean | undefined,
   }, ctx(args)),
 
-  'ac.discover_promoted_tools': async (args: Record<string, unknown>) => promotedToolsAnswer(podOf(args)),
+  'ac.discover_promoted_tools': async (args: Record<string, unknown>) => {
+    const podUrl = podOf(args);
+    return promotedToolsAnswer(podUrl, podFetch(podUrl, process.env.AC_DEFAULT_POD_URL));
+  },
 
   'ac.bundle_teaching_package': async (args: Record<string, unknown>) => bundleTeachingPackage({
     toolIri: String(args.tool_iri) as IRI,
