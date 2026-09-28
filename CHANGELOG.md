@@ -49,6 +49,23 @@ Tests:
   - the runtime's declared trust on a real transition.
 - **`the-base-runs-without-verticals`:** the classifier's rules (imports, rooted strings, helpers, packages; not IRIs or `docs/` paths), the pins in both directions, and known classifications.
 
+## 2026-09-28 — The deploy trigger is retried only when Railway refused it, and never over a deployment in flight (#560 follow-up)
+
+#560 retried `serviceInstanceDeployV2` after any failure the tolerant GraphQL helper called transient. That included a response that was lost or could not be parsed, where Railway may already have accepted the trigger. `railway-redeploy.mjs`'s own rule is "DO NOT RETRY": re-triggering while a deploy is in flight SIGTERMs the healthy container, and its successors die before logging. So a lost response could have turned a successful deploy into an outage (Codex, on #560).
+
+Now:
+- **Only an answered refusal is retried.** The trigger's GraphQL call is no longer tolerant, so a refusal throws `GraphQL: …` and a lost or unreadable answer throws `network: …`. Only the first is retried; the second fails the job exactly as it did before any retry existed.
+- **Even an answered refusal is reconciled first.** The script records the service's newest deployment before it repoints. After a refusal, a deployment that is not that one exists since the repoint, and it is followed (polled and verified like the script's own) instead of triggered over. Only when there is none is the trigger sent again.
+
+Tests: `a-refused-deploy-trigger-is-retried` covers:
+- answered refusals then success;
+- an ambiguous failure not retried;
+- a deployment since the repoint followed instead of re-triggered;
+- attempts spent;
+- the script's wiring (a non-tolerant call, and reconciliation against the pre-repoint deployment).
+
+Mutants that retry ambiguous failures, or that ignore the reconciled deployment, are each caught.
+
 ## 2026-09-28 — The byte bound releases what it refuses, and names an oversized archive as over the bound (#559 follow-up)
 
 Codex, on #559:
