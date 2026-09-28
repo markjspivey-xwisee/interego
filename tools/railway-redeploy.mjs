@@ -103,6 +103,7 @@
  */
 
 import { bootProofFor, healthPathFor, resolveImageRepo, singletonViolations, verifyUrlFor } from './railway-services.mjs';
+import { triggerWithRetry } from './railway-deploy-trigger.mjs';
 
 const EP = 'https://backboard.railway.com/graphql/v2';
 
@@ -346,10 +347,11 @@ await gql(
   { s: serviceId, e: environmentId, in: { source: { image } } });
 console.log('image repointed');
 
-// ── 4. Ship it.
-const dep = await gql(
+// ── 4. Ship it. Retried: a refused trigger leaves the service repointed but still running the
+//       old image, and Railway's API refuses it transiently (see railway-deploy-trigger.mjs).
+const dep = await triggerWithRetry(() => gql(
   'mutation($s:String!,$e:String!){ serviceInstanceDeployV2(serviceId:$s,environmentId:$e) }',
-  { s: serviceId, e: environmentId });
+  { s: serviceId, e: environmentId }, { tolerant: true }), { log: m => console.log(m) });
 const deployId = dep.serviceInstanceDeployV2;
 console.log(`deploy triggered: ${deployId}`);
 
