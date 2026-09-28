@@ -11,10 +11,12 @@
  *
  * ★ ONLY A FAILURE IS ANSWERED. Work that came out well, or asserted no outcome, needs no plan.
  *
- * ★ THE REGIME IS READ FROM THE WORK, OR NOT AT ALL. Only the trajectories kept with the latest
- * units of work at this competency (WORK_OFFER_WINDOW) are read. Work kept without one leaves the
- * regime unread, and then nothing is offered: the practice refuses to assume a regime, and the
- * answer says what would let it read one.
+ * ★ THE REGIME IS READ FROM THE WORK, OR NOT AT ALL. The trajectories kept with the latest units
+ * of work at this competency (WORK_OFFER_WINDOW) are read, and so are those the performer recorded
+ * apart from their work (foxxi.record_agent_trajectory, or steps they published to their own pod)
+ * where a task step names this competency, cut to that task (learner-record.ts trajectoryAt).
+ * Work with neither leaves the regime unread, and then nothing is offered: the practice refuses to
+ * assume a regime, and the answer says what would let it read one.
  *
  * ★ A SELF-REPORT IS HYPOTHETICAL. The situation is Asserted only when someone other than the
  * performer observed the failure. A performer's own report is a claim to measure first, and in
@@ -28,7 +30,7 @@
 import { createHash } from 'node:crypto';
 import type { Admission } from '../../foxxi-content-intelligence/src/compositions.js';
 import type { WorkStep } from '../../foxxi-content-intelligence/src/learner-record.js';
-import { buildTrajectory } from './agent-trajectory.js';
+import { buildTrajectory, type AgentTrajectory } from './agent-trajectory.js';
 import { admissionOffer } from './content-admission.js';
 import { diagnose, recommendInterventions, type PerformanceSituation, type Performer } from './performance-architecture.js';
 
@@ -64,6 +66,11 @@ export function offerFromWork(input: {
   work: readonly WorkUnit[];
   /** The admission the performer keeps at this competency, if any. */
   standing?: Admission;
+  /**
+   * Trajectories the performer recorded apart from their work, already cut to this competency's
+   * tasks (trajectoryAt): read with the trajectories kept with the work.
+   */
+  elsewhere?: readonly AgentTrajectory[];
   base: string;
 }): WorkOffer {
   const window = input.work.slice(0, WORK_OFFER_WINDOW);
@@ -74,8 +81,12 @@ export function offerFromWork(input: {
   const assessed = window.filter(u => u.success !== undefined);
   const failed = assessed.filter(u => u.success === false);
   const traced = window.filter(u => u.steps?.length);
-  const trajectories = traced.map(u => buildTrajectory(input.performer.id, undefined,
-    u.steps!.map(s => ({ ...s, recordedAt: s.recordedAt ?? u.timestamp }))));
+  const elsewhere = (input.elsewhere ?? []).filter(t => t.steps.length);
+  const trajectories = [
+    ...traced.map(u => buildTrajectory(input.performer.id, undefined,
+      u.steps!.map(s => ({ ...s, recordedAt: s.recordedAt ?? u.timestamp })))),
+    ...elsewhere,
+  ];
   const situation: PerformanceSituation = {
     id: `urn:foxxi:work-situation:${createHash('sha256').update(`${input.performer.id}\n${input.competency}\n${latest.id}`).digest('hex').slice(0, 32)}`,
     performer: input.performer,
@@ -85,11 +96,12 @@ export function offerFromWork(input: {
     frequency: 'frequent',
     criticality: 'moderate',
     modalStatus: latest.observedBy && latest.observedBy !== input.performer.id ? 'Asserted' : 'Hypothetical',
-    provenance: `the performer's recorded production work at ${input.label}: ${window.length} units, ${traced.length} with a trajectory`,
+    provenance: `the performer's recorded production work at ${input.label}: ${window.length} units, ${traced.length} with a trajectory`
+      + (elsewhere.length ? `, and ${elsewhere.length} ${elsewhere.length === 1 ? 'trajectory' : 'trajectories'} recorded apart from it` : ''),
   };
   const diagnosis = diagnose({ situation, ...(trajectories.length ? { trajectories } : {}) });
   if (diagnosis.method === 'classify-first') {
-    return { offered: false, because: `no trajectory was kept with the work at ${input.label}, so its regime cannot be read. Send how the work went (trajectory) with it, and a failure can be answered.` };
+    return { offered: false, because: `no trajectory was kept with the work at ${input.label}, or recorded apart from it with a task step naming it, so its regime cannot be read. Send how the work went (trajectory) with it, or record it (foxxi.record_agent_trajectory) with a task step naming this work, and a failure can be answered.` };
   }
   const plan = recommendInterventions({ diagnosis, situation });
   const selected = plan.selected.map(o => o.type);
@@ -108,7 +120,10 @@ export function offerFromWork(input: {
       situation: { observed: situation.observed, modalStatus: situation.modalStatus },
       diagnosis: { regime: diagnosis.domain, regimeSource: diagnosis.regimeSource, method: diagnosis.method },
       plan: { selected, summary: plan.summary },
-      evidence: { work: window.map(u => u.id), failed: failed.length, assessed: assessed.length, withTrajectory: traced.length },
+      evidence: {
+        work: window.map(u => u.id), failed: failed.length, assessed: assessed.length, withTrajectory: traced.length,
+        ...(elsewhere.length ? { recordedApart: elsewhere.map(t => ({ agent: t.agentDid, steps: t.steps.length })) } : {}),
+      },
     },
   };
 }

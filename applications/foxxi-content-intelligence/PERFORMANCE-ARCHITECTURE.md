@@ -231,11 +231,17 @@ agent, as learner and as author.
     - The work recorded at its competency is read back, the latest units
       first, by the rule the learner record counts it (`workAt`).
     - Its regime is read from the trajectories kept with that work, and
-      the failure is answered with the plan for that regime and the
+      from those the performer recorded apart from it: through
+      `foxxi.record_agent_trajectory`, or as steps published to their own
+      pod, as the mesh sweep keeps them. One of those counts where a task
+      step names that competency by the record's own rule (a domain type
+      of what it acted on, or the task it names with an outcome), and only
+      that task and the steps below it are read (`trajectoryAt`).
+    - The failure is answered with the plan for that regime and the
       admission the plan implies, to keep or not.
     - A failure only its performer reported is a claim to measure first.
-    - Work kept without a trajectory leaves the regime unread, so nothing
-      is offered, and the answer says so.
+    - Work with neither kind of trajectory leaves the regime unread, so
+      nothing is offered, and the answer says what would let one be read.
     - Nothing is offered twice, or for a plan with nothing to keep.
   - The learner, person or agent, keeps it with `foxxi.content_admit` on
     their own pod, in a list of its own sealed by the bridge to itself and
@@ -492,10 +498,7 @@ and the questions it declares in its own scripts a check graded here.
 
 Not yet wired:
 - importing an authoring tool's own project export, or questions a package
-  keeps in a form other than a constructor it declares;
-- reading the regime from work recorded elsewhere (the tenant-scoped
-  `foxxi.record_agent_trajectory` store, or trajectory steps an agent
-  publishes to its own pod) when a failure is answered.
+  keeps in a form other than a constructor it declares.
 
 ## 6. Authoring is composition — the same tools for humans and agents
 

@@ -64,6 +64,12 @@ export interface TrajectoryStepInput {
   verb: string;
   objectId: string;
   objectName: string;
+  /**
+   * The type of what the step acted on, when it has one. A task step's domain activity type names
+   * the competency its work counts toward, by the rule the learner record counts work by, so a
+   * trajectory recorded apart from its work is read at that competency too (trajectoryAt).
+   */
+  objectType?: string;
   /** Enclosing-granularity step id (the poly-granular tree). */
   parentId?: string;
   /** The step this one revises — plan ▸ revised plan ▸ executed action. */
@@ -129,6 +135,7 @@ export function buildStep(agentDid: string, input: TrajectoryStepInput): Traject
     verb: input.verb,
     objectId: input.objectId,
     objectName: input.objectName,
+    ...(input.objectType ? { objectType: input.objectType } : {}),
     parentId: input.parentId,
     supersedesId: input.supersedesId,
     wasDerivedFrom: input.wasDerivedFrom,

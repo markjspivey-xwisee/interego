@@ -237,7 +237,7 @@ Record an agent run in the AGENTIC-NATIVE form — not as flat xAPI statements b
 | --- | --- | --- | --- |
 | `agent_did` | string | yes | The agent whose run this trajectory records. |
 | `agent_name` | string | no | Optional agent display name. |
-| `steps` | array of object | yes | Ordered trajectory steps. Each: { modal_status (Hypothetical\|Asserted\|Counterfactual), granularity (task\|subtask\|tool-call), verb, object_id, object_name, id?, parent_id?, supersedes_id?, was_derived_from?[], result?{success,quality,note} }. |
+| `steps` | array of object | yes | Ordered trajectory steps. Each: { modal_status (Hypothetical\|Asserted\|Counterfactual), granularity (task\|subtask\|tool-call), verb, object_id, object_name, object_type?, id?, parent_id?, supersedes_id?, was_derived_from?[], result?{success,quality,note} }. A task step names the competency its work counts toward as the learner record counts work: by object_type when that is a domain activity type, or else by object_name when the step has a result. When work you record at that competency fails (foxxi.record_performance_signed), its regime is read from this trajectory too, cut to that task and the steps below it. |
 
 ## `foxxi.get_agent_trajectory`
 

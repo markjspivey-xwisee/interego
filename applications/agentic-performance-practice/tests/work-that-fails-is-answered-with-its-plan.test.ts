@@ -5,9 +5,10 @@
  * from the trajectories kept with the work, or not at all.
  */
 import { describe, expect, it } from 'vitest';
-import type { WorkStep } from '../../foxxi-content-intelligence/src/learner-record.js';
-import { competencyIri } from '../../foxxi-content-intelligence/src/competency-identity.js';
+import { trajectoryAt, type WorkStep } from '../../foxxi-content-intelligence/src/learner-record.js';
+import { competencyIri, competencyOfTerm } from '../../foxxi-content-intelligence/src/competency-identity.js';
 import { WORK_OFFER_WINDOW, offerFromWork, type WorkUnit } from '../src/work-offers.js';
+import { buildTrajectory, type AgentTrajectory, type TrajectoryStepInput } from '../src/agent-trajectory.js';
 
 const performer = { id: 'did:web:performer.example', kind: 'agent' as const };
 const competency = competencyIri('refund-authority');
@@ -81,5 +82,63 @@ describe('and nothing is offered when there is nothing to answer, or nothing to 
   it('does not offer what the performer already keeps there', () => {
     expect(offerFor([unit(1, false, exploring)], { kinds: ['reflection', 'probe'], because: 'kept earlier' })).toEqual({ offered: false, because: 'you already keep this admission at refund authority' });
     expect(offerFor([unit(1, false, exploring)], { kinds: ['probe'], because: 'kept earlier' }).offered).toBe(true);
+  });
+});
+
+describe('the regime is read from work recorded apart from it too', () => {
+  /** The key the record counts refund-authority work by: the task it names, since no type names it. */
+  const key = 'label:refund authority';
+  const REFUND_TYPE = 'https://ops.example/ns/work#RefundDecision';
+  const s = (id: string, granularity: TrajectoryStepInput['granularity'], more: Partial<TrajectoryStepInput> = {}): TrajectoryStepInput => ({
+    id, modalStatus: 'Asserted', granularity, verb: 'acted', objectId: `urn:x:${id}`, objectName: 'a step', ...more,
+  });
+  /** A run of two tasks: this competency's, done in a plan-then-execute way, and shipping, explored. */
+  const run = buildTrajectory(performer.id, undefined, [
+    s('refund', 'task', { objectName: 'Refund authority', result: { success: false } }),
+    s('refund.check', 'subtask', { parentId: 'refund' }),
+    s('refund.check.call', 'tool-call', { parentId: 'refund.check', result: { success: true } }),
+    // A step may be recorded before the subtask it belongs to.
+    s('refund.late.call', 'tool-call', { parentId: 'refund.late', result: { success: true } }),
+    s('refund.late', 'subtask', { parentId: 'refund' }),
+    s('refund.pay', 'tool-call', { parentId: 'refund', result: { success: true } }),
+    s('ship', 'task', { objectName: 'Shipping', result: { success: true } }),
+    s('ship.try', 'tool-call', { parentId: 'ship', result: { success: false } }),
+    // Only a task names the work it is part of: a call named like one does not.
+    s('ship.call', 'tool-call', { parentId: 'ship', objectName: 'Refund authority', result: { success: true } }),
+    s('ship.drop', 'tool-call', { parentId: 'ship', modalStatus: 'Counterfactual' }),
+    s('ship.drop.again', 'tool-call', { parentId: 'ship', modalStatus: 'Counterfactual' }),
+    s('typed', 'task', { objectType: REFUND_TYPE, objectName: 'whatever it is called here' }),
+    s('typed.call', 'tool-call', { parentId: 'typed' }),
+  ]);
+
+  it('takes of a trajectory only the task that names the competency, by the record\'s rule, and the steps below it', () => {
+    expect(trajectoryAt(run, key)!.steps.map(x => x.id)).toEqual(['refund', 'refund.check', 'refund.check.call', 'refund.late.call', 'refund.late', 'refund.pay']);
+    // A task typed with a domain activity type names that type's competency, whatever it is called.
+    expect(trajectoryAt(run, competencyOfTerm(REFUND_TYPE))!.steps.map(x => x.id)).toEqual(['typed', 'typed.call']);
+    // A task named without an outcome names nothing, as a record with none names no skill; nor
+    // does what a step acted on, which is an instance and not a type.
+    const unnamed = buildTrajectory(performer.id, undefined, [s('t', 'task', { objectName: 'Refund authority', objectId: REFUND_TYPE })]);
+    expect(trajectoryAt(unnamed, key)).toBeNull();
+    expect(trajectoryAt(unnamed, competencyOfTerm(REFUND_TYPE))).toBeNull();
+    expect(trajectoryAt(run, 'label:something else')).toBeNull();
+  });
+
+  it('answers a failure kept without a trajectory from one recorded apart from it, and says it did', () => {
+    const apart = buildTrajectory(performer.id, undefined, exploring as TrajectoryStepInput[]);
+    const answer = offerFromWork({ performer, competency, label: 'refund authority', work: [unit(1, false), unit(2, false)], base, elsewhere: [apart] });
+    expect(answer.offered).toBe(true);
+    const offer = (answer as { offer: Record<string, unknown> }).offer;
+    expect(offer).toMatchObject({
+      regime: 'Emergent', kinds: ['reflection', 'probe'],
+      evidence: { work: ['urn:uuid:unit-1', 'urn:uuid:unit-2'], withTrajectory: 0, recordedApart: [{ agent: performer.id, steps: 4 }] },
+    });
+  });
+
+  it('reads the regime from this work\'s task alone, not from other work the same run did', () => {
+    // Whole, the run's explored shipping task reads as Emergent; cut to this competency's task, it is Knowable.
+    const whole = offerFromWork({ performer, competency, label: 'refund authority', work: [unit(1, false)], base, elsewhere: [run] });
+    const cut = offerFromWork({ performer, competency, label: 'refund authority', work: [unit(1, false)], base, elsewhere: [trajectoryAt(run, key) as AgentTrajectory] });
+    expect(whole.offered && whole.offer.regime).toBe('Emergent');
+    expect(cut.offered && cut.offer.regime).toBe('Knowable');
   });
 });
