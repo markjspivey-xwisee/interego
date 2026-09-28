@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-28 — Foxxi: the census reads the SCORM upload's declines again, and a package a launch described is not read twice
+
+**The census reads the upload's declines again.** CI's mutation gate ("Every refusal gate fails on its own defect") has failed on every pull request since #548:
+- Its defect `untyped-decline-behind-a-multi-statement-handler` replaces a typed decline in `uploadScormPackage` with an untyped one, and `tests/every-vertical-declines-with-a-status.test.ts` must catch it.
+- That census follows a handler only into the function it tail-calls (`return fn(…)`, `tests/handler-delegation-reach.ts`).
+- #548 made the upload handler bind the upload's answer, host the package, and return the two merged.
+- A rejected upload was still returned as it came, so the defect was real, but the census could no longer see it.
+
+Now the hosting goes through a hook `uploadScormPackage` takes (`host`), which only a parsed package reaches. The handler is again a single `return uploadScormPackage({ …, host })`, so the gate's defect turns its gate red again. The upload's own answer wins over anything the hook says.
+
+**A package a launch described is not read twice (Codex, on #551).** A listing could queue a package behind a slow one, and a learner could launch it meanwhile. The launch described it, and the background then read it again when its turn came. A package already described is now answered from its description.
+
+Tests cover:
+- the handler is a delegation the census follows to `uploadScormPackage`;
+- the hook receives the package's own bytes and cannot override the upload's answer;
+- a declined package never reaches the hook, and its decline is typed;
+- a queued package that a launch described is read once;
+- a package is queued once however often it is asked for.
+
+Six mutants each turn a named test red, and the gate's defect is caught again (`node tools/mutation-gate.mjs --only=untyped-decline-behind-a-multi-statement-handler`).
+
 ## 2026-09-28 — Foxxi: listing hosted packages opens none of them, and hosting is offered to admins alone
 
 Two of Codex's findings on #550, after it merged.

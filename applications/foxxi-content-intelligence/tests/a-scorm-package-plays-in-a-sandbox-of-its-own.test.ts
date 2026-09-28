@@ -18,6 +18,7 @@ import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 import { JSDOM } from 'jsdom';
 import {
@@ -25,6 +26,7 @@ import {
   hostedPackageOf, isHtmlDocument, packageEntry, scormRuntimeSource, sha256Of, withRuntime, type PackageAbout,
 } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
+import { uploadScormPackage } from '../src/composed-extensions.js';
 
 const BRIDGE = 'https://bridge.example';
 const POD = 'https://pod.example/foxxi/';
@@ -300,6 +302,7 @@ describe('what a package is, kept beside it, so a listing opens none (Codex, on 
     // is being read (the first) or waiting its turn (the second).
     const asked = [SHA, SHA, sha256Of(other), sha256Of(other)];
     expect(await Promise.all(asked.map(sha => later.aboutOrLater(sha)))).toEqual([null, null, null, null]);
+    expect(later.waiting).toBe(1);
     await later.whenDescribed();
     expect(most).toBe(1);
     expect(zipReads(pod.asked)).toBe(1);
@@ -325,6 +328,29 @@ describe('what a package is, kept beside it, so a listing opens none (Codex, on 
     const eager = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl, describePackage, retryAfterMs: 0 });
     for (let i = 0; i < 2; i++) { expect(await eager.aboutOrLater(sha)).toBeNull(); await eager.whenDescribed(); }
     expect(zipReads(pod.asked, sha)).toBe(3);
+  });
+
+  it('does not read again a package a launch described while it waited its turn (Codex, on #551)', async () => {
+    const pod = standInPod();
+    const first = new HostedPackages({ podUrl: POD, fetch: pod.fetchImpl });
+    const slowOne = makeRetitled('Slow to read');
+    await first.keep(slowOne);
+    await first.keep(PACKAGE);
+    // The first package takes long to read; the second little.
+    const paced = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if ((init?.method ?? 'GET') === 'GET' && url.endsWith('.zip')) await new Promise(r => setTimeout(r, url.includes(sha256Of(slowOne)) ? 60 : 5));
+      return pod.fetchImpl(input, init);
+    }) as typeof fetch;
+    const later = new HostedPackages({ podUrl: POD, fetch: paced, describePackage });
+    // A listing queues both: the slow one is being read, and this one waits behind it.
+    await Promise.all([later.aboutOrLater(sha256Of(slowOne)), later.aboutOrLater(SHA)]);
+    expect(later.waiting).toBe(1);
+    // A launch describes the waiting one now, and the background, reaching it, reads nothing more.
+    expect(await later.aboutNow(SHA)).toEqual(ABOUT);
+    await later.whenDescribed();
+    expect(zipReads(pod.asked)).toBe(1);
+    expect(zipReads(pod.asked, sha256Of(slowOne))).toBe(1);
   });
 
   it('describes a package now for someone about to play it, and keeps that for the listing', async () => {
@@ -427,6 +453,33 @@ describe('the routes a hosted package is reached by', () => {
     expect(record.aus).toHaveLength(1);
     expect(record.launch).toMatchObject({ target: `${BRIDGE}/agent/cmi5/launch`, payload: { course_id: record.course.id } });
     expect((await fetch(`${base}/scorm/packages/${'1'.repeat(64)}`)).status).toBe(404);
+  });
+});
+
+describe('an upload is hosted through a hook the upload takes, so its declines stay its own', () => {
+  /** A pod that takes every write and holds nothing to read. */
+  const anyPod = (async (_input: unknown, init?: { method?: string }) => new Response('', { status: (init?.method ?? 'GET').toUpperCase() === 'GET' ? 404 : 201 })) as never;
+
+  it('hands a parsed package\'s own bytes to the host, and answers with what it says, never over the upload\'s own answer', async () => {
+    let seen: { bytes: Buffer; title: string } | null = null;
+    const r = await uploadScormPackage({
+      tenantPodUrl: POD, zipBase64: PACKAGE.toString('base64'), uploaderDid: 'did:web:admin.example', fetch: anyPod,
+      host: async (bytes, parsed) => { seen = { bytes, title: parsed.packageTitle }; return { hosted: true, packageSha256: sha256Of(bytes), status: 'overridden' }; },
+    });
+    expect(r.status).toBe('parsed');
+    expect(r).toMatchObject({ hosted: true, packageSha256: SHA });
+    expect(seen!.bytes.equals(PACKAGE)).toBe(true);
+    expect(seen!.title).toBe('Refunds, hosted');
+  });
+
+  it('does not reach the host with a package it declined, and types the decline', async () => {
+    let called = false;
+    const r = await uploadScormPackage({
+      tenantPodUrl: POD, zipBase64: Buffer.from('not a zip at all').toString('base64'), uploaderDid: 'did:web:admin.example', fetch: anyPod,
+      host: async () => { called = true; return {}; },
+    });
+    expect(called).toBe(false);
+    expect(r).toMatchObject({ status: 'failed', kind: 'refusal', 'iep:refusalStatus': 400 });
   });
 });
 
@@ -565,8 +618,9 @@ describe('the bridge hosts what is uploaded, and restores it after a restart', (
   const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
   it('keeps a parsed upload and makes it a course; a launch restores it from the package itself', () => {
     const upload = server.slice(server.indexOf("'foxxi.upload_scorm_package': async"), server.indexOf("'foxxi.derive_adaptive_policy'"));
-    expect(upload).toContain("if (upload.status !== 'parsed' || !upload.parsed) return upload;");
-    expect(upload).toContain("const hosted = await hostUploadedPackage(Buffer.from(args.zip_base64 as string, 'base64'), upload.parsed.packageTitle, upload.parsed.launchable);");
+    // The upload's answer is the handler's, returned as a tail call: the census of handler
+    // answers follows it into uploadScormPackage and reads its declines (tests/handler-delegation-reach.ts).
+    expect(upload).toMatch(/\n {4}return uploadScormPackage\(\{\n[\s\S]*\n {6}host: \(bytes, parsed\) => hostUploadedPackage\(bytes, parsed\.packageTitle, parsed\.launchable\),\n {4}\}\);\n {2}\},/);
     const launch = server.slice(server.indexOf("app.post('/agent/cmi5/launch'"), server.indexOf("app.post('/agent/cmi5/launch'") + 1500);
     expect(launch).toMatch(/restorePublishedCourse\(DEFAULT_TENANT, courseId\);[^\n]*\n\s+if \(!getCmi5Course\(DEFAULT_TENANT, courseId\)\) await restoreHostedPackage\(courseId\);\n\s+const course = getCmi5Course\(DEFAULT_TENANT, courseId\);/);
     expect(server).toMatch(/attachHostedPackageRoutes\(app, \{\n\s+packages: hostedPackages,\n\s+bridgeBaseUrl,/);
@@ -584,6 +638,13 @@ describe('the bridge hosts what is uploaded, and restores it after a restart', (
     // Described as an upload is parsed: under the same inflation budget, before anything is inflated.
     const describe = server.slice(server.indexOf('function describeHostedPackage('), server.indexOf('async function hostUploadedPackage('));
     expect(describe).toMatch(/if \(declaredUncompressedBytes\(bytes\) > uncompressedBudget\(bytes\.length\)\) return null;\n\s+const pkg = unwrapScormPackage\(bytes\);/);
+  });
+
+  it('is reached by the census of handler answers, so an untyped decline in the upload is caught', async () => {
+    const { delegationsIn } = await import('../../../tests/handler-delegation-reach.js');
+    const upload = delegationsIn(fileURLToPath(new URL('../bridge/server.ts', import.meta.url))).find(d => d.tool === 'foxxi.upload_scorm_package');
+    expect(upload?.fn).toBe('uploadScormPackage');
+    expect(upload?.module).toMatch(/composed-extensions\.ts$/);
   });
 
   it('lets the runtime PUT its statements from another origin, and grants no credentials to any', () => {

@@ -676,6 +676,13 @@ export async function uploadScormPackage(args: {
   hintedTitle?: string;
   uploaderDid: string;
   fetch?: FetchFn;
+  /**
+   * Where a parsed package goes to be played (the bridge hosts it: src/scorm-hosting.ts), and
+   * what it says of that, merged into the answer. Only a parsed package reaches it, so every
+   * decline is this function's own answer, returned as it is, which is what lets the census of
+   * handler answers read this function's declines as the handler's (tests/handler-delegation-reach.ts).
+   */
+  host?: (bytes: Buffer, parsed: ScormParseResult) => Promise<Record<string, unknown>>;
 }): Promise<ScormUploadResult> {
   if (args.zipBase64.length > MAX_ZIP_BASE64_CHARS) {
     return { ...refuse(413,
@@ -803,7 +810,7 @@ export async function uploadScormPackage(args: {
     graphSlug: `${packageId}-parsed-graph`,
   });
 
-  return {
+  const result: ScormUploadResult = {
     status: 'parsed',
     packageId,
     packageTitle: parsed.packageTitle,
@@ -812,6 +819,7 @@ export async function uploadScormPackage(args: {
     parsed,
     note: 'Parsed in-process — no external runner. The Asserted fxs:ParsedPackage descriptor supersedes the Hypothetical fxs:PackageUpload receipt over the same graph.',
   };
+  return args.host ? { ...(await args.host(zipBuffer, parsed)), ...result } : result;
 }
 
 // ── I. did:web tenant document ─────────────────────────────────
