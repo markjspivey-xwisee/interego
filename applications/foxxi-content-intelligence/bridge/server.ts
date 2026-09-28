@@ -4140,7 +4140,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         keptStatementIds: kept.keptIds,
         // Which ones, by id: a store making room can let an earlier statement go, so what it holds
         // need not be the first ones written (Codex, on #546).
-        performanceKept: kept.keptIds.includes(ingested.performance.id as string),
+        // The performance is written last, and its id is the one minted for it in inOrder: the
+        // statement the run ingested has none of its own (Codex, on #547).
+        performanceKept: kept.keptIds.includes(inOrder[inOrder.length - 1]!.id),
       };
     }
     const keptIds = kept.keptIds;
