@@ -46,7 +46,12 @@ export type Gql = (
   variables?: Record<string, unknown>,
 ) => Promise<Record<string, unknown>>;
 
-export declare function railwayGql(token: string, endpoint?: string): Gql;
+/** A GraphQL client for Railway; a `query` is retried on a transport failure or an unparsable body, a mutation never. */
+export declare function railwayGql(
+  token: string,
+  endpoint?: string,
+  options?: { attempts?: number; baseMs?: number; sleep?: (ms: number) => Promise<void> },
+): Gql;
 export declare function splitImage(ref: unknown): { repo: string; tag: string; kind: string };
 export declare function annotate(row: PinRow): PinRow;
 export declare function annotateFreshness(row: PinRow, git: GitFacts | null): PinRow;

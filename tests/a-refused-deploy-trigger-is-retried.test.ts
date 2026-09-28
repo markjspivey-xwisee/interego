@@ -69,3 +69,36 @@ describe('the deploy trigger', () => {
     expect(src).toMatch(/return now && now !== deploymentBeforeRepoint \? now : undefined;/);
   });
 });
+
+describe('a Railway read survives a gateway answer that is not an answer', () => {
+  it('retries a query whose body is not JSON, and returns the answer when one comes', async () => {
+    const { railwayGql } = await import('../tools/railway-pins.mjs');
+    const bodies = ['upstream connect error or disconnect/reset before headers', JSON.stringify({ data: { ok: 1 } })];
+    const fetchStub = vi.fn(async () => new Response(bodies.shift()!, { status: 200 }));
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      const sleep = vi.fn(async (_ms: number) => undefined);
+      const gql = railwayGql('token', 'https://railway.invalid/graphql', { sleep });
+      expect(await gql('query { ok }')).toEqual({ ok: 1 });
+      expect(fetchStub).toHaveBeenCalledTimes(2);
+      expect(sleep.mock.calls.map(c => c[0])).toEqual([1000]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('never retries a mutation, whose unreadable answer leaves unknown whether it ran', async () => {
+    const { railwayGql } = await import('../tools/railway-pins.mjs');
+    const fetchStub = vi.fn(async () => new Response('upstream connect error', { status: 503 }));
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      const gql = railwayGql('token', 'https://railway.invalid/graphql', { sleep: async () => undefined });
+      await expect(gql('mutation { x }')).rejects.toThrow();
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      await expect(gql('query { ok }')).rejects.toThrow();
+      expect(fetchStub).toHaveBeenCalledTimes(1 + 3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
