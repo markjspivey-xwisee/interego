@@ -23,6 +23,40 @@ Tests: `work-that-fails-is-answered-with-its-plan.test.ts` covers:
 
 `work-keeps-its-trajectory.test.ts` covers the bridge's wiring, the three places it looks, the tool's `object_type`, and a mesh step read at its domain type's competency.
 
+## 2026-09-28 — Foxxi: a hosted SCORM package folds into composable content
+
+A package from any authoring tool could be hosted and played whole, but not taken apart. None of it could be resolved per learner, offered another way in at one position, or measured for what works. Now `foxxi.content_fold_course` takes a third input, `package_sha256`, naming a package hosted here, and folds it into the fragments and compositions an author writes here (`src/package-import.ts`):
+- **Pages** are read in the order the manifest gives. Each HTML page outside the folders packages keep their shared chrome in becomes a concept fragment. Its HTML becomes the Markdown `course-markdown.ts` renders:
+  - headings one level down, under the page's title (its first top-level heading);
+  - paragraphs, line breaks, lists, tables (a one-row or one-column layout table read as paragraphs), quotes, code, emphasis;
+  - links and images; its images are the package's own files as this bridge hosts them.
+
+  A page's text is read in the charset it declares, else as UTF-8, else as windows-1252.
+- **Topics.** A folder of pages is a topic, titled by the organization item whose launch page is there, else by the folder's name. A topic of more than one part becomes a composition, pages then check, and the package a composition of its topics.
+- **Questions** are read only as the package declares them: calls to a `Question` constructor it declares in its own scripts, read by its own parameter names and type constants. Choice, true-false and numeric questions become a check graded on this bridge, blinded under the bridge's secret as a course's checks are, so the same package folds to the same IRIs. The response says the answer key is as open as the package was.
+- **What is not read** is listed with why: shared templates, a page with no text of its own, a question whose answer does not fit it, a page longer than a fragment holds, more questions than a check holds.
+- **Errors.** A package that cannot be folded (no manifest, nothing with text, more than 500 fragments) answers 422. A bad competency, level or language the caller named answers 400.
+- **Where it is kept.** Anyone may fold a hosted package, since it is served to anyone. The bundle is kept on the signer's pod with `derivedFrom`, the package's IRI.
+- **In the dashboard.** The Author page gains a "Fold a package" tab. It lists the hosted packages, folds one signed as the author, puts the composition on their shelf with links to play it and to what it has learned, and shows what was not read.
+- **Four findings from Codex, and one from CI, fixed on this PR:**
+  - **Text that looks like Markdown is shown as written.** `<p>- Important</p>` stays a paragraph, and `*literal*` stays asterisks. The importer escapes what Markdown would read, and `course-markdown.ts` now reads CommonMark's backslash escapes for all course text. An escaped character is held while inline markup is read, so it cannot open or close emphasis, and it is always given back HTML-escaped, so `\<script\>` is text, never a tag. Code shows what it holds, backslash and all.
+  - **`xml:base` at every level.** A resource's references resolve under its own `xml:base`, under the `<resources>` element's, under the manifest's. A base or reference that leads off the package names nothing in it.
+  - **Only calls that run are read.** A `new Question(…)` written in a comment or inside a string is not taken for one, and a constructor declared only in a comment declares nothing.
+  - **A script belongs to the page that loads it.** A page's `<script src>` gives that script's questions to the page's topic, wherever the script is kept (`js/` included). A script no page loads, one a template reads by name, belongs to its own folder's topic, as before.
+  - **windows-1252 is decoded here.** Node 20's `TextDecoder` reads that label as ISO-8859-1, so 0x80 to 0x9F came out as control characters in CI.
+
+Tests: `tests/a-scorm-package-folds-into-composable-content.test.ts` (new) covers:
+- the page reader, rendered through `course-markdown.ts`;
+- charsets and character references;
+- the question reader, against the package's own declarations;
+- `imported/golf-explained.zip` read and folded whole: 4 topics, 14 pages, 15 questions, each graded as the package says;
+- packages built to show ordering, titles, links and what is left out;
+- the fold's limits and errors;
+- the route's wiring, the affordance, and the Author page.
+
+Forty-eight mutants each turn a named test red.
+
+
 ## 2026-09-28 — Foxxi: the census reads the SCORM upload's declines again, and a package a launch described is not read twice
 
 **The census reads the upload's declines again.** CI's mutation gate ("Every refusal gate fails on its own defect") has failed on every pull request since #548:
@@ -43,6 +77,7 @@ Tests cover:
 - a package is queued once however often it is asked for.
 
 Six mutants each turn a named test red, and the gate's defect is caught again (`node tools/mutation-gate.mjs --only=untyped-decline-behind-a-multi-statement-handler`).
+
 
 ## 2026-09-28 — Foxxi: listing hosted packages opens none of them, and hosting is offered to admins alone
 

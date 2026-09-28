@@ -23,7 +23,8 @@ import { refuse, type BridgeRefusal } from '../../_shared/vertical-bridge/refusa
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'x';
 
-function humanize(name: string): string {
+/** A file or folder name as words: its extension and folders dropped, `_`, `-` and camelCase split, each word capitalized. */
+export function humanize(name: string): string {
   const base = name.replace(/\.[a-z0-9]+$/i, '').split(/[\\/]/).pop() ?? name;
   return base
     .replace(/[_-]+/g, ' ')
@@ -91,7 +92,8 @@ export function extractFileHrefs(manifestXml: string): string[] {
 }
 
 const CONTENT_RE = /\.html?$/i;
-const NONCONTENT = /(^|\/)(shared|common|lib|js|css|assets|images?|img|fonts?|meta|scormdriver)\//i;
+/** Folders a package keeps its shared chrome in (templates, scripts, styles, images), not its teaching. */
+export const NONCONTENT = /(^|\/)(shared|common|lib|js|css|assets|images?|img|fonts?|meta|scormdriver)\//i;
 const TEMPLATE_RE = /(launchpage|assessmenttemplate|index|story|goodbye|player)\.html?$/i;
 
 export interface ManifestToCourseArgs {

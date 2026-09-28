@@ -206,6 +206,7 @@ import { admissionFrom, anotherAlternative, compositionFrom, resolveComposition,
 import { bundledItem, ContentStore, fetchLocations, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
 import { foldEmergentCourse, type FoldedEmergent } from '../src/emergent-fold.js';
+import { filesOfZip, foldPackage, PackageError, readPackage, type FoldedPackage, type ImportedPackage, type PackageFoldOptions } from '../src/package-import.js';
 import { admissionFor, admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
 import { keepAdmission, readAdmissions } from '../src/admission-store.js';
 import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
@@ -436,7 +437,7 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { attachXapiLrsRoutes, internalRefusalOf, keepStatementsWhole, listStoredStatements, storeStatementDurably, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
-import { HostedPackages, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
+import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
@@ -10930,16 +10931,18 @@ async function keepAuthoredContent(item: ContentItem, authorDid: string, subject
  * Keep what an author made in one act, a folded course say, as one bundle on their pod: one write
  * to their shared lattice rather than one per item, since each write puts the whole lattice. Only
  * once it lands is each item cached and its pod remembered, and one `authored` statement recorded,
- * for the root. Each item keeps its own IRI, and is checked against it when read back.
+ * for the root. Each item keeps its own IRI, and is checked against it when read back. What the
+ * bundle was derived from, a package say, is kept with it: on the bundle, not on its items, whose
+ * IRIs are what they hold.
  */
-async function keepContentBundle(root: Composition, items: readonly ContentItem[], authorDid: string, subjectPodUrl: unknown):
+async function keepContentBundle(root: Composition, items: readonly ContentItem[], authorDid: string, subjectPodUrl: unknown, derivedFrom?: string):
   Promise<{ ok: true; kept: Record<string, unknown> } | { ok: false; error: string }> {
   const authorPod = selfBoundPod(authorDid, typeof subjectPodUrl === 'string' ? subjectPodUrl : undefined);
   let sharedLattice: Awaited<ReturnType<typeof composeIntoSharedLattice>>;
   try {
     sharedLattice = await composeIntoSharedLattice({
       podUrl: authorPod, agentDid: authorDid, label: actorForPod(authorPod, MESH_ACTOR_LABELS),
-      terms: [authorDid, AUTHORED_VERB, root['@id']], content: { '@id': root['@id'], items } as unknown as Record<string, unknown>,
+      terms: [authorDid, AUTHORED_VERB, root['@id']], content: { '@id': root['@id'], items, ...(derivedFrom ? { derivedFrom } : {}) } as unknown as Record<string, unknown>,
       contentType: CONTENT_TYPES.bundle, projections: ['rdf', 'vc', 'activity'],
     });
   } catch (e) { return { ok: false, error: `could not store it on your pod: ${(e as Error).message}` }; }
@@ -11125,6 +11128,8 @@ app.post('/agent/content/composition', async (req, res) => {
 
 // An authored course folded into fragments and compositions (src/course-fold.ts), kept on its
 // author's pod as one bundle. Only the course's author folds it: what is folded is kept as theirs.
+// An emergent course is the caller's own to fold (src/emergent-fold.ts), and so is a SCORM package
+// hosted here, which anyone may play (src/package-import.ts).
 /**
  * The secret a fold blinds its checks under, derived from the bridge's own key: the key every pod
  * write already needs, so the same course folds to the same IRIs for as long as the bridge can keep
@@ -11162,8 +11167,52 @@ app.post('/agent/content/fold-course', async (req, res) => {
       }, bridgeBaseUrl, 'Course folded into compositions', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve' || a.toolName === 'foxxi.content_launch'));
       return;
     }
+    // A SCORM package hosted here, read into the content model (src/package-import.ts). A hosted
+    // package is served to anyone, so anyone may fold it: what is made is kept on their own pod, as
+    // theirs, with the package it was derived from.
+    if (p.package_sha256 !== undefined) {
+      const sha = typeof p.package_sha256 === 'string' ? p.package_sha256.trim().toLowerCase() : '';
+      if (!PACKAGE_SHA.test(sha)) { res.status(400).json({ error: 'package_sha256 names a package hosted here by its sha-256, 64 hex characters (GET /scorm/packages lists them)' }); return; }
+      const topicCompetencies = p.topic_competencies;
+      if (topicCompetencies !== undefined && (!topicCompetencies || typeof topicCompetencies !== 'object' || Array.isArray(topicCompetencies) || Object.values(topicCompetencies).some(v => typeof v !== 'string'))) {
+        res.status(400).json({ error: 'topic_competencies maps topic ids to the competencies they develop' }); return;
+      }
+      const zip = await hostedPackages.open(sha);
+      if (!zip) { res.status(404).json({ error: `no package ${sha} is hosted here (GET /scorm/packages lists them)` }); return; }
+      const packageIri = `${bridgeBaseUrl.replace(/\/+$/, '')}/scorm/packages/${sha}`;
+      // The competency named for the package, or else the package itself: its IRI names what it teaches.
+      const competency = typeof p.competency === 'string' && p.competency.trim() ? p.competency.trim() : competencyIriForTerm(packageIri);
+      let imported: ImportedPackage;
+      let foldedPackage: FoldedPackage;
+      try {
+        imported = readPackage(filesOfZip(zip), { fileUrl: path => `${packageIri}/files/${path.split('/').map(encodeURIComponent).join('/')}` });
+        foldedPackage = foldPackage(imported, {
+          competency,
+          ...(topicCompetencies ? { topicCompetencies: topicCompetencies as Record<string, string> } : {}),
+          ...(typeof p.level === 'string' ? { level: p.level as PackageFoldOptions['level'] } : {}),
+          ...(typeof p.language === 'string' ? { language: p.language } : {}),
+          // Under the bridge's secret, as a course's checks are: the same package folds to the same IRIs here.
+          blindFor: topicId => createHmac('sha256', courseFoldSecret).update(`package-fold\n${packageIri}\n${topicId}`).digest('hex'),
+        });
+      } catch (e) {
+        if (e instanceof PackageError) { res.status(422).json({ error: `package not folded: ${e.message}` }); return; }
+        if (e instanceof ContentError) { res.status(400).json({ error: `package not folded: ${e.message}` }); return; }
+        throw e;
+      }
+      const keptPackage = await keepContentBundle(foldedPackage.root, foldedPackage.items, auth.callerDid, p.subject_pod_url, packageIri);
+      if (!keptPackage.ok) { res.status(503).json({ error: `package not folded: ${keptPackage.error}` }); return; }
+      sendActionResult(req, res, {
+        ok: true, '@id': foldedPackage.root['@id'], package: packageIri, packageSha256: sha, derivedFrom: packageIri, authoredBy: auth.callerDid, competency,
+        composition: foldedPackage.root, topics: foldedPackage.topics, unread: [...imported.unread, ...foldedPackage.left], items: foldedPackage.items.length,
+        ...(foldedPackage.topics.some(t => t.check)
+          ? { checks: 'Graded on this bridge. The package serves the same answers to every browser it runs in, so a check folded from it is only as closed-book as the package was.' }
+          : {}),
+        ...keptPackage.kept,
+      }, bridgeBaseUrl, 'Package folded into compositions', activeAffordances.filter(a => a.toolName === 'foxxi.content_resolve' || a.toolName === 'foxxi.content_launch'));
+      return;
+    }
     const courseId = typeof p.course_id === 'string' ? p.course_id.trim() : '';
-    if (!courseId) { res.status(400).json({ error: 'course_id is required: a course authored with foxxi.scorm_author; or send course, an emergent course as POST /content/compose-course returns it' }); return; }
+    if (!courseId) { res.status(400).json({ error: 'course_id is required: a course authored with foxxi.scorm_author; or send course, an emergent course as POST /content/compose-course returns it, or package_sha256, a SCORM package hosted here' }); return; }
     const course = await resolveCourseForRead(courseId);
     if (!course) { res.status(404).json({ error: `no authored course ${courseId} here` }); return; }
     if (course.authoredBy !== auth.callerDid) { res.status(403).json({ error: 'only the course\'s author can fold it' }); return; }
