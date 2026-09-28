@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-09-28 — The base decides no composition's trust, and runs with the verticals deleted (#366, part 2)
+
+The rest of #366: the publication trust the relay decided for every installed composition, the domain-heavy Application Lab fixture in the relay's own suite, and a demonstration of the base without verticals. #556 stated the demonstration as a table; this one runs it.
+
+**A composition declares the trust of what it publishes.**
+- **What the relay did.** Its generic write path, `resourceWriteContext`, published every composition's output as `Asserted` with confidence 1. So what an installed interpreter's transition was worth was a constant in the base, not a statement the interpreter made.
+- **The new contract.** `ResourceWriteContext.publish` now takes a required `trust` (`ResourcePublicationTrust`: a modal status and a confidence).
+  - The audience gate refuses a publication that declares none, or declares an unknown modal status or a confidence outside [0, 1], before anything is written.
+  - It carries a frozen copy of the declared trust to the write, so later mutation cannot change what is published.
+- **What each composition declares.** The application runtime and the affordance surface each declare `Asserted` / 1, with the reasons their own verification earns it, so what they publish is unchanged.
+- **What stays in the base.** Signing, the CAS on the expected head, and the audience rule: they are how any publication is made verifiable.
+
+**The Application Lab fixture left the relay's suite.** `deploy/mcp-relay/_application-lab-test.ts` exercised `integrations/application-runtime`, not the relay. Its fixture is a release-readiness transition gated on a signed AGP performance-readiness document carrying xAPI and LER evidence. It is now `integrations/tests/application-lab-runtime.test.ts`, run by vitest.
+
+**The base, without the verticals.** A new workflow, `base-without-verticals.yml`, runs two stages.
+- **With every tree present,** the emergence the verticals are for:
+  - Release Control's governed release (`tests/application-simulation.test.ts`);
+  - the Application Lab's evidence-gated transition;
+  - the FOXXI × AGP release showcase and AGP's readiness evidence.
+- **Then it deletes `applications/`, `integrations/`, `examples/` and the vertical-owned `packages/workspace-client`,** and `tools/base-without-verticals.mjs --run` checks the base on its own:
+  - it builds the base packages, which are the root's own build list less the vertical-owned ones;
+  - it typechecks the stdio server, the relay, identity and the validator;
+  - it runs identity's tests, the relay's own scripts and every base test module. Each base module is also typechecked on its own, with the full program's options.
+
+  No vertical's configuration is involved, because nothing that could supply one is left. Codex found that the first version left the vertical-owned package and the two smaller services out of the run; now they are in it, and changes to identity or the validator trigger the workflow.
+
+Which tests are base is derived, not listed.
+- A test module is base when neither it nor a test-side module it imports:
+  - names a path in those trees, by import or by a string rooted there;
+  - enumerates the tracked tree (`git ls-files`);
+  - runs a script that reaches one;
+  - imports a package published from them.
+- `--plan` classifies while the trees are present, so nothing depends on deleted files.
+- It pins the tests in base directories that reach a vertical, so the next domain-heavy fixture goes to its vertical or to `integrations/tests`, where it belongs:
+  - 121 root and stdio modules;
+  - 4 relay scripts that read a vertical's source or run a file that does;
+  - 4 files in the relay's test program, which the run typechecks as a derived program without them. One is a Playwright spec that imports the application runtime.
+- Run locally in a worktree with the three trees deleted, the job is green end to end: 69 relay steps and 187 test modules, before this branch was rebased onto the newer master's tests. Getting there found three ways a base test reached a vertical that its imports did not show, and the classifier now covers each:
+  - through a Playwright spec the relay's test program compiles;
+  - through a script it runs;
+  - through `git ls-files`.
+
+  It also found that the relay's chain must run the repository's own `tsc`, not a global one.
+
+`vitest.base.config.ts` runs only that plan. It refuses to load while the trees are present, so it is no way round the full config's typecheck gate or module floor.
+
+Tests:
+- **`resource-publication`:**
+  - refusals for a missing, unknown or out-of-range trust;
+  - each modal status carried unchanged;
+  - a mutated trust not reaching the write;
+  - the runtime's declared trust on a real transition.
+- **`the-base-runs-without-verticals`:** the classifier's rules (imports, rooted strings, helpers, packages; not IRIs or `docs/` paths), the pins in both directions, and known classifications; what the run deletes (the workflow's `rm` included), the base build it derives, and the identity and validator checks and triggers.
+
 ## 2026-09-28 — A retried deploy trigger reconciles right before it is sent (#562 follow-up)
 
 Codex, on #562: the deploy trigger reconciled against the pre-repoint deployment before its retry wait, not after it. A deployment Railway publishes late, or another deploy started during the 5 to 20 seconds, would have been triggered over inside the very window the wait widens. Re-triggering an in-flight deploy SIGTERMs the healthy container. `triggerWithRetry` now checks both before the wait and again immediately before each re-trigger, and follows a deployment that has appeared.

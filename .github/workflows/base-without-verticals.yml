@@ -1,0 +1,94 @@
+name: Base without verticals
+
+# ★ THE BASE IS CLAIMED TO NEED NO VERTICAL, SO THIS RUNS IT WITHOUT ANY (#366).
+#
+# The substrate (packages/*, the MCP relay, the stdio server) is meant to know no vertical, and
+# tools/base-neutrality-lint.mjs holds its SOURCE to that. This job holds its BEHAVIOUR to it:
+#
+#   1. with every tree present, the emergence the verticals are for still happens — Release
+#      Control's governed release and the FOXXI × AGP readiness showcase, both composed from
+#      signed artifacts rather than from code joining them;
+#   2. then applications/, integrations/, examples/ and every vertical-owned package under
+#      packages/ are deleted, and the base builds, typechecks (packages, relay, stdio, identity,
+#      validator), and passes identity's tests, the relay's own suite and every root and stdio test
+#      module whose closure stays inside the base — with no vertical's configuration anywhere,
+#      because nothing that could supply one is left.
+#
+# Which tests are base is classified by the tool while the trees are present (step 1), and the
+# number that reach a vertical is pinned there, so a domain-heavy fixture added to the base's
+# own suite fails here rather than quietly shrinking what this job proves.
+#
+# The paths below are everything that can change the base, the classification, or the emergence
+# step's runtime and fixtures. A change confined to applications/ cannot break a claim about
+# running without it; the full suite covers the verticals themselves.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'packages/**'
+      - 'deploy/mcp-relay/**'
+      - 'deploy/identity/**'
+      - 'deploy/validator/**'
+      - 'mcp-server/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'integrations/**'
+      - 'examples/**'
+      - 'vitest.config.ts'
+      - 'vitest.base.config.ts'
+      - 'tsconfig*.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/base-without-verticals.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/**'
+      - 'deploy/mcp-relay/**'
+      - 'deploy/identity/**'
+      - 'deploy/validator/**'
+      - 'mcp-server/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'integrations/**'
+      - 'examples/**'
+      - 'vitest.config.ts'
+      - 'vitest.base.config.ts'
+      - 'tsconfig*.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/base-without-verticals.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  base-without-verticals:
+    name: "Emergence with the verticals; the base without them"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - name: Install workspace
+        run: npm ci --ignore-scripts
+      - name: Build workspace packages
+        run: npm run build
+
+      # ── 1. With the verticals: the emergence they exist for ──────────────────────────────
+      - name: Release Control and FOXXI × AGP still emerge from their signed artifacts
+        run: >-
+          npx vitest run
+          tests/application-simulation.test.ts
+          integrations/tests/application-lab-runtime.test.ts
+          integrations/tests/foxxi-agp-release-showcase.test.ts
+          applications/agentic-performance-practice/tests/readiness-evidence.test.ts
+      - name: Classify the base's tests (the pins hold) and write the plan
+        run: node tools/base-without-verticals.mjs --plan
+
+      # ── 2. Without them: the base on its own ─────────────────────────────────────────────
+      - name: Delete every vertical, integration and example, and the packages verticals own
+        run: rm -rf applications integrations examples packages/workspace-client
+      - name: Build, typecheck and test the base
+        run: node tools/base-without-verticals.mjs --run

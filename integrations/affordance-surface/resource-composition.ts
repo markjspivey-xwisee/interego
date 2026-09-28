@@ -1,10 +1,18 @@
 /** Optional L3 finite-board interpreter. Signed resources supply every application identity. */
 import { parseTrig, renderHypermediaMarkdown, turtleIriRef, type ParsedSubject, type ParsedTerm } from '@interego/core';
 import { extractNamedGraphTurtle } from '@interego/solid';
-import type { ResourceComposition, ResourceContext, ResourceDescriptor, ResourceView, ResourceWriteContext } from '../../deploy/mcp-relay/resource-compositions.js';
+import type { ResourceComposition, ResourceContext, ResourceDescriptor, ResourcePublicationTrust, ResourceView, ResourceWriteContext } from '../../deploy/mcp-relay/resource-compositions.js';
 import { canonicalJson, parseSignedJsonDocument } from '../application-runtime/application-lab-runtime.js';
 import { DifferentialKernel, type Triple } from './differential-kernel.js';
 import { verifySurfaceEvidence } from './evidence.js';
+
+/**
+ * What a successor this surface publishes is worth: Asserted, with full confidence. It is this
+ * interpreter's statement, not the relay's: a successor is published only after the signed
+ * authority and the selected tuple re-verified, any surface evidence verified against the state
+ * head, and the differential kernel derived it; the relay adds the signature and the CAS.
+ */
+const SUCCESSOR_TRUST: ResourcePublicationTrust = Object.freeze({ modalStatus: 'Asserted', confidence: 1 });
 
 const GAME = 'urn:interego:game:';
 const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
@@ -367,7 +375,7 @@ const composition: ResourceComposition = {
     let published: Record<string, unknown>;
     try {
       published = await (context as ResourceWriteContext).publish({ podUrl: loaded.surface.authority.podUrl, graphIri: loaded.stateArtifact.graphIri, graphContent,
-        expectedHead: loaded.stateArtifact.cid, actor: context.principal });
+        expectedHead: loaded.stateArtifact.cid, actor: context.principal, trust: SUCCESSOR_TRUST });
     } catch (error) {
       return { error: 'publication_outcome_unknown', statusCode: 502, committed: 'unknown', message: (error as Error).message };
     }

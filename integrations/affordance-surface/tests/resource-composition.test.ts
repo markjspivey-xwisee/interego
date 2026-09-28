@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseHypermediaMarkdown } from '@interego/core';
-import { ResourceCompositions, type ResourceDescriptor, type ResourceWriteContext, type ResourceView } from '../../../deploy/mcp-relay/resource-compositions.js';
+import { ResourceCompositions, type ResourceDescriptor, type ResourcePublicationTrust, type ResourceWriteContext, type ResourceView } from '../../../deploy/mcp-relay/resource-compositions.js';
 import { signedJsonGraph } from '../../application-runtime/application-lab-runtime.js';
 import composition from '../resource-composition.js';
 import { protectResourcePublication } from '../../../deploy/mcp-relay/resource-publication.js';
@@ -75,7 +75,8 @@ describe('signed resource surface composition', () => {
         <> iep:affordance [ a dcat:Distribution; dcat:accessURL <${payload}>;
           iep:encrypted ${audience !== 'public'}; iep:visibility "${audience}" ] .` };
     } };
-    const sink = vi.fn(async (request: Parameters<ResourceWriteContext['publish']>[0], _audience: 'public' | 'private') => f.publish(request));
+    type Addressing = Omit<Parameters<ResourceWriteContext['publish']>[0], 'trust'>;
+    const sink = vi.fn(async (request: Addressing, _audience: 'public' | 'private', _trust: ResourcePublicationTrust) => f.publish(request));
     const context = { ...f.context, ...protectResourcePublication(reads, f.context.principal, sink) };
     const c = control(view, 'position-4');
     const result = await f.modules.invoke(String(c['descriptorUrl']), String(c['action']), c['payload'], context);
@@ -85,7 +86,9 @@ describe('signed resource surface composition', () => {
       expect(sink).not.toHaveBeenCalled();
     } else {
       expect(result).toMatchObject({ committed: true, verified: true });
-      expect(sink).toHaveBeenCalledWith(expect.objectContaining({ graphIri: f.ids.state, expectedHead: 'state-cid' }), visibility);
+      // The surface declares the trust of what it publishes; the relay decides none (#366).
+      expect(sink).toHaveBeenCalledWith(expect.objectContaining({ graphIri: f.ids.state, expectedHead: 'state-cid' }), visibility,
+        { modalStatus: 'Asserted', confidence: 1 });
       expect((result!['view'] as ResourceView)['snapshot']).toMatchObject({ state: { board: '....X....', sessionVersion: 1 } });
     }
   });

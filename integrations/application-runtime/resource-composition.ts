@@ -1,7 +1,7 @@
 /** Signed-domain/v1 composition. Installed explicitly; never an MCP tool or L1 vocabulary. */
 import { renderHypermediaMarkdown } from '@interego/core';
 import type {
-  ResourceComposition, ResourceContext, ResourceDescriptor, ResourceView, ResourceWriteContext, ResourceSignatureDraft,
+  ResourceComposition, ResourceContext, ResourceDescriptor, ResourcePublicationTrust, ResourceView, ResourceWriteContext, ResourceSignatureDraft,
 } from '../../deploy/mcp-relay/resource-compositions.js';
 import {
   descriptorActionIsExecutable, parseSignedJsonDocument, prepareApplicationAction,
@@ -13,6 +13,15 @@ import { previewApplicationAction } from './application-preview.js';
 import { clientKeyId, verifyClientAuthorization } from './client-authorization.js';
 import { authorizeEnrolledClientGrant, prepareClientGrantChange, validateClientGrantProposal, clientGrantLedger } from './client-grant-ledger.js';
 import { clientSigningGrantMessage, type ClientSigningGrant } from './client-signing-grant.js';
+
+/**
+ * What a transition this runtime publishes is worth: Asserted, with full confidence. It is a
+ * statement this interpreter makes, not the relay's: a successor is published only after the
+ * signed contract's guard held against the verified current state, every evidence input was
+ * resolved and checked against its signer and digest, and the chain replayed; the relay adds
+ * the actor's signature and the CAS on the expected head.
+ */
+const TRANSITION_TRUST: ResourcePublicationTrust = Object.freeze({ modalStatus: 'Asserted', confidence: 1 });
 
 const PREFIX = 'urn:interego:application-view:v1:';
 const REFRESH = 'urn:interego:application-view:refresh';
@@ -324,7 +333,7 @@ const composition: ResourceComposition = {
       action: declared, receipt: canonicalJson(applicationActionReceipt(authority, authorizedInput).receipt), authorization: authorizedInput.authorization!,
       attest: proof => { if (!write.attestClientRegistration) throw new Error('credential membership attestation is unavailable'); return write.attestClientRegistration(proof); } }) : undefined;
     const prepared = prepareApplicationAction(authority, { ...authorizedInput, ...(grantChange ? { grantChange } : {}) });
-    const published = await write.publish({ podUrl: resolved.podUrl, graphIri: resolved.definition.stateGraphIri, graphContent: prepared.graphContent, expectedHead: ref.head, actor: actor(context) });
+    const published = await write.publish({ podUrl: resolved.podUrl, graphIri: resolved.definition.stateGraphIri, graphContent: prepared.graphContent, expectedHead: ref.head, actor: actor(context), trust: TRANSITION_TRUST });
     if (published['error'] || published['published'] === false || published['status'] === 'failed') {
       return { error: 'application_action_refused', message: String(published['message'] ?? published['error'] ?? 'publication refused'), committed: false };
     }

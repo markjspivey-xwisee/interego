@@ -96,7 +96,8 @@ const SLACK = 10;
  *
  * 2. THREE LIVE TEST SCRIPTS COUNTED AS PRODUCTION, ON THE STRENGTH OF THEIR FILENAMES.
  *    `deploy/mcp-relay/_note-view-test.ts` (19 sites) and `_hmd-app-test.ts` (2) are run by the
- *    relay's own `npm test`, alongside `_application-lab-test.ts`. They sit beside the server
+ *    relay's own `npm test` (as `_application-lab-test.ts` was, until #366 moved it to
+ *    `integrations/tests`). They sit beside the server
  *    rather than under `tests/`, and their names end `-test.ts` rather than `.test.ts`, so both
  *    exclusions above missed them. 21 more sites of the allowance were fixtures.
  *

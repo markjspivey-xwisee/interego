@@ -290,6 +290,24 @@ vertical vocabulary in code outside a counted allowlist; a two-sided pin on comm
 `tests/every-code-path-has-an-owner.test.ts` fails when this table and that gate disagree, or when a
 directory has no row.
 
+**And it runs without them.** `.github/workflows/base-without-verticals.yml` first shows that the
+emergence the verticals exist for still happens with every tree present: Release Control's governed
+release, and the FOXXI × AGP readiness showcase, both composed from signed artifacts. It then deletes
+`applications/`, `integrations/`, `examples/` and every vertical-owned package under `packages/`,
+and builds, typechecks and tests the base:
+- the base packages build;
+- the relay, the stdio server, identity and the validator typecheck;
+- identity passes its own tests, and the relay its own scripts;
+- every root and stdio test module whose closure stays inside the base passes.
+
+No vertical's configuration is involved, because nothing that could supply one is left.
+`tools/base-without-verticals.mjs` derives which tests are base. It pins how many tests in base
+directories reach a vertical, so a new domain-heavy fixture goes to its vertical or to
+`integrations/tests`.
+
+A composition installed into the relay declares the trust of what it publishes
+(`ResourcePublicationTrust`); the relay's generic write path decides none.
+
 ---
 
 ## 7. Why this matters

@@ -1,15 +1,27 @@
 /** Audience gate for derived resource writes, independent of installed interpreters. */
 import { parseTrig, type ParsedTerm } from '@interego/core';
-import type { ResourceDescriptor, ResourceReads, ResourceWriteContext } from './resource-compositions.js';
+import type { ResourceDescriptor, ResourcePublicationTrust, ResourceReads, ResourceWriteContext } from './resource-compositions.js';
 
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const DCAT = 'http://www.w3.org/ns/dcat#';
 const HYDRA = 'http://www.w3.org/ns/hydra/core#';
 const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
 type Publication = Parameters<ResourceWriteContext['publish']>[0];
+/** Where and what: every field a non-empty string. The composition's trust travels beside it. */
+type Addressing = Omit<Publication, 'trust'>;
 type Audience = 'public' | 'private';
 type Source = { url: string; cid: string; audience: Audience; signer: string };
 const refuse = (message: string): never => { throw new Error(message); };
+
+const MODAL_STATUSES = new Set(['Asserted', 'Hypothetical', 'Counterfactual']);
+/** The composition's declared trust, copied and frozen, or undefined when it declares none usable. */
+function declaredTrust(trust: unknown): ResourcePublicationTrust | undefined {
+  if (trust === null || typeof trust !== 'object') return undefined;
+  const { modalStatus, confidence } = trust as Record<string, unknown>;
+  if (typeof modalStatus !== 'string' || !MODAL_STATUSES.has(modalStatus)) return undefined;
+  if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) return undefined;
+  return Object.freeze({ modalStatus: modalStatus as ResourcePublicationTrust['modalStatus'], confidence });
+}
 const termId = (term: ParsedTerm): string | undefined => term.kind === 'iri' ? term.iri : term.kind === 'bnode' ? '_:' + term.id : undefined;
 
 function sourceAudience(descriptor: ResourceDescriptor): Source {
@@ -61,7 +73,7 @@ function sourceAudience(descriptor: ResourceDescriptor): Source {
 export function protectResourcePublication(
   reads: ResourceReads,
   principal: string,
-  publish: (request: Publication, visibility: Audience) => Promise<Record<string, unknown>>,
+  publish: (request: Addressing, visibility: Audience, trust: ResourcePublicationTrust) => Promise<Record<string, unknown>>,
 ): { reads: ResourceReads; publish: ResourceWriteContext['publish'] } {
   const sources = new Map<string, Source>();
   let sourceError: string | undefined;
@@ -90,14 +102,16 @@ export function protectResourcePublication(
     }
   } };
   return { reads: protectedReads, publish: async input => {
-    const request: Publication = Object.freeze({ podUrl: input.podUrl, graphIri: input.graphIri, graphContent: input.graphContent,
+    const request: Addressing = Object.freeze({ podUrl: input.podUrl, graphIri: input.graphIri, graphContent: input.graphContent,
       expectedHead: input.expectedHead, actor: input.actor });
+    const trust = declaredTrust(input.trust);
     if (publishing || pendingReads) return { error: 'resource_audience_refused', message: 'source reads or publication are still in progress', published: false, committed: false };
     publishing = true;
     // A refusal is known to precede the write, not an uncertain publication.
     try {
       if (!principal || request.actor !== principal) refuse('authenticated resource actor is required');
       if (Object.values(request).some(value => typeof value !== 'string' || !value)) refuse('publication requires explicit string pod, graph, content, actor and expected head');
+      if (!trust) refuse('publication requires the trust its composition declares: a modal status (Asserted, Hypothetical or Counterfactual) and a confidence in [0, 1]');
       if (sourceError) refuse(sourceError);
       if (!sources.size) refuse('derived publication has no verified source audience');
       const head = await reads.currentHead(request.podUrl, request.graphIri);
@@ -113,6 +127,6 @@ export function protectResourcePublication(
       return { error: 'resource_audience_refused', message: (error as Error).message, published: false, committed: false };
     }
     const visibility = [...sources.values()].some(source => source.audience === 'private') ? 'private' : 'public';
-    try { return await publish(request, visibility); } finally { publishing = false; }
+    try { return await publish(request, visibility, trust!); } finally { publishing = false; }
   } };
 }
