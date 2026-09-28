@@ -1589,7 +1589,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:foxxi:scorm-submit-signed' as IRI,
     toolName: 'foxxi.scorm_submit',
     title: 'Submit the current SCO + advance (graded, committed to the SN engine)',
-    description: 'Submit the current SCO. For an assessment SCO pass { answers:[...] } — the player GRADES them against the package answer hashes (not self-reported), commitTracking()s cmi.completion/success/score into the SN engine, and advances (Continue). When the engine sequences to the end, its ROLLUP decides pass/complete and the outcome is recorded to your ELR. Externally routed: sign_request the args, then POST the envelope.',
+    description: 'Submit the current SCO. For an assessment SCO pass { answers:[...] } — the player GRADES them against the package answer hashes (not self-reported), commitTracking()s cmi.completion/success/score into the SN engine, and advances (Continue). When the engine sequences to the end, its ROLLUP decides pass/complete and the outcome is recorded to your ELR. If your record does not hold the outcome, the answer is a 503 carrying it, and the session stays: submit to it again, and the same statements are kept. Externally routed: sign_request the args, then POST the envelope.',
     method: 'POST',
     targetTemplate: '{base}/agent/scorm/submit',
     mediaType: 'application/json',
@@ -1601,7 +1601,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     ],
     appliesTo: { collections: ['courses', 'profiles'] },
     outputs: {
-      description: 'The next SCO (done:false) or the final rolled-up outcome (done:true) + grading detail. 404 when no play session; 403 when not your session; 409 when no current SCO; 401 on auth failure.',
+      description: 'The next SCO (done:false) or the final rolled-up outcome (done:true) + grading detail. 404 when no play session; 403 when not your session; 409 when no current SCO; 401 on auth failure; 503 with the outcome when the attempt ended but your record does not hold it (the session stays for another submit).',
       properties: {
         ok: { type: 'boolean' },
         done: { type: 'boolean', description: 'True when sequencing ended (final outcome present).' },
@@ -1611,7 +1611,8 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
         completed: { type: 'boolean', description: 'Engine rollup completion (when done:true).' },
         passed: { type: 'boolean', description: 'Engine rollup pass (when done:true).' },
         score: { type: 'number', description: 'Rolled-up normalized score (when done:true).' },
-        recordedStatements: { type: 'integer', description: 'Count of xAPI statements recorded to the ELR (when done:true).' },
+        recordedStatements: { type: 'integer', description: 'Count of the outcome\'s xAPI statements your ELR holds (when done:true).' },
+        recorded: { type: 'boolean', description: 'Whether your ELR holds the outcome: every statement that records it (when done:true).' },
       },
       required: ['ok'],
     },

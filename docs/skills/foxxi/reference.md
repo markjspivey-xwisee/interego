@@ -851,7 +851,7 @@ Launch an authored SCORM course as yourself. The SCORM 2004 SN runtime parses th
 
 **Submit the current SCO + advance (graded, committed to the SN engine)**
 
-Submit the current SCO. For an assessment SCO pass { answers:[...] } — the player GRADES them against the package answer hashes (not self-reported), commitTracking()s cmi.completion/success/score into the SN engine, and advances (Continue). When the engine sequences to the end, its ROLLUP decides pass/complete and the outcome is recorded to your ELR. Externally routed: sign_request the args, then POST the envelope.
+Submit the current SCO. For an assessment SCO pass { answers:[...] } — the player GRADES them against the package answer hashes (not self-reported), commitTracking()s cmi.completion/success/score into the SN engine, and advances (Continue). When the engine sequences to the end, its ROLLUP decides pass/complete and the outcome is recorded to your ELR. If your record does not hold the outcome, the answer is a 503 carrying it, and the session stays: submit to it again, and the same statements are kept. Externally routed: sign_request the args, then POST the envelope.
 
 - Action: `urn:iep:action:foxxi:scorm-submit-signed`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/submit` (served by a bespoke route; not through the bridge's MCP endpoint)

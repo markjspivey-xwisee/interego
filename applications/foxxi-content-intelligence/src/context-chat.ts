@@ -624,8 +624,9 @@ export interface ContextChatConfig extends OperatorAuthConfig {
   selfBaseUrl: string;
   /** The authoritative source — the xAPI Agent account homePage. */
   authoritativeSource: string;
-  /** Persist a statement into the tenant LRS (instruments the ask). */
-  emitStatement?: (statement: Record<string, unknown>, tenant: TenantId) => void;
+  /** Persist a statement into the tenant LRS (instruments the ask): its id once the store holds
+   *  it, or null when it does not. The ask is reported instrumented only on an id. */
+  emitStatement?: (statement: Record<string, unknown>, tenant: TenantId) => Promise<string | null>;
   /**
    * Optional — resolve the learner's policy-driven assignments. When
    * absent, assignments are engagement-derived from what the learner has
@@ -760,7 +761,7 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
       if ((intent === 'progress' || intent === 'assignments') && config.verifyCaller) {
         const authHeader = req.headers['authorization'] ?? req.headers['Authorization'];
         const m = typeof authHeader === 'string' && /^Bearer\s+(.+)$/i.exec(authHeader);
-        const v = await config.verifyCaller(m ? m[1].trim() : undefined);
+        const v = await config.verifyCaller(m ? m[1]!.trim() : undefined);
         if (!v.ok) {
           res.status(401).json({
             error: `a "${intent}" question is about a specific learner's record — it needs a `
@@ -833,7 +834,8 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
       // unauthenticated, un-rate-limited storage-growth + LRS-forwarding amplification vector
       // (the per-IP limiter is skipped entirely when no FOXXI_LLM_API_KEY is configured).
       if (config.emitStatement && attributedActor !== 'anonymous') {
-        config.emitStatement({
+        // Instrumented only when the store holds the statement.
+        instrumented = (await config.emitStatement({
           actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: attributedActor } },
           verb: { id: INTERACTED, display: { 'en-US': 'interacted' } },
           object: {
@@ -850,8 +852,7 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
           // is production | training | performance-support — 'context-chat' was off-vocabulary).
           context: { extensions: { [`${base}/ns/foxxi#contextKind`]: 'performance-support' } },
           timestamp: new Date().toISOString(),
-        }, tenant);
-        instrumented = true;
+        }, tenant)) !== null;
       }
 
       res.json({

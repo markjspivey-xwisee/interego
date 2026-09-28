@@ -117,7 +117,12 @@ const keepWholeFn = slice('export async function keepStatementsWhole', 1400);
 check('the cmi5 trace only collects stored ids',
   server.includes('const kept = await keepStatementsWhole(session, lensTenantFor(label));')
   && /const id = await storeStatementDurably\(s, tenant\);\s+if \(!id\) return \{ status: 'partial', keptIds \};\s+keptIds\.push\(id\);/.test(keepWholeFn));
-check('SCORM completion only collects stored ids', /if \(sid\) ids\.push\(sid\)/.test(server));
+// An attempt's outcome is kept whole or not at all, and its ids are the ones the store holds
+// (keepStatementsWhole, checked above): none when the LRS refused what the bridge built.
+check('SCORM completion only collects stored ids',
+  server.includes('const kept = await keepStatementsWhole(ended.statements, play.lens);')
+  && server.includes("ended.statementIds = kept.status === 'refused' ? [] : kept.keptIds;")
+  && /const id = await storeStatementDurably\(s, tenant\);\s+if \(!id\) return \{ status: 'partial', keptIds \};\s+keptIds\.push\(id\);/.test(keepWholeFn));
 
 if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }
 console.log('\nA statement that was refused yields no id, and no record cites one.\n');

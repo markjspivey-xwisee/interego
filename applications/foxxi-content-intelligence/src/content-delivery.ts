@@ -54,9 +54,10 @@ export interface ContentDeliveryConfig extends OperatorAuthConfig {
   /** The authoritative source — the xAPI Agent account homePage. */
   authoritativeSource: string;
   /** Persist a statement into the tenant LRS (wired to the bridge's
-   *  internal statement store). When absent, job-aid views are not
-   *  instrumented. */
-  emitStatement?: (statement: Record<string, unknown>, tenant: TenantId) => void;
+   *  internal statement store): its id once the store holds it, or null
+   *  when it does not. A delivery is reported instrumented only on an id.
+   *  When absent, job-aid views are not instrumented. */
+  emitStatement?: (statement: Record<string, unknown>, tenant: TenantId) => Promise<string | null>;
   /** Authorize instrumenting an xAPI statement attributed to `learner`.
    *  MUST return false for an anonymous caller — otherwise anyone can inject
    *  an LRS record attributed to any agent identity (attribution forgery that
@@ -308,7 +309,7 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
     // anonymous ?learner=<victim> forges attribution into the LRS. Unauthorized
     // callers still get the job-aid HTML; the view just isn't recorded.
     if (learner && config.emitStatement && (config.authorizeInstrumentation?.(req, learner) ?? false)) {
-      config.emitStatement({
+      void config.emitStatement({
         actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: learner } },
         verb: { id: EXPERIENCED, display: { 'en-US': 'experienced' } },
         object: {
@@ -419,7 +420,8 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
     // (verified operator or a signer who proved control of the learner DID) —
     // never attribute an LRS statement to an unauthenticated caller-named actor.
     if (transport.sent && learner && config.emitStatement && (config.authorizeInstrumentation?.(req, learner) ?? false)) {
-      config.emitStatement({
+      // Instrumented only when the store holds the statement: "recorded in the LRS" is a claim.
+      instrumented = (await config.emitStatement({
         actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: learner } },
         verb: { id: EXPERIENCED, display: { 'en-US': 'experienced' } },
         object: {
@@ -436,8 +438,7 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
           },
         },
         timestamp: new Date().toISOString(),
-      }, tenant);
-      instrumented = true;
+      }, tenant)) !== null;
     }
     res.json({
       delivered: transport.sent, rendered: true, channel, rendering, instrumented, transport,
