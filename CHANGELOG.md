@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-28 — Foxxi: a hosted package's container is made first, an XHTML document stays XML, and a run says whether its performance is held
+
+Three of Codex's findings, on #548 and #547 after they merged:
+- **The package's container is made first.** On a fresh tenant pod nothing had made `foxxi-uploads/packages/`, and a Solid store does not always make a PUT's parent, so an upload could answer `hosted: false`. `HostedPackages.keep` now PUTs the LDP BasicContainer first, best effort, as the shared lattice does its own.
+- **An XHTML document stays XML.** Served as `application/xhtml+xml`, a hosted document is parsed as XML, and the bootstrap's bare `<` and `&&` stopped the parser before any script ran. An XHTML document now gets the bootstrap in a CDATA section.
+- **A run says whether its performance is held.** `performanceKept` looked for an id on the ingested performance statement, which has none, so a run's refusal always said false. It now uses the id minted for it in `inOrder`, where it is written last.
+
+Tests: the container request made before the zip's; an XHTML document, instrumented and served, parsed by an XML parser (and the bare bootstrap shown not to parse); the run's refusal by the minted id. Four mutants each turn a named test red.
+
 ## 2026-09-27 — Foxxi: an uploaded SCORM package is played from the bridge, each document in a sandbox of its own
 
 `foxxi.upload_scorm_package` read a package (its title, SCOs, standard and authoring tool) and kept a record of it, but not the package. Nothing uploaded could be played. Serving someone else's HTML and script from the bridge's origin as it is would hand it that origin, and the way out on record was a second origin just for content.
@@ -13,8 +22,6 @@ No second origin is needed (`src/scorm-hosting.ts`):
 - the bridge's CORS preflight now allows PUT and DELETE. A statement is PUT with its id, and a preflight listing only GET and POST refused every statement the runtime sent, from the player's origin as much as from a sandbox. No credentials are allowed cross-origin, so no authority comes with the methods.
 
 Single-document SCOs, which current authoring tools export, run. Content whose frames script each other does not, since each document is its own opaque origin.
-
-Codex, on this PR's first push: the package's container is made before the zip is written, since a fresh tenant pod has none and a Solid store does not always make a PUT's parent. An XHTML document, parsed as XML, gets the bootstrap in a CDATA section, since its bare `<` and `&&` stopped the parser. Also, Codex on #547: a run's refusal said `performanceKept: false` whatever was held, because it looked for an id on the ingested statement; it now uses the id minted for it where it is written last.
 
 `tests/a-scorm-package-plays-in-a-sandbox-of-its-own.test.ts` covers:
 - the pieces: the sandbox, paths, injection that keeps every byte, and the course;
