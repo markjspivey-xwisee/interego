@@ -8,10 +8,12 @@
  * Only the shape is made here; the bridge checks each step as the learner record keeps it
  * (workStepsFrom) and says what it refuses. What the page checks first, it checks by the bridge's
  * own rules, loaded from the same modules: how long a step's texts may be (work-step-limits.ts),
- * and what xAPI takes as a duration (xapi-validate.ts).
+ * and what xAPI takes as a duration (xapi-duration.ts, which the LRS's validator reads too). Both
+ * import nothing, as every module this page shares with the bridge must: the dashboard's image
+ * builds with its own dependencies alone.
  */
 import { WORK_STEP_LIMITS } from '../../../src/work-step-limits.js';
-import { isXapiDuration } from '../../../src/xapi-validate.js';
+import { isXapiDuration } from '../../../src/xapi-duration.js';
 
 /** How sure the performer is a step happened as told. */
 export type Certainty = 'Asserted' | 'Hypothetical' | 'Counterfactual';

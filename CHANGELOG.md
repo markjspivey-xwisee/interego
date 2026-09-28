@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-28 — Foxxi: the dashboard's image builds again, so master deploys again
+
+`Auto-deploy master` had failed on every merge since #535, and nothing merged since #533 had reached Railway. The #534 run was a Docker Hub 502, but every run from #535 on failed the same way.
+
+**The cause.** The `interego-foxxi-dashboard` image failed to build, and the deploy waits for every image:
+- Its Dockerfile installs each directory's own `package.json` (the vertical's is `ethers` alone) and runs the dashboard's `tsc -b`.
+- #535 had the dashboard import `isXapiDuration` from `src/xapi-validate.ts`. That module's model imports the ontology's types from `@interego/core`, which the image does not install.
+- tsc follows `import type` where a bundler drops it, so the browser test's esbuild bundle never saw it.
+
+The scheduled `Railway fleet audit` then found six services behind master:
+- the Foxxi bridge, the dashboard, the AGP bridge and the jev-harness bridge, all at #533;
+- the Foxxi microsite, at #532;
+- the SCORM player.
+
+**The fix.**
+- The duration rule moves to `src/xapi-duration.ts`, which imports nothing, as every module the dashboard shares with the bridge must (`fragment-kinds.ts` and `work-step-limits.ts` already did). `xapi-validate.ts` re-exports it for the bridge.
+- `the-dashboard-runs-in-a-browser.test.ts` now also walks every module the dashboard type-checks, `import type` included, and fails on any package the image does not install where that module sits. It shows the walk would have caught #535.
+- Reproduced the image's build outside the repository, where nothing resolves up into the workspace: on master, the same 26 TS2307 errors as CI; with this change, `tsc -b` and `vite build` both succeed.
+
+Auto-deploy compares each service's live image with master, so the next deploy brings all six back to master.
+
 ## 2026-09-28 — Foxxi: a failure's regime is read from work its performer recorded elsewhere too
 
 A failed unit of work is answered with the plan its regime implies (#516). That regime was read only from the trajectories kept with the latest work at the competency. A performer who recorded how their work went apart from it, through `foxxi.record_agent_trajectory` or as steps published to their own pod, was told no trajectory had been kept, and got no offer. Now:

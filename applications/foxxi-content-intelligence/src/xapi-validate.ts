@@ -27,6 +27,7 @@
 // byte-identical to the long-proven constants (ADL 1442/1442); this only relocates
 // their definition to the ontology.
 import { XAPI_INTERACTION_TYPES, XAPI_PATTERNS } from './spec/xapi.model.js';
+import { isXapiDuration } from './xapi-duration.js';
 
 const UUID_RE = new RegExp(XAPI_PATTERNS.uuid, 'i');
 
@@ -50,12 +51,6 @@ const TIMESTAMP_RE =
   // `±hhmm`/`±hh` are rejected by requiring the `±hh:mm` colon form.)
   /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
 
-/** ISO 8601 duration (xAPI §4.1.5.2 result.duration). At least one component. */
-const DURATION_RE =
-  /^P(?=[^T]|T.)(\d+(?:\.\d+)?Y)?(\d+(?:\.\d+)?M)?(\d+(?:\.\d+)?W)?(\d+(?:\.\d+)?D)?(T(?=.)(\d+(?:\.\d+)?H)?(\d+(?:\.\d+)?M)?(\d+(?:\.\d+)?S)?)?$/;
-/** ISO 8601:2004 §4.4.3.2 — the week designator is exclusive. */
-const WEEK_DURATION_RE = /^P\d+(?:\.\d+)?W$/;
-
 /** RFC 5646 language tag (loose — rejects whitespace / empty / junk). */
 const LANG_TAG_RE = /^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$/;
 
@@ -74,17 +69,10 @@ const isTimestamp = (v: unknown): boolean =>
   // Normalize a space separator to 'T' before Date.parse so the RFC 3339
   // space form (accepted above) parses on every engine, not just lenient ones.
   && !Number.isNaN(Date.parse(v.replace(' ', 'T')));
-const isDuration = (v: unknown): boolean => {
-  if (typeof v !== 'string' || v.length < 2 || !DURATION_RE.test(v)) return false;
-  // The week designator cannot be combined with any other component.
-  if (v.includes('W')) return WEEK_DURATION_RE.test(v);
-  return true;
-};
-/**
- * Whether `v` is a duration xAPI takes as `result.duration`. What a caller's own duration is checked
- * against before a statement carries it, on the bridge and in the dashboard alike.
- */
-export function isXapiDuration(v: unknown): boolean { return isDuration(v); }
+// The duration rule lives in a module that imports nothing, since the dashboard shares it
+// (xapi-duration.ts says why); it is re-exported here for everything that already reads it here.
+const isDuration = isXapiDuration;
+export { isXapiDuration };
 const isLangTag = (v: unknown): boolean => typeof v === 'string' && LANG_TAG_RE.test(v);
 
 /** Keys of `obj` that are not in `allowed`. */
