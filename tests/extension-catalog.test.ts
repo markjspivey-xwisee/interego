@@ -288,4 +288,21 @@ describe('no one document can exhaust memory (Codex, on #558)', () => {
     expect(await refusal(loadExtensionCatalog(POD, profile(), { fetch: fetchFn as never, maxDocumentBytes: 8 * 1024 }))).toBe('over-bound');
     expect(read).toBe(false);
   });
+
+  it('cancels the body it refuses on a declared length, so a trickling pod cannot hold the connection (Codex, on #559)', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({ pull() { /* trickles nothing */ }, cancel() { cancelled = true; } }, { highWaterMark: 0 });
+    const fetchFn = vi.fn(async () => new Response(body, { status: 200, headers: { 'content-length': String(1 << 30) } }));
+    expect(await refusal(loadExtensionCatalog(POD, profile(), { fetch: fetchFn as never, maxDocumentBytes: 8 * 1024 }))).toBe('over-bound');
+    expect(cancelled).toBe(true);
+  });
+
+  it('reports an oversized archive segment as over the bound, not as a failed read (Codex, on #559)', async () => {
+    const pod = makePod();
+    await offer(pod, 'a', 'https://vertical.example/actions/a', 'First');
+    const archive = `${POD}.well-known/context-graphs-archive-0000`;
+    pod.store.set(MANIFEST, pod.store.get(MANIFEST)!.replace(' a hydra:Collection', ` iep:manifestArchive <${archive}> ;\n    a hydra:Collection`));
+    pod.store.set(archive, `# ${'#'.repeat(16 * 1024)}\n`);
+    expect(await refusal(loadExtensionCatalog(POD, profile(), { fetch: pod.fetch, maxDocumentBytes: 8 * 1024 }))).toBe('over-bound');
+  });
 });
