@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-27 — Foxxi: a set of statements is kept whole only while the store still holds all of it
+
+`keepStatementsWhole` called a set whole once every write had settled. An in-memory store over the process-wide resident budget makes room as it writes, evicting its oldest statement. So storing a SCORM attempt's `passed` could evict its `completed`: the attempt was reported recorded, its session was let go, and one of its statements was already gone (Codex, on #544). The helper now reads every id back before it says whole. What is still held is what it reports kept, and anything less is `partial`, which every door that uses it answers as not recorded.
+
+`tests/a-door-reports-only-what-the-store-kept.test.ts` pins the budget at one statement and shows the first write evicted by the second; saying whole on writes alone turns it red.
+
 ## 2026-09-27 — Foxxi: what the bridge records on its own behalf, it reports only once the store holds it
 
 The doors that take a caller's statements now wait for the store. The bridge's own emitters did not: each wrote with the unawaited `storeStatementInternal` and reported at once. A store that did not keep the write left each of these claims false:

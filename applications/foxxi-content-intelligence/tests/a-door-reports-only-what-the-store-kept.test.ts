@@ -23,7 +23,7 @@ import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { FileStatementStore, PrimaryForwardStatementStore } from '../src/statement-store.js';
+import { FileStatementStore, PrimaryForwardStatementStore, resetResidentBudgetRegistryForTest, setResidentStatementBudget } from '../src/statement-store.js';
 import { getStatementStore, internalRefusalOf, keepStatementsWhole, storeStatementInternal } from '../src/xapi-lrs.js';
 import { buildPassedSessionTrace } from '../src/cmi5.js';
 import { ingestExternalRun } from '../src/agent-run-ingest.js';
@@ -106,6 +106,24 @@ describe('keepStatementsWhole', () => {
     const [first] = session();
     expect(storeStatementInternal(first!, tenant)).toBe(first!.id);   // the answer the doors counted on
     expect(await keepStatementsWhole([first!], tenant)).toEqual({ status: 'partial', keptIds: [] });
+  });
+
+  it('is not whole when the store let an earlier statement go to make room for a later one', async () => {
+    // Codex, on #544: an in-memory store over the process-wide resident budget evicts its oldest
+    // statement as it takes a new one, so every write can succeed and the set still not be held.
+    resetResidentBudgetRegistryForTest();
+    const tenant = `store-that-makes-room-${randomUUID()}` as never;
+    getStatementStore(tenant);   // registered against the budget from here
+    setResidentStatementBudget(1);
+    try {
+      const s = session().slice(0, 2);
+      const kept = await keepStatementsWhole(s, tenant);
+      expect(await getStatementStore(tenant).get(s[0]!.id)).toBeNull();
+      expect(kept).toEqual({ status: 'partial', keptIds: [s[1]!.id] });
+    } finally {
+      setResidentStatementBudget();
+      resetResidentBudgetRegistryForTest();
+    }
   });
 });
 
