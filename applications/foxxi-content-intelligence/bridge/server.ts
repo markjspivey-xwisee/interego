@@ -10771,7 +10771,7 @@ async function hostProjectExport(bytes: Buffer, exported: ProjectExportParse): P
   catch (e) { return { hosted: false, hostedWhy: `the export could not be kept: ${(e as Error).message}` }; }
   return {
     hosted: true, playable: false,
-    playableWhy: `an ${exported.tool} export launches nothing as it is: fold it into composable content, and play what that makes`,
+    playableWhy: `this export (${exported.tool}'s own) launches nothing as it is: fold it into composable content, and play what that makes`,
     packageSha256: kept.sha256, packageUrl: kept.url,
     fold: { method: 'POST', target: `${bridgeBaseUrl}/agent/content/fold-course`, affordance: actionUrl('urn:iep:action:foxxi:content-fold-course-signed' as IRI), payload: { package_sha256: kept.sha256 } },
   };

@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a course Rise 360 published is read in Rise's own model
+
+A package Rise 360 published is one page its runtime draws everything into. Read as web pages, it had nothing to fold. That page carries the whole course as base64 JSON. `src/rise-course.ts` reads it in the three ways Rise has written it over its versions:
+- `window.courseData = "…"`;
+- `deserialize("…")`;
+- a `locales/<locale>.js` that `window.i18n` names.
+
+It reads the SCORM layout (`scormcontent/`), an xAPI package, and a web export (`content/`). The model was established from 694 real exports' course data and the runtime's own schema and grading code.
+
+- **Lessons are topics.** A lesson's blocks are its pages, split where the course asks the learner to continue. A quiz lesson is a topic of its questions, and a section is only a heading in the lesson list.
+- **Blocks read as pages:**
+  - text, lists, quotes, tables;
+  - images and galleries, found as the runtime finds them (`assets/` and the crushed or original key);
+  - accordions, tabs, processes, timelines, labeled graphics, flashcards, and sorting piles;
+  - attachments, as links to the package's own file.
+- **Right as Rise grades it.**
+  - A knowledge check's right answer is the ones it flags.
+  - A quiz question's right answer is what its `correct` or `corrects` names. The flags beside a quiz's answers are often the editor's leftover defaults, which the runtime does not read.
+  - A quiz's fill-in accepts every answer it lists, and letter case counts where Rise says so. A bank a quiz draws from is asked whole, and options a quiz shuffles are turned.
+- **A translated course** (`{ l10nId }` text) is read in its own language.
+- **Left out, with why:** video and audio (captions kept), embeds, Storyline blocks, charts, scenarios, raw HTML, and a question that comes with a picture.
+
+A Rise 360 course published for xAPI or the web has no SCORM manifest. It is uploaded, kept and folded as an authoring tool's own export ("Rise 360"). The readers' shared helpers moved to `src/tool-reading.ts`. The fold's and the upload's descriptions, the Foxxi README, PERFORMANCE-ARCHITECTURE.md §5, the host panel and `docs/skills/foxxi` say so.
+
+Tests: `a-course-rise-published-is-read-in-rises-own-model.test.ts` covers:
+- the three encodings and the three layouts;
+- pages, questions and what is left out;
+- the quiz's leftover flags;
+- a translated course;
+- shuffled options;
+- each read folded and graded.
+
 ## 2026-09-29 — Foxxi: a QTI answer another already accepts adds nothing to its letter case (Codex, on #576)
 
 #576 left out a QTI item whose accepted answers differ in whether letter case counts. Codex found it also left out items that are one question.

@@ -65,7 +65,7 @@ import AdmZip from 'adm-zip';
 import { unwrapScormPackage, type ScormPackageFormat } from '../../_shared/scorm/index.js';
 import { fingerprintAuthoringTool, type ScormStandardInfo } from './scorm-fingerprint.js';
 import { manifestToAgenticCourse, type ManifestCourseResult } from './course-graph.js';
-import { projectExportOf } from './tool-exports.js';
+import { projectExportOf, type ExportTool } from './tool-exports.js';
 import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 
 // ── A. Multi-tenant onboarding ────────────────────────────────
@@ -587,7 +587,7 @@ export interface ProjectExportParse {
   parsedAt: string;
   packageTitle: string;
   /** The tool whose own export it is. */
-  tool: 'Adapt' | 'H5P';
+  tool: ExportTool;
   /** What folding it reads: its topics, pages and questions, and how much is left out. */
   topics: number;
   pages: number;
