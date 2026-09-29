@@ -117,6 +117,18 @@ function textOf(n: XNode, gap?: (e: XNode) => string | null): string {
 
 const showsMedia = (n: XNode, skip?: (e: XNode) => boolean): boolean => descendantsOf(n, e => MEDIA_ELEMENTS.has(e.name), skip).length > 0;
 const unique = (xs: readonly string[]): string[] => [...new Set(xs)];
+
+/**
+ * Whether a question's accepted answers are matched with letter case, each as its source matches
+ * it; `mixed` when some are and some are not, which a question here, grading all its answers one
+ * way, cannot be (Codex, on #575). An answer matched with case that one matched without it already
+ * accepts adds nothing, so it does not count (Codex, on #576).
+ */
+function letterCaseOf(answers: ReadonlyArray<{ value: string; withCase: boolean }>): boolean | 'mixed' {
+  const anyCase = new Set(answers.filter(a => !a.withCase).map(a => a.value.toLowerCase()));
+  const kinds = new Set(answers.filter(a => !a.withCase || !anyCase.has(a.value.toLowerCase())).map(a => a.withCase));
+  return kinds.size > 1 ? 'mixed' : kinds.has(true);
+}
 /**
  * An option named by its letter, as an author names one: a text of one letter ("a", "B") would be
  * read as a letter too, and name another option, so the right ones are named by place.
@@ -175,15 +187,14 @@ function qti2Item(item: XNode): ImportedQuestion | string {
       const [answer, ...rest] = unique(correct.map(c => c.trim()).filter(Boolean));
       if (!answer) return noCorrect(decl);
       const accept = unique([...rest, ...mapped]).filter(a => a && a !== answer);
-      // Each accepted answer is matched as QTI matches it: with letter case unless the entry that scores
-      // it says not, and a correct response no entry scores exactly. A question here grades all its
-      // answers one way, so answers that differ in this are not one question (Codex, on #575).
-      const anyCase = new Set([
-        ...scoring.map(e => (e.attrs.get('casesensitive') ?? '').trim().toLowerCase() === 'false'),
-        ...[answer, ...rest].filter(a => !mapped.includes(a)).map(() => false),
-      ]);
-      if (anyCase.size > 1) return 'its answers differ in whether letter case counts, and a question here grades them one way';
-      return { question, type: 'fill-in', answer, ...(accept.length ? { accept } : {}), ...(anyCase.has(true) ? {} : { caseSensitive: true as const }) };
+      // Each accepted answer is matched as QTI matches it: an entry's with letter case unless it says
+      // not, and a correct response exactly, unless an entry accepts it without case (Codex, on #575
+      // and #576; letterCaseOf lets what one answer accepts cover another).
+      const entries = scoring.map(e => ({ value: (e.attrs.get('mapkey') ?? '').trim(), withCase: (e.attrs.get('casesensitive') ?? '').trim().toLowerCase() !== 'false' }))
+        .filter(e => e.value);
+      const withCase = letterCaseOf([...entries, ...[answer, ...rest].map(value => ({ value, withCase: true }))]);
+      if (withCase === 'mixed') return 'its answers differ in whether letter case counts, and a question here grades them one way';
+      return { question, type: 'fill-in', answer, ...(accept.length ? { accept } : {}), ...(withCase ? { caseSensitive: true as const } : {}) };
     }
     case 'orderinteraction': {
       const choices = childrenOf(ix, 'simplechoice');
@@ -237,15 +248,14 @@ function matText(n: XNode, except?: XNode): string | null {
 /**
  * What the conditions that score a 1.2 item set for `ident`: each varequal they test, outside a
  * `not`, and whether they compare with letter case (`case="Yes"`; 1.2 compares without it by
- * default): yes, no, or `mixed` when some do and some do not (Codex, on #575). A condition scores
- * when it sets the item's score (the outcome its decvar declares, SCORE by default) above nothing:
- * one that sets another outcome awards nothing (Codex, on #572).
+ * default), taken over the answers they accept (`letterCaseOf`). A condition scores when it sets
+ * the item's score (the outcome its decvar declares, SCORE by default) above nothing: one that
+ * sets another outcome awards nothing (Codex, on #572).
  */
 function qti12Correct(item: XNode, ident: string | undefined): { values: string[]; caseSensitive: boolean | 'mixed' } {
   const declared = descendantsOf(item, e => e.name === 'decvar').map(d => (d.attrs.get('varname') ?? 'SCORE').trim().toLowerCase());
   const scoreVar = !declared.length || declared.includes('score') ? 'score' : declared[0]!;
-  const out: string[] = [];
-  const withCase = new Set<boolean>();
+  const out: Array<{ value: string; withCase: boolean }> = [];
   for (const rc of descendantsOf(item, e => e.name === 'respcondition')) {
     const score = childrenOf(rc, 'setvar').reduce((sum, sv) => {
       if ((sv.attrs.get('varname') ?? 'SCORE').trim().toLowerCase() !== scoreVar) return sum;
@@ -259,11 +269,11 @@ function qti12Correct(item: XNode, ident: string | undefined): { values: string[
     for (const v of descendantsOf(cond, e => e.name === 'varequal', e => e.name === 'not')) {
       const r = v.attrs.get('respident');
       if (r && ident && r !== ident) continue;
-      out.push(textOf(v));
-      withCase.add((v.attrs.get('case') ?? '').trim().toLowerCase() === 'yes');
+      const value = textOf(v).trim();
+      if (value) out.push({ value, withCase: (v.attrs.get('case') ?? '').trim().toLowerCase() === 'yes' });
     }
   }
-  return { values: unique(out.map(v => v.trim()).filter(Boolean)), caseSensitive: withCase.size > 1 ? 'mixed' : withCase.has(true) };
+  return { values: unique(out.map(a => a.value)), caseSensitive: letterCaseOf(out) };
 }
 
 /** A 1.2 item as a question, or why it is not read. */
