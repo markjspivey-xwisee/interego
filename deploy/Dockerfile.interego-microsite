@@ -23,7 +23,11 @@ COPY demos/interego-microsite/src/ /app/src/
 RUN npm install --no-audit --no-fund && npm run build
 
 # ────────────────────────────────────────────────────────────
-FROM public.ecr.aws/docker/library/nginx:1.27-alpine
+# Pull nginx from Docker Hub, as the dashboard and the SCORM player do. The GitHub runners
+# that build these images (build-ghcr.yml) hit public ECR's anonymous data limit instead
+# ("429 Too Many Requests: Data limit exceeded", failing every deploy of 2026-09-29), and one
+# failed build holds back every service's deploy.
+FROM nginx:1.27-alpine
 # nginx config lives in deploy/nginx-spa.conf — a real file, not an escaped printf.
 # It 404s missing assets instead of returning the SPA shell with a 200, and sets HSTS.
 COPY deploy/nginx-spa.conf /etc/nginx/conf.d/default.conf
