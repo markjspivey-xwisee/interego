@@ -167,9 +167,16 @@ export function authorQuestion(raw: unknown, seed: string): ScormAssessmentQuest
     if (q.caseSensitive !== undefined && (typeof q.caseSensitive !== 'boolean' || (q.caseSensitive && input.type !== 'text'))) {
       throw new QuestionError('caseSensitive is true or false, and only a typed text answer can be case-sensitive');
     }
-    // A text input is the default, and is not kept, unless it makes letter case count.
+    if (q.compare !== undefined && ((q.compare !== 'exact' && q.compare !== 'letters') || input.type !== 'text')) {
+      throw new QuestionError('compare is exact or letters, and only a typed text answer is compared so');
+    }
+    if (q.compare !== undefined && input.compare !== undefined && q.compare !== input.compare) throw new QuestionError('compare and input.compare disagree; give one of them');
+    // A text input is the default, and is not kept, unless it makes letter case count or says how
+    // a reply is compared (Codex, on #581: an input's own compare was dropped).
     const caseSensitive = input.type === 'text' && (input.caseSensitive === true || q.caseSensitive === true);
-    const typed: ScormAnswerInput | undefined = input.type === 'text' ? (caseSensitive ? { type: 'text', caseSensitive: true } : undefined) : input;
+    const compare = input.type === 'text' ? input.compare ?? (q.compare as 'exact' | 'letters' | undefined) : undefined;
+    const typed: ScormAnswerInput | undefined = input.type !== 'text' ? input
+      : caseSensitive || compare ? { type: 'text', ...(caseSensitive ? { caseSensitive: true } : {}), ...(compare ? { compare } : {}) } : undefined;
     return { question, answerHash: verifier(answer, typed, 'answer'), ...(typed ? { input: typed } : {}), ...(explanation ? { explanation } : {}) };
   }
 

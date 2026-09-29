@@ -34,7 +34,7 @@
  */
 import { decodeEntities, type ImportedPackage, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
-import { choice, esc, imgHtml, isRecord, jsStringAt, numberOf, Reading, records, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
+import { choice, esc, imgHtml, isRecord, jsStringAt, numberOf, Reading, records, shows, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
 
 /** A scene longer than a composition holds becomes topics of this many slides each. */
 const SLIDES_PER_TOPIC = 50;
@@ -482,7 +482,7 @@ export function storylinePackage(files: PackageFiles, opts: ToolReadOptions, at?
         }
         if (read.results) { r.left(where, "a quiz's results slide: the score it shows is a running course's"); continue; }
         const note = notes.get(`${sceneId}.${slideId}`) ?? '';
-        const html = read.html + (plainText(note)?.trim() ? `<h2>Notes</h2>${note}` : '');
+        const html = read.html + (shows(note) ? `<h2>Notes</h2>${note}` : '');
         const own = oneLine(plainText(esc(str(s.title))) ?? '');
         const slideTitle = own && !/^untitled slide$/i.test(own) ? own : `Slide ${k + 1}`;
         const page = html.trim() ? r.page(esc(slideTitle), html, root) : { title: '', body: '' };

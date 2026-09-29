@@ -484,6 +484,16 @@ const oneScene = (slides: Array<[object, string]>, data: object = {}, scene: obj
 const readOf = (files: Record<string, string>, title = 'Sample'): ImportedPackage => storylinePackage(filesOfZip(zipOf(files)), { fileUrl, title })!;
 
 describe('what a review of #579 found', () => {
+  it('keeps a slide\'s notes that show a picture (Codex, on #583)', () => {
+    const page = slideFile('6Note000001', [{ objects: [textBox('tNote000001', 1, 'Know the map.')] }]);
+    const files = {
+      ...oneScene([[slide('6Note000001', 1, 'Map'), page]]),
+      'html5/data/js/frame.js': provide('frame', { notesData: [{ slideId: '6Scene00001.6Note000001', content: '<p>Point to the exits.</p><p><img src="story_content/map.png" alt="Floor map"></p>' }] }),
+      'story_content/map.png': 'png',
+    };
+    expect(readOf(files).topics[0]!.pages[0]!.body).toBe('Know the map.\n\n# Notes\n\nPoint to the exits.\n\n![Floor map](https://bridge.example/files/story_content/map.png)');
+  });
+
   it('reads a button as the slide shows it (a tab, a reference), unless it takes the learner on', () => {
     const page = slideFile('6Tabs000001', [
       { objects: [

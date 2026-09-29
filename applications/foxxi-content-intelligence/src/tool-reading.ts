@@ -7,6 +7,7 @@
  * have in common.
  */
 import { authorQuestion, QuestionError } from './course-questions.js';
+import { plainText } from './question-banks.js';
 import {
   fileUrlIn, htmlPage, markdownUrl, packageLookup, webUrl,
   type ImportedQuestion, type ImportedTopic, type LeftOut, type PackageFiles,
@@ -101,6 +102,18 @@ export function turned(options: string[], right: number[], seed: string): { opti
 export function choice(question: string, options: string[], right: number[], multiple: boolean): ImportedQuestion {
   const several = multiple || right.length > 1;
   return { question, type: 'choice', options, answer: several ? right.map(letter) : letter(right[0]!), ...(several ? { multiple: true as const } : {}) };
+}
+
+/** What HTML shows that is no text: a picture or media. */
+const MEDIA_TAG = /<(?:img|video|audio|object|embed|svg|math|canvas|iframe)\b/i;
+
+/**
+ * Whether HTML shows anything: its text, or a picture or media. `plainText` reads no media as
+ * text (it answers null), so it is no test of whether a page is empty (Codex, on #583: an
+ * interaction with a picture was left out whole).
+ */
+export function shows(html: string): boolean {
+  return MEDIA_TAG.test(html) || !!plainText(html)?.trim();
 }
 
 /** A picture as HTML: its file and its alt text. */

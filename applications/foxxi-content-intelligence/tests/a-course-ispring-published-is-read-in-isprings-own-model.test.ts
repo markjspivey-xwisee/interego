@@ -195,6 +195,31 @@ describe('a presentation iSpring published for the web', () => {
 });
 
 describe('the other ways iSpring publishes a course', () => {
+  it('keeps an info slide that is only a picture (Codex, on #583)', () => {
+    const quiz = { d: { T: 'Sample: Exits', sl: { g: [{ T: 'Main', s: { st: 'allQuestions' }, S: [
+      q('InfoSlide', '', { rt: { a: '<p><img src="data/images/img-1.png" alt="A fire exit"></p>', d: [], r: [] } }, { ee: false }),
+    ] }] } } };
+    const zip = zipOf({ 'index.html': `${HEAD}<!--content quiz --><script>var data="${b64(quiz)}";QuizPlayer.start("content","quiz1",data);</script>`, 'data/images/img-1.png': 'png' });
+    expect(ispringPackage(filesOfZip(zip), { fileUrl })!.topics[0]!.pages.map(pg => pg.body)).toEqual(['![A fire exit](https://bridge.example/files/data/images/img-1.png)']);
+  });
+
+  it('keeps a page that shows a picture: an interaction\'s, a slide\'s notes (Codex, on #583)', () => {
+    const tabs = { d: { i: 'interactivity_2', C: { is: [{ i: 'a', t: rt('Metals'), c: { a: '<p>Use a class D extinguisher.</p><p><img src="data/img6.png" alt="A class D extinguisher"></p>' } }] } } };
+    const pres = { i: '{GUID}', t: 'Pictures', w: 960, h: 540, s: [
+      { t: 'Metal fires', l: 0, st: 'i', it: 'iSpring.Tabs', s: 'data/intr2.js' },
+      { t: 'Map', l: 0, x: 'Know the map.', N: '<p>Point to the exits.</p><p><img src="data/img7.png" alt="Floor map"></p>' },
+    ] };
+    const files = {
+      'index.html': `${HEAD}<script>var presInfo="${deflated(pres)}";</script>`,
+      'data/intr2.js': `(function(){var loadHandler = window['i_{GUID}']; var interactionJson = "${b64(tabs)}"; loadHandler&&loadHandler(0,'interactivity_2',interactionJson);})();`,
+      'data/img6.png': 'png', 'data/img7.png': 'png',
+    };
+    expect(ispringPackage(filesOfZip(zipOf(files)), { fileUrl })!.topics.flatMap(t => t.pages.map(p => p.body))).toEqual([
+      '# Metals\n\nUse a class D extinguisher.\n\n![A class D extinguisher](https://bridge.example/files/data/img6.png)',
+      'Know the map.\n\n# Notes\n\nPoint to the exits.\n\n![Floor map](https://bridge.example/files/data/img7.png)',
+    ]);
+  });
+
   it('reads a SCORM package\'s player page in res/, and plays the package as one', () => {
     const scorm = zipOf({ 'imsmanifest.xml': '<manifest identifier="i"><organizations/><resources><resource identifier="r" href="res/index.html"/></resources></manifest>', ...PRES_FILES('res/') });
     const read = ispringPackage(filesOfZip(scorm), { fileUrl })!;
