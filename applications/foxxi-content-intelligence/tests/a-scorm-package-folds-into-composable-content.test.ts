@@ -185,7 +185,9 @@ describe('the questions a package declares', () => {
 
   it('become questions as an author writes them, or say why not', () => {
     const q = (...args: Literal[]): ReturnType<typeof questionOf> => questionOf(args, FORM);
-    expect(q(str('1'), str('Where?'), id('QUESTION_TYPE_CHOICE'), { k: 'arr', v: [str('Here'), str('There')] }, str('There'))).toEqual({ question: 'Where?', type: 'choice', options: ['Here', 'There'], answer: 'There' });
+    expect(q(str('1'), str('Where?'), id('QUESTION_TYPE_CHOICE'), { k: 'arr', v: [str('Here'), str('There')] }, str('There'))).toEqual({ question: 'Where?', type: 'choice', options: ['Here', 'There'], answer: 'B' });
+    // Named by place: an option whose text is one letter is not read as a letter naming another option.
+    expect(q(str('1b'), str('Grade?'), id('QUESTION_TYPE_CHOICE'), { k: 'arr', v: [str('B'), str('A')] }, str('A'))).toEqual({ question: 'Grade?', type: 'choice', options: ['B', 'A'], answer: 'B' });
     expect(q(str('2'), str('Rakes outside?'), id('QUESTION_TYPE_TF'), { k: 'null' }, str('True'))).toEqual({ question: 'Rakes outside?', type: 'true-false', answer: true });
     expect(q(str('3'), str('Par?'), str('numeric'), { k: 'null' }, str('3'))).toEqual({ question: 'Par?', type: 'numeric', answer: 3 });
     expect(q(str('4'), str('Where?'), id('QUESTION_TYPE_CHOICE'), { k: 'arr', v: [str('Here')] }, str('Elsewhere'))).toBe('its answer is not one of its options');
@@ -239,7 +241,7 @@ describe('the golf sample, read', () => {
   it('reads each question as the package wrote it: choice, true-false and numeric', () => {
     expect(golf.topics[0]!.questions[0]).toEqual({
       question: 'When another player is attempting a shot, it is best to stand:', type: 'choice',
-      options: ['On top of his ball', 'Directly in his line of fire', 'Out of the player\'s line of sight'], answer: 'Out of the player\'s line of sight',
+      options: ['On top of his ball', 'Directly in his line of fire', 'Out of the player\'s line of sight'], answer: 'C',
     });
     expect(golf.topics[0]!.questions[1]).toEqual({ question: 'Generally sand trap rakes should be left outside of the hazard', type: 'true-false', answer: true });
     expect(golf.topics[1]!.questions[1]).toMatchObject({ type: 'numeric', answer: 1 });

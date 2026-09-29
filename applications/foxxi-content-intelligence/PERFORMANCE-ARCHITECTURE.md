@@ -494,11 +494,13 @@ Nobody declares which explanation of a competency works; the plays show it.
 A SCORM package hosted on the bridge folds into this model
 (`foxxi.content_fold_course` with `package_sha256`, `src/package-import.ts`):
 its pages become concept fragments, a folder of pages a topic composition,
-and the questions it declares in its own scripts a check graded here.
+and the questions it keeps a check graded here. Questions are read in any
+form the package declares them in (`src/question-banks.ts`): calls to a
+Question constructor it declares, QTI items (2.x, 3.0 and 1.2), or a bank
+written as data, in a JSON file or in a script.
 
 Not yet wired:
-- importing an authoring tool's own project export, or questions a package
-  keeps in a form other than a constructor it declares.
+- importing an authoring tool's own project export.
 
 ## 6. Authoring is composition — the same tools for humans and agents
 

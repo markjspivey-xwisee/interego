@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a package's question bank is read in whatever form it declares
+
+Folding a hosted SCORM package read its questions only as calls to a `Question` constructor the package declares. Packages keep their banks in other forms too, and those questions were left out. `src/question-banks.ts` reads them, each by what its form declares.
+
+- **QTI items: 2.x, 3.0 (its renamed elements and attributes read as 2.x's), and 1.2.**
+  - 2.x and 3.0 are read by their declared correct response: choice (one right option or several, kept multiple-response), inline choice, text entry (fill-in, with a blank where it sits and the other answers its mapping scores, or numeric for a float or integer), order (sequencing) and match (matching, with a target nothing pairs with as a distractor).
+  - 1.2 is read by the condition that scores it: choice (several scoring conditions of a multiple response are its right options), string (fill-in) and numeric responses.
+- **Banks written as data,** in a JSON file or as an array of question objects in a script, read by their field names, a few levels down (a quiz of sections): choice (options as text, or as objects flagging which are right; the answer as an option's text or its letter), true-false, numeric and fill-in. The script-literal reader now reads object literals, and a bank's own lists of options are not read again as banks.
+- **Nothing is guessed.** Each of these is left out and listed with why:
+  - an item with no correct response, or scored only by a mapping;
+  - an interaction not graded here, such as an extended answer or a hotspot;
+  - a question or option that shows an image, a formula or media;
+  - an item that asks more than one thing;
+  - an answer given as a bare number or an index, when nothing says whether options count from 0 or from 1;
+  - a question an author could not write, such as one with a single option.
+- **Where a bank goes.** It sits in its folder's topic, and a script's bank in the topic of the page that loads it. A bank kept with the shared chrome is a topic of its own, named by its file.
+- **Right options are named by their place.** An author's answer of one letter is read as a letter first, so an option whose text is one letter could name another option. The constructor reader had this latent fault too: with options `B` and `A` and answer `A`, it would have graded option `B` as right. Both readers now name the right option by its letter.
+
+The fold affordance's description, the Foxxi README, PERFORMANCE-ARCHITECTURE.md §5 and `docs/skills/foxxi` say so. What remains not wired is importing an authoring tool's own project export.
+
+Tests: `a-package-question-bank-is-read-in-the-form-it-declares.test.ts` covers:
+- each QTI interaction read, and each left out;
+- QTI 3's spelling and QTI 1.2's scoring conditions;
+- data banks, nested banks, and lists that are not banks;
+- a script's banks;
+- a package keeping every form, read, folded and graded, sequencing included.
+
+`a-scorm-package-folds-into-composable-content.test.ts` pins the letter for the constructor reader, with a one-letter option case.
+
 ## 2026-09-29 — The multi-agent demo's descriptors name who generated them (#570 follow-up)
 
 Codex, on #570: the provenance facets #570 gave Alice's update and Bob's local descriptor named no generating activity.

@@ -31,6 +31,14 @@
  * serves the same answers to every browser it runs in, as any package that grades itself does, so
  * a check folded from one is only as closed-book as the package was.
  *
+ * ★ AND A BANK IN ANOTHER FORM IS READ AS ITS FORM DECLARES IT (question-banks.ts). Packages also
+ * keep their questions in the standard's own form, QTI items (2.x, 3.0 and 1.2), and as plain
+ * data: a JSON file, or an array of question objects written out in a script. Each is read wherever
+ * the package keeps it, by what its form declares (a QTI item's correct response, a data bank's
+ * field names), as choice, true-false, numeric, fill-in, sequencing or matching. A bank sits in its
+ * folder's topic, a script's in the topic of the page that loads it, and one kept with the shared
+ * chrome in a topic of its own.
+ *
  * ★ NOTHING IS INVENTED, AND WHAT IS NOT READ IS SAID. A page with no text of its own (its script
  * draws what it shows), shared chrome, a question whose arguments are not written out as values or
  * whose answer does not fit it, a page longer than a fragment holds: each is left out and listed,
@@ -43,6 +51,7 @@ import { fitted } from './course-fold.js';
 import { humanize, NONCONTENT } from './course-graph.js';
 import { authorQuestion, QuestionError } from './course-questions.js';
 import type { CognitiveLevel } from './emergent-content.js';
+import { dataQuestions, qtiQuestions, type BankRead } from './question-banks.js';
 import { parseManifest, type ScormActivityTree } from './scorm-sequencing.js';
 
 /**
@@ -68,9 +77,12 @@ export interface ImportedPage { path: string; title: string; body: string }
 
 /** A question as an author writes one (course-questions.ts), graded by what the package says is right. */
 export type ImportedQuestion =
-  | { question: string; type: 'choice'; options: string[]; answer: string }
+  | { question: string; type: 'choice'; options: string[]; answer: string | string[]; multiple?: true }
   | { question: string; type: 'true-false'; answer: boolean }
-  | { question: string; type: 'numeric'; answer: number };
+  | { question: string; type: 'numeric'; answer: number }
+  | { question: string; type: 'fill-in'; answer: string; accept?: string[] }
+  | { question: string; type: 'sequencing'; items: string[] }
+  | { question: string; type: 'matching'; pairs: Array<[string, string]>; distractors?: string[] };
 
 export interface ImportedTopic {
   /** The top folder its pages are in, or the path of a page in none. */
@@ -487,7 +499,7 @@ export function htmlPage(html: string, opts: { image?: (src: string) => string |
 /** A value written out in a script. */
 export type Literal =
   | { k: 'str'; v: string } | { k: 'num'; v: number } | { k: 'bool'; v: boolean } | { k: 'null' }
-  | { k: 'id'; v: string } | { k: 'arr'; v: Literal[] };
+  | { k: 'id'; v: string } | { k: 'arr'; v: Literal[] } | { k: 'obj'; v: Array<[string, Literal]> };
 
 /** Past whitespace and comments. */
 function skipSpace(s: string, i: number): number {
@@ -555,6 +567,7 @@ function readLiteral(s: string, i: number): { lit: Literal; end: number } | null
   const num = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?/.exec(s.slice(i, i + 40));
   if (num) return { lit: { k: 'num', v: Number(num[0]) }, end: i + num[0].length };
   if (c === '[') { const list = readList(s, i + 1, ']'); return list && { lit: { k: 'arr', v: list.items }, end: list.end }; }
+  if (c === '{') { const obj = readObject(s, i + 1); return obj && { lit: { k: 'obj', v: obj.fields }, end: obj.end }; }
   const word = /^[A-Za-z_$][\w$]*/.exec(s.slice(i, i + 200))?.[0];
   if (!word) return null;
   const end = i + word.length;
@@ -588,6 +601,73 @@ function readList(s: string, i: number, closer: string): { items: Literal[]; end
     }
     return s[k] === closer ? { items, end: k + 1 } : null;
   }
+}
+
+/**
+ * Fields up to `}`: each named by a word, a string or a number, with a value written out; null for
+ * anything else (a method, a spread, a computed name, a shorthand name whose value is elsewhere).
+ */
+function readObject(s: string, i: number): { fields: Array<[string, Literal]>; end: number } | null {
+  const fields: Array<[string, Literal]> = [];
+  let k = skipSpace(s, i);
+  if (s[k] === '}') return { fields, end: k + 1 };
+  for (;;) {
+    let key: string;
+    if (s[k] === '"' || s[k] === "'") {
+      const str = readString(s, k);
+      if (!str) return null;
+      key = str.value;
+      k = str.end;
+    } else {
+      const word = /^(?:[A-Za-z_$][\w$]*|\d+)/.exec(s.slice(k, k + 200))?.[0];
+      if (!word) return null;
+      key = word;
+      k += word.length;
+    }
+    k = skipSpace(s, k);
+    if (s[k] !== ':') return null;
+    const value = readLiteral(s, k + 1);
+    if (!value) return null;
+    fields.push([key, value.lit]);
+    k = skipSpace(s, value.end);
+    if (s[k] === ',') {
+      k = skipSpace(s, k + 1);
+      if (s[k] === '}') return { fields, end: k + 1 };
+      continue;
+    }
+    return s[k] === '}' ? { fields, end: k + 1 } : null;
+  }
+}
+
+/** A literal as the value it writes; undefined for a name, whose value is not written there. */
+function literalValue(lit: Literal): unknown {
+  switch (lit.k) {
+    case 'str': case 'num': case 'bool': return lit.v;
+    case 'null': return null;
+    case 'id': return undefined;
+    case 'arr': return lit.v.map(literalValue);
+    case 'obj': return Object.fromEntries(lit.v.map(([key, v]) => [key, literalValue(v)]));
+  }
+}
+
+/**
+ * The question banks a script writes out as data: each array of objects in its code that reads as
+ * one (question-banks.ts), outermost first, so a bank's own lists of options are not read again as
+ * banks of their own.
+ */
+export function literalBanks(script: string, path: string): BankRead[] {
+  const out: BankRead[] = [];
+  let past = 0;
+  for (const m of codeOf(script).matchAll(/\[\s*\{/g)) {
+    if (m.index! < past) continue;
+    const read = readLiteral(script, m.index!);
+    if (!read || read.lit.k !== 'arr') continue;
+    const bank = dataQuestions(literalValue(read.lit), path);
+    if (!bank) continue;
+    out.push(bank);
+    past = read.end;
+  }
+  return out;
 }
 
 /**
@@ -694,7 +774,9 @@ export function questionOf(args: readonly Literal[], form: QuestionForm): Import
     if (options?.k !== 'arr' || !options.v.length || options.v.some(o => o.k !== 'str')) return 'its options are not written out';
     const labels = options.v.map(o => (o as { v: string }).v);
     if (answer?.k !== 'str' || !labels.includes(answer.v)) return 'its answer is not one of its options';
-    read = { question, type, options: labels, answer: answer.v };
+    // Named by its letter: an option whose text is one letter ("A") would be read as a letter, and
+    // could name another option than the one the package meant.
+    read = { question, type, options: labels, answer: String.fromCharCode(65 + labels.indexOf(answer.v)) };
   } else if (type === 'true-false') {
     const said = answer?.k === 'bool' ? answer.v : answer?.k === 'str' && /^(true|false)$/i.test(answer.v.trim()) ? answer.v.trim().toLowerCase() === 'true' : undefined;
     if (said === undefined) return 'its answer is neither true nor false';
@@ -866,6 +948,28 @@ export function readPackage(files: PackageFiles, opts: { fileUrl: (path: string)
       if (typeof q === 'string') unread.push({ path, why: `question ${i + 1}: ${q}` });
       else topicFor(topicOf).questions.push(q);
     });
+  }
+
+  // Question banks in other forms (question-banks.ts): QTI items, and plain data in a JSON file or
+  // written out in a script. Read wherever the package keeps them, in its order; a bank kept with
+  // the shared chrome is a topic of its own, named by its file, rather than one called "Assets".
+  const bankTopic = (entry: string): ImportedTopic => topicFor(NONCONTENT.test(entry) ? entry.slice(entry.lastIndexOf('/') + 1) : entry);
+  for (const name of [...ordered, ...files.names.filter(n => !seen.has(n))]) {
+    if (name === manifestName) continue;
+    let read: BankRead | null = null;
+    if (/\.xml$/i.test(name)) read = qtiQuestions(utf8(files.read(name) ?? Buffer.alloc(0)), name);
+    else if (/\.json$/i.test(name)) {
+      try { read = dataQuestions(JSON.parse(utf8(files.read(name) ?? Buffer.alloc(0))), name); } catch { read = null; }
+    }
+    if (!read) continue;
+    bankTopic(name).questions.push(...read.questions);
+    unread.push(...read.unread);
+  }
+  for (const { path, text, topicOf } of pageScripts) {
+    for (const read of literalBanks(text, path)) {
+      bankTopic(topicOf).questions.push(...read.questions);
+      unread.push(...read.unread);
+    }
   }
 
   // A folder is titled as the one organization item whose launch page is in it, else by its name.
