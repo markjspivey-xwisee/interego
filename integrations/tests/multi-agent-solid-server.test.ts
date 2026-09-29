@@ -14,6 +14,9 @@
  * - Omitting groundTruth on an Asserted claim is not "implied true". The serializer then writes no
  *   iep:groundTruth, and iep-shapes.ttl refuses that. The demos' facets must say it.
  *
+ * Codex, on #570, then found descriptors whose provenance named no generating agent, so
+ * AgentProvenanceConsistencyShape warned and `conforms` was false.
+ *
  * It lives here, not in `tests/`, because it reads `examples/`, which the base runs without.
  */
 
@@ -108,6 +111,23 @@ describe('the descriptors the scripts build', () => {
       const id = /'([^']+)'/.exec(chain)?.[1];
       expect(chain.match(/^\.provenance\(/gm)?.length, `${file}: ${id} provenance facets`).toBe(1);
       expect(chain.match(/^\.agent\(/gm)?.length, `${file}: ${id} agent facets`).toBe(1);
+    }
+  });
+
+  // AgentProvenanceConsistencyShape compares the agent facet's identity with the agent of the
+  // provenance's generating activity. A provenance facet with no activity compares nothing against
+  // it, which is a Warning, and a Warning makes `conforms` false (Codex, on #570). Naming a
+  // different agent is a ghost-write, which the shape's own message allows, so the rule here is
+  // only that every descriptor names who generated it.
+  it.each(['run.ts', 'tla-demo.ts', 'team-demo.ts'])('%s names who generated every descriptor', file => {
+    const source = readFileSync(join(DIR, file), 'utf8');
+    const chains = [...source.matchAll(/ContextDescriptor\.create\(([\s\S]*?)\.build\(\)/g)].map(m => m[1] ?? '');
+    expect(chains.length, `${file} builds no descriptor; the scan is broken`).toBeGreaterThan(0);
+    for (const chain of chains) {
+      const id = /'([^']+)'/.exec(chain)?.[1];
+      const provenance = /^\.provenance\(\{([\s\S]*?)^\s*\}\)/m.exec(chain)?.[1] ?? '';
+      expect(provenance, `${file}: ${id} has no provenance facet`).not.toBe('');
+      expect(provenance, `${file}: ${id} names no generating agent`).toMatch(/wasGeneratedBy:\s*\{[\s\S]*?\bagent:/);
     }
   });
 });

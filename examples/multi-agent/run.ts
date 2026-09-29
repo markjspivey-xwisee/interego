@@ -263,8 +263,14 @@ async function agentBob(aliceDescriptor: ContextDescriptorData): Promise<void> {
       validFrom: '2026-03-01T00:00:00Z',
       validUntil: '2026-03-31T23:59:59Z',
     })
-// Every descriptor carries one provenance facet (iep-shapes.ttl), even one Bob keeps local.
+// Every descriptor carries one provenance facet (iep-shapes.ttl), even one Bob keeps local, and
+// its generating activity names the agent the agent facet names (AgentProvenanceConsistencyShape).
 .provenance({
+      wasGeneratedBy: {
+        agent: 'did:web:bob.example.org' as IRI,
+        startedAt: '2026-03-01T00:00:00Z',
+        endedAt: '2026-03-01T00:00:00Z',
+      },
       wasAttributedTo: 'did:web:bob.example.org' as IRI,
       generatedAtTime: '2026-03-01T00:00:00Z',
     })
@@ -355,8 +361,14 @@ async function alicePublishUpdate(): Promise<void> {
       validUntil: '2026-09-30T23:59:59Z',
     })
 // A descriptor carries exactly one provenance facet and one agent facet (iep-shapes.ttl); the
-// update had neither, so the published v2 failed the shapes v1 passes.
+// update had neither, so the published v2 failed the shapes v1 passes. Its generating activity
+// names the agent the agent facet names, which AgentProvenanceConsistencyShape compares.
 .provenance({
+      wasGeneratedBy: {
+        agent: 'did:web:alice.example.org' as IRI,
+        startedAt: '2026-03-19T00:00:00Z',
+        endedAt: '2026-03-19T00:00:00Z',
+      },
       wasAttributedTo: 'did:web:alice.example.org' as IRI,
       generatedAtTime: '2026-03-19T00:00:00Z',
       wasDerivedFrom: ['urn:iep:alice:arch-review-2026-Q1' as IRI],

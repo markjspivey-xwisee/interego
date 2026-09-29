@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-09-29 — The multi-agent demo's descriptors name who generated them (#570 follow-up)
+
+Codex, on #570: the provenance facets #570 gave Alice's update and Bob's local descriptor named no generating activity.
+- `AgentProvenanceConsistencyShape` compares the agent facet's identity with the agent of the provenance's generating activity.
+- With no activity it compared nothing and warned. A warning makes `conforms` false, so the published v2 still did not conform.
+- #570's own check had counted only violations, which is why it missed this.
+
+Both descriptors now name their own agent as the generator, and the published v2 conforms with no violations and no warnings.
+
+The demo's other descriptors keep generators that differ from their agent facets, for example a Claude Code instance generating for Alice, or a system generating for the LRS. The shape's own message allows that as a ghost-write, so those still warn by design.
+
+Tests: `integrations/tests/multi-agent-solid-server.test.ts` checks that every descriptor the three scripts build names a generating agent.
+
 ## 2026-09-29 — The multi-agent demos publish conformant descriptors and stop their server cleanly (#568 follow-up)
 
 Codex, on #568, found two faults, and validating what the demos publish found a third.
