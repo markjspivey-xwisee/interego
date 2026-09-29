@@ -12,7 +12,9 @@
  * ★ READ AS STORYLINE HOLDS IT. Each scene is a topic (a scene too long for one composition, topics
  * of fifty slides), each content slide a page: its layers' text in the order a screen reader reads
  * it (`tabIndex`), headings and lists as their style marks them, its pictures the package's own
- * files, and its notes. A group that changes with its state shows the text of its first state.
+ * files, and its notes. A group that changes with its state shows its own state's text. A button
+ * that takes the learner on (to another slide, a submit, out of its layer) is the player's way on,
+ * not the slide's text; any other button's text is read, as a tab's or a choice's is.
  * Text drawn as a picture is listed, not guessed at; so are video, web objects and narration. A
  * variable's value (`%_player.Name%`) is only a running course's, so it reads as "…"; a quiz's
  * results slide, which shows only such values, is left out.
@@ -23,9 +25,12 @@
  * differ in that are no one question here). A question built from a form keeps the choices the form
  * names; a free-form one's choices are objects on the slide, read as the slide shows them. A
  * question's text is its own when the slide shows it, with any longer text beside it (a passage it
- * asks about); else the slide's text, without a counter or a variable. Choices the slide shuffles
- * are turned (tool-reading.ts). A bank a scene draws from is asked whole. Surveys, hotspots and
- * essays are left out, with why.
+ * asks about); else the slide's text, without a counter ("3/10", "Question 1 of 10") or a variable.
+ * Choices the slide shuffles are turned (tool-reading.ts). A bank a scene draws from is asked
+ * whole, once however many draws take from it. Surveys, hotspots and essays are left out, with why.
+ * A question may ask about a picture on its slide, which a check here does not show; nothing in
+ * Storyline's data tells a question's own picture from the slide's decoration (a background, a
+ * character), so such a question is kept, and its picture is not.
  */
 import { decodeEntities, type ImportedPackage, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
@@ -35,14 +40,23 @@ import { choice, esc, imgHtml, isRecord, jsStringAt, numberOf, Reading, records,
 const SLIDES_PER_TOPIC = 50;
 /** A variable a running course fills in: `%_player.Name%`. A percent sign written as text is `^%^`. */
 const VARIABLE = /%[A-Za-z_][\w.$#]*%/g;
-/** Text that is only a number or a question's number ("1.", "01", "3/10"): a counter, not a question. */
-const COUNTER = /^[\d\s./()-]+$/;
+/**
+ * Text that only numbers a question or counts it among the others: "1.", "3/10", "1/10 soal",
+ * "Question 1 of 10", "Q3". A counter, not the question.
+ */
+const COUNTER = /^(?:[\d\s./()-]+|(?:\p{L}{1,20}\s*)?\d{1,4}\s*(?:\/|\p{L}{1,10})\s*\d{1,4}(?:\s+\p{L}{1,20})?[.:)]?|\p{L}{1,20}\s*\d{1,4}[.:)]?)$/u;
 /** A picture's alt text that is only its file's name. */
 const FILE_NAME = /\.(?:png|jpe?g|gif|svg|webp|bmp|emf|wmf|tiff?)$/i;
 /** Objects that show the learner's own answer, not the question's: a review banner or shape. */
 const REVIEW = /_(?:CorrectReview|IncorrectReview|ReviewShape)$/;
 /** The objects of a question built from a form, whose text is the form's choices. */
 const FORM_PARTS = new Set(['dragitem', 'droparea']);
+/** What a click runs that takes the learner on: to another slide, the next or the one before, a submit, out of the course. */
+const WAY_ON = new Set(['gotoplay', 'history_prev', 'history_next', 'playnextdrawslide', 'close_player', 'close_window', 'eval_interaction', 'resetquiz', 'reset_player', 'resume_timeline']);
+/** The player's own trigger groups for a next, previous or submit button. */
+const WAY_ON_GROUP = /^(?:ActGrpOn(?:Next|Prev|Submit)ButtonClick|NavigationRestriction)/;
+/** What a click runs that shows more of the slide: a layer, an object. */
+const SHOWS = new Set(['show_slidelayer', 'show']);
 
 /** A Storyline data file's JSON, when the file is one of `type`: decoded from its single-quoted string, never run. */
 export function provided(text: string | null, type: string): Json | null {
@@ -107,6 +121,34 @@ function objectHtml(o: Json): { html: string; variable: boolean } {
   return { html: s.text.split(/\n+/).map(p => `<p>${esc(p)}</p>`).join(''), variable: s.variable };
 }
 
+/** The actions a click on an object runs, those it runs on a condition too. */
+function clickActions(o: Json): Json[] {
+  const out: Json[] = [];
+  const walk = (list: unknown, depth: number): void => {
+    if (depth > 8) return;
+    for (const a of records(list)) { out.push(a); walk(a.thenActions, depth + 1); walk(a.elseActions, depth + 1); }
+  };
+  for (const e of records(o.events)) if (str(e.kind) === 'onrelease') walk(e.actions, 0);
+  return out;
+}
+const targetOf = (a: Json): string => (isRecord(a.objRef) ? str(a.objRef.value) : '');
+/** Whether a click shows more of the slide: a layer, an object. */
+const showsMore = (o: Json): boolean => clickActions(o).some(a => SHOWS.has(str(a.kind)));
+/**
+ * Whether a button takes the learner on: to another slide, the next or the one before, a submit,
+ * out of the layer it is on or out of the course, showing nothing more of the slide. Storyline
+ * marks any object with a trigger a button (a review of #579): a tab or a choice is one too.
+ */
+function takesOn(o: Json): boolean {
+  if (showsMore(o)) return false;
+  return clickActions(o).some(a => {
+    const kind = str(a.kind);
+    return WAY_ON.has(kind) || (kind === 'exe_actiongroup' && WAY_ON_GROUP.test(str(a.id))) || (kind === 'hide_slidelayer' && targetOf(a) === '_parent');
+  });
+}
+/** Whether a text is a short label: a word or two, not a passage. */
+const short = (t: string): boolean => t.split(/\s+/).filter(Boolean).length < 3 && t.length < 20;
+
 function descendants(o: Json, depth = 0): Json[] {
   return depth > 16 ? [] : records(o.objects).flatMap(c => [c, ...descendants(c, depth + 1)]);
 }
@@ -116,7 +158,8 @@ interface Placed { o: Json; within: string[] }
 
 /**
  * A layer's objects, nested ones too, in the order a screen reader reads them. A group that changes
- * with its state (`stategroup`) holds a copy of its text for each state: it is read as the first.
+ * with its state (`stategroup`) holds a copy of its text for each state: it is read as its own
+ * state, the object that shares its id, else as the first that shows text (a review of #579).
  */
 function readingOrder(objects: unknown): Placed[] {
   const all: Placed[] = [];
@@ -125,8 +168,9 @@ function readingOrder(objects: unknown): Placed[] {
     for (const o of records(list)) {
       const inside = [...within, str(o.id)];
       if (str(o.kind) === 'stategroup') {
-        const first = descendants(o).find(d => objectHtml(d).html);
-        if (first) all.push({ o: first, within: inside });
+        const states = descendants(o);
+        const own = states.find(d => str(d.id) === str(o.id) && objectHtml(d).html) ?? states.find(d => objectHtml(d).html);
+        if (own) all.push({ o: own, within: inside });
         continue;
       }
       all.push({ o, within });
@@ -139,7 +183,7 @@ function readingOrder(objects: unknown): Placed[] {
 }
 
 /** One object's text on a slide: whose it is (the object and those it sits in), and whether a variable fills it. */
-interface Piece { id: string; kind: string; within: string[]; text: string; variable: boolean }
+interface Piece { id: string; kind: string; within: string[]; text: string; variable: boolean; button: boolean }
 
 interface SlideRead {
   html: string;
@@ -190,12 +234,19 @@ class Storyline {
         // A layer repeats the objects it shares with another; each is read once.
         if (id && seen.has(id)) continue;
         if (id) seen.add(id);
-        if (str(o.accType) === 'button' || REVIEW.test(id) || kind === 'textinput' || kind === 'droplist') continue;
+        if (REVIEW.test(id) || kind === 'textinput' || kind === 'droplist') continue;
+        // A button that takes the learner on is the player's way on, not the slide's text.
+        const button = str(o.accType) === 'button';
+        if (button && takesOn(o)) continue;
         if (kind === 'video') { read.pictured = true; read.media.push('a video, which is not text'); continue; }
         if (kind === 'webobject') { read.media.push('a web object, which is not read'); continue; }
         const pictures = [...records(o.imagelib).map(im => ({ id: im.assetId, url: im.url, alt: str(im.altText) })),
           ...(isRecord(o.data) && isRecord(o.data.imagedata) ? [{ id: o.data.imagedata.assetId, url: o.data.imagedata.url, alt: str(o.data.imagedata.altText) }] : [])];
         const { html, variable } = objectHtml(o);
+        const text = html ? plainText(html) ?? '' : '';
+        // On a page, a button's short label that shows nothing more of the slide ("Next", with its
+        // trigger kept elsewhere) is not its text either. A question's are read: a choice may be one.
+        if (button && !questionSlide && !showsMore(o) && short(text)) continue;
         for (const p of pictures) {
           const urls = this.picture(p.id, p.url);
           // Storyline's own drawing of a shape (`txt__default_…`), and of any text in it: the text,
@@ -205,14 +256,13 @@ class Storyline {
           const url = urls.find(u => this.r.finds(u, this.root));
           if (url) read.html += imgHtml(url, FILE_NAME.test(p.alt.trim()) ? '' : p.alt.trim());
         }
-        const text = html ? plainText(html) ?? '' : '';
         // Nothing but a running course's values; or, on a page, a copy of the text just read beside
         // it (a shadow, say). A question's choices and places may read the same.
         const last = read.pieces.at(-1);
         const copy = !questionSlide && last?.text === text && last.within.join() === within.join();
         if (!text.replace(/…/g, '').trim() || copy) continue;
         read.html += html;
-        read.pieces.push({ id, kind, within, text, variable });
+        read.pieces.push({ id, kind, within, text, variable, button });
       }
     }
     return read;
@@ -263,7 +313,7 @@ function storylineQuestion(r: Reading, it: Json, slide: SlideRead, topic: Import
     const formed = oneLine(plainText(esc(str(c.lmstext))) ?? '');
     return (freeform ? own : formed || own) || null;
   };
-  const others = slide.pieces.filter(p => !ownerOf(p) && !FORM_PARTS.has(p.kind) && !p.variable && !COUNTER.test(p.text))
+  const others = slide.pieces.filter(p => !ownerOf(p) && !FORM_PARTS.has(p.kind) && !p.variable && !COUNTER.test(p.text) && !(p.button && short(p.text)))
     .map(p => p.text).filter((t, i, all) => t !== all[i - 1]);
   const label = (plainText(esc(str(it.lmstext))) ?? '').trim();
   // Its own words when the slide shows them, with any longer text beside them (a passage it asks
@@ -343,12 +393,25 @@ function storylineQuestion(r: Reading, it: Json, slide: SlideRead, topic: Import
 }
 
 /**
- * A package Storyline published, read in Storyline's own model: each scene a topic of its content
- * slides as pages and its questions, a bank a scene draws from asked whole. Null when the package
- * holds no Storyline course.
+ * The title meta.xml gives the project: its first `<project>` tag's. The tag is found, then read,
+ * so a file of many open tags is read once (a review of #579: one pattern over the whole file took
+ * the square of its length).
  */
-export function storylinePackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage | null {
-  const dataFile = files.names.filter(n => /(^|\/)html5\/data\/js\/data\.js$/.test(n)).sort((a, b) => a.length - b.length)[0];
+function metaTitle(xml: string): string {
+  const open = xml.search(/<project\b/);
+  if (open < 0) return '';
+  const close = xml.indexOf('>', open);
+  const tag = xml.slice(open, close < 0 ? xml.length : close);
+  return decodeEntities(/\btitle="([^"]*)"/.exec(tag)?.[1] ?? '').trim();
+}
+
+/**
+ * A package Storyline published, read in Storyline's own model: each scene a topic of its content
+ * slides as pages and its questions, a bank a scene draws from asked whole: the course whose
+ * data.js is `at`, else the package's shallowest. Null when there is no Storyline course there.
+ */
+export function storylinePackage(files: PackageFiles, opts: ToolReadOptions, at?: string): ImportedPackage | null {
+  const dataFile = at ?? files.names.filter(n => /(^|\/)html5\/data\/js\/data\.js$/.test(n)).sort((a, b) => a.length - b.length)[0];
   if (!dataFile) return null;
   const root = dataFile.slice(0, dataFile.length - 'html5/data/js/data.js'.length);
   const data = provided(new Reading(files, opts.fileUrl).text(dataFile), 'data');
@@ -357,7 +420,7 @@ export function storylinePackage(files: PackageFiles, opts: ToolReadOptions): Im
   const { r } = sl;
   const frame = provided(r.text(`${root}html5/data/js/frame.js`), 'frame');
 
-  const title = decodeEntities(/<project\b[^>]*\btitle="([^"]*)"/.exec(r.text(`${root}meta.xml`) ?? '')?.[1] ?? '').trim()
+  const title = metaTitle(r.text(`${root}meta.xml`) ?? '')
     || decodeEntities(/<title>([^<]*)<\/title>/i.exec(r.text(`${root}story.html`) ?? '')?.[1] ?? '').trim()
     || (isRecord(frame?.controlOptions) && isRecord(frame.controlOptions.sidebarOptions) ? oneLine(plainText(str(frame.controlOptions.sidebarOptions.titleText)) ?? '') : '')
     || opts.title?.trim() || 'Imported course';
@@ -385,6 +448,16 @@ export function storylinePackage(files: PackageFiles, opts: ToolReadOptions): Im
       ...records(scene.slidedraws).map(d => ({ slides: records(d.sliderefs).map(ref => bank.get(str(ref.id))).filter((s): s is Json => !!s), n: numberOf(d.slideNumberInScene) })),
     ].map((e, i) => ({ ...e, i }));
     if (entries.every(e => Number.isFinite(e.n))) entries.sort((a, b) => a.n - b.n || a.i - b.i);
+    // A slide two draws take from is asked once (a review of #579).
+    const asked = new Set<string>();
+    for (const e of entries) {
+      e.slides = e.slides.filter(sl => {
+        const id = str(sl.id);
+        const fresh = !asked.has(id);
+        asked.add(id);
+        return fresh;
+      });
+    }
     const chunked = entries.length >= SLIDES_PER_TOPIC * 2;
     let topic: ImportedTopic | null = null;
     entries.forEach((entry, k) => {

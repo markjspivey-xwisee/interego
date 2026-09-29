@@ -411,6 +411,15 @@ describe('the other ways Captivate publishes a course', () => {
     expect(projectExportOf(scorm.toBuffer())).toBeNull();
   });
 
+  it('reads each course in a zip of several, Classic and new', () => {
+    const read = readAnyPackage(filesOfZip(zipOf({ ...CLASSIC_FILES('fire/'), ...NEW_FILES('breathing/') })), { fileUrl, title: 'Two courses' });
+    expect(read.title).toBe('Two courses');
+    expect(read.topics.map(t => [t.id, t.title, t.pages.length, t.questions.length])).toEqual([
+      ['breathing/slides', 'Sample: Breathing', 1, 4],
+      ['fire/slides', 'Sample: Fire safety', 4, 10],
+    ]);
+  });
+
   it('titles the course by its project, else its launch page, else its file', () => {
     const titled = (files: Record<string, string>): string => captivatePackage(filesOfZip(zipOf(files)), { fileUrl })!.title;
     const one = course([slide('Slide1', 'One', [['Text_Caption_1', 19]], caption('Text_Caption_1', 20, 'Words.'))]);

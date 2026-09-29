@@ -504,7 +504,9 @@ model (`src/tool-exports.ts`, `src/rise-course.ts`,
 `src/captivate-course.ts`): Adapt's pages, articles and components, H5P's
 chapters, slides and pieces, Rise 360's lessons and blocks, Storyline's
 scenes and slides, iSpring's slides and quizzes, or Captivate's slides, and
-their questions as the tool grades them. A tool's own export that is no
+their questions as the tool grades them. A package that holds several courses
+has each read in its own tool's model, and a SCORM package's other activities
+read as any package's. A tool's own export that is no
 SCORM package (an .h5p file, an Adapt course exported as source, a Rise 360,
 Storyline, iSpring or Captivate course published for xAPI or the web) is
 uploaded and kept the same way, described as an export: it

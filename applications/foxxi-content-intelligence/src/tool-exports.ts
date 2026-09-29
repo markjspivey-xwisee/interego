@@ -188,9 +188,10 @@ function adaptComponent(r: Reading, x: AdaptItem, topic: ImportedTopic): string 
  * A package Adapt built or exported, read in Adapt's own model: each page a topic, each article a
  * page (its blocks under their titles, their components in order), and each question component a
  * question on its page's topic. What its author made unavailable is left out, as the course leaves
- * it out. Null when the package holds no Adapt course.
+ * it out: the course in the folder `at`, else the package's shallowest. Null when there is no
+ * Adapt course there.
  */
-export function adaptPackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage | null {
+export function adaptPackage(files: PackageFiles, opts: ToolReadOptions, at?: string): ImportedPackage | null {
   const roots = new Map<string, Map<string, string[]>>();
   for (const name of files.names) {
     const m = ADAPT_FILE.exec(name);
@@ -202,7 +203,7 @@ export function adaptPackage(files: PackageFiles, opts: ToolReadOptions): Import
   const r = new Reading(files, opts.fileUrl);
   let found: { root: string; items: AdaptItem[] } | null = null;
   // The shallowest course first; in it, the language its config names, else English, else the first.
-  for (const root of [...roots.keys()].sort((a, b) => a.length - b.length)) {
+  for (const root of at !== undefined ? [at].filter(a => roots.has(a)) : [...roots.keys()].sort((a, b) => a.length - b.length)) {
     const languages = roots.get(root)!;
     const config = r.json(`${root}course/config.json`);
     const preferred = isRecord(config) ? str(config._defaultLanguage) : '';
@@ -517,10 +518,11 @@ class H5pReading {
  * A package H5P built or exported (an .h5p file, or H5P content a package plays), read in H5P's own
  * model: an interactive book's chapters as topics, a presentation's slides as pages, and a
  * column's, a question set's or an accordion's pieces in order, text and images as pages and
- * questions on their topic. Null when the package holds no H5P content.
+ * questions on their topic: the content whose h5p.json is `at`, else the package's shallowest.
+ * Null when there is no H5P content there.
  */
-export function h5pPackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage | null {
-  const h5pJson = files.names.filter(n => /(^|\/)h5p\.json$/.test(n)).sort((a, b) => a.length - b.length)[0];
+export function h5pPackage(files: PackageFiles, opts: ToolReadOptions, at?: string): ImportedPackage | null {
+  const h5pJson = at ?? files.names.filter(n => /(^|\/)h5p\.json$/.test(n)).sort((a, b) => a.length - b.length)[0];
   if (!h5pJson) return null;
   const r = new Reading(files, opts.fileUrl);
   const base = h5pJson.slice(0, -'h5p.json'.length);
@@ -564,16 +566,6 @@ export function h5pPackage(files: PackageFiles, opts: ToolReadOptions): Imported
   return { title, topics, unread: r.unread };
 }
 
-/**
- * Any hosted package, read in the richest model it carries: an authoring tool's own (Adapt, H5P,
- * Rise 360, Storyline, iSpring, Captivate), else as package-import.ts reads any package, its pages and the
- * question banks it declares. Rise before Storyline: a Rise course may hold a Storyline block, a package of
- * its own inside it.
- */
-export function readAnyPackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage {
-  return adaptPackage(files, opts) ?? h5pPackage(files, opts) ?? risePackage(files, opts) ?? storylinePackage(files, opts) ?? ispringPackage(files, opts) ?? captivatePackage(files, opts) ?? readPackage(files, opts);
-}
-
 /** The tools whose own exports are read here. */
 export type ExportTool = 'Adapt' | 'H5P' | 'Rise 360' | 'Storyline' | 'iSpring' | 'Captivate';
 
@@ -581,27 +573,107 @@ export type ExportTool = 'Adapt' | 'H5P' | 'Rise 360' | 'Storyline' | 'iSpring' 
 export interface ProjectExport { tool: ExportTool; title: string; read: ImportedPackage }
 
 /**
+ * Where each tool read here starts a course, in the order the tools are tried in one folder: the
+ * file its reader starts from, the course's folder before it. Adapt's course is its folder, the one
+ * its course/<language>/ files are in.
+ */
+const COURSE_STARTS: ReadonlyArray<{ tool: ExportTool; start: RegExp; read: (files: PackageFiles, opts: ToolReadOptions, at: string) => ImportedPackage | null }> = [
+  { tool: 'Adapt', start: ADAPT_FILE, read: adaptPackage },
+  { tool: 'H5P', start: /^(.*\/)?h5p\.json$/, read: h5pPackage },
+  { tool: 'Rise 360', start: /^(.*\/)?index\.html$/i, read: risePackage },
+  { tool: 'Storyline', start: /^(.*\/)?html5\/data\/js\/data\.js$/, read: storylinePackage },
+  { tool: 'iSpring', start: /^(.*\/)?(?:index|html5)\.html?$/i, read: ispringPackage },
+  { tool: 'Captivate', start: /^(.*\/)?assets\/js\/(?:CPM|project)\.js$/, read: captivatePackage },
+];
+
+/** A course a package holds, read in its tool's own model, and the folder it is in ('' at the package's root). */
+interface ToolCourse { tool: ExportTool; root: string; read: ImportedPackage }
+
+/**
+ * Every course a package holds, each read in its tool's own model. Folders are tried shallowest
+ * first, the tools in order in each. A course in another's folder is part of that one: a Rise
+ * course holds a Storyline block, a package of its own, inside it (a review of #579: the shallowest
+ * course alone used to be read, and whatever else the package held was lost, unlisted).
+ */
+function toolCourses(files: PackageFiles, opts: ToolReadOptions): ToolCourse[] {
+  const starts = new Map<string, { at: string; root: string; order: number }>();
+  COURSE_STARTS.forEach(({ tool, start }, order) => {
+    for (const name of files.names) {
+      const m = start.exec(name);
+      if (!m) continue;
+      const root = m[1] ?? '';
+      const at = tool === 'Adapt' ? root : name;
+      starts.set(`${order}:${at}`, { at, root, order });
+    }
+  });
+  const found: ToolCourse[] = [];
+  for (const s of [...starts.values()].sort((a, b) => a.root.length - b.root.length || a.order - b.order || a.at.length - b.at.length)) {
+    if (found.some(c => s.root.startsWith(c.root))) continue;
+    const { tool, read } = COURSE_STARTS[s.order]!;
+    const course = read(files, opts, s.at);
+    if (course) found.push({ tool, root: s.root, read: course });
+  }
+  // In the order their folders are listed, a number in a name read as one ("module-2" before "module-10").
+  return found.sort((a, b) => a.root.localeCompare(b.root, 'en', { numeric: true }));
+}
+
+/** A package's files less those in the given folders. */
+function without(files: PackageFiles, folders: readonly string[]): PackageFiles {
+  const kept = (name: string): boolean => !folders.some(f => name.startsWith(f));
+  return { names: files.names.filter(kept), read: name => (kept(name) ? files.read(name) : null) };
+}
+
+/**
+ * Several courses, and what the package holds beside them, as one package: what is beside them
+ * first (a SCORM package's other activities, in its order), then each course's topics, titled by
+ * their course where they are not already, their ids under its folder.
+ */
+function together(courses: readonly ToolCourse[], beside: ImportedPackage | null, opts: ToolReadOptions): ImportedPackage {
+  const topics: ImportedTopic[] = [...(beside?.topics ?? [])];
+  const unread = [...(beside?.unread ?? [])];
+  for (const { root, read } of courses) {
+    for (const t of read.topics) {
+      const title = t.title === read.title || t.title.startsWith(`${read.title}: `) ? t.title : `${read.title}: ${t.title}`;
+      topics.push({ ...t, id: `${root}${t.id}`, title });
+    }
+    unread.push(...read.unread);
+  }
+  return { title: beside?.title || opts.title?.trim() || courses[0]!.read.title, topics, unread };
+}
+
+/**
+ * Any hosted package, read in the richest model it carries. Each course an authoring tool keeps in
+ * it (Adapt, H5P, Rise 360, Storyline, iSpring, Captivate) is read in that tool's own model. What a
+ * SCORM package holds beside its courses (its other activities) is read as package-import.ts reads
+ * any package, its pages and the question banks it declares; a page that only launches a course has
+ * no content of its own, and adds nothing. A course at the package's root, or in a folder that holds
+ * the manifest, is the package. A package that holds no tool's course is read as any package is.
+ */
+export function readAnyPackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage {
+  const courses = toolCourses(files, opts);
+  if (!courses.length) return readPackage(files, opts);
+  const manifest = packageLookup(files.names).entryFor('imsmanifest.xml');
+  const rest = manifest && !courses.some(c => manifest.startsWith(c.root)) ? readPackage(without(files, courses.map(c => c.root)), opts) : null;
+  const beside = rest?.topics.length ? rest : null;
+  return courses.length === 1 && !beside ? courses[0]!.read : together(courses, beside, opts);
+}
+
+/**
  * An authoring tool's own export that is no SCORM package: an .h5p file, an Adapt course exported as
- * source, or a course Rise 360, Storyline, iSpring or Captivate published for xAPI or the web. It has no manifest and
- * launches nothing as it is, so it is kept to be folded. Null for a SCORM or cmi5 package, which is
- * hosted and played as one (even one a tool built), and for a zip no tool here made. `title` is the
- * one to use when the export names none. Throws when the bytes are no zip.
+ * source, or a course Rise 360, Storyline, iSpring or Captivate published for xAPI or the web, or
+ * several such courses in one zip, each read in its tool's model (the export is named for the
+ * first). It has no manifest and launches nothing as it is, so it is kept to be folded. Null for a
+ * SCORM or cmi5 package, which is hosted and played as one (even one a tool built), and for a zip
+ * no tool here made. `title` is the one to use when the export names none. Throws when the bytes
+ * are no zip.
  */
 export function projectExportOf(zip: Buffer, title?: string): ProjectExport | null {
   const files = filesOfZip(new AdmZip(zip));
   const { entryFor } = packageLookup(files.names);
   if (entryFor('imsmanifest.xml') || entryFor('cmi5.xml')) return null;
   const opts: ToolReadOptions = { fileUrl: path => path, ...(title?.trim() ? { title } : {}) };
-  const adapt = adaptPackage(files, opts);
-  if (adapt) return { tool: 'Adapt', title: adapt.title, read: adapt };
-  const h5p = h5pPackage(files, opts);
-  if (h5p) return { tool: 'H5P', title: h5p.title, read: h5p };
-  const rise = risePackage(files, opts);
-  if (rise) return { tool: 'Rise 360', title: rise.title, read: rise };
-  const storyline = storylinePackage(files, opts);
-  if (storyline) return { tool: 'Storyline', title: storyline.title, read: storyline };
-  const ispring = ispringPackage(files, opts);
-  if (ispring) return { tool: 'iSpring', title: ispring.title, read: ispring };
-  const captivate = captivatePackage(files, opts);
-  return captivate ? { tool: 'Captivate', title: captivate.title, read: captivate } : null;
+  const courses = toolCourses(files, opts);
+  if (!courses.length) return null;
+  const read = courses.length === 1 ? courses[0]!.read : together(courses, null, opts);
+  return { tool: courses[0]!.tool, title: read.title, read };
 }

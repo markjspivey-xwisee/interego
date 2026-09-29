@@ -415,11 +415,11 @@ function captionsOf(slide: Json): string {
 
 /**
  * A package Captivate published, read in Captivate's own model: its slides as pages, its question
- * slides as questions, graded as Captivate grades them. Null when the package holds no course
- * Captivate published.
+ * slides as questions, graded as Captivate grades them: the course whose data file is `at`, else
+ * the package's shallowest. Null when there is no course Captivate published there.
  */
-export function captivatePackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage | null {
-  const dataFile = files.names.filter(n => /(^|\/)assets\/js\/(?:CPM|project)\.js$/.test(n)).sort((a, b) => a.length - b.length)[0];
+export function captivatePackage(files: PackageFiles, opts: ToolReadOptions, at?: string): ImportedPackage | null {
+  const dataFile = at ?? files.names.filter(n => /(^|\/)assets\/js\/(?:CPM|project)\.js$/.test(n)).sort((a, b) => a.length - b.length)[0];
   if (!dataFile) return null;
   const root = dataFile.slice(0, dataFile.length - dataFile.split('/').slice(-3).join('/').length);
   const probe = new Reading(files, opts.fileUrl);

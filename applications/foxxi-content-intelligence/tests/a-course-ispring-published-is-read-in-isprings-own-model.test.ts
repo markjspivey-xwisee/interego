@@ -252,6 +252,15 @@ describe('the other ways iSpring publishes a course', () => {
     expect(ispringPackage(filesOfZip(zip), { fileUrl })!.topics.map(t => [t.title, t.pages.length])).toEqual([['Long deck: slides 1 to 50', 50], ['Long deck: slides 51 to 100', 50]]);
   });
 
+  it('reads each presentation in a zip of several', () => {
+    const read = readAnyPackage(filesOfZip(zipOf({ ...PRES_FILES('part-1/'), ...PRES_FILES('part-2/') })), { fileUrl, title: 'Both parts' });
+    expect(read.title).toBe('Both parts');
+    expect(read.topics.map(t => [t.id, t.pages[0]?.path ?? ''])).toEqual([
+      ['part-1/slides/0', 'part-1/data/slide1.js'], ['part-1/slides/3', 'part-1/index.html#slides/3/groups/0/12'], ['part-1/slides/4', 'part-1/data/slide3.js'],
+      ['part-2/slides/0', 'part-2/data/slide1.js'], ['part-2/slides/3', 'part-2/index.html#slides/3/groups/0/12'], ['part-2/slides/4', 'part-2/data/slide3.js'],
+    ]);
+  });
+
   it('reads nothing that is not an iSpring course: a page without its mark, or a book', () => {
     expect(ispringPackage(filesOfZip(zipOf({ 'index.html': `<script>var presInfo="${deflated(PRES)}";</script>` })), { fileUrl })).toBeNull();
     expect(ispringPackage(filesOfZip(zipOf({ 'index.html': `${HEAD}<!--content book --><script>var bookInfo="${b64({ b: 1 })}";</script>` })), { fileUrl })).toBeNull();

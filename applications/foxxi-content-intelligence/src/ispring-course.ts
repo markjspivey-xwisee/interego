@@ -349,12 +349,12 @@ function presentation(r: Reading, root: string, entry: string, info: Json, opts:
 
 /**
  * A package iSpring published, read in iSpring's own model: a presentation's slides as pages in
- * topics, and a quiz's questions as iSpring grades them. Null when the package holds no course
- * iSpring published.
+ * topics, and a quiz's questions as iSpring grades them: the course whose page is `at`, else the
+ * package's shallowest. Null when there is no course iSpring published there.
  */
-export function ispringPackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage | null {
+export function ispringPackage(files: PackageFiles, opts: ToolReadOptions, at?: string): ImportedPackage | null {
   const r = new Reading(files, opts.fileUrl);
-  const pages = files.names.filter(n => /(^|\/)(?:index|html5)\.html?$/i.test(n)).sort((a, b) => a.split('/').length - b.split('/').length || a.length - b.length);
+  const pages = at ? [at] : files.names.filter(n => /(^|\/)(?:index|html5)\.html?$/i.test(n)).sort((a, b) => a.split('/').length - b.split('/').length || a.length - b.length);
   for (const entry of pages) {
     const text = r.text(entry);
     if (!text || !MARK.test(text)) continue;

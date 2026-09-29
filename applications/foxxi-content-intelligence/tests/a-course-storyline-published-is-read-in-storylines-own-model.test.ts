@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import AdmZip from 'adm-zip';
 import { filesOfZip, foldPackage, type ImportedPackage, type ImportedQuestion } from '../src/package-import.js';
 import { provided, storylinePackage } from '../src/storyline-course.js';
+import { risePackage } from '../src/rise-course.js';
 import { projectExportOf, readAnyPackage } from '../src/tool-exports.js';
 import { questionIsRight } from '../src/course-questions.js';
 import type { ScormAssessmentQuestion } from '../src/scorm-assessment.js';
@@ -461,6 +462,149 @@ describe('the other ways Storyline publishes a course', () => {
   it('leaves a Rise course that holds a Storyline block to be read as Rise', () => {
     const rise = { course: { title: 'Rise outside', lessons: [{ id: 'l', type: 'blocks', title: 'Lesson', items: [{ id: 'b', type: 'text', family: 'text', variant: 'paragraph', items: [{ paragraph: '<p>Words.</p>' }] }] }] }, labelSet: {}, fonts: [], media: {} };
     const zip = zipOf({ 'index.html': `<script>window.courseData = "${Buffer.from(JSON.stringify(rise)).toString('base64')}";</script>`, ...COURSE_FILES('assets/block1/') });
+    expect(readAnyPackage(filesOfZip(zip), { fileUrl })).toEqual(risePackage(filesOfZip(zip), { fileUrl }));
     expect(readAnyPackage(filesOfZip(zip), { fileUrl }).title).toBe('Rise outside');
+  });
+});
+
+// ── What a review of #579 found ────────────────────────────────────────────────────────────────────
+
+/** An object whose click runs these actions: Storyline marks it a button. */
+const clicking = (o: object, ...actions: object[]): object => ({ ...o, events: [{ kind: 'onrelease', actions }] });
+const GO = { kind: 'gotoplay', window: '_current', wndtype: 'normal', objRef: { type: 'string', value: '_player.6Scene00001.6Next000001' } };
+const SHOW_LAYER = { kind: 'show_slidelayer', hideOthers: 'oncomplete', transition: 'appear', objRef: { type: 'string', value: '_parent.6Layer00001' } };
+const CLOSE_LAYER = { kind: 'hide_slidelayer', transition: 'appear', objRef: { type: 'string', value: '_parent' } };
+const SUBMIT = { kind: 'exe_actiongroup', id: 'ActGrpOnSubmitButtonClick' };
+const SELECT = { kind: 'adjustvar', variable: '_checked', operator: 'toggle' };
+/** A course of one scene: its slides, their files, and what else its data holds. */
+const oneScene = (slides: Array<[object, string]>, data: object = {}, scene: object = {}): Record<string, string> => ({
+  'html5/data/js/data.js': provide('data', { scenes: [{ kind: 'scene', id: '6Scene00001', sceneNumber: 1, slides: slides.map(([entry]) => entry), ...scene }], assetLib: [], ...data }),
+  ...Object.fromEntries(slides.map(([entry, file]) => [`html5/data/js/${(entry as { id: string }).id}.js`, file])),
+});
+const readOf = (files: Record<string, string>, title = 'Sample'): ImportedPackage => storylinePackage(filesOfZip(zipOf(files)), { fileUrl, title })!;
+
+describe('what a review of #579 found', () => {
+  it('reads a button as the slide shows it (a tab, a reference), unless it takes the learner on', () => {
+    const page = slideFile('6Tabs000001', [
+      { objects: [
+        textBox('tHead000001', 1, 'Four ways to find ideas'),
+        // A tab: its click shows a layer. A reference Storyline marks a button, its trigger kept elsewhere.
+        clicking(button('bTab0000001', 2, 'Brainstorming'), SHOW_LAYER),
+        button('bRef0000001', 3, 'Hall, D. T. (1999). Behind closed doors.'),
+        // The player's way on: another slide; a layer closed; a short label with its trigger elsewhere.
+        clicking(button('bOn00000001', 4, 'Continue to the next part'), { kind: 'if_action', condition: { statement: { kind: 'compare', operator: 'eq', valuea: '_player.#visited', valueb: true } }, thenActions: [GO] }),
+        clicking(button('bClose00001', 5, 'Close'), CLOSE_LAYER),
+        button('bMenu000001', 6, 'Menu'),
+        // Three words are no short label.
+        button('bRead000001', 7, 'Read the policy'),
+      ] },
+      { base: false, objects: [
+        textBox('tMore000001', 1, 'Say every idea out loud.'),
+        clicking(button('bBack000001', 2, 'Back to the four ways'), CLOSE_LAYER),
+        // It shows the next layer as it closes its own: what it names is more of the slide.
+        clicking(button('bNextM00001', 3, 'Next: mind maps'), CLOSE_LAYER, SHOW_LAYER),
+      ] },
+    ]);
+    expect(readOf(oneScene([[slide('6Tabs000001', 1, 'Ideas'), page]])).topics[0]!.pages[0]!.body)
+      .toBe('Four ways to find ideas\n\nBrainstorming\n\nHall, D. T. (1999). Behind closed doors.\n\nRead the policy\n\nSay every idea out loud.\n\nNext: mind maps');
+  });
+
+  it('reads a question whose text and choices are buttons, and no counter or button label as its text', () => {
+    const q = slideFile('6Q000000001', [{ objects: [
+      textBox('tCount00001', 1, 'Question 1 of 3'),
+      // Its own text, on an object Storyline marks a button (it shows a layer when clicked).
+      clicking(button('bText000001', 2, 'Which of these makes a slide easier to read for everyone?'), SHOW_LAYER),
+      clicking(button('cBig0000001', 3, 'Large, high-contrast text'), SELECT),
+      clicking(button('cTiny000001', 4, 'Tiny grey text'), SELECT),
+      clicking(button('bHint000001', 5, 'Show hint'), SHOW_LAYER),
+      clicking(button('bSubmit0001', 6, 'Submit my answer'), SUBMIT),
+    ] }]);
+    const entry = slide('6Q000000001', 1, 'Question 1', [{ kind: 'interaction', type: 'multiplechoice', lmsId: 'FreeFormPickOne', lmstext: 'Pick One',
+      choices: choices(['cBig0000001', 'Checkbox 1'], ['cTiny000001', 'Checkbox 2']), answers: correct(equals('cBig0000001')) }]);
+    expect(readOf(oneScene([[entry, q]])).topics[0]!.questions).toEqual([
+      { question: 'Which of these makes a slide easier to read for everyone?', type: 'choice', options: ['Large, high-contrast text', 'Tiny grey text'], answer: 'A' },
+    ]);
+  });
+
+  it('leaves out a question that is a picture, its counter in words no text of its own', () => {
+    const counted = (id: string, counter: string): [object, string] => [
+      slide(id, 1, 'Question', [{ kind: 'interaction', type: 'multiplechoice', lmsId: 'MultiChoice', lmstext: 'Multiple Choice',
+        choices: choices([`a${id}`, '5'], [`b${id}`, '4']), answers: correct(equals(`a${id}`)) }]),
+      slideFile(id, [{ objects: [textBox(`t${id}`, 1, counter), picture(`i${id}`, 2, 0, 'Question'), textBox(`a${id}`, 3, '5'), textBox(`b${id}`, 4, '4')] }]),
+    ];
+    const read = readOf(oneScene([counted('6Q000000002', '1/10 soal'), counted('6Q000000003', 'Question 2 of 10')]));
+    expect(read.topics).toEqual([]);
+    expect(read.unread.map(u => u.why)).toEqual(Array(2).fill('its question is a picture or a video, which a check here would not show'));
+  });
+
+  it('asks a question two draws in a scene take from once', () => {
+    const bank = { slides: DATA.slideBank.slides };
+    const draws = [
+      { kind: 'slidedraw', id: '6Draw000001', slideNumberInScene: 1, sliderefs: [{ kind: 'slideref', id: '6BankTF0001' }] },
+      { kind: 'slidedraw', id: '6Draw000002', slideNumberInScene: 2, sliderefs: [{ kind: 'slideref', id: '6BankTF0001' }, { kind: 'slideref', id: '6BankMC0001' }] },
+    ];
+    const files = { ...oneScene([], { slideBank: bank }, { slidedraws: draws }), 'html5/data/js/6BankTF0001.js': SLIDES['6BankTF0001']!, 'html5/data/js/6BankMC0001.js': SLIDES['6BankMC0001']! };
+    expect(readOf(files).topics[0]!.questions.map(q => q.question)).toEqual(['A ladder may lean on a window.', 'Who may use a damaged ladder?']);
+  });
+
+  it('reads a group that changes with its state as its own state, the object that shares its id', () => {
+    const page = slideFile('6State00001', [{ objects: [
+      { kind: 'stategroup', id: 'sgObst00001', tabIndex: 1, objects: [
+        textBox('sgObst00002', 1, 'Obstacle: anything that blocks the way forward.'),
+        textBox('sgObst00001', 1, 'Obstacle'),
+      ] },
+    ] }]);
+    expect(readOf(oneScene([[slide('6State00001', 1, 'Terms'), page]])).topics[0]!.pages[0]!.body).toBe('Obstacle');
+  });
+
+  it('reads the title from a meta.xml of many open tags in one pass', () => {
+    const page = slideFile('6Only000001', [{ objects: [textBox('tOnly000001', 1, 'Words.')] }]);
+    const files = { ...oneScene([[slide('6Only000001', 1, 'Only'), page]]), 'meta.xml': '<project '.repeat(20_000), 'story.html': '<title>Sample: Tags</title>' };
+    const t0 = Date.now();
+    expect(readOf(files).title).toBe('Sample: Tags');
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+});
+
+describe('a package that holds more than one course (a review of #579)', () => {
+  const course = (title: string, text: string, scene?: string): Record<string, string> => ({
+    'meta.xml': `<meta><project title="${title}"></project></meta>`,
+    ...(scene ? { 'html5/data/js/frame.js': provide('frame', { navData: { outline: { links: [{ kind: 'slidelink', slideid: '_player.6Scene00001', displaytext: scene }] } } }) } : {}),
+    ...oneScene([[slide('6Only000001', 1, 'Only'), slideFile('6Only000001', [{ objects: [textBox('tOnly000001', 1, text)] }])]]),
+  });
+  const inFolder = (root: string, files: Record<string, string>): Record<string, string> => Object.fromEntries(Object.entries(files).map(([k, v]) => [`${root}${k}`, v]));
+
+  it('reads each course in a zip of several, titled as its own', () => {
+    const zip = zipOf({ ...inFolder('module-1/', course('Module 1: Ladders', 'Keep three points of contact.', 'Before you climb')), ...inFolder('module-2/', course('Module 2: Scaffolds', 'Check the guard rails.')) });
+    const read = readAnyPackage(filesOfZip(zip), { fileUrl, title: 'Two modules' });
+    expect(read.title).toBe('Two modules');
+    expect(read.topics.map(t => [t.id, t.title, t.pages.map(pg => pg.body)])).toEqual([
+      // A topic its course's own title does not name is titled by its course too.
+      ['module-1/6Scene00001', 'Module 1: Ladders: Before you climb', ['Keep three points of contact.']],
+      ['module-2/6Scene00001', 'Module 2: Scaffolds', ['Check the guard rails.']],
+    ]);
+    expect(projectExportOf(zip.toBuffer(), 'Two modules')).toMatchObject({ tool: 'Storyline', title: 'Two modules', read });
+  });
+
+  it('reads a SCORM package wrapped in a folder as the course it is', () => {
+    const wrapped = zipOf(inFolder('Ladder safety/', { 'imsmanifest.xml': MANIFEST, 'index_lms.html': '<html><body></body></html>', ...(COURSE_FILES() as Record<string, string>) }));
+    expect(readAnyPackage(filesOfZip(wrapped), { fileUrl })).toEqual(storylinePackage(filesOfZip(wrapped), { fileUrl }));
+  });
+
+  it('reads a SCORM package\'s other activities beside its Storyline course, the course after them', () => {
+    const sco = (id: string, href: string): string => `<resource identifier="${id}" type="webcontent" adlcp:scormtype="sco" href="${href}"><file href="${href}"/></resource>`;
+    const manifest = '<?xml version="1.0"?><manifest identifier="mixed" xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_rootv1p2"><organizations default="o"><organization identifier="o"><title>Forklift safety</title>'
+      + '<item identifier="i1" identifierref="r1"><title>Lesson 1</title></item><item identifier="i2" identifierref="r2"><title>Lesson 2</title></item><item identifier="i3" identifierref="r3"><title>Practice</title></item>'
+      + `</organization></organizations><resources>${sco('r1', 'lesson1.html')}${sco('r2', 'lesson2.html')}${sco('r3', 'practice/story.html')}</resources></manifest>`;
+    const zip = zipOf({
+      'imsmanifest.xml': manifest,
+      'lesson1.html': '<html><head><title>Lesson 1</title></head><body><p>Check the forks.</p></body></html>',
+      'lesson2.html': '<html><head><title>Lesson 2</title></head><body><p>Mind the load.</p></body></html>',
+      ...inFolder('practice/', { ...course('Practice run', 'Drive slowly.'), 'story.html': '<html><body><div id="app"></div></body></html>' }),
+    });
+    // The manifest's title, not the upload's name.
+    const read = readAnyPackage(filesOfZip(zip), { fileUrl, title: 'forklift.zip' });
+    expect(read.title).toBe('Forklift safety');
+    expect(read.topics.map(t => [t.title, t.pages.map(pg => pg.body)])).toEqual([['Lesson 1', ['Check the forks.']], ['Lesson 2', ['Mind the load.']], ['Practice run', ['Drive slowly.']]]);
   });
 });

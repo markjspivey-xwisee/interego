@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: every course a package holds is read, and a Storyline button as the slide shows it (a review of #579)
+
+Codex could not review #579 (its usage limit), so a separate review ran the Storyline reader over 610 real courses (404 questions kept, 769 pages). It found no grading errors. It found a decoder whose work grew with the square of a file's size, fixed in #583, and six more places where a course lost what it shows. Each is fixed here.
+
+- **Every course a package holds is read** (`src/tool-exports.ts`). The fold read only the shallowest course in a package, and lost whatever else it held without listing it: a second module in a zip of two, or a SCORM package's other activities beside a Storyline course. Now:
+  - every course an authoring tool keeps is read in its tool's model, trying folders shallowest first; a course inside another's folder is part of it (a Rise course holding a Storyline block);
+  - what a SCORM package holds beside its courses is read first, as any package is, in its order; a page that only launches a course adds nothing;
+  - several courses' topics are titled by their course, with their ids under its folder, in the order their folders are listed.
+
+  Each reader takes the file its course starts from (`at`). A reader builds its file lookup only when it finds a course.
+- **A button is read as the slide shows it.** Storyline marks any object with a trigger a button: a tab, a free-form choice, a question's own text. The reader skipped them all:
+  - 13 free-form questions were left out as "a choice is a picture";
+  - questions were kept as their counter ("Question 1 of 3");
+  - pages lost 225 button texts of 20 characters or more. Many were navigation; some were content: definitions, method names, a reference list.
+
+  Now a button that takes the learner on is skipped: to another slide, a submit, out of its layer, or out of the course. Any other button's text is read. On a page, a short label that shows nothing more of the slide ("Menu") is not read, and a question's text includes no button's short label.
+- **A counter in words is not question text**: "Question 1 of 10", "1/10 soal", "Pertanyaan 1 dari 10", "Q3". A question whose only text is its counter, beside a picture, is left out as a picture.
+- **A slide two draws in a scene take from is asked once.**
+- **A state group is read as its own state**: the object that shares its id, else the first with text.
+- **meta.xml's title is read in one pass.** The first `<project>` tag is found, then read. A 180 KB file of open tags used to take 4.3 seconds.
+- **A question about a picture on its slide** is kept. The reader's header now says the picture is not shown. Nothing in Storyline's data tells a question's own picture from the slide's decoration. Of 1,336 question slides in the corpus, 718 show a picture of a tenth of the slide or more, most of them backgrounds and characters, so leaving such questions out would lose far more than it fixes.
+
+The fold's description, the Foxxi README, PERFORMANCE-ARCHITECTURE.md §5 and `docs/skills/foxxi` say so.
+
+Tests: the Storyline reader's test adds two groups:
+- what a review of #579 found: buttons on a page and in a question, a counter in words, a bank drawn twice, a state group, a meta.xml of many open tags;
+- a package that holds more than one course: a zip of two modules, a SCORM package wrapped in a folder, a SCORM package's other activities.
+
+The iSpring and Captivate tests each read a zip of two courses. Mutation checks: 30, all caught.
+
 ## 2026-09-29 — Foxxi: a course Captivate published is read in Captivate's own model
 
 A package Captivate published is a player page its runtime draws each slide into. Read as web pages, it had nothing to fold. The course is one JavaScript object literal the player assigns (`cp.D = cp.model.data = {…}`): `assets/js/CPM.js` beside the Classic runtime (Captivate 8 to 11), `assets/js/project.js` for the new player (12.4 and later). `src/captivate-course.ts` reads it as a literal and never runs it: a function, a call or `new` in it ends the read. The course is titled by its project.txt, else the name the player gives the project, its launch page, or its file.
