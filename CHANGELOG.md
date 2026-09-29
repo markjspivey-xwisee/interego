@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a Rise block shows what Rise shows (a review of #578)
+
+Codex could not review #578 (its usage limit), so a separate review read the Rise reader against the runtime's schema and the 530-course survey behind it. It found no grading errors, and six places where a page showed what Rise does not, or lost what it does. Each is fixed in `src/rise-course.ts`.
+- **A block shows its own fields.** A paragraph block's leftover heading (1,563 in the survey), a heading block's leftover paragraph (430 heading, 223 subheading), and a statement's heading (302) are the editor's leftovers from another variant. Rise does not show them, and neither does a page now. An image beside text shows its paragraph, and the other image variants their caption.
+- **A button's text is kept.** A button's description (665 in the survey) is read, and where it goes is kept when this bridge can follow it: a web address, one of the package's own files, or an address to write to. A button to what the package does not hold is listed with why. A button to another lesson, or out of the course, is the player's way on, not the course's text.
+- **Scratch media is no picture.** A question whose only media is the editor's scratch entry (`media.tmp`) was left out as one that shows a picture. Only an image, video, audio, embed, attachment or Storyline block counts now.
+- **Blocks stay apart.** Text that is not HTML ran into the next block's ("first.Always"); each block and item is an element of its own now.
+- **What an item shows is read or listed.** A flashcard's front picture is read. A video, audio or embed inside an accordion, tab, process, timeline or labeled-graphic item, or on a card, is listed with why.
+- **A long lesson is not one page.** A lesson with no continue divider was one page, and one past 20,000 characters was left out of the fold entirely. A page now ends before a block that would take it past what a fragment holds.
+
+Tests: three new cases in `a-course-rise-published-is-read-in-rises-own-model.test.ts` (each block's own fields, block by block; what is listed; a long lesson split). Mutation checks: 12, all caught (a thirteenth showed a condition that could never matter, now gone).
+
 ## 2026-09-29 — Foxxi: a course Rise 360 published is read in Rise's own model
 
 A package Rise 360 published is one page its runtime draws everything into. Read as web pages, it had nothing to fold. That page carries the whole course as base64 JSON. `src/rise-course.ts` reads it in the three ways Rise has written it over its versions:
