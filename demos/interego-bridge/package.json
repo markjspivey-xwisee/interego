@@ -9,7 +9,10 @@
     "dev": "tsx server.ts"
   },
   "dependencies": {
-    "@interego/core": "file:../../",
+    "@interego/constitutional": "file:../../packages/constitutional",
+    "@interego/core": "file:../../packages/core",
+    "@interego/pgsl": "file:../../packages/pgsl",
+    "@interego/solid": "file:../../packages/solid",
     "ethers": "^6.16.0",
     "express": "^4.21.0"
   },

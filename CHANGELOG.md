@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-28 — The examples and demos that install on their own link the packages they import
+
+Following the personal-bridge README (`cd examples/personal-bridge && npm install && npm run build`) produced a bridge that built and then died at startup.
+
+**What was wrong.** Five packages are installed on their own rather than as root workspaces: `examples/personal-bridge`, `dashboard`, `multi-agent`, `pgsl-browser` and `demos/interego-bridge`.
+- **The stale link.** Each declared `"@interego/core": "file:../../"`, from when the repository root was that package. The root is `@interego/workspace` now, with no entry point, so `npm install` inside one of them linked core to the root.
+  - tsc still compiled, because it falls back to an ancestor `node_modules`.
+  - The personal-bridge then failed at startup with `ERR_MODULE_NOT_FOUND` for `node_modules/@interego/core/index.js`.
+- **Undeclared imports.** They also imported workspace packages they never declared: `p2p`, `pgsl`, `solid`, `abac`, `security-txt` and `constitutional`.
+- **Stale lockfiles.** The `multi-agent` and `pgsl-browser` lockfiles still named the package `@foxxi/context-graphs`, so `npm ci` refused them.
+
+**The fix.**
+- **Links.** Each package declares the workspace packages it imports, as `file:../../packages/<name>` links, and its lockfile was regenerated to match. npm links them and installs nothing into `packages/`.
+- **Docs.** The personal-bridge README, `demos/README.md` and `quickstart/README.md` now say to run `npm install && npm run build` at the repository root first, because the links load the packages' built `dist/`.
+- **The dashboard's local build.** Inside the repository, tsc also picked up the root's `@types`, DOM typings among them, and two `fetch` calls stopped type-checking. Its tsconfig now sets `"types": ["node"]`, which matches what the image build sees.
+
+**Deployed images are unchanged in content.** `Dockerfile.dashboard` and `Dockerfile.pgsl-browser` strip every `@interego/*` dependency, install the packages from tarballs, and copy no lockfile.
+
+Tests: `integrations/tests/examples-install-on-their-own.test.ts` holds every package under `examples/` and `demos/` with its own lockfile to three rules:
+- each `@interego` link names the package it points at;
+- every `@interego` package its sources import is declared;
+- its lockfile declares what its package file declares.
+
+On the previous master it fails for all five packages.
+
 ## 2026-09-28 — The base decides no composition's trust, and runs with the verticals deleted (#366, part 2)
 
 The rest of #366: the publication trust the relay decided for every installed composition, the domain-heavy Application Lab fixture in the relay's own suite, and a demonstration of the base without verticals. #556 stated the demonstration as a table; this one runs it.

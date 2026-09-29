@@ -8,7 +8,10 @@
     "dev": "tsx server.ts"
   },
   "dependencies": {
-    "@interego/core": "file:../../",
+    "@interego/core": "file:../../packages/core",
+    "@interego/pgsl": "file:../../packages/pgsl",
+    "@interego/security-txt": "file:../../packages/security-txt",
+    "@interego/solid": "file:../../packages/solid",
     "express": "^4.21.0"
   },
   "devDependencies": {

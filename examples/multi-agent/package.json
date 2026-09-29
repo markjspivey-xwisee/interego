@@ -7,7 +7,10 @@
     "start": "tsx run.ts"
   },
   "dependencies": {
-    "@interego/core": "file:../../",
+    "@interego/abac": "file:../../packages/abac",
+    "@interego/core": "file:../../packages/core",
+    "@interego/pgsl": "file:../../packages/pgsl",
+    "@interego/solid": "file:../../packages/solid",
     "@solid/community-server": "^7.0.0",
     "@types/ws": "^8.18.1",
     "tsx": "^4.0.0",
