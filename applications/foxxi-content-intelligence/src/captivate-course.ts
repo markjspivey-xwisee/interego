@@ -30,7 +30,7 @@
  */
 import { decodeEntities, type ImportedPackage, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
-import { choice, esc, imgHtml, isRecord, jsStringAt, numberOf, Reading, records, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
+import { choice, esc, imgHtml, isRecord, jsStringAt, literalAt, numberOf, Reading, records, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
 
 /** A course too long for one composition becomes topics of this many slides each. */
 const SLIDES_PER_TOPIC = 50;
@@ -48,98 +48,6 @@ const OBJECTS_SCORED = new Set(['InteractiveItemQuestion', 'DragDropQuestion']);
 /** A variable the player fills in: `$$name$$` (Classic), `@#{101}` (new). */
 const VARIABLE = /\$\$[\w.]+\$\$|@#\{\d+\}/g;
 const FILE_NAME = /\.(?:png|jpe?g|gif|svg|webp|bmp|emf|wmf)$/i;
-
-/**
- * The object literal a Captivate data file assigns, read without running it: objects (keys bare
- * names or numbers), arrays, strings, numbers, true, false, null, and a bare reference to a runtime
- * handler (`cp.fd`), kept as its name. A key given twice keeps its last value, as JavaScript does.
- * Null when what is there is not such a literal.
- */
-export function literalAt(src: string, at: number): { value: unknown; end: number } | null {
-  let i = at;
-  class NotALiteral extends Error {}
-  const fail = (): never => { throw new NotALiteral(); };
-  const ws = (): void => {
-    for (;;) {
-      while (i < src.length && (src[i] === ' ' || src[i] === '\n' || src[i] === '\r' || src[i] === '\t')) i++;
-      if (src.startsWith('//', i)) { const n = src.indexOf('\n', i); i = n < 0 ? src.length : n; continue; }
-      if (src.startsWith('/*', i)) { const n = src.indexOf('*/', i + 2); i = n < 0 ? src.length : n + 2; continue; }
-      return;
-    }
-  };
-  const name = (): string => {
-    const m = /^[A-Za-z_$][\w$]*/.exec(src.slice(i, i + 256));
-    if (!m) return fail();
-    i += m[0].length;
-    return m[0];
-  };
-  const number = (): string => {
-    const m = /^[-+]?(?:0x[\da-f]+|(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)/i.exec(src.slice(i, i + 64));
-    if (!m) return fail();
-    i += m[0].length;
-    return m[0];
-  };
-  const text = (): string => {
-    const s = jsStringAt(src, i);
-    if (!s) return fail();
-    i = s.end;
-    return s.value;
-  };
-  const value = (depth: number): unknown => {
-    if (depth > 256) fail();
-    ws();
-    const c = src[i];
-    if (c === '{') {
-      i++;
-      const o: Record<string, unknown> = {};
-      for (ws(); src[i] !== '}'; ws()) {
-        if (i >= src.length) fail();
-        const key = src[i] === "'" || src[i] === '"' ? text() : /[-\d.]/.test(src[i] ?? '') ? number() : name();
-        ws();
-        if (src[i] !== ':') fail();
-        i++;
-        o[key] = value(depth + 1);
-        ws();
-        if (src[i] === ',') i++;
-        else if (src[i] !== '}') fail();
-      }
-      i++;
-      return o;
-    }
-    if (c === '[') {
-      i++;
-      const a: unknown[] = [];
-      for (ws(); src[i] !== ']'; ws()) {
-        if (i >= src.length) fail();
-        if (src[i] === ',') { a.push(null); i++; continue; }
-        a.push(value(depth + 1));
-        ws();
-        if (src[i] === ',') i++;
-        else if (src[i] !== ']') fail();
-      }
-      i++;
-      return a;
-    }
-    if (c === "'" || c === '"') return text();
-    if (c !== undefined && /[-+\d.]/.test(c)) return Number(number());
-    const id = name();
-    if (id === 'true') return true;
-    if (id === 'false') return false;
-    if (id === 'null' || id === 'undefined') return null;
-    // A handler the runtime defines, by its name. A call, a function or `new` is no value: what
-    // follows its name is neither a comma nor a close, and ends the read.
-    let ref = id;
-    while (src[i] === '.') { i++; ref += `.${name()}`; }
-    return { ref };
-  };
-  try {
-    const v = value(0);
-    return { value: v, end: i };
-  } catch (e) {
-    if (e instanceof NotALiteral) return null;
-    throw e;
-  }
-}
 
 /** The course's data: the literal the player assigns to `cp.model.data`. */
 function courseData(text: string | null): Json | null {

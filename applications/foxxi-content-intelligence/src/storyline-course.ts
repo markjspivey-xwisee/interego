@@ -35,7 +35,7 @@
  */
 import { decodeEntities, type ImportedPackage, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
-import { choice, esc, imgHtml, isRecord, jsStringAt, numberOf, Reading, records, shows, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
+import { choice, esc, imgHtml, isRecord, jsStringAt, literalAt, numberOf, Reading, records, shows, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
 
 /** A scene longer than a composition holds becomes topics of this many slides each. */
 const SLIDES_PER_TOPIC = 50;
@@ -59,9 +59,12 @@ const SHOWS = new Set(['show_slidelayer', 'show']);
 /** A Storyline data file's JSON, when the file is one of `type`: decoded from its single-quoted string, never run. */
 export function provided(text: string | null, type: string): Json | null {
   if (!text) return null;
-  const m = /globalProvideData\(\s*(['"])(\w+)\1\s*,\s*'/.exec(text);
+  const m = /globalProvideData\(\s*(['"])(\w+)\1\s*,\s*(?=['"{])/.exec(text);
   if (!m || m[2] !== type) return null;
-  const json = jsStringAt(text, m.index + m[0].length - 1);
+  const at = m.index + m[0].length;
+  // Its JSON as a string, as Storyline writes it; or as an object, which the call takes too (Codex, on #579).
+  if (text[at] === '{') { const v = literalAt(text, at)?.value; return isRecord(v) ? v : null; }
+  const json = jsStringAt(text, at);
   if (!json) return null;
   try { const v: unknown = JSON.parse(json.value); return isRecord(v) ? v : null; } catch { return null; }
 }

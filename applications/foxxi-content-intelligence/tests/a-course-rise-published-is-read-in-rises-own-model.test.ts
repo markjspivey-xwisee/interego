@@ -250,6 +250,12 @@ describe('what a Rise block shows, as Rise shows it (a review of #578)', () => {
     expect(read.topics[0]!.questions).toEqual([{ question: 'Is scratch media shown?', type: 'choice', options: ['No', 'Yes'], answer: 'A' }]);
   });
 
+  it('reads a table as the text block its paragraph is (Codex, on #578)', () => {
+    const table = { id: 'tb', type: 'text', family: 'text', variant: 'table', items: [{ paragraph: '<table><tr><th>Load</th><th>How</th></tr><tr><td>Light box</td><td>Carry</td></tr></table>' }] };
+    const one = zipOf({ 'index.html': `<script>window.courseData = "${b64({ title: 'Tables', lessons: [{ id: 't', type: 'blocks', title: 'Loads', items: [table] }] })}";</script>` });
+    expect(risePackage(filesOfZip(one), { fileUrl })!.topics[0]!.pages[0]!.body).toBe('| Load | How |\n| --- | --- |\n| Light box | Carry |');
+  });
+
   it('lists what an item shows that is not text, and a button to what the package does not hold', () => {
     expect(read.unread).toEqual([
       { path: 'index.html#lessons/0/items/5', why: 'a button to assets/missing.pdf, which the package does not hold' },

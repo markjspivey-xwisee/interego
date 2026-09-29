@@ -445,6 +445,9 @@ describe('the other ways Storyline publishes a course', () => {
     // A quote, a \u escape and a \x escape as JavaScript reads them; \\n a backslash and n, so JSON's own escape.
     expect(provided("window.globalProvideData('slide', '{\"a\":\"it\\'s \\u00e9\\x41\\\\n\"}');", 'slide')).toEqual({ a: "it's éA\n" });
     expect(provided("window.globalProvideData('frame', '{}');", 'slide')).toBeNull();
+    // Its JSON given as an object, which the call takes too (Codex, on #579), read as a literal.
+    expect(provided('window.globalProvideData("slide", {"a":"it\'s","b":[1,true,null]});', 'slide')).toEqual({ a: "it's", b: [1, true, null] });
+    expect(provided('window.globalProvideData("slide", {"a":alert(1)});', 'slide')).toBeNull();
     expect(storylinePackage(filesOfZip(zipOf({ 'html5/data/js/data.js': 'var data = {};' })), { fileUrl })).toBeNull();
     expect(storylinePackage(filesOfZip(zipOf({ 'index.html': '<p>Just a page.</p>' })), { fileUrl })).toBeNull();
   });
@@ -561,6 +564,15 @@ describe('what a review of #579 found', () => {
     const texts = ['Level 2 requires 3 attempts.', '2 + 3 =', '4 + 5 =', '12 ÷ 4 =', '12 ÷ 4 =', 'How many sides has a shape with 5 corners?', 'How many sides has a shape with 6 corners?', '2 + 3 + 4 =', '5 + 3 + 1 ='];
     const read = readOf(oneScene(texts.map((t, i) => stem(`6S00000000${i + 1}`, i + 1, t))));
     expect(read.topics[0]!.questions.map(q => q.question)).toEqual(texts);
+  });
+
+  it('reads a course whose data files give their JSON as objects (Codex, on #579)', () => {
+    const asObject = (type: string, json: object): string => `window.globalProvideData('${type}', ${JSON.stringify(json)});`;
+    const files = {
+      'html5/data/js/data.js': asObject('data', { scenes: [{ kind: 'scene', id: '6Scene00001', sceneNumber: 1, slides: [slide('6Obj0000001', 1, 'Objects')] }], assetLib: [] }),
+      'html5/data/js/6Obj0000001.js': asObject('slide', { id: '6Obj0000001', slideLayers: [{ kind: 'slidelayer', isBaseLayer: true, objects: [textBox('tObj0000001', 1, 'Read as an object.')] }] }),
+    };
+    expect(readOf(files).topics[0]!.pages[0]!.body).toBe('Read as an object.');
   });
 
   it('asks a question two draws in a scene take from once', () => {
