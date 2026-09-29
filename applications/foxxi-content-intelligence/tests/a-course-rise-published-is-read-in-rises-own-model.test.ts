@@ -199,3 +199,70 @@ describe('the other ways Rise has written a course', () => {
     expect(risePackage(filesOfZip(zipOf({ 'index.html': '<html><body><p>Just a page.</p></body></html>' })), { fileUrl })).toBeNull();
   });
 });
+
+describe('what a Rise block shows, as Rise shows it (a review of #578)', () => {
+  const lesson = { id: 'l', type: 'blocks', title: 'Shown', items: [
+    // Each variant shows its own fields: a leftover heading, a leftover paragraph, a statement's heading are not the course's.
+    text('Leftover heading', '<p>Only the paragraph shows.</p>', 'paragraph'),
+    text('Only the heading shows', '<p>Leftover paragraph.</p>', 'heading'),
+    { id: 'st', type: 'text', family: 'impact', variant: 'b', items: [{ heading: 'Leftover statement heading', paragraph: 'Safety comes first.' }] },
+    // Text that is not HTML, block after block, never runs together.
+    { id: 'p2', type: 'text', family: 'text', variant: 'paragraph', items: [{ paragraph: 'Always check the load.' }] },
+    { id: 'aside', type: 'image', family: 'image', variant: 'text aside', items: [{ caption: '<p>Leftover caption.</p>', paragraph: '<p>Text beside the picture.</p>', media: { image: { key: 'aside.jpg', useCrushedKey: false } } }] },
+    { id: 'btn', type: 'interactive', family: 'buttons', variant: 'button stack', items: [
+      { type: 'link', label: 'Open policy', destination: 'https://example.org/policy', description: '<p>Every employee must read the policy.</p>' },
+      { type: 'relative-url', label: 'Checklist', destination: 'assets/checklist.pdf', description: '' },
+      { type: 'relative-url', label: 'Missing', destination: 'assets/missing.pdf', description: '' },
+      { type: 'email', label: 'Ask us', destination: 'safety@example.org', description: '' },
+      { type: 'lesson', label: 'Next lesson', destination: 'l2', description: '' },
+    ] },
+    { id: 'fc', type: 'interactive', family: 'flashcard', variant: 'flashcard', items: [
+      { front: { type: 'image', description: '<p>Front of the card</p>', media: { image: { key: 'front.jpg', useCrushedKey: false } } }, back: { type: 'description', description: '<p>Back of the card.</p>' } },
+    ] },
+    { id: 'acc', type: 'interactive', family: 'interactive', variant: 'accordion', items: [{ title: 'Watch', description: '<p>See it done.</p>', media: { video: { key: 'v.mp4' } } }] },
+    // The editor's scratch media is no picture the question shows.
+    kc({ type: 'MULTIPLE_CHOICE', title: '<p>Is scratch media shown?</p>', media: { tmp: { image: { key: 'x.jpg' } } }, answers: [{ id: 1, title: 'No', correct: true }, { id: 2, title: 'Yes', correct: false }] }),
+  ] };
+  const zip = zipOf({
+    'index.html': `<script>window.courseData = "${b64({ title: 'Shown', lessons: [lesson] })}";</script>`,
+    'assets/aside.jpg': 'jpeg', 'assets/front.jpg': 'jpeg', 'assets/checklist.pdf': 'pdf',
+  });
+  const read = risePackage(filesOfZip(zip), { fileUrl })!;
+
+  it('reads each block\'s own fields, each block apart, a button\'s description and where it goes', () => {
+    expect(read.topics[0]!.pages.map(p => p.body)).toEqual([[
+      'Only the paragraph shows.',
+      '# Only the heading shows',
+      'Safety comes first.',
+      'Always check the load.',
+      '![](https://bridge.example/files/assets/aside.jpg)',
+      'Text beside the picture.',
+      'Every employee must read the policy.',
+      '[Open policy](https://example.org/policy)',
+      '[Checklist](https://bridge.example/files/assets/checklist.pdf)',
+      'Ask us: safety@example.org',
+      '## Front of the card',
+      '![](https://bridge.example/files/assets/front.jpg)',
+      'Back of the card.',
+      '## Watch',
+      'See it done.',
+    ].join('\n\n')]);
+    expect(read.topics[0]!.questions).toEqual([{ question: 'Is scratch media shown?', type: 'choice', options: ['No', 'Yes'], answer: 'A' }]);
+  });
+
+  it('lists what an item shows that is not text, and a button to what the package does not hold', () => {
+    expect(read.unread).toEqual([
+      { path: 'index.html#lessons/0/items/5', why: 'a button to assets/missing.pdf, which the package does not hold' },
+      { path: 'index.html#lessons/0/items/7', why: 'a video in one of its items, which is not text' },
+    ]);
+  });
+
+  it('ends a page before it grows past what a fragment holds, with no divider to end it', () => {
+    const long = { id: 'long', type: 'blocks', title: 'Long', items: Array.from({ length: 60 }, (_, i) => text(`Point ${i + 1}`, `<p>${'Lift with your legs, not your back. '.repeat(16)}</p>`)) };
+    const pages = risePackage(filesOfZip(zipOf({ 'index.html': `<script>window.courseData = "${b64({ title: 'Long', lessons: [long] })}";</script>` })), { fileUrl })!.topics[0]!.pages;
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.every(p => p.body.length <= 20_000)).toBe(true);
+    expect(pages.map(p => p.title).slice(0, 2)).toEqual(['Long', 'Long, part 2']);
+    expect(pages.map(p => p.body).join('\n\n').match(/^# Point \d+$/gm)).toHaveLength(60);
+  });
+});

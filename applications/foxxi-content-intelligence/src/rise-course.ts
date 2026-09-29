@@ -12,11 +12,14 @@
  *
  * ★ READ AS RISE HOLDS IT. Each lesson is a topic, in the course's order (the lesson list's, not a
  * `position` field, which is mostly empty). A lesson's blocks are its pages, split where the course
- * asks the learner to continue, so a long lesson is not one page. A quiz lesson is a topic of its
- * questions, and a section is only a heading in the lesson list. Text, lists, quotes, tables,
- * images and galleries, accordions and tabs, processes, timelines, labeled graphics, flashcards and
- * sorting piles are read as pages, images the package's own files as Rise's runtime finds them
- * (`assets/` and the image's crushed or original key, or its `src`).
+ * asks the learner to continue, and where a page would grow past what a fragment holds, so a long
+ * lesson is not one page. A quiz lesson is a topic of its questions, and a section is only a
+ * heading in the lesson list. Text, lists, quotes, tables, images and galleries, accordions and
+ * tabs, processes, timelines, labeled graphics, flashcards, sorting piles and buttons are read as
+ * pages, images the package's own files as Rise's runtime finds them (`assets/` and the image's
+ * crushed or original key, or its `src`). A block shows what its variant shows (a review
+ * of #578): a paragraph block's leftover heading, a heading block's leftover paragraph and a
+ * statement's heading are not the course's text.
  *
  * ★ RIGHT AS RISE GRADES IT. A knowledge check's right answer is each one it flags correct (the
  * first, for one right answer). A quiz question's is the one its `correct` names, or the set its
@@ -27,8 +30,10 @@
  * (tool-reading.ts).
  *
  * ★ NOTHING INVENTED. Video, audio, embeds, a Storyline block (a package of its own), charts,
- * scenarios, raw HTML, and a question that comes with a picture are left out and listed with why.
+ * scenarios, raw HTML, a button to somewhere the package does not hold, and a question that comes
+ * with a picture are left out and listed with why, in a block or in one of its items.
  */
+import { FRAGMENT_LIMITS } from './content-fragments.js';
 import type { ImportedPackage, ImportedTopic, PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
 import {
@@ -44,6 +49,12 @@ const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const unique = (xs: readonly string[]): string[] => [...new Set(xs)];
 /** Plain text a course keeps as it is (a title), as HTML reads it: nothing in it markup. */
 const plainOf = (text: unknown): string => plainText(esc(str(text))) ?? '';
+/** The media a question or an item can show; anything else under `media` is the editor's scratch (`tmp`). */
+const MEDIA = ['image', 'video', 'audio', 'embed', 'attachment', 'storyline'];
+/** A block or an item as an element of its own, so its text never runs into the next one's. */
+const own = (html: string): string => (html.trim() ? `<div>${html}</div>` : '');
+/** How long a page may grow before the next block starts another: what a fragment holds, less room for its title. */
+const PAGE_TEXT = FRAGMENT_LIMITS.body - 1000;
 
 interface RiseData { data: Json; folder: string; source: string }
 
@@ -102,10 +113,21 @@ function riseImage(media: unknown): string {
   return imgHtml(src, str(img.altText) || str(img.alt));
 }
 
+/**
+ * What an item shows besides its text: its picture, as the page's own; a video, an audio or
+ * something embedded is listed with why.
+ */
+function itemMedia(r: Reading, media: unknown, where: string): string {
+  if (!isRecord(media)) return '';
+  for (const kind of ['video', 'audio', 'embed']) {
+    if (isRecord(media[kind])) r.left(where, `${kind === 'embed' ? 'something embedded from elsewhere' : kind === 'audio' ? 'an audio' : 'a video'} in one of its items, which is not text`);
+  }
+  return riseImage(media);
+}
+
 /** A block as the HTML its page shows; what is not text is listed with why, and shows its caption only. */
-function blockHtml(r: Reading, block: Json, where: string): string {
+function blockHtml(r: Reading, block: Json, where: string, folder: string): string {
   const type = str(block.type);
-  const family = str(block.family);
   const variant = str(block.variant);
   const items = records(block.items);
   const left = (why: string, kept = ''): string => { r.left(where, why); return kept; };
@@ -113,14 +135,15 @@ function blockHtml(r: Reading, block: Json, where: string): string {
     case 'text':
     case 'statement':
       return items.map(it => {
-        const heading = str(it.heading).trim();
-        const minor = variant.startsWith('subheading') || family === 'impact';
-        const paragraph = str(it.paragraph);
-        const head = !heading ? '' : minor ? `<h3>${heading}</h3>` : `<h2>${heading}</h2>`;
-        return `${head}${variant === 'note' ? `<blockquote>${paragraph}</blockquote>` : paragraph}${riseImage(it.media)}`;
+        // Each variant shows its own fields; another variant's are the editor's leftovers. A
+        // statement's variants (a to d, a note) show its paragraph.
+        const heading = /^(?:sub)?heading(?: paragraph)?$/.test(variant) ? str(it.heading).trim() : '';
+        const paragraph = /^(?:sub)?heading$/.test(variant) ? '' : str(it.paragraph);
+        const head = !heading ? '' : variant.startsWith('subheading') ? `<h3>${heading}</h3>` : `<h2>${heading}</h2>`;
+        return own(`${head}${own(variant === 'note' ? `<blockquote>${paragraph}</blockquote>` : paragraph)}${itemMedia(r, it.media, where)}`);
       }).join('');
     case 'quote':
-      return items.map(it => `<blockquote>${str(it.paragraph)}</blockquote>${str(it.name).trim() ? `<p>${str(it.name)}</p>` : ''}`).join('');
+      return items.map(it => own(`<blockquote>${str(it.paragraph)}</blockquote>${str(it.name).trim() ? `<p>${str(it.name)}</p>` : ''}`)).join('');
     case 'list': {
       const entries = items.map(it => `<li>${str(it.paragraph)}</li>`).join('');
       return variant === 'numbered' ? `<ol>${entries}</ol>` : `<ul>${entries}</ul>`;
@@ -128,7 +151,8 @@ function blockHtml(r: Reading, block: Json, where: string): string {
     case 'divider':
       return '';
     case 'image':
-      return items.map(it => `${riseImage(it.media)}${str(it.caption)}${str(it.paragraph)}`).join('');
+      // An image beside text shows its paragraph; the others their caption.
+      return items.map(it => own(`${riseImage(it.media)}${own(variant === 'text aside' ? str(it.paragraph) : str(it.caption))}`)).join('');
     case 'multimedia': {
       const captions = items.map(it => str(it.caption)).join('');
       if (variant === 'code') return items.map(it => `<pre>${esc(str(it.code))}</pre>${str(it.caption)}`).join('');
@@ -147,18 +171,20 @@ function blockHtml(r: Reading, block: Json, where: string): string {
       switch (variant) {
         case 'accordion':
         case 'tabs':
-          return items.map(it => `<h3>${esc(plainOf(it.title))}</h3>${str(it.description)}${riseImage(it.media)}`).join('');
+          return items.map(it => own(`<h3>${esc(plainOf(it.title))}</h3>${own(str(it.description))}${itemMedia(r, it.media, where)}`)).join('');
         case 'process':
-          return items.filter(it => it.isHidden !== true).map(it => `${plainOf(it.title) ? `<h3>${esc(plainOf(it.title))}</h3>` : ''}${str(it.description)}${riseImage(it.media)}`).join('');
+          return items.filter(it => it.isHidden !== true).map(it => own(`${plainOf(it.title) ? `<h3>${esc(plainOf(it.title))}</h3>` : ''}${own(str(it.description))}${itemMedia(r, it.media, where)}`)).join('');
         case 'timeline':
-          return items.map(it => `<h3>${esc([plainOf(it.date), plainOf(it.title)].filter(Boolean).join(': '))}</h3>${str(it.description)}${riseImage(it.media)}`).join('');
+          return items.map(it => own(`<h3>${esc([plainOf(it.date), plainOf(it.title)].filter(Boolean).join(': '))}</h3>${own(str(it.description))}${itemMedia(r, it.media, where)}`)).join('');
         case 'labeledgraphic':
-          return riseImage(block.media) + items.map(it => `<h3>${esc(plainOf(it.title))}</h3>${str(it.description)}${riseImage(it.media)}`).join('');
+          return riseImage(block.media) + items.map(it => own(`<h3>${esc(plainOf(it.title))}</h3>${own(str(it.description))}${itemMedia(r, it.media, where)}`)).join('');
         case 'flashcard':
         case 'stack':
           return items.map(it => {
-            const side = (s: unknown): string => (isRecord(s) ? `${str(s.description)}${riseImage(s.media)}` : '');
-            return `<h3>${esc(plainText(str(isRecord(it.front) ? it.front.description : '')) ?? '')}</h3>${side(it.back)}`;
+            const front = isRecord(it.front) ? it.front : {};
+            const back = isRecord(it.back) ? it.back : {};
+            // A card's front, its heading (and its picture); its back, what the card teaches.
+            return own(`<h3>${esc(plainText(str(front.description)) ?? '')}</h3>${itemMedia(r, front.media, where)}${own(str(back.description))}${itemMedia(r, back.media, where)}`);
           }).join('');
         case 'sorting': {
           const piles = records(block.piles);
@@ -170,8 +196,17 @@ function blockHtml(r: Reading, block: Json, where: string): string {
         case 'button':
         case 'button stack':
           return items.map(it => {
-            const to = str(it.destination);
-            return /^https?:\/\//i.test(to) ? `<p><a href="${esc(to)}">${esc(plainOf(it.label) || to)}</a></p>` : '';
+            // What the button says it is for (its description), and where it goes when this
+            // bridge can follow it: a web address, one of the package's own files, an address to
+            // write to. A button to another lesson, or out of the course, is the player's way on.
+            const to = str(it.destination).trim();
+            const kind = str(it.type) || 'link';
+            const label = plainOf(it.label) || to;
+            let link = '';
+            if (kind === 'email' && to) link = `<p>${esc(label === to ? to : `${label}: ${to}`)}</p>`;
+            else if ((kind === 'link' || kind === 'relative-url') && to && r.finds(to, folder)) link = `<p><a href="${esc(to)}">${esc(label)}</a></p>`;
+            else if (to && kind !== 'lesson' && kind !== 'exit-course') r.left(where, `a button to ${to}, which the package does not hold`);
+            return own(`${own(str(it.description))}${link}`);
           }).join('');
         case 'storyline':
           return left('a Storyline interaction, which is a package of its own');
@@ -198,7 +233,8 @@ function riseQuestion(r: Reading, q: Json, topic: ImportedTopic, where: string, 
   const question = plainText(str(q.title));
   if (question === null) { r.left(where, `its question ${SHOWS}`); return; }
   if (!question) { r.left(where, 'its question has no text'); return; }
-  if (isRecord(q.media) && Object.values(q.media).some(isRecord)) { r.left(where, WITH_MEDIA); return; }
+  // Its picture or video; not the editor's scratch (`media.tmp`), which the runtime never shows.
+  if (isRecord(q.media) && MEDIA.some(kind => isRecord((q.media as Json)[kind]))) { r.left(where, WITH_MEDIA); return; }
   const answers = records(q.answers);
   const idOf = (a: Json): string => String(a.id ?? '');
   switch (type) {
@@ -260,6 +296,7 @@ export function risePackage(files: PackageFiles, opts: ToolReadOptions): Importe
     const topic: ImportedTopic = { id, title, pages: [], questions: [] };
     const at = (tail = ''): string => `${source}#lessons/${i}${tail}`;
     let html = '';
+    let size = 0;
     let part = 1;
     const flush = (): void => {
       if (html.trim()) {
@@ -267,6 +304,7 @@ export function risePackage(files: PackageFiles, opts: ToolReadOptions): Importe
         if (read.body.trim()) { topic.pages.push({ path: at(part > 1 ? `/part/${part}` : ''), title: read.title || title, body: read.body }); part++; }
       }
       html = '';
+      size = 0;
     };
     if (kind === 'quiz') {
       html = str(lesson.description);
@@ -285,7 +323,12 @@ export function risePackage(files: PackageFiles, opts: ToolReadOptions): Importe
           else r.left(where, 'a knowledge check with no question');
           return;
         }
-        html += blockHtml(r, block, where);
+        const next = own(blockHtml(r, block, where, folder));
+        // A page that would grow past what a fragment holds ends before this block.
+        const grows = next ? r.page('', next, folder).body.length : 0;
+        if (html && size + grows > PAGE_TEXT) flush();
+        html += next;
+        size += grows + 2;
       });
       flush();
     }
