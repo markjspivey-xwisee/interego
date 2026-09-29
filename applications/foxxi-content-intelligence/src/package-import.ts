@@ -1035,13 +1035,71 @@ export interface FoldedPackage {
   left: LeftOut[];
 }
 
+/** A text too long for one part, cut between words (a word longer than a part, within it). */
+function cutBetweenWords(text: string, max: number): string[] {
+  const out: string[] = [];
+  let rest = text;
+  while (rest.length > max) {
+    const space = rest.lastIndexOf(' ', max);
+    const at = space > max / 2 ? space : max;
+    out.push(rest.slice(0, at).trimEnd());
+    rest = rest.slice(at).trimStart();
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+/** A page longer than a fragment holds, as parts that each fit: split between its paragraphs, a paragraph too long between words. */
+function pageParts(page: ImportedPage): ImportedPage[] {
+  const max = FRAGMENT_LIMITS.body;
+  if (page.body.length <= max) return [page];
+  const bodies: string[] = [];
+  for (const piece of page.body.split(/\n{2,}/).flatMap(para => cutBetweenWords(para, max))) {
+    const last = bodies.at(-1);
+    if (last !== undefined && last.length + 2 + piece.length <= max) bodies[bodies.length - 1] = `${last}\n\n${piece}`;
+    else bodies.push(piece);
+  }
+  return bodies.map((body, i) => (i ? { path: `${page.path}${page.path.includes('#') ? '/' : '#'}part/${i + 1}`, title: `${page.title}, part ${i + 1}`, body } : { ...page, body }));
+}
+
+/**
+ * A package fitted to what a fold holds, where it can be: a page longer than a fragment holds, in
+ * parts; a topic of more questions than a check holds, as topics of as many as one holds, its pages
+ * with the first (Codex, on #579 and #580: such a package was folded in part, the rest listed).
+ * When the parts would make more than one fold does, the package is folded as it is, and what does
+ * not fit is listed. `sourceOf` names the topic each further part came from.
+ */
+function fittedToFold(pkg: ImportedPackage): { fit: ImportedPackage; sourceOf: Map<string, string> } {
+  const sourceOf = new Map<string, string>();
+  const max = FRAGMENT_LIMITS.questions;
+  const topics: ImportedTopic[] = [];
+  for (const t of pkg.topics) {
+    const pages = t.pages.flatMap(pageParts);
+    const count = Math.max(1, Math.ceil(t.questions.length / max));
+    for (let k = 0; k < count; k++) {
+      const from = k * max;
+      const id = k ? `${t.id}/questions-${from + 1}` : t.id;
+      if (k) sourceOf.set(id, t.id);
+      const title = k ? `${t.title}: questions ${from + 1} to ${Math.min(t.questions.length, from + max)}` : t.title;
+      topics.push({ id, title, pages: k ? [] : pages, questions: t.questions.slice(from, from + max) });
+    }
+  }
+  const parts = (t: ImportedTopic): number => t.pages.length + (t.questions.length ? 1 : 0);
+  const fits = topics.length <= COMPOSITION_LIMITS.positions
+    && topics.reduce((n, t) => n + parts(t), 0) <= PACKAGE_FOLD_LIMITS.fragments
+    && topics.every(t => parts(t) <= COMPOSITION_LIMITS.positions);
+  return fits ? { fit: { ...pkg, topics }, sourceOf } : { fit: pkg, sourceOf: new Map() };
+}
+
 /**
  * A package read, folded: each page a concept fragment, each topic's questions a check, each topic
  * of more than one part a composition of them in order, and the package a composition of its
- * topics. Throws a PackageError when nothing folds or the package is larger than one fold, and a
- * ContentError when what the caller named (competency, level, language) is not one.
+ * topics. A long page and a topic of many questions are first fitted to what a fold holds, where
+ * they can be. Throws a PackageError when nothing folds or the package is larger than one fold, and
+ * a ContentError when what the caller named (competency, level, language) is not one.
  */
-export function foldPackage(pkg: ImportedPackage, opts: PackageFoldOptions): FoldedPackage {
+export function foldPackage(read: ImportedPackage, opts: PackageFoldOptions): FoldedPackage {
+  const { fit: pkg, sourceOf } = fittedToFold(read);
   const common = { level: opts.level ?? 'working', ...(opts.language ? { language: opts.language } : {}) };
   const packageCompetency = competencyRef(opts.competency, 'the competency of the package');
   // What the caller named is checked before any page is, so a bad level is the caller's to fix and
@@ -1056,8 +1114,10 @@ export function foldPackage(pkg: ImportedPackage, opts: PackageFoldOptions): Fol
   const left: LeftOut[] = [];
 
   const topics: FoldedTopic[] = pkg.topics.map(topic => {
-    const own = opts.topicCompetencies && Object.prototype.hasOwnProperty.call(opts.topicCompetencies, topic.id);
-    const competency = own ? competencyRef(opts.topicCompetencies![topic.id], `topic ${topic.id}'s competency`) : packageCompetency;
+    // A further part of a topic develops what the topic does, unless the caller names its own.
+    const has = (id: string | undefined): id is string => !!id && !!opts.topicCompetencies && Object.prototype.hasOwnProperty.call(opts.topicCompetencies, id);
+    const named = has(topic.id) ? topic.id : has(sourceOf.get(topic.id)) ? sourceOf.get(topic.id) : undefined;
+    const competency = named ? competencyRef(opts.topicCompetencies![named], `topic ${named}'s competency`) : packageCompetency;
     const title = fitted(topic.title || topic.id, titleMax);
     const pages: FoldedTopic['pages'] = [];
     for (const page of topic.pages) {

@@ -16,7 +16,8 @@
 import { describe, expect, it } from 'vitest';
 import AdmZip from 'adm-zip';
 import { filesOfZip, foldPackage, type ImportedPackage, type ImportedQuestion } from '../src/package-import.js';
-import { captivatePackage, literalAt } from '../src/captivate-course.js';
+import { captivatePackage } from '../src/captivate-course.js';
+import { literalAt } from '../src/tool-reading.js';
 import { projectExportOf, readAnyPackage } from '../src/tool-exports.js';
 import { questionIsRight } from '../src/course-questions.js';
 import type { ScormAssessmentQuestion } from '../src/scorm-assessment.js';

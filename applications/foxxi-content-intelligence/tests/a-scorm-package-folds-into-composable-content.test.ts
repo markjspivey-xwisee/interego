@@ -396,25 +396,46 @@ describe('a package, folded', () => {
     expect(own.topics.map(t => t.competency.split('/').pop())).toEqual(['golf-basics', 'golf-handicaps', 'golf-basics', 'golf-basics']);
   });
 
-  it('puts a topic of one part at its position itself, and says what did not fold', () => {
+  it('puts a topic of one part at its position itself, and fits a long page and many questions to a fold', () => {
     const pkg: ImportedPackage = {
       title: 'Small',
       topics: [
         { id: 'one', title: 'One', pages: [{ path: 'one/a.html', title: 'A', body: 'Text.' }], questions: [] },
         { id: 'long', title: 'Long', pages: [{ path: 'long/a.html', title: 'Too long', body: 'x'.repeat(FRAGMENT_LIMITS.body + 1) }], questions: [] },
-        { id: 'many', title: 'Many', pages: [], questions: Array.from({ length: FRAGMENT_LIMITS.questions + 2 }, (_, i) => ({ question: `Is ${i} even?`, type: 'true-false' as const, answer: i % 2 === 0 })) },
+        { id: 'many', title: 'Many', pages: [{ path: 'many/intro.html', title: 'Intro', body: 'Count them.' }], questions: Array.from({ length: FRAGMENT_LIMITS.questions + 2 }, (_, i) => ({ question: `Is ${i} even?`, type: 'true-false' as const, answer: i % 2 === 0 })) },
       ],
       unread: [],
     };
-    const small = foldPackage(pkg, { competency: 'small' });
+    const small = foldPackage(pkg, { competency: 'small', topicCompetencies: { many: 'counting' } });
     expect(small.topics[0]!.at).toBe(small.topics[0]!.pages[0]!.concept);
-    expect(small.topics[1]!.at).toBeUndefined();
-    expect(small.topics[2]!.questions).toBe(FRAGMENT_LIMITS.questions);
-    expect(small.left).toEqual([
+    // A page longer than a fragment holds, in parts (Codex, on #580).
+    expect(small.topics[1]!.pages.map(p => [p.path, p.title])).toEqual([['long/a.html', 'Too long'], ['long/a.html#part/2', 'Too long, part 2']]);
+    // A topic of more questions than a check holds, as topics of as many as one holds, its pages
+    // with the first, each developing what the topic does (Codex, on #579).
+    expect(small.topics.slice(2).map(t => [t.id, t.title, t.pages.length, t.questions, t.competency.split('/').pop()])).toEqual([
+      ['many', 'Many', 1, FRAGMENT_LIMITS.questions, 'counting'],
+      ['many/questions-41', 'Many: questions 41 to 42', 0, 2, 'counting'],
+    ]);
+    expect(small.left).toEqual([]);
+    expect(small.root.positions).toHaveLength(4);
+  });
+
+  it('says what did not fold when fitting it would make more than a fold holds', () => {
+    // A hundred topics already: the questions past what a check holds cannot become a topic of their own.
+    const many = { id: 'many', title: 'Many', pages: [], questions: Array.from({ length: FRAGMENT_LIMITS.questions + 2 }, (_, i) => ({ question: `Is ${i} even?`, type: 'true-false' as const, answer: i % 2 === 0 })) };
+    const full: ImportedPackage = {
+      title: 'Full',
+      topics: [
+        { id: 'long', title: 'Long', pages: [{ path: 'long/a.html', title: 'Too long', body: 'x'.repeat(FRAGMENT_LIMITS.body + 1) }, { path: 'long/b.html', title: 'B', body: 'Text.' }], questions: [] },
+        ...Array.from({ length: 98 }, (_, i) => ({ id: `t${i}`, title: `T${i}`, pages: [{ path: `t${i}.html`, title: `Page ${i}`, body: `Text ${i}.` }], questions: [] })),
+        many,
+      ],
+      unread: [],
+    };
+    expect(foldPackage(full, { competency: 'full' }).left).toEqual([
       { path: 'long/a.html', why: `longer than a fragment holds: ${FRAGMENT_LIMITS.body + 1} characters of text, at most ${FRAGMENT_LIMITS.body}` },
       { path: 'many', why: `a check holds at most ${FRAGMENT_LIMITS.questions} questions; the other 2 were not folded` },
     ]);
-    expect(small.root.positions).toHaveLength(2);
   });
 
   it('refuses what lies in the package as a PackageError, and what the caller named as a ContentError', () => {

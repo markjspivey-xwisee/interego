@@ -25,7 +25,8 @@
  * differ in that are no one question here). A question built from a form keeps the choices the form
  * names; a free-form one's choices are objects on the slide, read as the slide shows them. A
  * question's text is its own when the slide shows it, with any longer text beside it (a passage it
- * asks about); else the slide's text, without a counter ("3/10", "Question 1 of 10") or a variable.
+ * asks about); else the slide's text, without a variable or a counter: a number alone ("3/10"), or
+ * words a scene's question slides share with only the question's number changed ("Question 3 of 10").
  * Choices the slide shuffles are turned (tool-reading.ts). A bank a scene draws from is asked
  * whole, once however many draws take from it. Surveys, hotspots and essays are left out, with why.
  * A question may ask about a picture on its slide, which a check here does not show; nothing in
@@ -34,17 +35,14 @@
  */
 import { decodeEntities, type ImportedPackage, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
-import { choice, esc, imgHtml, isRecord, jsStringAt, numberOf, Reading, records, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
+import { choice, esc, imgHtml, isRecord, jsStringAt, literalAt, numberOf, Reading, records, shows, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
 
 /** A scene longer than a composition holds becomes topics of this many slides each. */
 const SLIDES_PER_TOPIC = 50;
 /** A variable a running course fills in: `%_player.Name%`. A percent sign written as text is `^%^`. */
 const VARIABLE = /%[A-Za-z_][\w.$#]*%/g;
-/**
- * Text that only numbers a question or counts it among the others: "1.", "3/10", "1/10 soal",
- * "Question 1 of 10", "Q3". A counter, not the question.
- */
-const COUNTER = /^(?:[\d\s./()-]+|(?:\p{L}{1,20}\s*)?\d{1,4}\s*(?:\/|\p{L}{1,10})\s*\d{1,4}(?:\s+\p{L}{1,20})?[.:)]?|\p{L}{1,20}\s*\d{1,4}[.:)]?)$/u;
+/** Text that is only a number or a question's number ("1.", "01", "3/10"): a counter, not a question. */
+const COUNTER = /^[\d\s./()-]+$/;
 /** A picture's alt text that is only its file's name. */
 const FILE_NAME = /\.(?:png|jpe?g|gif|svg|webp|bmp|emf|wmf|tiff?)$/i;
 /** Objects that show the learner's own answer, not the question's: a review banner or shape. */
@@ -58,12 +56,15 @@ const WAY_ON_GROUP = /^(?:ActGrpOn(?:Next|Prev|Submit)ButtonClick|NavigationRest
 /** What a click runs that shows more of the slide: a layer, an object. */
 const SHOWS = new Set(['show_slidelayer', 'show']);
 
-/** A Storyline data file's JSON, when the file is one of `type`: decoded from its single-quoted string, never run. */
+/** A Storyline data file's JSON, when the file is one of `type`: decoded from the string Storyline writes, or read as the object the call also takes; never run. */
 export function provided(text: string | null, type: string): Json | null {
   if (!text) return null;
-  const m = /globalProvideData\(\s*(['"])(\w+)\1\s*,\s*'/.exec(text);
+  const m = /globalProvideData\(\s*(['"])(\w+)\1\s*,\s*(?=['"{])/.exec(text);
   if (!m || m[2] !== type) return null;
-  const json = jsStringAt(text, m.index + m[0].length - 1);
+  const at = m.index + m[0].length;
+  // Its JSON as a string, as Storyline writes it; or as an object, which the call takes too (Codex, on #579).
+  if (text[at] === '{') { const v = literalAt(text, at)?.value; return isRecord(v) ? v : null; }
+  const json = jsStringAt(text, at);
   if (!json) return null;
   try { const v: unknown = JSON.parse(json.value); return isRecord(v) ? v : null; } catch { return null; }
 }
@@ -269,6 +270,36 @@ class Storyline {
   }
 }
 
+/**
+ * The texts that count a scene's questions ("Question 3 of 10", "1/10 soal"): a short text whose
+ * words recur across its question slides, one number differing each time (the question's place)
+ * and any other the same each time (their count). Found by recurring, in whatever language (Codex,
+ * on #585: a pattern of words took "Level 2 requires 3 attempts." for a counter; and "2 + 3 ="
+ * beside "4 + 5 =" differs in both its numbers, so is no counter).
+ */
+function countersOf(reads: readonly SlideRead[]): Set<string> {
+  const byShape = new Map<string, string[]>();
+  for (const read of reads) {
+    for (const text of new Set(read.pieces.map(p => p.text))) {
+      const numbers = text.match(/\d+/g) ?? [];
+      const words = text.replace(/\d+/g, ' ').split(/\s+/).filter(Boolean);
+      if (!numbers.length || numbers.length > 2 || words.length > 3) continue;
+      const shape = text.replace(/\d+/g, '#');
+      const texts = byShape.get(shape);
+      if (texts) texts.push(text);
+      else byShape.set(shape, [text]);
+    }
+  }
+  const counters = new Set<string>();
+  for (const texts of byShape.values()) {
+    const numbers = texts.map(t => (t.match(/\d+/g) ?? []).map(Number));
+    const places = new Set(numbers.map(n => n[0]));
+    const count = numbers.every(n => n.length < 2 || n[1] === numbers[0]![1]);
+    if (texts.length > 1 && places.size === texts.length && count) for (const t of texts) counters.add(t);
+  }
+  return counters;
+}
+
 /** What a question's correct answer names: its choices (with how each is compared), its pairs, its comparisons. */
 function namedBy(evaluate: unknown): { equals: Array<{ choice: string; ignorecase: boolean }>; pairs: Array<{ choice: string; statement: string }>; compares: Json[] } {
   const out = { equals: [] as Array<{ choice: string; ignorecase: boolean }>, pairs: [] as Array<{ choice: string; statement: string }>, compares: [] as Json[] };
@@ -293,7 +324,7 @@ const oneLine = (s: string): string => s.replace(/\s*\n\s*/g, ' ').trim();
 const distinct = (xs: string[]): boolean => new Set(xs.map(x => x.toLowerCase().replace(/\s+/g, ' '))).size === xs.length;
 
 /** A question as Storyline grades it, kept on its topic, or why not, listed. */
-function storylineQuestion(r: Reading, it: Json, slide: SlideRead, topic: ImportedTopic, where: string): void {
+function storylineQuestion(r: Reading, it: Json, slide: SlideRead, topic: ImportedTopic, where: string, counters: ReadonlySet<string>): void {
   const type = str(it.type);
   if (it.issurvey === true) { r.left(where, 'a survey question, which grades nothing'); return; }
   const correct = records(it.answers).find(a => str(a.status) === 'correct');
@@ -313,7 +344,7 @@ function storylineQuestion(r: Reading, it: Json, slide: SlideRead, topic: Import
     const formed = oneLine(plainText(esc(str(c.lmstext))) ?? '');
     return (freeform ? own : formed || own) || null;
   };
-  const others = slide.pieces.filter(p => !ownerOf(p) && !FORM_PARTS.has(p.kind) && !p.variable && !COUNTER.test(p.text) && !(p.button && short(p.text)))
+  const others = slide.pieces.filter(p => !ownerOf(p) && !FORM_PARTS.has(p.kind) && !p.variable && !COUNTER.test(p.text) && !counters.has(p.text) && !(p.button && short(p.text)))
     .map(p => p.text).filter((t, i, all) => t !== all[i - 1]);
   const label = (plainText(esc(str(it.lmstext))) ?? '').trim();
   // Its own words when the slide shows them, with any longer text beside them (a passage it asks
@@ -458,6 +489,11 @@ export function storylinePackage(files: PackageFiles, opts: ToolReadOptions, at?
         return fresh;
       });
     }
+    // Its question slides read first: what counts them is text they share.
+    const urlOf = (x: Json): string => str(x.html5url) || `html5/data/js/${str(x.id)}.js`;
+    const questionReads = new Map<Json, SlideRead>();
+    for (const e of entries) for (const x of e.slides) if (records(x.interactions).length) questionReads.set(x, sl.slide(urlOf(x), true));
+    const counters = countersOf([...questionReads.values()]);
     const chunked = entries.length >= SLIDES_PER_TOPIC * 2;
     let topic: ImportedTopic | null = null;
     entries.forEach((entry, k) => {
@@ -471,18 +507,18 @@ export function storylinePackage(files: PackageFiles, opts: ToolReadOptions, at?
       for (const s of entry.slides) {
         const slideId = str(s.id);
         const where = `${dataFile}#${sceneId}/${slideId}`;
-        const html5url = str(s.html5url) || `html5/data/js/${slideId}.js`;
+        const html5url = urlOf(s);
         const interactions = records(s.interactions);
-        const read = sl.slide(html5url, interactions.length > 0);
+        const read = questionReads.get(s) ?? sl.slide(html5url, false);
         if (read.narrated) narrated++;
         for (const why of new Set(read.media)) r.left(where, why);
         if (interactions.length) {
-          interactions.forEach((it, j) => storylineQuestion(r, it, read, topic!, interactions.length > 1 ? `${where}/${j + 1}` : where));
+          interactions.forEach((it, j) => storylineQuestion(r, it, read, topic!, interactions.length > 1 ? `${where}/${j + 1}` : where, counters));
           continue;
         }
         if (read.results) { r.left(where, "a quiz's results slide: the score it shows is a running course's"); continue; }
         const note = notes.get(`${sceneId}.${slideId}`) ?? '';
-        const html = read.html + (plainText(note)?.trim() ? `<h2>Notes</h2>${note}` : '');
+        const html = read.html + (shows(note) ? `<h2>Notes</h2>${note}` : '');
         const own = oneLine(plainText(esc(str(s.title))) ?? '');
         const slideTitle = own && !/^untitled slide$/i.test(own) ? own : `Slide ${k + 1}`;
         const page = html.trim() ? r.page(esc(slideTitle), html, root) : { title: '', body: '' };

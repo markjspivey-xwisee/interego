@@ -2,11 +2,12 @@
  * What every reader of an authoring tool's own model shares (tool-exports.ts, rise-course.ts,
  * storyline-course.ts, ispring-course.ts): how a package's files are found and served, how a page is
  * written from the HTML a tool keeps, how a question is kept only when it stands as an authored one
- * does, how options a tool shows shuffled are turned, and how a string a tool's data file writes as
- * JavaScript is read without running it. Each reader reads its tool's model; this is what they
+ * does, how options a tool shows shuffled are turned, and how a string or an object a tool's data
+ * file writes as JavaScript is read without running it. Each reader reads its tool's model; this is what they
  * have in common.
  */
 import { authorQuestion, QuestionError } from './course-questions.js';
+import { plainText } from './question-banks.js';
 import {
   fileUrlIn, htmlPage, markdownUrl, packageLookup, webUrl,
   type ImportedQuestion, type ImportedTopic, type LeftOut, type PackageFiles,
@@ -103,6 +104,18 @@ export function choice(question: string, options: string[], right: number[], mul
   return { question, type: 'choice', options, answer: several ? right.map(letter) : letter(right[0]!), ...(several ? { multiple: true as const } : {}) };
 }
 
+/** What HTML shows that is no text: a picture or media. */
+const MEDIA_TAG = /<(?:img|video|audio|object|embed|svg|math|canvas|iframe)\b/i;
+
+/**
+ * Whether HTML shows anything: its text, or a picture or media. `plainText` reads no media as
+ * text (it answers null), so it is no test of whether a page is empty (Codex, on #583: an
+ * interaction with a picture was left out whole).
+ */
+export function shows(html: string): boolean {
+  return MEDIA_TAG.test(html) || !!plainText(html)?.trim();
+}
+
 /** A picture as HTML: its file and its alt text. */
 export function imgHtml(src: string, alt: string): string {
   return src.trim() ? `<p><img src="${esc(src)}" alt="${esc(alt)}"></p>` : '';
@@ -137,5 +150,98 @@ export function jsStringAt(text: string, at: number): { value: string; end: numb
     else if (n === 'x') { out += String.fromCharCode(parseInt(text.slice(stop + 2, stop + 4), 16)); i = stop + 4; }
     else if (n === '\r' || n === '\n') { i = stop + (n === '\r' && text[stop + 2] === '\n' ? 3 : 2); }
     else { out += JS_ESCAPES[n] ?? n; i = stop + 2; }
+  }
+}
+
+/**
+ * A JavaScript object literal a tool's data file writes (starting at `at`), read without running it
+ * (Captivate's course; a Storyline data file that gives its JSON as an object): objects (keys bare
+ * names, numbers or strings), arrays, strings, numbers, true, false, null, and a bare reference to
+ * a runtime handler (`cp.fd`), kept as its name. A key given twice keeps its last value, as
+ * JavaScript does. Null when what is there is not such a literal.
+ */
+export function literalAt(src: string, at: number): { value: unknown; end: number } | null {
+  let i = at;
+  class NotALiteral extends Error {}
+  const fail = (): never => { throw new NotALiteral(); };
+  const ws = (): void => {
+    for (;;) {
+      while (i < src.length && (src[i] === ' ' || src[i] === '\n' || src[i] === '\r' || src[i] === '\t')) i++;
+      if (src.startsWith('//', i)) { const n = src.indexOf('\n', i); i = n < 0 ? src.length : n; continue; }
+      if (src.startsWith('/*', i)) { const n = src.indexOf('*/', i + 2); i = n < 0 ? src.length : n + 2; continue; }
+      return;
+    }
+  };
+  const name = (): string => {
+    const m = /^[A-Za-z_$][\w$]*/.exec(src.slice(i, i + 256));
+    if (!m) return fail();
+    i += m[0].length;
+    return m[0];
+  };
+  const number = (): string => {
+    const m = /^[-+]?(?:0x[\da-f]+|(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)/i.exec(src.slice(i, i + 64));
+    if (!m) return fail();
+    i += m[0].length;
+    return m[0];
+  };
+  const text = (): string => {
+    const s = jsStringAt(src, i);
+    if (!s) return fail();
+    i = s.end;
+    return s.value;
+  };
+  const value = (depth: number): unknown => {
+    if (depth > 256) fail();
+    ws();
+    const c = src[i];
+    if (c === '{') {
+      i++;
+      const o: Record<string, unknown> = {};
+      for (ws(); src[i] !== '}'; ws()) {
+        if (i >= src.length) fail();
+        const key = src[i] === "'" || src[i] === '"' ? text() : /[-\d.]/.test(src[i] ?? '') ? number() : name();
+        ws();
+        if (src[i] !== ':') fail();
+        i++;
+        o[key] = value(depth + 1);
+        ws();
+        if (src[i] === ',') i++;
+        else if (src[i] !== '}') fail();
+      }
+      i++;
+      return o;
+    }
+    if (c === '[') {
+      i++;
+      const a: unknown[] = [];
+      for (ws(); src[i] !== ']'; ws()) {
+        if (i >= src.length) fail();
+        if (src[i] === ',') { a.push(null); i++; continue; }
+        a.push(value(depth + 1));
+        ws();
+        if (src[i] === ',') i++;
+        else if (src[i] !== ']') fail();
+      }
+      i++;
+      return a;
+    }
+    if (c === "'" || c === '"') return text();
+    if (c !== undefined && /[-+\d.]/.test(c)) return Number(number());
+    const id = name();
+    if (id === 'true') return true;
+    if (id === 'false') return false;
+    if (id === 'null' || id === 'undefined') return null;
+    // A handler the runtime defines, by its name. A call, a function or `new` is no value: what
+    // follows its name is neither a comma nor a close, and ends the read.
+    let ref = id;
+    while (src[i] === '.') { i++; ref += `.${name()}`; }
+    return { ref };
+  };
+  try {
+    const v = value(0);
+    return { value: v, end: i };
+  } catch (e) {
+    if (e instanceof NotALiteral) return null;
+    throw e;
   }
 }

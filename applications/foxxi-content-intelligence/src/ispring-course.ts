@@ -28,7 +28,7 @@ import { inflateSync } from 'node:zlib';
 import type { ImportedPackage, ImportedTopic, PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
 import {
-  choice, esc, imgHtml, isRecord, jsStringAt, numberOf, Reading, records, str, turned, WITH_MEDIA,
+  choice, esc, imgHtml, isRecord, jsStringAt, numberOf, Reading, records, shows, str, turned, WITH_MEDIA,
   type Json, type ToolReadOptions,
 } from './tool-reading.js';
 
@@ -258,7 +258,7 @@ function readQuiz(r: Reading, quiz: Json, topicFor: (group: Json, g: number) => 
       if (str(q.tp) === 'InfoSlide') {
         const title = oneLine(richText(q.D));
         const body = isRecord(q.C) ? richHtml(q.C.rt) : '';
-        if (title || plainText(body)) page(topic, title, body, at);
+        if (title || shows(body)) page(topic, title, body, at);
         return;
       }
       quizQuestion(r, q, topic, at);
@@ -333,15 +333,15 @@ function presentation(r: Reading, root: string, entry: string, info: Json, opts:
       const items = records(isRecord(d?.d) && isRecord(d.d.C) ? d.d.C.is : []);
       const html = items.map(it => `<h2>${esc(richText(it.t))}</h2>${richHtml(it.c)}`).join('');
       const kind = str(s.it).replace(/^iSpring\./, '');
-      if (plainText(html)) addPage(t, own || kind || `Slide ${i + 1}`, html, `${root}${str(s.s)}`);
+      if (shows(html)) addPage(t, own || kind || `Slide ${i + 1}`, html, `${root}${str(s.s)}`);
       else r.left(where, 'its interaction is not in the package');
       return;
     }
     const body = paragraphs.filter((p, k) => !(k === 0 && !own && p === first)).map(p => `<p>${esc(p)}</p>`).join('');
     const pictures = slidePictures(r, root, str(s.s), str(s.x), size);
     const notes = str(s.N) || str(s.n).split('\n').map(p => `<p>${esc(p)}</p>`).join('');
-    const html = body + pictures + (plainText(notes) ? `<h2>Notes</h2>${notes}` : '');
-    if (plainText(html) || pictures) addPage(t, slideTitle, html, `${root}${str(s.s) || `data/slide${i + 1}.js`}`);
+    const html = body + pictures + (shows(notes) ? `<h2>Notes</h2>${notes}` : '');
+    if (shows(html)) addPage(t, slideTitle, html, `${root}${str(s.s) || `data/slide${i + 1}.js`}`);
   });
   if (narrated) r.left(entry, `narration on ${narrated === 1 ? 'one slide' : `${narrated} slides`}, which is not text`);
   return { title, topics: topics.filter(t => t.pages.length || t.questions.length), unread: r.unread };

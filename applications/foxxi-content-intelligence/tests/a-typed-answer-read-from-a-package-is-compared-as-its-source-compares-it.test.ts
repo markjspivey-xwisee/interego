@@ -80,6 +80,21 @@ describe('an answer stored or authored here reads as it always has', () => {
     expect(() => fillIn('x', { compare: 'loose' })).toThrow(/compare is exact or letters/);
     expect(() => authorQuestion({ question: 'Q?', answer: '42', compare: 'exact' }, 'seed')).toThrow(/only a typed text answer is compared/);
   });
+
+  it('keeps how a text input given with its answer compares, from the input or beside it (Codex, on #581)', () => {
+    const own = authorQuestion({ question: 'Q?', answer: 'C++', input: { type: 'text', compare: 'exact' } }, 'seed');
+    expect(own.input).toEqual({ type: 'text', compare: 'exact' });
+    expect(questionIsRight('C', own)).toBe(false);
+    expect(questionIsRight('c++', own)).toBe(true);
+    const beside = authorQuestion({ question: 'Q?', answer: 'C++', input: { type: 'text' }, compare: 'exact', caseSensitive: true }, 'seed');
+    expect(beside.input).toEqual({ type: 'text', caseSensitive: true, compare: 'exact' });
+    expect(questionIsRight('c++', beside)).toBe(false);
+    expect(() => authorQuestion({ question: 'Q?', answer: 'C++', input: { type: 'text', compare: 'exact' }, compare: 'letters' }, 'seed')).toThrow(/disagree/);
+    expect(() => authorQuestion({ question: 'Q?', answer: 'C++', input: { type: 'text' }, compare: 'loose' }, 'seed')).toThrow(/compare is exact or letters/);
+    expect(() => authorQuestion({ question: 'Q?', answer: '4', input: { type: 'integer' }, compare: 'exact' }, 'seed')).toThrow(/only a typed text answer is compared/);
+    // A text input that says nothing more is the default, and is not kept.
+    expect(authorQuestion({ question: 'Q?', answer: 'legs', input: { type: 'text' } }, 'seed').input).toBeUndefined();
+  });
 });
 
 describe('the page a package plays', () => {
