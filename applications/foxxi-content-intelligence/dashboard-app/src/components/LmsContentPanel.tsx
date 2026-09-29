@@ -145,8 +145,12 @@ function UploadPackage({ origin, bearer, session }: { origin: string; bearer: st
 
 // ── Host a SCORM package for learners to play ────────────────────────
 
-/** What the bridge says of a package it now hosts, or why it does not. */
-interface Hosted { hosted?: boolean; hostedWhy?: string; packageSha256?: string; course?: { id: string; title: string; aus?: Array<{ title: string }> } }
+/** What the bridge says of a package it now hosts, or of an export it keeps to be folded, or why it does not. */
+interface Hosted {
+  hosted?: boolean; hostedWhy?: string; packageSha256?: string; course?: { id: string; title: string; aus?: Array<{ title: string }> };
+  /** False for an authoring tool's own export, which launches nothing and is kept to be folded. */
+  playable?: boolean; packageTitle?: string; exported?: { tool?: string };
+}
 
 function HostPackage({ origin, bearer }: { origin: string; bearer: string }) {
   const [file, setFile] = useState<File | null>(null);
@@ -158,7 +162,7 @@ function HostPackage({ origin, bearer }: { origin: string; bearer: string }) {
     if (!file) return;
     setBusy(true); setErr(null); setResult(null);
     try {
-      const r = await mcpCall(origin, bearer, 'foxxi.upload_scorm_package', { zip_base64: await fileToBase64(file), hinted_title: file.name.replace(/\.zip$/i, '') }) as Hosted & Record<string, unknown>;
+      const r = await mcpCall(origin, bearer, 'foxxi.upload_scorm_package', { zip_base64: await fileToBase64(file), hinted_title: file.name.replace(/\.(?:zip|h5p)$/i, '') }) as Hosted & Record<string, unknown>;
       if (typeof r.error === 'string') throw new Error(r.error);
       setResult(r);
     } catch (e) { setErr((e as Error).message); }
@@ -170,11 +174,13 @@ function HostPackage({ origin, bearer }: { origin: string; bearer: string }) {
       <div style={{ fontSize: 13, color: 'var(--text-dim)' }}>
         Host a SCORM 1.2 / 2004 .zip for learners to play. The bridge keeps it on the tenant pod by its
         sha-256, serves each of its documents in a sandbox of its own, and makes it a cmi5 course of its
-        SCOs; learners launch it from their Learn page, and what it reports lands in their record.
+        SCOs; learners launch it from their Learn page, and what it reports lands in their record. An
+        authoring tool's own export (an .h5p file, or an Adapt course exported as source) is kept the same
+        way, to be folded on the Author page, since it launches nothing as it is.
       </div>
       <div>
-        <span style={label}>Package (.zip)</span>
-        <input type="file" accept=".zip,application/zip" onChange={e => setFile(e.target.files?.[0] ?? null)} style={{ fontSize: 12 }} />
+        <span style={label}>Package (.zip), or a tool's own export (.h5p, .zip)</span>
+        <input type="file" accept=".zip,.h5p,application/zip" onChange={e => setFile(e.target.files?.[0] ?? null)} style={{ fontSize: 12 }} />
       </div>
       <div><Button primary small disabled={busy || !file} onClick={submit}>{busy ? 'Hosting…' : 'Host package'}</Button></div>
       {err && <div style={{ color: 'var(--bad)', fontSize: 12 }}>✗ {err}</div>}
@@ -183,6 +189,12 @@ function HostPackage({ origin, bearer }: { origin: string; bearer: string }) {
           ✓ Hosted <strong>{result.course.title}</strong>
           {result.course.aus ? ` (${result.course.aus.length === 1 ? '1 part' : `${result.course.aus.length} parts`})` : ''}:
           {' '}<a href={result.course.id} target="_blank" rel="noopener noreferrer">its record</a>. Learners find it on Learn.
+        </div>
+      )}
+      {result?.hosted === true && result.playable === false && (
+        <div style={{ fontSize: 13 }}>
+          ✓ Kept <strong>{result.packageTitle ?? 'the export'}</strong>{result.exported?.tool ? `, ${result.exported.tool}'s own export,` : ''} to be folded:
+          it launches nothing as it is. Fold it on the Author page ("Fold a package"), and learners play what that makes.
         </div>
       )}
       {result?.hosted === false && <div style={{ color: 'var(--bad)', fontSize: 12 }}>Read, but not hosted: {result.hostedWhy ?? 'the bridge did not say why'}</div>}

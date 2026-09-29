@@ -1,6 +1,7 @@
 /**
  * SCORM packages the bridge hosts (src/scorm-hosting.ts), as its listing gives them, and the launch
- * URL a signed cmi5 launch of one answers with.
+ * URL a signed cmi5 launch of one answers with; and the authoring tools' own exports it keeps to be
+ * folded, which launch nothing.
  *
  * Every document of a hosted package runs in a sandbox of its own on the bridge, so a launched
  * package opens in a tab of its own rather than in a frame on this page.
@@ -32,6 +33,27 @@ export function hostedPackagesFrom(body: unknown): HostedPackage[] {
     if (!p.course || !isHttpUrl(p.course.id) || typeof p.course.title !== 'string') continue;
     const aus = Array.isArray(p.aus) ? p.aus.filter(a => !!a && typeof a.id === 'string' && typeof a.title === 'string') : [];
     out.push({ packageSha256: p.packageSha256, href: p.href, course: { id: p.course.id, title: p.course.title }, aus });
+  }
+  return out;
+}
+
+/** A package the Author page can fold: one the bridge hosts to be played, or an authoring tool's own export kept to be folded. */
+export interface FoldablePackage {
+  packageSha256: string;
+  title: string;
+  /** The tool whose own export it is, when it is one. */
+  exportOf?: string;
+}
+
+/** Every package a listing names that folds: those that play, then the exports kept to be folded, each well-formed. */
+export function foldablePackagesFrom(body: unknown): FoldablePackage[] {
+  const out: FoldablePackage[] = hostedPackagesFrom(body).map(p => ({ packageSha256: p.packageSha256, title: p.course.title }));
+  const list = (body as { exports?: unknown } | null)?.exports;
+  for (const entry of Array.isArray(list) ? list : []) {
+    const e = entry as { packageSha256?: unknown; href?: unknown; title?: unknown; exportOf?: unknown } | null;
+    if (!e || typeof e.packageSha256 !== 'string' || !SHA.test(e.packageSha256) || !isHttpUrl(e.href)) continue;
+    if (typeof e.title !== 'string' || typeof e.exportOf !== 'string' || !e.exportOf.trim()) continue;
+    out.push({ packageSha256: e.packageSha256, title: e.title, exportOf: e.exportOf });
   }
   return out;
 }

@@ -65,6 +65,7 @@ import AdmZip from 'adm-zip';
 import { unwrapScormPackage, type ScormPackageFormat } from '../../_shared/scorm/index.js';
 import { fingerprintAuthoringTool, type ScormStandardInfo } from './scorm-fingerprint.js';
 import { manifestToAgenticCourse, type ManifestCourseResult } from './course-graph.js';
+import { projectExportOf } from './tool-exports.js';
 import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 
 // ── A. Multi-tenant onboarding ────────────────────────────────
@@ -577,6 +578,23 @@ export interface ScormParseResult {
   launchable: string[];
 }
 
+/**
+ * An authoring tool's own export, read on upload in its tool's model (src/tool-exports.ts): no SCORM
+ * package, and nothing to launch as it is, so it is kept to be folded rather than played.
+ */
+export interface ProjectExportParse {
+  packageId: string;
+  parsedAt: string;
+  packageTitle: string;
+  /** The tool whose own export it is. */
+  tool: 'Adapt' | 'H5P';
+  /** What folding it reads: its topics, pages and questions, and how much is left out. */
+  topics: number;
+  pages: number;
+  questions: number;
+  unread: number;
+}
+
 export interface ScormUploadResult {
   /** No 'queued' member. There is no queue and no runner to drain one, and leaving
    *  the member in the union is how the old implementation stayed plausible: a caller
@@ -589,6 +607,8 @@ export interface ScormUploadResult {
   /** The Asserted fxs:ParsedPackage that supersedes the receipt. Present only on 'parsed'. */
   parsedDescriptorUrl?: string;
   parsed?: ScormParseResult;
+  /** An authoring tool's own export, read in place of a SCORM parse. Present only on 'parsed', and never beside `parsed`. */
+  exported?: ProjectExportParse;
   error?: string;
   note?: string;
   /**
@@ -683,6 +703,12 @@ export async function uploadScormPackage(args: {
    * handler answers read this function's declines as the handler's (tests/handler-delegation-reach.ts).
    */
   host?: (bytes: Buffer, parsed: ScormParseResult) => Promise<Record<string, unknown>>;
+  /**
+   * Where an authoring tool's own export goes to be kept, to be folded rather than played (the
+   * bridge keeps it beside the packages it hosts), and what it says of that, merged into the answer
+   * as the host's is. Only an export read reaches it.
+   */
+  keepExport?: (bytes: Buffer, exported: ProjectExportParse) => Promise<Record<string, unknown>>;
 }): Promise<ScormUploadResult> {
   if (args.zipBase64.length > MAX_ZIP_BASE64_CHARS) {
     return { ...refuse(413,
@@ -732,50 +758,39 @@ export async function uploadScormPackage(args: {
     graphSlug: `${packageId}-graph`,
   });
 
-  // 2) The parse. In-process, synchronous, no runner.
-  let parsed: ScormParseResult;
+  // 2) The parse. In-process, synchronous, no runner. An authoring tool's own export has no
+  //    manifest: it is read in its tool's model instead (src/tool-exports.ts), to be kept and folded.
+  let read: { kind: 'package'; parsed: ScormParseResult } | { kind: 'export'; exported: ProjectExportParse };
   try {
     const declared = declaredUncompressedBytes(zipBuffer);
     const budget = uncompressedBudget(zipBuffer.length);
     if (declared > budget) {
       throw new Error(`zip declares ${declared} uncompressed bytes against a budget of ${budget} — refused as a decompression bomb before inflating anything.`);
     }
-    const pkg = unwrapScormPackage(zipBuffer);
-    const fileList = ['imsmanifest.xml', ...pkg.resources.map(r => r.path)];
-    const fileText: Record<string, string> = {};
-    for (const r of pkg.resources) {
-      if (typeof r.content === 'string') fileText[r.path] = r.content.slice(0, 4000);
-    }
-    const fingerprint = fingerprintAuthoringTool({ manifestXml: pkg.manifestRaw, fileList, fileContents: fileText });
-    const built = manifestToAgenticCourse({
-      manifestXml: pkg.manifestRaw, fileList, fileText,
-      courseIri: graphIri, authoritativeSource: graphIri,
-    });
-    parsed = {
-      packageId,
-      parsedAt: new Date().toISOString(),
-      packageIdentifier: pkg.identifier,
-      // The manifest's own title wins. The uploader's hint is a fallback, never an override —
-      // what the package SAYS it is outranks what the uploader typed.
-      packageTitle: pkg.title !== 'untitled' ? pkg.title : (args.hintedTitle ?? pkg.title),
-      format: pkg.format,
-      standard: fingerprint.standard,
-      authoringTool: {
-        tool: fingerprint.tool, toolId: fingerprint.toolId, vendor: fingerprint.vendor,
-        confidence: fingerprint.confidence, version: fingerprint.version, summary: fingerprint.summary,
-      },
-      structure: built.structure,
-      resourceCount: pkg.resources.length,
-      launchable: pkg.resources.filter(r => r.isLaunchable).map(r => r.path),
-    };
+    const tool = projectExportOf(zipBuffer, args.hintedTitle);
+    if (tool) {
+      read = { kind: 'export', exported: {
+        packageId,
+        parsedAt: new Date().toISOString(),
+        packageTitle: tool.title,
+        tool: tool.tool,
+        topics: tool.read.topics.length,
+        pages: tool.read.topics.reduce((n, t) => n + t.pages.length, 0),
+        questions: tool.read.topics.reduce((n, t) => n + t.questions.length, 0),
+        unread: tool.read.unread.length,
+      } };
+    } else read = { kind: 'package', parsed: scormParseOf(zipBuffer, packageId, graphIri, args.hintedTitle) };
   } catch (err) {
     // 422, not 400: the bytes ARE a zip (the PK check above passed) and this deployment is
     // healthy - what could not be processed is the SCORM package inside it. The receipt stays
-    // Hypothetical on the pod, which is the honest record of exactly that.
+    // Hypothetical on the pod, which is the honest record of exactly that. A zip with no manifest
+    // may be an export no tool here models, so what was looked for is said.
+    const why = (err as Error).message;
+    const lookedFor = /missing imsmanifest\.xml or cmi5\.xml/.test(why) ? '; nor is it an authoring tool\'s own export read here (an Adapt course, H5P content)' : '';
     return {
       ...refuse(
         422,
-        `SCORM parse failed: ${(err as Error).message}`,
+        `SCORM parse failed: ${why}${lookedFor}`,
         'the archive was readable but its SCORM manifest could not be parsed, so nothing was asserted about the package',
       ),
       status: 'failed',
@@ -785,20 +800,21 @@ export async function uploadScormPackage(args: {
       note: 'The upload receipt is on the pod as a Hypothetical fxs:PackageUpload and stays that way. Nothing was asserted about the package because it could not be read.',
     };
   }
+  const bundle = read.kind === 'package' ? read.parsed : read.exported;
 
-  // 3) The promotion. Same graph, Asserted, superseding the receipt.
+  // 3) The promotion. Same graph, Asserted, superseding the receipt: what was read, a package or an export.
   const parsedDescriptor: ContextDescriptorData = {
     id: `${graphIri}#parsed` as IRI,
     describes: [graphIri],
     conformsTo: [`${FOXXI_NS}ParsedPackage` as IRI],
     supersedes: [`${graphIri}#descriptor` as IRI],
     facets: [
-      { type: 'Temporal', validFrom: parsed.parsedAt },
+      { type: 'Temporal', validFrom: bundle.parsedAt },
       { type: 'Provenance', wasAttributedTo: args.uploaderDid as IRI },
       { type: 'Semiotic', modalStatus: 'Asserted' },
     ],
   };
-  const parsedB64 = Buffer.from(JSON.stringify(parsed), 'utf8').toString('base64');
+  const parsedB64 = Buffer.from(JSON.stringify(bundle), 'utf8').toString('base64');
   const parsedGraph = `<${iesc(graphIri)}> a <${FOXXI_NS}ParsedPackage> ;
     <http://www.w3.org/ns/prov#wasAttributedTo> <${iesc(args.uploaderDid)}> ;
     <${FOXXI_NS}bundleJson> "${parsedB64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
@@ -810,6 +826,20 @@ export async function uploadScormPackage(args: {
     graphSlug: `${packageId}-parsed-graph`,
   });
 
+  if (read.kind === 'export') {
+    const { exported } = read;
+    const kept: ScormUploadResult = {
+      status: 'parsed',
+      packageId,
+      packageTitle: exported.packageTitle,
+      descriptorUrl: receipt.descriptorUrl,
+      parsedDescriptorUrl: promoted.descriptorUrl,
+      exported,
+      note: `Read in-process as ${exported.tool}'s own export, in its tool's model (src/tool-exports.ts). It is no SCORM package and launches nothing as it is, so it is kept to be folded (foxxi.content_fold_course with its package_sha256), and what that makes is played. The Asserted fxs:ParsedPackage descriptor supersedes the Hypothetical fxs:PackageUpload receipt over the same graph.`,
+    };
+    return args.keepExport ? { ...(await args.keepExport(zipBuffer, exported)), ...kept } : kept;
+  }
+  const { parsed } = read;
   const result: ScormUploadResult = {
     status: 'parsed',
     packageId,
@@ -820,6 +850,38 @@ export async function uploadScormPackage(args: {
     note: 'Parsed in-process — no external runner. The Asserted fxs:ParsedPackage descriptor supersedes the Hypothetical fxs:PackageUpload receipt over the same graph.',
   };
   return args.host ? { ...(await args.host(zipBuffer, parsed)), ...result } : result;
+}
+
+/** A SCORM or cmi5 package's parse: its manifest, standard, authoring tool, structure and SCOs. Throws when it has no manifest to read. */
+function scormParseOf(zipBuffer: Buffer, packageId: string, graphIri: IRI, hintedTitle: string | undefined): ScormParseResult {
+  const pkg = unwrapScormPackage(zipBuffer);
+  const fileList = ['imsmanifest.xml', ...pkg.resources.map(r => r.path)];
+  const fileText: Record<string, string> = {};
+  for (const r of pkg.resources) {
+    if (typeof r.content === 'string') fileText[r.path] = r.content.slice(0, 4000);
+  }
+  const fingerprint = fingerprintAuthoringTool({ manifestXml: pkg.manifestRaw, fileList, fileContents: fileText });
+  const built = manifestToAgenticCourse({
+    manifestXml: pkg.manifestRaw, fileList, fileText,
+    courseIri: graphIri, authoritativeSource: graphIri,
+  });
+  return {
+    packageId,
+    parsedAt: new Date().toISOString(),
+    packageIdentifier: pkg.identifier,
+    // The manifest's own title wins. The uploader's hint is a fallback, never an override —
+    // what the package SAYS it is outranks what the uploader typed.
+    packageTitle: pkg.title !== 'untitled' ? pkg.title : (hintedTitle ?? pkg.title),
+    format: pkg.format,
+    standard: fingerprint.standard,
+    authoringTool: {
+      tool: fingerprint.tool, toolId: fingerprint.toolId, vendor: fingerprint.vendor,
+      confidence: fingerprint.confidence, version: fingerprint.version, summary: fingerprint.summary,
+    },
+    structure: built.structure,
+    resourceCount: pkg.resources.length,
+    launchable: pkg.resources.filter(r => r.isLaunchable).map(r => r.path),
+  };
 }
 
 // ── I. did:web tenant document ─────────────────────────────────

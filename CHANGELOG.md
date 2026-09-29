@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: an authoring tool's own export is kept here to be folded
+
+An `.h5p` file, or an Adapt course exported as source, is no SCORM package. It has no manifest and nothing to launch as it is, so the upload refused it. The fold reads such an export in its tool's own model (`src/tool-exports.ts`), but it could not be hosted, so it could not be folded. Now it can:
+
+- **The upload reads it** (`foxxi.upload_scorm_package`). A zip with no SCORM or cmi5 manifest that Adapt or H5P made is read in its tool's model:
+  - its receipt is promoted as a parsed package's is;
+  - the answer says what it is (`exported`: its tool, and the topics, pages and questions folding it reads);
+  - the bridge keeps it on the tenant pod by its sha-256, described beside it as an export (`exportOf`);
+  - it launches nothing (`playable: false`), and the answer names the fold that takes it.
+
+  A zip that is neither a package nor such an export is refused as before, and the refusal says what was looked for. A SCORM package a tool built is still hosted and played as one.
+- **Listed apart from what plays.** `GET /scorm/packages` lists exports under `exports`, and names the fold. The Learn page lists only what plays.
+- **Its record says how to fold it.** `GET /scorm/packages/<sha-256>` answers `hosted-project-export`, where a package answers with its course.
+- **Its files are served** in the same sandbox, for the pages folded from it.
+- **A kept export is described as one.** Where nothing describes it beside it, it is described from itself, and no course is made of it.
+- **The dashboard** hosts an `.h5p` file as it hosts a zip, and says an export is kept to be folded. The Author page's "Fold a package" lists exports beside packages.
+
+The upload's and the fold's descriptions, the Foxxi README, PERFORMANCE-ARCHITECTURE.md §5 and `docs/skills/foxxi` say so. §5 no longer lists anything as not wired.
+
+Tests: `an-authoring-tools-own-export-is-kept-to-be-folded.test.ts` covers:
+- what is an export and what is not;
+- the upload's answer for an export, a SCORM package a tool built, and a zip that is neither;
+- the description kept beside an export, and one described from the export itself;
+- the listing, the record and the files;
+- the bridge's wiring;
+- the dashboard's listing and panels.
+
 ## 2026-09-29 — Foxxi: a package Adapt or H5P made is read in that tool's own model
 
 Read as web pages, a package Adapt or H5P made is mostly "no text of its own: what it shows, its script draws", because its runtime draws every page from data kept beside it. That data is the course. `src/tool-exports.ts` reads it into the model a hosted package folds from, and the fold route (`foxxi.content_fold_course` with `package_sha256`) now reads every hosted package this way first. A package neither tool made is read as before.

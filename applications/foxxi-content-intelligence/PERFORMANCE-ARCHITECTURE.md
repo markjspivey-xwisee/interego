@@ -500,12 +500,11 @@ Question constructor it declares, QTI items (2.x, 3.0 and 1.2), or a bank
 written as data, in a JSON file or in a script. A package Adapt or H5P
 made is read in that tool's own model (`src/tool-exports.ts`): Adapt's
 pages, articles and components, or H5P's chapters, slides and pieces,
-and their questions as the tool marks them right.
-
-Not yet wired:
-- hosting a tool's export that is no SCORM package (an .h5p file, an
-  Adapt course exported as source): such an export is read, but only a
-  SCORM package is hosted to be folded.
+and their questions as the tool marks them right. A tool's own export
+that is no SCORM package (an .h5p file, an Adapt course exported as
+source) is uploaded and kept the same way, described as an export: it
+launches nothing as it is, so it is listed apart from what plays, and
+folded like any hosted package.
 
 ## 6. Authoring is composition — the same tools for humans and agents
 
