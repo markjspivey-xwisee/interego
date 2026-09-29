@@ -1,8 +1,9 @@
 /**
- * Fold a SCORM package hosted here into your own content: each page a concept fragment, the pages
- * in one folder a topic, and the questions the package declares a check graded here. Signed as
- * you, kept on your pod, and put on your shelf to compose from. An agent folds one the same way
- * (foxxi.content_fold_course with package_sha256).
+ * Fold a SCORM package hosted here, or an authoring tool's own export kept here to be folded, into
+ * your own content: each page a concept fragment, the pages in one folder a topic, and the
+ * questions the package declares a check graded here. Signed as you, kept on your pod, and put on
+ * your shelf to compose from. An agent folds one the same way (foxxi.content_fold_course with
+ * package_sha256).
  */
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -11,7 +12,7 @@ import { linkOf, useAffordance, useHypermedia } from '../hypermedia.js';
 import type { FoxxiSession } from '../auth/session.js';
 import { signerAsks, signerFor } from '../auth/signer.js';
 import { postSigned } from '../auth/signed-request.js';
-import { hostedPackagesFrom, type HostedPackage } from '../learn/hosted-packages.js';
+import { foldablePackagesFrom, type FoldablePackage } from '../learn/hosted-packages.js';
 import { hashOfComposition } from '../learn/composition-ref.js';
 import { foldedPackageFrom, type FoldedPackageView } from '../author/package-fold.js';
 import type { ShelfItem } from '../author/shelf.js';
@@ -28,7 +29,7 @@ export function FoldPackageCard({ session, onFolded }: { session: FoxxiSession; 
   const listHref = linkOf(entry, 'scorm-packages');
   const fold = useAffordance('foxxi.content_fold_course');
   const asks = signerAsks(session);
-  const [packages, setPackages] = useState<HostedPackage[] | null>(null);
+  const [packages, setPackages] = useState<FoldablePackage[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [folds, setFolds] = useState<Record<string, Fold>>({});
 
@@ -37,12 +38,12 @@ export function FoldPackageCard({ session, onFolded }: { session: FoxxiSession; 
     let cancel = false;
     fetch(listHref, { headers: { Accept: 'application/json' } })
       .then(r => { if (!r.ok) throw new Error(`the bridge answered ${r.status}`); return r.json() as Promise<unknown>; })
-      .then(body => { if (!cancel) setPackages(hostedPackagesFrom(body)); })
+      .then(body => { if (!cancel) setPackages(foldablePackagesFrom(body)); })
       .catch((e: unknown) => { if (!cancel) setListError((e as Error).message); });
     return () => { cancel = true; };
   }, [listHref]);
 
-  async function foldIt(p: HostedPackage): Promise<void> {
+  async function foldIt(p: FoldablePackage): Promise<void> {
     if (!fold) return;
     setFolds(f => ({ ...f, [p.packageSha256]: { state: 'folding' } }));
     try {
@@ -59,8 +60,8 @@ export function FoldPackageCard({ session, onFolded }: { session: FoxxiSession; 
   return (
     <Card title="Fold a package into your content">
       <div style={{ color: 'var(--text-dim)', fontSize: 14, marginBottom: 10 }}>
-        A SCORM package hosted here, taken apart: each page becomes a fragment, the pages in one folder a topic, and the
-        questions the package declares a check graded here. What it makes is kept on your pod and put on your shelf, so you
+        A SCORM package hosted here, or an authoring tool's own export kept here to be folded, taken apart: each page
+        becomes a fragment, the pages in one folder a topic, and the questions the package declares a check graded here. What it makes is kept on your pod and put on your shelf, so you
         can offer another way in at any position and see what works{asks ? '; your wallet asks first' : ''}.
       </div>
       {!listHref && <div style={{ color: 'var(--text-dim)', fontSize: 14 }}>This bridge lists no hosted packages.</div>}
@@ -73,7 +74,8 @@ export function FoldPackageCard({ session, onFolded }: { session: FoxxiSession; 
         return (
           <div key={p.packageSha256} style={row}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 16 }}>{p.course.title}</span>
+              <span style={{ fontSize: 16 }}>{p.title}</span>
+              {p.exportOf && <Pill tone="neutral">{p.exportOf} export</Pill>}
               <span style={{ flex: 1 }} />
               {f?.state !== 'folded' && (
                 <Button small primary disabled={!fold || f?.state === 'folding'} onClick={() => { void foldIt(p); }}>

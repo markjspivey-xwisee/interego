@@ -32,7 +32,9 @@
  *
  * ★ KEPT BY WHAT IT IS. A package is kept on the tenant pod under its sha-256, and read back only
  * when its bytes still hash to it. What it is (its title and SCOs) is kept beside it, so the
- * packages here are listed without opening any of them.
+ * packages here are listed without opening any of them. An authoring tool's own export (an .h5p
+ * file, an Adapt course exported as source) is kept the same way, described as one: it launches
+ * nothing, and is kept to be folded.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -204,13 +206,25 @@ export function hostedPackageOf(bridgeBaseUrl: string, courseId: string): string
  * and the SCOs it launches. It describes the package and is not the package: files are served only
  * from bytes that hash to the package's id, and a description names only package paths, so the
  * most one could misstate is a title, or which of the package's own files a launch opens.
+ *
+ * An authoring tool's own export (an .h5p file, an Adapt course exported as source) is kept here
+ * too, to be folded (src/tool-exports.ts): no SCORM package, it launches nothing, and its
+ * description names the tool instead (`exportOf`).
  */
-export interface PackageAbout { title: string; launchable: readonly string[] }
+export interface PackageAbout {
+  title: string;
+  launchable: readonly string[];
+  /** The authoring tool whose own export this is, when it is one; it then launches nothing. */
+  exportOf?: string;
+}
 
-/** A description read back from beside a package, when it is one of that package, with something to launch. */
+/** A description read back from beside a package, when it is one of that package: with something to launch, or an export. */
 export function aboutFrom(sha256: string, body: unknown): PackageAbout | null {
-  const b = body as { packageSha256?: unknown; title?: unknown; launchable?: unknown } | null;
+  const b = body as { packageSha256?: unknown; title?: unknown; launchable?: unknown; exportOf?: unknown } | null;
   if (!b || b.packageSha256 !== sha256 || typeof b.title !== 'string' || !Array.isArray(b.launchable)) return null;
+  // An export launches nothing, whatever a description beside it says.
+  const exportOf = typeof b.exportOf === 'string' ? b.exportOf.trim() : '';
+  if (exportOf) return { title: b.title, launchable: [], exportOf };
   const launchable = b.launchable.filter((p): p is string => typeof p === 'string' && isPackagePath(p));
   return launchable.length ? { title: b.title, launchable } : null;
 }
@@ -250,7 +264,7 @@ export class HostedPackages {
 
   constructor(private readonly opts: {
     podUrl: string; fetch?: typeof fetch; maxHeldBytes?: number;
-    /** What a package's bytes say it is, or null when they are no package with anything to launch. */
+    /** What a package's bytes say it is (a package with something to launch, or a tool's own export), or null when neither. */
     describePackage?: (bytes: Buffer) => PackageAbout | null;
     /** How long the background leaves a package it could not describe before trying it again. */
     retryAfterMs?: number;
@@ -299,9 +313,11 @@ export class HostedPackages {
    * description the pod did not take is described again from the package, once.
    */
   async keepAbout(sha256: string, about: PackageAbout): Promise<void> {
-    const launchable = about.launchable.filter(isPackagePath);
-    if (!PACKAGE_SHA.test(sha256) || !launchable.length) return;
-    const kept = { title: about.title, launchable };
+    const exportOf = about.exportOf?.trim() ?? '';
+    // An export launches nothing; a package names only the SCOs inside it.
+    const launchable = exportOf ? [] : about.launchable.filter(isPackagePath);
+    if (!PACKAGE_SHA.test(sha256) || (!launchable.length && !exportOf)) return;
+    const kept: PackageAbout = exportOf ? { title: about.title, launchable, exportOf } : { title: about.title, launchable };
     this.abouts.set(sha256, kept);
     try {
       await (this.opts.fetch ?? globalThis.fetch)(this.aboutUrlOf(sha256), {
@@ -478,21 +494,33 @@ export function attachHostedPackageRoutes(app: Express, deps: {
     res.send(scormRuntimeSource());
   });
 
+  /** The fold that takes a package kept here, or an export: POST /agent/content/fold-course with its sha-256. */
+  const foldOf = (payload: unknown): Record<string, unknown> => ({
+    toolName: 'foxxi.content_fold_course', method: 'POST', target: `${base}/agent/content/fold-course`, payload,
+    note: 'Signed as its author-to-be: what it makes is kept on the signer\'s own pod, to resolve, play and learn from. An export launches nothing as it is: fold it, and play what that makes.',
+  });
+
   /**
    * The packages hosted here, each with its course, and one way to launch any of them: the signed
    * cmi5 launch, for the signer, naming the package's course. Read by a learner's page and by an
    * agent alike; nothing in it is anyone's record. It is made from what is kept beside each
    * package, and opens none (Codex, on #550): one with nothing beside it yet is counted as
-   * unlisted, and listed once the background has described it.
+   * unlisted, and listed once the background has described it. An authoring tool's own export,
+   * kept to be folded, is listed apart (`exports`), since it launches nothing.
    */
   app.get('/scorm/packages', async (_req, res) => {
     try {
       const shas = await deps.packages.list();
       const abouts = await mapLimited(shas, 8, sha => deps.packages.aboutOrLater(sha));
       const packages: Array<Record<string, unknown>> = [];
+      const exports: Array<Record<string, unknown>> = [];
       let unlisted = 0;
       shas.forEach((sha, i) => {
         const about = abouts[i];
+        if (about?.exportOf) {
+          exports.push({ packageSha256: sha, href: `${base}/scorm/packages/${sha}`, title: about.title, exportOf: about.exportOf });
+          return;
+        }
         const course = about ? hostedPackageCourse(base, sha, about) : undefined;
         if (!course?.structure.length) { unlisted++; return; }
         packages.push({
@@ -501,15 +529,16 @@ export function attachHostedPackageRoutes(app: Express, deps: {
         });
       });
       res.json({
-        kind: 'hosted-scorm-packages', packages,
+        kind: 'hosted-scorm-packages', packages, exports,
         ...(unlisted ? {
           unlisted,
-          unlistedWhy: 'kept here with nothing yet describing them: each is read once, in the background, and listed when it has been. One that is no package with anything to launch stays unlisted.',
+          unlistedWhy: 'kept here with nothing yet describing them: each is read once, in the background, and listed when it has been. One that is neither a package with anything to launch nor a tool\'s own export stays unlisted.',
         } : {}),
         launch: {
           toolName: 'foxxi.cmi5_launch_signed', method: 'POST', target: `${base}/agent/cmi5/launch`, payload: '{ course_id: <a package\'s course.id> }',
           note: 'Signed as the learner: the launch is for the signer, and answers with the launchUrl to open. What the package reports lands in their own record, as experience.',
         },
+        fold: foldOf('{ package_sha256: <a package\'s or an export\'s packageSha256> }'),
       });
     } catch (err) { deps.onError(res, err, 'hosted-packages'); }
   });
@@ -518,7 +547,16 @@ export function attachHostedPackageRoutes(app: Express, deps: {
     try {
       const sha = PACKAGE_RECORD.exec(req.path)?.[1] ?? '';
       const course = await deps.courseFor(sha);
-      if (!course) { res.status(404).json({ error: 'no package with that sha-256 is hosted here' }); return; }
+      if (!course) {
+        // An authoring tool's own export is kept here too, with no course: its record says how to fold it.
+        const about = await deps.packages.about(sha);
+        if (about?.exportOf) {
+          res.json({ kind: 'hosted-project-export', packageSha256: sha, title: about.title, exportOf: about.exportOf, fold: foldOf({ package_sha256: sha }) });
+          return;
+        }
+        res.status(404).json({ error: 'no package with that sha-256 is hosted here' });
+        return;
+      }
       res.json({
         kind: 'hosted-scorm-package', packageSha256: sha, course: { id: course.id, title: course.title },
         aus: course.structure.map(a => ({ id: a.id, title: a.title })),

@@ -34,10 +34,15 @@
  *
  * ★ A BLANK AT A TIME. A sentence with several blanks is asked one blank at a time, the others elided
  * (…), since a question here asks one thing.
+ *
+ * ★ AN EXPORT THAT IS NO PACKAGE. An .h5p file, or an Adapt course exported as source, has no
+ * manifest and nothing to launch as it is (`projectExportOf`). The upload takes it all the same, and
+ * the bridge keeps it beside the packages it hosts, to be folded (scorm-hosting.ts).
  */
+import AdmZip from 'adm-zip';
 import { authorQuestion, QuestionError } from './course-questions.js';
 import {
-  fileUrlIn, htmlPage, markdownUrl, packageLookup, readPackage, webUrl,
+  fileUrlIn, filesOfZip, htmlPage, markdownUrl, packageLookup, readPackage, webUrl,
   type ImportedPackage, type ImportedQuestion, type ImportedTopic, type LeftOut, type PackageFiles,
 } from './package-import.js';
 import { plainText } from './question-banks.js';
@@ -636,4 +641,25 @@ export function h5pPackage(files: PackageFiles, opts: ToolReadOptions): Imported
  */
 export function readAnyPackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage {
   return adaptPackage(files, opts) ?? h5pPackage(files, opts) ?? readPackage(files, opts);
+}
+
+/** An authoring tool's own export: the tool, its title, and what it reads as. */
+export interface ProjectExport { tool: 'Adapt' | 'H5P'; title: string; read: ImportedPackage }
+
+/**
+ * An authoring tool's own export that is no SCORM package: an .h5p file, or an Adapt course exported
+ * as source. It has no manifest and launches nothing as it is, so it is kept to be folded. Null for
+ * a SCORM or cmi5 package, which is hosted and played as one (even one a tool built), and for a zip
+ * no tool here made. `title` is the one to use when the export names none. Throws when the bytes
+ * are no zip.
+ */
+export function projectExportOf(zip: Buffer, title?: string): ProjectExport | null {
+  const files = filesOfZip(new AdmZip(zip));
+  const { entryFor } = packageLookup(files.names);
+  if (entryFor('imsmanifest.xml') || entryFor('cmi5.xml')) return null;
+  const opts: ToolReadOptions = { fileUrl: path => path, ...(title?.trim() ? { title } : {}) };
+  const adapt = adaptPackage(files, opts);
+  if (adapt) return { tool: 'Adapt', title: adapt.title, read: adapt };
+  const h5p = h5pPackage(files, opts);
+  return h5p ? { tool: 'H5P', title: h5p.title, read: h5p } : null;
 }

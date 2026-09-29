@@ -208,7 +208,7 @@ import { bundledItem, ContentStore, fetchLocations, isCompositionItem, LOCATIONS
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
 import { foldEmergentCourse, type FoldedEmergent } from '../src/emergent-fold.js';
 import { filesOfZip, foldPackage, PackageError, type FoldedPackage, type ImportedPackage, type PackageFoldOptions } from '../src/package-import.js';
-import { readAnyPackage } from '../src/tool-exports.js';
+import { projectExportOf, readAnyPackage } from '../src/tool-exports.js';
 import { admissionFor, admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
 import { keepAdmission, readAdmissions } from '../src/admission-store.js';
 import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
@@ -400,6 +400,7 @@ import {
   composeDpia,
   buildManagerTeamView,
   uploadScormPackage,
+  type ProjectExportParse,
   declaredUncompressedBytes,
   uncompressedBudget,
   buildTenantDidDocument,
@@ -5105,7 +5106,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // could write a SCORM package into the acme tenant pod (round-26).
     if (!isAdminEquivalent(ctx.role)) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — uploading a SCORM package to the tenant requires an admin or delegated admin (caller role: ${ctx.role})` };
     // A parsed package is kept, by its sha-256, and played: a cmi5 course whose AUs are its SCOs,
-    // served here each in a sandbox of its own (src/scorm-hosting.ts). The upload's answer is
+    // served here each in a sandbox of its own (src/scorm-hosting.ts). An authoring tool's own
+    // export is kept the same way, to be folded (src/tool-exports.ts). The upload's answer is
     // returned as it is, a tail call, so the census of handler answers reads its declines as this
     // handler's (tests/handler-delegation-reach.ts).
     return uploadScormPackage({
@@ -5114,6 +5116,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       hintedTitle: args.hinted_title as string | undefined,
       uploaderDid: ctx.webId,
       host: (bytes, parsed) => hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable),
+      keepExport: (bytes, exported) => hostProjectExport(bytes, exported),
     });
   },
 
@@ -10725,10 +10728,14 @@ const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackag
 
 /**
  * What a kept package's bytes say it is, parsed as an upload is and under the same inflation
- * budget: its title and launchable SCOs, or null when it is no package with any.
+ * budget: its title and launchable SCOs, or, for an authoring tool's own export, its title and
+ * tool; null when it is neither.
  */
 function describeHostedPackage(bytes: Buffer): PackageAbout | null {
   if (declaredUncompressedBytes(bytes) > uncompressedBudget(bytes.length)) return null;
+  // An authoring tool's own export launches nothing: it is kept to be folded (src/tool-exports.ts).
+  const exported = projectExportOf(bytes);
+  if (exported) return { title: exported.title, launchable: [], exportOf: exported.tool };
   const pkg = unwrapScormPackage(bytes);
   const launchable = pkg.resources.filter(r => r.isLaunchable).map(r => r.path).filter(isPackagePath);
   return launchable.length ? { title: pkg.title, launchable } : null;
@@ -10752,14 +10759,34 @@ async function hostUploadedPackage(bytes: Buffer, title: string, launchable: rea
 }
 
 /**
+ * Keep an authoring tool's own export, and what it is beside it. No SCORM package, it launches
+ * nothing, so no course is made of it: it is kept to be folded (POST /agent/content/fold-course
+ * with its package_sha256), and its files are served in the same sandbox for the pages folded from
+ * it. Say how to fold it, or why it is not kept.
+ */
+async function hostProjectExport(bytes: Buffer, exported: ProjectExportParse): Promise<Record<string, unknown>> {
+  const about: PackageAbout = { title: exported.packageTitle, launchable: [], exportOf: exported.tool };
+  let kept: { sha256: string; url: string };
+  try { kept = await hostedPackages.keep(bytes, about); }
+  catch (e) { return { hosted: false, hostedWhy: `the export could not be kept: ${(e as Error).message}` }; }
+  return {
+    hosted: true, playable: false,
+    playableWhy: `an ${exported.tool} export launches nothing as it is: fold it into composable content, and play what that makes`,
+    packageSha256: kept.sha256, packageUrl: kept.url,
+    fold: { method: 'POST', target: `${bridgeBaseUrl}/agent/content/fold-course`, affordance: actionUrl('urn:iep:action:foxxi:content-fold-course-signed' as IRI), payload: { package_sha256: kept.sha256 } },
+  };
+}
+
+/**
  * A hosted package's course, registered again after a restart from what is kept beside the
- * package, or from the package itself when nothing is (it is then described, once).
+ * package, or from the package itself when nothing is (it is then described, once). An export
+ * has no course.
  */
 async function restoreHostedPackage(courseId: string): Promise<void> {
   const sha = hostedPackageOf(bridgeBaseUrl, courseId);
   if (!sha) return;
   const about = await hostedPackages.aboutNow(sha);
-  if (about) registerCmi5Course(DEFAULT_TENANT, hostedPackageCourse(bridgeBaseUrl, sha, about));
+  if (about?.launchable.length) registerCmi5Course(DEFAULT_TENANT, hostedPackageCourse(bridgeBaseUrl, sha, about));
 }
 
 attachHostedPackageRoutes(app, {
