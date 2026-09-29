@@ -79,7 +79,7 @@ export interface ImportedPage { path: string; title: string; body: string }
 export type ImportedQuestion =
   | { question: string; type: 'choice'; options: string[]; answer: string | string[]; multiple?: true }
   | { question: string; type: 'true-false'; answer: boolean }
-  | { question: string; type: 'numeric'; answer: number }
+  | { question: string; type: 'numeric'; answer: number; min?: number; max?: number }
   | { question: string; type: 'fill-in'; answer: string; accept?: string[] }
   | { question: string; type: 'sequencing'; items: string[] }
   | { question: string; type: 'matching'; pairs: Array<[string, string]>; distractors?: string[] };
@@ -235,8 +235,6 @@ function htmlTokens(html: string): Token[] {
 
 /** Elements whose content is not text a reader reads: skipped whole. */
 const SKIP = new Set(['head', 'svg', 'math', 'object', 'applet', 'canvas', 'audio', 'video', 'select', 'button', 'map', 'datalist']);
-/** Elements that never have content, so never start a skip. */
-const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 const BLOCK = new Set([
   'address', 'article', 'aside', 'blockquote', 'body', 'caption', 'center', 'dd', 'details', 'dialog', 'div', 'dl', 'dt',
   'fieldset', 'figcaption', 'figure', 'footer', 'form', 'frame', 'frameset', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header',
@@ -246,12 +244,12 @@ const BLOCK = new Set([
 const INLINE_MARK: Record<string, 'strong' | 'em' | 'code' | undefined> = { strong: 'strong', b: 'strong', em: 'em', i: 'em', cite: 'em', code: 'code', tt: 'code', kbd: 'code', samp: 'code' };
 
 /** A URL as a Markdown link or image target may hold it: no spaces or parentheses. */
-function markdownUrl(url: string): string {
+export function markdownUrl(url: string): string {
   return url.replace(/[\s()]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
 }
 
 /** An absolute http(s) URL, as a Markdown target, or null. */
-function webUrl(raw: string): string | null {
+export function webUrl(raw: string): string | null {
   try {
     const url = new URL(raw.trim());
     return url.protocol === 'https:' || url.protocol === 'http:' ? markdownUrl(url.href) : null;
@@ -828,31 +826,28 @@ function resourcesOf(manifest: string): Map<string, Resource> {
   return out;
 }
 
-/** Where a file of the package sits, as a URL its own references resolve against. */
-const fileUrlIn = (path: string): string => `${PACKAGE_ROOT}${path.split('/').map(encodeURIComponent).join('/')}`;
-
-const PAGE = /\.(?:x?html?)$/i;
-const SCRIPT = /\.m?js$/i;
+/** Where a file (or, ending in /, a folder) of the package sits, as a URL its own references resolve against. */
+export const fileUrlIn = (path: string): string => `${PACKAGE_ROOT}${path.split('/').map(encodeURIComponent).join('/')}`;
 
 /**
- * A package read: its title, its topics in the package's order (each its pages and the questions
- * it declares), and what was not read, with why. `fileUrl` says where this bridge serves a file of
- * the package, for an image or a download a page shows. Throws a ContentError when the package
- * has no manifest.
+ * How a package's names are looked up: `entryFor` names the file a path is, exactly or, when one
+ * file matches that way, case-folded (packages made on case-insensitive disks often link with other
+ * casing); `inPackage` names the file a reference is, resolved against `base` (a file's URL,
+ * `fileUrlIn`, or a base folder's). A reference, or a base, that leads off the package names
+ * nothing in it.
  */
-export function readPackage(files: PackageFiles, opts: { fileUrl: (path: string) => string; title?: string }): ImportedPackage {
-  const exact = new Set(files.names);
+export function packageLookup(names: readonly string[]): {
+  entryFor: (path: string) => string | null;
+  inPackage: (ref: string, base: string) => string | null;
+} {
+  const exact = new Set(names);
   const folded = new Map<string, string[]>();
-  for (const n of files.names) folded.set(n.toLowerCase(), [...(folded.get(n.toLowerCase()) ?? []), n]);
+  for (const n of names) folded.set(n.toLowerCase(), [...(folded.get(n.toLowerCase()) ?? []), n]);
   const entryFor = (path: string): string | null => {
     if (exact.has(path)) return path;
     const same = folded.get(path.toLowerCase());
     return same?.length === 1 ? same[0]! : null;
   };
-  /**
-   * The file a reference names, resolved against `base` (a file's URL, or a base folder's), or
-   * null. A reference, or a base, that leads off the package names nothing in it.
-   */
   const inPackage = (ref: string, base: string): string | null => {
     const clean = ref.trim().split('#')[0]!.split('?')[0]!;
     if (!clean || /^[a-z][a-z0-9+.-]*:/i.test(clean) || clean.startsWith('//')) return null;
@@ -864,6 +859,20 @@ export function readPackage(files: PackageFiles, opts: { fileUrl: (path: string)
       return entryFor(path);
     } catch { return null; }
   };
+  return { entryFor, inPackage };
+}
+
+const PAGE = /\.(?:x?html?)$/i;
+const SCRIPT = /\.m?js$/i;
+
+/**
+ * A package read: its title, its topics in the package's order (each its pages and the questions
+ * it declares), and what was not read, with why. `fileUrl` says where this bridge serves a file of
+ * the package, for an image or a download a page shows. Throws a ContentError when the package
+ * has no manifest.
+ */
+export function readPackage(files: PackageFiles, opts: { fileUrl: (path: string) => string; title?: string }): ImportedPackage {
+  const { entryFor, inPackage } = packageLookup(files.names);
 
   const manifestName = entryFor('imsmanifest.xml');
   const manifestBytes = manifestName ? files.read(manifestName) : null;

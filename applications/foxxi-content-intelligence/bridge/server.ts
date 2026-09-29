@@ -207,7 +207,8 @@ import { admissionFrom, anotherAlternative, compositionFrom, resolveComposition,
 import { bundledItem, ContentStore, fetchLocations, isCompositionItem, LOCATIONS_PER_ITEM, mergeLocations, type ContentItem, type ContentLocation } from '../src/content-store.js';
 import { foldCourse, type FoldedCourse, type FoldOptions } from '../src/course-fold.js';
 import { foldEmergentCourse, type FoldedEmergent } from '../src/emergent-fold.js';
-import { filesOfZip, foldPackage, PackageError, readPackage, type FoldedPackage, type ImportedPackage, type PackageFoldOptions } from '../src/package-import.js';
+import { filesOfZip, foldPackage, PackageError, type FoldedPackage, type ImportedPackage, type PackageFoldOptions } from '../src/package-import.js';
+import { readAnyPackage } from '../src/tool-exports.js';
 import { admissionFor, admissionRecordFrom, recordFor, standingAdmissions, type AdmissionRecord } from '../src/admission-records.js';
 import { keepAdmission, readAdmissions } from '../src/admission-store.js';
 import { attemptStatements, closingStatements, cmi5AttemptFrom, compositionCourseStructure, definedStatement, type Cmi5Attempt } from '../src/composition-cmi5.js';
@@ -11194,7 +11195,7 @@ app.post('/agent/content/fold-course', async (req, res) => {
       let imported: ImportedPackage;
       let foldedPackage: FoldedPackage;
       try {
-        imported = readPackage(filesOfZip(zip), { fileUrl: path => `${packageIri}/files/${path.split('/').map(encodeURIComponent).join('/')}` });
+        imported = readAnyPackage(filesOfZip(zip), { fileUrl: path => `${packageIri}/files/${path.split('/').map(encodeURIComponent).join('/')}` });
         foldedPackage = foldPackage(imported, {
           competency,
           ...(topicCompetencies ? { topicCompetencies: topicCompetencies as Record<string, string> } : {}),

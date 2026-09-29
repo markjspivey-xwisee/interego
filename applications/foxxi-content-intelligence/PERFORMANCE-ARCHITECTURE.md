@@ -497,10 +497,15 @@ its pages become concept fragments, a folder of pages a topic composition,
 and the questions it keeps a check graded here. Questions are read in any
 form the package declares them in (`src/question-banks.ts`): calls to a
 Question constructor it declares, QTI items (2.x, 3.0 and 1.2), or a bank
-written as data, in a JSON file or in a script.
+written as data, in a JSON file or in a script. A package Adapt or H5P
+made is read in that tool's own model (`src/tool-exports.ts`): Adapt's
+pages, articles and components, or H5P's chapters, slides and pieces,
+and their questions as the tool marks them right.
 
 Not yet wired:
-- importing an authoring tool's own project export.
+- hosting a tool's export that is no SCORM package (an .h5p file, an
+  Adapt course exported as source): such an export is read, but only a
+  SCORM package is hosted to be folded.
 
 ## 6. Authoring is composition — the same tools for humans and agents
 
