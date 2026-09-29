@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-28 — The multi-agent demos the README advertises record what their credentials derive from
+
+The README's TLA and team-audit demos (`tla-demo.ts` and `team-demo.ts` in `examples/multi-agent`) passed `sources` in their provenance facets. The builder no longer reads that field (it is `wasDerivedFrom`), and does not reject it either. So the credential and audit report the demos publish silently lacked the sessions and findings they were derived from, in a demo that presents a full trust-chain audit. They now pass `wasDerivedFrom`, and the derivation appears in the published Turtle.
+
+**Why it went unnoticed:** the README runs them with `tsx`, which never typechecks, and nothing else compiled them.
+- `bridge-typecheck.yml` now compiles `examples/multi-agent/tsconfig.advertised.json`. It lists the scripts the docs tell people to run, plus the example's `npm start` (`run.ts`).
+- The folder's other scripts are not advertised and are not listed.
+
+Tests: `integrations/tests/advertised-demos-typecheck.test.ts` keeps that list equal to every `tsx examples/multi-agent/…` instruction in the tracked docs plus `npm start`, and pins the workflow step.
+
 ## 2026-09-28 — The examples and demos that install on their own link the packages they import
 
 Following the personal-bridge README (`cd examples/personal-bridge && npm install && npm run build`) produced a bridge that built and then died at startup.
