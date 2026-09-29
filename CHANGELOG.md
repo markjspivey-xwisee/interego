@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a QTI item's letter case is read from the answers it scores (Codex, on #575)
+
+#575 read a QTI text entry's letter case from the item as a whole, and Codex found two ways that went wrong.
+- **QTI 2.x/3.0 counted entries that score nothing.** A mapping entry that scores nothing is no answer. When the accepted entries said `caseSensitive="false"` and a zero-scoring one did not, the whole question was made case-sensitive, and case variants QTI awards were marked wrong. Case is now read from the entries that score, and from a correct response no entry scores, which QTI matches exactly.
+- **QTI 1.2 let one `case="Yes"` condition decide for every answer.** A strict `Mars` beside a default `Venus` rejected `VENUS`.
+
+A question here grades all its answers one way. So an item whose accepted answers differ in whether letter case counts is now left out, and its why is listed, rather than graded wrongly for some of them.
+
+Tests: `a-package-question-bank-is-read-in-the-form-it-declares.test.ts` covers:
+- an entry that scores nothing;
+- mixed entries;
+- a correct response no entry scores;
+- mixed and agreeing 1.2 conditions.
+
 ## 2026-09-29 — Foxxi: imported questions are graded as their source grades them (Codex, on #572 and #573)
 
 Codex reviewed the question-bank reader (#572) and the authoring-tool reader (#573) after they merged. All six findings held, and each is fixed.
