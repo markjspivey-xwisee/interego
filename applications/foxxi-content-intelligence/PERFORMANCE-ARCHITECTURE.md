@@ -498,14 +498,16 @@ and the questions it keeps a check graded here. Questions are read in any
 form the package declares them in (`src/question-banks.ts`): calls to a
 Question constructor it declares, QTI items (2.x, 3.0 and 1.2), or a bank
 written as data, in a JSON file or in a script. A package Adapt, H5P,
-Rise 360, Storyline or iSpring made is read in that tool's own model
-(`src/tool-exports.ts`, `src/rise-course.ts`, `src/storyline-course.ts`,
-`src/ispring-course.ts`): Adapt's pages, articles and components, H5P's
+Rise 360, Storyline, iSpring or Captivate made is read in that tool's own
+model (`src/tool-exports.ts`, `src/rise-course.ts`,
+`src/storyline-course.ts`, `src/ispring-course.ts`,
+`src/captivate-course.ts`): Adapt's pages, articles and components, H5P's
 chapters, slides and pieces, Rise 360's lessons and blocks, Storyline's
-scenes and slides, or iSpring's slides and quizzes, and their questions as
-the tool grades them. A tool's own export that is no SCORM package (an .h5p
-file, an Adapt course exported as source, a Rise 360, Storyline or iSpring
-course published for xAPI or the web) is uploaded and kept the same way, described as an export: it
+scenes and slides, iSpring's slides and quizzes, or Captivate's slides, and
+their questions as the tool grades them. A tool's own export that is no
+SCORM package (an .h5p file, an Adapt course exported as source, a Rise 360,
+Storyline, iSpring or Captivate course published for xAPI or the web) is
+uploaded and kept the same way, described as an export: it
 launches nothing as it is, so it is listed apart from what plays, and
 folded like any hosted package.
 

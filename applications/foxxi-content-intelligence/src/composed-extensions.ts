@@ -786,7 +786,7 @@ export async function uploadScormPackage(args: {
     // Hypothetical on the pod, which is the honest record of exactly that. A zip with no manifest
     // may be an export no tool here models, so what was looked for is said.
     const why = (err as Error).message;
-    const lookedFor = /missing imsmanifest\.xml or cmi5\.xml/.test(why) ? '; nor is it an authoring tool\'s own export read here (an Adapt course, H5P content, a Rise 360, Storyline or iSpring course)' : '';
+    const lookedFor = /missing imsmanifest\.xml or cmi5\.xml/.test(why) ? '; nor is it an authoring tool\'s own export read here (an Adapt course, H5P content, a Rise 360, Storyline, iSpring or Captivate course)' : '';
     return {
       ...refuse(
         422,

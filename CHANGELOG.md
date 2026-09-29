@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a course Captivate published is read in Captivate's own model
+
+A package Captivate published is a player page its runtime draws each slide into. Read as web pages, it had nothing to fold. The course is one JavaScript object literal the player assigns (`cp.D = cp.model.data = {…}`): `assets/js/CPM.js` beside the Classic runtime (Captivate 8 to 11), `assets/js/project.js` for the new player (12.4 and later). `src/captivate-course.ts` reads it as a literal and never runs it: a function, a call or `new` in it ends the read. The course is titled by its project.txt, else the name the player gives the project, its launch page, or its file.
+
+It reads Classic projects, fixed and responsive, and the new player's, published for SCORM, xAPI or the web. The model was established from real public exports: 813 project.txt files (753 Classic, 8.0.1 to 11.8.3; 59 new, 12.4 to 13.1.1), and the data files of 36 of them.
+
+- **Slides are pages**, a topic of them titled by the course (in parts of fifty when it is too long for one composition), each titled by its label.
+  - A slide's text is each caption and shape that shows any, in the order the slide shows it. In Classic that is by when each appears, then top to bottom and left to right; in the new player, as its containers nest.
+  - Text is read as Captivate keeps it. A fixed Classic project draws its text as pictures and keeps only the text a screen reader reads; a responsive one keeps HTML; the new player keeps rich text, with its headings and lists.
+  - A state's copy of an item, a button, a shape used as one, and a quiz's scaffolding are not the slide's text. A variable's value is a running course's, so it reads as "…".
+  - Its pictures are the package's own files, and its narration's captions are read.
+- **Right as Captivate grades it.** A question slide is a question:
+  - a choice, right as its answers are marked, one or several;
+  - a blank or a short answer, accepting each answer it lists, compared whole, its letter case where it says so; a blank that is a list is a choice;
+  - a match pairing what it pairs, and an order as the question keeps it.
+  - Answers it shuffles are turned. Its text is read from the slide, not from `qt`, a copy Captivate does not keep in step with it.
+- **Left out, with why:**
+  - objects scored as questions (a click on one, a drag onto one), whose slide is read as a page;
+  - hotspots, surveys and Likert scales, and a short answer that lists none (any reply is right);
+  - a choice that is a picture, and a quiz's results slide;
+  - video, web objects, and narration without captions;
+  - the pictures Classic (9.0 and later) packs into its data files (`dr/img*.json`), which are not served.
+
+A Captivate course published for xAPI or the web has no SCORM manifest. It is uploaded, kept and folded as an authoring tool's own export ("Captivate"). The fold's and the upload's descriptions, the upload's refusal, the Foxxi README (which also says iSpring's and Captivate's typed answers keep letter case where they say so), PERFORMANCE-ARCHITECTURE.md §5, the host panel and `docs/skills/foxxi` say so.
+
+Tests: `a-course-captivate-published-is-read-in-captivates-own-model.test.ts` covers:
+- a fixed Classic project: its pages in the order each slide shows its items, its pictures and captions, and what is left out;
+- each kind of Classic question, folded and graded;
+- a responsive Classic project's HTML;
+- the new player: its rich text, its nested containers, its questions;
+- the SCORM, xAPI and web layouts, the title's fallbacks, a long course;
+- the literal read without running anything, and what is not Captivate's.
+
 ## 2026-09-29 — Foxxi: a course iSpring published is read in iSpring's own model
 
 A package iSpring published is a player page its runtime draws each slide into. Read as web pages, it had nothing to fold. The page carries the course as a base64 string, which `src/ispring-course.ts` finds and decodes without running anything:

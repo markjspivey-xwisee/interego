@@ -111,7 +111,7 @@ describe('the upload reads an export and hands it to be kept, not played', () =>
     expect(called).toBe(false);
     expect(r).toMatchObject({ status: 'failed', kind: 'refusal', 'iep:refusalStatus': 422 });
     expect(r.error).toMatch(/missing imsmanifest\.xml or cmi5\.xml/);
-    expect(r.error).toMatch(/nor is it an authoring tool's own export read here \(an Adapt course, H5P content, a Rise 360, Storyline or iSpring course\)/);
+    expect(r.error).toMatch(/nor is it an authoring tool's own export read here \(an Adapt course, H5P content, a Rise 360, Storyline, iSpring or Captivate course\)/);
   });
 
   it('hosts a SCORM package a tool built as a package, to be played', async () => {
