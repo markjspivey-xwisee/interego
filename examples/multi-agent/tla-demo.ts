@@ -368,7 +368,7 @@ async function agentCompetency(lrsDescriptor: any) {
       },
       wasAttributedTo: 'did:web:competency.training.airforce.mil' as IRI,
       generatedAtTime: '2026-03-17T09:05:00Z',
-      sources: ['urn:iep:lrs:xapi-session-2026-03-15' as IRI],
+      wasDerivedFrom: ['urn:iep:lrs:xapi-session-2026-03-15' as IRI],
     })
 .agent('did:web:competency.training.airforce.mil' as IRI, 'Assessor')
 .semiotic({
@@ -490,7 +490,7 @@ async function agentCredential(lrsDesc: any, compDesc: any) {
       },
       wasAttributedTo: 'did:web:credential.training.airforce.mil' as IRI,
       generatedAtTime: '2026-03-17T10:00:05Z',
-      sources: [
+      wasDerivedFrom: [
         'urn:iep:lrs:xapi-session-2026-03-15' as IRI,
         'urn:iep:competency:chen-sarah-assessment-2026-03' as IRI,
       ],

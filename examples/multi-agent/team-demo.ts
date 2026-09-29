@@ -505,7 +505,7 @@ async function agentLead(
       },
       wasAttributedTo: 'did:web:lead.security.internal' as IRI,
       generatedAtTime: '2026-03-16T14:30:00Z',
-      sources: [
+      wasDerivedFrom: [
         'urn:iep:scanner:scan-2026-03-15' as IRI,
         'urn:iep:analyst:triage-2026-03-16' as IRI,
       ],

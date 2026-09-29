@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [],
+  "files": ["coherence-demo.ts", "run.ts", "team-demo.ts", "tla-demo.ts"]
+}

@@ -194,6 +194,14 @@ jobs:
       - name: Typecheck examples/personal-bridge (no workflow covered examples/ at all)
         run: npx tsc --noEmit -p examples/personal-bridge/tsconfig.json
 
+      # The multi-agent scripts the README tells people to run with tsx, plus the example's
+      # `npm start`. tsx never typechecks, and nothing else compiled them, so two of them kept
+      # passing a provenance field the builder had stopped reading, and silently lost it
+      # (2026-09-28). The folder's other scripts are not advertised and are not listed.
+      # integrations/tests/advertised-demos-typecheck.test.ts keeps the list complete.
+      - name: Typecheck the multi-agent demos the README advertises
+        run: npx tsc --noEmit -p examples/multi-agent/tsconfig.advertised.json
+
       # ── The two programs NO tsconfig in the repo reached ─────────────────────
       #
       # `tests/**` and `applications/shared-workspace/**`. Every other application's src is
