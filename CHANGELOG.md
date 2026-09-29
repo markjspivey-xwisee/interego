@@ -12,6 +12,37 @@ Codex could not review #578 (its usage limit), so a separate review read the Ris
 
 Tests: three new cases in `a-course-rise-published-is-read-in-rises-own-model.test.ts` (each block's own fields, block by block; what is listed; a long lesson split). Mutation checks: 12, all caught (a thirteenth showed a condition that could never matter, now gone).
 
+## 2026-09-29 — Foxxi: a course Storyline published is read in Storyline's own model
+
+A package Storyline published is a player page its runtime draws each slide into. Read as web pages, it had nothing to fold. The course is JSON in the data files its player loads (`html5/data/js/`), each a `globalProvideData('<type>', '…')` call. `src/storyline-course.ts` decodes them without running them:
+- `data.js`: the scenes and slides, the question banks, each question's definition, and the pictures;
+- one file per slide: its layers, their objects, and the text each object shows;
+- `frame.js`: the player's menu (the only place a scene has a title) and the slides' notes.
+
+It reads Storyline 360 and 3, published for SCORM, xAPI or the web, at the package's root or in a folder. The model was established from about 900 real courses' data files and some 1,700 of their slide files.
+
+- **Scenes are topics**, titled as the menu titles them. A scene too long for one composition becomes topics of fifty slides.
+- **Content slides are pages:** their layers' text in the order a screen reader reads it, headings and lists as their style marks them, their pictures (the package's own files) and their notes.
+  - A group that changes with its state is read as its first state, not as a copy of its text for each.
+  - A variable's value is a running course's, so it reads as "…". A literal percent sign (`^%^`) reads as one.
+  - A quiz's results slide shows only such values, so it is left out.
+- **Right as Storyline grades it.** A question's right answer is what its definition marks correct: the choices it names, the pairs it matches, the order it asks for, the values it compares.
+  - A question built from a form keeps the choices the form names. A free-form question's choices are objects on the slide, read as the slide shows them (its labels are only object names).
+  - A fill-in accepts every answer it lists, its letter case as each says.
+  - Items sorted into groups become a match of each item to its group. A drop-down match asks of each statement which choice.
+  - A bank a scene draws from is asked whole, and choices the slide shuffles are turned.
+  - A question's text is its own words where the slide shows them, with any longer passage beside them. Otherwise it is the slide's text, without counters or variables.
+- **Left out, with why:** video, web objects, narration, shapes drawn as pictures, surveys, hotspots, a range of values, a question or choice that is a picture, and choices or places that read the same.
+
+A Storyline course published for xAPI or the web has no SCORM manifest. It is uploaded, kept and folded as an authoring tool's own export ("Storyline"). A Rise course holding a Storyline block is still read as Rise. A numeric question may now accept more than one value (`accept`). The fold's and the upload's descriptions, the upload's refusal, the Foxxi README, PERFORMANCE-ARCHITECTURE.md §5, the host panel and `docs/skills/foxxi` say so.
+
+Tests: `a-course-storyline-published-is-read-in-storylines-own-model.test.ts` covers:
+- pages in reading order, pictures, notes, lists, state groups, layers, variables;
+- each kind of question, a bank, and what is left out;
+- the SCORM, xAPI and web layouts, and the title's fallbacks;
+- a long scene, the decoder, and a Rise course holding a Storyline block;
+- each read folded and graded.
+
 ## 2026-09-29 — Foxxi: a course Rise 360 published is read in Rise's own model
 
 A package Rise 360 published is one page its runtime draws everything into. Read as web pages, it had nothing to fold. That page carries the whole course as base64 JSON. `src/rise-course.ts` reads it in the three ways Rise has written it over its versions:
