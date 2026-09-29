@@ -29,9 +29,8 @@
  */
 import { decodeEntities, type ImportedPackage, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
-import { choice, esc, imgHtml, isRecord, numberOf, Reading, records, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
+import { choice, esc, imgHtml, isRecord, jsStringAt, numberOf, Reading, records, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
 
-const ESCAPES: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', 0: '\0' };
 /** A scene longer than a composition holds becomes topics of this many slides each. */
 const SLIDES_PER_TOPIC = 50;
 /** A variable a running course fills in: `%_player.Name%`. A percent sign written as text is `^%^`. */
@@ -50,20 +49,9 @@ export function provided(text: string | null, type: string): Json | null {
   if (!text) return null;
   const m = /globalProvideData\(\s*(['"])(\w+)\1\s*,\s*'/.exec(text);
   if (!m || m[2] !== type) return null;
-  let out = '';
-  let i = m.index + m[0].length;
-  for (;;) {
-    const quote = text.indexOf("'", i);
-    const slash = text.indexOf('\\', i);
-    if (quote < 0) return null;
-    if (slash < 0 || quote < slash) { out += text.slice(i, quote); break; }
-    out += text.slice(i, slash);
-    const n = text[slash + 1] ?? '';
-    if (n === 'u') { out += String.fromCharCode(parseInt(text.slice(slash + 2, slash + 6), 16)); i = slash + 6; }
-    else if (n === 'x') { out += String.fromCharCode(parseInt(text.slice(slash + 2, slash + 4), 16)); i = slash + 4; }
-    else { out += ESCAPES[n] ?? n; i = slash + 2; }
-  }
-  try { const v = JSON.parse(out); return isRecord(v) ? v : null; } catch { return null; }
+  const json = jsStringAt(text, m.index + m[0].length - 1);
+  if (!json) return null;
+  try { const v: unknown = JSON.parse(json.value); return isRecord(v) ? v : null; } catch { return null; }
 }
 
 /** Text as a slide shows it, and whether a variable fills part of it: its value is a running course's. */
