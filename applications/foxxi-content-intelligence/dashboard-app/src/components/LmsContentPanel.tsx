@@ -175,9 +175,9 @@ function HostPackage({ origin, bearer }: { origin: string; bearer: string }) {
         Host a SCORM 1.2 / 2004 .zip for learners to play. The bridge keeps it on the tenant pod by its
         sha-256, serves each of its documents in a sandbox of its own, and makes it a cmi5 course of its
         SCOs; learners launch it from their Learn page, and what it reports lands in their record. An
-        authoring tool's own export (an .h5p file, an Adapt course exported as source, or a Rise 360 course
-        published for xAPI or the web) is kept the same way, to be folded on the Author page, since it
-        launches nothing as it is.
+        authoring tool's own export (an .h5p file, an Adapt course exported as source, or a Rise 360 or
+        Storyline course published for xAPI or the web) is kept the same way, to be folded on the Author
+        page, since it launches nothing as it is.
       </div>
       <div>
         <span style={label}>Package (.zip), or a tool's own export (.h5p, .zip)</span>
