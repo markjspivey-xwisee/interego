@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a text input keeps how it compares, and a page that shows a picture is kept (Codex, on #581 and #583)
+
+- **A text input given with its answer keeps how it compares** (`src/course-questions.ts`). `authorQuestion`'s explicit-input form rebuilt a text input from its letter case alone. So `input: { type: 'text', compare: 'exact' }` stored no input, and "C" was still right for "C++". Now the input's `compare`, or the question's own beside it, is kept. The two disagreeing are refused, and so is a `compare` beside an input that is not text.
+- **A page that shows a picture is kept.** The readers asked `plainText` whether a page had anything to show, and `plainText` reads no media as text: it answers null. `shows()` (`src/tool-reading.ts`) answers instead: the page's text, or a picture or media. This fixes three cases:
+  - an iSpring interaction holding a picture was left out whole, and so was an info slide that is only a picture;
+  - a slide's notes holding a picture were dropped with their text, in iSpring and Storyline alike;
+  - an iSpring slide with nothing but such notes was left out.
+
+Tests: an explicit text input's `compare` (from the input, beside it, the two disagreeing); iSpring's interaction, notes and info slide with a picture; Storyline's notes with one. Mutation checks: 9, all caught.
+
 ## 2026-09-29 — Foxxi: every course a package holds is read, and a Storyline button as the slide shows it (a review of #579)
 
 Codex could not review #579 (its usage limit), so a separate review ran the Storyline reader over 610 real courses (404 questions kept, 769 pages). It found no grading errors. It found a decoder whose work grew with the square of a file's size, fixed in #583, and six more places where a course lost what it shows. Each is fixed here.
