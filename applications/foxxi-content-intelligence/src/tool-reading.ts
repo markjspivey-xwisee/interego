@@ -31,10 +31,13 @@ export interface ToolReadOptions { fileUrl: (path: string) => string; title?: st
 /** One package being read: how its files are found and served, and what was left out. */
 export class Reading {
   readonly unread: LeftOut[] = [];
-  private readonly lookup: ReturnType<typeof packageLookup>;
+  private found: ReturnType<typeof packageLookup> | null = null;
 
-  constructor(private readonly files: PackageFiles, private readonly fileUrl: (path: string) => string) {
-    this.lookup = packageLookup(files.names);
+  constructor(private readonly files: PackageFiles, private readonly fileUrl: (path: string) => string) {}
+
+  /** How a reference finds its file, made on first use: a reader that finds no course there needs none. */
+  private get lookup(): ReturnType<typeof packageLookup> {
+    return (this.found ??= packageLookup(this.files.names));
   }
 
   text(name: string): string | null {

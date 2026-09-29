@@ -75,8 +75,8 @@ function delocalized(data: Json): Json {
 }
 
 /** The course a Rise page carries, and the folder the page is in; null when no page carries one. */
-function riseData(r: Reading, files: PackageFiles): RiseData | null {
-  const pages = files.names.filter(n => /(^|\/)index\.html$/i.test(n)).sort((a, b) => a.length - b.length);
+function riseData(r: Reading, files: PackageFiles, at?: string): RiseData | null {
+  const pages = at ? [at] : files.names.filter(n => /(^|\/)index\.html$/i.test(n)).sort((a, b) => a.length - b.length);
   for (const page of pages) {
     const html = r.text(page) ?? '';
     const folder = page.slice(0, page.length - 'index.html'.length);
@@ -280,11 +280,12 @@ function riseQuestion(r: Reading, q: Json, topic: ImportedTopic, where: string, 
 /**
  * A package Rise 360 published, read in Rise's own model: each lesson a topic of its pages (split
  * where the course asks the learner to continue) and its knowledge checks, each quiz lesson a
- * topic of its questions. Null when the package carries no Rise course.
+ * topic of its questions: the course whose page is `at`, else the package's shallowest. Null when
+ * there is no Rise course there.
  */
-export function risePackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage | null {
+export function risePackage(files: PackageFiles, opts: ToolReadOptions, at?: string): ImportedPackage | null {
   const r = new Reading(files, opts.fileUrl);
-  const found = riseData(r, files);
+  const found = riseData(r, files, at);
   if (!found) return null;
   const { data, folder, source } = found;
   const course = data.course as Json;
