@@ -495,11 +495,18 @@ describe('what a review of #579 found', () => {
         clicking(button('bOn00000001', 4, 'Continue to the next part'), { kind: 'if_action', condition: { statement: { kind: 'compare', operator: 'eq', valuea: '_player.#visited', valueb: true } }, thenActions: [GO] }),
         clicking(button('bClose00001', 5, 'Close'), CLOSE_LAYER),
         button('bMenu000001', 6, 'Menu'),
+        // Three words are no short label.
+        button('bRead000001', 7, 'Read the policy'),
       ] },
-      { base: false, objects: [textBox('tMore000001', 1, 'Say every idea out loud.'), clicking(button('bBack000001', 2, 'Back to the four ways'), CLOSE_LAYER)] },
+      { base: false, objects: [
+        textBox('tMore000001', 1, 'Say every idea out loud.'),
+        clicking(button('bBack000001', 2, 'Back to the four ways'), CLOSE_LAYER),
+        // It shows the next layer as it closes its own: what it names is more of the slide.
+        clicking(button('bNextM00001', 3, 'Next: mind maps'), CLOSE_LAYER, SHOW_LAYER),
+      ] },
     ]);
     expect(readOf(oneScene([[slide('6Tabs000001', 1, 'Ideas'), page]])).topics[0]!.pages[0]!.body)
-      .toBe('Four ways to find ideas\n\nBrainstorming\n\nHall, D. T. (1999). Behind closed doors.\n\nSay every idea out loud.');
+      .toBe('Four ways to find ideas\n\nBrainstorming\n\nHall, D. T. (1999). Behind closed doors.\n\nRead the policy\n\nSay every idea out loud.\n\nNext: mind maps');
   });
 
   it('reads a question whose text and choices are buttons, and no counter or button label as its text', () => {
@@ -595,7 +602,8 @@ describe('a package that holds more than one course (a review of #579)', () => {
       'lesson2.html': '<html><head><title>Lesson 2</title></head><body><p>Mind the load.</p></body></html>',
       ...inFolder('practice/', { ...course('Practice run', 'Drive slowly.'), 'story.html': '<html><body><div id="app"></div></body></html>' }),
     });
-    const read = readAnyPackage(filesOfZip(zip), { fileUrl });
+    // The manifest's title, not the upload's name.
+    const read = readAnyPackage(filesOfZip(zip), { fileUrl, title: 'forklift.zip' });
     expect(read.title).toBe('Forklift safety');
     expect(read.topics.map(t => [t.title, t.pages.map(pg => pg.body)])).toEqual([['Lesson 1', ['Check the forks.']], ['Lesson 2', ['Mind the load.']], ['Practice run', ['Drive slowly.']]]);
   });
