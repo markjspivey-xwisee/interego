@@ -21,6 +21,11 @@
  * a tool does not declare is left out and listed with why: media, an essay, an interaction graded
  * some way this bridge does not grade, a question or option that is a picture.
  *
+ * ★ GRADED AS THE TOOL GRADES IT (Codex, on #573). A typed answer's letter case counts where the
+ * tool counts it: an H5P blank unless its author said not (it does by default), an Adapt blank
+ * unless its author allows any case, a flashcard only where its author said so. A blank that takes
+ * misspellings is left out, since a check here would mark one wrong.
+ *
  * ★ WHAT THE TOOL SHUFFLES IS TURNED. A check here shows a choice's options in the order kept. Where
  * the tool shows them shuffled (a right-first list, and options it randomizes), the order kept tells
  * too much: the right one is often first. So those options are turned by a count the question's own
@@ -181,6 +186,8 @@ function adaptQuestion(r: Reading, c: Json, kind: string, topic: ImportedTopic, 
   }
   if (kind === 'textinput') {
     if (c._allowAnyOrder === true) { r.left(where, 'its blanks may be filled in any order, and a question here fills one blank'); return; }
+    // Letter case counts unless its author allows any case, as the tool grades it.
+    const caseSensitive = c._allowsAnyCase !== true;
     items.forEach((it, i) => {
       const at = items.length > 1 ? `${where}/${i + 1}` : where;
       const answers = (Array.isArray(it._answers) ? it._answers : [])
@@ -191,7 +198,10 @@ function adaptQuestion(r: Reading, c: Json, kind: string, topic: ImportedTopic, 
       if (prefix === null || suffix === null) { r.left(at, `its blank ${SHOWS}`); return; }
       // "Bend your ____." : a suffix that starts with punctuation follows the blank as it would a word.
       const blank = `${prefix ? `${prefix} ` : ''}____${suffix ? (/^[.,;:!?)]/.test(suffix) ? suffix : ` ${suffix}`) : ''}`;
-      r.keep(topic, { question: joined(question, blank), type: 'fill-in', answer: answers[0]!, ...(answers.length > 1 ? { accept: answers.slice(1) } : {}) }, at);
+      r.keep(topic, {
+        question: joined(question, blank), type: 'fill-in', answer: answers[0]!,
+        ...(answers.length > 1 ? { accept: answers.slice(1) } : {}), ...(caseSensitive ? { caseSensitive: true as const } : {}),
+      }, at);
     });
     return;
   }
@@ -344,8 +354,12 @@ const machineOf = (library: string): string => library.trim().split(/\s+/)[0] ??
 /** Whether a question comes with a picture or a video of its own (its `media`). */
 const hasMedia = (p: Json): boolean => isRecord(p.media) && isRecord(p.media.type) && !!str(p.media.type.library);
 const WITH_MEDIA = 'its question comes with an image or a video, which a check here would not show';
-/** "*answer/other:tip*": the answers, split at "/", a tip after ":" not one of them. */
-const blankAnswers = (inner: string): string[] => inner.split(':')[0]!.split('/').map(a => plainText(a)?.trim() ?? '').filter(Boolean);
+/**
+ * "*answer/other:tip*": the answers, split at "/", a tip after ":" not one of them. "\/" and "\:"
+ * are those characters in an answer, as H5P escapes them (Codex, on #573).
+ */
+const blankAnswers = (inner: string): string[] => inner.split(/(?<!\\):/)[0]!.split(/(?<!\\)\//)
+  .map(a => plainText(a.replace(/\\([/:])/g, '$1'))?.trim() ?? '').filter(Boolean);
 /** Presentational pieces, which say nothing to read. */
 const DECORATION = new Set(['H5P.Shape', 'H5P.Line']);
 /** A presentation longer than a topic holds becomes topics of this many slides each. */
@@ -425,8 +439,11 @@ class H5pReading {
       case 'H5P.AdvancedText':
       case 'H5P.Text':
       case 'H5P.ContinuousText':
-      case 'H5P.Table':
         this.show(str(p.text), where);
+        return;
+      case 'H5P.Table':
+        // A table keeps its HTML in its own field (Codex, on #573).
+        this.show(str(p.table) || str(p.text), where);
         return;
       case 'H5P.Image': {
         const src = isRecord(p.file) ? str(p.file.path) : '';
@@ -468,6 +485,11 @@ class H5pReading {
       }
       case 'H5P.Blanks': {
         if (hasMedia(p)) { this.ask(WITH_MEDIA, where); return; }
+        // Graded as the tool grades it (Codex, on #573): letter case counts unless its author said
+        // not (it does by default), and a blank that accepts misspellings is one a check here would not grade so.
+        const behaviour = isRecord(p.behaviour) ? p.behaviour : {};
+        if (behaviour.acceptSpellingErrors === true) { this.ask('it accepts misspelled answers, which a check here would mark wrong', where); return; }
+        const caseSensitive = behaviour.caseSensitive !== false;
         const lead = plainText(str(p.text)) ?? '';
         (Array.isArray(p.questions) ? p.questions : []).forEach((raw, i) => {
           const sentence = str(raw);
@@ -480,7 +502,10 @@ class H5pReading {
             const shown = plainText(elided(sentence, blanks, k));
             if (shown === null) { this.ask(`its sentence ${SHOWS}`, asked); return; }
             this.ask(answers.length
-              ? { question: joined(lead, shown), type: 'fill-in', answer: answers[0]!, ...(answers.length > 1 ? { accept: answers.slice(1) } : {}) }
+              ? {
+                question: joined(lead, shown), type: 'fill-in', answer: answers[0]!,
+                ...(answers.length > 1 ? { accept: answers.slice(1) } : {}), ...(caseSensitive ? { caseSensitive: true as const } : {}),
+              }
               : 'its blank gives no answer', asked);
           });
         });
@@ -532,16 +557,19 @@ class H5pReading {
         });
         return;
       }
-      case 'H5P.Flashcards':
+      case 'H5P.Flashcards': {
         this.show(str(p.description), where);
+        // Letter case counts only where its author said so.
+        const caseSensitive = p.caseSensitive === true || (isRecord(p.behaviour) && p.behaviour.caseSensitive === true);
         records(p.cards).forEach((c, i) => {
           const at = `${where}/cards/${i}`;
           const question = plainText(str(c.text));
           const answer = plainText(str(c.answer))?.trim() ?? '';
           if (imageHtml(c.image) || question === null) this.ask(WITH_MEDIA, at);
-          else this.ask(answer ? { question, type: 'fill-in', answer } : 'its card gives no answer', at);
+          else this.ask(answer ? { question, type: 'fill-in', answer, ...(caseSensitive ? { caseSensitive: true as const } : {}) } : 'its card gives no answer', at);
         });
         return;
+      }
       case 'H5P.Video':
       case 'H5P.Audio':
       case 'H5P.InteractiveVideo':

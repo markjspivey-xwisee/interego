@@ -37,6 +37,7 @@ export function QuestionField({ name, q, draft, onChange, disabled, problem, fee
       <div style={{ marginBottom: 8 }}>
         {q.graded ? <Pill>graded</Pill> : <Pill title="What you put is recorded with your record; nothing grades it.">not graded</Pill>}
         {draft.kind === 'pick' && draft.many && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-dim)' }}>Pick every one that applies.</span>}
+        {input?.type === 'text' && input.caseSensitive && <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-dim)' }}>Letter case counts.</span>}
       </div>
 
       {draft.kind === 'pick' && (

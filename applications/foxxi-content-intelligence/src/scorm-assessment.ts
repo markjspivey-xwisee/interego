@@ -21,6 +21,8 @@ export interface ScormAnswerInput {
   targets?: string[];
   /** Mixed into an exact question's verifier, so a right answer never hashes to a value shared by every course. */
   salt?: string;
+  /** text: letter case counts, as the source a question was read from declares; otherwise a typed answer is read without it. */
+  caseSensitive?: boolean;
 }
 export interface ScormAssessmentQuestion {
   question: string;
@@ -99,10 +101,12 @@ export function inferScormAnswerInput(answer: string): ScormAnswerInput | undefi
 }
 
 /** Preserve legacy text hashes, including words with digits. Numeric-only
- * expressions retain punctuation; typed numeric answers use their numeric contract. */
-export function normalizeScormAnswer(value: string): string {
-  const text = String(value ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-  return /[a-z]/.test(text) ? text.replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim() : text;
+ * expressions retain punctuation; typed numeric answers use their numeric contract.
+ * Letter case is kept only when a question says it counts (`caseSensitive`). */
+export function normalizeScormAnswer(value: string, caseSensitive = false): string {
+  const spaced = String(value ?? '').replace(/\s+/g, ' ').trim();
+  const text = caseSensitive ? spaced : spaced.toLowerCase();
+  return /[a-z]/i.test(text) ? text.replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim() : text;
 }
 
 export function validateScormAnswer(value: unknown, input?: ScormAnswerInput): string | null {
@@ -154,7 +158,7 @@ export function scormAnswerCandidates(value: string, input?: ScormAnswerInput): 
     return [`${input.type}|${input.salt ?? ''}|${chosen.join(',')}`];
   }
   if (input && input.type !== 'text') return [String(Number(value.trim()))];
-  const normalized = normalizeScormAnswer(value);
+  const normalized = normalizeScormAnswer(value, !!(input && input.caseSensitive));
   return normalized ? [...new Set([normalized, ...normalized.split(' ').filter(token => token.length >= 4)])] : [];
 }
 

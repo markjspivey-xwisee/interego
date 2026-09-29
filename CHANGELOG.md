@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: imported questions are graded as their source grades them (Codex, on #572 and #573)
+
+Codex reviewed the question-bank reader (#572) and the authoring-tool reader (#573) after they merged. All six findings held, and each is fixed.
+
+- **Letter case, where the source counts it** (P1, on #573). This bridge grades a typed answer without letter case. H5P blanks count it by default, so `paris` passed where H5P wants `Paris`. The same held for Adapt blanks, which count it unless their author allows any case, and for QTI text entries, which match with it unless a mapping says not. The engine now keeps letter case for a question that says it counts (`caseSensitive` on a fill-in, stored as a text input that says so), and for it alone: every other answer's verifier is the one it was. The reader marks such questions:
+  - H5P blanks unless `caseSensitive` is false, and flashcards where it is true;
+  - Adapt text input unless `_allowsAnyCase`;
+  - QTI 2.x/3.0 text entry unless the mapping's entries say `caseSensitive="false"`;
+  - QTI 1.2 string responses where a condition says `case="Yes"`.
+
+  An H5P blank that accepts misspellings is left out, since a check here would mark one wrong. The dashboard's question says "Letter case counts." And `foxxi.scorm_author` documents `caseSensitive` for authors.
+- **H5P**: a table is read from its own field (`params.table`) (P2). A blank's `\/` and `\:` are those characters in an answer, not delimiters (P2).
+- **QTI 2.x/3.0**: an interaction's own prompt that shows an image, a formula or media is left out, as a stem that does is (P1, on #572).
+- **QTI 1.2**: only a condition that sets the item's score (the outcome its `decvar` declares, `SCORE` by default) names a right answer. A condition that sets another outcome awards nothing (P2).
+- **Data banks**: an entry declared a choice with no list of options is left out, rather than graded as typed text (P2).
+
+Tests:
+- `rich-course-content.test.ts`: letter case in the engine, and in a page's own copy of it.
+- `a-package-question-bank-is-read-in-the-form-it-declares.test.ts`: the QTI and data-bank findings.
+- `an-authoring-tools-own-export-is-read-in-its-own-model.test.ts`: the H5P and Adapt findings. Its fill-ins from blanks now say `caseSensitive`, and grading them checks it.
+
 ## 2026-09-29 — Foxxi: an authoring tool's own export is kept here to be folded
 
 An `.h5p` file, or an Adapt course exported as source, is no SCORM package. It has no manifest and nothing to launch as it is, so the upload refused it. The fold reads such an export in its tool's own model (`src/tool-exports.ts`), but it could not be hosted, so it could not be folded. Now it can:

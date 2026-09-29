@@ -13,7 +13,9 @@
  * ★ EACH IS WRITTEN AS AN AUTHOR WRITES A QUESTION (course-questions.ts): choice (one right option,
  * or several), true-false, numeric, fill-in (with the other answers it accepts), sequencing or
  * matching; and it must stand as an authored one does, so its lengths and options are checked the
- * same way before it is kept.
+ * same way before it is kept. A typed answer's letter case counts where the form says it does: in
+ * QTI 2.x and 3.0 unless its mapping's entries say not (they match with it by default), in 1.2
+ * where a condition compares with it (`case="Yes"`).
  *
  * ★ QTI 2 AND QTI 3 ARE ONE READING. QTI 3 renamed every element and attribute (`choiceInteraction`
  * became `qti-choice-interaction`, `responseIdentifier` became `response-identifier`), keeping what
@@ -142,6 +144,8 @@ function qti2Item(item: XNode): ImportedQuestion | string {
   const inline = ix.name === 'textentryinteraction' || ix.name === 'inlinechoiceinteraction';
   const lead = textOf(body, e => (e === ix ? (inline ? '____' : '') : null));
   const prompt = childOf(ix, 'prompt');
+  // The interaction's own prompt is part of its question, as its stem is (Codex, on #572).
+  if (prompt && showsMedia(prompt)) return 'its question shows an image, a formula or media, which a check here would not show';
   const question = [lead, prompt ? textOf(prompt) : ''].filter(Boolean).join('\n\n');
   if (!question) return 'its question has no text';
 
@@ -171,7 +175,10 @@ function qti2Item(item: XNode): ImportedQuestion | string {
       const [answer, ...rest] = unique(correct.map(c => c.trim()).filter(Boolean));
       if (!answer) return noCorrect(decl);
       const accept = unique([...rest, ...mapped.map(m => m.trim())]).filter(a => a && a !== answer);
-      return { question, type: 'fill-in', answer, ...(accept.length ? { accept } : {}) };
+      // QTI matches a typed response with its letter case, unless the mapping's entries each say not to.
+      const entries = descendantsOf(decl ?? body, e => e.name === 'mapentry');
+      const anyCase = entries.length > 0 && entries.every(e => (e.attrs.get('casesensitive') ?? '').trim().toLowerCase() === 'false');
+      return { question, type: 'fill-in', answer, ...(accept.length ? { accept } : {}), ...(anyCase ? {} : { caseSensitive: true as const }) };
     }
     case 'orderinteraction': {
       const choices = childrenOf(ix, 'simplechoice');
@@ -222,11 +229,20 @@ function matText(n: XNode, except?: XNode): string | null {
   return texts.map(t => t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
 }
 
-/** The values a positive-scoring condition sets for `ident`: each varequal it tests, outside a `not`. */
-function qti12Correct(item: XNode, ident: string | undefined): string[] {
+/**
+ * What the conditions that score a 1.2 item set for `ident`: each varequal they test, outside a
+ * `not`, and whether one compares with letter case (`case="Yes"`; 1.2 compares without it by
+ * default). A condition scores when it sets the item's score (the outcome its decvar declares,
+ * SCORE by default) above nothing: one that sets another outcome awards nothing (Codex, on #572).
+ */
+function qti12Correct(item: XNode, ident: string | undefined): { values: string[]; caseSensitive: boolean } {
+  const declared = descendantsOf(item, e => e.name === 'decvar').map(d => (d.attrs.get('varname') ?? 'SCORE').trim().toLowerCase());
+  const scoreVar = !declared.length || declared.includes('score') ? 'score' : declared[0]!;
   const out: string[] = [];
+  let caseSensitive = false;
   for (const rc of descendantsOf(item, e => e.name === 'respcondition')) {
     const score = childrenOf(rc, 'setvar').reduce((sum, sv) => {
+      if ((sv.attrs.get('varname') ?? 'SCORE').trim().toLowerCase() !== scoreVar) return sum;
       const action = (sv.attrs.get('action') ?? 'Set').toLowerCase();
       const n = Number(textOf(sv));
       return (action === 'set' || action === 'add') && Number.isFinite(n) ? sum + n : sum;
@@ -236,10 +252,12 @@ function qti12Correct(item: XNode, ident: string | undefined): string[] {
     if (!cond) continue;
     for (const v of descendantsOf(cond, e => e.name === 'varequal', e => e.name === 'not')) {
       const r = v.attrs.get('respident');
-      if (!r || !ident || r === ident) out.push(textOf(v));
+      if (r && ident && r !== ident) continue;
+      out.push(textOf(v));
+      if ((v.attrs.get('case') ?? '').trim().toLowerCase() === 'yes') caseSensitive = true;
     }
   }
-  return unique(out.map(v => v.trim()).filter(Boolean));
+  return { values: unique(out.map(v => v.trim()).filter(Boolean)), caseSensitive };
 }
 
 /** A 1.2 item as a question, or why it is not read. */
@@ -254,7 +272,7 @@ function qti12Item(item: XNode): ImportedQuestion | string {
   const question = matText(pres, r);
   if (question === null) return 'its question shows an image, a formula or media, which a check here would not show';
   if (!question) return 'its question has no text';
-  const correct = qti12Correct(item, r.attrs.get('ident'));
+  const { values: correct, caseSensitive } = qti12Correct(item, r.attrs.get('ident'));
   if (!correct.length) return 'no condition that scores it names a correct response';
   if (r.name === 'response_lid') {
     const labels = descendantsOf(r, e => e.name === 'responselabel' || e.name === 'response_label');
@@ -269,7 +287,7 @@ function qti12Item(item: XNode): ImportedQuestion | string {
   }
   if (r.name === 'response_str') {
     const [answer, ...accept] = correct;
-    return { question, type: 'fill-in', answer: answer!, ...(accept.length ? { accept } : {}) };
+    return { question, type: 'fill-in', answer: answer!, ...(accept.length ? { accept } : {}), ...(caseSensitive ? { caseSensitive: true as const } : {}) };
   }
   if (r.name === 'response_num') {
     const n = Number(correct[0]);
@@ -382,6 +400,8 @@ function dataQuestion(v: unknown): ImportedQuestion | string {
   if (kind === 'sequencing' || kind === 'matching') return `a ${kind} question kept as data is not read; the standard's form of one (QTI) is`;
 
   const options = pick(m, OPTION_KEYS)?.[1];
+  // A declared choice is graded as one or not at all: without a list of options it is not typed text (Codex, on #572).
+  if ((kind === 'choice' || kind === 'choice-multiple') && !Array.isArray(options)) return 'it is declared a choice, and gives no list of options';
   if (Array.isArray(options) && kind !== 'fill-in' && kind !== 'numeric' && kind !== 'true-false') {
     const texts: string[] = [];
     const flagged: number[] = [];

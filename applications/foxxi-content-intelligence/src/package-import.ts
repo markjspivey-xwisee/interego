@@ -80,7 +80,7 @@ export type ImportedQuestion =
   | { question: string; type: 'choice'; options: string[]; answer: string | string[]; multiple?: true }
   | { question: string; type: 'true-false'; answer: boolean }
   | { question: string; type: 'numeric'; answer: number; min?: number; max?: number }
-  | { question: string; type: 'fill-in'; answer: string; accept?: string[] }
+  | { question: string; type: 'fill-in'; answer: string; accept?: string[]; caseSensitive?: true }
   | { question: string; type: 'sequencing'; items: string[] }
   | { question: string; type: 'matching'; pairs: Array<[string, string]>; distractors?: string[] };
 

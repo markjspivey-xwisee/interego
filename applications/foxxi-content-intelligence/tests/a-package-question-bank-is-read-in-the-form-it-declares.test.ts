@@ -45,9 +45,19 @@ describe('a QTI 2 item', () => {
   });
 
   it('reads a text entry as fill-in, with a blank where it sits and what its mapping also scores', () => {
-    const xml = item('<p>The word is spelled <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="10"/> in America.</p>',
-      declared('single', 'string', ['color'], '<mapping defaultValue="0"><mapEntry mapKey="color" mappedValue="1"/><mapEntry mapKey="colour" mappedValue="1"/><mapEntry mapKey="colr" mappedValue="0"/></mapping>'));
-    expect(one(xml)).toEqual({ question: 'The word is spelled ____ in America.', type: 'fill-in', answer: 'color', accept: ['colour'] });
+    const entry = (caseSensitive: string): string => item('<p>The word is spelled <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="10"/> in America.</p>',
+      declared('single', 'string', ['color'], `<mapping defaultValue="0"><mapEntry mapKey="color" mappedValue="1"${caseSensitive}/><mapEntry mapKey="colour" mappedValue="1"${caseSensitive}/><mapEntry mapKey="colr" mappedValue="0"${caseSensitive}/></mapping>`));
+    // QTI matches a typed response with its letter case, unless the mapping's entries say not to.
+    expect(one(entry(''))).toEqual({ question: 'The word is spelled ____ in America.', type: 'fill-in', answer: 'color', accept: ['colour'], caseSensitive: true });
+    expect(one(entry(' caseSensitive="false"'))).toEqual({ question: 'The word is spelled ____ in America.', type: 'fill-in', answer: 'color', accept: ['colour'] });
+  });
+
+  it('leaves out an item whose prompt shows an image, a formula or media, as it does a stem that does (Codex, on #572)', () => {
+    const options = '<simpleChoice identifier="A">a</simpleChoice><simpleChoice identifier="B">b</simpleChoice>';
+    expect(one(item(`<choiceInteraction responseIdentifier="RESPONSE" maxChoices="1"><prompt>Which is shown? <img src="x.png" alt="x"/></prompt>${options}</choiceInteraction>`, declared('single', 'identifier', ['A']))))
+      .toBe('item "q1": its question shows an image, a formula or media, which a check here would not show');
+    expect(one(item(`<orderInteraction responseIdentifier="RESPONSE"><prompt>Order by <math><mi>x</mi></math>.</prompt>${options}</orderInteraction>`, declared('ordered', 'identifier', ['A', 'B']))))
+      .toMatch(/shows an image, a formula or media/);
   });
 
   it('reads a numeric text entry as numeric, and an inline choice as a choice', () => {
@@ -131,6 +141,21 @@ describe('a QTI 1.2 item', () => {
     expect(one(qti12(`<item ident="z"><presentation><material><mattext>Which?</mattext></material><response_lid ident="R">${labels}</response_lid></presentation></item>`)))
       .toBe('item "z": no condition that scores it names a correct response');
   });
+
+  it('counts only a condition that sets the score it declares, not another outcome (Codex, on #572)', () => {
+    const noted = (value: string): string => `<respcondition><conditionvar><varequal respident="R">${value}</varequal></conditionvar><setvar action="Set" varname="FEEDBACK">1</setvar></respcondition>`;
+    const lid = (resprocessing: string): string => qti12(`<item ident="o"><presentation><material><mattext>Hottest planet?</mattext></material><response_lid ident="R" rcardinality="Single">${labels}</response_lid></presentation><resprocessing>${resprocessing}</resprocessing></item>`);
+    expect(one(lid(`<outcomes><decvar varname="SCORE"/><decvar varname="FEEDBACK"/></outcomes>${noted('A')}${scored('R', 'B')}`))).toMatchObject({ answer: 'B' });
+    // An item may name its score otherwise; what it names is what counts.
+    expect(one(lid(`<outcomes><decvar varname="POINTS"/></outcomes>${scored('R', 'C').replace('SCORE', 'POINTS')}${scored('R', 'A')}`))).toMatchObject({ answer: 'C' });
+  });
+
+  it('reads a typed response with its letter case where a condition compares with it', () => {
+    const str = (compare: string): unknown => one(qti12(`<item ident="c"><presentation><material><mattext>Red planet?</mattext></material><response_str ident="R"><render_fib/></response_str></presentation>`
+      + `<resprocessing><respcondition><conditionvar><varequal respident="R"${compare}>Mars</varequal></conditionvar><setvar action="Set">1</setvar></respcondition></resprocessing></item>`));
+    expect(str(' case="Yes"')).toEqual({ question: 'Red planet?', type: 'fill-in', answer: 'Mars', caseSensitive: true });
+    expect(str('')).toEqual({ question: 'Red planet?', type: 'fill-in', answer: 'Mars' });
+  });
 });
 
 describe('a bank kept as data', () => {
@@ -167,6 +192,9 @@ describe('a bank kept as data', () => {
       { question: 'Explain.', type: 'essay' },
       { question: 'Shown? <img src="a.png">', answer: 'yes' },
       { question: 'Odd?', type: 'hotspot', answer: 'x' },
+      // A declared choice is graded as one or not at all, never as typed text (Codex, on #572).
+      { question: 'Capital?', type: 'choice', answer: 'Paris' },
+      { question: 'Capitals?', type: 'multiple-response', options: 'Paris, Rome', answer: 'Paris' },
     ], 'b.json');
     expect(read?.questions).toEqual([]);
     expect(read?.unread.map(u => u.why)).toEqual([
@@ -176,6 +204,8 @@ describe('a bank kept as data', () => {
       'question 4: it asks for an answer that is recorded rather than graded, so it is left for a reflection written here',
       'question 5: its question shows an image, a formula or media, which a check here would not show',
       'question 6: it is a "hotspot" question, which is not read',
+      'question 7: it is declared a choice, and gives no list of options',
+      'question 8: it is declared a choice, and gives no list of options',
     ]);
   });
 

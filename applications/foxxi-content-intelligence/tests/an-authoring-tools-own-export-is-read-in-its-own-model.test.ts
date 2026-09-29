@@ -122,8 +122,8 @@ describe('a course Adapt built', () => {
       { question: 'What do you check first?', type: 'choice', options: ['The weather', 'The weight'], answer: 'B' },
       { question: 'Which help?', type: 'choice', options: ['Gloves', 'Rushing', 'Boots'], answer: ['A', 'C'], multiple: true },
       { question: 'Pick what applies.', type: 'choice', options: ['Lift alone', 'Ask for help'], answer: ['B'], multiple: true },
-      { question: 'Fill in.\n\nBend your ____.', type: 'fill-in', answer: 'knees', accept: ['legs'] },
-      { question: 'Fill in.\n\nKeep your back ____', type: 'fill-in', answer: 'straight' },
+      { question: 'Fill in.\n\nBend your ____.', type: 'fill-in', answer: 'knees', accept: ['legs'], caseSensitive: true },
+      { question: 'Fill in.\n\nKeep your back ____', type: 'fill-in', answer: 'straight', caseSensitive: true },
       { question: 'Match each load to how to move it.', type: 'matching', pairs: [['Light box', 'Carry'], ['Heavy crate', 'Trolley']], distractors: ['Crane'] },
       { question: 'How many kilograms may one person lift?', type: 'numeric', answer: 25, min: 0, max: 50 },
     ]);
@@ -151,6 +151,8 @@ describe('a course Adapt built', () => {
     expect(questionIsRight('knees', bend!)).toBe(true);
     expect(questionIsRight('legs', bend!)).toBe(true);
     expect(questionIsRight('arms', bend!)).toBe(false);
+    // Letter case counts, as the tool grades it unless its author allows any case.
+    expect(questionIsRight('Knees', bend!)).toBe(false);
     expect(questionIsRight('straight', back!)).toBe(true);
     const shown = (match as ScormAssessmentQuestion & { input: { targets: string[] } }).input.targets;
     expect(questionIsRight(['Carry', 'Trolley'].map(t => letterOf(shown.indexOf(t))).join(', '), match!)).toBe(true);
@@ -263,8 +265,8 @@ describe('an interactive book H5P exported', () => {
       { question: 'Plant cells have chloroplasts.', type: 'true-false', answer: true },
     ]);
     expect(read.topics[1]!.questions).toEqual([
-      { question: 'Fill in the blanks.\n\nLeaves make ____ from ….', type: 'fill-in', answer: 'food' },
-      { question: 'Fill in the blanks.\n\nLeaves make … from ____.', type: 'fill-in', answer: 'light', accept: ['sunlight'] },
+      { question: 'Fill in the blanks.\n\nLeaves make ____ from ….', type: 'fill-in', answer: 'food', caseSensitive: true },
+      { question: 'Fill in the blanks.\n\nLeaves make … from ____.', type: 'fill-in', answer: 'light', accept: ['sunlight'], caseSensitive: true },
       { question: 'Drag the words.\n\nRoots take in ____.', type: 'choice', options: ['chlorophyll', 'sand', 'water'], answer: 'C' },
       { question: 'Drag the words.\n\nLeaves hold ____.', type: 'choice', options: ['chlorophyll', 'sand', 'water'], answer: 'A' },
       { question: 'Roots make food.', type: 'true-false', answer: false },
@@ -285,6 +287,7 @@ describe('an interactive book H5P exported', () => {
     expect(questionIsRight('true', chloroplasts!)).toBe(true);
     const [food, light, water] = checkOf(read, 1);
     expect(questionIsRight('food', food!)).toBe(true);
+    expect(questionIsRight('Food', food!)).toBe(false);
     expect(questionIsRight('sunlight', light!)).toBe(true);
     expect(questionIsRight('C', water!)).toBe(true);
     expect(questionIsRight('B', water!)).toBe(false);
@@ -345,6 +348,49 @@ describe('a presentation H5P content a SCORM package plays', () => {
       ['slides-1-50', 'Long: slides 1 to 50', 50], ['slides-51-100', 'Long: slides 51 to 100', 50], ['slides-101-120', 'Long: slides 101 to 120', 20],
     ]);
     expect(foldPackage(long, { competency: 'long' }).topics.every(t => t.at)).toBe(true);
+  });
+});
+
+describe('a question graded as its tool grades it (Codex, on #573)', () => {
+  const h5p = (params: object, mainLibrary: string): ImportedPackage => h5pPackage(filesOfZip(zipOf({
+    'h5p.json': { title: 'One', mainLibrary }, 'content/content.json': params,
+  })), { fileUrl })!;
+
+  it('keeps letter case where H5P counts it, reads it without where its author said so, and leaves out a blank that takes misspellings', () => {
+    const blanks = (behaviour: object): ImportedPackage => h5p({ text: 'Fill in.', questions: ['<p>The capital is *Paris*.</p>'], behaviour }, 'H5P.Blanks');
+    expect(blanks({}).topics[0]!.questions[0]).toMatchObject({ answer: 'Paris', caseSensitive: true });
+    expect(blanks({ caseSensitive: false }).topics[0]!.questions[0]).not.toHaveProperty('caseSensitive');
+    const typos = blanks({ acceptSpellingErrors: true });
+    expect(typos.topics).toEqual([]);
+    expect(typos.unread).toEqual([{ path: 'content/content.json#content', why: 'it accepts misspelled answers, which a check here would mark wrong' }]);
+    // A flashcard counts it only where its author said so.
+    const card = (extra: object): ImportedQuestion => h5p({ cards: [{ text: 'Capital of France?', answer: 'Paris' }], ...extra }, 'H5P.Flashcards').topics[0]!.questions[0]!;
+    expect(card({})).toEqual({ question: 'Capital of France?', type: 'fill-in', answer: 'Paris' });
+    expect(card({ caseSensitive: true })).toMatchObject({ caseSensitive: true });
+  });
+
+  it('reads an escaped slash or colon in a blank as part of its answer', () => {
+    const read = h5p({ questions: ['<p>Say *and\\/or*, or *10\\:30/half past ten:a time*.</p>'], behaviour: { caseSensitive: false } }, 'H5P.Blanks');
+    expect(read.topics[0]!.questions).toEqual([
+      expect.objectContaining({ answer: 'and/or' }),
+      expect.objectContaining({ answer: '10:30', accept: ['half past ten'] }),
+    ]);
+  });
+
+  it('reads a table from its own field', () => {
+    const read = h5p({ table: '<table><tr><th>Gas</th><th>Share</th></tr><tr><td>Nitrogen</td><td>78%</td></tr></table>' }, 'H5P.Table');
+    expect(read.topics[0]!.pages[0]!.body).toBe('| Gas | Share |\n| --- | --- |\n| Nitrogen | 78% |');
+  });
+
+  it('reads an Adapt blank without letter case where its author allows any case', () => {
+    const anyCase = adaptPackage(filesOfZip(zipOf({
+      'course/en/course.json': { _id: 'course', _type: 'course', title: 'T' },
+      'course/en/contentObjects.json': [{ _id: 'p', _parentId: 'course', _type: 'page', title: 'P' }],
+      'course/en/articles.json': [{ _id: 'a', _parentId: 'p', _type: 'article' }],
+      'course/en/blocks.json': [{ _id: 'b', _parentId: 'a', _type: 'block' }],
+      'course/en/components.json': [{ _id: 'c', _parentId: 'b', _type: 'component', _component: 'textinput', body: 'Capital?', _allowsAnyCase: true, _items: [{ _answers: ['Paris'] }] }],
+    })), { fileUrl })!;
+    expect(anyCase.topics[0]!.questions).toEqual([{ question: 'Capital?\n\n____', type: 'fill-in', answer: 'Paris' }]);
   });
 });
 
