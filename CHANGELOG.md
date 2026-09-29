@@ -1,14 +1,25 @@
 # Changelog
 
-## 2026-09-29 — Foxxi: a text input keeps how it compares, and a page that shows a picture is kept (Codex, on #581 and #583)
+## 2026-09-29 — Foxxi: what Codex found on #581, #583 and #585
 
 - **A text input given with its answer keeps how it compares** (`src/course-questions.ts`). `authorQuestion`'s explicit-input form rebuilt a text input from its letter case alone. So `input: { type: 'text', compare: 'exact' }` stored no input, and "C" was still right for "C++". Now the input's `compare`, or the question's own beside it, is kept. The two disagreeing are refused, and so is a `compare` beside an input that is not text.
 - **A page that shows a picture is kept.** The readers asked `plainText` whether a page had anything to show, and `plainText` reads no media as text: it answers null. `shows()` (`src/tool-reading.ts`) answers instead: the page's text, or a picture or media. This fixes three cases:
   - an iSpring interaction holding a picture was left out whole, and so was an info slide that is only a picture;
   - a slide's notes holding a picture were dropped with their text, in iSpring and Storyline alike;
   - an iSpring slide with nothing but such notes was left out.
+- **A counter is found by recurring** (`src/storyline-course.ts`). #585 took a counter to be any short run of words around numbers, so "Level 2 requires 3 attempts." or "ISO 9001" could be taken for one, leaving a question with no text. Now a counter is a short text that a scene's question slides share, with only the question's number changed and any other number the same on all: "Question 3 of 10", "1/10 soal", in whatever language. A number alone ("3/10") still counts as one. These do not:
+  - sums whose numbers all differ ("2 + 3 =" beside "4 + 5 =");
+  - a stem repeated as it is;
+  - longer texts.
+- **An activity beside a course that reads to nothing is listed** (`src/tool-exports.ts`). In a SCORM package of several activities, one beside the courses that has no text of its own (drawn by its script) was dropped without a word. It is now listed with why. In a package of one activity, that activity is the course it holds, and its launcher page adds nothing, as before.
 
-Tests: an explicit text input's `compare` (from the input, beside it, the two disagreeing); iSpring's interaction, notes and info slide with a picture; Storyline's notes with one. Mutation checks: 9, all caught.
+Tests cover:
+- an explicit text input's `compare`: from the input, beside it, and the two disagreeing;
+- iSpring's interaction, notes and info slide with a picture, and Storyline's notes with one;
+- counters that recur, and texts that only look like counters;
+- an activity drawn by its script beside a Storyline course.
+
+Mutation checks: 18, all caught.
 
 ## 2026-09-29 — Foxxi: every course a package holds is read, and a Storyline button as the slide shows it (a review of #579)
 
