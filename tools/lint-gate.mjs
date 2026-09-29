@@ -654,8 +654,10 @@ const BASELINE = {};
 // Same shape as every other proxy this week — the summary line standing in for the verdict.
 // The simulation regressions bring the measured tracked scope to 554 files.
 // 2026-09-28: #556, #558 and the deploy-trigger retry brought the linted scope to 630, and the
-// base-without-verticals tool and its test (#366) to 633; the gate named 603, which is written here.
-export const MIN_FILES = 603;
+// base-without-verticals tool and its test (#366) to 633; the gate named 603. The advertised-demos
+// lint and its declarations (#567 follow-up) brought it to 635; the gate named 604, which is
+// written here.
+export const MIN_FILES = 604;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
