@@ -620,7 +620,7 @@ describe('the bridge hosts what is uploaded, and restores it after a restart', (
     const upload = server.slice(server.indexOf("'foxxi.upload_scorm_package': async"), server.indexOf("'foxxi.derive_adaptive_policy'"));
     // The upload's answer is the handler's, returned as a tail call: the census of handler
     // answers follows it into uploadScormPackage and reads its declines (tests/handler-delegation-reach.ts).
-    expect(upload).toMatch(/\n {4}return uploadScormPackage\(\{\n[\s\S]*\n {6}host: \(bytes, parsed\) => hostUploadedPackage\(bytes, parsed\.packageTitle, parsed\.launchable\),\n {4}\}\);\n {2}\},/);
+    expect(upload).toMatch(/\n {4}return uploadScormPackage\(\{\n[\s\S]*\n {6}host: \(bytes, parsed\) => hostUploadedPackage\(bytes, parsed\.packageTitle, parsed\.launchable\),\n {6}keepExport: \(bytes, exported\) => hostProjectExport\(bytes, exported\),\n {4}\}\);\n {2}\},/);
     const launch = server.slice(server.indexOf("app.post('/agent/cmi5/launch'"), server.indexOf("app.post('/agent/cmi5/launch'") + 1500);
     expect(launch).toMatch(/restorePublishedCourse\(DEFAULT_TENANT, courseId\);[^\n]*\n\s+if \(!getCmi5Course\(DEFAULT_TENANT, courseId\)\) await restoreHostedPackage\(courseId\);\n\s+const course = getCmi5Course\(DEFAULT_TENANT, courseId\);/);
     expect(server).toMatch(/attachHostedPackageRoutes\(app, \{\n\s+packages: hostedPackages,\n\s+bridgeBaseUrl,/);
@@ -635,9 +635,10 @@ describe('the bridge hosts what is uploaded, and restores it after a restart', (
     const restore = server.slice(server.indexOf('async function restoreHostedPackage('), server.indexOf('attachHostedPackageRoutes(app, {'));
     expect(restore).toContain('const about = await hostedPackages.aboutNow(sha);');
     expect(restore).not.toContain('unwrapScormPackage');
-    // Described as an upload is parsed: under the same inflation budget, before anything is inflated.
+    // Described as an upload is parsed: under the same inflation budget, before anything is inflated,
+    // an authoring tool's own export as one.
     const describe = server.slice(server.indexOf('function describeHostedPackage('), server.indexOf('async function hostUploadedPackage('));
-    expect(describe).toMatch(/if \(declaredUncompressedBytes\(bytes\) > uncompressedBudget\(bytes\.length\)\) return null;\n\s+const pkg = unwrapScormPackage\(bytes\);/);
+    expect(describe).toMatch(/if \(declaredUncompressedBytes\(bytes\) > uncompressedBudget\(bytes\.length\)\) return null;\n(?:\s+\/\/[^\n]*\n)?\s+const exported = projectExportOf\(bytes\);\n\s+if \(exported\) return \{ title: exported\.title, launchable: \[\], exportOf: exported\.tool \};\n\s+const pkg = unwrapScormPackage\(bytes\);/);
   });
 
   it('is reached by the census of handler answers, so an untyped decline in the upload is caught', async () => {
