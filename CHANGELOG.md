@@ -33,6 +33,8 @@ Tests: `a-course-captivate-published-is-read-in-captivates-own-model.test.ts` co
 - the SCORM, xAPI and web layouts, the title's fallbacks, a long course;
 - the literal read without running anything, and what is not Captivate's.
 
+Mutation checks: 68 on the reader and its wiring, all caught. Two of the literal parser's checks proved redundant (a call or `new` already fails its grammar) and are gone.
+
 ## 2026-09-29 — Foxxi: a course iSpring published is read in iSpring's own model
 
 A package iSpring published is a player page its runtime draws each slide into. Read as web pages, it had nothing to fold. The page carries the course as a base64 string, which `src/ispring-course.ts` finds and decodes without running anything:
