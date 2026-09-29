@@ -263,6 +263,11 @@ async function agentBob(aliceDescriptor: ContextDescriptorData): Promise<void> {
       validFrom: '2026-03-01T00:00:00Z',
       validUntil: '2026-03-31T23:59:59Z',
     })
+// Every descriptor carries one provenance facet (iep-shapes.ttl), even one Bob keeps local.
+.provenance({
+      wasAttributedTo: 'did:web:bob.example.org' as IRI,
+      generatedAtTime: '2026-03-01T00:00:00Z',
+    })
 .semiotic({
       modalStatus: 'Hypothetical',
       epistemicConfidence: 0.7,
@@ -349,6 +354,14 @@ async function alicePublishUpdate(): Promise<void> {
       validFrom: '2026-03-19T00:00:00Z',
       validUntil: '2026-09-30T23:59:59Z',
     })
+// A descriptor carries exactly one provenance facet and one agent facet (iep-shapes.ttl); the
+// update had neither, so the published v2 failed the shapes v1 passes.
+.provenance({
+      wasAttributedTo: 'did:web:alice.example.org' as IRI,
+      generatedAtTime: '2026-03-19T00:00:00Z',
+      wasDerivedFrom: ['urn:iep:alice:arch-review-2026-Q1' as IRI],
+    })
+.agent('did:web:alice.example.org' as IRI, 'Author')
 .asserted(0.97)
 .selfAsserted('did:web:alice.example.org' as IRI)
 .federation({

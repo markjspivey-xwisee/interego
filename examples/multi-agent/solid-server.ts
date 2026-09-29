@@ -11,6 +11,13 @@
  * (2026-09-28). `--mainModulePath` cannot help: it moves where the walk starts, not where it ends.
  * `npx`, run from a directory outside the repository, installs the server into npm's cache, whose
  * ancestors hold nothing of ours. The first run downloads it; later runs reuse the cache.
+ *
+ * ★ AND IT IS STOPPED AS A TREE. npx does not run the server itself. On Windows it sits behind a
+ * shell; on Unix npm 11 runs `npm → sh -c → node`, and SIGTERM to npm ends the shell but leaves the
+ * server running (Codex, on #568), holding the port and making the next run refuse to start. So on
+ * Unix the server gets its own process group and the whole group is signalled; on Windows the tree
+ * is ended with taskkill /T. It is also stopped when the demo exits or is interrupted, because a
+ * server in its own group no longer receives the terminal's Ctrl+C.
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
@@ -66,6 +73,25 @@ export function solidServerLaunch(opts: {
 const shellArg = (arg: string): string => (/[\s"]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg);
 
 /**
+ * How the server is spawned. Windows runs npx through its .cmd shim, which needs a shell. Elsewhere
+ * npx runs directly, as the leader of its own process group, so the whole tree can be signalled.
+ */
+export function solidServerSpawnOptions(platform: NodeJS.Platform = process.platform): { shell: boolean; detached: boolean } {
+  return platform === 'win32' ? { shell: true, detached: false } : { shell: false, detached: true };
+}
+
+/** Stop the server when the demo exits, or is interrupted, before stopping it itself. */
+function stopWithTheDemo(proc: ChildProcess): void {
+  process.once('exit', () => stopSolidServer(proc));
+  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]] as const) {
+    process.once(signal, () => {
+      stopSolidServer(proc);
+      process.exit(code);
+    });
+  }
+}
+
+/**
  * Start the server with fresh pods and resolve once it answers HTTP. Refuses when something already
  * answers at `baseUrl` (a demo left running with --keep-alive) rather than wiping that server's pods.
  */
@@ -85,10 +111,11 @@ export async function startSolidServer(opts: {
   rmSync(launch.podsDir, { recursive: true, force: true });
   const timeoutMs = opts.timeoutMs ?? 300_000;
   opts.log(`Starting Community Solid Server on port ${opts.port} (${SOLID_SERVER_PACKAGE} via npx, outside the repository; the first run downloads it)...`);
-  // Windows runs npx through its .cmd shim, which needs a shell; elsewhere npx runs directly.
-  const proc: ChildProcess = process.platform === 'win32'
+  const { shell, detached } = solidServerSpawnOptions();
+  const proc: ChildProcess = shell
     ? spawn([launch.command, ...launch.args].map(shellArg).join(' '), { cwd: launch.cwd, stdio: ['ignore', 'pipe', 'pipe'], shell: true })
-    : spawn(launch.command, [...launch.args], { cwd: launch.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    : spawn(launch.command, [...launch.args], { cwd: launch.cwd, stdio: ['ignore', 'pipe', 'pipe'], detached });
+  stopWithTheDemo(proc);
 
   return new Promise((resolveStarted, rejectStarted) => {
     let settled = false;
@@ -122,15 +149,29 @@ export async function startSolidServer(opts: {
   });
 }
 
+const stopped = new WeakSet<object>();
+
 /**
- * Stop the server and what it started. npx runs the server as a child of its own, behind a shell on
- * Windows, so a plain kill() of the process we spawned can leave the server itself running there.
+ * Stop the server and everything npx started for it: the process tree on Windows, the process
+ * group on Unix. Safe to call more than once. The platform and the two ways of stopping are
+ * parameters so the test can check each branch on any machine.
  */
-export function stopSolidServer(proc: ChildProcess): void {
-  if (proc.pid === undefined || proc.exitCode !== null || proc.signalCode !== null) return;
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
-  } else {
-    proc.kill('SIGTERM'); // npm exec forwards SIGTERM to the server it started
+export function stopSolidServer(
+  proc: Pick<ChildProcess, 'pid' | 'exitCode' | 'signalCode' | 'kill'>,
+  platform: NodeJS.Platform = process.platform,
+  signal: (pid: number, sig: NodeJS.Signals) => void = (pid, sig) => { process.kill(pid, sig); },
+  run: (command: string, args: string[]) => void = (command, args) => { spawnSync(command, args, { stdio: 'ignore' }); },
+): void {
+  if (proc.pid === undefined || proc.exitCode !== null || proc.signalCode !== null || stopped.has(proc)) return;
+  // Once only: a second call at exit must not signal a process ID the system has since reused.
+  stopped.add(proc);
+  if (platform === 'win32') {
+    run('taskkill', ['/pid', String(proc.pid), '/T', '/F']);
+    return;
+  }
+  try {
+    signal(-proc.pid, 'SIGTERM'); // the whole group: npm, its shell and the server
+  } catch {
+    try { proc.kill('SIGTERM'); } catch { /* already gone */ }
   }
 }
