@@ -52,6 +52,17 @@ describe('a QTI 2 item', () => {
     expect(one(entry(' caseSensitive="false"'))).toEqual({ question: 'The word is spelled ____ in America.', type: 'fill-in', answer: 'color', accept: ['colour'] });
   });
 
+  it('reads letter case from the answers it scores, and leaves out answers that differ in it (Codex, on #575)', () => {
+    const entries = (...kinds: Array<[string, number, string]>): string => item('<p>Spell it: <textEntryInteraction responseIdentifier="RESPONSE"/></p>',
+      declared('single', 'string', ['color'], `<mapping defaultValue="0">${kinds.map(([key, value, cs]) => `<mapEntry mapKey="${key}" mappedValue="${value}"${cs}/>`).join('')}</mapping>`));
+    // An entry that scores nothing is no answer, and says nothing of how answers are matched.
+    expect(one(entries(['color', 1, ' caseSensitive="false"'], ['colour', 1, ' caseSensitive="false"'], ['COLR', 0, '']))).toEqual({ question: 'Spell it: ____', type: 'fill-in', answer: 'color', accept: ['colour'] });
+    expect(one(entries(['color', 1, ' caseSensitive="false"'], ['colour', 1, ' caseSensitive="true"'])))
+      .toBe('item "q1": its answers differ in whether letter case counts, and a question here grades them one way');
+    // A correct response no entry scores is matched exactly, so beside answers read without case it differs.
+    expect(one(entries(['colour', 1, ' caseSensitive="false"']))).toMatch(/differ in whether letter case counts/);
+  });
+
   it('leaves out an item whose prompt shows an image, a formula or media, as it does a stem that does (Codex, on #572)', () => {
     const options = '<simpleChoice identifier="A">a</simpleChoice><simpleChoice identifier="B">b</simpleChoice>';
     expect(one(item(`<choiceInteraction responseIdentifier="RESPONSE" maxChoices="1"><prompt>Which is shown? <img src="x.png" alt="x"/></prompt>${options}</choiceInteraction>`, declared('single', 'identifier', ['A']))))
@@ -155,6 +166,13 @@ describe('a QTI 1.2 item', () => {
       + `<resprocessing><respcondition><conditionvar><varequal respident="R"${compare}>Mars</varequal></conditionvar><setvar action="Set">1</setvar></respcondition></resprocessing></item>`));
     expect(str(' case="Yes"')).toEqual({ question: 'Red planet?', type: 'fill-in', answer: 'Mars', caseSensitive: true });
     expect(str('')).toEqual({ question: 'Red planet?', type: 'fill-in', answer: 'Mars' });
+  });
+
+  it('leaves out a typed response whose scoring conditions differ in whether letter case counts (Codex, on #575)', () => {
+    const condition = (value: string, compare: string): string => `<respcondition><conditionvar><varequal respident="R"${compare}>${value}</varequal></conditionvar><setvar action="Set">1</setvar></respcondition>`;
+    const str = (conditions: string): unknown => one(qti12(`<item ident="m"><presentation><material><mattext>A rocky planet?</mattext></material><response_str ident="R"><render_fib/></response_str></presentation><resprocessing>${conditions}</resprocessing></item>`));
+    expect(str(condition('Mars', ' case="Yes"') + condition('Venus', ''))).toBe('item "m": its answers differ in whether letter case counts, and a question here grades them one way');
+    expect(str(condition('Mars', ' case="Yes"') + condition('Venus', ' case="Yes"'))).toEqual({ question: 'A rocky planet?', type: 'fill-in', answer: 'Mars', accept: ['Venus'], caseSensitive: true });
   });
 });
 
