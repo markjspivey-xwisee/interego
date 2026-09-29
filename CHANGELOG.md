@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a QTI answer another already accepts adds nothing to its letter case (Codex, on #576)
+
+#576 left out a QTI item whose accepted answers differ in whether letter case counts. Codex found it also left out items that are one question.
+- **A QTI 2.x/3.0 correct response scored by a case-insensitive entry.** A correct response `COLOR` with an entry `color caseSensitive="false"` was treated as unscored, and so matched exactly. That entry already accepts it in any casing.
+- **QTI 1.2 conditions that overlap.** A strict `Mars` beside a loose `Mars` accepts `Mars` in any casing overall.
+
+Letter case is now decided over the answers a question accepts (`letterCaseOf`). An answer matched with case, which one matched without case already accepts, adds nothing. Items that still differ are left out, as before.
+
+Tests: `a-package-question-bank-is-read-in-the-form-it-declares.test.ts` covers both examples, and a strict entry beside a loose one.
+
 ## 2026-09-29 — Foxxi: a QTI item's letter case is read from the answers it scores (Codex, on #575)
 
 #575 read a QTI text entry's letter case from the item as a whole, and Codex found two ways that went wrong.

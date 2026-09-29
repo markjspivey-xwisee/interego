@@ -63,6 +63,16 @@ describe('a QTI 2 item', () => {
     expect(one(entries(['colour', 1, ' caseSensitive="false"']))).toMatch(/differ in whether letter case counts/);
   });
 
+  it('counts a correct response an entry scores by that entry\'s own rule, and an answer another already accepts as nothing more (Codex, on #576)', () => {
+    const upper = item('<p>Spell it: <textEntryInteraction responseIdentifier="RESPONSE"/></p>',
+      declared('single', 'string', ['COLOR'], '<mapping defaultValue="0"><mapEntry mapKey="color" mappedValue="1" caseSensitive="false"/></mapping>'));
+    expect(one(upper)).toEqual({ question: 'Spell it: ____', type: 'fill-in', answer: 'COLOR', accept: ['color'] });
+    // A strict entry that a loose one already accepts adds nothing: the question is read without case.
+    const both = item('<p>Spell it: <textEntryInteraction responseIdentifier="RESPONSE"/></p>',
+      declared('single', 'string', ['color'], '<mapping defaultValue="0"><mapEntry mapKey="Color" mappedValue="1" caseSensitive="true"/><mapEntry mapKey="color" mappedValue="1" caseSensitive="false"/></mapping>'));
+    expect(one(both)).toEqual({ question: 'Spell it: ____', type: 'fill-in', answer: 'color', accept: ['Color'] });
+  });
+
   it('leaves out an item whose prompt shows an image, a formula or media, as it does a stem that does (Codex, on #572)', () => {
     const options = '<simpleChoice identifier="A">a</simpleChoice><simpleChoice identifier="B">b</simpleChoice>';
     expect(one(item(`<choiceInteraction responseIdentifier="RESPONSE" maxChoices="1"><prompt>Which is shown? <img src="x.png" alt="x"/></prompt>${options}</choiceInteraction>`, declared('single', 'identifier', ['A']))))
@@ -173,6 +183,8 @@ describe('a QTI 1.2 item', () => {
     const str = (conditions: string): unknown => one(qti12(`<item ident="m"><presentation><material><mattext>A rocky planet?</mattext></material><response_str ident="R"><render_fib/></response_str></presentation><resprocessing>${conditions}</resprocessing></item>`));
     expect(str(condition('Mars', ' case="Yes"') + condition('Venus', ''))).toBe('item "m": its answers differ in whether letter case counts, and a question here grades them one way');
     expect(str(condition('Mars', ' case="Yes"') + condition('Venus', ' case="Yes"'))).toEqual({ question: 'A rocky planet?', type: 'fill-in', answer: 'Mars', accept: ['Venus'], caseSensitive: true });
+    // A strict condition that a loose one for the same answer already covers adds nothing (Codex, on #576).
+    expect(str(condition('Mars', ' case="Yes"') + condition('Mars', ''))).toEqual({ question: 'A rocky planet?', type: 'fill-in', answer: 'Mars' });
   });
 });
 
