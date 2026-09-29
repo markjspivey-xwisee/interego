@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-09-29 — The multi-agent demos publish conformant descriptors and stop their server cleanly (#568 follow-up)
+
+Codex, on #568, found two faults, and validating what the demos publish found a third.
+
+- **Ground truth.** Omitting `groundTruth` on an Asserted claim is not "implied true". The builder accepts the omission, but the serializer then writes no `iep:groundTruth`, and `iep-shapes.ttl` refuses an Asserted facet without it. The three Asserted claims #568 changed now say `groundTruth: true`; their "not human-verified" nuance stays in the trust level. The Hypothetical claim still leaves it unset.
+- **The server outlived the demo on Unix.** With npm 11, `npx` runs `npm → sh -c → node`, and SIGTERM to npm ended the shell but left the server running, holding the port. The next run then refused to start.
+  - Off Windows, `solid-server.ts` now spawns npx as the leader of its own process group, and signals the whole group.
+  - On Windows it still ends the tree with `taskkill /T`.
+  - It also stops the server when the demo exits, or on Ctrl+C: a server in its own group no longer receives the terminal's.
+  - Stopping happens once, so a second call at exit cannot signal a reused process ID.
+- **Two descriptors in `run.ts` broke the shapes.** Alice's update (`arch-review-2026-Q1-v2`) had no provenance facet and no agent facet, so the published v2 failed the shapes that v1 passes. Bob's local descriptor had no provenance facet. Both now carry them, and the v2 records `wasDerivedFrom` v1. After the intersection, "Provenance" survives alongside "Temporal".
+
+Run on Windows from the repository root, the TLA demo, the team demo and `npm start` each complete. Every descriptor they publish validates against `docs/ns/iep-shapes.ttl` with no violations. The Unix group signal is covered by the tests, but was not run on Unix.
+
+Tests: `integrations/tests/multi-agent-solid-server.test.ts` adds:
+- the modal-status/ground-truth rule over every `.semiotic({…})` facet in the three scripts;
+- exactly one provenance facet and one agent facet in every descriptor they build;
+- each stop path, with the platform and signal injected: Unix group, Windows tree, once only, and the fallback to the process itself.
+
 ## 2026-09-28 — The multi-agent demos run again: their Solid server starts from outside the repository
 
 The README's TLA and team-audit demos, and `npm start` in `examples/multi-agent`, stopped at "CSS timeout" before doing anything. Two causes had piled up.

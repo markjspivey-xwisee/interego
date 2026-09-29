@@ -185,8 +185,9 @@ async function agentScanner(): Promise<ContextDescriptorData> {
 .semiotic({
       modalStatus: 'Asserted',      // Machine-generated, high confidence
       epistemicConfidence: 0.95,
-      // No groundTruth: Asserted implies it (spec/architecture.md §5.2.2). "Not verified by a
-      // human yet" is the trust level below.
+      // Asserted requires groundTruth true (spec/architecture.md §5.2.2; iep-shapes.ttl refuses it
+      // missing). "Not verified by a human yet" is the trust level below.
+      groundTruth: true,
     })
 .trust({
       trustLevel: 'ThirdPartyAttested',  // Nessus attestation

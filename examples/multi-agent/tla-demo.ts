@@ -235,8 +235,9 @@ async function agentLRS() {
 .semiotic({
       modalStatus: 'Asserted',
       epistemicConfidence: 0.99,   // Machine-recorded, highly reliable
-      // No groundTruth: Asserted implies it (spec/architecture.md §5.2.2). "Not human-verified"
-      // is the trust level below.
+      // Asserted requires groundTruth true (spec/architecture.md §5.2.2; iep-shapes.ttl refuses it
+      // missing). "Not human-verified" is the trust level below.
+      groundTruth: true,
     })
 .trust({
       trustLevel: 'SelfAsserted',  // LRS self-reports xAPI conformance
@@ -356,8 +357,9 @@ async function agentCompetency(lrsDescriptor: any) {
 .semiotic({
       modalStatus: 'Asserted',
       epistemicConfidence: 0.92,
-      // No groundTruth: Asserted implies it (spec/architecture.md §5.2.2). "Algorithm-assessed,
-      // not instructor-verified" is the trust level below.
+      // Asserted requires groundTruth true (spec/architecture.md §5.2.2; iep-shapes.ttl refuses it
+      // missing). "Algorithm-assessed, not instructor-verified" is the trust level below.
+      groundTruth: true,
     })
 .trust({
       trustLevel: 'ThirdPartyAttested',  // Competency framework attestation
