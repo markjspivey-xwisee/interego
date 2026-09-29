@@ -11,7 +11,6 @@
     "@interego/core": "file:../../packages/core",
     "@interego/pgsl": "file:../../packages/pgsl",
     "@interego/solid": "file:../../packages/solid",
-    "@solid/community-server": "^7.0.0",
     "@types/ws": "^8.18.1",
     "tsx": "^4.0.0",
     "ws": "^8.19.0"

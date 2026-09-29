@@ -19,7 +19,7 @@
  * real Solid pod, real RDF serialization.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
@@ -47,6 +47,7 @@ import type {
 import type {
   ContextChangeEvent,
 } from '@interego/solid';
+import { startSolidServer, stopSolidServer } from './solid-server.js';
 
 // ── Configuration ───────────────────────────────────────────
 
@@ -57,7 +58,6 @@ const BOB_POD = `${BASE_URL}bob/`;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CSS_CONFIG = resolve(__dirname, 'css-config.json');
-const CSS_BIN = resolve(__dirname, 'node_modules/.bin/community-solid-server');
 
 // ── Utility ─────────────────────────────────────────────────
 
@@ -86,74 +86,7 @@ const solidFetch: FetchFn = async (url, init) => {
 // ── CSS Lifecycle ───────────────────────────────────────────
 
 function startCSS(): Promise<ChildProcess> {
-  return new Promise((resolve, reject) => {
-    log('System', `Starting Community Solid Server on port ${CSS_PORT}...`);
-
-    const proc = spawn(CSS_BIN, [
-      '-c', CSS_CONFIG,
-      '-p', String(CSS_PORT),
-      '-l', 'warn',
-      '--baseUrl', BASE_URL,
-    ], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
-    });
-
-    let started = false;
-
-    proc.stdout!.on('data', (data: Buffer) => {
-      const text = data.toString();
-      if (!started && text.includes('Listening')) {
-        started = true;
-        log('System', `CSS running at ${BASE_URL}`);
-        resolve(proc);
-      }
-    });
-
-    proc.stderr!.on('data', (data: Buffer) => {
-      const text = data.toString().trim();
-      if (text && !started) {
-        // CSS logs info to stderr sometimes
-        if (text.includes('Listening')) {
-          started = true;
-          log('System', `CSS running at ${BASE_URL}`);
-          resolve(proc);
-        }
-      }
-    });
-
-    proc.on('error', (err) => {
-      if (!started) reject(err);
-    });
-
-    proc.on('exit', (code) => {
-      if (!started) reject(new Error(`CSS exited with code ${code}`));
-    });
-
-    // Fallback: poll for readiness
-    const poll = setInterval(async () => {
-      if (started) { clearInterval(poll); return; }
-      try {
-        const resp = await fetch(BASE_URL);
-        if (resp.ok || resp.status < 500) {
-          clearInterval(poll);
-          if (!started) {
-            started = true;
-            log('System', `CSS running at ${BASE_URL}`);
-            resolve(proc);
-          }
-        }
-      } catch {
-        // Not ready yet
-      }
-    }, 500);
-
-    // Hard timeout
-    setTimeout(() => {
-      clearInterval(poll);
-      if (!started) reject(new Error('CSS did not start within 30s'));
-    }, 30_000);
-  });
+  return startSolidServer({ config: CSS_CONFIG, port: CSS_PORT, baseUrl: BASE_URL, log: message => log('System', message) });
 }
 
 async function ensurePodContainer(podUrl: string): Promise<void> {
@@ -333,7 +266,7 @@ async function agentBob(aliceDescriptor: ContextDescriptorData): Promise<void> {
 .semiotic({
       modalStatus: 'Hypothetical',
       epistemicConfidence: 0.7,
-      groundTruth: false,
+      // No groundTruth: a Hypothetical claim has no settled truth value (spec/architecture.md §5.2.2).
     })
 .trust({
       trustLevel: 'SelfAsserted',
@@ -518,7 +451,7 @@ async function main(): Promise<void> {
   } finally {
     if (cssProc) {
       log('System', 'Shutting down CSS...');
-      cssProc.kill('SIGTERM');
+      stopSolidServer(cssProc);
       // Give it a moment to clean up
       await new Promise(r => setTimeout(r, 500));
       log('System', 'Done');

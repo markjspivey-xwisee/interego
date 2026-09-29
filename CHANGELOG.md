@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-09-28 — The multi-agent demos run again: their Solid server starts from outside the repository
+
+The README's TLA and team-audit demos, and `npm start` in `examples/multi-agent`, stopped at "CSS timeout" before doing anything. Two causes had piled up.
+
+**The server could not boot inside the repository.**
+- Components.js, the server's configuration loader, loads every `node_modules` from the server's package directory up to the filesystem root. Installed in `examples/multi-agent`, the server also found the repository root's `@comunica` 5 beside its own `@comunica` 2, and its configuration failed ("… ActorDereference … is not a valid component").
+- `--mainModulePath` cannot help: it moves where that walk starts, not where it ends.
+- `examples/multi-agent/solid-server.ts` now starts the server with `npx @solid/community-server@7` from a folder under the OS temp directory, whose ancestors hold nothing of the repository's. Pods are kept there too, fresh on each start.
+- It refuses to start over a server that is already answering (a demo left running with `--keep-alive`), rather than wiping that server's pods.
+- It stops the whole process tree. On Windows a plain `kill()` of the npx shell would leave the server running.
+- The three scripts use it, and the example no longer installs a server of its own: its install drops 630 packages.
+
+**Then the builder refused their claims.** The modal-truth rule (spec/architecture.md §5.2.2) is: Asserted ↔ `groundTruth` true, Counterfactual ↔ false, Hypothetical ↔ unset.
+- Three Asserted claims set `groundTruth: false` to mean "not human-verified". Each already carries that in its trust level (`SelfAsserted` or `ThirdPartyAttested`), so they now omit it.
+- One Hypothetical claim in `run.ts` set `groundTruth: false`, and now leaves it unset.
+
+Run on Windows from the repository root, the TLA demo, the team demo and `npm start` each completed every phase and shut the server down. The TLA credential in the pod carries the `wasDerivedFrom` links from the previous change.
+
+Tests: `integrations/tests/multi-agent-solid-server.test.ts` holds the launch to a folder outside the repository and holds the three scripts to the helper. It also checks that the example no longer depends on its own server.
+
 ## 2026-09-28 — The multi-agent demos the README advertises record what their credentials derive from
 
 The README's TLA and team-audit demos (`tla-demo.ts` and `team-demo.ts` in `examples/multi-agent`) passed `sources` in their provenance facets. The builder no longer reads that field (it is `wasDerivedFrom`), and does not reject it either. So the credential and audit report the demos publish silently lacked the sessions and findings they were derived from, in a demo that presents a full trust-chain audit. They now pass `wasDerivedFrom`, and the derivation appears in the published Turtle.
