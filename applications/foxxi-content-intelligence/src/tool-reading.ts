@@ -106,27 +106,33 @@ export function imgHtml(src: string, alt: string): string {
 }
 
 const JS_ESCAPES: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', 0: '\0' };
+/** A run of characters that neither close a literal quoted so nor start an escape. */
+const PLAIN_RUN: Record<string, RegExp> = { "'": /[^'\\]*/y, '"': /[^"\\]*/y };
 
 /**
  * A JavaScript string literal a tool's data file writes (single- or double-quoted, starting at
  * `at`), read as JavaScript reads it without running anything: its escapes decoded (\n, \xHH,
- * \uHHHH, a line continuation, any other character as itself). Null when it does not close.
+ * \uHHHH, a line continuation, any other character as itself). Null when it does not close. It
+ * reads the literal once, however many escapes it holds: a data file can hold megabytes in one.
  */
 export function jsStringAt(text: string, at: number): { value: string; end: number } | null {
   const q = text[at];
   if (q !== "'" && q !== '"') return null;
+  const run = PLAIN_RUN[q]!;
   let out = '';
   let i = at + 1;
   for (;;) {
-    const close = text.indexOf(q, i);
-    const slash = text.indexOf('\\', i);
-    if (close < 0) return null;
-    if (slash < 0 || close < slash) return { value: out + text.slice(i, close), end: close + 1 };
-    out += text.slice(i, slash);
-    const n = text[slash + 1] ?? '';
-    if (n === 'u') { out += String.fromCharCode(parseInt(text.slice(slash + 2, slash + 6), 16)); i = slash + 6; }
-    else if (n === 'x') { out += String.fromCharCode(parseInt(text.slice(slash + 2, slash + 4), 16)); i = slash + 4; }
-    else if (n === '\r' || n === '\n') { i = slash + (n === '\r' && text[slash + 2] === '\n' ? 3 : 2); }
-    else { out += JS_ESCAPES[n] ?? n; i = slash + 2; }
+    run.lastIndex = i;
+    // A run always matches, if only as nothing, except past the end (an escape cut short).
+    if (!run.exec(text)) return null;
+    const stop = run.lastIndex;
+    out += text.slice(i, stop);
+    if (stop >= text.length) return null;
+    if (text[stop] === q) return { value: out, end: stop + 1 };
+    const n = text[stop + 1] ?? '';
+    if (n === 'u') { out += String.fromCharCode(parseInt(text.slice(stop + 2, stop + 6), 16)); i = stop + 6; }
+    else if (n === 'x') { out += String.fromCharCode(parseInt(text.slice(stop + 2, stop + 4), 16)); i = stop + 4; }
+    else if (n === '\r' || n === '\n') { i = stop + (n === '\r' && text[stop + 2] === '\n' ? 3 : 2); }
+    else { out += JS_ESCAPES[n] ?? n; i = stop + 2; }
   }
 }
