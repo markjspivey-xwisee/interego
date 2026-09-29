@@ -218,6 +218,22 @@ describe('the other ways iSpring publishes a course', () => {
       '# Metals\n\nUse a class D extinguisher.\n\n![A class D extinguisher](https://bridge.example/files/data/img6.png)',
       'Know the map.\n\n# Notes\n\nPoint to the exits.\n\n![Floor map](https://bridge.example/files/data/img7.png)',
     ]);
+    // What no page keeps (a video) is no page, and no notes of their own: the interaction is listed (Codex, on #586).
+    const film = { d: { i: 'interactivity_3', C: { is: [{ i: 'a', t: rt(''), c: { a: '<video src="data/video2.mp4"></video>' } }] } } };
+    const onlyVideo = { ...pres, s: [
+      { t: 'Film', l: 0, st: 'i', it: 'iSpring.Tabs', s: 'data/intr3.js' },
+      { t: 'Walk', l: 0, x: 'Walk the route.', N: '<video src="data/video3.mp4"></video>' },
+      { t: 'Gone', l: 0, st: 'i', it: 'iSpring.Tabs', s: 'data/intr9.js' },
+    ] };
+    const read = ispringPackage(filesOfZip(zipOf({
+      'index.html': `${HEAD}<script>var presInfo="${deflated(onlyVideo)}";</script>`,
+      'data/intr3.js': `(function(){var loadHandler = window['i_{GUID}']; var interactionJson = "${b64(film)}"; loadHandler&&loadHandler(0,'interactivity_3',interactionJson);})();`,
+    })), { fileUrl })!;
+    expect(read.topics.flatMap(t => t.pages.map(p => p.body))).toEqual(['Walk the route.']);
+    expect(read.unread).toEqual([
+      { path: 'index.html#slides/0', why: 'its interaction shows nothing a page here keeps: no text, no picture' },
+      { path: 'index.html#slides/2', why: 'its interaction is not in the package' },
+    ]);
   });
 
   it('reads a SCORM package\'s player page in res/, and plays the package as one', () => {
