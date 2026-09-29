@@ -520,20 +520,23 @@ describe('what a review of #579 found', () => {
   });
 
   it('reads a question whose text and choices are buttons, and no counter or button label as its text', () => {
-    const q = slideFile('6Q000000001', [{ objects: [
-      textBox('tCount00001', 1, 'Question 1 of 3'),
-      // Its own text, on an object Storyline marks a button (it shows a layer when clicked).
-      clicking(button('bText000001', 2, 'Which of these makes a slide easier to read for everyone?'), SHOW_LAYER),
-      clicking(button('cBig0000001', 3, 'Large, high-contrast text'), SELECT),
-      clicking(button('cTiny000001', 4, 'Tiny grey text'), SELECT),
-      clicking(button('bHint000001', 5, 'Show hint'), SHOW_LAYER),
-      clicking(button('bSubmit0001', 6, 'Submit my answer'), SUBMIT),
-    ] }]);
-    const entry = slide('6Q000000001', 1, 'Question 1', [{ kind: 'interaction', type: 'multiplechoice', lmsId: 'FreeFormPickOne', lmstext: 'Pick One',
-      choices: choices(['cBig0000001', 'Checkbox 1'], ['cTiny000001', 'Checkbox 2']), answers: correct(equals('cBig0000001')) }]);
-    expect(readOf(oneScene([[entry, q]])).topics[0]!.questions).toEqual([
+    // Two such questions in a scene: what counts them ("Question 1 of 3") is the text they share.
+    const onButtons = (n: number): [object, string] => [
+      slide(`6Q00000000${n}`, n, `Question ${n}`, [{ kind: 'interaction', type: 'multiplechoice', lmsId: 'FreeFormPickOne', lmstext: 'Pick One',
+        choices: choices([`cBig000000${n}`, 'Checkbox 1'], [`cTiny00000${n}`, 'Checkbox 2']), answers: correct(equals(`cBig000000${n}`)) }]),
+      slideFile(`6Q00000000${n}`, [{ objects: [
+        textBox(`tCount0000${n}`, 1, `Question ${n} of 3`),
+        // Its own text, on an object Storyline marks a button (it shows a layer when clicked).
+        clicking(button(`bText00000${n}`, 2, 'Which of these makes a slide easier to read for everyone?'), SHOW_LAYER),
+        clicking(button(`cBig000000${n}`, 3, 'Large, high-contrast text'), SELECT),
+        clicking(button(`cTiny00000${n}`, 4, 'Tiny grey text'), SELECT),
+        clicking(button(`bHint00000${n}`, 5, 'Show hint'), SHOW_LAYER),
+        clicking(button(`bSubmit000${n}`, 6, 'Submit my answer'), SUBMIT),
+      ] }]),
+    ];
+    expect(readOf(oneScene([onButtons(1), onButtons(2)])).topics[0]!.questions).toEqual(Array(2).fill(
       { question: 'Which of these makes a slide easier to read for everyone?', type: 'choice', options: ['Large, high-contrast text', 'Tiny grey text'], answer: 'A' },
-    ]);
+    ));
   });
 
   it('leaves out a question that is a picture, its counter in words no text of its own', () => {
@@ -542,9 +545,22 @@ describe('what a review of #579 found', () => {
         choices: choices([`a${id}`, '5'], [`b${id}`, '4']), answers: correct(equals(`a${id}`)) }]),
       slideFile(id, [{ objects: [textBox(`t${id}`, 1, counter), picture(`i${id}`, 2, 0, 'Question'), textBox(`a${id}`, 3, '5'), textBox(`b${id}`, 4, '4')] }]),
     ];
-    const read = readOf(oneScene([counted('6Q000000002', '1/10 soal'), counted('6Q000000003', 'Question 2 of 10')]));
+    const read = readOf(oneScene([counted('6Q000000002', '1/10 soal'), counted('6Q000000003', '2/10 soal')]));
     expect(read.topics).toEqual([]);
     expect(read.unread.map(u => u.why)).toEqual(Array(2).fill('its question is a picture or a video, which a check here would not show'));
+  });
+
+  it('keeps a question\'s text that only looks like a counter (Codex, on #585)', () => {
+    const stem = (id: string, n: number, text: string): [object, string] => [
+      slide(id, n, 'Question', [{ kind: 'interaction', type: 'truefalse', lmsId: 'TrueFalse', lmstext: 'True/False',
+        choices: choices([`t${id}`, 'True'], [`f${id}`, 'False']), answers: correct(equals(`t${id}`)) }]),
+      slideFile(id, [{ objects: [textBox(`q${id}`, 1, text), choiceBox(`t${id}`, 2, 'True'), choiceBox(`f${id}`, 3, 'False')] }]),
+    ];
+    // Words and numbers once only; and two sums, whose numbers both differ: no place among others.
+    // The same stem twice (no place among others); longer texts; sums of three numbers.
+    const texts = ['Level 2 requires 3 attempts.', '2 + 3 =', '4 + 5 =', '12 ÷ 4 =', '12 ÷ 4 =', 'How many sides has a shape with 5 corners?', 'How many sides has a shape with 6 corners?', '2 + 3 + 4 =', '5 + 3 + 1 ='];
+    const read = readOf(oneScene(texts.map((t, i) => stem(`6S00000000${i + 1}`, i + 1, t))));
+    expect(read.topics[0]!.questions.map(q => q.question)).toEqual(texts);
   });
 
   it('asks a question two draws in a scene take from once', () => {
@@ -599,6 +615,24 @@ describe('a package that holds more than one course (a review of #579)', () => {
   it('reads a SCORM package wrapped in a folder as the course it is', () => {
     const wrapped = zipOf(inFolder('Ladder safety/', { 'imsmanifest.xml': MANIFEST, 'index_lms.html': '<html><body></body></html>', ...(COURSE_FILES() as Record<string, string>) }));
     expect(readAnyPackage(filesOfZip(wrapped), { fileUrl })).toEqual(storylinePackage(filesOfZip(wrapped), { fileUrl }));
+  });
+
+  it('lists an activity beside its course that reads to nothing, in a package of several (Codex, on #585)', () => {
+    const sco = (id: string, href: string): string => `<resource identifier="${id}" type="webcontent" adlcp:scormtype="sco" href="${href}"><file href="${href}"/></resource>`;
+    const manifest = '<?xml version="1.0"?><manifest identifier="two" xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_rootv1p2"><organizations default="o"><organization identifier="o"><title>Forklift safety</title>'
+      + '<item identifier="i1" identifierref="r1"><title>Simulator</title></item><item identifier="i2" identifierref="r2"><title>Practice</title></item>'
+      + `</organization></organizations><resources>${sco('r1', 'simulator.html')}${sco('r2', 'practice/story.html')}</resources></manifest>`;
+    const zip = zipOf({
+      'imsmanifest.xml': manifest,
+      // Drawn by its script: nothing to read, and so listed.
+      'simulator.html': '<html><body><div id="app"></div><script src="simulator.js"></script></body></html>',
+      'simulator.js': 'document.getElementById("app").textContent = "";',
+      ...inFolder('practice/', { ...course('Practice run', 'Drive slowly.'), 'story.html': '<html><body><div id="app"></div></body></html>' }),
+    });
+    const read = readAnyPackage(filesOfZip(zip), { fileUrl });
+    expect(read.title).toBe('Forklift safety');
+    expect(read.topics.map(t => [t.title, t.pages.map(pg => pg.body)])).toEqual([['Practice run', ['Drive slowly.']]]);
+    expect(read.unread).toEqual([{ path: 'simulator.html', why: 'no text of its own: what it shows, its script draws' }]);
   });
 
   it('reads a SCORM package\'s other activities beside its Storyline course, the course after them', () => {

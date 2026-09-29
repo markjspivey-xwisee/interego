@@ -46,6 +46,7 @@
 import AdmZip from 'adm-zip';
 import { filesOfZip, packageLookup, readPackage, type ImportedPackage, type ImportedQuestion, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
+import { parseManifest } from './scorm-sequencing.js';
 import { risePackage } from './rise-course.js';
 import { captivatePackage } from './captivate-course.js';
 import { ispringPackage } from './ispring-course.js';
@@ -617,6 +618,11 @@ function toolCourses(files: PackageFiles, opts: ToolReadOptions): ToolCourse[] {
   return found.sort((a, b) => a.root.localeCompare(b.root, 'en', { numeric: true }));
 }
 
+/** How many activities a package's manifest launches. */
+function activitiesIn(files: PackageFiles, manifest: string): number {
+  try { return parseManifest((files.read(manifest) ?? Buffer.alloc(0)).toString('utf8')).preorder.filter(a => a.resourceId).length; } catch { return 0; }
+}
+
 /** A package's files less those in the given folders. */
 function without(files: PackageFiles, folders: readonly string[]): PackageFiles {
   const kept = (name: string): boolean => !folders.some(f => name.startsWith(f));
@@ -645,16 +651,18 @@ function together(courses: readonly ToolCourse[], beside: ImportedPackage | null
  * Any hosted package, read in the richest model it carries. Each course an authoring tool keeps in
  * it (Adapt, H5P, Rise 360, Storyline, iSpring, Captivate) is read in that tool's own model. What a
  * SCORM package holds beside its courses (its other activities) is read as package-import.ts reads
- * any package, its pages and the question banks it declares; a page that only launches a course has
- * no content of its own, and adds nothing. A course at the package's root, or in a folder that holds
- * the manifest, is the package. A package that holds no tool's course is read as any package is.
+ * any package, its pages and the question banks it declares. In a package of one activity, that
+ * activity is the course, its page only a launcher; in a package of several, one beside the courses
+ * that reads to nothing is listed with why, not lost (Codex, on #585). A course at the package's
+ * root, or in a folder that holds the manifest, is the package. A package that holds no tool's
+ * course is read as any package is.
  */
 export function readAnyPackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage {
   const courses = toolCourses(files, opts);
   if (!courses.length) return readPackage(files, opts);
   const manifest = packageLookup(files.names).entryFor('imsmanifest.xml');
   const rest = manifest && !courses.some(c => manifest.startsWith(c.root)) ? readPackage(without(files, courses.map(c => c.root)), opts) : null;
-  const beside = rest?.topics.length ? rest : null;
+  const beside = rest && (rest.topics.length || (rest.unread.length && activitiesIn(files, manifest!) > 1)) ? rest : null;
   return courses.length === 1 && !beside ? courses[0]!.read : together(courses, beside, opts);
 }
 
