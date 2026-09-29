@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { courseMarkdownHtml } from '../src/course-markdown.js';
 import { authorQuestion, questionForLearner, questionIsRight } from '../src/course-questions.js';
 import { hashScormAnswer, scormScoHtml } from '../src/scorm-artifacts.js';
+import { scormAssessmentScript, type ScormAnswerInput } from '../src/scorm-assessment.js';
 import { answersFrom, renderScoPage, type LearnerQuestion } from '../src/lti-player.js';
 
 const seed = (i: number) => `rich-course\nSCO-1\n${i}`;
@@ -107,6 +108,28 @@ describe('each question type is authored into a stored form and graded exactly',
     const agreed = authorQuestion({ question: 'Code?', type: 'fill-in', answer: '0012', input: { type: 'text' } }, seed(46));
     expect([questionIsRight('0012', agreed), questionIsRight('12', agreed)]).toEqual([true, false]);
     expect(authorQuestion({ question: 'Cap?', type: 'numeric', answer: '8', input: { type: 'integer', min: 0 } }, seed(47)).input).toEqual({ type: 'integer', min: 0 });
+  });
+
+  it('grades letter case only where a question says it counts, and keeps every other verifier as it was', () => {
+    const q = authorQuestion({ question: 'Capital of France?', type: 'fill-in', answer: 'Paris', accept: ['Paree'], caseSensitive: true }, seed(48));
+    expect(q.input).toEqual({ type: 'text', caseSensitive: true });
+    expect(['Paris', 'paris', 'Paree', 'The capital is Paris.'].map(r => questionIsRight(r, q))).toEqual([true, false, true, true]);
+    // Without it, as before: the same verifier, and letter case is not read.
+    const plain = authorQuestion({ question: 'Capital of France?', type: 'fill-in', answer: 'Paris' }, seed(49));
+    expect(plain.input).toBeUndefined();
+    expect(plain.answerHash).toBe(hashScormAnswer('paris'));
+    expect(questionIsRight('PARIS', plain)).toBe(true);
+    // An explicit text input keeps it; a number has no letter case to count.
+    expect(authorQuestion({ question: 'Code?', answer: 'AbC', input: { type: 'text', caseSensitive: true } }, seed(50)).input).toEqual({ type: 'text', caseSensitive: true });
+    expect(() => authorQuestion({ question: 'Cap?', type: 'numeric', answer: 8, caseSensitive: true }, seed(51))).toThrow(/only a typed text answer/);
+    expect(() => authorQuestion({ question: 'Cap?', answer: '8', input: { type: 'integer' }, caseSensitive: true }, seed(52))).toThrow(/only a typed text answer/);
+    expect(() => authorQuestion({ question: 'Cap?', answerHash: 'a'.repeat(64), input: { type: 'integer', caseSensitive: true } }, seed(53))).toThrow(/only a text input can be case-sensitive/);
+  });
+
+  it('grades letter case the same way in a page, whose script is the engine\'s own source', () => {
+    const candidates = new Function(`${scormAssessmentScript()}\nreturn scormAnswerCandidates;`)() as (value: string, input?: ScormAnswerInput) => string[];
+    expect(candidates('Paris', { type: 'text', caseSensitive: true })[0]).toBe('Paris');
+    expect(candidates('Paris')[0]).toBe('paris');
   });
 
   it('choice takes a letter or the option text, one right or several, and keeps no answer in plaintext', () => {

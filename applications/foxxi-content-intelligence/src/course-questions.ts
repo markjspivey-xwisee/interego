@@ -8,7 +8,8 @@
  * canonical right answer, see `scormAnswerCandidates`) instead of the answer.
  *
  * The question types are the xAPI interaction types:
- *   fill-in       a typed answer; `accept` lists other accepted answers
+ *   fill-in       a typed answer; `accept` lists other accepted answers, and `caseSensitive`
+ *                 makes letter case count (it is otherwise read without it)
  *   numeric       a number, with optional min and max
  *   choice        options A…; one right, or several (`multiple`, or an array answer)
  *   true-false
@@ -133,6 +134,7 @@ export function checkStoredInput(input: ScormAnswerInput | undefined): void {
   if (input.type === 'matching') labels(input.targets, 'targets');
   else if (input.targets !== undefined) throw new QuestionError(`a ${input.type} input has no targets`);
   if (input.multiple !== undefined && (input.type !== 'choice' || typeof input.multiple !== 'boolean')) throw new QuestionError('only a choice input can be multiple');
+  if (input.caseSensitive !== undefined && (input.type !== 'text' || typeof input.caseSensitive !== 'boolean')) throw new QuestionError('only a text input can be case-sensitive');
   if (input.salt !== undefined && (typeof input.salt !== 'string' || !/^[0-9a-f]{8,64}$/.test(input.salt))) throw new QuestionError('input.salt must be 8 to 64 hex characters');
 }
 
@@ -161,7 +163,12 @@ export function authorQuestion(raw: unknown, seed: string): ScormAssessmentQuest
       if (!agrees) throw new QuestionError(`type ${String(q.type)} and input type ${input.type} disagree; give one of them`);
     }
     const answer = typeof q.answer === 'number' ? String(q.answer) : text(q.answer, 'answer', QUESTION_LIMITS.acceptLength);
-    const typed = input.type === 'text' ? undefined : input;
+    if (q.caseSensitive !== undefined && (typeof q.caseSensitive !== 'boolean' || (q.caseSensitive && input.type !== 'text'))) {
+      throw new QuestionError('caseSensitive is true or false, and only a typed text answer can be case-sensitive');
+    }
+    // A text input is the default, and is not kept, unless it makes letter case count.
+    const caseSensitive = input.type === 'text' && (input.caseSensitive === true || q.caseSensitive === true);
+    const typed: ScormAnswerInput | undefined = input.type === 'text' ? (caseSensitive ? { type: 'text', caseSensitive: true } : undefined) : input;
     return { question, answerHash: verifier(answer, typed, 'answer'), ...(typed ? { input: typed } : {}), ...(explanation ? { explanation } : {}) };
   }
 
@@ -192,9 +199,13 @@ export function authorQuestion(raw: unknown, seed: string): ScormAssessmentQuest
       const inferred = named === 'fill-in' ? undefined : inferScormAnswerInput(answer);
       if (type === 'numeric' && !inferred) throw new QuestionError('a numeric question needs a number as its answer');
       if (!inferred && (q.min !== undefined || q.max !== undefined)) throw new QuestionError('min and max apply only to a numeric question');
+      // Letter case counts only where a question says so (`caseSensitive`), as a source it was read
+      // from may declare; a typed answer is otherwise read without it.
+      if (q.caseSensitive !== undefined && typeof q.caseSensitive !== 'boolean') throw new QuestionError('caseSensitive is true or false');
+      if (q.caseSensitive === true && inferred) throw new QuestionError('only a typed text answer can be case-sensitive');
       const input: ScormAnswerInput | undefined = inferred
         ? { ...inferred, ...(q.min !== undefined ? { min: Number(q.min) } : {}), ...(q.max !== undefined ? { max: Number(q.max) } : {}) }
-        : undefined;
+        : q.caseSensitive === true ? { type: 'text', caseSensitive: true } : undefined;
       if (input) checkStoredInput(input);
       const acceptIn = q.accept === undefined ? [] : Array.isArray(q.accept) ? q.accept : [q.accept];
       if (acceptIn.length > QUESTION_LIMITS.accept) throw new QuestionError(`accept lists at most ${QUESTION_LIMITS.accept} answers`);
