@@ -1,14 +1,19 @@
 # Changelog
 
-## 2026-09-29 — Foxxi: what Codex found on #578 to #585
+## 2026-09-29 — Foxxi: what Codex found on #578 to #586
 
-Codex was at its usage limit when #578, #579 and #580 opened. Its reviews were asked for again once it was back, and it reviewed #581 to #585 as they opened. Each finding is fixed here, or answered where the evidence says otherwise.
+Codex was at its usage limit when #578, #579 and #580 opened. Its reviews were asked for again once it was back, and it reviewed #581 to #586 as they opened. Each finding is fixed here, or answered where the evidence says otherwise.
 
 - **A text input given with its answer keeps how it compares** (#581, `src/course-questions.ts`). `authorQuestion`'s explicit-input form rebuilt a text input from its letter case alone. So `input: { type: 'text', compare: 'exact' }` stored no input, and "C" was still right for "C++". Now the input's `compare`, or the question's own beside it, is kept. The two disagreeing are refused, and so is a `compare` beside an input that is not text.
-- **A page that shows a picture is kept** (#583). The readers asked `plainText` whether a page had anything to show, and `plainText` reads no media as text: it answers null. `shows()` (`src/tool-reading.ts`) now answers from the page's text, or a picture or media. Before, iSpring left out an interaction holding a picture, an info slide that is only a picture, and a slide with nothing but notes holding a picture. iSpring and Storyline both dropped notes holding a picture, text and all.
-- **A counter is found by recurring** (#585, `src/storyline-course.ts`). A counter was any short run of words around numbers, so "Level 2 requires 3 attempts." or "ISO 9001" could be taken for one, leaving a question with no text.
-  - Now a counter is a short text that a scene's question slides share, with only the question's number changed and any other number the same on all: "Question 3 of 10", "1/10 soal", in whatever language. A number alone ("3/10") still counts.
-  - Sums whose numbers all differ, a stem repeated unchanged, and longer texts are not counters.
+- **Whether a page shows anything is what the page keeps of it** (#583, #586, `src/tool-reading.ts`). The readers asked `plainText` whether a page had anything to show. `plainText` reads no picture as text, and a video, a sound or an embed is no part of a page. `Reading.shows()` asks the page converter itself: the page's text, or a picture the package holds. This fixes:
+  - an iSpring interaction holding a picture, left out whole, and an info slide that is only a picture;
+  - a slide's notes holding a picture, dropped with their text, in iSpring and Storyline alike;
+  - an iSpring slide with nothing but such notes, left out.
+
+  Notes that are only a video no longer leave a bare heading. An interaction that shows nothing a page keeps is listed as that, apart from one whose file is missing from the package.
+- **A counter is a place in a count** (#585, #586, `src/storyline-course.ts`). #585 took any short run of words around numbers for a counter. Its first repair took any short text that recurs with one number changed. So "Level 2 requires 3 attempts.", "ISO 9001" and stems like "What is 2?" beside "What is 3?" could be taken for counters, and a question left with no text.
+  - Now a counter is a place in a count, joined by a slash or a word ("of", "dari"), in a short text that recurs on a scene's question slides. The count must be the same on all of them, and the place must rise in their order and stay within the count: "Question 3 of 10", "1/10 soal", in whatever language. A number alone ("3/10") still counts.
+  - Not counters: stems with no count, times tables ("1 x 5 =" beside "2 x 5 ="), sums, a lone or falling place, a place past its count, counts that differ, and longer texts.
 - **An activity beside a course that reads to nothing is listed** (#585, `src/tool-exports.ts`). In a SCORM package of several activities, one beside the courses that has no text of its own was dropped without a word. It is now listed with why. In a package of one activity, that activity is the course it holds, so its launcher page still adds nothing.
 - **A fold fits a long page and many questions** (#579, #580, `src/package-import.ts`). The fold took only part of a page longer than a fragment holds, or of a topic with more questions than a check holds, and listed the rest. So a Rise block over 20,000 characters, or a Storyline bank of more than 40 questions, lost what did not fit. Now the fold fits them where it can:
   - a long page becomes parts, split between its paragraphs (a paragraph too long, between words);
@@ -22,14 +27,14 @@ Codex was at its usage limit when #578, #579 and #580 opened. Its reviews were a
 
 Tests:
 - an explicit text input's `compare`;
-- a picture in iSpring's interactions, notes and info slides, and in Storyline's notes;
-- counters and texts that only look like them;
+- a picture in iSpring's interactions, notes and info slides and in Storyline's notes, and a video in them;
+- counters, and texts that only look like them;
 - an activity drawn by its script beside a course;
 - a fold that fits a long page and a topic of many questions, and one that cannot;
 - a Storyline course written as objects;
 - a Rise table.
 
-Mutation checks: 25, all caught.
+Mutation checks: 22 on the final code, all caught.
 
 ## 2026-09-29 — Foxxi: every course a package holds is read, and a Storyline button as the slide shows it (a review of #579)
 
