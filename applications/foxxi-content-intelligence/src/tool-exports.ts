@@ -12,9 +12,10 @@
  * - H5P: h5p.json, naming the main library, and content/content.json, its params, each nested piece
  *   a library with params of its own; an .h5p file, or H5P content a package plays.
  * Rise 360's model, which it keeps as JSON inside the page its runtime draws, is read by
- * rise-course.ts. Each becomes the model package-import.ts reads a package into, topics of pages and
- * questions, so it folds, resolves per learner, plays and learns as any hosted package does. A
- * package no tool here models is read as package-import.ts reads any package.
+ * rise-course.ts; Storyline's, which it keeps as JSON in the data files its player loads, by
+ * storyline-course.ts. Each becomes the model package-import.ts reads a package into, topics of
+ * pages and questions, so it folds, resolves per learner, plays and learns as any hosted package
+ * does. A package no tool here models is read as package-import.ts reads any package.
  *
  * ★ READ AS THE TOOL DECLARES IT, AND NOTHING INVENTED. An Adapt option is right when the tool marks
  * it to be selected; an H5P answer is right when it is marked correct, or, in the two types whose
@@ -44,6 +45,7 @@ import AdmZip from 'adm-zip';
 import { filesOfZip, packageLookup, readPackage, type ImportedPackage, type ImportedQuestion, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
 import { risePackage } from './rise-course.js';
+import { storylinePackage } from './storyline-course.js';
 import {
   choice, esc, imgHtml, isRecord, joined, numberOf, Reading, records, SHOWS, str, turned, WITH_MEDIA,
   type Json, type ToolReadOptions,
@@ -556,25 +558,27 @@ export function h5pPackage(files: PackageFiles, opts: ToolReadOptions): Imported
 }
 
 /**
- * Any hosted package, read in the richest model it carries: an authoring tool's own (Adapt, H5P),
- * else as package-import.ts reads any package, its pages and the question banks it declares.
+ * Any hosted package, read in the richest model it carries: an authoring tool's own (Adapt, H5P,
+ * Rise 360, Storyline), else as package-import.ts reads any package, its pages and the question
+ * banks it declares. Rise before Storyline: a Rise course may hold a Storyline block, a package of
+ * its own inside it.
  */
 export function readAnyPackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage {
-  return adaptPackage(files, opts) ?? h5pPackage(files, opts) ?? risePackage(files, opts) ?? readPackage(files, opts);
+  return adaptPackage(files, opts) ?? h5pPackage(files, opts) ?? risePackage(files, opts) ?? storylinePackage(files, opts) ?? readPackage(files, opts);
 }
 
 /** The tools whose own exports are read here. */
-export type ExportTool = 'Adapt' | 'H5P' | 'Rise 360';
+export type ExportTool = 'Adapt' | 'H5P' | 'Rise 360' | 'Storyline';
 
 /** An authoring tool's own export: the tool, its title, and what it reads as. */
 export interface ProjectExport { tool: ExportTool; title: string; read: ImportedPackage }
 
 /**
  * An authoring tool's own export that is no SCORM package: an .h5p file, an Adapt course exported as
- * source, or a course Rise 360 published for xAPI or the web. It has no manifest and launches
- * nothing as it is, so it is kept to be folded. Null for a SCORM or cmi5 package, which is hosted
- * and played as one (even one a tool built), and for a zip no tool here made. `title` is the one to
- * use when the export names none. Throws when the bytes are no zip.
+ * source, or a course Rise 360 or Storyline published for xAPI or the web. It has no manifest and
+ * launches nothing as it is, so it is kept to be folded. Null for a SCORM or cmi5 package, which is
+ * hosted and played as one (even one a tool built), and for a zip no tool here made. `title` is the
+ * one to use when the export names none. Throws when the bytes are no zip.
  */
 export function projectExportOf(zip: Buffer, title?: string): ProjectExport | null {
   const files = filesOfZip(new AdmZip(zip));
@@ -586,5 +590,7 @@ export function projectExportOf(zip: Buffer, title?: string): ProjectExport | nu
   const h5p = h5pPackage(files, opts);
   if (h5p) return { tool: 'H5P', title: h5p.title, read: h5p };
   const rise = risePackage(files, opts);
-  return rise ? { tool: 'Rise 360', title: rise.title, read: rise } : null;
+  if (rise) return { tool: 'Rise 360', title: rise.title, read: rise };
+  const storyline = storylinePackage(files, opts);
+  return storyline ? { tool: 'Storyline', title: storyline.title, read: storyline } : null;
 }
