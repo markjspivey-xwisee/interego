@@ -1,25 +1,35 @@
 # Changelog
 
-## 2026-09-29 — Foxxi: what Codex found on #581, #583 and #585
+## 2026-09-29 — Foxxi: what Codex found on #578 to #585
 
-- **A text input given with its answer keeps how it compares** (`src/course-questions.ts`). `authorQuestion`'s explicit-input form rebuilt a text input from its letter case alone. So `input: { type: 'text', compare: 'exact' }` stored no input, and "C" was still right for "C++". Now the input's `compare`, or the question's own beside it, is kept. The two disagreeing are refused, and so is a `compare` beside an input that is not text.
-- **A page that shows a picture is kept.** The readers asked `plainText` whether a page had anything to show, and `plainText` reads no media as text: it answers null. `shows()` (`src/tool-reading.ts`) answers instead: the page's text, or a picture or media. This fixes three cases:
-  - an iSpring interaction holding a picture was left out whole, and so was an info slide that is only a picture;
-  - a slide's notes holding a picture were dropped with their text, in iSpring and Storyline alike;
-  - an iSpring slide with nothing but such notes was left out.
-- **A counter is found by recurring** (`src/storyline-course.ts`). #585 took a counter to be any short run of words around numbers, so "Level 2 requires 3 attempts." or "ISO 9001" could be taken for one, leaving a question with no text. Now a counter is a short text that a scene's question slides share, with only the question's number changed and any other number the same on all: "Question 3 of 10", "1/10 soal", in whatever language. A number alone ("3/10") still counts as one. These do not:
-  - sums whose numbers all differ ("2 + 3 =" beside "4 + 5 =");
-  - a stem repeated as it is;
-  - longer texts.
-- **An activity beside a course that reads to nothing is listed** (`src/tool-exports.ts`). In a SCORM package of several activities, one beside the courses that has no text of its own (drawn by its script) was dropped without a word. It is now listed with why. In a package of one activity, that activity is the course it holds, and its launcher page adds nothing, as before.
+Codex was at its usage limit when #578, #579 and #580 opened. Its reviews were asked for again once it was back, and it reviewed #581 to #585 as they opened. Each finding is fixed here, or answered where the evidence says otherwise.
 
-Tests cover:
-- an explicit text input's `compare`: from the input, beside it, and the two disagreeing;
-- iSpring's interaction, notes and info slide with a picture, and Storyline's notes with one;
-- counters that recur, and texts that only look like counters;
-- an activity drawn by its script beside a Storyline course.
+- **A text input given with its answer keeps how it compares** (#581, `src/course-questions.ts`). `authorQuestion`'s explicit-input form rebuilt a text input from its letter case alone. So `input: { type: 'text', compare: 'exact' }` stored no input, and "C" was still right for "C++". Now the input's `compare`, or the question's own beside it, is kept. The two disagreeing are refused, and so is a `compare` beside an input that is not text.
+- **A page that shows a picture is kept** (#583). The readers asked `plainText` whether a page had anything to show, and `plainText` reads no media as text: it answers null. `shows()` (`src/tool-reading.ts`) now answers from the page's text, or a picture or media. Before, iSpring left out an interaction holding a picture, an info slide that is only a picture, and a slide with nothing but notes holding a picture. iSpring and Storyline both dropped notes holding a picture, text and all.
+- **A counter is found by recurring** (#585, `src/storyline-course.ts`). A counter was any short run of words around numbers, so "Level 2 requires 3 attempts." or "ISO 9001" could be taken for one, leaving a question with no text.
+  - Now a counter is a short text that a scene's question slides share, with only the question's number changed and any other number the same on all: "Question 3 of 10", "1/10 soal", in whatever language. A number alone ("3/10") still counts.
+  - Sums whose numbers all differ, a stem repeated unchanged, and longer texts are not counters.
+- **An activity beside a course that reads to nothing is listed** (#585, `src/tool-exports.ts`). In a SCORM package of several activities, one beside the courses that has no text of its own was dropped without a word. It is now listed with why. In a package of one activity, that activity is the course it holds, so its launcher page still adds nothing.
+- **A fold fits a long page and many questions** (#579, #580, `src/package-import.ts`). The fold took only part of a page longer than a fragment holds, or of a topic with more questions than a check holds, and listed the rest. So a Rise block over 20,000 characters, or a Storyline bank of more than 40 questions, lost what did not fit. Now the fold fits them where it can:
+  - a long page becomes parts, split between its paragraphs (a paragraph too long, between words);
+  - a topic of many questions becomes topics of as many as a check holds, its pages with the first, each developing what the topic does.
 
-Mutation checks: 18, all caught.
+  When fitting would make more than one fold holds (100 topics, 500 fragments), the package folds as before, and what does not fit is listed.
+- **A Storyline data file may give its JSON as an object** (#579). `globalProvideData('data', {…})` is read with the literal parser Captivate's reader had, now shared (`literalAt` in `src/tool-reading.ts`), and never run. None of the corpus's 3,250 data files is written this way, but the call accepts it.
+- **Answered, not changed:**
+  - A Rise table (#578) is a text block whose paragraph is an HTML table, and it was read already. A test now shows it.
+  - Rise's `deserialize()` payloads (#578) are not compressed. In 186 real packages of that form, each payload decoded as plain base64 JSON. The `lzwcompress.js` a page ships wraps only the LMS's suspend data (`LMSProxy.SetDataChunk(compress(cache))`).
+
+Tests:
+- an explicit text input's `compare`;
+- a picture in iSpring's interactions, notes and info slides, and in Storyline's notes;
+- counters and texts that only look like them;
+- an activity drawn by its script beside a course;
+- a fold that fits a long page and a topic of many questions, and one that cannot;
+- a Storyline course written as objects;
+- a Rise table.
+
+Mutation checks: 25, all caught.
 
 ## 2026-09-29 — Foxxi: every course a package holds is read, and a Storyline button as the slide shows it (a review of #579)
 

@@ -402,7 +402,7 @@ describe('a package, folded', () => {
       topics: [
         { id: 'one', title: 'One', pages: [{ path: 'one/a.html', title: 'A', body: 'Text.' }], questions: [] },
         { id: 'long', title: 'Long', pages: [{ path: 'long/a.html', title: 'Too long', body: 'x'.repeat(FRAGMENT_LIMITS.body + 1) }], questions: [] },
-        { id: 'many', title: 'Many', pages: [], questions: Array.from({ length: FRAGMENT_LIMITS.questions + 2 }, (_, i) => ({ question: `Is ${i} even?`, type: 'true-false' as const, answer: i % 2 === 0 })) },
+        { id: 'many', title: 'Many', pages: [{ path: 'many/intro.html', title: 'Intro', body: 'Count them.' }], questions: Array.from({ length: FRAGMENT_LIMITS.questions + 2 }, (_, i) => ({ question: `Is ${i} even?`, type: 'true-false' as const, answer: i % 2 === 0 })) },
       ],
       unread: [],
     };
@@ -410,11 +410,11 @@ describe('a package, folded', () => {
     expect(small.topics[0]!.at).toBe(small.topics[0]!.pages[0]!.concept);
     // A page longer than a fragment holds, in parts (Codex, on #580).
     expect(small.topics[1]!.pages.map(p => [p.path, p.title])).toEqual([['long/a.html', 'Too long'], ['long/a.html#part/2', 'Too long, part 2']]);
-    // A topic of more questions than a check holds, as topics of as many as one holds, each
-    // developing what the topic does (Codex, on #579).
-    expect(small.topics.slice(2).map(t => [t.id, t.title, t.questions, t.competency.split('/').pop()])).toEqual([
-      ['many', 'Many', FRAGMENT_LIMITS.questions, 'counting'],
-      ['many/questions-41', 'Many: questions 41 to 42', 2, 'counting'],
+    // A topic of more questions than a check holds, as topics of as many as one holds, its pages
+    // with the first, each developing what the topic does (Codex, on #579).
+    expect(small.topics.slice(2).map(t => [t.id, t.title, t.pages.length, t.questions, t.competency.split('/').pop()])).toEqual([
+      ['many', 'Many', 1, FRAGMENT_LIMITS.questions, 'counting'],
+      ['many/questions-41', 'Many: questions 41 to 42', 0, 2, 'counting'],
     ]);
     expect(small.left).toEqual([]);
     expect(small.root.positions).toHaveLength(4);
