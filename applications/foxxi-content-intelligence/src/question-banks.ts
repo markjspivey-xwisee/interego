@@ -360,7 +360,7 @@ function banksIn(value: unknown, depth = 0, into: unknown[][] = []): unknown[][]
 }
 
 /** Text a bank may keep as HTML: its tags dropped and its references decoded; null when it shows media. */
-function plain(s: string): string | null {
+export function plainText(s: string): string | null {
   if (MEDIA.test(s)) return null;
   // A block's tags break the line; an inline one (<em>, <b>, <span>) leaves its words where they were.
   return decode(s.replace(/<(?:br|\/?(?:p|div|li|ul|ol|h[1-6]|tr|table|blockquote))\b[^>]*>/gi, '\n').replace(/<[^>]+>/g, ''))
@@ -372,7 +372,7 @@ function dataQuestion(v: unknown): ImportedQuestion | string {
   if (!isRecord(v)) return 'it is not a question written as an object';
   const m = keyed(v);
   const rawText = pick(m, TEXT_KEYS)?.[1];
-  const question = typeof rawText === 'string' ? plain(rawText) : '';
+  const question = typeof rawText === 'string' ? plainText(rawText) : '';
   if (question === null) return 'its question shows an image, a formula or media, which a check here would not show';
   if (!question) return 'it has no question text';
   const typeName = pick(m, TYPE_KEYS)?.[1];
@@ -392,7 +392,7 @@ function dataQuestion(v: unknown): ImportedQuestion | string {
         t = pick(om, OPTION_TEXT_KEYS)?.[1];
         const flag = pick(om, FLAG_KEYS)?.[1];
         if (typeof t === 'string' || typeof t === 'number') {
-          const text = typeof t === 'string' ? plain(t) : String(t);
+          const text = typeof t === 'string' ? plainText(t) : String(t);
           if (text === null) return 'an option shows an image or media, which a check here would not show';
           if (flag === true || flag === 'true') flagged.push(texts.length);
           texts.push(text);
@@ -400,7 +400,7 @@ function dataQuestion(v: unknown): ImportedQuestion | string {
         }
       }
       if (typeof t === 'string' || typeof t === 'number') {
-        const text = typeof t === 'string' ? plain(t) : String(t);
+        const text = typeof t === 'string' ? plainText(t) : String(t);
         if (text === null) return 'an option shows an image or media, which a check here would not show';
         texts.push(text);
       } else return 'an option has no text';
@@ -415,7 +415,7 @@ function dataQuestion(v: unknown): ImportedQuestion | string {
       if (list.some(x => typeof x === 'number')) return 'its answer is a number, and whether that counts the options from 0 or from 1 is not said';
       const named: Array<string | null> = list.map(x => {
         if (typeof x !== 'string') return null;
-        const t = plain(x) ?? '';
+        const t = plainText(x) ?? '';
         if (texts.includes(t)) return letter(texts.indexOf(t));
         // A single capital letter names an option by its place, as an author writes "B".
         return /^[A-Z]$/.test(t) && t.charCodeAt(0) - 65 < texts.length ? t : null;

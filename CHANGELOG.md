@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a package Adapt or H5P made is read in that tool's own model
+
+Read as web pages, a package Adapt or H5P made is mostly "no text of its own: what it shows, its script draws", because its runtime draws every page from data kept beside it. That data is the course. `src/tool-exports.ts` reads it into the model a hosted package folds from, and the fold route (`foxxi.content_fold_course` with `package_sha256`) now reads every hosted package this way first. A package neither tool made is read as before.
+
+- **Adapt** (`course/<language>/*.json`, the language its config names, else English):
+  - each page is a topic, in the course's order, a menu's pages where the menu is;
+  - each article is a page: its blocks under their titles, and their text, graphic, accordion, narrative and hot graphic components in order;
+  - question components are read as the tool marks them right. Multiple choice gives one right option or several. Text input gives a blank at a time, with the other answers it accepts. Matching is read with its unused options as distractors, and a slider by its one right value, on its scale;
+  - items are typed by what they say they are, or, in an older export, by the file they are kept in. What its author made unavailable is left out, as the course leaves it out.
+- **H5P** (`h5p.json` and `content/content.json`, wherever a package keeps them):
+  - an interactive book's chapters are topics, and a presentation's slides are pages. A presentation of more than 99 slides becomes topics of 50, so each fits a composition;
+  - columns, question sets and accordions are read piece by piece. Text, tables, images, links and dialog cards are read as pages;
+  - multiple choice, true/false, fill in the blanks (a blank at a time, the others elided), drag the words (its pool offered in alphabetical order), single-choice sets, summaries and flashcards are read as questions.
+- **What the tool shuffles is turned.** A check here shows options in the order kept, and a right-first list (a single-choice set, a summary) or answers the tool randomizes would put the right one first. Those options are turned by a count their question decides, the same way every time.
+- **Nothing is guessed.** Each of these is left out and listed with why: media, an essay, a question or option that is a picture, a slider whose right answer is a range, a matching item without exactly one right option.
+
+`package-import.ts` shares its path lookup (`packageLookup`, `fileUrlIn`), and numeric questions may carry the scale their answer is on. The fold affordance's description, the Foxxi README, PERFORMANCE-ARCHITECTURE.md §5 and `docs/skills/foxxi` say so. What remains not wired is hosting a tool's export that is no SCORM package (an .h5p file, an Adapt course exported as source). Such an export is read, but only a SCORM package is hosted to be folded.
+
+Tests: `an-authoring-tools-own-export-is-read-in-its-own-model.test.ts` covers:
+- an Adapt build and an Adapt source export, the latter in its default language and in an older export's layout;
+- an H5P book and an H5P presentation inside a SCORM package, including a long presentation;
+- what each leaves out, and the turning of shuffled options;
+- a package neither tool made;
+- each read folded and graded as the tool marks it right.
+
 ## 2026-09-29 — Foxxi: a package's question bank is read in whatever form it declares
 
 Folding a hosted SCORM package read its questions only as calls to a `Question` constructor the package declares. Packages keep their banks in other forms too, and those questions were left out. `src/question-banks.ts` reads them, each by what its form declares.

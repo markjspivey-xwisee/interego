@@ -450,7 +450,7 @@ describe('the fold route takes a hosted package', () => {
     expect(branch).toContain('if (!PACKAGE_SHA.test(sha)) { res.status(400)');
     expect(branch).toContain('const zip = await hostedPackages.open(sha);');
     expect(branch).toContain('if (!zip) { res.status(404)');
-    expect(branch).toContain("imported = readPackage(filesOfZip(zip), { fileUrl: path => `${packageIri}/files/${path.split('/').map(encodeURIComponent).join('/')}` });");
+    expect(branch).toContain("imported = readAnyPackage(filesOfZip(zip), { fileUrl: path => `${packageIri}/files/${path.split('/').map(encodeURIComponent).join('/')}` });");
   });
 
   it('blinds the checks under the bridge\'s secret, keeps the bundle with what it was derived from, and tells a package\'s fault from the caller\'s', () => {
