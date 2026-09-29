@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a typed answer read from a package is compared as its source compares it (a review of #578)
+
+The engine read every typed answer leniently, as an authored course's always has been. It kept only ASCII letters and digits, and took any word of four letters or more as the answer. So a question read from a package accepted:
+- "C" for "C++";
+- "Grüße" for "Größe" (both read "gre");
+- "not legs" for "legs".
+
+Rise, Storyline, H5P and QTI compare the whole reply, trimmed and case-folded unless case-sensitive; Adapt does too, without punctuation where its author allows punctuation.
+
+- **`compare` on a text input** (`src/scorm-assessment.ts`):
+  - `exact` keeps every character;
+  - `letters` drops punctuation and symbols and keeps the letters and digits of every script.
+  Either way the reply is read in one Unicode form, without zero-width marks, its spaces collapsed, and taken whole. The page a package plays grades the same way, since the same functions are embedded in it.
+- **Each reader says how its source compares.** Rise, Storyline, H5P (blanks and flashcards), QTI 2.x, 3.0 and 1.2 text entries, and Adapt (`letters` where `_allowsPunctuation`) mark their typed answers. `authorQuestion` takes `compare` for a typed text answer and refuses it elsewhere; a stored input is checked.
+- **Nothing stored changes.** A question without `compare` (every question stored before, and every one authored here) reads as it always has, so no stored verifier stops matching. A package folded again gets its typed answers compared the new way.
+
+Tests: `a-typed-answer-read-from-a-package-is-compared-as-its-source-compares-it.test.ts` (exact, letters, the whole reply, Unicode forms, the legacy rule kept, stored inputs checked, the page's grading), an Adapt blank that allows punctuation, and each reader's typed answers. Mutation checks: 17, all caught.
+
 ## 2026-09-29 — Foxxi: a Rise block shows what Rise shows (a review of #578)
 
 Codex could not review #578 (its usage limit), so a separate review read the Rise reader against the runtime's schema and the 530-course survey behind it. It found no grading errors, and six places where a page showed what Rise does not, or lost what it does. Each is fixed in `src/rise-course.ts`.
