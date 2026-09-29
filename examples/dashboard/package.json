@@ -9,7 +9,7 @@
     "dev": "tsx server.ts"
   },
   "dependencies": {
-    "@interego/core": "file:../../",
+    "@interego/security-txt": "file:../../packages/security-txt",
     "@solid/community-server": "^7.0.0",
     "ws": "^8.19.0"
   },

@@ -33,6 +33,11 @@ Best for **single Claude Code session, single device**. Zero terminal management
 
 Once:
 ```bash
+# From the repository root: the bridge links the workspace packages
+# (@interego/core, @interego/p2p) and runs their built dist/.
+npm install
+npm run build
+
 cd examples/personal-bridge
 npm install
 npm run build
@@ -61,6 +66,7 @@ Reload Claude Code → 6 core p2p tools available immediately (see "Tools the br
 Best for **phone + desktop both connecting to one bridge**. Runs as a long-lived process; requires keeping a terminal or service open.
 
 ```bash
+# After the one-time `npm install && npm run build` at the repository root (above):
 cd examples/personal-bridge
 npm install
 npm run build

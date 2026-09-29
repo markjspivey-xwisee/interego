@@ -25,7 +25,8 @@ npx tsx demos/live/server.ts   # then open http://localhost:4747
 ## Prerequisites
 
 - **Claude Code CLI** on `PATH`, already authenticated. No API key needed.
-- **Node 20+** and `npm install` done at the repo root.
+- **Node 20+**, and `npm install && npm run build` done at the repo root: the demo bridges
+  link the workspace packages and load their built `dist/`.
 - Demo bridges installed:
   ```bash
   (cd demos/interego-bridge && npm install)

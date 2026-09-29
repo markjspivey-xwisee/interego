@@ -15,7 +15,8 @@
     "wipe-strangers": "node dist/wipe-strangers.js"
   },
   "dependencies": {
-    "@interego/core": "file:../../",
+    "@interego/core": "file:../../packages/core",
+    "@interego/p2p": "file:../../packages/p2p",
     "express": "^4.21.0"
   },
   "devDependencies": {
