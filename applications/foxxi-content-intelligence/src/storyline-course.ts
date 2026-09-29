@@ -56,7 +56,7 @@ const WAY_ON_GROUP = /^(?:ActGrpOn(?:Next|Prev|Submit)ButtonClick|NavigationRest
 /** What a click runs that shows more of the slide: a layer, an object. */
 const SHOWS = new Set(['show_slidelayer', 'show']);
 
-/** A Storyline data file's JSON, when the file is one of `type`: decoded from its single-quoted string, never run. */
+/** A Storyline data file's JSON, when the file is one of `type`: decoded from the string Storyline writes, or read as the object the call also takes; never run. */
 export function provided(text: string | null, type: string): Json | null {
   if (!text) return null;
   const m = /globalProvideData\(\s*(['"])(\w+)\1\s*,\s*(?=['"{])/.exec(text);
@@ -271,11 +271,11 @@ class Storyline {
 }
 
 /**
- * The texts that count a scene's questions ("Question 3 of 10", "1/10 soal"): a short text on two or
- * more of its question slides whose words are the same, one number differing on each (the
- * question's place) and any other the same on all (their count). Found by recurring, in whatever
- * language (Codex, on #585: a pattern of words took "Level 2 requires 3 attempts." for a counter,
- * and "What is 2 + 3?" beside "What is 4 + 5?" differs in two numbers, so is no counter).
+ * The texts that count a scene's questions ("Question 3 of 10", "1/10 soal"): a short text whose
+ * words recur across its question slides, one number differing each time (the question's place)
+ * and any other the same each time (their count). Found by recurring, in whatever language (Codex,
+ * on #585: a pattern of words took "Level 2 requires 3 attempts." for a counter; and "2 + 3 ="
+ * beside "4 + 5 =" differs in both its numbers, so is no counter).
  */
 function countersOf(reads: readonly SlideRead[]): Set<string> {
   const byShape = new Map<string, string[]>();
@@ -285,7 +285,9 @@ function countersOf(reads: readonly SlideRead[]): Set<string> {
       const words = text.replace(/\d+/g, ' ').split(/\s+/).filter(Boolean);
       if (!numbers.length || numbers.length > 2 || words.length > 3) continue;
       const shape = text.replace(/\d+/g, '#');
-      byShape.set(shape, [...(byShape.get(shape) ?? []), text]);
+      const texts = byShape.get(shape);
+      if (texts) texts.push(text);
+      else byShape.set(shape, [text]);
     }
   }
   const counters = new Set<string>();
