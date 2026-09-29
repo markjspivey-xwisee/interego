@@ -448,6 +448,16 @@ describe('the other ways Storyline publishes a course', () => {
     expect(storylinePackage(filesOfZip(zipOf({ 'index.html': '<p>Just a page.</p>' })), { fileUrl })).toBeNull();
   });
 
+  it('reads a data file of a great many escapes in one pass over it', () => {
+    // Every double quote in a course's text is an escape in its data file, and a long course can
+    // hold hundreds of thousands: each is decoded where it is, not by searching the rest of the file.
+    const text = '"'.repeat(300_000);
+    const file = provide('slide', { id: 's', text });
+    const t0 = Date.now();
+    expect(provided(file, 'slide')).toEqual({ id: 's', text });
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+
   it('leaves a Rise course that holds a Storyline block to be read as Rise', () => {
     const rise = { course: { title: 'Rise outside', lessons: [{ id: 'l', type: 'blocks', title: 'Lesson', items: [{ id: 'b', type: 'text', family: 'text', variant: 'paragraph', items: [{ paragraph: '<p>Words.</p>' }] }] }] }, labelSet: {}, fonts: [], media: {} };
     const zip = zipOf({ 'index.html': `<script>window.courseData = "${Buffer.from(JSON.stringify(rise)).toString('base64')}";</script>`, ...COURSE_FILES('assets/block1/') });

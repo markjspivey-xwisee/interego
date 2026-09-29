@@ -1,8 +1,10 @@
 /**
- * What every reader of an authoring tool's own model shares (tool-exports.ts, rise-course.ts): how
- * a package's files are found and served, how a page is written from the HTML a tool keeps, how a
- * question is kept only when it stands as an authored one does, and how options a tool shows
- * shuffled are turned. Each reader reads its tool's model; this is what they have in common.
+ * What every reader of an authoring tool's own model shares (tool-exports.ts, rise-course.ts,
+ * storyline-course.ts, ispring-course.ts): how a package's files are found and served, how a page is
+ * written from the HTML a tool keeps, how a question is kept only when it stands as an authored one
+ * does, how options a tool shows shuffled are turned, and how a string a tool's data file writes as
+ * JavaScript is read without running it. Each reader reads its tool's model; this is what they
+ * have in common.
  */
 import { authorQuestion, QuestionError } from './course-questions.js';
 import {
@@ -101,4 +103,36 @@ export function choice(question: string, options: string[], right: number[], mul
 /** A picture as HTML: its file and its alt text. */
 export function imgHtml(src: string, alt: string): string {
   return src.trim() ? `<p><img src="${esc(src)}" alt="${esc(alt)}"></p>` : '';
+}
+
+const JS_ESCAPES: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', 0: '\0' };
+/** A run of characters that neither close a literal quoted so nor start an escape. */
+const PLAIN_RUN: Record<string, RegExp> = { "'": /[^'\\]*/y, '"': /[^"\\]*/y };
+
+/**
+ * A JavaScript string literal a tool's data file writes (single- or double-quoted, starting at
+ * `at`), read as JavaScript reads it without running anything: its escapes decoded (\n, \xHH,
+ * \uHHHH, a line continuation, any other character as itself). Null when it does not close. It
+ * reads the literal once, however many escapes it holds: a data file can hold megabytes in one.
+ */
+export function jsStringAt(text: string, at: number): { value: string; end: number } | null {
+  const q = text[at];
+  if (q !== "'" && q !== '"') return null;
+  const run = PLAIN_RUN[q]!;
+  let out = '';
+  let i = at + 1;
+  for (;;) {
+    run.lastIndex = i;
+    // A run always matches, if only as nothing, except past the end (an escape cut short).
+    if (!run.exec(text)) return null;
+    const stop = run.lastIndex;
+    out += text.slice(i, stop);
+    if (stop >= text.length) return null;
+    if (text[stop] === q) return { value: out, end: stop + 1 };
+    const n = text[stop + 1] ?? '';
+    if (n === 'u') { out += String.fromCharCode(parseInt(text.slice(stop + 2, stop + 6), 16)); i = stop + 6; }
+    else if (n === 'x') { out += String.fromCharCode(parseInt(text.slice(stop + 2, stop + 4), 16)); i = stop + 4; }
+    else if (n === '\r' || n === '\n') { i = stop + (n === '\r' && text[stop + 2] === '\n' ? 3 : 2); }
+    else { out += JS_ESCAPES[n] ?? n; i = stop + 2; }
+  }
 }
