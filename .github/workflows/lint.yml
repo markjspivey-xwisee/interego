@@ -136,6 +136,13 @@ jobs:
       # `paths:`, like everything above.
       - name: Base neutrality (the substrate names no vertical)
         run: node tools/base-neutrality-lint.mjs
+      # The multi-agent scripts the docs tell people to run (`npx tsx examples/multi-agent/…`) are
+      # the ones bridge-typecheck.yml compiles, through examples/multi-agent/tsconfig.advertised.json.
+      # The check reads every tracked Markdown file, so it runs here, unfiltered by `paths:`. As a
+      # test only, a pull request that advertised a new demo outside bridge-typecheck.yml's paths
+      # would never have run it (Codex, on #567).
+      - name: Advertised demos are compiled (every `tsx examples/multi-agent/…` in the docs)
+        run: node tools/advertised-demos-lint.mjs
       # ★★ THE THIRD GATE IN THIS REPOSITORY THAT RAN IN NO WORKFLOW AT ALL. The other two are
       # two steps above — the conformance runner, "called by nothing" — and in ontology-lint.yml,
       # whose note records the security-txt expiry helper being red at HEAD while CI ran the

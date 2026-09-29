@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-28 — The advertised-demos check runs on every pull request (#567 follow-up)
+
+Codex, on #567: the check that keeps `examples/multi-agent/tsconfig.advertised.json` equal to every `tsx examples/multi-agent/…` instruction in the docs read every tracked Markdown file. It ran only in the root suite, whose workflow is path-filtered. A pull request that advertised a new demo in, for example, `quickstart/README.md` would start neither that check nor the compile.
+
+- **The check is now a tool.** It is `tools/advertised-demos-lint.mjs` (`npm run lint:advertised-demos`, part of `lint:all`).
+- **It runs unfiltered.** `lint.yml` runs it on every pull request, with no `paths:` filter.
+- **One definition of the rule.** The test imports the tool's functions rather than repeating the scan.
+
+Tests: `integrations/tests/advertised-demos-typecheck.test.ts` also pins the unfiltered `lint.yml` step. It builds a throwaway repository whose `quickstart/README.md` advertises a demo the tsconfig does not list, and checks that the tool flags it and clears once it is listed.
+
 ## 2026-09-28 — The multi-agent demos the README advertises record what their credentials derive from
 
 The README's TLA and team-audit demos (`tla-demo.ts` and `team-demo.ts` in `examples/multi-agent`) passed `sources` in their provenance facets. The builder no longer reads that field (it is `wasDerivedFrom`), and does not reject it either. So the credential and audit report the demos publish silently lacked the sessions and findings they were derived from, in a demo that presents a full trust-chain audit. They now pass `wasDerivedFrom`, and the derivation appears in the published Turtle.
