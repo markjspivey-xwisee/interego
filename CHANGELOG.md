@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: what Codex found on #586
+
+Codex reviewed #586 after it merged, and found two of its fixes too broad. Both are narrowed here.
+
+- **A counter is a place in a count** (`src/storyline-course.ts`, P1). #586 took any short text that recurs on a scene's question slides with one number changed for a counter. So stems like "What is 2?" beside "What is 3?" were removed from their questions, and the questions were lost for want of text.
+  - Now a counter is a place in a count, joined by a slash or a word ("of", "dari"), in a short text that recurs on a scene's question slides. The count must be the same on all of them, and the place must rise in their order and stay within the count: "Question 3 of 10", "1/10 soal", in whatever language. A number alone ("3/10") still counts.
+  - Not counters: stems with no count, times tables ("1 x 5 =" beside "2 x 5 ="), sums, a lone or falling place, a place past its count, counts that differ, and longer texts.
+- **Whether a page shows anything is what the page keeps of it** (`src/tool-reading.ts`, P2). #586's `shows()` counted a video, a sound or an embed as something a page shows. The page converter drops them, though. So an iSpring interaction of only a video lost its listing, and notes of only a video left a bare heading. `Reading.shows()` now asks the converter itself: the page's text, or a picture the package holds. An interaction that shows nothing a page keeps is listed as that, apart from one whose file is missing from the package.
+
+Tests: the Storyline test's stems that only look like counters (no count, times tables, falling or lone places, a place past its count, counts that differ); iSpring's video-only interaction and notes, and a missing interaction; Storyline's video-only notes. Mutation checks: 9, all caught (one survivor, counts that differ, made the test stricter).
+
 ## 2026-09-29 — Foxxi: what Codex found on #578 to #585
 
 Codex was at its usage limit when #578, #579 and #580 opened. Its reviews were asked for again once it was back, and it reviewed #581 to #585 as they opened. Each finding is fixed here, or answered where the evidence says otherwise.

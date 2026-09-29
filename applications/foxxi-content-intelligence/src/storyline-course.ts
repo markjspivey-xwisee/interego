@@ -26,7 +26,7 @@
  * names; a free-form one's choices are objects on the slide, read as the slide shows them. A
  * question's text is its own when the slide shows it, with any longer text beside it (a passage it
  * asks about); else the slide's text, without a variable or a counter: a number alone ("3/10"), or
- * words a scene's question slides share with only the question's number changed ("Question 3 of 10").
+ * a place in a count that a scene's question slides share ("Question 3 of 10", "1/10 soal").
  * Choices the slide shuffles are turned (tool-reading.ts). A bank a scene draws from is asked
  * whole, once however many draws take from it. Surveys, hotspots and essays are left out, with why.
  * A question may ask about a picture on its slide, which a check here does not show; nothing in
@@ -35,7 +35,7 @@
  */
 import { decodeEntities, type ImportedPackage, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
-import { choice, esc, imgHtml, isRecord, jsStringAt, literalAt, numberOf, Reading, records, shows, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
+import { choice, esc, imgHtml, isRecord, jsStringAt, literalAt, numberOf, Reading, records, str, turned, type Json, type ToolReadOptions } from './tool-reading.js';
 
 /** A scene longer than a composition holds becomes topics of this many slides each. */
 const SLIDES_PER_TOPIC = 50;
@@ -270,32 +270,36 @@ class Storyline {
   }
 }
 
+/** A place in a count, and how a short text writes them: joined by a slash or by one word ("of", "dari"). */
+const PLACE_IN_COUNT = /^(\D*?)(\d+)\s*(\/|\p{L}{2,})\s*(\d+)(\D*)$/u;
+
 /**
- * The texts that count a scene's questions ("Question 3 of 10", "1/10 soal"): a short text whose
- * words recur across its question slides, one number differing each time (the question's place)
- * and any other the same each time (their count). Found by recurring, in whatever language (Codex,
- * on #585: a pattern of words took "Level 2 requires 3 attempts." for a counter; and "2 + 3 ="
- * beside "4 + 5 =" differs in both its numbers, so is no counter).
+ * The texts that count a scene's questions ("Question 3 of 10", "1/10 soal"): a place in a count, in
+ * a short text whose words recur on the scene's question slides, the place rising in the slides'
+ * order within a count the same on all. Found by recurring, in whatever language, not by a pattern
+ * of words (Codex, on #585 and #586). Not a counter: "What is 2?" beside "What is 3?" (no count),
+ * "1 x 5 =" beside "2 x 5 =" (no word between), "2 + 3 =" beside "4 + 5 =".
  */
 function countersOf(reads: readonly SlideRead[]): Set<string> {
-  const byShape = new Map<string, string[]>();
+  // Each shape's texts, in the slides' order.
+  const byShape = new Map<string, Array<{ text: string; place: number; count: number }>>();
   for (const read of reads) {
     for (const text of new Set(read.pieces.map(p => p.text))) {
-      const numbers = text.match(/\d+/g) ?? [];
-      const words = text.replace(/\d+/g, ' ').split(/\s+/).filter(Boolean);
-      if (!numbers.length || numbers.length > 2 || words.length > 3) continue;
-      const shape = text.replace(/\d+/g, '#');
+      const m = text.length > 60 ? null : PLACE_IN_COUNT.exec(text);
+      if (!m || `${m[1]} ${m[5]}`.trim().split(/\s+/).filter(Boolean).length > 2) continue;
+      const found = { text, place: Number(m[2]), count: Number(m[4]) };
+      const shape = `${m[1]}#${m[3]}#${m[5]}`;
       const texts = byShape.get(shape);
-      if (texts) texts.push(text);
-      else byShape.set(shape, [text]);
+      if (texts) texts.push(found);
+      else byShape.set(shape, [found]);
     }
   }
   const counters = new Set<string>();
-  for (const texts of byShape.values()) {
-    const numbers = texts.map(t => (t.match(/\d+/g) ?? []).map(Number));
-    const places = new Set(numbers.map(n => n[0]));
-    const count = numbers.every(n => n.length < 2 || n[1] === numbers[0]![1]);
-    if (texts.length > 1 && places.size === texts.length && count) for (const t of texts) counters.add(t);
+  for (const found of byShape.values()) {
+    const count = found[0]!.count;
+    const within = found.length > 1 && found.every(f => f.count === count && f.place >= 1 && f.place <= count);
+    const rising = found.every((f, i) => i === 0 || f.place > found[i - 1]!.place);
+    if (within && rising) for (const f of found) counters.add(f.text);
   }
   return counters;
 }
@@ -518,7 +522,7 @@ export function storylinePackage(files: PackageFiles, opts: ToolReadOptions, at?
         }
         if (read.results) { r.left(where, "a quiz's results slide: the score it shows is a running course's"); continue; }
         const note = notes.get(`${sceneId}.${slideId}`) ?? '';
-        const html = read.html + (shows(note) ? `<h2>Notes</h2>${note}` : '');
+        const html = read.html + (r.shows(note, root) ? `<h2>Notes</h2>${note}` : '');
         const own = oneLine(plainText(esc(str(s.title))) ?? '');
         const slideTitle = own && !/^untitled slide$/i.test(own) ? own : `Slide ${k + 1}`;
         const page = html.trim() ? r.page(esc(slideTitle), html, root) : { title: '', body: '' };

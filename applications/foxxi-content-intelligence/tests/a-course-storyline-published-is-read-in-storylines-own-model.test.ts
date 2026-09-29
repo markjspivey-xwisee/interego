@@ -495,6 +495,9 @@ describe('what a review of #579 found', () => {
       'story_content/map.png': 'png',
     };
     expect(readOf(files).topics[0]!.pages[0]!.body).toBe('Know the map.\n\n# Notes\n\nPoint to the exits.\n\n![Floor map](https://bridge.example/files/story_content/map.png)');
+    // Notes that are only a video show nothing a page keeps, so no heading of their own (Codex, on #586).
+    const video = { ...files, 'html5/data/js/frame.js': provide('frame', { notesData: [{ slideId: '6Scene00001.6Note000001', content: '<video src="story_content/walk.mp4"></video>' }] }) };
+    expect(readOf(video).topics[0]!.pages[0]!.body).toBe('Know the map.');
   });
 
   it('reads a button as the slide shows it (a tab, a reference), unless it takes the learner on', () => {
@@ -560,8 +563,13 @@ describe('what a review of #579 found', () => {
       slideFile(id, [{ objects: [textBox(`q${id}`, 1, text), choiceBox(`t${id}`, 2, 'True'), choiceBox(`f${id}`, 3, 'False')] }]),
     ];
     // Words and numbers once only; and two sums, whose numbers both differ: no place among others.
-    // The same stem twice (no place among others); longer texts; sums of three numbers.
-    const texts = ['Level 2 requires 3 attempts.', '2 + 3 =', '4 + 5 =', '12 ÷ 4 =', '12 ÷ 4 =', 'How many sides has a shape with 5 corners?', 'How many sides has a shape with 6 corners?', '2 + 3 + 4 =', '5 + 3 + 1 ='];
+    // Stems with no count, or no word between place and count; a place that falls, or past its
+    // count; counts that differ; a stem alone; longer texts; sums (Codex, on #585 and #586).
+    const texts = [
+      'What is 2?', 'What is 3?', '1 x 5 =', '2 x 5 =', '2 + 3 =', '4 + 5 =', '12 ÷ 4 =', '12 ÷ 4 =',
+      'Level 2 requires 3 attempts.', 'Level 1 requires 3 attempts.', 'Chapter 5 part 2', 'Chapter 6 part 2', 'Part 1 of 4', 'Part 2 of 6', 'Step 2 of 5',
+      'Which of these is 1 of 3 colours?', 'Which of these is 2 of 3 colours?', 'How many sides has a shape with 5 corners?', '2 + 3 + 4 =',
+    ];
     const read = readOf(oneScene(texts.map((t, i) => stem(`6S00000000${i + 1}`, i + 1, t))));
     expect(read.topics[0]!.questions.map(q => q.question)).toEqual(texts);
   });
