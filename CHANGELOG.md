@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-09-29 — Foxxi: a course iSpring published is read in iSpring's own model
+
+A package iSpring published is a player page its runtime draws each slide into. Read as web pages, it had nothing to fold. The page carries the course as a base64 string, which `src/ispring-course.ts` finds and decodes without running anything:
+- a presentation's `presInfo` (zlib-deflated JSON): its slides in playing order, each with its level in the outline, its text shape by shape and its notes, and a quiz or an interaction in a slide's place, each in a file of its own;
+- each slide's own file (`data/slideN.js`), whose content layer holds its pictures;
+- a quiz's `data` (QuizMaker 9.7 and later) or `quizJson` (QuizMaker 8, deflated): its question groups, and each question's type, text, answers and which are right.
+
+It reads iSpring Suite, Presenter, Converter, Free and QuizMaker, 8 to 11, published for SCORM, xAPI or the web. The model was established from real exports, 8.5 to 11.19: 136 presentations, 75 quizzes (29 of them QuizMaker 8's), 22 quizzes in presentations and about 40 slide files.
+
+- **Slides are pages.** A presentation whose outline nests its slides is a topic per slide at its top; one that does not is one topic, in parts of fifty when it is too long for one composition. A page is its slide's text, its pictures and its notes.
+  - A slide's background (its master layer, or a picture the size of the slide) is no picture of the page. Nor is text drawn as a picture, whose words the slide already keeps.
+  - A counter ("3 / 10") is not text. A variable's value is a running course's, so it reads as "…".
+  - A slide with no title of its own is titled by its first line.
+  - An interaction (tabs, an accordion, a glossary, steps) is a page of its items.
+- **Right as iSpring grades it.** A choice is right when iSpring marks it correct.
+  - A typed answer accepts each answer it lists, compared whole, its letter case where the quiz says so.
+  - A sentence of blanks, or of lists, is asked a blank at a time. A word bank offers its words and its extra words.
+  - A match pairs what it pairs, with its extra choices. An order is the order the quiz keeps. A numeric question accepts the values it compares equal.
+  - A group a quiz draws from at random is asked whole, and options the player shuffles are turned.
+- **Left out, with why:** surveys and essays, hotspots, a drag onto the slide, a question with a picture or media, a choice or item that is a picture, choices that read the same, a range or comparison, video, web objects and narration.
+
+A course iSpring published for xAPI or the web has no SCORM manifest. It is uploaded, kept and folded as an authoring tool's own export ("iSpring"). The fold's and the upload's descriptions, the upload's refusal, the Foxxi README, PERFORMANCE-ARCHITECTURE.md §5, the host panel and `docs/skills/foxxi` say so.
+
+**A tool's string literal is read in one pass** (`src/tool-reading.ts`, a review of #579). The reader that Storyline's data files and iSpring's slide files share searched the rest of the file for the closing quote after every escape. A data file of many escapes took the square of its length to read: 300,000 escaped quotes took 8.7 seconds. It reads each literal once now.
+
+Tests: `a-course-ispring-published-is-read-in-isprings-own-model.test.ts` covers:
+- the outline as topics, and each page's text, pictures and notes (not a background, text drawn as a picture, or a counter);
+- an interaction, and a quiz in a slide's place;
+- each kind of question, a blank or list at a time, and what is left out;
+- a quiz QuizMaker made, 9.7 and later and 8, and its groups;
+- the SCORM, xAPI and web layouts, a long presentation, and what is not iSpring's;
+- each read folded and graded.
+
+A data file of 300,000 escapes is read within a second (in Storyline's test). Mutation checks: 40 on the reader, all caught, and one on the one-pass reading, caught.
+
 ## 2026-09-29 — Foxxi: a typed answer read from a package is compared as its source compares it (a review of #578)
 
 The engine read every typed answer leniently, as an authored course's always has been. It kept only ASCII letters and digits, and took any word of four letters or more as the answer. So a question read from a package accepted:
