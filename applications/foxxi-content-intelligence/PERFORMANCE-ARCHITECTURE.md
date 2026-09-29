@@ -497,12 +497,13 @@ its pages become concept fragments, a folder of pages a topic composition,
 and the questions it keeps a check graded here. Questions are read in any
 form the package declares them in (`src/question-banks.ts`): calls to a
 Question constructor it declares, QTI items (2.x, 3.0 and 1.2), or a bank
-written as data, in a JSON file or in a script. A package Adapt or H5P
-made is read in that tool's own model (`src/tool-exports.ts`): Adapt's
-pages, articles and components, or H5P's chapters, slides and pieces,
-and their questions as the tool marks them right. A tool's own export
-that is no SCORM package (an .h5p file, an Adapt course exported as
-source) is uploaded and kept the same way, described as an export: it
+written as data, in a JSON file or in a script. A package Adapt, H5P or
+Rise 360 made is read in that tool's own model (`src/tool-exports.ts`,
+`src/rise-course.ts`): Adapt's pages, articles and components, H5P's
+chapters, slides and pieces, or Rise 360's lessons and blocks, and their
+questions as the tool grades them. A tool's own export that is no SCORM
+package (an .h5p file, an Adapt course exported as source, a Rise 360
+course published for xAPI or the web) is uploaded and kept the same way, described as an export: it
 launches nothing as it is, so it is listed apart from what plays, and
 folded like any hosted package.
 

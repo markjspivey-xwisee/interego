@@ -11,9 +11,10 @@
  *   is served from, or an export's src/;
  * - H5P: h5p.json, naming the main library, and content/content.json, its params, each nested piece
  *   a library with params of its own; an .h5p file, or H5P content a package plays.
- * Each becomes the model package-import.ts reads a package into, topics of pages and questions, so it
- * folds, resolves per learner, plays and learns as any hosted package does. A package built by
- * neither is read as package-import.ts reads any package.
+ * Rise 360's model, which it keeps as JSON inside the page its runtime draws, is read by
+ * rise-course.ts. Each becomes the model package-import.ts reads a package into, topics of pages and
+ * questions, so it folds, resolves per learner, plays and learns as any hosted package does. A
+ * package no tool here models is read as package-import.ts reads any package.
  *
  * ★ READ AS THE TOOL DECLARES IT, AND NOTHING INVENTED. An Adapt option is right when the tool marks
  * it to be selected; an H5P answer is right when it is marked correct, or, in the two types whose
@@ -40,101 +41,21 @@
  * the bridge keeps it beside the packages it hosts, to be folded (scorm-hosting.ts).
  */
 import AdmZip from 'adm-zip';
-import { authorQuestion, QuestionError } from './course-questions.js';
-import {
-  fileUrlIn, filesOfZip, htmlPage, markdownUrl, packageLookup, readPackage, webUrl,
-  type ImportedPackage, type ImportedQuestion, type ImportedTopic, type LeftOut, type PackageFiles,
-} from './package-import.js';
+import { filesOfZip, packageLookup, readPackage, type ImportedPackage, type ImportedQuestion, type ImportedTopic, type PackageFiles } from './package-import.js';
 import { plainText } from './question-banks.js';
+import { risePackage } from './rise-course.js';
+import {
+  choice, esc, imgHtml, isRecord, joined, numberOf, Reading, records, SHOWS, str, turned, WITH_MEDIA,
+  type Json, type ToolReadOptions,
+} from './tool-reading.js';
 
-type Json = Record<string, unknown>;
-const isRecord = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v);
-const str = (v: unknown): string => (typeof v === 'string' ? v : '');
-const records = (v: unknown): Json[] => (Array.isArray(v) ? v.filter(isRecord) : []);
-const numberOf = (v: unknown): number => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : Number.NaN);
-/** An option named by its letter, as an author names one (a one-letter text would be read as a letter). */
-const letter = (i: number): string => String.fromCharCode(65 + i);
-/** Text as HTML says it: nothing in it read as markup. */
-const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const BOM = String.fromCharCode(0xfeff);
-const SHOWS = 'shows an image, a formula or media, which a check here would not show';
-
-export interface ToolReadOptions { fileUrl: (path: string) => string; title?: string }
-
-/** One package being read: how its files are found and served, and what was left out. */
-class Reading {
-  readonly unread: LeftOut[] = [];
-  private readonly lookup: ReturnType<typeof packageLookup>;
-
-  constructor(private readonly files: PackageFiles, private readonly fileUrl: (path: string) => string) {
-    this.lookup = packageLookup(files.names);
-  }
-
-  json(name: string): unknown {
-    const bytes = this.files.read(name);
-    if (!bytes) return undefined;
-    const text = bytes.toString('utf8');
-    try { return JSON.parse(text.startsWith(BOM) ? text.slice(1) : text); } catch { return undefined; }
-  }
-
-  /** Whether a reference, resolved in `folder` ('' or ending in /), is on the web or one of the package's files. */
-  finds(ref: string, folder: string): boolean {
-    return webUrl(ref) !== null || this.lookup.inPackage(ref, fileUrlIn(folder)) !== null;
-  }
-
-  /**
-   * A page: its title (HTML) and its content (HTML), written as the Markdown a page shows
-   * (package-import.ts writes it), its images and downloads the package's own files as this bridge
-   * serves them, resolved in `folder` ('' or ending in /).
-   */
-  page(title: string, html: string, folder: string): { title: string; body: string } {
-    const file = (ref: string): string | null => {
-      const f = this.lookup.inPackage(ref, fileUrlIn(folder));
-      return f ? markdownUrl(this.fileUrl(f)) : null;
-    };
-    // Heading the page with its own title keeps a first <h1> in the content in the body.
-    const read = htmlPage(`<h1>${title}</h1>${html}`, { image: src => webUrl(src) ?? file(src), link: href => webUrl(href) ?? file(href) });
-    return { title: read.title ?? '', body: read.body };
-  }
-
-  left(path: string, why: string): void {
-    this.unread.push({ path, why });
-  }
-
-  /** A question kept on its topic when it stands as an authored one does (course-questions.ts); else why not, listed. */
-  keep(topic: ImportedTopic, got: ImportedQuestion | string, where: string): void {
-    let q: ImportedQuestion | string = got;
-    if (typeof q !== 'string') {
-      try { authorQuestion(q, 'package-import'); } catch (e) { if (e instanceof QuestionError) q = e.message; else throw e; }
-    }
-    if (typeof q === 'string') this.left(where, q);
-    else topic.questions.push(q);
-  }
-}
-
-/** Options the tool shows shuffled, turned by a count their question decides; and where the right ones went. */
-function turned(options: string[], right: number[], seed: string): { options: string[]; right: number[] } {
-  let h = 0;
-  for (const c of seed) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  const n = options.length;
-  const k = n ? h % n : 0;
-  return { options: [...options.slice(k), ...options.slice(0, k)], right: right.map(i => (i - k + n) % n).sort((a, b) => a - b) };
-}
-
-/** A choice question: its options, the right ones by index, and one or several to pick. */
-function choice(question: string, options: string[], right: number[], multiple: boolean): ImportedQuestion {
-  const several = multiple || right.length > 1;
-  return { question, type: 'choice', options, answer: several ? right.map(letter) : letter(right[0]!), ...(several ? { multiple: true as const } : {}) };
-}
+export type { ToolReadOptions } from './tool-reading.js';
 
 /** A picture as HTML: its file (the large one first) and its alt text. */
 function imageHtml(g: unknown): string {
   if (!isRecord(g)) return '';
-  const src = str(g.large) || str(g.src) || str(g.small) || str(g.path);
-  return src.trim() ? `<p><img src="${esc(src)}" alt="${esc(str(g.alt))}"></p>` : '';
+  return imgHtml(str(g.large) || str(g.src) || str(g.small) || str(g.path), str(g.alt));
 }
-
-const joined = (...parts: string[]): string => parts.filter(p => p.trim()).join('\n\n');
 
 // ── Adapt ───────────────────────────────────────────────────────────
 
@@ -353,7 +274,6 @@ export function adaptPackage(files: PackageFiles, opts: ToolReadOptions): Import
 const machineOf = (library: string): string => library.trim().split(/\s+/)[0] ?? '';
 /** Whether a question comes with a picture or a video of its own (its `media`). */
 const hasMedia = (p: Json): boolean => isRecord(p.media) && isRecord(p.media.type) && !!str(p.media.type.library);
-const WITH_MEDIA = 'its question comes with an image or a video, which a check here would not show';
 /**
  * "*answer/other:tip*": the answers, split at "/", a tip after ":" not one of them. "\/" and "\:"
  * are those characters in an answer, as H5P escapes them (Codex, on #573).
@@ -640,18 +560,21 @@ export function h5pPackage(files: PackageFiles, opts: ToolReadOptions): Imported
  * else as package-import.ts reads any package, its pages and the question banks it declares.
  */
 export function readAnyPackage(files: PackageFiles, opts: ToolReadOptions): ImportedPackage {
-  return adaptPackage(files, opts) ?? h5pPackage(files, opts) ?? readPackage(files, opts);
+  return adaptPackage(files, opts) ?? h5pPackage(files, opts) ?? risePackage(files, opts) ?? readPackage(files, opts);
 }
 
+/** The tools whose own exports are read here. */
+export type ExportTool = 'Adapt' | 'H5P' | 'Rise 360';
+
 /** An authoring tool's own export: the tool, its title, and what it reads as. */
-export interface ProjectExport { tool: 'Adapt' | 'H5P'; title: string; read: ImportedPackage }
+export interface ProjectExport { tool: ExportTool; title: string; read: ImportedPackage }
 
 /**
- * An authoring tool's own export that is no SCORM package: an .h5p file, or an Adapt course exported
- * as source. It has no manifest and launches nothing as it is, so it is kept to be folded. Null for
- * a SCORM or cmi5 package, which is hosted and played as one (even one a tool built), and for a zip
- * no tool here made. `title` is the one to use when the export names none. Throws when the bytes
- * are no zip.
+ * An authoring tool's own export that is no SCORM package: an .h5p file, an Adapt course exported as
+ * source, or a course Rise 360 published for xAPI or the web. It has no manifest and launches
+ * nothing as it is, so it is kept to be folded. Null for a SCORM or cmi5 package, which is hosted
+ * and played as one (even one a tool built), and for a zip no tool here made. `title` is the one to
+ * use when the export names none. Throws when the bytes are no zip.
  */
 export function projectExportOf(zip: Buffer, title?: string): ProjectExport | null {
   const files = filesOfZip(new AdmZip(zip));
@@ -661,5 +584,7 @@ export function projectExportOf(zip: Buffer, title?: string): ProjectExport | nu
   const adapt = adaptPackage(files, opts);
   if (adapt) return { tool: 'Adapt', title: adapt.title, read: adapt };
   const h5p = h5pPackage(files, opts);
-  return h5p ? { tool: 'H5P', title: h5p.title, read: h5p } : null;
+  if (h5p) return { tool: 'H5P', title: h5p.title, read: h5p };
+  const rise = risePackage(files, opts);
+  return rise ? { tool: 'Rise 360', title: rise.title, read: rise } : null;
 }
