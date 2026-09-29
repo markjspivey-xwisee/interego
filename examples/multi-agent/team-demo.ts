@@ -19,7 +19,7 @@
  * No mocks. Real HTTP. Real Solid pods. Real RDF. Real crypto.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -55,6 +55,7 @@ import type {
   FetchFn,
   IRI,
 } from '@interego/core';
+import { startSolidServer, stopSolidServer } from './solid-server.js';
 
 // ── Configuration ───────────────────────────────────────────
 
@@ -66,7 +67,6 @@ const LEAD_POD = `${BASE_URL}lead/`;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CSS_CONFIG = resolve(__dirname, 'css-config.json');
-const CSS_BIN = resolve(__dirname, 'node_modules/.bin/community-solid-server');
 
 // ── Utility ─────────────────────────────────────────────────
 
@@ -106,32 +106,7 @@ const solidFetch: FetchFn = async (url, init) => {
 // ── CSS Lifecycle ───────────────────────────────────────────
 
 function startCSS(): Promise<ChildProcess> {
-  return new Promise((resolveP, reject) => {
-    log('System', `Starting Community Solid Server on port ${CSS_PORT}...`);
-    const proc = spawn(CSS_BIN, ['-c', CSS_CONFIG, '-p', String(CSS_PORT), '-l', 'warn', '--baseUrl', BASE_URL], {
-      stdio: ['ignore', 'pipe', 'pipe'], shell: true,
-    });
-    let started = false;
-    const check = (text: string) => {
-      if (!started && text.includes('Listening')) {
-        started = true;
-        log('System', `CSS running at ${BASE_URL}`);
-        resolveP(proc);
-      }
-    };
-    proc.stdout!.on('data', (d: Buffer) => check(d.toString()));
-    proc.stderr!.on('data', (d: Buffer) => check(d.toString()));
-    proc.on('error', (e) => { if (!started) reject(e); });
-
-    const poll = setInterval(async () => {
-      if (started) { clearInterval(poll); return; }
-      try {
-        const r = await fetch(BASE_URL);
-        if (r.ok || r.status < 500) { clearInterval(poll); if (!started) { started = true; log('System', `CSS running at ${BASE_URL}`); resolveP(proc); } }
-      } catch {}
-    }, 500);
-    setTimeout(() => { clearInterval(poll); if (!started) reject(new Error('CSS timeout')); }, 30_000);
-  });
+  return startSolidServer({ config: CSS_CONFIG, port: CSS_PORT, baseUrl: BASE_URL, log: message => log('System', message) });
 }
 
 async function ensurePod(url: string): Promise<void> {
@@ -210,7 +185,8 @@ async function agentScanner(): Promise<ContextDescriptorData> {
 .semiotic({
       modalStatus: 'Asserted',      // Machine-generated, high confidence
       epistemicConfidence: 0.95,
-      groundTruth: false,            // Not verified by human yet
+      // No groundTruth: Asserted implies it (spec/architecture.md §5.2.2). "Not verified by a
+      // human yet" is the trust level below.
     })
 .trust({
       trustLevel: 'ThirdPartyAttested',  // Nessus attestation
@@ -616,7 +592,7 @@ async function main(): Promise<void> {
       await new Promise(() => {});
     } else if (cssProc) {
       log('System', 'Shutting down CSS...');
-      cssProc.kill('SIGTERM');
+      stopSolidServer(cssProc);
       await new Promise(r => setTimeout(r, 500));
     }
   }
