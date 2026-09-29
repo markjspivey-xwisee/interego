@@ -110,7 +110,7 @@ describe('a course Rise 360 published for SCORM', () => {
   it('reads a knowledge check by the answers it flags', () => {
     expect(read.topics[0]!.questions).toEqual([
       { question: 'What do you check first?', type: 'choice', options: ['The weather', 'The load'], answer: 'B' },
-      { question: 'Lift with your ____.', type: 'fill-in', answer: 'legs', accept: ['knees'] },
+      { question: 'Lift with your ____.', type: 'fill-in', answer: 'legs', accept: ['knees'], compare: 'exact' },
       { question: 'Match each load to how to move it.', type: 'matching', pairs: [['Light box', 'Carry'], ['Heavy crate', 'Trolley']] },
     ]);
   });
@@ -119,7 +119,7 @@ describe('a course Rise 360 published for SCORM', () => {
     expect(read.topics[1]!.questions).toEqual([
       { question: 'How many people lift a heavy crate?', type: 'choice', options: ['One', 'Two'], answer: 'B' },
       { question: 'Which help?', type: 'choice', options: ['Gloves', 'Rushing', 'Boots'], answer: ['A', 'C'], multiple: true },
-      { question: 'Keep your back ____.', type: 'fill-in', answer: 'straight', accept: ['upright'], caseSensitive: true },
+      { question: 'Keep your back ____.', type: 'fill-in', answer: 'straight', accept: ['upright'], caseSensitive: true, compare: 'exact' },
       { question: 'Stop if it hurts?', type: 'choice', options: ['Yes', 'No'], answer: 'A' },
     ]);
   });

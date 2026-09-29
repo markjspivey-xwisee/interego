@@ -124,6 +124,8 @@ function adaptQuestion(r: Reading, c: Json, kind: string, topic: ImportedTopic, 
       r.keep(topic, {
         question: joined(question, blank), type: 'fill-in', answer: answers[0]!,
         ...(answers.length > 1 ? { accept: answers.slice(1) } : {}), ...(caseSensitive ? { caseSensitive: true as const } : {}),
+        // Adapt compares the whole reply; where its author allows punctuation, without it.
+        compare: c._allowsPunctuation === true ? 'letters' : 'exact',
       }, at);
     });
     return;
@@ -427,6 +429,7 @@ class H5pReading {
               ? {
                 question: joined(lead, shown), type: 'fill-in', answer: answers[0]!,
                 ...(answers.length > 1 ? { accept: answers.slice(1) } : {}), ...(caseSensitive ? { caseSensitive: true as const } : {}),
+                compare: 'exact',
               }
               : 'its blank gives no answer', asked);
           });
@@ -488,7 +491,7 @@ class H5pReading {
           const question = plainText(str(c.text));
           const answer = plainText(str(c.answer))?.trim() ?? '';
           if (imageHtml(c.image) || question === null) this.ask(WITH_MEDIA, at);
-          else this.ask(answer ? { question, type: 'fill-in', answer, ...(caseSensitive ? { caseSensitive: true as const } : {}) } : 'its card gives no answer', at);
+          else this.ask(answer ? { question, type: 'fill-in', answer, ...(caseSensitive ? { caseSensitive: true as const } : {}), compare: 'exact' } : 'its card gives no answer', at);
         });
         return;
       }

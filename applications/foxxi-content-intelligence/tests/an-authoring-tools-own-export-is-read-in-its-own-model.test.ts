@@ -122,8 +122,8 @@ describe('a course Adapt built', () => {
       { question: 'What do you check first?', type: 'choice', options: ['The weather', 'The weight'], answer: 'B' },
       { question: 'Which help?', type: 'choice', options: ['Gloves', 'Rushing', 'Boots'], answer: ['A', 'C'], multiple: true },
       { question: 'Pick what applies.', type: 'choice', options: ['Lift alone', 'Ask for help'], answer: ['B'], multiple: true },
-      { question: 'Fill in.\n\nBend your ____.', type: 'fill-in', answer: 'knees', accept: ['legs'], caseSensitive: true },
-      { question: 'Fill in.\n\nKeep your back ____', type: 'fill-in', answer: 'straight', caseSensitive: true },
+      { question: 'Fill in.\n\nBend your ____.', type: 'fill-in', answer: 'knees', accept: ['legs'], caseSensitive: true, compare: 'exact' },
+      { question: 'Fill in.\n\nKeep your back ____', type: 'fill-in', answer: 'straight', caseSensitive: true, compare: 'exact' },
       { question: 'Match each load to how to move it.', type: 'matching', pairs: [['Light box', 'Carry'], ['Heavy crate', 'Trolley']], distractors: ['Crane'] },
       { question: 'How many kilograms may one person lift?', type: 'numeric', answer: 25, min: 0, max: 50 },
     ]);
@@ -265,8 +265,8 @@ describe('an interactive book H5P exported', () => {
       { question: 'Plant cells have chloroplasts.', type: 'true-false', answer: true },
     ]);
     expect(read.topics[1]!.questions).toEqual([
-      { question: 'Fill in the blanks.\n\nLeaves make ____ from ….', type: 'fill-in', answer: 'food', caseSensitive: true },
-      { question: 'Fill in the blanks.\n\nLeaves make … from ____.', type: 'fill-in', answer: 'light', accept: ['sunlight'], caseSensitive: true },
+      { question: 'Fill in the blanks.\n\nLeaves make ____ from ….', type: 'fill-in', answer: 'food', caseSensitive: true, compare: 'exact' },
+      { question: 'Fill in the blanks.\n\nLeaves make … from ____.', type: 'fill-in', answer: 'light', accept: ['sunlight'], caseSensitive: true, compare: 'exact' },
       { question: 'Drag the words.\n\nRoots take in ____.', type: 'choice', options: ['chlorophyll', 'sand', 'water'], answer: 'C' },
       { question: 'Drag the words.\n\nLeaves hold ____.', type: 'choice', options: ['chlorophyll', 'sand', 'water'], answer: 'A' },
       { question: 'Roots make food.', type: 'true-false', answer: false },
@@ -365,7 +365,7 @@ describe('a question graded as its tool grades it (Codex, on #573)', () => {
     expect(typos.unread).toEqual([{ path: 'content/content.json#content', why: 'it accepts misspelled answers, which a check here would mark wrong' }]);
     // A flashcard counts it only where its author said so.
     const card = (extra: object): ImportedQuestion => h5p({ cards: [{ text: 'Capital of France?', answer: 'Paris' }], ...extra }, 'H5P.Flashcards').topics[0]!.questions[0]!;
-    expect(card({})).toEqual({ question: 'Capital of France?', type: 'fill-in', answer: 'Paris' });
+    expect(card({})).toEqual({ question: 'Capital of France?', type: 'fill-in', answer: 'Paris', compare: 'exact' });
     expect(card({ caseSensitive: true })).toMatchObject({ caseSensitive: true });
   });
 
@@ -390,7 +390,18 @@ describe('a question graded as its tool grades it (Codex, on #573)', () => {
       'course/en/blocks.json': [{ _id: 'b', _parentId: 'a', _type: 'block' }],
       'course/en/components.json': [{ _id: 'c', _parentId: 'b', _type: 'component', _component: 'textinput', body: 'Capital?', _allowsAnyCase: true, _items: [{ _answers: ['Paris'] }] }],
     })), { fileUrl })!;
-    expect(anyCase.topics[0]!.questions).toEqual([{ question: 'Capital?\n\n____', type: 'fill-in', answer: 'Paris' }]);
+    expect(anyCase.topics[0]!.questions).toEqual([{ question: 'Capital?\n\n____', type: 'fill-in', answer: 'Paris', compare: 'exact' }]);
+  });
+
+  it('compares an Adapt blank without its punctuation where its author allows punctuation', () => {
+    const lax = adaptPackage(filesOfZip(zipOf({
+      'course/en/course.json': { _id: 'course', _type: 'course', title: 'T' },
+      'course/en/contentObjects.json': [{ _id: 'p', _parentId: 'course', _type: 'page', title: 'P' }],
+      'course/en/articles.json': [{ _id: 'a', _parentId: 'p', _type: 'article' }],
+      'course/en/blocks.json': [{ _id: 'b', _parentId: 'a', _type: 'block' }],
+      'course/en/components.json': [{ _id: 'c', _parentId: 'b', _type: 'component', _component: 'textinput', body: 'Which country?', _allowsAnyCase: true, _allowsPunctuation: true, _items: [{ _answers: ['U.S.A.'] }] }],
+    })), { fileUrl })!;
+    expect(lax.topics[0]!.questions).toEqual([{ question: 'Which country?\n\n____', type: 'fill-in', answer: 'U.S.A.', compare: 'letters' }]);
   });
 });
 

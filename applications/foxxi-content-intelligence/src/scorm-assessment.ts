@@ -23,6 +23,14 @@ export interface ScormAnswerInput {
   salt?: string;
   /** text: letter case counts, as the source a question was read from declares; otherwise a typed answer is read without it. */
   caseSensitive?: boolean;
+  /**
+   * text: the whole reply is the answer, compared as the source a question was read from compares
+   * it (a review of #578): `exact` keeps every character, `letters` drops punctuation and symbols
+   * and keeps the letters and digits of every script. Either way its spaces are collapsed and its
+   * letter case folded unless `caseSensitive`. Without it a typed answer is read as authored
+   * courses always have been: its ASCII letters and digits, and any word of four letters or more.
+   */
+  compare?: 'exact' | 'letters';
 }
 export interface ScormAssessmentQuestion {
   question: string;
@@ -102,10 +110,15 @@ export function inferScormAnswerInput(answer: string): ScormAnswerInput | undefi
 
 /** Preserve legacy text hashes, including words with digits. Numeric-only
  * expressions retain punctuation; typed numeric answers use their numeric contract.
- * Letter case is kept only when a question says it counts (`caseSensitive`). */
-export function normalizeScormAnswer(value: string, caseSensitive = false): string {
-  const spaced = String(value ?? '').replace(/\s+/g, ' ').trim();
+ * Letter case is kept only when a question says it counts (`caseSensitive`). A question read from a
+ * package compares as its source does (`compare`): every character (`exact`), or the letters and
+ * digits of every script (`letters`), in one Unicode form and without zero-width marks. */
+export function normalizeScormAnswer(value: string, caseSensitive = false, compare?: 'exact' | 'letters'): string {
+  const raw = String(value ?? '');
+  const spaced = (compare ? raw.normalize('NFC').replace(/[\u200b-\u200d\u2060\ufeff]/g, '') : raw).replace(/\s+/g, ' ').trim();
   const text = caseSensitive ? spaced : spaced.toLowerCase();
+  if (compare === 'exact') return text;
+  if (compare === 'letters') return text.replace(/[^\p{L}\p{M}\p{N} ]/gu, '').replace(/\s+/g, ' ').trim();
   return /[a-z]/i.test(text) ? text.replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, ' ').trim() : text;
 }
 
@@ -158,7 +171,11 @@ export function scormAnswerCandidates(value: string, input?: ScormAnswerInput): 
     return [`${input.type}|${input.salt ?? ''}|${chosen.join(',')}`];
   }
   if (input && input.type !== 'text') return [String(Number(value.trim()))];
-  const normalized = normalizeScormAnswer(value, !!(input && input.caseSensitive));
+  const compare = input && (input.compare === 'exact' || input.compare === 'letters') ? input.compare : undefined;
+  const normalized = normalizeScormAnswer(value, !!(input && input.caseSensitive), compare);
+  // A question read from a package takes the whole reply, as its source does; one authored here
+  // also takes a reply whose word is the answer.
+  if (compare) return normalized ? [normalized] : [];
   return normalized ? [...new Set([normalized, ...normalized.split(' ').filter(token => token.length >= 4)])] : [];
 }
 

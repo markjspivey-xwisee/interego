@@ -135,6 +135,7 @@ export function checkStoredInput(input: ScormAnswerInput | undefined): void {
   else if (input.targets !== undefined) throw new QuestionError(`a ${input.type} input has no targets`);
   if (input.multiple !== undefined && (input.type !== 'choice' || typeof input.multiple !== 'boolean')) throw new QuestionError('only a choice input can be multiple');
   if (input.caseSensitive !== undefined && (input.type !== 'text' || typeof input.caseSensitive !== 'boolean')) throw new QuestionError('only a text input can be case-sensitive');
+  if (input.compare !== undefined && (input.type !== 'text' || (input.compare !== 'exact' && input.compare !== 'letters'))) throw new QuestionError('only a text input compares a reply whole, exact or by its letters');
   if (input.salt !== undefined && (typeof input.salt !== 'string' || !/^[0-9a-f]{8,64}$/.test(input.salt))) throw new QuestionError('input.salt must be 8 to 64 hex characters');
 }
 
@@ -203,9 +204,13 @@ export function authorQuestion(raw: unknown, seed: string): ScormAssessmentQuest
       // from may declare; a typed answer is otherwise read without it.
       if (q.caseSensitive !== undefined && typeof q.caseSensitive !== 'boolean') throw new QuestionError('caseSensitive is true or false');
       if (q.caseSensitive === true && inferred) throw new QuestionError('only a typed text answer can be case-sensitive');
+      // A question read from a package compares the whole reply as its source does (`compare`).
+      if (q.compare !== undefined && q.compare !== 'exact' && q.compare !== 'letters') throw new QuestionError('compare is exact or letters');
+      if (q.compare !== undefined && inferred) throw new QuestionError('only a typed text answer is compared exact or by its letters');
+      const compare = q.compare as 'exact' | 'letters' | undefined;
       const input: ScormAnswerInput | undefined = inferred
         ? { ...inferred, ...(q.min !== undefined ? { min: Number(q.min) } : {}), ...(q.max !== undefined ? { max: Number(q.max) } : {}) }
-        : q.caseSensitive === true ? { type: 'text', caseSensitive: true } : undefined;
+        : q.caseSensitive === true || compare ? { type: 'text', ...(q.caseSensitive === true ? { caseSensitive: true } : {}), ...(compare ? { compare } : {}) } : undefined;
       if (input) checkStoredInput(input);
       const acceptIn = q.accept === undefined ? [] : Array.isArray(q.accept) ? q.accept : [q.accept];
       if (acceptIn.length > QUESTION_LIMITS.accept) throw new QuestionError(`accept lists at most ${QUESTION_LIMITS.accept} answers`);
