@@ -194,7 +194,7 @@ function qti2Item(item: XNode): ImportedQuestion | string {
         .filter(e => e.value);
       const withCase = letterCaseOf([...entries, ...[answer, ...rest].map(value => ({ value, withCase: true }))]);
       if (withCase === 'mixed') return 'its answers differ in whether letter case counts, and a question here grades them one way';
-      return { question, type: 'fill-in', answer, ...(accept.length ? { accept } : {}), ...(withCase ? { caseSensitive: true as const } : {}) };
+      return { question, type: 'fill-in', answer, ...(accept.length ? { accept } : {}), ...(withCase ? { caseSensitive: true as const } : {}), compare: 'exact' };
     }
     case 'orderinteraction': {
       const choices = childrenOf(ix, 'simplechoice');
@@ -305,7 +305,7 @@ function qti12Item(item: XNode): ImportedQuestion | string {
     // A question here grades all its answers one way, so answers that differ in whether letter case counts are not one question.
     if (caseSensitive === 'mixed') return 'its answers differ in whether letter case counts, and a question here grades them one way';
     const [answer, ...accept] = correct;
-    return { question, type: 'fill-in', answer: answer!, ...(accept.length ? { accept } : {}), ...(caseSensitive ? { caseSensitive: true as const } : {}) };
+    return { question, type: 'fill-in', answer: answer!, ...(accept.length ? { accept } : {}), ...(caseSensitive ? { caseSensitive: true as const } : {}), compare: 'exact' };
   }
   if (r.name === 'response_num') {
     const n = Number(correct[0]);

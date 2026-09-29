@@ -307,7 +307,7 @@ function storylineQuestion(r: Reading, it: Json, slide: SlideRead, topic: Import
       const cases = new Set(accepted.map(a => a.ignorecase));
       if (cases.size > 1) { r.left(where, 'its answers differ in whether letter case counts, and a question here grades them one way'); return; }
       const [first, ...rest] = [...new Set(accepted.map(a => a.text))];
-      r.keep(topic, { question, type: 'fill-in', answer: first!, ...(rest.length ? { accept: rest } : {}), ...(cases.has(false) ? { caseSensitive: true as const } : {}) }, where);
+      r.keep(topic, { question, type: 'fill-in', answer: first!, ...(rest.length ? { accept: rest } : {}), ...(cases.has(false) ? { caseSensitive: true as const } : {}), compare: 'exact' }, where);
       return;
     }
     case 'matching': {

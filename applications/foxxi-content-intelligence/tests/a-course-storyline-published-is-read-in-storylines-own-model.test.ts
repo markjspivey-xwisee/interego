@@ -334,8 +334,8 @@ describe('a course Storyline published for SCORM', () => {
       // The passage it asks about is kept beside its own words.
       { question: 'The inspection note says the left rail is cracked and a rung is missing; the feet were cleaned this morning.\n\nWhich make this ladder unsafe?',
         type: 'choice', options: ['The cracked rail', 'The clean feet', 'The missing rung'], answer: ['A', 'C'], multiple: true },
-      { question: 'What do you do before every climb?', type: 'fill-in', answer: 'inspect', accept: ['check'] },
-      { question: 'Name the rung you never stand on: the ____ rung.', type: 'fill-in', answer: 'Top', caseSensitive: true },
+      { question: 'What do you do before every climb?', type: 'fill-in', answer: 'inspect', accept: ['check'], compare: 'exact' },
+      { question: 'Name the rung you never stand on: the ____ rung.', type: 'fill-in', answer: 'Top', caseSensitive: true, compare: 'exact' },
       // Sorted into groups: each item, and the place it goes.
       { question: 'Sort each item.', type: 'matching', pairs: [['Hard hat', 'Wear it'], ['Boots', 'Wear it'], ['Ladder', 'Climb it']] },
       // A drop-down asks of each statement which choice; a choice no statement takes is a distractor.

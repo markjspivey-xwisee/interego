@@ -261,6 +261,8 @@ function riseQuestion(r: Reading, q: Json, topic: ImportedTopic, where: string, 
       r.keep(topic, {
         question, type: 'fill-in', answer: accepted[0]!,
         ...(accepted.length > 1 ? { accept: accepted.slice(1) } : {}), ...(caseSensitive ? { caseSensitive: true as const } : {}),
+        // Rise compares the whole reply, trimmed and (unless case-sensitive) lower-cased.
+        compare: 'exact',
       }, where);
       return;
     }
