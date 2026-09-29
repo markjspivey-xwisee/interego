@@ -564,10 +564,10 @@ describe('what a review of #579 found', () => {
     ];
     // Words and numbers once only; and two sums, whose numbers both differ: no place among others.
     // Stems with no count, or no word between place and count; a place that falls, or past its
-    // count; a stem alone; longer texts; sums (Codex, on #585 and #586).
+    // count; counts that differ; a stem alone; longer texts; sums (Codex, on #585 and #586).
     const texts = [
       'What is 2?', 'What is 3?', '1 x 5 =', '2 x 5 =', '2 + 3 =', '4 + 5 =', '12 ÷ 4 =', '12 ÷ 4 =',
-      'Level 2 requires 3 attempts.', 'Level 1 requires 3 attempts.', 'Chapter 5 part 2', 'Chapter 6 part 2', 'Step 2 of 5',
+      'Level 2 requires 3 attempts.', 'Level 1 requires 3 attempts.', 'Chapter 5 part 2', 'Chapter 6 part 2', 'Part 1 of 4', 'Part 2 of 6', 'Step 2 of 5',
       'Which of these is 1 of 3 colours?', 'Which of these is 2 of 3 colours?', 'How many sides has a shape with 5 corners?', '2 + 3 + 4 =',
     ];
     const read = readOf(oneScene(texts.map((t, i) => stem(`6S00000000${i + 1}`, i + 1, t))));
