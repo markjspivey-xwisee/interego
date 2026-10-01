@@ -264,6 +264,7 @@ these layers.
 | `deploy/acme-id` | L3 | deployment | A demonstration identity service. |
 | `deploy/railway` | L3 | deployment | Platform configuration for the hosted fleet. |
 | `deploy/foxxi-scorm-player` | vertical | deployment | A vertical's static site. |
+| `integrations/agent-plugin` | L3 | composition | Portable workflow skills and versioned guidance for permitted agent runtimes; connects the existing service without extending the protocol. |
 | `integrations/application-runtime` | L3 | composition | The optional application interpreter the reference relay image installs. |
 | `integrations/affordance-surface` | L3 | composition | An optional resource interpreter the reference relay image installs. |
 | `integrations/compliance-overlay` | L3 | composition | Agent action → compliance descriptor translation. |

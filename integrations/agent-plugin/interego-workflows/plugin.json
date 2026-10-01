@@ -1,0 +1,24 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "interego-workflows",
+  "version": "1.0.0",
+  "description": "Resume durable work, discover live capabilities, improve performance, transfer knowledge, and evaluate outcomes through Interego.",
+  "author": { "name": "Interego" },
+  "license": "MIT",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Interego Workflows",
+        "shortDescription": "Durable work and improvement",
+        "longDescription": "Five workflows for continuing work across sessions, discovering live services, selecting performance interventions, verifying knowledge transfer, and retaining evidence-backed improvements. Uses the existing Interego connection and its HyperMarkdown viewer.",
+        "developerName": "Interego",
+        "category": "Productivity",
+        "defaultPrompt": [
+          "Resume my Interego project from its current state and continue the next authorized task.",
+          "Discover the live services needed for this task and compose a working solution.",
+          "Diagnose this performance gap, test an intervention, and retain what works."
+        ]
+      }
+    }
+  }
+}

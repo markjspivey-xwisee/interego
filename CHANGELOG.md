@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-01 — Portable Interego workflow plugin
+
+A five-skill package adds durable work continuation, live affordance discovery, performance diagnosis, authorized knowledge transfer, and evidence-based retention. Portable builds use the existing Streamable HTTP service; private account builds reuse a verified app binding and avoid a duplicate connection. A versioned, hashed instruction module supports constrained runtimes without enabling additional permissions.
+
+The bootstrap is prepared for Crown; runtime integration and the Architecture Atlas update remain pending because the existing Sites source endpoint is unreachable from the authoring workspace. No hosted deployment is changed by this entry.
+
+Validation: five Node package tests pass, live encrypted continuation persistence/readback succeeds, and independent forward testing preserves unresolved state forks and avoids causal or unaided-retention claims from assisted task scores. Source: `c31b1154881bda6ad9622b27d8256f9619c41c11`.
+
 ## 2026-09-29 — Foxxi: what Codex found on #586
 
 Codex reviewed #586 after it merged, and found two of its fixes too broad. Both are narrowed here.

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Improve performance"
+  short_description: "Diagnose a gap and test an intervention"
+  default_prompt: "Use $interego-improve-performance to diagnose and improve this task."
+policy:
+  allow_implicit_invocation: true
