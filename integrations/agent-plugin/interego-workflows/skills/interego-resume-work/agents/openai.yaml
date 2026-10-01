@@ -1,0 +1,6 @@
+interface:
+  display_name: "Resume work"
+  short_description: "Continue from current Interego project state"
+  default_prompt: "Resume my Interego project using $interego-resume-work."
+policy:
+  allow_implicit_invocation: true

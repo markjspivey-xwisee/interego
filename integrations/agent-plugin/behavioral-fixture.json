@@ -1,0 +1,75 @@
+{
+  "kind": "synthetic behavioral fixture, not production evidence",
+  "task": "Continue the Delta release and decide whether to retain its proposed job aid.",
+  "pod": "https://example.invalid/delta/",
+  "graph": "urn:graph:project:delta",
+  "cachedNote": {
+    "version": "v1",
+    "deployment": "pending",
+    "next": "deploy"
+  },
+  "headResponse": {
+    "forked": true,
+    "heads": [
+      {
+        "descriptorUrl": "https://example.invalid/delta/v2a.ttl",
+        "cid": "fixture-a"
+      },
+      {
+        "descriptorUrl": "https://example.invalid/delta/v2b.ttl",
+        "cid": "fixture-b"
+      }
+    ]
+  },
+  "descriptors": [
+    {
+      "url": "https://example.invalid/delta/v2a.ttl",
+      "supersedes": "v1",
+      "deployment": {
+        "state": "succeeded",
+        "evidence": "release-receipt-2"
+      },
+      "evaluation": {
+        "baseline": {
+          "score": 0,
+          "max": 48,
+          "conventionsKnown": false
+        },
+        "after": {
+          "score": 48,
+          "max": 48,
+          "assistance": "job aid with required conventions"
+        },
+        "delayed": {
+          "score": 48,
+          "max": 48,
+          "assistance": "same job aid"
+        },
+        "comparativeControl": false,
+        "independentAssessor": false,
+        "cost": null
+      },
+      "decision": "retain as candidate reference aid; causal benefit unknown",
+      "next": "independent application check"
+    },
+    {
+      "url": "https://example.invalid/delta/v2b.ttl",
+      "supersedes": "v1",
+      "deployment": {
+        "state": "rolled-back",
+        "evidence": "rollback-receipt-3"
+      },
+      "decision": "hold deployment pending incident review",
+      "next": "review incident"
+    }
+  ],
+  "permissions": {
+    "registerAgent": false,
+    "changeSharing": false,
+    "sendMessages": false,
+    "allowed": [
+      "read descriptors",
+      "write private continuation after reconciliation"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Evaluate and retain"
+  short_description: "Measure results and retain supported changes"
+  default_prompt: "Use $interego-evaluate-retain to review this intervention."
+policy:
+  allow_implicit_invocation: true

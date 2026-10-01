@@ -1,0 +1,20 @@
+name: Interego workflow plugin
+on:
+  pull_request:
+    branches: [master]
+    paths: ['integrations/agent-plugin/**', '.github/workflows/agent-plugin.yml']
+  push:
+    branches: [master]
+    paths: ['integrations/agent-plugin/**', '.github/workflows/agent-plugin.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - run: node --test integrations/agent-plugin/build.test.mjs
+      - run: node integrations/agent-plugin/build.mjs --out "$RUNNER_TEMP/interego-plugin"

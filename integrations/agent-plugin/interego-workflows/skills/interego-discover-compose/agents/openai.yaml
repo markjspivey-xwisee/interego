@@ -1,0 +1,6 @@
+interface:
+  display_name: "Discover and compose"
+  short_description: "Follow live contracts to complete a task"
+  default_prompt: "Use $interego-discover-compose to discover the services for this task."
+policy:
+  allow_implicit_invocation: true

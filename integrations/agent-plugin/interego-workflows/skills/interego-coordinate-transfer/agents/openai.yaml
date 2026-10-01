@@ -1,0 +1,6 @@
+interface:
+  display_name: "Coordinate and transfer"
+  short_description: "Prepare a handoff and verify application"
+  default_prompt: "Use $interego-coordinate-transfer to prepare this authorized handoff."
+policy:
+  allow_implicit_invocation: true
