@@ -38,6 +38,7 @@ import {
   withTransientRetry,
 } from '@interego/solid';
 import { PodStatementStore } from './pod-statement-store.js';
+import { PostgresStatementStore } from './postgres-learning-store.js';
 
 export interface StoredStatement {
   id: string;
@@ -544,7 +545,8 @@ export class ConflictError extends Error {
 
 // ── Factory ──────────────────────────────────────────────────────────
 
-export function createStatementStore(spec: string = 'memory'): StatementStore {
+export function createStatementStore(spec: string = 'memory', tenant = 'default'): StatementStore {
+  if (spec === 'postgres') return new PostgresStatementStore(tenant);
   if (!spec || spec === 'memory') return new InMemoryStatementStore();
   if (spec.startsWith('file:')) return new FileStatementStore(spec.slice(5));
   if (spec.startsWith('forward:')) {

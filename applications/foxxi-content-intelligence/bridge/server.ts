@@ -1,3 +1,4 @@
+import { durableLearningEnabled, initializeLearningDatabase, registerLearningMap, registerLearningPartition, registerLearningState, durableLearningMiddleware, withLearningTransaction, drainLearningOutbox } from '../src/postgres-learning-store.js';
 /**
  * foxxi-content-intelligence bridge — opinionated MCP-named-tool
  * surface over the Foxxi vertical.
@@ -5801,7 +5802,7 @@ const instrumentedHandlers = Object.fromEntries(
       const t0 = Date.now();
       let isError = false;
       try {
-        const result = await fn(args);
+        const result = await withLearningTransaction(() => fn(args));
         if (result && typeof result === 'object' && 'error' in result) {
           isError = true;
           const errStr = String((result as { error: unknown }).error);
@@ -5889,6 +5890,7 @@ const app = createVerticalBridge({
     { label: 'Guidance', href: `${bridgeBaseUrl}/guidance?format=markdown`, rel: 'help', type: 'text/markdown' },
   ],
   middleware: (a) => {
+    a.use(durableLearningMiddleware);
     // CORS for the browser dashboard. The vertical owns its CORS
     // policy; the substrate-side vertical-bridge factory stays
     // CORS-agnostic so other deployments (server-to-server, MCP
@@ -5983,12 +5985,12 @@ const app = createVerticalBridge({
         const reg = (stmt.context as { registration?: string } | undefined)?.registration;
         const own = reg ? signedLaunchLearner(reg, tenant) : undefined;
         if (own) keepCmi5OnLearnerPod(stmt, own);
-        void observeCmi5Statement(stmt, tenant, {
+        return observeCmi5Statement(stmt, tenant, {
           statementsForRegistration: async (reg) =>
             (await getStatementStore(tenant).query({ registration: reg, limit: 500 }))
               .statements.map(r => r.statement),
           emit: (s) => { const id = storeStatementInternal(s, tenant); if (id && own) keepCmi5OnLearnerPod({ ...s, id }, own); },
-        }).catch(() => undefined);
+        });
       },
       // A void that took effect is kept with the voided statement's owner (keepAppliedVoid).
       onVoidApplied: (target, voidingStatementId) => { void keepAppliedVoid(target.statement, voidingStatementId); },
@@ -9526,6 +9528,7 @@ app.post('/agent/record-course-completion', async (req, res) => {
 // (so it can hydrate) + the owner (so it's theirs); secrets never hit the pod
 // in clear.
 async function hydrateOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<void> {
+  if (durableLearningEnabled()) { markForwardingHydrated(tenant); return; }
   const kp = bridgeEncryptionKeypair();
   if (kp) {
     try { const blob = await loadForwardingConfig({ ownerPod, bridgeKp: kp }); if (blob) importForwardingConfig(tenant, blob); }
@@ -9543,6 +9546,7 @@ async function persistOwnerForwarding(tenant: TenantId, ownerPod: string): Promi
 // reverse-derive the owner pod from the lens tenant and load their persisted
 // config BEFORE the first forward, so a post-restart statement isn't dropped.
 registerForwardingHydrator(async (tenant) => {
+  if (durableLearningEnabled()) return;
   if (!tenant.startsWith('lens:')) return;
   const kp = bridgeEncryptionKeypair(); if (!kp) return;
   let origin = ''; try { origin = new URL(tenantPodUrl).origin; } catch { return; }
@@ -11391,7 +11395,8 @@ const contentPlays = new Map<string, PlayInProgress & { expiresAt: number }>();
 function keepPlay(play: CompositionPlay, choose: AnotherWayIn): void {
   const now = Date.now();
   for (const [k, v] of contentPlays) if (v.expiresAt < now) contentPlays.delete(k);
-  if (contentPlays.size >= CONTENT_PLAYS_MAX) { const oldest = contentPlays.keys().next().value; if (oldest !== undefined) contentPlays.delete(oldest); }
+  if (durableLearningEnabled() && contentPlays.size >= CONTENT_PLAYS_MAX) throw new Error('active learning session capacity reached; no saved attempt was discarded');
+    if (contentPlays.size >= CONTENT_PLAYS_MAX) { const oldest = contentPlays.keys().next().value; if (oldest !== undefined) contentPlays.delete(oldest); }
   contentPlays.set(play.id, { play, choose, expiresAt: now + CONTENT_PLAY_TTL_MS });
 }
 
@@ -11638,6 +11643,7 @@ app.post('/ns/foxxi/composition/:hash/au/session', async (req, res) => {
     }
     const t = Date.now();
     for (const [k, v] of projectedPlays) if (v.expiresAt < t) projectedPlays.delete(k);
+    if (durableLearningEnabled() && projectedPlays.size >= PROJECTED_PLAYS_MAX) throw new Error('active learning session capacity reached; no saved attempt was discarded');
     if (projectedPlays.size >= PROJECTED_PLAYS_MAX) { const oldest = projectedPlays.keys().next().value; if (oldest !== undefined) projectedPlays.delete(oldest); }
     projectedPlays.set(play.id, { play, attempt, choose: wayInBy(learner.kind), startedAt: t, expiresAt: t + CONTENT_PLAY_TTL_MS });
     res.json({ ok: true, session: play.id, title: root.title, done: false, step: currentView(play), statements: opening });
@@ -11809,6 +11815,7 @@ app.post('/agent/scorm/launch', async (req, res) => {
     const seq = createSession(tenantIdOf(`scorm:${callerDid}`), tree);
     const nav = processNavigation(seq, 'start');
     if (!nav.ok || !nav.delivered) { res.status(409).json({ error: `SCORM start failed: ${nav.exception ?? nav.message ?? 'no SCO delivered'}` }); return; }
+    if (durableLearningEnabled() && agentScormPlays.size >= SCORM_PLAYS_MAX) throw new Error('active learning session capacity reached; no saved attempt was discarded');
     if (agentScormPlays.size >= SCORM_PLAYS_MAX) { const oldest = agentScormPlays.keys().next().value; if (oldest !== undefined) agentScormPlays.delete(oldest); }
     agentScormPlays.set(seq.id, { seq, courseId, learnerDid: callerDid, lens, masteryScore: course.masteryScore, course });
     sendActionResult(req, res, { ok: true, sessionId: seq.id, launchedBy: callerDid, course: { id: courseId, title: course.title }, sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)), sequencingEnded: !!nav.sequencingEnded, instruction: 'Read the SCO; for an assessment SCO answer the questions; then POST /agent/scorm/submit { session_id, answers? }. Repeat until done:true.' }, bridgeBaseUrl, 'SCORM attempt launched', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
@@ -11967,7 +11974,8 @@ async function startLtiPlay(launch: VerifiedResourceLaunch): Promise<{ ok: true;
   };
   const now = Date.now();
   for (const [k, v] of ltiPlays) if (v.expiresAt < now) ltiPlays.delete(k);
-  if (ltiPlays.size >= LTI_PLAYS_MAX) { const oldest = ltiPlays.keys().next().value; if (oldest !== undefined) ltiPlays.delete(oldest); }
+  if (durableLearningEnabled() && ltiPlays.size >= LTI_PLAYS_MAX) throw new Error('active learning session capacity reached; no saved attempt was discarded');
+    if (ltiPlays.size >= LTI_PLAYS_MAX) { const oldest = ltiPlays.keys().next().value; if (oldest !== undefined) ltiPlays.delete(oldest); }
   const id = randomBytes(24).toString('base64url');
   // The grade goes back only where the platform offered it: a line item, and the score scope.
   const lineItem = launch.ags?.scope.includes(AGS_SCOPE.score) ? launch.ags.lineitem : undefined;
@@ -12224,12 +12232,35 @@ app.use((err: unknown, _req: import('express').Request, res: import('express').R
   res.status(status).json({ ok: false, error: status === 400 ? 'invalid request body (malformed JSON)' : 'internal error' });
 });
 
+registerLearningMap('bridge:agentScormPlays', agentScormPlays);
+registerLearningMap('bridge:ltiPlays', ltiPlays);
+registerLearningMap('bridge:contentPlays', contentPlays);
+registerLearningMap('bridge:projectedPlays', projectedPlays);
+registerLearningMap('bridge:agentScormCourses', agentScormCourses);
+registerLearningMap('bridge:courseAuthors', courseAuthors);
+registerLearningPartition('bridge:trajectories', agentTrajectoriesByTenant);
+registerLearningPartition('bridge:probes', performanceProbesByTenant);
+registerLearningState('bridge:lti-platform', {
+  collect: () => ltiPlatform.durableSnapshot(),
+  restore: value => ltiPlatform.restoreDurableSnapshot(value),
+});
+if (process.env.FOXXI_REQUIRE_DURABLE_LEARNING === '1' && !durableLearningEnabled()) throw new Error('durable learning storage is required; memory-only startup refused');
+if (durableLearningEnabled()) await initializeLearningDatabase();
+
 app.listen(PORT, () => {
   console.log(`foxxi-content-intelligence bridge on http://localhost:${PORT}`);
   console.log(`  MCP endpoint:        http://localhost:${PORT}/mcp`);
   console.log(`  Affordance manifest: http://localhost:${PORT}/affordances`);
   console.log(`  Standards extension: http://localhost:${PORT}/agent/extend-standards  |  Guidance: http://localhost:${PORT}/guidance`);
   console.log(`  Audience: ${audience} (${activeAffordances.length} affordances active; FOXXI_AUDIENCE=learner|admin|both)`);
+  if (durableLearningEnabled()) {
+    const drain = () => drainLearningOutbox((tenant, statement) => {
+      const name=(statement.actor as {account?:{name?:string}} | undefined)?.account?.name;
+      const owner=typeof name==='string' && (/^did:(ethr|web|key):/.test(name) || /(u-pk-|u-did-|u-eth-|eth-0x)/.test(name)) ? lensTenantFor(actorForPod(resolveSubjectPodUrl(name),MESH_ACTOR_LABELS)) : tenant;
+      return forwardToTargets(owner,statement);
+    }).catch(err => console.error('[foxxi-outbox] delivery not confirmed:', (err as Error).message));
+    void drain(); setInterval(() => { void drain(); }, 30_000).unref();
+  }
   void seedDemoContent();
   // Warm the public-memories commons so a published memory resolves from the first
   // request after a restart, not only after a lazy on-miss rehydrate.
