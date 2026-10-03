@@ -1,3 +1,4 @@
+import { durableLearningEnabled, registerLearningMap, registerLearningPartition } from './postgres-learning-store.js';
 /**
  * The cmi5 LMS-side launch contract (cmi5 / IEEE 9274.2.1 §7–§8).
  *
@@ -116,12 +117,14 @@ interface FetchTokenRecord {
 
 /** Fetch tokens minted by launches, keyed by the token the AU presents. */
 const fetchTokens = new Map<string, FetchTokenRecord>();
+registerLearningMap('cmi5-lms:fetchTokens', fetchTokens);
 /**
  * Auth-tokens the LRS accepts as Bearer → their tenant, and the one launch registration they may
  * touch. A learner's launches all share their lens tenant, so the tenant alone let one launch's
  * token read another's statements and write `passed` into it (the automated review of #478).
  */
 const authTokenLaunch = new Map<string, { tenant: TenantId; registration: string }>();
+registerLearningMap('cmi5-lms:authTokenLaunch', authTokenLaunch);
 const FETCH_TOKEN_TTL_MS = 30 * 60_000; // a launch must be fetched within 30 min
 
 // ── moveOn orchestration state ──────────────────────────────────────
@@ -146,9 +149,11 @@ interface LaunchRecord {
 
 /** Launches keyed by registration — the LMS watches these for moveOn. */
 const launches = new Map<string, LaunchRecord>();
+registerLearningMap('cmi5-lms:launches', launches);
 /** Per tenant, per learner — the set of AU ids the learner has satisfied
  *  (drives prerequisite gating). */
 const satisfiedAus = new Map<TenantId, Map<string, Set<string>>>();
+registerLearningMap('cmi5-lms:satisfiedAus', satisfiedAus);
 
 // ── Pod projection (foxxi:Cmi5TenantSnapshot) ────────────────────────
 // Snapshot publisher: every launch + satisfaction state change is
@@ -205,10 +210,13 @@ export function learnerSatisfiedAus(tenant: TenantId, learnerId: string): string
 
 /** Registered cmi5 course structures, per tenant, keyed by course id. */
 const courseRegistry = new TenantPartition<Map<string, Cmi5Course>>(() => new Map());
+registerLearningPartition('cmi5-lms:courseRegistry', courseRegistry);
 /** Per tenant|course|learner — the block/course ids already emitted `satisfied`. */
 const rollupEmitted = new Map<string, Set<string>>();
+registerLearningMap('cmi5-lms:rollupEmitted', rollupEmitted);
 /** Per tenant|course|learner — the (stable) registration for course-level statements. */
 const courseEnrollmentReg = new Map<string, string>();
+registerLearningMap('cmi5-lms:courseEnrollmentReg', courseEnrollmentReg);
 
 /** Cap the per-tenant cmi5 course registry — an unauth POST /content/publish-course loop with a
  *  fresh course id each time would otherwise grow it without limit into an OOM (round-42). Evict
@@ -218,6 +226,7 @@ const CMI5_COURSES_MAX = 5000;
 /** Register a cmi5 course structure (from a parsed cmi5.xml). */
 export function registerCmi5Course(tenant: TenantId, course: Cmi5Course): void {
   const m = courseRegistry.for(tenant);
+  if (durableLearningEnabled() && m.size >= CMI5_COURSES_MAX && !m.has(course.id)) throw new Error('cmi5 course capacity reached; no saved course was discarded');
   if (m.size >= CMI5_COURSES_MAX && !m.has(course.id)) { const oldest = m.keys().next().value; if (oldest !== undefined) m.delete(oldest); }
   m.set(course.id, course);
 }

@@ -1,3 +1,4 @@
+import { registerLearningMap, registerLearningPartition, registerLearningState } from './postgres-learning-store.js';
 /**
  * Runtime-managed xAPI Statement Forwarding + inbound forwarding control
  * for the Foxxi LRS. Three concerns, one cohesive module, all tenant-
@@ -90,6 +91,7 @@ export interface ForwardingTargetView {
 const MAX_DEAD_LETTER = 200;
 
 const targetsByTenant = new TenantPartition<Map<string, TargetState>>(() => new Map());
+registerLearningPartition('lrs-forwarding:targetsByTenant', targetsByTenant);
 const seededTenants = new Set<TenantId>();
 
 // ── Durable hydration (lazy, once per tenant) ───────────────────────
@@ -282,14 +284,15 @@ function recordFailure(st: TargetState, stmt: Record<string, unknown>, error: st
  * failure is recorded in the dead-letter queue, never propagated back to
  * the inbound POST (which already succeeded).
  */
-export async function forwardStatement(tenant: TenantId, stmt: Record<string, unknown>): Promise<void> {
+export async function forwardStatement(tenant: TenantId, stmt: Record<string, unknown>): Promise<boolean> {
   await ensureForwardingHydrated(tenant);
   const map = targetsByTenant.for(tenant);
-  if (map.size === 0) return;
+  let enabled = 0, delivered = 0;
   for (const st of map.values()) {
     if (!st.target.enabled) continue;
-    await deliver(st, stmt);
+    enabled++; if (await deliver(st, stmt)) delivered++;
   }
+  return enabled > 0 && delivered === enabled;
 }
 
 /**
@@ -397,6 +400,19 @@ class InboundCredentialRegistry {
   readonly liveMap = new Map<string, TenantId>();
   private readonly meta = new Map<string, InboundCredential>();
   private seeded = false;
+  constructor() {
+    registerLearningState('forwarding:inbound-credentials', {
+      collect: () => ({live:this.liveMap,meta:this.meta}),
+      restore: value => {
+        const data=value as {live:Map<string,TenantId>;meta:Map<string,InboundCredential>};
+        if (!(data?.live instanceof Map) || !(data.meta instanceof Map)) throw new Error('invalid forwarding credentials checkpoint');
+        this.liveMap.clear(); this.meta.clear();
+        for (const [k,v] of data.live) this.liveMap.set(k,v);
+        for (const [k,v] of data.meta) this.meta.set(k,v);
+      },
+    });
+  }
+
 
   seedFromEnv(pairs: string): void {
     if (this.seeded) return;

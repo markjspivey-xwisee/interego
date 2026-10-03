@@ -1,3 +1,4 @@
+import { durableLearningEnabled, registerLearningPartition, trackLearningWork } from './postgres-learning-store.js';
 /**
  * Inbound xAPI 2.0 LRS surface for the Foxxi vertical.
  *
@@ -58,6 +59,7 @@ import {
   recordInbound,
   inboundCredentials,
   seedForwardingTargets,
+  listForwardingTargets,
 } from './lrs-forwarding.js';
 import {
   withTransientRetry,
@@ -96,7 +98,8 @@ function isDerivedViewTenant(tenant: string): boolean {
 }
 const statementStores = new TenantPartition<StatementStore>(
   (tenant) => createStatementStore(
-    isDerivedViewTenant(String(tenant)) ? 'memory' : process.env.FOXXI_LRS_BACKEND,
+    durableLearningEnabled() ? 'postgres' : isDerivedViewTenant(String(tenant)) ? 'memory' : process.env.FOXXI_LRS_BACKEND,
+    String(tenant),
   ),
   // A dropped partition must leave the process-wide statement budget. Without this the
   // budget counts statements from partitions that were evicted long ago, and the bridge
@@ -128,7 +131,7 @@ export interface XapiLrsConfig {
   oauthPublicKey?: KeyObject | null;
   /** Optional: invoked after each Statement is stored, with its tenant.
    *  The cmi5 LMS uses this to watch for moveOn satisfaction. */
-  onStatementStored?: (statement: Record<string, unknown>, tenant: TenantId) => void;
+  onStatementStored?: (statement: Record<string, unknown>, tenant: TenantId) => void | Promise<unknown>;
   /** Optional: invoked once a voiding statement has taken effect, with the statement it voided
    *  (as the store holds it, marked) and the tenant it was voided in. Never for a void that took
    *  no effect: a target not held yet, another voiding statement, or one outside the writer's
@@ -235,7 +238,9 @@ export async function keepStatementsWhole(statements: ReadonlyArray<Record<strin
 export function storeStatementInternal(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): string | null {
   const rec = internalRecord(stmt, 'storeStatementInternal');
   if (!rec) return null;
-  void statementStores.for(tenant).put(rec).catch(err => {
+  const pending = statementStores.for(tenant).put(rec);
+  trackLearningWork(pending);
+  void pending.catch(err => {
     // eslint-disable-next-line no-console
     console.warn('[storeStatementInternal]', (err as Error).message);
   });
@@ -282,6 +287,10 @@ const agentProfileStores = new TenantPartition<Map<string, StoredDoc>>(() => new
 // Raw attachment bytes, keyed by SHA-2 hash, captured from
 // multipart/mixed Statement requests — tenant-partitioned.
 const attachmentStores = new TenantPartition<Map<string, { data: Buffer; contentType: string }>>(() => new Map());
+registerLearningPartition('xapi-state', stateStores);
+registerLearningPartition('xapi-activity-profiles', activityProfileStores);
+registerLearningPartition('xapi-agent-profiles', agentProfileStores);
+registerLearningPartition('xapi-attachments', attachmentStores);
 
 // Per-tenant document/attachment stores are keyed by *caller-supplied* ids
 // (State stateId, Activity/Agent Profile profileId, attachment SHA-2). The auth
@@ -292,6 +301,7 @@ const attachmentStores = new TenantPartition<Map<string, { data: Buffer; content
 // oldest live entry — the same discipline the statement store and cmi5 registry use.
 const XAPI_DOC_STORE_MAX = 50_000;
 function cappedMapSet<V>(m: Map<string, V>, key: string, value: V, max = XAPI_DOC_STORE_MAX): void {
+  if (durableLearningEnabled() && m.size >= max && !m.has(key)) throw new Error('xAPI document capacity reached; no saved record was discarded');
   if (m.size >= max && !m.has(key)) {
     const oldest = m.keys().next().value;
     if (oldest !== undefined) m.delete(oldest);
@@ -822,7 +832,7 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
     // Forward to the OWNER's targets (per-user self-sovereign forwarding) when
     // the actor resolves to an owner; else the caller's tenant. So user A's
     // statements only ever reach A's downstream targets, never B's.
-    forwardToTargets(config.ownerTenantOfStatement?.(enriched) ?? tenantOf(req), enriched).catch(err => {
+    (!durableLearningEnabled() ? forwardToTargets(config.ownerTenantOfStatement?.(enriched) ?? tenantOf(req), enriched) : Promise.resolve()).catch(err => {
       // eslint-disable-next-line no-console
       console.warn('[foxxi-lrs] forwarding failed:', (err as Error).message);
     });
@@ -1021,7 +1031,7 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   persistAttachmentData(enriched, multipartParts, attachmentStores.for(tenantOf(req)));
   notifyStatementStored(enriched, tenantOf(req), config);
   recordInboundIfForwarded(req, enriched);
-  forwardToTargets(config.ownerTenantOfStatement?.(enriched) ?? tenantOf(req), enriched).catch(() => undefined);
+  (!durableLearningEnabled() ? forwardToTargets(config.ownerTenantOfStatement?.(enriched) ?? tenantOf(req), enriched) : Promise.resolve()).catch(() => undefined);
   res.status(204).end();
 }
 
@@ -1052,7 +1062,8 @@ function notifyVoidApplied(target: StoredStatement, voidingStatementId: string, 
 function notifyStatementStored(stmt: Record<string, unknown>, tenant: TenantId, config: XapiLrsConfig): void {
   if (!config.onStatementStored) return;
   try {
-    config.onStatementStored(stmt, tenant);
+    const result=config.onStatementStored(stmt, tenant);
+    if (result) trackLearningWork(result);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[foxxi-lrs] onStatementStored hook threw:', (err as Error).message);
@@ -1352,7 +1363,9 @@ function handleAbout(req: Request, res: Response, config: XapiLrsConfig): void {
       [`${ns}identity`]: config.tenantDid,
       [`${ns}bridge`]: config.selfBaseUrl,
       [`${ns}pod`]: config.podUrl,
-      [`${ns}statementForwarding`]: !!config.forwardingTargets.trim(),
+      [`${ns}statementForwarding`]: !!config.forwardingTargets.trim() || listForwardingTargets(tenantOf(req)).some(t=>t.enabled),
+      [`${ns}operationalStorage`]: durableLearningEnabled() ? 'private PostgreSQL; acknowledgments follow commit' : 'legacy snapshot/cache mode',
+      [`${ns}forwardingDurability`]: durableLearningEnabled() ? 'transactional outbox; at-least-once' : 'process-local retry queue',
       [`${ns}substrateBackend`]: 'context-graphs-1.0 + solid-css',
       [`${ns}lrsBackend`]: statementStores.for(tenantOf(req)).backendDescription(),
       [`${ns}multiTenant`]: true,
