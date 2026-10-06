@@ -1235,7 +1235,7 @@ async function didSubmit() {
     }
     if (rec.clientId !== client.client_id) {
       this.cfg.log?.('[oauth-provider] refresh refused: client-mismatch');
-      throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Refresh token was issued to a different client');
+      throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Client ID mismatch');
     }
 
     // Scope narrowing: MUST be a subset of the original scopes (RFC 6749 §6).
