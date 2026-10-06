@@ -165,7 +165,11 @@ export type Advance =
  * build the statements that record it, and move on. On the last step the composition is completed.
  */
 /** What a step's statements are made with: who the learner is to xAPI, the time, and fresh statement ids. */
-export interface AdvanceContext { actor: Record<string, unknown>; now: string; newId: () => string; platform?: string }
+export interface AdvanceContext {
+  actor: Record<string, unknown>; now: string; newId: () => string; platform?: string;
+  /** Optional signed, one-based step from currentView: guards retries against advancing another step. */
+  expectedStep?: number;
+}
 
 export function advancePlay(play: CompositionPlay, answers: unknown, ctx: AdvanceContext, choose?: AnotherWayIn): Advance {
   const step = play.steps[play.at];
@@ -251,6 +255,10 @@ export interface PlayInProgress {
   play: CompositionPlay;
   /** A step answered and graded whose statements could not be kept yet: taking a step keeps these very statements first. */
   pending?: Extract<Advance, { ok: true }>;
+  /** One-based step whose record is pending; advancePlay has already moved the play onward. */
+  pendingAt?: number;
+  /** Latest successful receipt, for a guarded retry after its HTTP acknowledgement was lost. */
+  lastTaken?: { at: number; taken: Extract<Taken, { ok: true }> };
   /** A step is being taken; another request for this play waits its turn. */
   busy?: boolean;
   /** Where a missed check finds another way in: the rules this play was resolved by. */
@@ -258,7 +266,7 @@ export interface PlayInProgress {
 }
 
 export type Taken =
-  | { ok: true; recorded: string[]; step: Extract<Advance, { ok: true }>; resumed: boolean }
+  | { ok: true; recorded: string[]; step: Extract<Advance, { ok: true }>; resumed: boolean; replayed?: true }
   | Extract<Advance, { ok: false }>;
 
 /**
@@ -267,24 +275,38 @@ export type Taken =
  * fixes each statement's final form (the bridge's mark on what it graded) once, before the first
  * attempt. The step's outcome is returned only once its record is kept. Until then it stays
  * pending: the answers given stand, nothing is credited, and the next take keeps the same
- * statements before anything else. One take at a time per play.
+ * statements before anything else. One take at a time per play. With expectedStep, the latest
+ * successful receipt can be replayed without writes; a stale step is refused before grading.
+ * The receipt lives only as long as this in-process play session. Unguarded calls cannot safely
+ * retry a successful write whose HTTP acknowledgement was lost.
  */
 export async function takeStep(entry: PlayInProgress, answers: unknown, ctx: AdvanceContext,
   keep: (statements: readonly Statement[]) => Promise<string[] | null>,
   mark: (s: Statement) => Statement = s => s): Promise<Taken> {
   if (entry.busy) return { ok: false, status: 409, error: 'a step of this play is still being recorded; send it again in a moment' };
+  const expected = ctx.expectedStep;
+  if (expected !== undefined && (!Number.isSafeInteger(expected) || expected < 1)) return { ok: false, status: 400, error: 'expected_step is a positive one-based integer from the step you received' };
+  const at = entry.pendingAt ?? entry.play.at + 1;
+  if (expected !== undefined) {
+    if (!entry.pending && entry.lastTaken?.at === expected) return { ...entry.lastTaken.taken, replayed: true };
+    if (expected !== at) return { ok: false, status: 409, error: 'expected_step does not name the current step; do not apply an earlier answer to a later step' };
+  }
   entry.busy = true;
   try {
     const resumed = !!entry.pending;
     if (!entry.pending) {
       const advanced = advancePlay(entry.play, answers, ctx, entry.choose);
       if (!advanced.ok) return advanced;
+      entry.pendingAt = at;
       entry.pending = { ...advanced, statements: advanced.statements.map(mark) };
     }
     const step = entry.pending;
     const recorded = await keep(step.statements);
     if (!recorded) return { ok: false, status: 503, error: 'your answers to this step were taken but could not be kept in your record yet; take the step again to keep them (the answers already given stand)' };
+    const taken: Extract<Taken, { ok: true }> = { ok: true, recorded, step, resumed };
+    entry.lastTaken = { at, taken };
     delete entry.pending;
-    return { ok: true, recorded, step, resumed };
+    delete entry.pendingAt;
+    return taken;
   } finally { entry.busy = false; }
 }

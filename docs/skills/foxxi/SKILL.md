@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 56 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 57 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 56
+  affordances: 57
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -81,6 +81,7 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.content_mine` | List the compositions you authored and the ones you have played, to launch one (foxxi.content_launch) or read what it has learned (GET <composition IRI>/effica… | `POST https://foxxi-bridge.interego.xwisee.com/agent/content/mine` *(HTTP only)* |
 | `foxxi.content_launch` | Resolve a composition for yourself (as foxxi.content_resolve does, from your own record) and start playing it: the first step comes back as you receive it, the… | `POST https://foxxi-bridge.interego.xwisee.com/agent/content/launch` *(HTTP only)* |
 | `foxxi.content_next` | Answer the questions of the step you are on, if it has any, and move to the next. | `POST https://foxxi-bridge.interego.xwisee.com/agent/content/next` *(HTTP only)* |
+| `foxxi.xapi_author` | Author teaching and checks natively as content-addressed fragments and compositions, kept on your own pod. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi/author` *(HTTP only)* |
 | `foxxi.scorm_author` | Author a SCORM 2004 course as yourself. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/author` *(HTTP only)* |
 | `foxxi.scorm_launch` | Launch an authored SCORM course as yourself. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/launch` *(HTTP only)* |
 | `foxxi.scorm_submit` | Submit the current SCO. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/submit` *(HTTP only)* |
