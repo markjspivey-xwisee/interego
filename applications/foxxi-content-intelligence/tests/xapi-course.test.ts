@@ -147,7 +147,7 @@ describe('native xAPI course authoring', () => {
     expect(route.indexOf('keepContentBundle(')).toBeLessThan(route.indexOf('sendActionResult('));
     for (const forbidden of ['parseManifest(', 'buildAgentScormManifest(', 'startAttempt(', 'commitTracking(', '/agent/scorm/author']) expect(route).not.toContain(forbidden);
     expect(server).toContain("app.post('/agent/scorm/author'"); expect(server).toContain("app.post('/agent/content/launch'");
-    expect(server).toContain('if (!taken.replayed && await ensureEfficacy())');
+    expect(server).toMatch(/if \(!taken\.replayed\) \{\n\s+if \(await ensureEfficacy\(\)\) \{/);
     expect(server).toContain('if (outcome.done && p.expected_step === undefined) contentPlays.delete(entry.play.id)');
     const manifest = readFileSync(new URL('../affordances.ts', import.meta.url), 'utf8');
     expect(manifest).toContain("toolName: 'foxxi.xapi_author'"); expect(manifest).toContain("targetTemplate: '{base}/agent/xapi/author'");

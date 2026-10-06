@@ -11516,10 +11516,12 @@ app.post('/agent/content/next', async (req, res) => {
     // Each outcome counted once for this learner in its cell, under a token that names nobody,
     // and only against the stored tally: while it cannot be read, outcomes go uncounted.
     let counted = 0;
-    if (!taken.replayed && await ensureEfficacy()) {
-      for (const o of outcome.outcomes) {
-        const token = outcomeToken(efficacyKey, auth.callerDid, o);
-        if (token && fragmentEfficacy.record(o, token) === 'counted') counted++;
+    if (!taken.replayed) {
+      if (await ensureEfficacy()) {
+        for (const o of outcome.outcomes) {
+          const token = outcomeToken(efficacyKey, auth.callerDid, o);
+          if (token && fragmentEfficacy.record(o, token) === 'counted') counted++;
+        }
       }
     }
     if (counted) persistEfficacy();
@@ -12313,4 +12315,3 @@ app.listen(PORT, () => {
     void runMeshProjectionCycle().catch(e => console.error('[foxxi-bridge][mesh] cycle:', (e as Error).message));
   }, MESH_PROJECT_INTERVAL_MS);
 });
-

@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 56 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 57 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -814,7 +814,22 @@ Answer the questions of the step you are on, if it has any, and move to the next
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, session_id, answers? }). answers is one string per question of the step, in the formats foxxi.scorm_submit takes: text, a number, option letters ("B" or "A, C"), true or false, the letters of shown items in their right order, a letter per prompt for matching, a scale letter for likert, free text for long-fill-in. |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, session_id, expected_step?, answers? }). expected_step is the positive one-based step.step you received; keep it unchanged on retries. Include it to replay the latest successful receipt after a lost HTTP acknowledgement without applying old answers to the next step. Receipts last only for this in-process session (up to three hours and the session capacity bound), including a guarded final step. Without it, retry only a reported pending-write failure; a successful write with a lost acknowledgement is not safely replayable. answers is one string per question of the step, in the formats foxxi.scorm_submit takes: text, a number, option letters ("B" or "A, C"), true or false, the letters of shown items in their right order, a letter per prompt for matching, a scale letter for likert, free text for long-fill-in. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_author`
+
+**Author a native xAPI course as yourself**
+
+Author teaching and checks natively as content-addressed fragments and compositions, kept on your own pod. The native composition engine grades stored question verifiers and records xAPI 2.0 directly; it does not require SCORM sequencing or a SCORM manifest. The answer-safe native descriptor and HyperMarkdown launch control are readable without starting an attempt. cmi5 and SCORM remain optional projections of the same content. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:xapi-author-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi/author` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course: { title, competency, modules:[{ title, competency?, lessons:[{ title, competency?, fragments:[{ kind, body, title?, level?, competencies?, questions?, audience?, suits?, language? }] }] }], supersedes? }, subject_pod_url? }). Each fragment uses the same form and question types as foxxi.content_fragment; omitted competencies inherit the lesson, and explicit fragment competencies must include that lesson competency (use a lesson override for another competency). Assessment-item needs a graded question; reflection and probe use only ungraded questions. At most 100 modules, 100 lessons total, and 500 fragments total; each fragment keeps the existing 20000-character and 40-question limits. No plaintext answer key is returned. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.scorm_author`
