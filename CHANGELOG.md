@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-06 — OAuth refresh refusals preserve their cause
+
+Expired refresh grants and grants presented by a different registered client now return HTTP 400 `invalid_grant`; requests for scopes beyond the original grant return HTTP 400 `invalid_scope`. These expected refusals previously became generic HTTP 500 `server_error`, preventing a connector from distinguishing reauthorization from a server fault. Fixed diagnostic categories contain no bearer values.
+
+The original grant expiry, client binding, scope checks and refusal to issue credentials are preserved. Validation: the real HTTP authorization-server flow has 32 passing checks, including expired restored grants, client mismatch, scope escalation, credential exclusion and unchanged expiry after a legitimate refresh. This source change does not itself renew an expired live session or establish its specific failure cause.
+
 ## 2026-10-01 — Portable Interego workflow plugin
 
 A five-skill package adds durable work continuation, live affordance discovery, performance diagnosis, authorized knowledge transfer, and evidence-based retention. Portable builds use the existing Streamable HTTP service; private account builds reuse a verified app binding and avoid a duplicate connection. A versioned, hashed instruction module supports constrained runtimes without enabling additional permissions.

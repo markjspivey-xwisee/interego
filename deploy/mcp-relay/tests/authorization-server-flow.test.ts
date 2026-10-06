@@ -50,12 +50,18 @@ const b64url = (b: Buffer) => b.toString('base64').replace(/\+/g, '-').replace(/
 const verifier = b64url(randomBytes(32));
 const challenge = b64url(createHash('sha256').update(verifier).digest());
 
+// Model records restored from the durable token store through the provider's
+// public constructor contract, including one whose grant has already expired.
+const refreshRows: NonNullable<ConstructorParameters<typeof InteregoOAuthProvider>[0]['initialRefreshTokensBySha']> = new Map();
+const oauthLog: string[] = [];
+
 const provider = new InteregoOAuthProvider({
   identityUrl: 'https://identity.invalid',
   tokenTtlSec: 3600,
   initialClients: new Map(),
+  initialRefreshTokensBySha: refreshRows,
   resourceIdentifier: ISSUER.href,
-  log: () => {},
+  log: message => { oauthLog.push(message); },
 });
 
 const app = express();
@@ -177,15 +183,66 @@ try {
       'an unknown refresh token is likewise invalid_grant', `HTTP ${r.status} ${String(body.error)}`);
   }
 
-  // ── Refresh ──────────────────────────────────────────────────────────────
+  // ── Expected refresh refusals are OAuth errors, never server faults ───────
+  {
+    const expiredRefresh = 'expired-refresh-grant-fixture';
+    refreshRows.set(createHash('sha256').update(expiredRefresh).digest('hex'), {
+      clientId, scopes: ['mcp'], identity: IDENTITY, expiresAt: Date.now() - 1,
+    });
+    const r = await postForm('/token', {
+      grant_type: 'refresh_token', refresh_token: expiredRefresh, client_id: clientId,
+    });
+    const body = await r.json() as Record<string, unknown>;
+    ok(r.status === 400 && body.error === 'invalid_grant',
+      'an expired restored refresh grant is invalid_grant, not server_error', `HTTP ${r.status} ${String(body.error)}`);
+    ok(!('access_token' in body) && !('refresh_token' in body),
+      'an expired grant issues no replacement credentials');
+  }
+  {
+    const reg2 = await fetch(`${base}/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' }),
+    });
+    const otherClient = await reg2.json() as { client_id: string };
+    const r = await postForm('/token', {
+      grant_type: 'refresh_token', refresh_token: tokens.refresh_token!, client_id: otherClient.client_id,
+    });
+    const body = await r.json() as Record<string, unknown>;
+    ok(r.status === 400 && body.error === 'invalid_grant',
+      'a refresh grant bound to another registered client is invalid_grant', `HTTP ${r.status} ${String(body.error)}`);
+    ok(!('access_token' in body) && !('refresh_token' in body),
+      'a client mismatch issues no credentials');
+  }
   {
     const r = await postForm('/token', {
       grant_type: 'refresh_token', refresh_token: tokens.refresh_token!, client_id: clientId,
+      scope: 'mcp mcp:write',
     });
-    const refreshed = await r.json() as { access_token?: string };
+    const body = await r.json() as Record<string, unknown>;
+    ok(r.status === 400 && body.error === 'invalid_scope',
+      'refresh scope escalation is invalid_scope, not server_error', `HTTP ${r.status} ${String(body.error)}`);
+    ok(!('access_token' in body) && !('refresh_token' in body),
+      'scope escalation issues no credentials');
+  }
+  ok(['expired', 'client-mismatch', 'scope-escalation'].every(category =>
+    oauthLog.includes(`[oauth-provider] refresh refused: ${category}`)),
+    'refresh refusals log bounded diagnostic categories');
+  ok(oauthLog.every(message => !message.includes(tokens.access_token!)
+    && !message.includes(tokens.refresh_token!) && !message.includes(IDENTITY.identityToken)),
+    'refresh diagnostics contain no bearer credentials');
+
+  // ── A refused misuse does not consume the rightful client's live grant ────
+  {
+    const priorExpiry = refreshRows.get(createHash('sha256').update(tokens.refresh_token!).digest('hex'))!.expiresAt;
+    const r = await postForm('/token', {
+      grant_type: 'refresh_token', refresh_token: tokens.refresh_token!, client_id: clientId,
+    });
+    const refreshed = await r.json() as { access_token?: string; refresh_token?: string };
     ok(r.status === 200 && typeof refreshed.access_token === 'string',
       'a refresh token exchanges for a fresh access token', `HTTP ${r.status}`);
     ok(refreshed.access_token !== tokens.access_token, '…which is a DIFFERENT token', 'rotation');
+    const rotatedExpiry = refreshRows.get(createHash('sha256').update(refreshed.refresh_token!).digest('hex'))?.expiresAt;
+    ok(rotatedExpiry === priorExpiry, 'refresh rotation preserves the original grant expiry');
   }
 
   // ── An unknown client cannot start a flow ────────────────────────────────
