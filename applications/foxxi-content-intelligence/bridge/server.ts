@@ -92,7 +92,8 @@ process.on('uncaughtException', (err) => {
 });
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { wantsHmd, sendHmd, sendActionResult, renderAffordanceManifestHmd } from '../../_shared/hypermedia/index.js';
-import { courseHmd, memoryHmd, collectionHmd } from '../src/hypermedia.js';
+import { courseHmd, memoryHmd, collectionHmd, xapiCourseHmd } from '../src/hypermedia.js';
+import { authorXapiCourse, xapiCourseArtifact, xapiCourseLinks } from '../src/xapi-course.js';
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 
@@ -11140,6 +11141,26 @@ app.post('/agent/content/fragment', async (req, res) => {
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
+// Native xAPI authoring is a bundle of the same fragments/compositions the native player uses.
+// Persistence precedes the success response; no SCORM manifest or sequencing engine is touched.
+app.post('/agent/xapi/author', async (req, res) => {
+  try {
+    if (contentRateLimited(req, res)) return;
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    let authored: ReturnType<typeof authorXapiCourse>;
+    try { authored = authorXapiCourse(auth.payload.course); }
+    catch (e) { if (e instanceof ContentError) { res.status(400).json({ error: `native xAPI course not authored: ${e.message}` }); return; } throw e; }
+    const kept = await keepContentBundle(authored.root, authored.items, auth.callerDid, auth.payload.subject_pod_url);
+    if (!kept.ok) { res.status(503).json({ error: `native xAPI course not kept: ${kept.error}` }); return; }
+    sendActionResult(req, res, {
+      ok: true, '@id': authored.root['@id'], authoredBy: auth.callerDid, composition: authored.root,
+      modules: authored.modules, lessons: authored.lessons, items: authored.items.length,
+      artifacts: xapiCourseLinks(authored.root, bridgeBaseUrl), ...kept.kept,
+    }, bridgeBaseUrl, 'Native xAPI course authored', activeAffordances.filter(a => a.toolName === 'foxxi.content_launch'));
+  } catch (err) { sendServerError(res, err, 'xapi-course-author'); }
+});
+
 app.post('/agent/content/composition', async (req, res) => {
   try {
     if (contentRateLimited(req, res)) return;
@@ -11479,28 +11500,35 @@ app.post('/agent/content/next', async (req, res) => {
     if (!entry || entry.expiresAt < Date.now()) { res.status(404).json({ error: 'no such play session: launch the composition' }); return; }
     // A play is its learner's: nobody else can answer for them or read their next step.
     if (entry.play.learner.id !== auth.callerDid) { res.status(403).json({ error: 'this play session belongs to another learner' }); return; }
+    if (p.expected_step !== undefined && (typeof p.expected_step !== 'number' || !Number.isSafeInteger(p.expected_step) || p.expected_step < 1)) {
+      res.status(400).json({ error: 'expected_step is a positive one-based integer from the step you received' }); return;
+    }
     // The step counts only once its record is kept (takeStep): until then nothing is counted, and
     // the play is not finished, and a step that could not be kept is kept on the next request with
     // the answers already given.
     const taken = await takeStep(entry, p.answers, {
       actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: auth.callerDid } },
       now: new Date().toISOString(), newId: randomUUID, platform: 'Foxxi',
+      ...(p.expected_step !== undefined ? { expectedStep: p.expected_step as number } : {}),
     }, statements => recordPlayStatements(auth.callerDid, statements), markIfGraded);
     if (!taken.ok) { res.status(taken.status).json({ error: taken.error, ...(taken.validationErrors ? { validationErrors: taken.validationErrors } : {}) }); return; }
     const outcome = taken.step;
     // Each outcome counted once for this learner in its cell, under a token that names nobody,
     // and only against the stored tally: while it cannot be read, outcomes go uncounted.
     let counted = 0;
-    if (await ensureEfficacy()) {
+    if (!taken.replayed && await ensureEfficacy()) {
       for (const o of outcome.outcomes) {
         const token = outcomeToken(efficacyKey, auth.callerDid, o);
         if (token && fragmentEfficacy.record(o, token) === 'counted') counted++;
       }
     }
     if (counted) persistEfficacy();
-    if (outcome.done) contentPlays.delete(entry.play.id);
+    // A guarded final acknowledgement can be replayed under the same existing session TTL and
+    // capacity bound. Unguarded legacy calls keep their prior completed-session behavior.
+    if (outcome.done && p.expected_step === undefined) contentPlays.delete(entry.play.id);
     sendActionResult(req, res, {
       ok: true, sessionId: entry.play.id, recorded: taken.recorded, done: outcome.done, ...(taken.resumed ? { keptEarlierAnswers: true } : {}),
+      ...(taken.replayed ? { replayedReceipt: true } : {}),
       ...(outcome.graded ? { graded: outcome.graded } : {}),
       ...(outcome.done ? { summary: { steps: entry.play.steps.length, graded: entry.play.graded } } : { step: currentView(entry.play) }),
     }, bridgeBaseUrl, outcome.done ? 'Composition completed' : 'Next step', outcome.done ? [] : activeAffordances.filter(a => a.toolName === 'foxxi.content_next'));
@@ -11558,6 +11586,22 @@ app.get('/ns/foxxi/composition/:hash/efficacy', async (req, res) => {
 });
 
 // A composition holds no secret, so its IRI dereferences to it as it is.
+// The public descriptor contains readable teaching and public questions, never their verifiers.
+app.get('/ns/foxxi/composition/:hash/xapi.json', async (req, res) => {
+  try {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const hash = String(req.params.hash);
+    if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a composition id is a sha256 hash' }); return; }
+    const item = await contentStore.fetch(compositionIri(hash));
+    if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
+    await contentStore.gather(item);
+    res.type('application/json').json(xapiCourseArtifact(item, iri => contentStore.get(iri), bridgeBaseUrl));
+  } catch (err) {
+    if (err instanceof ContentError) { res.status(503).json({ error: 'The complete native course content is unavailable.' }); return; }
+    sendServerError(res, err, 'xapi-course-artifact');
+  }
+});
+
 app.get('/ns/foxxi/composition/:hash', async (req, res) => {
   try {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -11565,6 +11609,11 @@ app.get('/ns/foxxi/composition/:hash', async (req, res) => {
     if (!/^[0-9a-f]{64}$/.test(hash)) { res.status(404).json({ error: 'a composition id is a sha256 hash' }); return; }
     const item = await contentStore.fetch(compositionIri(hash));
     if (!item || !isCompositionItem(item)) { res.status(404).json({ error: 'no such composition here' }); return; }
+    res.vary('Accept');
+    if (wantsHmd(req)) {
+      sendHmd(res, xapiCourseHmd(item, bridgeBaseUrl, canonicalAffordance('urn:iep:action:foxxi:content-launch-signed')));
+      return;
+    }
     res.type('application/json').send(JSON.stringify(item, null, 2));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
@@ -12264,3 +12313,4 @@ app.listen(PORT, () => {
     void runMeshProjectionCycle().catch(e => console.error('[foxxi-bridge][mesh] cycle:', (e as Error).message));
   }, MESH_PROJECT_INTERVAL_MS);
 });
+

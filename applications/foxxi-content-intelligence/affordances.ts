@@ -1508,23 +1508,46 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Answer and continue', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, session_id, answers? }). answers is one string per question of the step, in the formats foxxi.scorm_submit takes: text, a number, option letters ("B" or "A, C"), true or false, the letters of shown items in their right order, a letter per prompt for matching, a scale letter for likert, free text for long-fill-in.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, session_id, expected_step?, answers? }). expected_step is the positive one-based step.step you received; keep it unchanged on retries. Include it to replay the latest successful receipt after a lost HTTP acknowledgement without applying old answers to the next step. Receipts last only for this in-process session (up to three hours and the session capacity bound), including a guarded final step. Without it, retry only a reported pending-write failure; a successful write with a lost acknowledgement is not safely replayable. answers is one string per question of the step, in the formats foxxi.scorm_submit takes: text, a number, option letters ("B" or "A, C"), true or false, the letters of shown items in their right order, a letter per prompt for matching, a scale letter for likert, free text for long-fill-in.' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['courses', 'profiles'] },
     outputs: {
-      description: 'The graded step and the next one, or the summary when done. 404 for an unknown or expired session; 403 when the session is another learner\'s; 422 with validationErrors when the answers cannot be taken (the step does not advance); 503 when your answers were taken but could not be kept in your record yet (call again: the answers already given are kept, and any sent with the retry are not taken); 409 while another call for this session is being recorded; 401 on auth failure.',
+      description: 'The graded step and the next one, or the summary when done. 404 for an unknown or expired session; 403 when the session is another learner\'s; 422 with validationErrors when the answers cannot be taken (the step does not advance); 503 when your answers were taken but could not be kept in your record yet (call again: the answers already given are kept, and any sent with the retry are not taken); 409 while another call is recording or expected_step is stale; 400 for an invalid expected_step; 401 on auth failure. A guarded latest receipt may be replayed without recording or efficacy credit a second time.',
       properties: {
         ok: { type: 'boolean' },
         sessionId: { type: 'string' },
         recorded: { type: 'array', description: 'The ids of the statements recorded for this step.', items: { type: 'string' } },
         keptEarlierAnswers: { type: 'boolean', description: 'True when this call kept a step answered on an earlier call whose record could not be kept then: graded and recorded are that step\'s.' },
+        replayedReceipt: { type: 'boolean', description: 'True when expected_step replayed the latest successful receipt without grading, recording or efficacy credit again.' },
         graded: { type: 'object', description: '{ correct, total, detail:[{ question, correct: true|false|null, explanation? }] } when the step had questions.', additionalProperties: true },
         done: { type: 'boolean' },
         step: { type: 'object', description: 'The next step, as launch returns it.', additionalProperties: true },
         summary: { type: 'object', description: '{ steps, graded: { correct, total } } when done.', additionalProperties: true },
       },
       required: ['ok'],
+    },
+  },
+
+  {
+    action: 'urn:iep:action:foxxi:xapi-author-signed' as IRI,
+    toolName: 'foxxi.xapi_author',
+    title: 'Author a native xAPI course as yourself',
+    description: 'Author teaching and checks natively as content-addressed fragments and compositions, kept on your own pod. The native composition engine grades stored question verifiers and records xAPI 2.0 directly; it does not require SCORM sequencing or a SCORM manifest. The answer-safe native descriptor and HyperMarkdown launch control are readable without starting an attempt. cmi5 and SCORM remain optional projections of the same content. Externally routed: sign_request the args, then POST the envelope.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/xapi/author',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Author a native xAPI course', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course: { title, competency, modules:[{ title, competency?, lessons:[{ title, competency?, fragments:[{ kind, body, title?, level?, competencies?, questions?, audience?, suits?, language? }] }] }], supersedes? }, subject_pod_url? }). Each fragment uses the same form and question types as foxxi.content_fragment; omitted competencies inherit the lesson, and explicit fragment competencies must include that lesson competency (use a lesson override for another competency). Assessment-item needs a graded question; reflection and probe use only ungraded questions. At most 100 modules, 100 lessons total, and 500 fragments total; each fragment keeps the existing 20000-character and 40-question limits. No plaintext answer key is returned.' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['courses', 'profiles'] },
+    outputs: {
+      description: 'The native course content identity, author, composition, artifact links and confirmed pod persistence. Follow foxxi.content_launch with composition set to the returned @id. 400 for invalid content; 401 for failed authentication; 503 when the course could not be kept.',
+      properties: { ok: { type: 'boolean' }, '@id': { type: 'string' }, authoredBy: { type: 'string' }, composition: { type: 'object', additionalProperties: true }, modules: { type: 'integer' }, lessons: { type: 'integer' }, items: { type: 'integer' }, artifacts: { type: 'object', additionalProperties: true }, durable: { type: 'string' }, sharedLattice: { type: 'object', additionalProperties: true } },
+      required: ['ok', '@id', 'authoredBy', 'artifacts'],
     },
   },
 
@@ -2894,3 +2917,4 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     ],
   },
 ];
+
