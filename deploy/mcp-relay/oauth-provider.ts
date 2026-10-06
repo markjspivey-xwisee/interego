@@ -1230,16 +1230,21 @@ async function didSubmit() {
     if (!rec) throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Invalid or expired refresh token');
     if (rec.expiresAt < Date.now()) {
       this.refreshTokens.delete(refreshToken);
-      throw new Error('Refresh token expired');
+      this.cfg.log?.('[oauth-provider] refresh refused: expired');
+      throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Refresh token expired; authenticate again');
     }
-    if (rec.clientId !== client.client_id) throw new Error('Client ID mismatch');
+    if (rec.clientId !== client.client_id) {
+      this.cfg.log?.('[oauth-provider] refresh refused: client-mismatch');
+      throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Refresh token was issued to a different client');
+    }
 
     // Scope narrowing: MUST be a subset of the original scopes (RFC 6749 §6).
     const finalScopes = scopes && scopes.length > 0
       ? scopes.filter(s => rec.scopes.includes(s))
       : rec.scopes;
     if (scopes && finalScopes.length !== scopes.length) {
-      throw new Error('Requested scopes exceed original grant');
+      this.cfg.log?.('[oauth-provider] refresh refused: scope-escalation');
+      throw new OAuthError(OAuthErrorCode.InvalidScope, 'Requested scopes exceed original grant');
     }
 
     // OAuth access refresh must also renew the shorter-lived inner identity.
