@@ -10189,7 +10189,7 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
     // target-less/declarative control, or an unfollowable target re-throws the
     // original not-found. Descriptor affordances always WIN (tried first).
     if (e instanceof AffordanceNotFoundError) {
-      const graphAff = await resolveGraphAffordanceForInvoke(descriptorUrl, actionIri);
+      const graphAff = await resolveGraphAffordanceForInvoke(descriptorUrl, actionIri, args);
       if (graphAff) {
         const r2 = await kernelAct(graphAff, invPayload, actOpts);
         return JSON.stringify(r2);
@@ -10201,19 +10201,24 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
 }
 
 /**
- * Resolve an authority-closed payload control that declares its own hydra:target
- * inside the SIGNED graph — used as invoke_affordance's fallback when the action
- * isn't a descriptor affordance. Reuses handleGetDescriptor (IDENTICAL resolution
- * to render_hmd's executable-set, so they never disagree): its graph.content is
- * non-null ONLY for a recipient, so a non-recipient resolves nothing. Returns a
- * pre-resolved affordance ONLY when the matching action carries a followable target.
+ * Resolve a payload control's hydra:target from the recipient-readable graph when
+ * the descriptor does not declare that action. Both invocation verbs reuse the
+ * descriptor reader's session and recipient gates, matching render_hmd; an
+ * unreadable private payload resolves nothing. Authorship is reported by that
+ * reader, but this compatibility path retains its existing admission policy and
+ * does not introduce a signature requirement. The target must still be followable.
  */
 async function resolveGraphAffordanceForInvoke(
   descriptorUrl: string,
   actionIri: string,
+  args: ToolArgs,
 ): Promise<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; mediaType?: string } | null> {
   let gd: Record<string, unknown>;
-  try { gd = JSON.parse(await handleGetDescriptor({ url: descriptorUrl } as ToolArgs)) as Record<string, unknown>; }
+  // Keep the verified invocation session: dropping it makes an authorized
+  // private graph unreadable even though render_hmd offered its controls. The
+  // descriptor reader still enforces recipient membership; no key is inferred
+  // from the selected descriptor or action. Only graph data is needed here.
+  try { gd = JSON.parse(await handleGetDescriptor({ ...args, url: descriptorUrl }, false)) as Record<string, unknown>; }
   catch { return null; }
   const gobj = gd['graph'] as Record<string, unknown> | undefined;
   const gcontent = gobj && typeof gobj['content'] === 'string' ? (gobj['content'] as string) : '';
@@ -10583,14 +10588,25 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
    * Fails CLOSED without an own-pod: no pod, no borrowed key, nothing to authorise.
    */
   const ownPodForDecrypt = await callerOwnPod(args);
-  const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], actPayload, {
+  const actOpts = {
     fetch: actFetch,
     recipientKeyPair: await recipientKeyFor(args, keyAuthorisedFor),
     openEnvelope: await envelopeOpenerFor(args),
     mayDecrypt: (fetchedUrl: string) => ownPodForDecrypt !== undefined
       && mayUseRelayKey({ targetUrl: fetchedUrl, ownPodUrl: ownPodForDecrypt, storeOrigins: STORE_ORIGINS }),
     ...(authorization ? { authorization } : {}),
-  });
+  };
+  let r;
+  try {
+    r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], actPayload, actOpts);
+  } catch (error) {
+    // Match invoke_affordance only for descriptor-selected actions. A direct
+    // target supplies no graph authority and never enters this fallback.
+    if (!(error instanceof AffordanceNotFoundError) || !descriptorUrl || !actionIri) throw error;
+    const graphAff = await resolveGraphAffordanceForInvoke(descriptorUrl, actionIri, args);
+    if (!graphAff) throw error;
+    r = await kernelAct(graphAff, actPayload, actOpts);
+  }
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
     kind: 'act',
     id: r.affordance.target,
