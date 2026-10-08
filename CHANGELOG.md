@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — Private HyperMarkdown controls retain the caller's identity
+
+A private signed note could render an executable control but refuse its click with an affordance-not-found error. The graph-action fallback fetched the descriptor without the invoking session, so it could not decrypt the same graph the viewer had read. It now resolves that graph with the caller's session and without projecting another application view. Descriptor-form `act` follows the same fallback as `invoke_affordance`.
+
+Descriptor affordances still take precedence. A graph without recipient-readable content, an unknown action, or an unfollowable target resolves no action; target fetches retain the existing guards. Regression coverage exercises both invocation APIs, session isolation, descriptor precedence and refusal paths. The generic viewer's host lifecycle, forms and grid tests also pass.
+
 ## 2026-10-06 — OAuth refresh refusals preserve their cause
 
 Expired refresh grants and grants presented by a different registered client now return HTTP 400 `invalid_grant`; requests for scopes beyond the original grant return HTTP 400 `invalid_scope`. These expected refusals previously became generic HTTP 500 `server_error`, preventing a connector from distinguishing reauthorization from a server fault. Fixed diagnostic categories contain no bearer values.
