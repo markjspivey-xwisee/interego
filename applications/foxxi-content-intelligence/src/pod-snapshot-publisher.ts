@@ -1,3 +1,4 @@
+import { durableLearningEnabled } from './postgres-learning-store.js';
 /**
  * Surface-level pod snapshot publisher.
  *
@@ -195,6 +196,7 @@ function snapshotGraph(args: {
 }
 
 async function doPublish(reg: SnapshotRegistration): Promise<void> {
+  if (durableLearningEnabled()) return; // private SQL checkpoints own operational state
   const config = podConfig();
   if (!config) return;
   let payload: unknown;
@@ -309,7 +311,7 @@ export async function flushAll(): Promise<void> {
  * publisher always uses the same slug), so a single GET suffices.
  */
 export async function loadLatestSnapshot<T>(surface: string, config = podConfig()): Promise<T | null> {
-  if (!config) return null;
+  if (durableLearningEnabled() || !config) return null;
   const graphUrl = `${config.podUrl}foxxi/snapshots/${surface}-snapshot-graph.trig`;
   try {
     const ttl = await withTransientRetry(async () => {
