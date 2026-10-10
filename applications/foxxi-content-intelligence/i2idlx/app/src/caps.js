@@ -351,10 +351,12 @@ export function CapsProvider({ children }) {
       if (wsReady.current && !wsQueue.current.length) replayKept(myId);
       if (remote && !wsReady.current && store.get(formatKey(myId), 0) < 2) {
         // An earlier version kept no changes for a save that did not land, only a browser copy newer than the
-        // document. On the first visit with this one, that difference is taken as this viewer's change.
+        // document. On the first visit with this one, what that copy adds or changes is taken as this viewer's
+        // change. A whole copy cannot say what was deleted (a pack only in the document may be another
+        // device's), so nothing is dropped or unstarred on its strength.
         const copy = store.get(wsKey(myId), null);
         if (copy && (copy.at || 0) > (remote.at || 0)) {
-          const change = changeOf(remote, copy);
+          const change = { ...changeOf(remote, copy), drop: [], unstar: [] };
           wsQueue.current.unshift((w) => withChange(w, change));
         }
       }
