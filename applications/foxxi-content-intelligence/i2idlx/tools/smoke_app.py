@@ -42,7 +42,8 @@ STUBS = r"""
       // __cachedFirst[path]: deliver that (stale) body from the client's cache first, then the server's snapshot.
       const stale = (window.__cachedFirst || {})[p];
       if (stale !== undefined) setTimeout(() => next({ id: p.split('/').pop(), exists: stale !== null, data: () => stale || undefined, metadata: { fromCache: true, hasPendingWrites: false } }), 5);
-      setTimeout(() => next(snapDoc(p)), stale !== undefined ? 250 : 5); return off; },
+      // __slowDocs[path]: the server's snapshot of that document takes this long to arrive.
+      setTimeout(() => next(snapDoc(p)), (window.__slowDocs || {})[p] || (stale !== undefined ? 250 : 5)); return off; },
     collection: (c) => colRef(p + '/' + c) });
   const colRef = (c) => { const q = { path: c, doc: (id) => docRef(c + '/' + (id || Math.random().toString(36).slice(2))),
     onSnapshot: (next) => { const off = add(colL, c, next); setTimeout(() => next(snapCol(c)), 5); return off; },
@@ -368,13 +369,14 @@ def workspace_checks():
         ctx = b.new_context(viewport={"width": 1280, "height": 860})
         ctx.route("**/*", route_handler)
 
-        def open_as(viewer, seed=None, legacy=False, cached_first=None, me_delay=0, settle=400):
+        def open_as(viewer, seed=None, legacy=False, cached_first=None, me_delay=0, settle=400, slow=None):
             page = ctx.new_page()
             if legacy:  # what earlier versions left: one unscoped copy for every viewer of the browser
                 page.add_init_script("localStorage.setItem('interpretant:workspace', JSON.stringify({packs:[{id:'pk-legacy',name:'Legacy pack',items:[]}],stars:[],recents:[]}))")
             if viewer:
                 page.add_init_script(f"window.__viewerId = {json.dumps(viewer)}; window.__seed = {json.dumps(seed or {})}; "
-                                     f"window.__cachedFirst = {json.dumps(cached_first or {})}; window.__meDelay = {me_delay};")
+                                     f"window.__cachedFirst = {json.dumps(cached_first or {})}; window.__meDelay = {me_delay}; "
+                                     f"window.__slowDocs = {json.dumps(slow or {})};")
                 page.add_init_script(STUBS)
             page.goto("http://app.test/#packs")
             page.wait_for_selector(".pk")
@@ -439,6 +441,20 @@ def workspace_checks():
         check(len(d.get("packs", [])) == 2 and anon_left == 0 and cp.locator(".pkitem").count() == 2,
               f"[workspace] a pack made before identity resolves is saved to that account with its existing packs ({len(d.get('packs', []))} in the document, {anon_left} left signed-out)")
         cp.close()
+
+        # The page closes while the document is still loading: the pack made meanwhile survives the reload.
+        D = "u_accountd00000000000000"
+        existing_d = {"packs": [{"id": "pk-existing-d", "name": "Existing pack", "items": []}], "stars": [], "recents": [], "at": 5}
+        dp = open_as(D, seed={doc(D): existing_d}, slow={doc(D): 5000}, settle=300)
+        dp.locator(".pk aside button", has_text="New").first.click()
+        dp.wait_for_timeout(150)
+        dp.close()
+        dp2 = open_as(D, seed={doc(D): existing_d}, settle=800)
+        d = stored(dp2, doc(D)) or {}
+        held_left = dp2.evaluate(f"localStorage.getItem({json.dumps('interpretant:workspace.u.' + D + '.held')})")
+        check(dp2.locator(".pkitem").count() == 2 and len(d.get("packs", [])) == 2 and held_left is None,
+              f"[workspace] a pack made while the document was loading survives a reload and reaches the document ({len(d.get('packs', []))} there)")
+        dp2.close()
         b.close()
 
 
