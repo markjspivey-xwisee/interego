@@ -74,6 +74,7 @@ export function useRoute() {
 export const store = {
   get(k, d) { try { const v = localStorage.getItem("interpretant:" + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem("interpretant:" + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
+  del(k) { try { localStorage.removeItem("interpretant:" + k); } catch { /* storage unavailable */ } },
 };
 // Inside a StoreScope (an embedded workbench), per-viewer state lives in that scope instead of browser
 // storage, so a view driven by agents never overwrites the viewer's own filters, drafts or tabs — and the

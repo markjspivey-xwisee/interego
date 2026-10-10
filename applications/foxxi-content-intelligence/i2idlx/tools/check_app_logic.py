@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 from pyshacl import validate
-from rdflib import Graph, URIRef
+from rdflib import BNode, Graph, URIRef
 from rdflib.namespace import RDF, SKOS
 
 ROOT = pathlib.Path(sys.argv[1]).resolve()
@@ -148,6 +148,13 @@ check(edge["a"]["notes"] == ["subject"] and edge["b"]["problems"] == ["unknown"]
       and edge["d"]["clashes"] and edge["d"]["clashes"][0]["on"],
       "playground: a discipline used as a type is flagged as a subject, unknown concepts and literals are refused, and an LRS that is also a teacher clashes")
 check("error" in sem["bad"], "playground: unparseable Turtle is reported, not guessed at")
+bn = sem["bnode"]
+bg = Graph().parse(data=bn["turtle"], format="turtle")
+subjects = set(bg.subjects())
+check(len(subjects) == 1 and all(isinstance(x, BNode) for x in subjects)
+      and {str(o) for o in bg.objects(None, URIRef(data["semantic"]["prefixes"]["i2x"] + "isClassifiedBy"))}
+      == {"https://id.i2idl.org/concepts/" + c for c in bn["concepts"]},
+      f"playground: a blank node typed {bn['peer']} stays one blank node in the inferred Turtle, its bridged classification included ({len(bg)} triples)")
 
 # 3. exports and governed writes
 shapes = Graph().parse(ROOT / "dist" / f"{cfg['slugs']['shapes']}.ttl", format="turtle")

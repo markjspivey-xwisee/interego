@@ -108,13 +108,15 @@ def text(g: Graph, s, *preds) -> str | None:
 
 
 # ── Sources of truth ────────────────────────────────────────────────────────────────────────────────
-glossary_path = pathlib.Path(cfg["i2idl"]["localClone"]) / cfg["i2idl"]["graphPath"]
-gl = json.loads(glossary_path.read_text())
-nodes = gl["@graph"]
-by_id = {n["@id"]: n for n in nodes}
+# The glossary as committed, at the commit build.py builds from, never the clone's working tree: an uncommitted
+# edit there must not reach the app while the app reports this commit.
 commit = subprocess.run(["git", "-C", cfg["i2idl"]["localClone"], "log", "-1", "--format=%H|%cI", "--",
                          cfg["i2idl"]["graphPath"]], capture_output=True, text=True, check=True).stdout.strip()
 commit_sha, commit_date = commit.split("|")
+gl = json.loads(subprocess.run(["git", "-C", cfg["i2idl"]["localClone"], "show", f"{commit_sha}:{cfg['i2idl']['graphPath']}"],
+                               capture_output=True, text=True, check=True).stdout)
+nodes = gl["@graph"]
+by_id = {n["@id"]: n for n in nodes}
 
 onto, cat, enact, maps, rels, deco, chg = (ttl(k) for k in
                                             ("ontology", "catalog", "enactments", "mappings", "releases", "decorations", "changes"))
