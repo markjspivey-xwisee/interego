@@ -38,7 +38,9 @@ STUBS = r"""
       store.set(p, JSON.parse(s)); log.push(['set', p]); setTimeout(() => notify(p), 5); },
     update: async (d) => { store.set(p, Object.assign({}, store.get(p), d)); log.push(['update', p]); setTimeout(() => notify(p), 5); },
     delete: async () => { store.delete(p); log.push(['delete', p]); setTimeout(() => notify(p), 5); },
-    onSnapshot: (next) => { const off = add(docL, p, next);
+    onSnapshot: (next, fail) => { const off = add(docL, p, next);
+      // __failDocs[path]: the subscription to that document fails.
+      if ((window.__failDocs || {})[p]) { setTimeout(() => fail && fail({ code: 'unavailable', message: 'offline' }), 5); return off; }
       // __cachedFirst[path]: deliver that (stale) body from the client's cache first, then the server's snapshot.
       const stale = (window.__cachedFirst || {})[p];
       if (stale !== undefined) setTimeout(() => next({ id: p.split('/').pop(), exists: stale !== null, data: () => stale || undefined, metadata: { fromCache: true, hasPendingWrites: false } }), 5);
@@ -369,14 +371,14 @@ def workspace_checks():
         ctx = b.new_context(viewport={"width": 1280, "height": 860})
         ctx.route("**/*", route_handler)
 
-        def open_as(viewer, seed=None, legacy=False, cached_first=None, me_delay=0, settle=400, slow=None):
+        def open_as(viewer, seed=None, legacy=False, cached_first=None, me_delay=0, settle=400, slow=None, fail=None):
             page = ctx.new_page()
             if legacy:  # what earlier versions left: one unscoped copy for every viewer of the browser
                 page.add_init_script("localStorage.setItem('interpretant:workspace', JSON.stringify({packs:[{id:'pk-legacy',name:'Legacy pack',items:[]}],stars:[],recents:[]}))")
             if viewer:
                 page.add_init_script(f"window.__viewerId = {json.dumps(viewer)}; window.__seed = {json.dumps(seed or {})}; "
                                      f"window.__cachedFirst = {json.dumps(cached_first or {})}; window.__meDelay = {me_delay}; "
-                                     f"window.__slowDocs = {json.dumps(slow or {})};")
+                                     f"window.__slowDocs = {json.dumps(slow or {})}; window.__failDocs = {json.dumps(fail or {})};")
                 page.add_init_script(STUBS)
             page.goto("http://app.test/#packs")
             page.wait_for_selector(".pk")
@@ -455,6 +457,22 @@ def workspace_checks():
         check(dp2.locator(".pkitem").count() == 2 and len(d.get("packs", [])) == 2 and held_left is None,
               f"[workspace] a pack made while the document was loading survives a reload and reaches the document ({len(d.get('packs', []))} there)")
         dp2.close()
+
+        # The document cannot be read: an edit is held (never written over a document the page has not seen)
+        # and reaches the document on the next visit, next to what another device saved there.
+        E = "u_accounte00000000000000"
+        existing_e = {"packs": [{"id": "pk-existing-e", "name": "Saved on another device", "items": []}], "stars": [], "recents": [], "at": 5}
+        ep = open_as(E, seed={doc(E): existing_e}, fail={doc(E): True}, settle=300)
+        ep.locator(".pk aside button", has_text="New").first.click()
+        ep.wait_for_timeout(1200)
+        writes = ep.evaluate(f"window.__db.log.filter(e => e[0] === 'set' && e[1] === {json.dumps(doc(E))}).length")
+        held_msg = ep.locator(".pk", has_text="could not be loaded").count()
+        ep.close()
+        ep2 = open_as(E, seed={doc(E): existing_e}, settle=800)
+        d = stored(ep2, doc(E)) or {}
+        check(writes == 0 and held_msg == 1 and len(d.get("packs", [])) == 2 and ep2.locator(".pkitem").count() == 2,
+              f"[workspace] when the document cannot be read, an edit is held, not written blind, and joins the document next visit ({writes} writes then, {len(d.get('packs', []))} packs after)")
+        ep2.close()
         b.close()
 
 
