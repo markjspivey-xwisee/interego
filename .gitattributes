@@ -85,6 +85,12 @@ Dockerfile*    text eol=lf diff
 *.conf   text eol=lf diff
 *.tla    text eol=lf diff
 
+# Templates a build renders into Turtle (the I2IDL-X ontology, shapes, rules, catalog and examples in
+# applications/foxxi-content-intelligence/i2idlx). They hold `{{…}}` placeholders, so they are not
+# Turtle until rendered; `.ttl.tmpl` keeps them out of tests/every-published-ontology-parses.test.ts,
+# which holds every tracked `.ttl` to a real parser.
+*.tmpl   text eol=lf diff
+
 # ★ CRLF ON PURPOSE. cmd.exe reads batch files line by line and a `goto`/label in an
 # LF-only .bat can be mis-seeked; these are the only files in the tree whose runtime
 # is a Windows shell. Excluded from the normalisation gate by the same extension list.

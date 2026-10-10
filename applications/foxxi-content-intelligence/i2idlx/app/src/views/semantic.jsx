@@ -11,7 +11,7 @@ import { useCaps } from "../caps.js";
 import { Icon } from "../icons.jsx";
 import { ConceptChip, CopyBtn, CodeBlock, Seg, useUI } from "../ui.jsx";
 import { Origin, OriginStrip } from "../origin.jsx";
-import { plural, go, cx, useStored, useDebounced, copyText } from "../util.js";
+import { plural, go, cx, useStored, useDebounced, copyText, useDrive } from "../util.js";
 import { pretty } from "../lib.js";
 
 const { useState, useMemo, useEffect, useRef } = React;
@@ -208,7 +208,9 @@ function Playground({ tryId }) {
   const [text, setText] = useStored("sem.play", SEM.example);
   useEffect(() => { if (tryId && byId.has(tryId)) setText(snippetFor(tryId)); }, [tryId]);
   const slow = useDebounced(text, 250);
-  const out = useMemo(() => classify(slow), [slow]);
+  const drive = useDrive();
+  const extra = drive && drive.bridges;
+  const out = useMemo(() => classify(slow, extra), [slow, extra]);
   const { save } = useCaps();
   const { toast } = useUI();
   const download = async () => {
@@ -251,7 +253,7 @@ function ResourceCard({ r }) {
   const byCol = COLUMNS.map((col) => [col, r.classes.filter((x) => columnOf(x.t) === col.id || (col.id === "peer" && columnOf(x.t) === "foxxi"))]).filter(([, l]) => l.length);
   const own = r.classes.filter((x) => columnOf(x.t) === "i2x");
   return (
-    <article className={cx("card pad stack rescard", r.clashes.length && "clash")} style={{ gap: 8 }}>
+    <article className={cx("card pad stack rescard", r.clashes.length && "clash")} style={{ gap: 8 }} data-iri={r.iri}>
       <div className="row wrap" style={{ gap: 8 }}>
         <b className="grow">{r.label || shortIri(r.iri)}</b>
         {r.label ? <code className="tiny muted">{shortIri(r.iri)}</code> : null}

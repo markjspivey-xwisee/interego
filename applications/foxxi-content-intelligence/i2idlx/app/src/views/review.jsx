@@ -1,19 +1,22 @@
 // Review: the shared queue that closes the ratification loop for I2IDL-X crosswalks and capability links.
-import { ITEMS, META, byId, ACTIONS, roleById, methodById, systemLabel, itemByKey, METHODS } from "../data.js";
+import { ITEMS as ALL_ITEMS, META, byId, ACTIONS, roleById, methodById, systemLabel, itemByKey as ITEM_BY_KEY, METHODS } from "../data.js";
 import { OriginStrip } from "../origin.jsx";
 import { useCaps, consensus, CONSENSUS_LABEL } from "../caps.js";
 import { Icon } from "../icons.jsx";
 import { ConceptChip, Meter, MethodTag, CodeBlock, Modal, Seg, useUI } from "../ui.jsx";
 import { VoteBar, Voters, GovernanceLoop, myVotes, ledgerTurtle, upstreamIssue, VOTE } from "../governance.jsx";
 import { search } from "../search.js";
-import { cx, go, isTyping, useStored, plural, pct } from "../util.js";
+import { cx, go, isTyping, useStored, plural, pct, useDrive } from "../util.js";
 import { pretty } from "../lib.js";
 
 const { useState, useMemo, useEffect, useRef } = React;
 
 export function Review({ route }) {
   const caps = useCaps();
+  const drive = useDrive();
   const { tallies, policy, myBallot, writable, canEdit, savePolicy, signedIn, resolved } = caps;
+  const ITEMS = caps.items || ALL_ITEMS;
+  const itemByKey = caps.itemByKey || ITEM_BY_KEY;
   const { toast } = useUI();
   const [type, setType] = useStored("rv.type", "all");
   const [status, setStatus] = useStored("rv.status", "open");
@@ -28,31 +31,42 @@ export function Review({ route }) {
   const [focus, setFocus] = useState(route.key && !route.key.startsWith("method.") ? route.key : null);
   const [exp, setExp] = useState(null);
   const listRef = useRef(null);
+  // #review-<key> focuses that item and brings it into view
+  useEffect(() => {
+    if (!route.key || route.key.startsWith("method.")) return;
+    setFocus(route.key);
+    const t = setTimeout(() => {
+      const el = listRef.current && listRef.current.querySelector(`[data-key="${CSS.escape(route.key)}"]`);
+      if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 60);
+    return () => clearTimeout(t);
+  }, [route.key]);
 
   const rows = useMemo(() => {
     const qIds = q.trim() ? new Set(search(q, 400).map((r) => r.c.id)) : null;
     let out = ITEMS.map((i) => ({ i, s: consensus(tallies.get(i.key), policy.quorum) }));
     if (type !== "all") out = out.filter((r) => r.i.type === type);
     if (method !== "all") out = out.filter((r) => r.i.rec.m === method);
-    if (status === "open") out = out.filter((r) => r.s === "proposed" || r.s === "in-review" || r.s === "contested");
-    else if (status !== "all") out = out.filter((r) => r.s === status);
+    if (status === "open") out = out.filter((r) => r.i.sandbox || r.s === "proposed" || r.s === "in-review" || r.s === "contested");
+    else if (status !== "all") out = out.filter((r) => r.i.sandbox || r.s === status);
     if (mineOnly) out = out.filter((r) => !myBallot.v[r.i.key]);
     if (qIds) out = out.filter((r) => qIds.has(r.i.c) || (r.i.type === "mapping" ? (r.i.rec.ol || r.i.rec.o) : (ACTIONS[r.i.rec.a] || {}).t || "").toLowerCase().includes(q.trim().toLowerCase()));
-    out.sort((a, b) => sort === "conf" ? b.i.rec.cf - a.i.rec.cf || a.i.key.localeCompare(b.i.key)
+    out.sort((a, b) => (b.i.sandbox ? 1 : 0) - (a.i.sandbox ? 1 : 0) || (sort === "conf" ? b.i.rec.cf - a.i.rec.cf || a.i.key.localeCompare(b.i.key)
       : sort === "low" ? a.i.rec.cf - b.i.rec.cf || a.i.key.localeCompare(b.i.key)
-      : byId.get(a.i.c).l.localeCompare(byId.get(b.i.c).l));
+      : byId.get(a.i.c).l.localeCompare(byId.get(b.i.c).l)));
     return out;
-  }, [type, status, mineOnly, sort, q, tallies, policy, myBallot, method]);
+  }, [type, status, mineOnly, sort, q, tallies, policy, myBallot, method, ITEMS]);
 
   const stats = useMemo(() => {
     const s = { proposed: 0, "in-review": 0, contested: 0, ratified: 0, rejected: 0 };
     for (const i of ITEMS) s[consensus(tallies.get(i.key), policy.quorum)]++;
     return s;
-  }, [tallies, policy]);
+  }, [tallies, policy, ITEMS]);
   const mine = Object.keys(myBallot.v).filter((k) => itemByKey.has(k)).length;
 
-  // keyboard review: j/k move, f/a/x vote on the focused card
+  // keyboard review: j/k move, f/a/x vote on the focused card (not when embedded beside an orchestrated run)
   useEffect(() => {
+    if (drive && drive.embedded) return undefined;
     const keys = rows.map((r) => r.i.key);
     const h = async (e) => {
       if (isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -74,7 +88,7 @@ export function Review({ route }) {
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [rows, focus, writable, myBallot]);
+  }, [rows, focus, writable, myBallot, drive]);
 
   return (
     <div className="page">
@@ -83,7 +97,7 @@ export function Review({ route }) {
           <div className="stack" style={{ gap: 6 }}>
             <div className="eyebrow">Review</div>
             <h1 className="h-display" style={{ fontSize: 26, lineHeight: 1.1 }}>Ratify the layer</h1>
-            <p className="small muted">{ITEMS.length} I2IDL-X records published as Hypothetical: {ITEMS.filter((i) => i.type === "mapping").length} crosswalks ({META.counts.unesco} to UNESCO Thesaurus terms I2IDL's own evidence cites) and {ITEMS.filter((i) => i.type === "enactment").length} capability links. None of them is part of I2IDL's record.</p>
+            <p className="small muted">{ALL_ITEMS.length} I2IDL-X records published as Hypothetical: {ALL_ITEMS.filter((i) => i.type === "mapping").length} crosswalks ({META.counts.unesco} to UNESCO Thesaurus terms I2IDL's own evidence cites) and {ALL_ITEMS.filter((i) => i.type === "enactment").length} capability links. None of them is part of I2IDL's record.{ITEMS.length > ALL_ITEMS.length ? ` Plus ${ITEMS.length - ALL_ITEMS.length} proposed in this run, in the sandbox.` : ""}</p>
           </div>
           <div className="card pad stack" style={{ gap: 8 }}>
             <div className="progress" aria-label="Consensus">
@@ -153,18 +167,20 @@ export function Review({ route }) {
 
 function ReviewCard({ item, s, focused, onFocus }) {
   const { tallies } = useCaps();
+  const agent = item.sandbox ? <span className="tag sbx" title="Proposed in this orchestrated run (sandbox)">this run</span> : null;
   const c = byId.get(item.c);
   const r = item.rec;
   const a = item.type === "enactment" ? ACTIONS[r.a] : null;
   return (
     <article className={cx("rcard", s === "ratified" && "ratified", s === "rejected" && "rejected", focused && "focus")} data-key={item.key} onClick={onFocus}>
       <div className="row wrap small">
-        <span className="tag">{item.type === "mapping" ? "Crosswalk · " + r.v : "Capability · " + systemLabel(a && a.sys)}</span>
+        {agent}<span className="tag">{item.type === "mapping" ? "Crosswalk · " + r.v : "Capability · " + systemLabel(a && a.sys)}</span>
         <span className="muted">{methodById.get(r.m).label}</span>
         {r.ci ? <span className="cited" title={"I2IDL's definition cites this target as direct evidence: " + r.ci}><Icon name="check" size={11} />cited by I2IDL</span> : null}
         <span className="row" style={{ gap: 6 }} title="Drafting confidence"><Meter v={r.cf} /><span className="num">{r.cf.toFixed(2)}</span></span>
         <span className="spacer" />
-        <a className="tiny muted" href={item.iri} target="_blank" rel="noopener" title={item.iri}><code>{item.type === "mapping" ? "mp:" : "en:"}{r.id}</code></a>
+        {item.sandbox ? <code className="tiny muted" title="Proposed in this run; it gets its IRI when the staged call is published">mp:{r.id}</code>
+          : <a className="tiny muted" href={item.iri} target="_blank" rel="noopener" title={item.iri}><code>{item.type === "mapping" ? "mp:" : "en:"}{r.id}</code></a>}
       </div>
       <div className="rpair">
         <div className="rside">
@@ -181,7 +197,7 @@ function ReviewCard({ item, s, focused, onFocus }) {
           {item.type === "mapping" ? (
             <>
               <div className="rs-t"><a href={r.pg || r.o} target="_blank" rel="noopener" title={r.o}>{r.ol || r.o.split(/[#/]/).pop()}</a></div>
-              <div className="rs-d">{r.od ? <>{r.on ? <span className="tiny muted">{r.on}: </span> : null}{r.od.length > 220 ? r.od.slice(0, 220) + "…" : r.od}</> : <span className="muted small">{r.v === "UNESCO Thesaurus" ? "UNESCO publishes no scope note for this term." : "Its vocabulary publishes no definition."}</span>}</div>
+              <div className="rs-d">{r.od ? <>{r.on ? <span className="tiny muted">{r.on}: </span> : null}{r.od.length > 220 ? r.od.slice(0, 220) + "…" : r.od}</> : <span className="muted small">{item.sandbox ? "I2IDL-X's pinned term index confirms the term and its label." : r.v === "UNESCO Thesaurus" ? "UNESCO publishes no scope note for this term." : "Its vocabulary publishes no definition."}</span>}</div>
               {r.oa && r.oa.length ? <div className="tiny muted">Also: {r.oa.slice(0, 5).join(", ")}</div> : null}
             </>
           ) : (

@@ -4,18 +4,9 @@ import { CapsProvider, useCaps, consensus } from "./caps.js";
 import { Icon, Mark } from "./icons.jsx";
 import { UI, useToasts, useHoverCards, Modal, Avatar } from "./ui.jsx";
 import { Palette } from "./palette.jsx";
-import { Home } from "./views/home.jsx";
-import { Lexicon, parseFilter } from "./views/lexicon.jsx";
-import { MapView } from "./views/map.jsx";
-import { Compare } from "./views/compare.jsx";
-import { Review } from "./views/review.jsx";
-import { Packs } from "./views/packs.jsx";
-import { Insights } from "./views/insights.jsx";
-import { Agents } from "./views/agents.jsx";
-import { Ask, useAskEngine } from "./views/ask.jsx";
-import { ForI2IDL } from "./views/fori2idl.jsx";
-import { Annotate } from "./views/annotate.jsx";
-import { Semantic } from "./views/semantic.jsx";
+import { useAskEngine } from "./views/ask.jsx";
+import { ViewFor } from "./views/router.jsx";
+import { Orchestrate } from "./views/orchestrate.jsx";
 import { LensToggle, LayersModal } from "./origin.jsx";
 import { useRoute, go, isTyping, useStored, cx } from "./util.js";
 
@@ -31,6 +22,7 @@ const NAV = [
   { v: "insights", l: "Insights", h: "insights", icon: "insights" },
   { v: "semantic", l: "Semantics", h: "semantic", icon: "tree" },
   { v: "agents", l: "Agents", h: "agents", icon: "agent" },
+  { v: "orchestrate", l: "Orchestrate", h: "orchestrate", icon: "route" },
   { v: "ask", l: "Ask", h: "ask", icon: "sparkle" },
 ];
 
@@ -74,7 +66,7 @@ function Shell() {
       if (e.key === "?") { e.preventDefault(); setHelp(true); return; }
       if (e.key === "g") { gPending.current = Date.now(); return; }
       if (Date.now() - gPending.current < 900) {
-        const to = { h: "home", l: "browse", m: "whole", c: "cmp", n: "annotate", r: "review", p: "packs", i: "insights", s: "semantic", a: "agents", k: "ask", o: "for-i2idl" }[e.key];
+        const to = { h: "home", l: "browse", m: "whole", c: "cmp", n: "annotate", r: "review", p: "packs", i: "insights", s: "semantic", a: "agents", t: "orchestrate", k: "ask", o: "for-i2idl" }[e.key];
         gPending.current = 0;
         if (to) { e.preventDefault(); go(to); }
       }
@@ -123,20 +115,8 @@ function Shell() {
           </div>
         </header>
         <div className="navbar2">{nav}</div>
-        <main className="view" id="main">
-          {route.view === "home" ? <Home />
-            : route.view === "lexicon" ? <Lexicon route={route} />
-              : route.view === "map" ? <MapView route={route} />
-                : route.view === "compare" ? <Compare route={route} />
-                  : route.view === "review" ? <Review route={route} />
-                    : route.view === "packs" ? <Packs route={route} />
-                      : route.view === "insights" ? <Insights route={route} />
-                        : route.view === "agents" ? <Agents route={route} />
-                          : route.view === "ask" ? <Ask engine={engine} />
-                            : route.view === "fori2idl" ? <ForI2IDL />
-                              : route.view === "annotate" ? <Annotate />
-                                : route.view === "semantic" ? <Semantic route={route} />
-                                : <Home />}
+        <main className={cx("view", route.view === "orchestrate" && "view-fixed")} id="main">
+          {route.view === "orchestrate" ? <Orchestrate /> : <ViewFor route={route} engine={engine.available ? engine : null} />}
         </main>
       </div>
       {pal ? <Palette onClose={() => setPal(false)} ask={ask} current={current} setTheme={setTheme} /> : null}
@@ -150,7 +130,7 @@ function Shell() {
 
 function Help({ onClose }) {
   const keys = [["/ or ⌘K", "Search everything"], ["j / k or ↑ / ↓", "Next / previous term (Lexicon), next / previous item (Review)"],
-    ["f / a / x", "Vote for / against / abstain on the focused review item"], ["g then h l m c n r p i s a k o", "Go to Home, Lexicon, Map, Compare, Annotate, Review, Packs, Insights, Semantics, Agents, Ask, For I2IDL"],
+    ["f / a / x", "Vote for / against / abstain on the focused review item"], ["g then h l m c n r p i s a t k o", "Go to Home, Lexicon, Map, Compare, Annotate, Review, Packs, Insights, Semantics, Agents, Orchestrate, Ask, For I2IDL"],
     ["?", "This panel"], ["Esc", "Close"]];
   return (
     <Modal title="Interpretant" onClose={onClose} wide>

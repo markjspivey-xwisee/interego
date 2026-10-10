@@ -113,7 +113,7 @@ The same paths run through the Interego connector itself: `invoke_affordance` on
 - The relay validates a publish only against shapes that target something in it: the catalog and referents are checked on publish; the alignments graph has nothing the shapes target, so the build checks it locally.
 - Large upper ontologies are snapshotted as upward modules around the terms used (each term, its named superclasses and superproperties, domains and ranges, and the disjointness axioms among them). Credential Engine refuses scripted downloads, so CTDL and CTDL-ASN terms are recorded from the published class index.
 - `dcat:mediaType` is a literal, as Interego's extractor reads it, rather than a DCAT 3 media-type IRI.
-- Default license CC BY 4.0, matching I2IDL-original content; change it in `src/i2idlx.ttl` if you prefer Interego's MIT.
+- Default license CC BY 4.0, matching I2IDL-original content; change it in `src/i2idlx.ttl.tmpl` if you prefer Interego's MIT.
 
 ## Interpretant — the workbench
 
@@ -127,6 +127,7 @@ Every zone carries its origin label, and an **I2IDL only / + I2IDL-X** lens hide
 - **Semantics** — the alignment matrix (35 categories × every ontology) with each category's concepts, reasons and clashes; a **Playground** that classifies pasted Turtle in the browser and flags contradictions, with the same results as q-classify; how I2IDL's records and the platforms are typed; the reasoning record; and the agent recipe.
 - **For I2IDL** — what this layer adds to I2IDL's glossary, mapped to I2IDL's own roadmap, with an editorial packet to export.
 - **Insights**, an **Agent console** (published graphs, every port with its input shape, the stored queries runnable on the embedded release and live, the capability directory, an agent brief), and **Ask Claude**, which reads the release through page tools and cites terms as `[[concept-id]]`.
+- **Orchestrate** — a split screen. On the left, a team of eight Claude agents (Conductor, Scout, Lexicographer, Ontologist, Crosswalker, a standards and a practice reviewer, Curator) onboards a fictional clinical academy's learning inventory into the semantic layer: swimlanes for the plan, the transcript of their messages, handoffs and tool calls, the context graph they build, the staged writes, and the run as provenance (`ieh:AgentTurn`, `ieh:AgentAction`). On the right, the workbench itself, in its own frame and route, driven by their calls; a cursor in the acting agent's color shows where each one lands. The agents act only through this page's tools (`app/src/orc/world.js`) and the catalog controls the Scout inspected. Everything happens in a sandbox: their proposals, votes and pack never reach the shared queue, and the governed writes are staged as the exact `publish_context` calls the ports declare until you approve them; the page sends nothing. **Watch** replays a recorded run (`examples/orchestra/kestrel-point-run.json`), re-running every call; **Run it live** runs the same team on your own Claude account, one call per step.
 
 Shared state lives in the artifact's database under declared rules: `ballots/`, `notes/`, `usage/` are readable by everyone the page admits and each person writes only their own document (Contributor access or above); `settings/policy` is editors-only; packs and stars are private to each viewer. Signed-out visitors get the full read-only app. Ask Claude runs on each viewer's own Claude account.
 
@@ -136,7 +137,11 @@ python3 -I tools/refresh_app_evidence.py .         # network: Foxxi manifest, re
 python3 -I tools/build_app.py .                    # → app/build/data.json, site/app.html (no network)
 python3 -I tools/smoke_app.py . <cdn-cache> [--shots <dir>]   # headless: every view, with and without capabilities
 python3 -I tools/check_app_logic.py . [<shots-dir>]           # client logic vs rdflib; exports vs the I2IDL-X shapes
+python3 -I tools/check_orchestra.py .                          # the recorded run's 64 tool calls reproduce exactly
+python3 -I tools/smoke_orchestra.py . <cdn-cache> [--shots <dir>]   # replay to the gate and through; a live run with a scripted stand-in
 ```
+
+The recorded run was made with `app/tools/orc_server.js`, which serves the page's own tools and sandbox over HTTP on localhost and writes every call to a trace (`python3 -I tools/record_orchestra.py . [port] [trace.json]` bundles and starts it). The Conductor was the recording session's Claude; every other role was a separate Claude agent that could act only through `app/tools/orc_cli.mjs`. Because the tools are deterministic, the page re-runs each recorded call as it replays, and `tools/check_orchestra.py` holds the recording to exactly what the tools return.
 
 `<cdn-cache>` holds the three cdnjs scripts (React 18.3.1, ReactDOM 18.3.1, d3 7.9.0) and the Google Fonts CSS and woff2 files, fetched once; the smoke test answers the page's requests from it.
 

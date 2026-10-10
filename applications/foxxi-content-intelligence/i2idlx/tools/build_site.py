@@ -1073,7 +1073,7 @@ page = f"""<title>I2IDL-X</title>
   </dl>
   <div class="package"><button class="btn btn-primary" type="button" id="save-package">Save the package (.zip)</button>
     <span class="note" id="save-note">Sources, build, all graphs, decorations and reports: {len(manifest)} files, {pkg_mb:.1f} MB, zipped in your browser.</span></div>
-  {f'<div class="entry"><span class="label">Workbench for people</span><span>Interpretant: search, entries, map, compare, review, packs, insights and Ask Claude over the glossary and these graphs.</span>{ext(cfg["appArtifactUrl"], "Open Interpretant", "btn btn-primary")}</div>' if cfg.get("appArtifactUrl") else ""}
+  {f'<div class="entry"><span class="label">Workbench for people</span><span>Interpretant: search, entries, map, compare, review, packs, insights, Ask Claude and Orchestrate — a team of Claude agents working the workbench in front of you — over the glossary and these graphs.</span>{ext(cfg["appArtifactUrl"], "Open Interpretant", "btn btn-primary")}</div>' if cfg.get("appArtifactUrl") else ""}
   <p class="fine">Independent work by Mark Spivey (Foxxi Mediums Inc.), drafted with Claude. Not affiliated with or endorsed by I2IDL.
   Concept labels on this page come from the I2IDL Digital Learning Glossary (CC BY 4.0).</p>
 </header>

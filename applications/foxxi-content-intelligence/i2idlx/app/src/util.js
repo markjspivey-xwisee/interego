@@ -1,6 +1,6 @@
 // Small helpers shared by every view.
 /* global React */
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useContext, createContext } = React;
 
 export const cx = (...a) => a.filter(Boolean).join(" ");
 export const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many || one + "s"}`;
@@ -46,11 +46,17 @@ export function parseHash(h) {
     case "for": return { view: "fori2idl", section: rest || null };
     case "annotate": return { view: "annotate" };
     case "semantic": return { view: "semantic", section: rest || null };
+    case "orchestrate": return { view: "orchestrate" };
     default: return { view: "home" };
   }
 }
+// A view embedded in another (the workbench pane beside an orchestrated run) routes inside its frame:
+// while the viewer is working in that frame, go() navigates the frame instead of the page.
+let routeTarget = null;
+export const setRouteTarget = (fn) => { routeTarget = fn; };
 export const go = (hash) => {
   const h = hash.startsWith("#") ? hash : "#" + hash;
+  if (routeTarget) return routeTarget(h);
   if (location.hash === h) window.dispatchEvent(new HashChangeEvent("hashchange"));
   else location.hash = h;
 };
@@ -69,11 +75,33 @@ export const store = {
   get(k, d) { try { const v = localStorage.getItem("interpretant:" + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem("interpretant:" + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
+// Inside a StoreScope (an embedded workbench), per-viewer state lives in that scope instead of browser
+// storage, so a view driven by agents never overwrites the viewer's own filters, drafts or tabs — and the
+// scope's owner can set a value (a search, a playground's text) that every view using that key shows.
+export const StoreScope = createContext(null);
+export function makeScope(initial = {}) {
+  const m = new Map(Object.entries(initial));
+  const subs = new Map();
+  return {
+    get: (k, d) => (m.has(k) ? m.get(k) : d),
+    set: (k, v) => { m.set(k, v); for (const f of subs.get(k) || []) f(v); },
+    subscribe: (k, f) => { const s = subs.get(k) || subs.set(k, new Set()).get(k); s.add(f); return () => s.delete(f); },
+  };
+}
 export function useStored(key, initial) {
-  const [v, setV] = useState(() => store.get(key, initial));
-  const set = useCallback((nv) => setV((old) => { const x = typeof nv === "function" ? nv(old) : nv; store.set(key, x); return x; }), [key]);
+  const scope = useContext(StoreScope);
+  const [v, setV] = useState(() => (scope ? scope.get(key, initial) : store.get(key, initial)));
+  useEffect(() => (scope ? scope.subscribe(key, setV) : undefined), [scope, key]);
+  const set = useCallback((nv) => {
+    if (scope) { scope.set(key, typeof nv === "function" ? nv(scope.get(key, initial)) : nv); return; }
+    setV((old) => { const x = typeof nv === "function" ? nv(old) : nv; store.set(key, x); return x; });
+  }, [key, scope]);
   return [v, set];
 }
+
+/** Set by the orchestration pane: {embedded, bridges}. Views read it to skip page-wide keys and side effects. */
+export const Drive = createContext(null);
+export const useDrive = () => useContext(Drive);
 
 // ── Clipboard ───────────────────────────────────────────────────────────────────────────────────
 export async function copyText(text) {

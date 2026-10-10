@@ -1,5 +1,9 @@
 // One stroke icon set (24px grid, 1.8 stroke), drawn for this app.
 const P = {
+  play: "M8 5.5v13l10.5-6.5z",
+  pause: "M8.5 5v14M15.5 5v14",
+  next: "M6 5.5v13l9-6.5zM18 5v14",
+  restart: "M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5",
   search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4.2-4.2",
   star: "M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z",
   plus: "M12 5v14M5 12h14",

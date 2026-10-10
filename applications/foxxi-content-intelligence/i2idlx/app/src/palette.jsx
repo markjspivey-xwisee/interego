@@ -10,7 +10,8 @@ const { useState, useEffect, useRef, useMemo } = React;
 const VIEWS = [
   { l: "Home", h: "home", icon: "home" }, { l: "Lexicon", h: "browse", icon: "book" }, { l: "Map", h: "whole", icon: "globe" },
   { l: "Compare", h: "cmp", icon: "compare" }, { l: "Review queue", h: "review", icon: "review" }, { l: "Packs", h: "packs", icon: "pack" },
-  { l: "Insights", h: "insights", icon: "insights" }, { l: "Agent console", h: "agents", icon: "agent" }, { l: "Ask Claude", h: "ask", icon: "sparkle" },
+  { l: "Insights", h: "insights", icon: "insights" }, { l: "Agent console", h: "agents", icon: "agent" },
+  { l: "Orchestrate: a team of agents at work", h: "orchestrate", icon: "route" }, { l: "Ask Claude", h: "ask", icon: "sparkle" },
   { l: "Path between two terms", h: "path-~", icon: "route" },
 ];
 

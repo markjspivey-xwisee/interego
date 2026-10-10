@@ -25,6 +25,7 @@ export const LAYOUT = raw.layout;
 export const CHANGE_KINDS = raw.changeKinds;
 export const SEMANTIC = raw.semantic;
 export const FORMS = raw.forms; // [surface form, concept index, strong, case-sensitive] for Annotate
+export const RUN = raw.orchestra || null; // a recorded orchestrated run (examples/orchestra/), replayed by Orchestrate
 
 export const CONCEPT_NS = "https://id.i2idl.org/concepts/";
 export const byId = new Map(C.map((c) => [c.id, c]));

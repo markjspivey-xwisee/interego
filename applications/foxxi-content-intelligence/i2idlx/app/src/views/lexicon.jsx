@@ -5,7 +5,7 @@ import { Icon } from "../icons.jsx";
 import { PopButton, useUI } from "../ui.jsx";
 import { HL } from "../text.jsx";
 import { Entry } from "./entry.jsx";
-import { cx, go, useStored, isTyping } from "../util.js";
+import { cx, go, useStored, isTyping, useDrive } from "../util.js";
 import { useCaps } from "../caps.js";
 
 const { useState, useEffect, useMemo, useRef } = React;
@@ -37,6 +37,7 @@ export function parseFilter(s) {
 
 export function Lexicon({ route }) {
   const { ws } = useCaps();
+  const drive = useDrive();
   const { hover, lens } = useUI();
   const FACETS_NOW = lens === "i2idl" ? FACETS.filter((f) => f.o === "i2idl") : FACETS;
   const [q, setQ] = useStored("lex.q", "");
@@ -82,6 +83,7 @@ export function Lexicon({ route }) {
   const ids = results.map((r) => r.c.id);
   const pos = sel ? ids.indexOf(sel) : -1;
   useEffect(() => {
+    if (drive && drive.embedded) return undefined;
     const k = (e) => {
       if (isTyping(e) && e.target !== inputRef.current) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -91,7 +93,7 @@ export function Lexicon({ route }) {
     };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
-  }, [ids.join("|"), pos]);
+  }, [ids.join("|"), pos, drive]);
   useEffect(() => {
     if (!sel || !listRef.current) return;
     const el = listRef.current.querySelector(`[data-id="${sel}"]`);

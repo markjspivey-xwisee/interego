@@ -74,6 +74,12 @@ for (const b of S.bridges) {
   if (b.k === "exact" || b.k === "broad") (bridgesOut.get(b.c) || bridgesOut.set(b.c, []).get(b.c)).push(b);
 }
 export const bridgesOf = (cid) => S.bridges.filter((b) => b.c === cid);
+/** The bridge tables with extra bridges (e.g. crosswalks a team ratified in this page) added. */
+function withExtra(base, extra, keep, keyOf) {
+  const m = new Map([...base].map(([k, v]) => [k, v.slice()]));
+  for (const b of extra) if (keep(b)) (m.get(keyOf(b)) || m.set(keyOf(b), []).get(keyOf(b))).push(b);
+  return m;
+}
 
 /** Why two categories can never share a member: {ontology: [classA, classB]}, or null. */
 export function disjointness(a, b) {
@@ -93,11 +99,15 @@ export function snippetFor(cid) {
 }
 
 /**
- * Classify pasted Turtle. Returns {error} or {resources, triples, typings, clashes, turtle}.
+ * Classify pasted Turtle. Returns {error} or {resources, triples, typings, clashes, turtle}. extraBridges: further
+ * {c, t, k, m} bridges (a crosswalk ratified in this page) used alongside the published ones.
  * resources: [{iri, label, by: [{c, how: "stated"|"bridge", t?, k?, m?}], cats, classes: [{t, why: [...]}],
  *              clashes: [{a, b, ca, cb, why}], notes: [...], problems: [...]}]
  */
-export function classify(text) {
+export function classify(text, extraBridges) {
+  const extra = extraBridges || [];
+  const bIn = extra.length ? withExtra(bridgesIn, extra, (x) => x.k === "exact" || x.k === "narrow", (x) => x.t) : bridgesIn;
+  const bOut = extra.length ? withExtra(bridgesOut, extra, (x) => x.k === "exact" || x.k === "broad", (x) => x.c) : bridgesOut;
   let quads;
   try {
     quads = new N3Parser({ format: "text/turtle", baseIRI: "https://example.org/" }).parse(text);
@@ -123,7 +133,7 @@ export function classify(text) {
     }
   }
   for (const r of res.values())
-    for (const t of r.types) for (const b of bridgesIn.get(curieOf(t)) || [])
+    for (const t of r.types) for (const b of bIn.get(curieOf(t)) || [])
       if (!r.by.has(b.c)) r.by.set(b.c, { c: b.c, how: "bridge", t: b.t, k: b.k, m: b.m });
 
   const resources = [];
@@ -140,7 +150,7 @@ export function classify(text) {
       const cat = catById.get(c.rc);
       cats.push(c.rc);
       for (const x of classesOf(c.rc)) add(x.t, { c: b.c, k: x.k, how: x.how });
-      for (const o of bridgesOut.get(b.c) || []) add(o.t, { c: b.c, how: "bridge", k: o.k, m: o.m });
+      for (const o of bOut.get(b.c) || []) add(o.t, { c: b.c, how: "bridge", k: o.k, m: o.m });
       if (cat.mode === "subject") notes.push({ kind: "subject", c: b.c, text: `${c.l} is a field: things are about it, not instances of it. Link to it with dct:subject; it types nothing beyond i2x:${cat.cls.split(":")[1]}.` });
       if (cat.mode === "none") notes.push({ kind: "none", c: b.c, text: `${c.l} has no single upper-ontology category (${cat.def.replace(/^A concept whose /, "its ")}), so it types nothing beyond I2IDL-X's own classes.` });
     }

@@ -967,11 +967,18 @@ meta = {
     "changes": changes_meta, "upstream": upstream, "unesco": unesco_meta, "origins": origins,
 }
 
+# ── A recorded orchestrated run (Orchestrate replays it; tools/check_orchestra.py proves it replays exactly) ──
+RUN_FILE = ROOT / "examples" / "orchestra" / "kestrel-point-run.json"
+orchestra = json.loads(RUN_FILE.read_text()) if RUN_FILE.exists() else None
+if orchestra:
+    kinds_ok = all(e.get("k") in ("step", "say", "call", "result", "decision") for e in orchestra["events"])
+    check(kinds_ok and orchestra.get("v") == 1, f"recorded run: {len(orchestra['events'])} events of known kinds")
+
 data = {"meta": meta, "kinds": kinds, "roles": roles, "statuses": statuses, "methods": methods,
         "interrogatives": interrogatives, "collections": collections, "sources": sources, "concepts": concepts,
         "actions": actions, "enactments": enactments, "inherited": inherited, "roleCaps": role_caps,
         "mappings": mappings, "releases": releases, "ports": ports, "queries": queries, "suggestions": suggestions,
-        "changeKinds": change_kinds, "forms": annotate_forms, "semantic": semantic}
+        "changeKinds": change_kinds, "forms": annotate_forms, "semantic": semantic, "orchestra": orchestra}
 
 (APP / "build").mkdir(parents=True, exist_ok=True)
 out = APP / "build" / "data.json"

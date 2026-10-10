@@ -18,7 +18,7 @@ import {
   citeText, citeMarkdown, citeBibtex, quoteWithAttribution, newPack, addToPack, usageStatement, usageActCall,
   ADL_VERBS, actQuery, pretty, alignmentTurtle,
 } from "../lib.js";
-import { cx, go, ago, plural, copyText, store, fmtDate } from "../util.js";
+import { cx, go, ago, plural, copyText, store, fmtDate, useDrive } from "../util.js";
 import { catById, classesOf, columnOf, labelOf, bridgesOf, COLUMNS, ancestors } from "../semantic.js";
 import { Term } from "./semantic.jsx";
 import { consensus } from "../caps.js";
@@ -42,11 +42,13 @@ export function additionsOf(c) {
 export function Entry({ id, onBack, query }) {
   const c = byId.get(id);
   const { lens, setLens } = useUI();
+  const drive = useDrive();
   useEffect(() => {
-    // recents are a per-viewer convenience: browser storage only
+    // recents are a per-viewer convenience: browser storage only (an agent's reading in the orchestration pane doesn't count)
+    if (drive && drive.embedded) return;
     const r = (store.get("recents", []) || []).filter((x) => x !== id);
     store.set("recents", [id, ...r].slice(0, 24));
-  }, [id]);
+  }, [id, drive]);
   if (!c) return <div className="entry"><div className="note"><Icon name="warn" />No concept “{id}” in release {META.release}.</div></div>;
   const linked = new Set([...c.r, ...c.b, ...c.n]);
   const x = lens !== "i2idl";

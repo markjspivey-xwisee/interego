@@ -3,7 +3,7 @@
 // (downloads). Every capability is optional: the page renders fully without any of them.
 /* global React */
 import { store } from "./util.js";
-import { ITEMS } from "./data.js";
+import { ITEMS, itemByKey } from "./data.js";
 
 const { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback, createElement: h } = React;
 
@@ -221,7 +221,7 @@ export function CapsProvider({ children }) {
   const value = {
     resolved: caps.resolved, db: caps.db, user: caps.user, sample: caps.sample, downloads: caps.downloads, tools,
     me, myId, signedIn, writable, canWrite, isOwner: !!(me && me.isOwner), canEdit: !!(me && me.canEdit), dbError,
-    ballots, myBallot, tallies, vote, policy, savePolicy,
+    items: ITEMS, itemByKey, ballots, myBallot, tallies, vote, policy, savePolicy,
     allNotes, addNote, deleteNote, usageByConcept, setUse,
     ws, wsSource, updateWs, save,
   };

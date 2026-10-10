@@ -4,7 +4,7 @@
     python3 -I build.py [--live]
 
 Reads the pinned I2IDL release from a local clone, renders the ontology / shapes / rules /
-catalog templates, generates the enactments and mappings graphs from src/crosswalk.py
+catalog templates (src/*.ttl.tmpl), generates the enactments and mappings graphs from src/crosswalk.py
 (refusing any row that does not resolve), materializes per-concept decorations, and runs
 every check it can: Turtle parsing, SHACL (upstream contract + superset), SHACL-AF rules,
 stored queries, and Interego's own affordance extractor. --live adds HTTP checks against
@@ -231,13 +231,13 @@ GS_TYPE = URIRef("https://glossarystudio.app/ns/typeCollection")
 layer_concepts = {str(gl.value(URIRef(c), DCTERMS.identifier)): {"iri": c, "type": str(gl.value(URIRef(c), GS_TYPE)).rsplit("/", 1)[-1]}
                   for c in concepts}
 LAYER = layer_mod.Layer(ROOT, NS, IRI, layer_concepts, cw.MAPPINGS, release, commit)
-onto_ttl = render((SRC / "i2idlx.ttl").read_text().replace("{{CHANGE_KINDS}}", change_kinds)
+onto_ttl = render((SRC / "i2idlx.ttl.tmpl").read_text().replace("{{CHANGE_KINDS}}", change_kinds)
                   .replace("{{REFERENT_CATEGORIES}}", LAYER.ontology_section())
                   .replace("{{ORIGINS}}", "\n".join(origin_blocks))
                   .replace("{{ORIGINS_LABEL}}", ORIGINS["scheme"]["label"].replace('"', '\\"'))
                   .replace("{{ORIGINS_DEFINITION}}", ORIGINS["scheme"]["definition"].replace('"', '\\"')))
 onto = Graph().parse(data=onto_ttl, format="turtle")
-shapes_ttl = render((SRC / "i2idlx-shapes.ttl").read_text()
+shapes_ttl = render((SRC / "i2idlx-shapes.ttl.tmpl").read_text()
                     .replace("{{CHANGE_KIND_LIST}}", " ".join(f"i2x:change-{c}" for c in hist.KIND_CODES))
                     .replace("{{REFERENT_CATEGORY_LIST}}", " ".join(f"i2x:category-{c['id']}" for c in LAYER.sem.CATEGORIES)))
 shapes = Graph().parse(data=shapes_ttl, format="turtle")
@@ -285,7 +285,7 @@ for _c in LAYER.sem.CATEGORIES:
             f"    sh:rule [ a sh:TripleRule ; sh:order 5 ; sh:condition {_cond} ;\n"
             f"        rdfs:comment {lit('Category ' + _c['label'] + ' ⇒ i2x:' + LAYER.cat[_k]['cls'] + '.')}@en ;\n"
             f"        sh:subject sh:this ; sh:predicate rdf:type ; sh:object i2x:{LAYER.cat[_k]['cls']} ]")
-rules_ttl = render((SRC / "i2idlx-rules.ttl").read_text()
+rules_ttl = render((SRC / "i2idlx-rules.ttl.tmpl").read_text()
                    .replace("{{REFERENT_RULES}}", " ;\n".join(ref_rules))
                    .replace("{{REFERENT_CONDITIONS}}", "\n".join(ref_conds))
                    .replace("{{KIND_RULES}}", " ;\n".join(kind_rules))
@@ -320,7 +320,7 @@ for cid, target in cw.EXEMPLARS:
 sq_blocks.append("\n# ── Specification documents for standard concepts ──\n")
 for cid, target in cw.SPECS:
     sq_blocks.append(f"<{concept_iri(cid)}> i2x:specification <{target}> .")
-catalog_ttl = render((SRC / "i2idlx-catalog.ttl").read_text().replace("{{STORED_QUERIES}}", "\n".join(sq_blocks)))
+catalog_ttl = render((SRC / "i2idlx-catalog.ttl.tmpl").read_text().replace("{{STORED_QUERIES}}", "\n".join(sq_blocks)))
 catalog = Graph().parse(data=catalog_ttl, format="turtle")
 
 # ── 4. Crosswalk graphs ──────────────────────────────────────────────────────────
@@ -1360,10 +1360,12 @@ proj.bind("i2x", NS)
 proj.serialize(DIST / "examples" / "usage-record.ttl", format="turtle")
 (DIST / "examples" / "usage-statement.json").write_text(json.dumps(stmt, indent=2) + "\n")
 ex_graphs = {"usage-record.ttl": proj}
-for f in sorted(EX.glob("*.ttl")):
+# Examples that name a published IRI are templates (*.ttl.tmpl, not Turtle until rendered); the rest are Turtle.
+for f in sorted([*EX.glob("*.ttl"), *EX.glob("*.ttl.tmpl")], key=lambda f: f.name.removesuffix(".tmpl")):
+    name = f.name.removesuffix(".tmpl")
     text = render(f.read_text())
-    (DIST / "examples" / f.name).write_text(text)
-    ex_graphs[f.name] = Graph().parse(data=text, format="turtle")
+    (DIST / "examples" / name).write_text(text)
+    ex_graphs[name] = Graph().parse(data=text, format="turtle")
 for name, g in ex_graphs.items():
     ok, _, text = shacl_validate(g, shacl_graph=shapes, ont_graph=onto, inference="rdfs", advanced=True)
     check(ok, f"example `{name}` conforms to I2IDL-X shapes ({len(g)} triples)")
