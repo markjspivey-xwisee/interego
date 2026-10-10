@@ -34,6 +34,7 @@ STUBS = r"""
   const docRef = (p) => ({ id: p.split('/').pop(), path: p,
     get: async () => snapDoc(p),
     set: async (d) => { if (window.__readOnly) throw { code: 'invalid_argument', message: 'read only' };
+      if ((window.__failWrites || {})[p]) throw { code: 'unavailable', message: 'offline' };
       const s = JSON.stringify(d); if (s.length > 262144) throw { code: 'invalid_argument', message: 'too big' };
       store.set(p, JSON.parse(s)); log.push(['set', p]); setTimeout(() => notify(p), 5); },
     update: async (d) => { store.set(p, Object.assign({}, store.get(p), d)); log.push(['update', p]); setTimeout(() => notify(p), 5); },
@@ -82,7 +83,7 @@ STUBS = r"""
   store.set('notes/u_otherreviewer0000000000', { n: { abc: { c: 'learning-record-store-lrs', text: 'We teach this with a live LRS demo.', at: Date.now() - 7200e3 } } });
   store.set('usage/u_otherreviewer0000000000', { u: { 'learning-record-store-lrs': { ctx: 'LE 101 · week 3', at: Date.now() } } });
   for (const [k, v] of Object.entries(window.__seed || {})) store.set(k, v);
-  window.claude = { use: async (name) => ({ db, user, sample, downloads })[name] || null };
+  window.claude = { use: async (name) => (window.__noDb && name === 'db') ? null : ({ db, user, sample, downloads })[name] || null };
 })();
 """
 
@@ -371,14 +372,16 @@ def workspace_checks():
         ctx = b.new_context(viewport={"width": 1280, "height": 860})
         ctx.route("**/*", route_handler)
 
-        def open_as(viewer, seed=None, legacy=False, cached_first=None, me_delay=0, settle=400, slow=None, fail=None):
+        def open_as(viewer, seed=None, legacy=False, cached_first=None, me_delay=0, settle=400, slow=None, fail=None, no_db=False,
+                    fail_writes=None):
             page = ctx.new_page()
             if legacy:  # what earlier versions left: one unscoped copy for every viewer of the browser
                 page.add_init_script("localStorage.setItem('interpretant:workspace', JSON.stringify({packs:[{id:'pk-legacy',name:'Legacy pack',items:[]}],stars:[],recents:[]}))")
             if viewer:
                 page.add_init_script(f"window.__viewerId = {json.dumps(viewer)}; window.__seed = {json.dumps(seed or {})}; "
                                      f"window.__cachedFirst = {json.dumps(cached_first or {})}; window.__meDelay = {me_delay}; "
-                                     f"window.__slowDocs = {json.dumps(slow or {})}; window.__failDocs = {json.dumps(fail or {})};")
+                                     f"window.__slowDocs = {json.dumps(slow or {})}; window.__failDocs = {json.dumps(fail or {})}; "
+                                     f"window.__noDb = {json.dumps(no_db)}; window.__failWrites = {json.dumps(fail_writes or {})};")
                 page.add_init_script(STUBS)
             page.goto("http://app.test/#packs")
             page.wait_for_selector(".pk")
@@ -414,11 +417,19 @@ def workspace_checks():
         check(anon.locator(".pkitem").count() == 0, "[workspace] signed out in the same browser, neither account's packs show")
         anon.close()
 
-        a2 = open_as(A, seed={doc(A): {"packs": [], "stars": [], "recents": [], "at": 1}})
-        d = stored(a2, doc(A))
-        check(a2.locator(".pkitem").count() == 1 and bool(d) and len(d.get("packs", [])) == 1,
-              "[workspace] a browser copy newer than the document wins and is sent to it")
+        # A save that does not land stays kept as a change and is made again on top of the document next visit,
+        # next to what another device saved there meanwhile (newer, so a whole-copy rule would have dropped ours).
+        a2 = open_as(A, seed={doc(A): {"packs": [], "stars": [], "recents": [], "at": 1}}, fail_writes={doc(A): True})
+        a2.locator(".pk aside button", has_text="New").first.click()
+        a2.wait_for_timeout(1000)
         a2.close()
+        other = {"packs": [{"id": "pk-other", "name": "Saved on another device", "items": []}], "stars": [], "recents": [], "at": 9e15}
+        a2b = open_as(A, seed={doc(A): other}, settle=800)
+        d = stored(a2b, doc(A)) or {}
+        kept = a2b.evaluate(f"localStorage.getItem({json.dumps('interpretant:workspace.u.' + A + '.held')})")
+        check(a2b.locator(".pkitem").count() == 2 and len(d.get("packs", [])) == 2 and kept is None,
+              f"[workspace] a save that did not land is made again next visit, next to another device's newer edit ({len(d.get('packs', []))} packs in the document)")
+        a2b.close()
         a3 = open_as(A, seed={doc(A): {"packs": [{"id": "pk-remote", "name": "From another device", "items": []}], "stars": [], "recents": [], "at": 9e15}})
         check(a3.locator(".pkitem").count() == 1 and a3.locator(".pkitem", has_text="From another device").count() == 1,
               "[workspace] a document newer than the browser copy wins")
@@ -473,6 +484,41 @@ def workspace_checks():
         check(writes == 0 and held_msg == 1 and len(d.get("packs", [])) == 2 and ep2.locator(".pkitem").count() == 2,
               f"[workspace] when the document cannot be read, an edit is held, not written blind, and joins the document next visit ({writes} writes then, {len(d.get('packs', []))} packs after)")
         ep2.close()
+
+        # Held edits stay held, and shown, on a visit with no database at all; they reach the document later.
+        F = "u_accountf00000000000000"
+        existing_f = {"packs": [{"id": "pk-existing-f", "name": "Saved on another device", "items": []}], "stars": [], "recents": [], "at": 5}
+        fp = open_as(F, seed={doc(F): existing_f}, fail={doc(F): True}, settle=300)
+        fp.locator(".pk aside button", has_text="New").first.click()
+        fp.wait_for_timeout(300)
+        fp.close()
+        fp2 = open_as(F, no_db=True, settle=400)
+        shown_then = fp2.locator(".pkitem").count()
+        held_msg = fp2.locator(".pk", has_text="could not be loaded").count()
+        fp2.locator(".pk aside button", has_text="New").first.click()
+        fp2.wait_for_timeout(300)
+        fp2.close()
+        fp3 = open_as(F, seed={doc(F): existing_f}, settle=800)
+        d = stored(fp3, doc(F)) or {}
+        check(shown_then == 1 and held_msg == 1 and len(d.get("packs", [])) == 3 and fp3.locator(".pkitem").count() == 3,
+              f"[workspace] held edits stay shown on a visit with no database, keep accruing, and all reach the document later ({shown_then} shown then, {len(d.get('packs', []))} packs after)")
+        fp3.close()
+
+        # A save that did not land, then a visit that closes before the document arrives: the change survives
+        # both and reaches the document on the third visit.
+        G = "u_accountg00000000000000"
+        existing_g = {"packs": [{"id": "pk-existing-g", "name": "Saved on another device", "items": []}], "stars": [], "recents": [], "at": 5}
+        gp = open_as(G, seed={doc(G): existing_g}, fail_writes={doc(G): True}, settle=500)
+        gp.locator(".pk aside button", has_text="New").first.click()
+        gp.wait_for_timeout(1000)
+        gp.close()
+        gp2 = open_as(G, seed={doc(G): existing_g}, slow={doc(G): 5000}, settle=400)
+        gp2.close()
+        gp3 = open_as(G, seed={doc(G): existing_g}, settle=800)
+        d = stored(gp3, doc(G)) or {}
+        check(len(d.get("packs", [])) == 2 and gp3.locator(".pkitem").count() == 2,
+              f"[workspace] a change whose save failed survives a visit that closed while loading, and lands on the next ({len(d.get('packs', []))} packs)")
+        gp3.close()
         b.close()
 
 
