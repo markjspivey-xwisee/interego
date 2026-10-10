@@ -11,13 +11,15 @@ export const CapsContext = createContext(null);
 export const useCaps = () => useContext(CapsContext);
 
 const EMPTY_WS = { packs: [], stars: [], recents: [] };
-// This browser's copies of the workspace: one per signed-in viewer (a cache of their private document) and
+// This browser's copies of the workspace: one per signed-in viewer (a copy of their private document) and
 // one for signed-out use. Nothing kept for one account is read for another account in the same browser.
 const ANON_WS = "workspace.anon";
 const wsKey = (id) => (id ? "workspace.u." + id : ANON_WS);
-// Edits a signed-in viewer made while their document was still loading, kept so a reload does not lose them:
-// the workspace they were made on and the result, so the change can be made again on top of the document.
+// A signed-in viewer's changes that their document has not confirmed, kept as changes (packs put or dropped by
+// id, stars added or removed), so they can be made again on top of whatever the document holds: a merge, never
+// a whole-copy write over a document the page has not seen.
 const draftKey = (id) => wsKey(id) + ".held";
+const NO_CHANGE = { put: [], drop: [], star: [], unstar: [] };
 const changeOf = (base, next) => {
   const before = new Map((base.packs || []).map((x) => [x.id, x]));
   const after = new Set((next.packs || []).map((x) => x.id));
@@ -34,6 +36,16 @@ const withChange = (w, c) => {
   return {
     packs: [...c.put.filter((x) => !packs.some((y) => y.id === x.id)), ...packs.filter((x) => !c.drop.includes(x.id)).map((x) => put.get(x.id) || x)],
     stars: [...c.star.filter((id) => !stars.includes(id)), ...stars.filter((id) => !c.unstar.includes(id))],
+  };
+};
+// b after a: the later put of a pack wins, a drop cancels an earlier put, a star cancels an earlier unstar.
+const compose = (a, b) => {
+  const later = new Set(b.put.map((x) => x.id));
+  return {
+    put: [...b.put, ...a.put.filter((x) => !later.has(x.id))].filter((x) => !b.drop.includes(x.id)),
+    drop: [...new Set([...a.drop.filter((id) => !later.has(id)), ...b.drop])],
+    star: [...new Set([...b.star, ...a.star.filter((id) => !b.unstar.includes(id))])],
+    unstar: [...new Set([...a.unstar.filter((id) => !b.star.includes(id)), ...b.unstar])],
   };
 };
 const hasWork = (w) => !!w && ((w.packs || []).length > 0 || (w.stars || []).length > 0);
@@ -64,7 +76,8 @@ export function CapsProvider({ children }) {
   const [policy, setPolicy] = useState(DEFAULT_POLICY);
   const [idDone, setIdDone] = useState(false); // whether we know who is viewing (or that no one is signed in)
   const [ws, setWs] = useState(EMPTY_WS);
-  // "pending" until known, then "local" | "db"; "held" when a signed-in viewer's document could not be read
+  // "pending" until known, then "local" (signed out) | "db"; "held" when a signed-in viewer's document cannot be
+  // reached (no database this visit, or the subscription failed): edits are kept as a change until it can be.
   const [wsSource, setWsSource] = useState("pending");
   const [tools, setTools] = useState(false);
   const [dbError, setDbError] = useState(null);
@@ -88,11 +101,13 @@ export function CapsProvider({ children }) {
         try {
           const m = await user.me();
           if (live) setMe(m && m.id ? m : null);
-          const w = await user.can("data.write").catch(() => null);
-          if (live) setCanWrite(w);
         } catch { /* identity unavailable */ }
       }
       if (live) setIdDone(true);
+      if (user) {
+        const w = await user.can("data.write").catch(() => null);
+        if (live) setCanWrite(w);
+      }
       if (sample && sample.limits) {
         try { const l = await sample.limits(); if (live) setTools(!!(l && l.tools)); } catch { /* no tools */ }
       }
@@ -208,114 +223,152 @@ export function CapsProvider({ children }) {
   }, [policy, write]);
 
   // ── Workspace: packs, stars, recents ────────────────────────────────────────────────────────
-  // A signed-in viewer's workspace is their private document (data/users/<id>/workspace), with a copy in this
-  // browser under their own key; signed out, it is this browser's own copy. Until we know which, and, signed in,
-  // what the server's document holds, an edit is shown at once and held; once the workspace is known, the held
-  // edits are applied on top of it. So an edit never lands in another viewer's copy and a stale copy never
-  // overwrites a newer document. Edits held for a known viewer are also kept in the browser, as a change, so
-  // a reload makes them again on top of the document; an edit made before the page knows who is viewing (a
-  // moment at load) cannot be attributed to anyone, so it lives only in the page.
+  // Signed out, the workspace is this browser's own copy. Signed in, it is the viewer's private document
+  // (data/users/<id>/workspace). This browser keeps a copy of it under the viewer's own key, to show while the
+  // document loads, and keeps every change the document has not confirmed as a change (see draftKey). A change
+  // is never written as a whole copy over a document the page has not seen: it is made again on top of what
+  // the server's document holds once the page has that (this visit, after a reload, or after a visit with no
+  // database), so another device's edits survive, and a save that failed is retried the same way. Until the
+  // workspace is known, edits are shown at once and held. An edit made in the moment before the page knows
+  // who is viewing cannot be attributed to anyone, so it lives only in the page.
   const latest = useRef({});
   latest.current = { myId, canWrite, db: caps.db, write, idDone };
+  const lastBody = useRef(null); // the newest workspace this page produced, to know when a landed save is the latest
+  const deferred = useRef(false); // whether a snapshot arrived while a save was in flight
+  const onDoc = useRef(null); // the snapshot handler for this viewer's document
   const pathOf = (id) => `data/users/${id}/workspace`;
   const applyHeld = (base) => wsQueue.current.reduce((w, fn) => ({ ...w, ...fn(w) }), { ...EMPTY_WS, ...base });
   const tidy = (w) => {
     const seen = new Set();
     return { ...w, stars: [...new Set(w.stars || [])], packs: (w.packs || []).filter((x) => x && !seen.has(x.id) && seen.add(x.id)) };
   };
+  // Add what one edit changed (from the workspace before it to the one after) to the changes kept for a viewer.
+  const keepChange = (id, before, after) => {
+    if (!id) return;
+    const kept = store.get(draftKey(id), null);
+    store.set(draftKey(id), { change: compose((kept && kept.change) || NO_CHANGE, changeOf(before, after)), at: Date.now() });
+  };
+  const replayKept = (id) => {
+    const kept = id ? store.get(draftKey(id), null) : null;
+    if (kept && kept.change) wsQueue.current.unshift((w) => withChange(w, kept.change));
+  };
 
-  // The workspace is known: apply the held edits on top of it, keep it, and send it when it changed.
-  const settle = (base, source, send) => {
-    const { myId: id, canWrite: cw, db, write: put } = latest.current;
+  // Send a workspace to the document. Once it lands, if nothing newer was made meanwhile, there are no changes
+  // left to keep; if it does not land, they stay kept. Snapshots that arrive while a save is in flight may
+  // predate it, so they are set aside and the document is read again once it settles.
+  const send = (id, body) => latest.current.write(pathOf(id), body).then(() => {
+    if (lastBody.current === body) store.del(draftKey(id));
+  }).catch(() => {});
+  const push = (id, body) => {
+    wsPending.current = true;
+    return send(id, body).finally(() => {
+      if (wsNext.current) return;
+      wsPending.current = false;
+      if (!deferred.current) return;
+      deferred.current = false;
+      const { db } = latest.current;
+      if (db) db.doc(pathOf(id)).get().then((snap) => { if (onDoc.current) onDoc.current(snap); }).catch(() => {});
+    });
+  };
+
+  // The workspace is known: apply the held edits on top of it, keep the result, and, signed in, send it when it
+  // differs from what the server holds (serverHas: the document, or nothing when there is none yet).
+  const settle = (start, source, serverHas) => {
+    const { myId: id, canWrite: cw, db } = latest.current;
     const held = wsQueue.current;
     wsQueue.current = [];
-    let next = { ...EMPTY_WS, ...base };
+    let next = { ...EMPTY_WS, ...start };
     for (const fn of held) next = { ...next, ...fn(next) };
     if (held.length) next = tidy({ ...next, at: Date.now() });
     wsReady.current = true;
+    lastBody.current = next;
     setWs(next);
     setWsSource(source);
     store.set(wsKey(id), next);
-    if (id && source === "db") store.del(draftKey(id)); // merged with the server's document: nothing left to hold
-    if ((send || held.length) && source === "db" && db && id && cw !== false) put(pathOf(id), next).catch(() => {});
+    if (source !== "db" || !id) return;
+    if (!held.length && start === serverHas) { store.del(draftKey(id)); return; }
+    // What is sent is the document with the kept changes made again on it (and, with no document yet, what this
+    // browser carried in); the changes stay kept until it lands.
+    keepChange(id, serverHas, next);
+    if (db && cw !== false) push(id, next);
   };
 
   // Once we know who is viewing: signed out, the workspace is this browser's copy; signed in, show their copy
-  // (with anything held) while their document loads.
+  // with any change kept from an earlier visit while their document loads, or, with no database this visit,
+  // hold everything.
   useEffect(() => {
     if (!idDone) return;
     store.del("workspace"); // earlier versions kept one unscoped copy for every viewer of this browser
     const own = { ...EMPTY_WS, ...store.get(wsKey(myId), EMPTY_WS) };
-    if (!(caps.db && myId)) { settle(own, "local", false); return; }
-    // What a session that closed before its document arrived was holding is made again, first.
-    const prev = replayed.current === myId ? null : store.get(draftKey(myId), null);
-    replayed.current = myId;
-    if (prev && prev.base && prev.next) {
-      const change = changeOf(prev.base, prev.next);
-      wsQueue.current.unshift((w) => withChange(w, change));
-    }
+    if (!myId) { settle(own, "local", null); return; }
+    // Edits made before we knew who was viewing are this viewer's now: keep them, on top of any changes kept
+    // from an earlier visit, which are made again first.
+    const early = wsQueue.current.slice();
+    if (replayed.current !== myId) { replayed.current = myId; replayKept(myId); }
     wsReady.current = false;
     heldBase.current = own;
     const shown = applyHeld(own);
+    if (early.length) {
+      const replay = wsQueue.current.slice(0, wsQueue.current.length - early.length);
+      keepChange(myId, replay.reduce((w, fn) => ({ ...w, ...fn(w) }), own), shown);
+    }
     setWs(shown);
-    setWsSource("pending");
-    if (wsQueue.current.length) store.set(draftKey(myId), { base: own, next: shown, at: Date.now() });
-    else store.del(draftKey(myId));
+    setWsSource(caps.db ? "pending" : "held");
   }, [idDone, myId, caps.db]);
 
   useEffect(() => {
     const db = caps.db;
     if (!db || !myId || !idDone) return undefined;
     let off = null;
-    // The document cannot be read: keep holding edits (shown, and kept in this browser as a change) rather than
-    // writing a copy that never saw the server's, so the next load makes them again on top of the document.
+    // The document cannot be read: keep holding edits (shown, and kept as a change) rather than writing a copy
+    // that never saw the server's, so they are made again on top of the document when it can be read.
     const fallBack = (e) => {
       setDbError(e && e.code ? e.code : "unavailable");
       if (!wsReady.current) setWsSource("held");
     };
+    const handle = (s) => {
+      if (s.metadata && s.metadata.hasPendingWrites) return; // includes this page's own unconfirmed write
+      if (wsPending.current) { deferred.current = true; return; } // a save is in flight: read again after it
+      const remote = s.exists ? { ...EMPTY_WS, ...s.data() } : null;
+      if (s.metadata && s.metadata.fromCache) {
+        // From the client's own cache, perhaps stale: show it with what is held, and decide nothing (no write,
+        // no "no document yet") until the server's definitive snapshot, which follows on its own.
+        if (!wsReady.current && remote) { heldBase.current = remote; setWs(applyHeld(remote)); }
+        return;
+      }
+      // A change kept from a save that did not land is made again on top of this document. (While the
+      // workspace is still being settled, the held edits already include it.)
+      if (wsReady.current && !wsQueue.current.length) replayKept(myId);
+      if (remote) { settle(remote, "db", remote); return; }
+      // No document yet: start it from this viewer's own copy, else from what this browser kept while signed
+      // out, which moves (not copies) into the first account that signs in here.
+      const own = store.get(wsKey(myId), null);
+      const anon = store.get(ANON_WS, null);
+      const carry = latest.current.canWrite === false ? null : hasWork(own) ? own : hasWork(anon) ? anon : null;
+      if (carry && carry === anon) store.del(ANON_WS);
+      settle(carry || EMPTY_WS, "db", EMPTY_WS);
+    };
+    onDoc.current = handle;
     try {
-      off = db.doc(pathOf(myId)).onSnapshot((s) => {
-        if (wsPending.current || (s.metadata && s.metadata.hasPendingWrites)) return;
-        const remote = s.exists ? { ...EMPTY_WS, ...s.data() } : null;
-        const local = store.get(wsKey(myId), null);
-        const localNewer = !!local && (local.at || 0) > ((remote && remote.at) || 0);
-        if (s.metadata && s.metadata.fromCache) {
-          // From the client's own cache, perhaps stale: show the likelier copy, decide nothing (no write, no
-          // "no document yet") until the server's definitive snapshot, which follows on its own.
-          if (!wsReady.current) {
-            heldBase.current = { ...EMPTY_WS, ...(remote && !localNewer ? remote : local || EMPTY_WS) };
-            setWs(applyHeld(heldBase.current));
-          }
-          return;
-        }
-        if (remote) {
-          // A browser copy newer than the document (a save the page closed before sending, or edits held across
-          // a reload) wins and is sent; otherwise the document wins.
-          settle(localNewer ? local : remote, "db", localNewer);
-          return;
-        }
-        // No document yet: start it from this viewer's own copy, else from what this browser kept while signed
-        // out, which moves (not copies) into the first account that signs in here.
-        const anon = store.get(ANON_WS, null);
-        const carry = latest.current.canWrite === false ? null : hasWork(local) ? local : hasWork(anon) ? anon : null;
-        if (carry && carry === anon) store.del(ANON_WS);
-        settle(carry || EMPTY_WS, "db", !!carry);
-      }, fallBack);
+      off = db.doc(pathOf(myId)).onSnapshot(handle, fallBack);
     } catch (e) {
       fallBack(e);
     }
-    return () => { try { if (off) off(); } catch { /* already closed */ } };
+    return () => {
+      onDoc.current = null;
+      try { if (off) off(); } catch { /* already closed */ }
+    };
   }, [caps.db, myId, idDone]);
 
-  // Send the save the debounce is holding now. Also run when the page is hidden or closed, so an edit made
-  // just before is not lost; if it still does not arrive, the browser copy is newer and wins on the next load.
+  // Send the save the debounce is holding now. Also run when the page is hidden or closed, so an edit made just
+  // before goes out; if it still does not land, it stays kept as a change and is made again next time.
   const sendWs = useCallback(() => {
     clearTimeout(wsTimer.current);
     wsTimer.current = null;
     const job = wsNext.current;
     wsNext.current = null;
     if (!job) return;
-    write(job.path, job.body).catch(() => {}).finally(() => { if (!wsNext.current) wsPending.current = false; });
+    push(job.id, job.body);
   }, [write]);
   useEffect(() => {
     const onVisibility = () => { if (document.visibilityState === "hidden") sendWs(); };
@@ -332,20 +385,24 @@ export function CapsProvider({ children }) {
       wsQueue.current.push(fn);
       setWs((old) => {
         const next = { ...old, ...fn(old), at: Date.now() };
-        const { myId: id, db, idDone: known } = latest.current;
-        if (known && id && db) store.set(draftKey(id), { base: heldBase.current, next, at: next.at });
+        const { myId: id, idDone: known } = latest.current;
+        if (known && id) keepChange(id, old, next);
         return next;
       });
       return;
     }
     setWs((old) => {
       const next = { ...old, ...fn(old), at: Date.now() };
+      lastBody.current = next;
       store.set(wsKey(myId), next);
-      if (caps.db && myId && canWrite !== false) {
-        wsPending.current = true;
-        wsNext.current = { path: pathOf(myId), body: next };
-        clearTimeout(wsTimer.current);
-        wsTimer.current = setTimeout(sendWs, 700);
+      if (myId) {
+        keepChange(myId, old, next);
+        if (caps.db && canWrite !== false) {
+          wsPending.current = true;
+          wsNext.current = { id: myId, body: next };
+          clearTimeout(wsTimer.current);
+          wsTimer.current = setTimeout(sendWs, 700);
+        }
       }
       return next;
     });
