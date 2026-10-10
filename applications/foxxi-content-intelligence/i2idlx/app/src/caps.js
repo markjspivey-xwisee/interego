@@ -11,6 +11,11 @@ export const CapsContext = createContext(null);
 export const useCaps = () => useContext(CapsContext);
 
 const EMPTY_WS = { packs: [], stars: [], recents: [] };
+// This browser's copies of the workspace: one per signed-in viewer (a cache of their private document) and
+// one for signed-out use. Nothing kept for one account is read for another account in the same browser.
+const ANON_WS = "workspace.anon";
+const wsKey = (id) => (id ? "workspace.u." + id : ANON_WS);
+const hasWork = (w) => !!w && ((w.packs || []).length > 0 || (w.stars || []).length > 0);
 const DEFAULT_POLICY = { quorum: 2 };
 
 const docsToMap = (snap) => {
@@ -36,12 +41,14 @@ export function CapsProvider({ children }) {
   const [notes, setNotes] = useState(() => new Map());
   const [usage, setUsage] = useState(() => new Map());
   const [policy, setPolicy] = useState(DEFAULT_POLICY);
-  const [ws, setWs] = useState(() => ({ ...EMPTY_WS, ...store.get("workspace", EMPTY_WS) }));
-  const [wsSource, setWsSource] = useState("local"); // "local" | "db"
+  const [idDone, setIdDone] = useState(false); // whether we know who is viewing (or that no one is signed in)
+  const [ws, setWs] = useState(EMPTY_WS);
+  const [wsSource, setWsSource] = useState("pending"); // "pending" | "local" | "db" | "db-empty"
   const [tools, setTools] = useState(false);
   const [dbError, setDbError] = useState(null);
   const chains = useRef(new Map()); // path → promise chain (one write at a time per document)
   const wsTimer = useRef(null);
+  const wsNext = useRef(null); // the save the debounce is holding: { path, body }
   const wsPending = useRef(false);
   const migrated = useRef(false);
 
@@ -60,6 +67,7 @@ export function CapsProvider({ children }) {
           if (live) setCanWrite(w);
         } catch { /* identity unavailable */ }
       }
+      if (live) setIdDone(true);
       if (sample && sample.limits) {
         try { const l = await sample.limits(); if (live) setTools(!!(l && l.tools)); } catch { /* no tools */ }
       }
@@ -67,7 +75,7 @@ export function CapsProvider({ children }) {
     return () => { live = false; };
   }, []);
 
-  // Subscribe once to the shared collections (and this viewer's private workspace).
+  // Subscribe once to the shared collections.
   const myId = me ? me.id : null;
   useEffect(() => {
     const db = caps.db;
@@ -79,30 +87,62 @@ export function CapsProvider({ children }) {
       offs.push(db.collection("notes").onSnapshot((s) => setNotes(docsToMap(s)), fail));
       offs.push(db.collection("usage").onSnapshot((s) => setUsage(docsToMap(s)), fail));
       offs.push(db.doc("settings/policy").onSnapshot((s) => setPolicy(s.exists ? { ...DEFAULT_POLICY, ...s.data() } : DEFAULT_POLICY), fail));
-      if (myId) {
-        offs.push(db.doc(`data/users/${myId}/workspace`).onSnapshot((s) => {
-          if (wsPending.current || s.metadata.hasPendingWrites) return;
-          if (s.exists) {
-            setWs({ ...EMPTY_WS, ...s.data() });
-            setWsSource("db");
-          } else {
-            setWsSource("db-empty");
-          }
-        }, fail));
-      }
     } catch (e) {
       fail(e);
     }
     return () => offs.forEach((off) => { try { off(); } catch { /* already closed */ } });
-  }, [caps.db, myId]);
+  }, [caps.db]);
 
-  // First visit with a signed-in identity: carry what this browser already kept into the private doc.
+  // Once we know who is viewing, show their own browser copy (signed in) or the signed-out one.
+  useEffect(() => {
+    if (!idDone) return;
+    store.del("workspace"); // earlier versions kept one unscoped copy for every viewer of this browser
+    setWs({ ...EMPTY_WS, ...store.get(wsKey(myId), EMPTY_WS) });
+    setWsSource(caps.db && myId ? "pending" : "local");
+  }, [idDone, myId, caps.db]);
+
+  // A signed-in viewer's private document is the workspace; the browser copy only fills the wait for it.
+  useEffect(() => {
+    const db = caps.db;
+    if (!db || !myId || !idDone) return undefined;
+    const path = `data/users/${myId}/workspace`;
+    let off = null;
+    try {
+      off = db.doc(path).onSnapshot((s) => {
+        if (wsPending.current || (s.metadata && s.metadata.hasPendingWrites)) return;
+        if (!s.exists) { setWsSource("db-empty"); return; }
+        const remote = { ...EMPTY_WS, ...s.data() };
+        const local = store.get(wsKey(myId), null);
+        if (local && (local.at || 0) > (remote.at || 0)) {
+          // An edit this browser saved but the page closed before sending is newer than the document: keep it, send it.
+          setWs({ ...EMPTY_WS, ...local });
+          if (canWrite !== false) write(path, local).catch(() => {});
+        } else {
+          setWs(remote);
+          store.set(wsKey(myId), remote);
+        }
+        setWsSource("db");
+      }, (e) => setDbError(e && e.code ? e.code : "unavailable"));
+    } catch (e) {
+      setDbError(e && e.code ? e.code : "unavailable");
+    }
+    return () => { try { if (off) off(); } catch { /* already closed */ } };
+  }, [caps.db, myId, idDone]);
+
+  // No document yet: start it from this viewer's own unsent browser copy, or else from what this browser kept
+  // while signed out, which moves (not copies) into the first account that signs in here.
   useEffect(() => {
     if (wsSource !== "db-empty" || migrated.current || !caps.db || !myId || canWrite === false) return;
     migrated.current = true;
-    const local = store.get("workspace", EMPTY_WS);
-    if ((local.packs || []).length || (local.stars || []).length) {
-      write(`data/users/${myId}/workspace`, { ...EMPTY_WS, ...local }).catch(() => {});
+    const own = store.get(wsKey(myId), null);
+    const anon = store.get(ANON_WS, null);
+    const carry = hasWork(own) ? own : hasWork(anon) ? anon : null;
+    if (carry) {
+      const next = { ...EMPTY_WS, ...carry, at: Date.now() };
+      setWs(next);
+      store.set(wsKey(myId), next);
+      if (carry === anon) store.del(ANON_WS);
+      write(`data/users/${myId}/workspace`, next).catch(() => {});
     }
     setWsSource("db");
   }, [wsSource, caps.db, myId, canWrite]);
@@ -197,20 +237,39 @@ export function CapsProvider({ children }) {
   }, [policy, write]);
 
   // ── Workspace: packs, stars, recents ────────────────────────────────────────────────────────
+  // Send the save the debounce is holding now. Also run when the page is hidden or closed, so an edit made
+  // just before is not lost; if it still does not arrive, the browser copy is newer and wins on the next load.
+  const sendWs = useCallback(() => {
+    clearTimeout(wsTimer.current);
+    wsTimer.current = null;
+    const job = wsNext.current;
+    wsNext.current = null;
+    if (!job) return;
+    write(job.path, job.body).catch(() => {}).finally(() => { if (!wsNext.current) wsPending.current = false; });
+  }, [write]);
+  useEffect(() => {
+    const onVisibility = () => { if (document.visibilityState === "hidden") sendWs(); };
+    window.addEventListener("pagehide", sendWs);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", sendWs);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [sendWs]);
+
   const updateWs = useCallback((fn) => {
     setWs((old) => {
-      const next = { ...old, ...fn(old) };
-      store.set("workspace", next);
+      const next = { ...old, ...fn(old), at: Date.now() };
+      store.set(wsKey(myId), next);
       if (caps.db && myId && canWrite !== false) {
         wsPending.current = true;
+        wsNext.current = { path: `data/users/${myId}/workspace`, body: next };
         clearTimeout(wsTimer.current);
-        wsTimer.current = setTimeout(() => {
-          write(`data/users/${myId}/workspace`, next).catch(() => {}).finally(() => { wsPending.current = false; });
-        }, 700);
+        wsTimer.current = setTimeout(sendWs, 700);
       }
       return next;
     });
-  }, [caps.db, myId, canWrite, write]);
+  }, [caps.db, myId, canWrite, sendWs]);
 
   // ── Files ───────────────────────────────────────────────────────────────────────────────────
   const save = useCallback(async (filename, data) => {

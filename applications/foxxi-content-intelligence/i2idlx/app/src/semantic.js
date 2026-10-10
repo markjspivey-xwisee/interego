@@ -165,8 +165,9 @@ export function classify(text, extraBridges) {
       }
     const list = [...classes.values()].sort((x, y) => x.t.localeCompare(y.t));
     typings += list.length;
-    for (const x of list) lines.push(`${r.iri.startsWith("_:") ? r.iri : "<" + r.iri + ">"} a <${expand(x.t)}> .`);
-    for (const b of r.by.values()) if (b.how === "bridge") lines.push(`<${r.iri}> <${CLASSIFIED_BY}> <${CONCEPT_NS + b.c}> .`);
+    const subject = r.iri.startsWith("_:") ? r.iri : "<" + r.iri + ">"; // a blank node stays one, in every line
+    for (const x of list) lines.push(`${subject} a <${expand(x.t)}> .`);
+    for (const b of r.by.values()) if (b.how === "bridge") lines.push(`${subject} <${CLASSIFIED_BY}> <${CONCEPT_NS + b.c}> .`);
     resources.push({ iri: r.iri, label: r.label, by: [...r.by.values()], cats: uniq, classes: list, clashes, notes, problems: r.problems,
       types: [...r.types].map(curieOf) });
   }

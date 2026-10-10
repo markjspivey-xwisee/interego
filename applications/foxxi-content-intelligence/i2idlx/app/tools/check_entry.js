@@ -4,7 +4,7 @@ import { C, controlsFor } from "../src/data.js";
 import { QUERIES, bind, runLocal } from "../src/queries.js";
 import { annotate } from "../src/annotate.js";
 import { editorialPacket } from "../src/packet.js";
-import { classify, SEM } from "../src/semantic.js";
+import { classify, SEM, bridgesIn, expand } from "../src/semantic.js";
 const out = { controls: {}, queries: {}, selfMatch: {}, packet: "" };
 for (const c of C) out.controls[c.id] = Object.fromEntries(controlsFor(c).map((x) => [x.id, x.u]));
 for (const q of QUERIES) out.queries[q.name] = { sparql: bind(q, q.sample), result: runLocal(q.name, q.sample) };
@@ -17,4 +17,9 @@ out.semantic = { example: strip(classify(SEM.example)), clash: strip(classify(SE
 ex:a i2x:isClassifiedBy i2idl:learning-sciences . ex:b i2x:isClassifiedBy i2idl:not-a-concept . ex:c i2x:isClassifiedBy "LRS" .
 ex:d i2x:isClassifiedBy i2idl:learning-record-store-lrs , i2idl:classroom-teacher .`)),
   bad: classify("ex:a ex:b") };
+// A blank node typed with a peer class that a crosswalk bridges to an I2IDL concept: every inferred line,
+// the bridge's i2x:isClassifiedBy included, must name that same blank node.
+const peer = [...bridgesIn.keys()].sort()[0];
+const bnode = classify(`[] a <${expand(peer)}> .`);
+out.semantic.bnode = { peer, concepts: bridgesIn.get(peer).map((b) => b.c), turtle: bnode.turtle };
 process.stdout.write(JSON.stringify(out));

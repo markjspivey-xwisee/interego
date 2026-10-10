@@ -37,7 +37,7 @@ export function Packs({ route }) {
                 <span className="t">{p.name}</span><span className="small muted">{plural(p.items.length, "term")}{p.audience ? " · " + p.audience : ""}</span>
               </button>
             ))}
-            {!packs.length ? <div className="small muted">No packs yet.</div> : null}
+            {!packs.length ? <div className="small muted">{wsSource === "pending" ? "Loading your packs…" : "No packs yet."}</div> : null}
           </div>
           <StarterPacks onMake={(name, ids) => { const p = newPack(name, ids); updateWs((w) => ({ packs: [p, ...w.packs] })); go("packs-" + p.id); toast(`Created “${name}”`, { icon: "pack" }); }} />
         </aside>

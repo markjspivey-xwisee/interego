@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-10 — I2IDL-X workbench: each account keeps its own workspace
+
+Interpretant, the I2IDL-X workbench in the Foxxi vertical, kept one browser copy of the private workspace (packs and stars) for whoever was signed in. A second account in the same browser therefore saw the first account's packs while its own loaded, and on its first visit copied them into its own private document. The browser copy is now kept per account, what was kept while signed out moves into at most one account, and the old shared copy is deleted on load. A save made just before the page is hidden is sent at once, and a browser copy newer than the document wins on the next load. The inference playground keeps a blank node as one node when a crosswalk classifies it, and the app reads the glossary at the pinned commit, as the build does. The automated review of #593 found all four; `tools/smoke_app.py` now opens the page as two accounts in one browser, and `tools/check_app_logic.py` parses the blank-node case.
+
 ## 2026-10-09 — Foxxi: I2IDL-X, the I2IDL glossary as an agentic vocabulary and a semantic layer
 
 The Foxxi vertical gains `applications/foxxi-content-intelligence/i2idlx/`, which makes the I2IDL Digital Learning Glossary (397 concepts, published by I2IDL as linked data) something agents act on and something learning data can be typed by. It decorates I2IDL's IRIs and never restates the glossary. Its ten graphs are published on Interego as signed, public context graphs: an `i2x:` ontology, shapes, SHACL rules, a HyprCat agent catalog with 23 controls, enactments that link concepts to live Foxxi and relay actions, crosswalk proposals governed by ratification, a release feed, a change history, and the semantic layer — one of 35 referent categories per concept, aligned to BFO 2020 (with IAO and CCO), gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and the peer learning vocabularies. Everything proposed is published Hypothetical.

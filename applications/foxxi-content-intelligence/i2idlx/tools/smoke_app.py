@@ -44,7 +44,7 @@ STUBS = r"""
     onSnapshot: (next) => { const off = add(colL, c, next); setTimeout(() => next(snapCol(c)), 5); return off; },
     get: async () => snapCol(c), where: () => q, orderBy: () => q, limit: () => q }; return q; };
   const db = { doc: docRef, collection: colRef };
-  const me = { id: 'u_testviewer000000000000', name: 'Test Viewer', avatarUrl: '', color: '#2a78d6', email: null, isOwner: true, canEdit: true };
+  const me = { id: window.__viewerId || 'u_testviewer000000000000', name: 'Test Viewer', avatarUrl: '', color: '#2a78d6', email: null, isOwner: true, canEdit: true };
   const user = { me: async () => me, id: async () => me.id, can: async () => true, isOwner: async () => true, canEdit: async () => true,
     profiles: async (ids) => Object.fromEntries([].concat(ids).map(i => [i, { id: i, name: i === me.id ? 'Test Viewer' : 'Ana Reviewer', avatarUrl: '', color: '#eb6834', email: null, isMe: i === me.id, guest: false }])) };
   window.__sampleCalls = [];
@@ -74,6 +74,7 @@ STUBS = r"""
   store.set('ballots/u_otherreviewer0000000000', { v: { 'm.m-xapi-statement-1': { vote: 'for', note: 'Same normative text.', at: Date.now() - 3600e3 } } });
   store.set('notes/u_otherreviewer0000000000', { n: { abc: { c: 'learning-record-store-lrs', text: 'We teach this with a live LRS demo.', at: Date.now() - 7200e3 } } });
   store.set('usage/u_otherreviewer0000000000', { u: { 'learning-record-store-lrs': { ctx: 'LE 101 · week 3', at: Date.now() } } });
+  for (const [k, v] of Object.entries(window.__seed || {})) store.set(k, v);
   window.claude = { use: async (name) => ({ db, user, sample, downloads })[name] || null };
 })();
 """
@@ -352,6 +353,71 @@ if SHOTS:
     SHOTS.mkdir(parents=True, exist_ok=True)
 run(True, shots=True)
 run(False)
+
+
+def workspace_checks():
+    """Two accounts in one browser keep apart; a save made as the page hides is sent; the newer copy wins."""
+    A, B = "u_accounta00000000000000", "u_accountb00000000000000"
+    doc = lambda who: f"data/users/{who}/workspace"
+    with sync_playwright() as p:
+        b = p.chromium.launch()
+        ctx = b.new_context(viewport={"width": 1280, "height": 860})
+        ctx.route("**/*", route_handler)
+
+        def open_as(viewer, seed=None, legacy=False):
+            page = ctx.new_page()
+            if legacy:  # what earlier versions left: one unscoped copy for every viewer of the browser
+                page.add_init_script("localStorage.setItem('interpretant:workspace', JSON.stringify({packs:[{id:'pk-legacy',name:'Legacy pack',items:[]}],stars:[],recents:[]}))")
+            if viewer:
+                page.add_init_script(f"window.__viewerId = {json.dumps(viewer)}; window.__seed = {json.dumps(seed or {})};")
+                page.add_init_script(STUBS)
+            page.goto("http://app.test/#packs")
+            page.wait_for_selector(".pk")
+            page.wait_for_timeout(400)
+            return page
+
+        def stored(page, path):
+            return page.evaluate(f"(window.__db && window.__db.store.get({json.dumps(path)})) || null")
+
+        a = open_as(A, legacy=True)
+        check(a.locator(".pkitem", has_text="Legacy pack").count() == 0, "[workspace] the unscoped copy earlier versions kept is shown to no one")
+        a.locator(".pk aside button", has_text="New").first.click()
+        a.wait_for_timeout(1000)
+        d = stored(a, doc(A))
+        check(bool(d) and len(d.get("packs", [])) == 1, "[workspace] account A's new pack is saved to A's private document")
+        keys = a.evaluate("Object.keys(localStorage).filter(k => k.startsWith('interpretant:workspace')).sort()")
+        check(keys == [f"interpretant:workspace.u.{A}"], f"[workspace] A's browser copy is under A's own key, and the unscoped copy is gone: {keys}")
+        a.close()
+
+        bp = open_as(B)
+        check(bp.locator(".pkitem").count() == 0, "[workspace] account B, in the same browser, sees none of A's packs")
+        d = stored(bp, doc(B))
+        check(not d or not d.get("packs"), "[workspace] nothing of A's is written into B's document")
+        bp.locator(".pk aside button", has_text="New").first.click()
+        bp.wait_for_timeout(50)
+        bp.evaluate("window.dispatchEvent(new Event('pagehide'))")
+        bp.wait_for_timeout(80)
+        d = stored(bp, doc(B))
+        check(bool(d) and len(d.get("packs", [])) == 1, "[workspace] a pack made just before the page hides is sent at once, not lost with the debounce")
+        bp.close()
+
+        anon = open_as(None)
+        check(anon.locator(".pkitem").count() == 0, "[workspace] signed out in the same browser, neither account's packs show")
+        anon.close()
+
+        a2 = open_as(A, seed={doc(A): {"packs": [], "stars": [], "recents": [], "at": 1}})
+        d = stored(a2, doc(A))
+        check(a2.locator(".pkitem").count() == 1 and bool(d) and len(d.get("packs", [])) == 1,
+              "[workspace] a browser copy newer than the document wins and is sent to it")
+        a2.close()
+        a3 = open_as(A, seed={doc(A): {"packs": [{"id": "pk-remote", "name": "From another device", "items": []}], "stars": [], "recents": [], "at": 9e15}})
+        check(a3.locator(".pkitem").count() == 1 and a3.locator(".pkitem", has_text="From another device").count() == 1,
+              "[workspace] a document newer than the browser copy wins")
+        a3.close()
+        b.close()
+
+
+workspace_checks()
 if SHOTS:
     run(True, width=420, height=860, shots=True)
 print(f"\n{len(failures)} failures")
