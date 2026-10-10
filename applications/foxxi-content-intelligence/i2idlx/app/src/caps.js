@@ -50,6 +50,7 @@ export function CapsProvider({ children }) {
   const wsTimer = useRef(null);
   const wsNext = useRef(null); // the save the debounce is holding: { path, body }
   const wsPending = useRef(false);
+  const wsQueue = useRef([]); // edits made before the workspace is known, applied on top of it once it is
   const migrated = useRef(false);
 
   // Resolve capabilities once; light features up as each arrives.
@@ -110,10 +111,21 @@ export function CapsProvider({ children }) {
     try {
       off = db.doc(path).onSnapshot((s) => {
         if (wsPending.current || (s.metadata && s.metadata.hasPendingWrites)) return;
-        if (!s.exists) { setWsSource("db-empty"); return; }
-        const remote = { ...EMPTY_WS, ...s.data() };
+        // A snapshot from the client's own cache may be stale: show the likelier copy, but decide nothing (no
+        // write, no "no document yet") until the server's definitive snapshot, which follows on its own.
+        const cached = !!(s.metadata && s.metadata.fromCache);
         const local = store.get(wsKey(myId), null);
-        if (local && (local.at || 0) > (remote.at || 0)) {
+        if (!s.exists) {
+          if (!cached) setWsSource("db-empty");
+          return;
+        }
+        const remote = { ...EMPTY_WS, ...s.data() };
+        const newer = !!local && (local.at || 0) > (remote.at || 0);
+        if (cached) {
+          setWs(newer ? { ...EMPTY_WS, ...local } : remote);
+          return;
+        }
+        if (newer) {
           // An edit this browser saved but the page closed before sending is newer than the document: keep it, send it.
           setWs({ ...EMPTY_WS, ...local });
           if (canWrite !== false) write(path, local).catch(() => {});
@@ -122,9 +134,13 @@ export function CapsProvider({ children }) {
           store.set(wsKey(myId), remote);
         }
         setWsSource("db");
-      }, (e) => setDbError(e && e.code ? e.code : "unavailable"));
+      }, (e) => {
+        setDbError(e && e.code ? e.code : "unavailable");
+        setWsSource("local"); // keep working from this browser's copy
+      });
     } catch (e) {
       setDbError(e && e.code ? e.code : "unavailable");
+      setWsSource("local");
     }
     return () => { try { if (off) off(); } catch { /* already closed */ } };
   }, [caps.db, myId, idDone]);
@@ -132,11 +148,11 @@ export function CapsProvider({ children }) {
   // No document yet: start it from this viewer's own unsent browser copy, or else from what this browser kept
   // while signed out, which moves (not copies) into the first account that signs in here.
   useEffect(() => {
-    if (wsSource !== "db-empty" || migrated.current || !caps.db || !myId || canWrite === false) return;
+    if (wsSource !== "db-empty" || migrated.current || !caps.db || !myId) return;
     migrated.current = true;
     const own = store.get(wsKey(myId), null);
     const anon = store.get(ANON_WS, null);
-    const carry = hasWork(own) ? own : hasWork(anon) ? anon : null;
+    const carry = canWrite === false ? null : hasWork(own) ? own : hasWork(anon) ? anon : null;
     if (carry) {
       const next = { ...EMPTY_WS, ...carry, at: Date.now() };
       setWs(next);
@@ -257,7 +273,18 @@ export function CapsProvider({ children }) {
     };
   }, [sendWs]);
 
+  // Until we know whose workspace this is (and, signed in, what their document holds), an edit is shown at once
+  // and kept aside; it is applied for real on top of the workspace once that is known, so it neither lands in
+  // the signed-out copy nor overwrites a newer document with a stale copy.
+  const wsReady = wsSource === "local" || wsSource === "db";
+  const wsReadyRef = useRef(false);
+  wsReadyRef.current = wsReady;
   const updateWs = useCallback((fn) => {
+    if (!wsReadyRef.current) {
+      wsQueue.current.push(fn);
+      setWs((old) => ({ ...old, ...fn(old) }));
+      return;
+    }
     setWs((old) => {
       const next = { ...old, ...fn(old), at: Date.now() };
       store.set(wsKey(myId), next);
@@ -270,6 +297,12 @@ export function CapsProvider({ children }) {
       return next;
     });
   }, [caps.db, myId, canWrite, sendWs]);
+  useEffect(() => {
+    if (!wsReady || !wsQueue.current.length) return;
+    const queued = wsQueue.current;
+    wsQueue.current = [];
+    for (const fn of queued) updateWs(fn);
+  }, [wsReady, updateWs]);
 
   // ── Files ───────────────────────────────────────────────────────────────────────────────────
   const save = useCallback(async (filename, data) => {

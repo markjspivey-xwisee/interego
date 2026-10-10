@@ -38,14 +38,18 @@ STUBS = r"""
       store.set(p, JSON.parse(s)); log.push(['set', p]); setTimeout(() => notify(p), 5); },
     update: async (d) => { store.set(p, Object.assign({}, store.get(p), d)); log.push(['update', p]); setTimeout(() => notify(p), 5); },
     delete: async () => { store.delete(p); log.push(['delete', p]); setTimeout(() => notify(p), 5); },
-    onSnapshot: (next) => { const off = add(docL, p, next); setTimeout(() => next(snapDoc(p)), 5); return off; },
+    onSnapshot: (next) => { const off = add(docL, p, next);
+      // __cachedFirst[path]: deliver that (stale) body from the client's cache first, then the server's snapshot.
+      const stale = (window.__cachedFirst || {})[p];
+      if (stale !== undefined) setTimeout(() => next({ id: p.split('/').pop(), exists: stale !== null, data: () => stale || undefined, metadata: { fromCache: true, hasPendingWrites: false } }), 5);
+      setTimeout(() => next(snapDoc(p)), stale !== undefined ? 250 : 5); return off; },
     collection: (c) => colRef(p + '/' + c) });
   const colRef = (c) => { const q = { path: c, doc: (id) => docRef(c + '/' + (id || Math.random().toString(36).slice(2))),
     onSnapshot: (next) => { const off = add(colL, c, next); setTimeout(() => next(snapCol(c)), 5); return off; },
     get: async () => snapCol(c), where: () => q, orderBy: () => q, limit: () => q }; return q; };
   const db = { doc: docRef, collection: colRef };
   const me = { id: window.__viewerId || 'u_testviewer000000000000', name: 'Test Viewer', avatarUrl: '', color: '#2a78d6', email: null, isOwner: true, canEdit: true };
-  const user = { me: async () => me, id: async () => me.id, can: async () => true, isOwner: async () => true, canEdit: async () => true,
+  const user = { me: async () => { if (window.__meDelay) await new Promise((r) => setTimeout(r, window.__meDelay)); return me; }, id: async () => me.id, can: async () => true, isOwner: async () => true, canEdit: async () => true,
     profiles: async (ids) => Object.fromEntries([].concat(ids).map(i => [i, { id: i, name: i === me.id ? 'Test Viewer' : 'Ana Reviewer', avatarUrl: '', color: '#eb6834', email: null, isMe: i === me.id, guest: false }])) };
   window.__sampleCalls = [];
   const sample = async (input, opts = {}) => {
@@ -364,16 +368,17 @@ def workspace_checks():
         ctx = b.new_context(viewport={"width": 1280, "height": 860})
         ctx.route("**/*", route_handler)
 
-        def open_as(viewer, seed=None, legacy=False):
+        def open_as(viewer, seed=None, legacy=False, cached_first=None, me_delay=0, settle=400):
             page = ctx.new_page()
             if legacy:  # what earlier versions left: one unscoped copy for every viewer of the browser
                 page.add_init_script("localStorage.setItem('interpretant:workspace', JSON.stringify({packs:[{id:'pk-legacy',name:'Legacy pack',items:[]}],stars:[],recents:[]}))")
             if viewer:
-                page.add_init_script(f"window.__viewerId = {json.dumps(viewer)}; window.__seed = {json.dumps(seed or {})};")
+                page.add_init_script(f"window.__viewerId = {json.dumps(viewer)}; window.__seed = {json.dumps(seed or {})}; "
+                                     f"window.__cachedFirst = {json.dumps(cached_first or {})}; window.__meDelay = {me_delay};")
                 page.add_init_script(STUBS)
             page.goto("http://app.test/#packs")
             page.wait_for_selector(".pk")
-            page.wait_for_timeout(400)
+            page.wait_for_timeout(settle)
             return page
 
         def stored(page, path):
@@ -414,6 +419,26 @@ def workspace_checks():
         check(a3.locator(".pkitem").count() == 1 and a3.locator(".pkitem", has_text="From another device").count() == 1,
               "[workspace] a document newer than the browser copy wins")
         a3.close()
+
+        # The client's cache first delivers a stale document, older than this browser's copy; the server has a newer one.
+        server = {"packs": [{"id": "pk-server", "name": "Saved on the server since", "items": []}], "stars": [], "recents": [], "at": 9e15}
+        a4 = open_as(A, seed={doc(A): server}, cached_first={doc(A): {"packs": [], "stars": [], "recents": [], "at": 1}}, settle=600)
+        sets = a4.evaluate(f"window.__db.log.filter(e => e[0] === 'set' && e[1] === {json.dumps(doc(A))}).length")
+        check(sets == 0 and a4.locator(".pkitem", has_text="Saved on the server since").count() == 1,
+              "[workspace] a stale cached snapshot never triggers a write: the server's newer document wins")
+        a4.close()
+
+        # An edit made before the viewer's identity is known lands in that account, on top of its document.
+        C = "u_accountc00000000000000"
+        existing = {"packs": [{"id": "pk-existing", "name": "Existing pack", "items": []}], "stars": [], "recents": [], "at": 5}
+        cp = open_as(C, seed={doc(C): existing}, me_delay=900, settle=100)
+        cp.locator(".pk aside button", has_text="New").first.click()
+        cp.wait_for_timeout(2200)
+        d = stored(cp, doc(C)) or {}
+        anon_left = cp.evaluate("(JSON.parse(localStorage.getItem('interpretant:workspace.anon') || 'null') || {packs: []}).packs.length")
+        check(len(d.get("packs", [])) == 2 and anon_left == 0 and cp.locator(".pkitem").count() == 2,
+              f"[workspace] a pack made before identity resolves is saved to that account with its existing packs ({len(d.get('packs', []))} in the document, {anon_left} left signed-out)")
+        cp.close()
         b.close()
 
 
