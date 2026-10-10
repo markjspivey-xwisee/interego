@@ -398,7 +398,8 @@ def workspace_checks():
         d = stored(a, doc(A))
         check(bool(d) and len(d.get("packs", [])) == 1, "[workspace] account A's new pack is saved to A's private document")
         keys = a.evaluate("Object.keys(localStorage).filter(k => k.startsWith('interpretant:workspace')).sort()")
-        check(keys == [f"interpretant:workspace.u.{A}"], f"[workspace] A's browser copy is under A's own key, and the unscoped copy is gone: {keys}")
+        check(f"interpretant:workspace.u.{A}" in keys and all(k.startswith(f"interpretant:workspace.u.{A}") for k in keys),
+              f"[workspace] A's browser copy is under A's own key, and the unscoped copy is gone: {keys}")
         a.close()
 
         bp = open_as(B)
@@ -519,6 +520,27 @@ def workspace_checks():
         check(len(d.get("packs", [])) == 2 and gp3.locator(".pkitem").count() == 2,
               f"[workspace] a change whose save failed survives a visit that closed while loading, and lands on the next ({len(d.get('packs', []))} packs)")
         gp3.close()
+
+        # What earlier versions of the page left unconfirmed is taken in on the first visit with this one.
+        H, I = "u_accounth00000000000000", "u_accounti00000000000000"
+        existing_hi = {"packs": [{"id": "pk-existing-hi", "name": "Already in the document", "items": []}], "stars": [], "recents": [], "at": 5}
+        legacy_pack = {"id": "pk-legacy-held", "name": "Held by an earlier version", "items": []}
+        seed_ls = ("localStorage.setItem('interpretant:workspace.u." + H + ".held', JSON.stringify({base: {packs: [], stars: [], recents: []}, "
+                   "next: {packs: [" + json.dumps(legacy_pack) + "], stars: [], recents: []}, at: 7})); "
+                   "localStorage.setItem('interpretant:workspace.u." + I + "', JSON.stringify({packs: [{id: 'pk-legacy-copy', name: 'Unsent under an earlier version', items: []}, "
+                   + json.dumps(existing_hi["packs"][0]) + "], stars: [], recents: [], at: 9e14}));")
+        for who, what in ((H, "a change an earlier version held while loading"), (I, "a save an earlier version left unsent")):
+            pg = ctx.new_page()
+            pg.add_init_script("if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); " + seed_ls + " }")
+            pg.add_init_script(f"window.__viewerId = {json.dumps(who)}; window.__seed = {json.dumps({doc(who): existing_hi})};")
+            pg.add_init_script(STUBS)
+            pg.goto("http://app.test/#packs")
+            pg.wait_for_selector(".pk")
+            pg.wait_for_timeout(800)
+            d = stored(pg, doc(who)) or {}
+            check(len(d.get("packs", [])) == 2 and pg.locator(".pkitem").count() == 2,
+                  f"[workspace] {what} reaches the document on the first visit with this version ({len(d.get('packs', []))} packs)")
+            pg.close()
         b.close()
 
 
