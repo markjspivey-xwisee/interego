@@ -29,7 +29,7 @@ export function Packs({ route }) {
       <div className="pk">
         <aside className="stack" style={{ gap: 10 }}>
           <div className="row"><h1 className="h-display grow" style={{ fontSize: 24 }}>Packs</h1><button className="btn sm primary" onClick={create}><Icon name="plus" />New</button></div>
-          <p className="small muted">Course glossaries you build from the release. {wsSource === "sandbox" ? "Packs here belong to this run's sandbox." : signedIn ? "Saved privately to your account." : "Saved in this browser; sign in to keep them with your account."}</p>
+          <p className="small muted">Course glossaries you build from the release. {wsSource === "sandbox" ? "Packs here belong to this run's sandbox." : wsSource === "held" ? "Your account's packs could not be loaded; changes are kept in this browser and saved to your account on a later visit." : signedIn ? "Saved privately to your account." : "Saved in this browser; sign in to keep them with your account."}</p>
           <OriginStrip items={[["i2idl", "definitions and attribution"], ["team", "your packs"]]} />
           <div className="pklist">
             {packs.map((p) => (

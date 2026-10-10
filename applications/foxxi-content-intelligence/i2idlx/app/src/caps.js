@@ -64,7 +64,8 @@ export function CapsProvider({ children }) {
   const [policy, setPolicy] = useState(DEFAULT_POLICY);
   const [idDone, setIdDone] = useState(false); // whether we know who is viewing (or that no one is signed in)
   const [ws, setWs] = useState(EMPTY_WS);
-  const [wsSource, setWsSource] = useState("pending"); // "pending" until known, then "local" | "db"
+  // "pending" until known, then "local" | "db"; "held" when a signed-in viewer's document could not be read
+  const [wsSource, setWsSource] = useState("pending");
   const [tools, setTools] = useState(false);
   const [dbError, setDbError] = useState(null);
   const chains = useRef(new Map()); // path → promise chain (one write at a time per document)
@@ -235,7 +236,7 @@ export function CapsProvider({ children }) {
     setWs(next);
     setWsSource(source);
     store.set(wsKey(id), next);
-    if (id) store.del(draftKey(id));
+    if (id && source === "db") store.del(draftKey(id)); // merged with the server's document: nothing left to hold
     if ((send || held.length) && source === "db" && db && id && cw !== false) put(pathOf(id), next).catch(() => {});
   };
 
@@ -266,9 +267,11 @@ export function CapsProvider({ children }) {
     const db = caps.db;
     if (!db || !myId || !idDone) return undefined;
     let off = null;
+    // The document cannot be read: keep holding edits (shown, and kept in this browser as a change) rather than
+    // writing a copy that never saw the server's, so the next load makes them again on top of the document.
     const fallBack = (e) => {
       setDbError(e && e.code ? e.code : "unavailable");
-      if (!wsReady.current) settle(store.get(wsKey(myId), EMPTY_WS), "local", false); // keep working from this browser
+      if (!wsReady.current) setWsSource("held");
     };
     try {
       off = db.doc(pathOf(myId)).onSnapshot((s) => {
