@@ -541,6 +541,23 @@ def workspace_checks():
             check(len(d.get("packs", [])) == 2 and pg.locator(".pkitem").count() == 2,
                   f"[workspace] {what} reaches the document on the first visit with this version ({len(d.get('packs', []))} packs)")
             pg.close()
+
+        # That legacy copy never saw a pack another device added since (with an older clock): the pack stays.
+        J = "u_accountj00000000000000"
+        other_j = {"packs": [{"id": "pk-other-j", "name": "Added on another device", "items": []}], "stars": [], "recents": [], "at": 5}
+        pj = ctx.new_page()
+        pj.add_init_script("if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); "
+                           "localStorage.setItem('interpretant:workspace.u." + J + "', JSON.stringify({packs: [{id: 'pk-legacy-j', name: 'Unsent under an earlier version', items: []}], "
+                           "stars: [], recents: [], at: 9e14})); }")
+        pj.add_init_script(f"window.__viewerId = {json.dumps(J)}; window.__seed = {json.dumps({doc(J): other_j})};")
+        pj.add_init_script(STUBS)
+        pj.goto("http://app.test/#packs")
+        pj.wait_for_selector(".pk")
+        pj.wait_for_timeout(800)
+        d = stored(pj, doc(J)) or {}
+        ids = sorted(x.get("id") for x in d.get("packs", []))
+        check(ids == ["pk-legacy-j", "pk-other-j"], f"[workspace] taking in a legacy copy never drops a pack only the document has: {ids}")
+        pj.close()
         b.close()
 
 
