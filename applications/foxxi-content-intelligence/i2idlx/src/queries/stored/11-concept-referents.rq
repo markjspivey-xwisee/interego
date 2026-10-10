@@ -1,0 +1,16 @@
+# label: What a concept classifies, in every vocabulary
+# form: SELECT
+# params: concept
+# runsOver: port-vocabulary port-alignments port-referents
+# description: For one I2IDL concept ($concept as <IRI>): the category of the things it classifies, why (I2IDL's type or the concept's definition), and every class those things join, from I2IDL-X's own referent classes to BFO 2020, IAO, CCO, gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and peers.
+PREFIX i2x: <{{NS}}>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?category ?categoryLabel ?basis ?why ?class
+WHERE {
+  $concept i2x:referentCategory ?category ; i2x:assignmentBasis ?basis ; i2x:categoryRationale ?why .
+  ?category skos:prefLabel ?categoryLabel ; i2x:referentClass ?own .
+  ?own rdfs:subClassOf* ?class .
+  FILTER isIRI(?class)
+}
+ORDER BY ?class

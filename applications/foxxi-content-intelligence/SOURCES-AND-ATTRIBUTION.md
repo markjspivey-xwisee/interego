@@ -56,6 +56,18 @@ certification mark.
 Conformance is re-verifiable — see `LMS-CONFORMANCE.md` and the
 `tools/*-smoke` runners.
 
+### Referenced vocabularies and glossaries (`i2idlx/`)
+
+[`i2idlx/`](i2idlx/) refers to other publishers' vocabularies by IRI. It does not
+redistribute their content in this repository.
+
+| Source | Publisher, licence | How `i2idlx/` uses it |
+|---|---|---|
+| I2IDL Digital Learning Glossary | I2IDL; I2IDL-original material CC BY 4.0, with each source's own rights preserved per evidence record | Decorated by IRI; never restated or edited. The workbench embeds a pinned release at build time, credits I2IDL and shows each source's rights. Not affiliated with or endorsed by I2IDL. |
+| BFO 2020, IAO, CCO, gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org, W3C ORG, DCMI, DCAT | Their publishers; licences recorded per file in `i2idlx/evidence/upper/manifest.json` | Alignment targets, referenced by IRI. Each term is checked against a pinned snapshot fetched at build time (`tools/refresh_upper.py`). |
+| CTDL, CTDL-ASN, ESCO, ELM, LRMI, ASN, Open Badges 3.0, CASE, xAPI | Their stewards | Peer vocabularies: alignment targets and export classes, referenced by IRI. |
+| UNESCO Thesaurus | UNESCO, CC BY-SA 3.0 IGO | Crosswalk targets that I2IDL's own evidence cites; the labels and scope notes checked are recorded with their licence in `i2idlx/evidence/unesco-thesaurus.json`. |
+
 ## 2. Concepts, models and methodology — the project's own synthesis
 
 The performance, content and knowledge architecture

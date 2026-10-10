@@ -1,0 +1,14 @@
+# label: Find concepts by label
+# form: SELECT
+# params: text
+# description: Case-insensitive substring match on preferred and alternate labels. Substitute $text with a quoted string literal, e.g. "record store".
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+SELECT DISTINCT ?concept ?label
+WHERE {
+  ?concept a skos:Concept ; skos:prefLabel ?label .
+  OPTIONAL { ?concept skos:altLabel ?alt }
+  FILTER ( CONTAINS(LCASE(STR(?label)), LCASE($text))
+   || (BOUND(?alt) && CONTAINS(LCASE(STR(?alt)), LCASE($text))) )
+}
+ORDER BY ?label
+LIMIT 50

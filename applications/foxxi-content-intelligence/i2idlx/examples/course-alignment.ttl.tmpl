@@ -1,0 +1,13 @@
+# Through cat:port-align-course-concept: a Foxxi course concept-graph node aligned to I2IDL,
+# so Foxxi's coverage query can be read against the shared I2IDL concept space.
+@prefix i2x:   <{{NS}}> .
+@prefix i2idl: <https://id.i2idl.org/concepts/> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+
+<urn:example:alignment:intro-to-xapi-lrs> a i2x:CourseConceptAlignment ;
+    i2x:courseConcept <urn:example:foxxi:course:intro-to-xapi/concept/lrs> ;
+    i2x:alignedTo i2idl:learning-record-store-lrs ;
+    i2x:alignmentPredicate skos:closeMatch ;
+    i2x:reviewStatus i2x:status-proposed ;
+    prov:wasAttributedTo <urn:example:agent> .

@@ -1,0 +1,15 @@
+# label: Semantic neighborhood of a concept
+# form: CONSTRUCT
+# params: concept
+# description: The concept's editorial broader, narrower and related concepts with their labels. Substitute $concept with <concept IRI>.
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+CONSTRUCT {
+  $concept skos:prefLabel ?label ; skos:broader ?b ; skos:narrower ?n ; skos:related ?r .
+  ?b skos:prefLabel ?bl . ?n skos:prefLabel ?nl . ?r skos:prefLabel ?rl .
+}
+WHERE {
+  $concept skos:prefLabel ?label .
+  { $concept skos:broader ?b . ?b skos:prefLabel ?bl }
+  UNION { $concept skos:narrower ?n . ?n skos:prefLabel ?nl }
+  UNION { $concept skos:related ?r . ?r skos:prefLabel ?rl }
+}

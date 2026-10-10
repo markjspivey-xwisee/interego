@@ -252,7 +252,12 @@ const UNLINTED_FRONTIER = {
   //    650 -> 684 files (2026-09-29), errors not raised: Foxxi's hosting, package import and
   //    session keys (#545 to #554) used the slack, and the question-bank reader
   //    (src/question-banks.ts and its test) took the root past it. All of them lint clean.
-  applications: { errors: 1452, files: 684 },
+  //
+  //    684 -> 721 files (2026-10-10), errors not raised: Foxxi's I2IDL-X package (#593) — its
+  //    workbench (i2idlx/app/src), the workbench's Orchestrate view and the recording harness
+  //    (i2idlx/app/src/orc, i2idlx/app/tools) — used the slack and took the root past it. All of
+  //    them lint clean (`npx eslint applications/foxxi-content-intelligence/i2idlx`: 0 problems).
+  applications: { errors: 1452, files: 721 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },

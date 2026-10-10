@@ -1,0 +1,837 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vc: <https://www.w3.org/2018/credentials#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix hela: <https://markjspivey-xwisee.github.io/interego/ns/hela#> .
+@prefix ler: <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#> .
+@prefix tla: <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> a owl:Ontology ;
+    rdfs:label "ADL Total Learning Architecture — emergent composable ontology" ;
+    rdfs:comment "An OWL vocabulary for the ADL TLA (the four data pillars, the Master Object Model, the CaSS competency model, the federated LRS tiers and the learner-state machines), modelled as compositions over the Interego substrate. The three LRS tiers and the learner-state machines are rendered as views, not stores." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+tla:Competency a owl:Class ;
+    rdfs:label "Competency" ;
+    rdfs:comment "A skill, knowledge, ability, trait, or combination required to perform a task or job — the common currency that gives the four TLA data pillars a shared semantics." ;
+    dct:source "ADL TLA Competency pillar; CaSS schema 0.4" ;
+    ler:construction "minted" ;
+    rdfs:subClassOf skos:Concept ;
+    owl:equivalentClass ler:CompetencyDefinition ;
+    skos:exactMatch <https://schema.cassproject.org/0.4/Competency> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:CompetencyFramework a owl:Class ;
+    rdfs:label "Competency Framework" ;
+    rdfs:comment "A structured, directed graph of competencies with typed relations, levels and roll-up rules." ;
+    dct:source "ADL TLA; CaSS schema 0.4 (Framework)" ;
+    ler:construction "minted" ;
+    rdfs:subClassOf skos:ConceptScheme ;
+    owl:equivalentClass ler:CompetencyFramework ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:Relation a owl:Class ;
+    rdfs:label "Competency Relation" ;
+    rdfs:comment "A typed edge between two competencies — narrows, broadens, requires, is-related-to, is-equivalent-to — with an optional validity window." ;
+    dct:source "CaSS schema 0.4 (Relation)" ;
+    ler:construction "minted" ;
+    owl:equivalentClass ler:CompetencyRelationship ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:Level a owl:Class ;
+    rdfs:label "Proficiency Level" ;
+    rdfs:comment "A named proficiency level or assessment criterion attached to a competency." ;
+    dct:source "CaSS schema 0.4 (Level)" ;
+    ler:construction "minted" ;
+    owl:equivalentClass ler:ProficiencyLevel ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:RollupRule a owl:Class ;
+    rdfs:label "Roll-up Rule" ;
+    rdfs:comment "A rule for deriving a competency's attainment state from the states of its sub-competencies — the competency-graph analogue of cmi5 move-on logic." ;
+    dct:source "CaSS schema 0.4 (RollupRule)" ;
+    ler:construction "minted" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:MoveOnRule a owl:Class ;
+    rdfs:label "Move-On Rule" ;
+    rdfs:comment "The criterion (Passed, Completed, CompletedAndPassed, CompletedOrPassed, NotApplicable) that decides whether a learner has satisfied an activity well enough to advance. TLA generalises cmi5 move-on into its Control Loop 2." ;
+    dct:source "cmi5; ADL TLA Control Loops" ;
+    ler:construction "minted" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:Assertion a owl:Class ;
+    rdfs:label "Competency Assertion" ;
+    rdfs:comment "A CaSS assertion: a declaration by one party that a subject can perform a competency at a level, with a confidence in [-1,1], over a timespan, backed by evidence. The same attestation primitive as an IEEE record entry — confidence and evidence are facets, not new shapes." ;
+    dct:source "CaSS schema 0.4 (Assertion); MOM `asserted` verb" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf amta:Attestation ;
+    owl:equivalentClass ler:CompetencyAssertion ;
+    iep:constructedFrom amta:Attestation ;
+    iep:constructedFrom amta:CompetenceRating ;
+    iep:constructedFrom iep:modalStatus ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LearningActivityMetadata a owl:Class ;
+    rdfs:label "Learning Activity Metadata" ;
+    rdfs:comment "A typed metadata descriptor of a learning resource — course, section, activity or content object. The substrate's resource-descriptor primitive specialised for learning resources." ;
+    dct:source "IEEE P2881 Learning Activity Metadata (extends IEEE 1484.12.1 LOM)" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    iep:constructedFrom iep:ContextDescriptor ;
+    iep:constructedFrom iep:SemioticFacet ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:ExperienceIndex a owl:Class ;
+    rdfs:label "Experience Index" ;
+    rdfs:comment "The server-side index of learning-activity metadata, federating local catalogs. Not a store of new vocabulary — a query view over Learning Activity Metadata descriptors." ;
+    dct:source "ADL TLA Experience Index (XI)" ;
+    ler:construction "view" ;
+    iep:constructedFrom tla:LearningActivityMetadata ;
+    iep:constructedFrom iep:CompositionOperator ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:EnterpriseCourseCatalog a owl:Class ;
+    rdfs:label "Enterprise Course Catalog" ;
+    rdfs:comment "A network of federated course catalogs — an aggregation of learning-activity metadata descriptors across providers." ;
+    dct:source "ADL TLA Enterprise Course Catalog (ECC)" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf iep:ComposedDescriptor ;
+    iep:constructedFrom tla:LearningActivityMetadata ;
+    iep:constructedFrom iep:FederationFacet ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:MasterObjectModel a owl:Class ;
+    rdfs:label "Master Object Model" ;
+    rdfs:comment "TLA's xAPI profile (https://w3id.org/xapi/tla): the MOM verb set (organised in this vocabulary into five thematic levels — our own pedagogical grouping, not ADL-numbered conformance tiers), 11 activity types, three learner-state machines, and a set of context extensions. Every MOM record is an xAPI Statement." ;
+    dct:source "ADL Master Object Model (MOM_Spec.md)" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf iep:ContextDescriptor ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom hela:Verb ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LearnerProfile a owl:Class ;
+    rdfs:label "Learner Profile / Enterprise Learner Record" ;
+    rdfs:comment "Each learner's aggregate competency level, credentials, aptitudes, preferences, goals and career trajectory. The TLA pillar that the IEEE P2997 study group grew from — equivalent to the IEEE Enterprise Learner Record." ;
+    dct:source "ADL TLA Learner Profile pillar; ADL ELRR" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf iep:ComposedDescriptor ;
+    owl:equivalentClass ler:EnterpriseLearnerRecord ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom iep:AgentFacet ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:NoisyLRS a owl:Class ;
+    rdfs:label "Noisy LRS" ;
+    rdfs:comment "The tier holding every raw xAPI statement, with data ownership retained by the activity owner. A view over the statement set — the unfiltered partition." ;
+    dct:source "ADL TLA federated LRS layer" ;
+    ler:construction "view" ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom hela:Trace ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:TransactionalLRS a owl:Class ;
+    rdfs:label "Transactional LRS" ;
+    rdfs:comment "The tier holding only the normalised MOM roll-up verbs — the evidence base for competency inference. A restriction view over the statement set, partitioned by verb-set." ;
+    dct:source "ADL TLA federated LRS layer" ;
+    ler:construction "view" ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom hela:Verb ;
+    iep:constructedFrom iep:CompositionOperator ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:AuthoritativeLRS a owl:Class ;
+    rdfs:label "Authoritative LRS" ;
+    rdfs:comment "The tier holding only digitally-signed competency-assertion and career verbs, access-restricted. A restriction view partitioned by verb-set, trust tier and signature." ;
+    dct:source "ADL TLA federated LRS layer" ;
+    ler:construction "view" ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom iep:TrustFacet ;
+    iep:constructedFrom iep:CompositionOperator ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LearnerState a owl:Class ;
+    rdfs:label "Learner State" ;
+    rdfs:comment "A learner's current state — the materialised projection of the latest MOM statement per state dimension. A function of the event log, not stored vocabulary." ;
+    dct:source "ADL TLA / MOM learner-state machines" ;
+    ler:construction "view" ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom iep:TemporalFacet ;
+    iep:constructedFrom iep:supersedes ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LearnerActivityState a owl:Class ;
+    rdfs:label "Learner Activity State" ;
+    rdfs:comment "The cmi5-aligned tactical state machine: launched → initialized → attended → suspended/resumed → completed/abandoned/terminated." ;
+    dct:source "ADL MOM learner-state machines" ;
+    ler:construction "view" ;
+    rdfs:subClassOf tla:LearnerState ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom iep:TemporalFacet ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LearnerEventState a owl:Class ;
+    rdfs:label "Learner Event State" ;
+    rdfs:comment "The pre-activity / post-evidence state machine: requested → approved → scheduled → recommended, and validated / qualified / conferred / inferred." ;
+    dct:source "ADL MOM learner-state machines" ;
+    ler:construction "view" ;
+    rdfs:subClassOf tla:LearnerState ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom iep:TemporalFacet ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LearnerCareerState a owl:Class ;
+    rdfs:label "Learner Career State" ;
+    rdfs:comment "The slow, strategic human-capital state machine: recruited → appraised → screened/selected → promoted → detailed → transitioned → released." ;
+    dct:source "ADL MOM learner-state machines" ;
+    ler:construction "view" ;
+    rdfs:subClassOf tla:LearnerState ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom iep:TemporalFacet ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:CompetencyManagementService a owl:Class ;
+    rdfs:label "Competency Management Service (CaSS)" ;
+    rdfs:comment "The service that reads MOM statements from the Transactional LRS, joins actor to learner and object to activity-metadata-to-competency, estimates proficiency and emits signed assertions." ;
+    dct:source "ADL TLA Competency Management (CaSS)" ;
+    ler:construction "role" ;
+    rdfs:subClassOf iep:Affordance ;
+    iep:constructedFrom iep:Affordance ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LearningEventManager a owl:Class ;
+    rdfs:label "Learning Event Manager" ;
+    rdfs:comment "The service that manages xAPI statement generation per profile, bridging learning activities into the LRS layer." ;
+    dct:source "ADL TLA Learning Event Manager (LEM)" ;
+    ler:construction "role" ;
+    rdfs:subClassOf iep:Affordance ;
+    iep:constructedFrom iep:Affordance ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:aboutCompetency a owl:ObjectProperty ;
+    rdfs:label "about competency" ;
+    rdfs:comment "Relates a CaSS assertion to the competency it asserts." ;
+    dct:source "CaSS schema 0.4" ;
+    ler:construction "minted" ;
+    rdfs:domain tla:Assertion ;
+    rdfs:range tla:Competency ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:confidence a owl:DatatypeProperty ;
+    rdfs:label "confidence" ;
+    rdfs:comment "The asserting party's confidence in a competency assertion, a decimal in [-1, 1]." ;
+    dct:source "CaSS schema 0.4 (Assertion.confidence); MOM context extension" ;
+    ler:construction "minted" ;
+    rdfs:domain tla:Assertion ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:decayFunction a owl:DatatypeProperty ;
+    rdfs:label "decay function" ;
+    rdfs:comment "A function describing how the confidence of a competency assertion decays over time." ;
+    dct:source "CaSS schema 0.4 (Assertion.decayFunction)" ;
+    ler:construction "minted" ;
+    rdfs:domain tla:Assertion ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:relationType a owl:DatatypeProperty ;
+    rdfs:label "relation type" ;
+    rdfs:comment "The type of a competency relation — narrows, broadens, requires, isEnabledBy, isEquivalentTo." ;
+    dct:source "CaSS schema 0.4 (Relation.relationType)" ;
+    ler:construction "minted" ;
+    rdfs:domain tla:Relation ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:rollupRule a owl:DatatypeProperty ;
+    rdfs:label "roll-up rule expression" ;
+    rdfs:comment "The rule expression a roll-up rule evaluates against sub-competency states." ;
+    dct:source "CaSS schema 0.4 (RollupRule.rule)" ;
+    ler:construction "minted" ;
+    rdfs:domain tla:RollupRule ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:MOMVerbScheme a skos:ConceptScheme ;
+    rdfs:label "MOM performance verb scheme" ;
+    rdfs:comment "The 52 Master Object Model performance verbs, grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb carries skos:closeMatch ONLY when it has a genuinely registered counterpart — the ADL core verbs at adlnet.gov/expapi/verbs and the cmi5 verbs at w3id.org/xapi/adl/verbs; the remaining verbs are coined by this project and assert no external alignment (no closeMatch to a non-existent IRI)." ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:MOMLevel1 a skos:Collection ;
+    rdfs:label "Level 1 — Completion & Certification" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:member tla:certified ;
+    skos:member tla:completed ;
+    skos:member tla:passed ;
+    skos:member tla:failed ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:MOMLevel2 a skos:Collection ;
+    rdfs:label "Level 2 — Session Lifecycle (cmi5-aligned)" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:member tla:launched ;
+    skos:member tla:initialized ;
+    skos:member tla:attended ;
+    skos:member tla:experienced ;
+    skos:member tla:suspended ;
+    skos:member tla:resumed ;
+    skos:member tla:terminated ;
+    skos:member tla:abandoned ;
+    skos:member tla:scored ;
+    skos:member tla:mastered ;
+    skos:member tla:registered ;
+    skos:member tla:waived ;
+    skos:member tla:satisfied ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:MOMLevel3 a skos:Collection ;
+    rdfs:label "Level 3 — Competency Assertions" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:member tla:assessed ;
+    skos:member tla:contextualized ;
+    skos:member tla:located ;
+    skos:member tla:asserted ;
+    skos:member tla:validated ;
+    skos:member tla:inferred ;
+    skos:member tla:qualified ;
+    skos:member tla:verified ;
+    skos:member tla:conferred ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:MOMLevel4 a skos:Collection ;
+    rdfs:label "Level 4 — Adaptive Learning Paths & Goal Management" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:member tla:recommended ;
+    skos:member tla:prioritized ;
+    skos:member tla:organized ;
+    skos:member tla:projected ;
+    skos:member tla:planned ;
+    skos:member tla:deselected ;
+    skos:member tla:requested ;
+    skos:member tla:approved ;
+    skos:member tla:augmented ;
+    skos:member tla:explored ;
+    skos:member tla:clarified ;
+    skos:member tla:directed ;
+    skos:member tla:scheduled ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:MOMLevel5 a skos:Collection ;
+    rdfs:label "Level 5 — Career & Human-Capital" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:member tla:recruited ;
+    skos:member tla:appraised ;
+    skos:member tla:detailed ;
+    skos:member tla:mobilized ;
+    skos:member tla:employed ;
+    skos:member tla:schooled ;
+    skos:member tla:promoted ;
+    skos:member tla:screened ;
+    skos:member tla:selected ;
+    skos:member tla:transitioned ;
+    skos:member tla:released ;
+    skos:member tla:restricted ;
+    skos:member tla:voided ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:certified a skos:Concept ;
+    rdfs:label "certified" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:completed a skos:Concept ;
+    rdfs:label "completed" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/completed> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:passed a skos:Concept ;
+    rdfs:label "passed" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/passed> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:failed a skos:Concept ;
+    rdfs:label "failed" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/failed> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:launched a skos:Concept ;
+    rdfs:label "launched" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/launched> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:initialized a skos:Concept ;
+    rdfs:label "initialized" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/initialized> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:attended a skos:Concept ;
+    rdfs:label "attended" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/attended> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:experienced a skos:Concept ;
+    rdfs:label "experienced" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/experienced> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:suspended a skos:Concept ;
+    rdfs:label "suspended" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/suspended> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:resumed a skos:Concept ;
+    rdfs:label "resumed" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/resumed> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:terminated a skos:Concept ;
+    rdfs:label "terminated" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/terminated> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:abandoned a skos:Concept ;
+    rdfs:label "abandoned" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <https://w3id.org/xapi/adl/verbs/abandoned> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:scored a skos:Concept ;
+    rdfs:label "scored" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/scored> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:mastered a skos:Concept ;
+    rdfs:label "mastered" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/mastered> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:registered a skos:Concept ;
+    rdfs:label "registered" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/registered> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:waived a skos:Concept ;
+    rdfs:label "waived" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <https://w3id.org/xapi/adl/verbs/waived> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:satisfied a skos:Concept ;
+    rdfs:label "satisfied" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <https://w3id.org/xapi/adl/verbs/satisfied> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:assessed a skos:Concept ;
+    rdfs:label "assessed" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:contextualized a skos:Concept ;
+    rdfs:label "contextualized" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:located a skos:Concept ;
+    rdfs:label "located" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:asserted a skos:Concept ;
+    rdfs:label "asserted" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:validated a skos:Concept ;
+    rdfs:label "validated" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:inferred a skos:Concept ;
+    rdfs:label "inferred" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:qualified a skos:Concept ;
+    rdfs:label "qualified" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:verified a skos:Concept ;
+    rdfs:label "verified" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:conferred a skos:Concept ;
+    rdfs:label "conferred" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:recommended a skos:Concept ;
+    rdfs:label "recommended" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:prioritized a skos:Concept ;
+    rdfs:label "prioritized" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:organized a skos:Concept ;
+    rdfs:label "organized" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:projected a skos:Concept ;
+    rdfs:label "projected" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:planned a skos:Concept ;
+    rdfs:label "planned" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:deselected a skos:Concept ;
+    rdfs:label "deselected" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:requested a skos:Concept ;
+    rdfs:label "requested" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:approved a skos:Concept ;
+    rdfs:label "approved" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:augmented a skos:Concept ;
+    rdfs:label "augmented" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:explored a skos:Concept ;
+    rdfs:label "explored" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:clarified a skos:Concept ;
+    rdfs:label "clarified" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:directed a skos:Concept ;
+    rdfs:label "directed" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:scheduled a skos:Concept ;
+    rdfs:label "scheduled" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:recruited a skos:Concept ;
+    rdfs:label "recruited" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:appraised a skos:Concept ;
+    rdfs:label "appraised" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:detailed a skos:Concept ;
+    rdfs:label "detailed" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:mobilized a skos:Concept ;
+    rdfs:label "mobilized" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:employed a skos:Concept ;
+    rdfs:label "employed" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:schooled a skos:Concept ;
+    rdfs:label "schooled" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:promoted a skos:Concept ;
+    rdfs:label "promoted" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:screened a skos:Concept ;
+    rdfs:label "screened" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:selected a skos:Concept ;
+    rdfs:label "selected" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:transitioned a skos:Concept ;
+    rdfs:label "transitioned" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:released a skos:Concept ;
+    rdfs:label "released" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:restricted a skos:Concept ;
+    rdfs:label "restricted" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:voided a skos:Concept ;
+    rdfs:label "voided" ;
+    ler:construction "concept" ;
+    skos:inScheme tla:MOMVerbScheme ;
+    skos:closeMatch <http://adlnet.gov/expapi/verbs/voided> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/activity> a skos:Concept ;
+    rdfs:label "activity" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/assessment> a skos:Concept ;
+    rdfs:label "assessment" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/competency> a skos:Concept ;
+    rdfs:label "competency" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/activity_cluster> a skos:Concept ;
+    rdfs:label "activity_cluster" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/career> a skos:Concept ;
+    rdfs:label "career" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/badge> a skos:Concept ;
+    rdfs:label "badge" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/job> a skos:Concept ;
+    rdfs:label "job" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/credential> a skos:Concept ;
+    rdfs:label "credential" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/job_duty_gig> a skos:Concept ;
+    rdfs:label "job_duty_gig" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/career_state> a skos:Concept ;
+    rdfs:label "career_state" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/rank> a skos:Concept ;
+    rdfs:label "rank" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/learner> a skos:Concept ;
+    rdfs:label "learner" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/evidence> a skos:Concept ;
+    rdfs:label "evidence" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/confidence> a skos:Concept ;
+    rdfs:label "confidence" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/instance> a skos:Concept ;
+    rdfs:label "instance" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/due_date> a skos:Concept ;
+    rdfs:label "due_date" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/location> a skos:Concept ;
+    rdfs:label "location" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/unit_identification_code> a skos:Concept ;
+    rdfs:label "unit_identification_code" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/permanent_change_of_station> a skos:Concept ;
+    rdfs:label "permanent_change_of_station" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/restriction> a skos:Concept ;
+    rdfs:label "restriction" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/reason> a skos:Concept ;
+    rdfs:label "reason" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/recommendation_order> a skos:Concept ;
+    rdfs:label "recommendation_order" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/expiration> a skos:Concept ;
+    rdfs:label "expiration" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:PerformanceProficiencyFramework a tla:CompetencyFramework , skos:ConceptScheme ;
+    rdfs:label "Foxxi Production-Performance Proficiency Framework" ;
+    rdfs:comment "A published proficiency scale for on-the-job production performance, using the Dreyfus five-stage model of skill acquisition. The tla:Level individuals below are the dereferenceable scale an ELR competency assertion is measured against (ler:atProficiency)." ;
+    dct:source "Dreyfus, S.E. & Dreyfus, H.L. (1980) — A Five-Stage Model of the Mental Activities Involved in Directed Skill Acquisition" ;
+    ler:construction "minted" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LevelNovice a tla:Level , ler:ProficiencyLevel , skos:Concept ;
+    rdfs:label "Novice" ;
+    rdfs:comment "Rule-bound, relies on instruction. Inferred from training completion only — not yet demonstrated in production." ;
+    skos:inScheme tla:PerformanceProficiencyFramework ;
+    skos:notation "1" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LevelAdvancedBeginner a tla:Level , ler:ProficiencyLevel , skos:Concept ;
+    rdfs:label "Advanced Beginner" ;
+    rdfs:comment "Has demonstrated the competency in production at least once with an asserted successful outcome; limited situational judgment." ;
+    skos:inScheme tla:PerformanceProficiencyFramework ;
+    skos:notation "2" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LevelCompetent a tla:Level , ler:ProficiencyLevel , skos:Concept ;
+    rdfs:label "Competent" ;
+    rdfs:comment "Consistent successful production performance over a meaningful sample; plans deliberately and handles the typical case." ;
+    skos:inScheme tla:PerformanceProficiencyFramework ;
+    skos:notation "3" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LevelProficient a tla:Level , ler:ProficiencyLevel , skos:Concept ;
+    rdfs:label "Proficient" ;
+    rdfs:comment "Reliable, high-quality production performance across many executions; perceives situations holistically." ;
+    skos:inScheme tla:PerformanceProficiencyFramework ;
+    skos:notation "4" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:LevelExpert a tla:Level , ler:ProficiencyLevel , skos:Concept ;
+    rdfs:label "Expert" ;
+    rdfs:comment "Sustained, near-flawless, high-quality production performance at scale; fluid, intuitive mastery." ;
+    skos:inScheme tla:PerformanceProficiencyFramework ;
+    skos:notation "5" ;
+    ler:construction "concept" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
+
+tla:PerformanceProficiencyRollupRule a tla:RollupRule ;
+    rdfs:label "Production-performance proficiency roll-up rule" ;
+    rdfs:comment "Maps a subject's production-performance evidence to a proficiency level in the Foxxi Production-Performance Proficiency Framework, with a confidence. Cited by every performance-basis ler:CompetencyAssertion the ELR emits." ;
+    tla:rollupRule "Given production performance evidence (n executions carrying an asserted outcome, k successes, mean scored quality q in 0..1): reliability is the Wilson score interval lower bound (z=1.96) on k/n, which rises with evidence and FALLS when a failure is added — so it carries both how often the work succeeded and how much of it there is, and no separate execution count is gated on. Expert if reliability>=0.75 and mean quality q is recorded and q>=0.85; Proficient if reliability>=0.6 and mean quality q is recorded and q>=0.7; Competent if reliability>=0.4; Advanced Beginner if k>=1; else Novice. Quality is a FLOOR, not a scale: every value at or above a band's floor ranks alike. A verified credential with no production evidence maps to Competent; training completion only maps to Novice (Hypothetical). The reported confidence IS the reliability above. This rule is DATA: it is parsed at runtime from docs/ns/adl-tla-proficiency.ttl, and this sentence is generated from the same triples the evaluator walks." ;
+    skos:inScheme tla:PerformanceProficiencyFramework ;
+    ler:construction "minted" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .

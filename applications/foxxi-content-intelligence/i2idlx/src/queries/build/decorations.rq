@@ -1,0 +1,83 @@
+# I2IDL-X decorator projection — the executable form of i2x:registry.
+#
+# Input:  the I2IDL glossary graph ∪ the I2IDL-X catalog graph.
+# Output: per concept, concrete (strictly followable) affordances whose hydra:target is a
+#         real id.i2idl.org / www.i2idl.org URL. The neighborhood control embeds the
+#         catalog's own stored query (cat:q-concept-neighborhood) with $concept bound,
+#         so the projection is a function of (glossary × catalog) and nothing else.
+# Engines: any SPARQL 1.1 engine (needs IRI, CONCAT, REPLACE, ENCODE_FOR_URI). Not a
+#         SHACL TripleRule because TripleRules cannot construct strings.
+
+PREFIX i2x:   <{{NS}}>
+PREFIX cat:   <{{CATALOG}}#>
+PREFIX iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#>
+PREFIX ieh:   <https://markjspivey-xwisee.github.io/interego/ns/harness#>
+PREFIX hydra: <http://www.w3.org/ns/hydra/core#>
+PREFIX dcat:  <http://www.w3.org/ns/dcat#>
+PREFIX skos:  <http://www.w3.org/2004/02/skos/core#>
+PREFIX dct:   <http://purl.org/dc/terms/>
+PREFIX gs:    <https://glossarystudio.app/ns/>
+PREFIX rdfs:  <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX prov:  <http://www.w3.org/ns/prov#>
+
+CONSTRUCT {
+  ?c iep:affordance ?aTtl , ?aJson , ?aDef , ?aNbr , ?aHuman .
+
+  ?aTtl a iep:Affordance , ieh:DecoratedAffordance , hydra:Operation ;
+      hydra:title ?tlTtl ; iep:action ?aTtl ; skos:broadMatch i2x:act-resolve-concept ; ieh:affordanceType "resolve-concept" ;
+      hydra:target ?uTtl ; hydra:method "GET" ; dcat:mediaType "text/turtle" ;
+      ieh:decoratorId "i2idlx.resolve" ; prov:wasDerivedFrom cat:tmpl-concept-turtle ;
+      iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true .
+
+  ?aJson a iep:Affordance , ieh:DecoratedAffordance , hydra:Operation ;
+      hydra:title ?tlJson ; iep:action ?aJson ; skos:broadMatch i2x:act-resolve-concept-jsonld ; ieh:affordanceType "resolve-concept-jsonld" ;
+      hydra:target ?uJson ; hydra:method "GET" ; dcat:mediaType "application/ld+json" ;
+      ieh:decoratorId "i2idlx.resolve" ; prov:wasDerivedFrom cat:tmpl-concept-jsonld ;
+      iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true .
+
+  ?aDef a iep:Affordance , ieh:DecoratedAffordance , hydra:Operation ;
+      hydra:title ?tlDef ; iep:action ?aDef ; skos:broadMatch i2x:act-resolve-definition ; ieh:affordanceType "resolve-definition" ;
+      hydra:target ?uDef ; hydra:method "GET" ; dcat:mediaType "text/turtle" ;
+      ieh:decoratorId "i2idlx.resolve" ; prov:wasDerivedFrom cat:tmpl-definition ;
+      iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true .
+
+  ?aNbr a iep:Affordance , ieh:DecoratedAffordance , hydra:Operation ;
+      hydra:title ?tlNbr ; iep:action ?aNbr ; skos:broadMatch i2x:act-concept-neighborhood ; ieh:affordanceType "concept-neighborhood" ;
+      hydra:target ?uNbr ; hydra:method "GET" ; dcat:mediaType "text/turtle" ;
+      ieh:decoratorId "i2idlx.neighborhood" ; prov:wasDerivedFrom cat:q-concept-neighborhood ;
+      dcat:accessService cat:sparql-service ; iep:reads cat:store-i2idl ;
+      iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true .
+
+  ?aHuman a iep:Affordance , ieh:DecoratedAffordance , hydra:Operation ;
+      hydra:title ?tlHuman ; iep:action ?aHuman ; skos:broadMatch i2x:act-open-concept-card ; ieh:affordanceType "open-concept-card" ;
+      hydra:target ?uHuman ; hydra:method "GET" ; dcat:mediaType "text/html" ;
+      ieh:decoratorId "i2idlx.human" ; prov:wasDerivedFrom cat:tmpl-human ;
+      iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true .
+}
+WHERE {
+  cat:q-concept-neighborhood i2x:sparql ?nq .
+  ?c a skos:Concept ;
+     skos:inScheme <https://id.i2idl.org/scheme> ;
+     dct:identifier ?id ;
+     skos:prefLabel ?label ;
+     gs:activeDefinition ?def .
+
+  BIND ( IRI(CONCAT("{{DECOR}}#", STR(?id), "--resolve"))      AS ?aTtl )
+  BIND ( IRI(CONCAT("{{DECOR}}#", STR(?id), "--resolve-json")) AS ?aJson )
+  BIND ( IRI(CONCAT("{{DECOR}}#", STR(?id), "--definition"))   AS ?aDef )
+  BIND ( IRI(CONCAT("{{DECOR}}#", STR(?id), "--neighborhood")) AS ?aNbr )
+  BIND ( IRI(CONCAT("{{DECOR}}#", STR(?id), "--card"))         AS ?aHuman )
+
+  BIND ( IRI(CONCAT(STR(?c), ".ttl"))    AS ?uTtl )
+  BIND ( IRI(CONCAT(STR(?c), ".jsonld")) AS ?uJson )
+  BIND ( IRI(CONCAT(STR(?def), ".ttl"))  AS ?uDef )
+  BIND ( IRI(CONCAT("https://id.i2idl.org/sparql?query=",
+                    ENCODE_FOR_URI(REPLACE(STR(?nq), "[$]concept", CONCAT("<", STR(?c), ">"))))) AS ?uNbr )
+  BIND ( IRI(CONCAT("https://www.i2idl.org/glossary#", STR(?id))) AS ?uHuman )
+
+  BIND ( CONCAT("Resolve '", STR(?label), "' (Turtle)")              AS ?tlTtl )
+  BIND ( CONCAT("Resolve '", STR(?label), "' (JSON-LD)")             AS ?tlJson )
+  BIND ( CONCAT("Definition and evidence for '", STR(?label), "'")   AS ?tlDef )
+  BIND ( CONCAT("Semantic neighborhood of '", STR(?label), "'")      AS ?tlNbr )
+  BIND ( CONCAT("Open the card for '", STR(?label), "'")             AS ?tlHuman )
+}

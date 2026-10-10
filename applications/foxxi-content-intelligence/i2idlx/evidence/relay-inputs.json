@@ -1,0 +1,1362 @@
+{
+ "act": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/act/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "action": {
+    "type": "string"
+   },
+   "action_iri": {
+    "type": "string"
+   },
+   "authorization": {
+    "type": "string"
+   },
+   "descriptor_url": {
+    "type": "string"
+   },
+   "media_type": {
+    "type": "string"
+   },
+   "method": {
+    "enum": [
+     "GET",
+     "POST",
+     "PUT",
+     "PATCH",
+     "DELETE"
+    ],
+    "type": "string"
+   },
+   "payload": {
+    "description": "For AMEP acts, a full amep:Exchange envelope (see the tool description). For other affordances, the JSON body the target expects."
+   },
+   "sign_payload": {
+    "description": "Compose sign_request with this descriptor-resolved act using the authenticated session identity. Relay-mediated signature; not a client-held key. Requires descriptor_url and action_iri.",
+    "type": "boolean"
+   },
+   "target": {
+    "type": "string"
+   }
+  },
+  "title": "act — request body",
+  "type": "object"
+ },
+ "add_pod": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/add_pod/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "label": {
+    "description": "Human-readable label. Free text you are writing about someone else's pod",
+    "type": "string"
+   },
+   "owner": {
+    "description": "Who you believe owns the pod. Free text, NOT verified and NOT identity: a did:web spelled here is reported to every reader as `claimedAgent` — never as the row's `agent` — and on a row nothing else identifies it also sets `identifiedBy: \"unverified owner claim\"`. On a row this relay already identified, the claim is shown beside the identity it disagrees with, which does not become yours",
+    "type": "string"
+   },
+   "pod_url": {
+    "description": "Pod URL to add",
+    "type": "string"
+   }
+  },
+  "required": [
+   "pod_url"
+  ],
+  "title": "add_pod — request body",
+  "type": "object"
+ },
+ "analyze_question": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/analyze_question/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "question": {
+    "description": "The question to analyze",
+    "type": "string"
+   },
+   "session_content": {
+    "description": "Optional session content to check for abstention (are the question entities present?)",
+    "type": "string"
+   }
+  },
+  "required": [
+   "question"
+  ],
+  "title": "analyze_question — request body",
+  "type": "object"
+ },
+ "check_balance": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/check_balance/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "address": {
+    "description": "Wallet address to check (default: the relay's compliance wallet)",
+    "type": "string"
+   }
+  },
+  "title": "check_balance — request body",
+  "type": "object"
+ },
+ "compose": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/compose/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "descriptors": {
+    "description": "Inline Context Descriptor objects — NOT IRIs. Each needs { id, describes: [graph IRIs], facets: [facet objects] }.",
+    "items": {
+     "additionalProperties": true,
+     "properties": {
+      "describes": {
+       "description": "Named-graph IRIs this descriptor is about.",
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "facets": {
+       "description": "Facet objects, each with a `type`.",
+       "items": {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       "type": "array"
+      },
+      "id": {
+       "description": "This descriptor's IRI.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "id",
+      "describes",
+      "facets"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "operator": {
+    "enum": [
+     "union",
+     "intersection",
+     "restriction",
+     "override"
+    ],
+    "type": "string"
+   },
+   "types": {
+    "description": "Required for `restriction`: the facet types to project onto.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "descriptors",
+   "operator"
+  ],
+  "title": "compose — request body",
+  "type": "object"
+ },
+ "decompose": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/decompose/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "iri": {
+    "type": "string"
+   }
+  },
+  "required": [
+   "iri"
+  ],
+  "title": "decompose — request body",
+  "type": "object"
+ },
+ "dereference": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/dereference/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "decorate_manifest": {
+    "description": "Decorate manifest entries with affordances (default true). Each decorated entry costs a descriptor fetch, so `false` makes this one HTTP request total.",
+    "type": "boolean"
+   },
+   "iri": {
+    "description": "IRI to resolve.",
+    "type": "string"
+   },
+   "limit": {
+    "description": "Maximum manifest entries to return (deployment default 200). The bound is applied BEFORE decoration, so it cuts the per-entry fetches too. A partial result says so: manifestPartial:true with manifestTotalEntries.",
+    "type": "integer"
+   }
+  },
+  "required": [
+   "iri"
+  ],
+  "title": "dereference — request body",
+  "type": "object"
+ },
+ "discover_all": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/discover_all/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "effective_at": {
+    "description": "Filter: descriptors currently valid at the given instant.",
+    "type": "string"
+   },
+   "facet_type": {
+    "description": "Filter by facet type",
+    "enum": [
+     "Temporal",
+     "Provenance",
+     "Agent",
+     "Semiotic",
+     "Trust",
+     "Federation"
+    ],
+    "type": "string"
+   },
+   "graph_iri": {
+    "description": "Narrow to descriptors mentioning this urn:graph:* IRI in their iep:describes set. Applied per pod, server-side.",
+    "type": "string"
+   },
+   "limit": {
+    "description": "Cap result count per pod. Default: unbounded.",
+    "minimum": 0,
+    "type": "integer"
+   },
+   "sort": {
+    "description": "Sort order per pod. Default: \"newest-first\".",
+    "enum": [
+     "newest-first",
+     "oldest-first",
+     "unsorted"
+    ],
+    "type": "string"
+   },
+   "valid_from": {
+    "description": "Filter: valid at or after this ISO datetime",
+    "type": "string"
+   },
+   "valid_until": {
+    "description": "Filter: valid at or before this ISO datetime",
+    "type": "string"
+   }
+  },
+  "title": "discover_all — request body",
+  "type": "object"
+ },
+ "discover_context": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/discover_context/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "effective_at": {
+    "description": "Filter: descriptors that are currently valid at the given instant (validFrom <= T AND (validUntil >= T OR validUntil absent)). The \"currently-valid-at-time-T\" semantic — distinct from valid_from/valid_until which only filter on the endpoints.",
+    "type": "string"
+   },
+   "facet_type": {
+    "description": "Filter by facet type",
+    "enum": [
+     "Temporal",
+     "Provenance",
+     "Agent",
+     "Semiotic",
+     "Trust",
+     "Federation"
+    ],
+    "type": "string"
+   },
+   "graph_iri": {
+    "description": "Narrow to descriptors that mention this urn:graph:* IRI in their iep:describes set. Server-side filter — avoids fetching+truncating the full manifest. If you only want the LIVE HEAD descriptor for this IRI (not the whole lineage), prefer `get_current_head`.",
+    "type": "string"
+   },
+   "limit": {
+    "description": "Cap result count. Combined with sort, gives the \"latest N descriptors\" affordance. Default: unbounded.",
+    "minimum": 0,
+    "type": "integer"
+   },
+   "pod_name": {
+    "description": "The same pod spelled as a name on the relay's CSS_URL. HONOURED: it selects the pod discovered from. The answer carries `pod`.",
+    "type": "string"
+   },
+   "pod_url": {
+    "description": "Solid pod URL to discover from (e.g. https://pod.example.com/agent/). Defaults to the authenticated caller's own pod. Provide this OR pod_name — naming two different pods is refused.",
+    "type": "string"
+   },
+   "sort": {
+    "description": "Sort order applied after filters. Default: \"newest-first\" (largest validFrom first) — matches the typical \"find what just landed\" workflow.",
+    "enum": [
+     "newest-first",
+     "oldest-first",
+     "unsorted"
+    ],
+    "type": "string"
+   },
+   "valid_from": {
+    "description": "Filter: valid at or after this ISO datetime",
+    "type": "string"
+   },
+   "valid_until": {
+    "description": "Filter: valid at or before this ISO datetime",
+    "type": "string"
+   },
+   "verify_delegation": {
+    "description": "If true, also fetch the agent registry to verify delegation",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "pod_url"
+  ],
+  "title": "discover_context — request body",
+  "type": "object"
+ },
+ "discover_directory": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/discover_directory/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "directory_url": {
+    "description": "URL of a Turtle-encoded PodDirectory graph",
+    "type": "string"
+   }
+  },
+  "required": [
+   "directory_url"
+  ],
+  "title": "discover_directory — request body",
+  "type": "object"
+ },
+ "extend": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/extend/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "part": {
+    "additionalProperties": true,
+    "type": "object"
+   },
+   "preserve_witness": {
+    "type": "boolean"
+   },
+   "whole": {
+    "additionalProperties": true,
+    "type": "object"
+   }
+  },
+  "required": [
+   "part",
+   "whole"
+  ],
+  "title": "extend — request body",
+  "type": "object"
+ },
+ "get_current_head": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/get_current_head/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+   {
+    "required": [
+     "urn"
+    ]
+   },
+   {
+    "required": [
+     "graph_iri"
+    ]
+   }
+  ],
+  "properties": {
+   "graph_iri": {
+    "description": "Alias for `urn`, matching discover_context's name for the same value. Supply one or the other.",
+    "type": "string"
+   },
+   "pod_name": {
+    "description": "The same pod spelled as a name on the relay's CSS_URL. HONOURED: it selects the pod whose chain head is resolved. (It previously lost to the relay's own pod_url auto-fill on every /mcp call, so this contract could not be kept.) The answer carries `podUrl`.",
+    "type": "string"
+   },
+   "pod_url": {
+    "description": "Pod URL. Defaults to the authenticated caller's own pod. Provide this OR pod_name — naming two different pods is refused rather than resolved to one of them.",
+    "type": "string"
+   },
+   "urn": {
+    "description": "The urn:graph:* IRI whose current chain head is being resolved. `graph_iri` is accepted as an alias — discover_context spells the same value that way, and the publish 412 retryHint sends callers here.",
+    "type": "string"
+   }
+  },
+  "title": "get_current_head — request body",
+  "type": "object"
+ },
+ "get_descriptor": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/get_descriptor/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "url": {
+    "description": "Full URL of the descriptor resource (ends in .ttl). If you don't have the URL yet but know the urn:graph IRI it describes, call get_current_head first.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "url"
+  ],
+  "title": "get_descriptor — request body",
+  "type": "object"
+ },
+ "get_encrypted_graph": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/get_encrypted_graph/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "url": {
+    "description": "Full URL of the descriptor whose graph payload you want sealed bytes for.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "url"
+  ],
+  "title": "get_encrypted_graph — request body",
+  "type": "object"
+ },
+ "get_pod_status": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/get_pod_status/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "pod_name": {
+    "description": "The same pod spelled as a name on the relay's CSS_URL. HONOURED: it selects the pod whose status is reported. The answer carries `pod`.",
+    "type": "string"
+   },
+   "pod_url": {
+    "description": "Pod URL (default: home pod for authenticated user). Provide this OR pod_name — naming two different pods is refused.",
+    "type": "string"
+   }
+  },
+  "title": "get_pod_status — request body",
+  "type": "object"
+ },
+ "interrogative_route": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/interrogative_route/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "all": {
+    "description": "Project all eleven interrogatives (only honored when neither `question` nor `interrogatives` is given).",
+    "type": "boolean"
+   },
+   "bypass_cache": {
+    "description": "Bypass the descriptor body cache.",
+    "type": "boolean"
+   },
+   "interrogatives": {
+    "description": "Explicit interrogative(s), e.g. [\"Who\",\"When\"] — bypasses NL classification. One or more of: Who, What, Where, When, Why, How, Which, WhatKind, HowMuch, Whose, Whether.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "question": {
+    "description": "Natural-language question; lexically classified into interrogative type(s).",
+    "type": "string"
+   },
+   "target": {
+    "description": "Alias for `url`.",
+    "type": "string"
+   },
+   "url": {
+    "description": "Descriptor .ttl URL to interrogate (REQUIRED; `target` is an alias). Routed through the same fetch/decrypt/cache/auth path as get_descriptor. Pick one via discover_context / discover_all first.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "url"
+  ],
+  "title": "interrogative_route — request body",
+  "type": "object"
+ },
+ "invoke_affordance": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/invoke_affordance/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "action_iri": {
+    "description": "The iep:action IRI of the affordance to invoke, as the descriptor's iep:Affordance block declares it. Discover available actions via discover_context + get_descriptor.",
+    "type": "string"
+   },
+   "authorization": {
+    "description": "Optional Authorization header value to forward (e.g., Bearer <token>). Use when the target requires auth. The relay caller's own bearer token is NOT auto-forwarded — supply it explicitly if needed.",
+    "type": "string"
+   },
+   "descriptor_url": {
+    "description": "Descriptor URL or derived resource reference containing the affordance. Use the exact reference returned by discovery or a resource view.",
+    "type": "string"
+   },
+   "payload": {
+    "additionalProperties": true,
+    "description": "Arguments to POST to the affordance target. Shape depends on the specific affordance — read the descriptor or the affordance's inputs metadata to learn what fields are required.",
+    "type": "object"
+   }
+  },
+  "required": [
+   "descriptor_url",
+   "action_iri",
+   "payload"
+  ],
+  "title": "invoke_affordance — request body",
+  "type": "object"
+ },
+ "link_wallet": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/link_wallet/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "signature": {
+    "description": "SIWE signature (0x...) — if you already signed offline. Omit to get the message to sign.",
+    "type": "string"
+   },
+   "wallet_address": {
+    "description": "Your Ethereum wallet address (0x...)",
+    "type": "string"
+   }
+  },
+  "required": [
+   "wallet_address"
+  ],
+  "title": "link_wallet — request body",
+  "type": "object"
+ },
+ "list_declared_shapes": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/list_declared_shapes/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {},
+  "title": "list_declared_shapes — request body",
+  "type": "object"
+ },
+ "list_known_pods": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/list_known_pods/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {},
+  "title": "list_known_pods — request body",
+  "type": "object"
+ },
+ "mint": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/mint/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "content": {
+    "description": "Value (atom), list (fragment), descriptor JSON, or any value (opaque)."
+   },
+   "kind": {
+    "description": "Substrate kind (default: atom).",
+    "enum": [
+     "atom",
+     "fragment",
+     "descriptor",
+     "opaque"
+    ],
+    "type": "string"
+   }
+  },
+  "required": [
+   "content"
+  ],
+  "title": "mint — request body",
+  "type": "object"
+ },
+ "notify_agent": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/notify_agent/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "about": {
+    "description": "Optional IRI this is about (a finding, resolution, descriptor, or graph).",
+    "type": "string"
+   },
+   "content": {
+    "description": "The message body. OPTIONAL IN THIS SCHEMA AND NOT OPTIONAL IN THE CONTRACT: every notification this relay writes is validated against iep:NotificationBodyShape, published at https://markjspivey-xwisee.github.io/interego/ns/iep, and a message whose summary says the detail travels with it is refused unless the detail is here or `about` names an IRI where it is. Dereference the shape for the rule itself — this sentence is a pointer to it, not a copy of it. A summary-only notification is legitimate and is not selected by the shape.",
+    "type": "string"
+   },
+   "in_reply_to": {
+    "description": "Optional IRI this notification replies to.",
+    "type": "string"
+   },
+   "summary": {
+    "description": "One-line summary (shows in inbox previews).",
+    "type": "string"
+   },
+   "to": {
+    "description": "Recipient. PREFER THE FOLLOWED FORM: take the row you mean from list_known_pods and send its `affordances` entry's `arguments` verbatim — `to` is already bound to an https address this relay minted for THAT row, which you can GET to see whose it is before sending. It is the only form whose receipt reports `resolvedVia: \"followed-affordance\"`, and this relay returns that route only for a recipient it identified, so `recipientKnown: true` comes with it. A row with no `affordances` has no such address. A DID, pod id or acct: handle you compose yourself is still accepted, as is a pod URL on this deployment's store written as the pod ROOT (\"<store>/<pod>/\"), its inbox (\"<store>/<pod>/inbox/\") or its WebID (\"<store>/<pod>/profile/card#me\"). Any other path on this store, and any target on another origin, is REFUSED with a receipt naming those forms — this relay no longer shortens an address to the part of it that names some container here, which is how a message addressed to \"<store>/team/<pod>/\" was reported `delivered: true` after being written to \"<store>/team/inbox/\". And note that a well-formed address for the wrong agent satisfies this schema too, which is how findings have been delivered to the wrong inbox with `delivered: true`.",
+    "type": "string"
+   },
+   "type": {
+    "description": "ActivityStreams type: Create (default), Announce, Offer, Question, Update.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "to",
+   "summary"
+  ],
+  "title": "notify_agent — request body",
+  "type": "object"
+ },
+ "pgsl_decide": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_decide/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "agent_id": {
+    "description": "The calling agent's identity (used as the agent slot in the decision functor's observation section). Default: derived from auth context.",
+    "type": "string"
+   },
+   "certificates": {
+    "description": "Optional coherence certificates from prior pgsl_meet calls. Without them the functor returns \"explore\" (which is the right move when coherence is unknown).",
+    "items": {
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "title": "pgsl_decide — request body",
+  "type": "object"
+ },
+ "pgsl_ingest": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_ingest/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "content": {
+    "description": "Text content to ingest into the lattice",
+    "type": "string"
+   },
+   "publish_to_pod": {
+    "description": "Also publish as a context descriptor to the pod (default: false)",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "content"
+  ],
+  "title": "pgsl_ingest — request body",
+  "type": "object"
+ },
+ "pgsl_lattice_status": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_lattice_status/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {},
+  "title": "pgsl_lattice_status — request body",
+  "type": "object"
+ },
+ "pgsl_meet": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_meet/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "uri_a": {
+    "description": "First PGSL fragment URI",
+    "type": "string"
+   },
+   "uri_b": {
+    "description": "Second PGSL fragment URI",
+    "type": "string"
+   }
+  },
+  "required": [
+   "uri_a",
+   "uri_b"
+  ],
+  "title": "pgsl_meet — request body",
+  "type": "object"
+ },
+ "pgsl_resolve": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_resolve/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "uri": {
+    "description": "PGSL URI to resolve (urn:pgsl:atom:... or urn:pgsl:fragment:...)",
+    "type": "string"
+   }
+  },
+  "required": [
+   "uri"
+  ],
+  "title": "pgsl_resolve — request body",
+  "type": "object"
+ },
+ "pgsl_to_turtle": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_to_turtle/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {},
+  "title": "pgsl_to_turtle — request body",
+  "type": "object"
+ },
+ "promote": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/promote/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "atoms": {
+    "description": "Values or PGSL atom IRIs.",
+    "items": {},
+    "type": "array"
+   }
+  },
+  "required": [
+   "atoms"
+  ],
+  "title": "promote — request body",
+  "type": "object"
+ },
+ "publish_context": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/publish_context/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "examples": [
+   {
+    "graph_content": "<urn:graph:markj:public:about> a <https://schema.org/AboutPage> ; <http://purl.org/dc/terms/title> \"About me\" .",
+    "graph_iri": "urn:graph:markj:public:about",
+    "visibility": "public"
+   },
+   {
+    "graph_content": "<urn:graph:markj:notes:20260605> <http://purl.org/dc/terms/description> \"Team-internal note.\" .",
+    "graph_iri": "urn:graph:markj:notes:20260605",
+    "share_with": [
+     "did:web:alice.example"
+    ],
+    "visibility": "shared"
+   },
+   {
+    "graph_content": "<urn:graph:markj:scratchpad:20260605> <http://purl.org/dc/terms/description> \"Personal scratch — author only.\" .",
+    "graph_iri": "urn:graph:markj:scratchpad:20260605",
+    "visibility": "private"
+   }
+  ],
+  "properties": {
+   "agent_did": {
+    "description": "Optional DID for the calling agent. When present and sign_authorship is true, the DID is included in the canonical authorship payload (so verifiers have a resolution hint without an extra round-trip).",
+    "type": "string"
+   },
+   "auto_supersede_prior": {
+    "description": "When true (default), automatically add iep:supersedes links to any prior descriptor on this pod that describes the same graph_iri. Makes republish-to-add-recipients cleanly mark the older version as superseded. Set to false to allow multiple coexisting descriptors for the same graph.",
+    "type": "boolean"
+   },
+   "cleartext_mirror": {
+    "description": "For sealed_payload: non-secret descriptor relationships extracted by the client, such as iep:supersedes, prov:wasDerivedFrom and dct:conformsTo. These metadata are visible to the relay. Do not put private payload content here. May be omitted when there are no relationships to mirror.",
+    "type": "string"
+   },
+   "compliance": {
+    "description": "When true, publish as compliance-grade evidence (regulatory audit trail). Upgrades iep:trustLevel to CryptographicallyVerified IF the calling agent's signed delegation chain verifies end-to-end (otherwise it stays SelfAsserted and the reason is logged), adds an operator-grade ECDSA signature over the whole descriptor turtle, and requires non-Hypothetical modal status. Response carries a complianceCheck report.",
+    "type": "boolean"
+   },
+   "compliance_framework": {
+    "description": "Optional regulatory framework this descriptor provides evidence for. The graph_content should cite the relevant control IRIs (e.g., soc2:CC6.1) so framework reports can aggregate.",
+    "enum": [
+     "eu-ai-act",
+     "nist-rmf",
+     "soc2"
+    ],
+    "type": "string"
+   },
+   "confidence": {
+    "description": "Epistemic confidence 0.0-1.0 (default: 0.85)",
+    "type": "number"
+   },
+   "conforms_to_shapes": {
+    "description": "Optional list of SHACL shape IRIs the plaintext MUST conform to. For sealed_payload, the relay cannot check encrypted plaintext: conformance.status is deferred-to-clients, no validation pass is asserted, and the publisher and recipients must validate locally. The following relay enforcement applies to unsealed input only. Each shape is fetched (text/turtle) and run against the payload BEFORE any pod write — non-conformance rejects with the same 422 envelope as the container-declared conformance gate ({ error: \"shape_violation\", code: 422, shape, violations: [...] }) and the descriptor + payload never land on the pod. Naming a document that FETCHES AND PARSES BUT DECLARES NO SHAPES is also a 422, carrying the constraint component iep:shapeDeclaresNoShapes: an ontology named where a shapes graph was meant would otherwise validate everything by validating nothing, and reported success is the wrong answer to \"enforce this contract\". The same document declared by the pod's own container is REPORTED rather than refused (conformance.unenforced, why: \"declares-no-shapes\"), because the pod owner is not the caller. Stacks on top of any iep:conformsTo / dct:conformsTo shapes the target container (or its manifest collection) already declares; ALL shapes (container-declared + caller-supplied) must conform — any one failing rejects. Use to enforce a per-publish shape contract from the MCP wire without relying on the pod's .well-known/container-shape file being present.",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "content_digest": {
+    "description": "For sealed_payload: the client-computed canonical graph digest of the plaintext. Required when sign_authorship is true. The relay records the publisher assertion; recipients verify the digest locally after decrypting.",
+    "type": "string"
+   },
+   "descriptor_id": {
+    "description": "Optional descriptor IRI (auto-generated if omitted)",
+    "type": "string"
+   },
+   "graph_content": {
+    "description": "RDF Turtle content, or the original encrypted envelope JSON when sealed_payload is true.",
+    "type": "string"
+   },
+   "graph_iri": {
+    "description": "IRI for the named graph, e.g. urn:graph:markj:session:20260418",
+    "type": "string"
+   },
+   "if_match": {
+    "description": "CAS precondition — the descriptor URL (https://.../foo.ttl) OR content-CID (bafkrei...) of the chain head this publish is meant to supersede. publish() resolves the current head for descriptor.supersedes and rejects with code 412 {currentHead, expected} if the assertion does not match what the pod currently holds. Use the `previousHeadCid` field returned by a prior publish_context (or call get_current_head first) as the next publish_context's if_match — that gives you atomic compare-and-swap on the supersession chain, preventing two concurrent writers from forking the chain into two competing HEADs.",
+    "type": "string"
+   },
+   "modal_status": {
+    "description": "Semiotic modal status (default: Asserted)",
+    "enum": [
+     "Asserted",
+     "Hypothetical",
+     "Counterfactual"
+    ],
+    "type": "string"
+   },
+   "pod_name": {
+    "description": "Pod name (default: the authenticated user's pod)",
+    "type": "string"
+   },
+   "sealed_payload": {
+    "description": "Set true when graph_content is an encrypted envelope already created by the client. The relay stores those ciphertext bytes unchanged. This is the existing client-sealed publishing path; default/false sends plaintext for relay-managed encryption. For end-to-end encryption, clients must hold the recipient private keys and seal before transport. visibility must not be public; choose all recipients before sealing because share_with cannot add recipients to a presealed envelope.",
+    "type": "boolean"
+   },
+   "share_with": {
+    "description": "For sealed_payload=true, recipients must already be in the envelope and this parameter cannot add them. For unsealed input: optional list of external identity handles (did:web:..., WebID URLs, or acct:user@host). Each is resolved to its pod, and their authorized agents' X25519 keys are added as recipients on the envelope — per-graph cross-pod sharing without any pod-level ACL change. Use to share a specific graph with another person while keeping your other graphs private. NOTE: only honored when visibility is \"shared\" (the default); ignored + warn-logged under \"public\" or \"private\".",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   },
+   "sign_authorship": {
+    "description": "When true, embed an agent-level iep:authorshipProof block in the descriptor turtle. The proof signs a canonical payload of (agentId, ownerWebId, descriptorId, created, agentDid?) with the relay's shared delegation key. This is a relay attestation about the authenticated caller, not a signature made by the caller's own credential. Verifiable from the descriptor ALONE: the verificationMethod (did:ethr:<addr>) lets a reader recover the public key without trusting pod storage. On dereference (get_descriptor), the relay automatically runs the verifier and returns { authorshipVerified, signedBy, verificationMethod, effectiveTrustLevel }. When BOTH the authorship proof AND the delegation chain verify, the EFFECTIVE trustLevel is CryptographicallyVerified even when the descriptor body ships TrustFacet.trustLevel = SelfAsserted. Default false to preserve SelfAsserted neutrality. Independent of `compliance` (the trust-facet operator-grade iep:proof block) — the two stack: a publish can carry both, neither, or either.",
+    "type": "boolean"
+   },
+   "valid_from": {
+    "description": "ISO 8601 start of validity (default: now)",
+    "type": "string"
+   },
+   "valid_until": {
+    "description": "ISO 8601 end of validity (optional)",
+    "type": "string"
+   },
+   "visibility": {
+    "description": "For sealed_payload=true, the client envelope alone determines who can decrypt; the relay preserves its audience and does not assert author inclusion. Public is incompatible with sealed input. For unsealed input: audience class for the published payload. Default \"shared\". \"public\" → no envelope; plaintext Turtle written to the pod; the descriptor + payload .acl grants acl:Read to acl:agentClass foaf:Agent — which in Web Access Control means ANYONE ON THE INTERNET, including unauthenticated readers. (The WAC term for logged-in-only is acl:AuthenticatedAgent; this is deliberately NOT that.) The content is written as plaintext Turtle with no envelope, and there is no unpublish. Descriptor advertises iep:visibility \"public\" and iep:encrypted false. Use ONLY for content the user has decided to disclose to the open web — wiki-style notes, jam:renderView projections. If in doubt, use \"shared\". \"shared\" (DEFAULT) → JOSE envelope wrapped to the pod's authorized agents + author's session-agent key + any share_with recipients — historical behavior, preserves wire compat. \"private\" → envelope to the author's session agent ONLY; even other authorized agents on the same pod cannot decrypt. Use for personal scratchpads. share_with is ignored under \"public\" and \"private\" (a warn is logged if it was supplied).",
+    "enum": [
+     "public",
+     "shared",
+     "private"
+    ],
+    "type": "string"
+   }
+  },
+  "required": [
+   "graph_iri",
+   "graph_content"
+  ],
+  "title": "publish_context — request body",
+  "type": "object"
+ },
+ "publish_directory": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/publish_directory/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "directory_id": {
+    "description": "Optional directory IRI",
+    "type": "string"
+   },
+   "pod_name": {
+    "description": "Pod name to publish to (default: authenticated user)",
+    "type": "string"
+   }
+  },
+  "title": "publish_directory — request body",
+  "type": "object"
+ },
+ "publish_node": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/publish_node/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "iri": {
+    "description": "A node id previously returned by mint/promote in this session, e.g. https://relay.interego.xwisee.com/ns/pgsl/atom/<40hex>",
+    "type": "string"
+   }
+  },
+  "required": [
+   "iri"
+  ],
+  "title": "publish_node — request body",
+  "type": "object"
+ },
+ "read_inbox": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/read_inbox/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "limit": {
+    "description": "Max notifications to return (default 50).",
+    "type": "integer"
+   },
+   "pod_url": {
+    "description": "Pod whose inbox to read. Defaults to your own pod.",
+    "type": "string"
+   }
+  },
+  "title": "read_inbox — request body",
+  "type": "object"
+ },
+ "rebuild_manifest": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/rebuild_manifest/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "pod_url": {
+    "description": "Pod whose manifest to rebuild. Defaults to your own pod.",
+    "type": "string"
+   }
+  },
+  "title": "rebuild_manifest — request body",
+  "type": "object"
+ },
+ "record_trajectory_step": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/record_trajectory_step/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "examples": [
+   {
+    "object_name": "iep:supersedes chain to head",
+    "verb": "walked"
+   },
+   {
+    "granularity": "task",
+    "modal_status": "Hypothetical",
+    "object_name": "rev5 supersession of rev4",
+    "verb": "planning"
+   },
+   {
+    "modal_status": "Asserted",
+    "object_name": "rev5 via signed+CAS",
+    "result_success": true,
+    "supersedes_step_id": "urn:iep:trajectory-step:johnny:1780851000000",
+    "verb": "published"
+   }
+  ],
+  "properties": {
+   "granularity": {
+    "description": "task (high-level goal), subtask (intermediate), tool-call (one tool invocation). Default: tool-call.",
+    "enum": [
+     "task",
+     "subtask",
+     "tool-call"
+    ],
+    "type": "string"
+   },
+   "modal_status": {
+    "description": "Asserted (default) for completed actions; Hypothetical for intent recorded BEFORE acting; Counterfactual to retract a prior step. Use Hypothetical+supersedes_step_id to flip plan→execute.",
+    "enum": [
+     "Asserted",
+     "Hypothetical",
+     "Counterfactual"
+    ],
+    "type": "string"
+   },
+   "object_name": {
+    "description": "What the agent did it to (e.g. \"move:4\", \"g3 agreement\", \"Phase A precondition\"). Combined with `verb` for verifier matching.",
+    "type": "string"
+   },
+   "parent_step_id": {
+    "description": "Optional URN of the parent step (for hierarchical decomposition: task → subtask → tool-call).",
+    "type": "string"
+   },
+   "result_note": {
+    "description": "Optional short description of the outcome.",
+    "type": "string"
+   },
+   "result_quality": {
+    "description": "Optional quality score in [0,1].",
+    "maximum": 1,
+    "minimum": 0,
+    "type": "number"
+   },
+   "result_success": {
+    "description": "Optional: did the action succeed?",
+    "type": "boolean"
+   },
+   "session_id": {
+    "description": "Optional grouping label. Default: \"default-YYYY-MM-DD\".",
+    "type": "string"
+   },
+   "sign_authorship": {
+    "description": "Default true (trajectory steps are evidence; readers need to verify the signer). Set false only for low-stakes scratch.",
+    "type": "boolean"
+   },
+   "supersedes_step_id": {
+    "description": "Optional URN of a step this one supersedes (use to flip a Hypothetical intent into an Asserted execution).",
+    "type": "string"
+   },
+   "verb": {
+    "description": "What the agent did (e.g. \"published\", \"verified\", \"supersededBoard\"). Combined with `object_name` for substring matching by verifyCapabilityTransfer.",
+    "type": "string"
+   },
+   "visibility": {
+    "description": "Default \"public\" — trajectory steps are discoverable evidence. Use \"private\" for sensitive ones.",
+    "enum": [
+     "public",
+     "shared",
+     "private"
+    ],
+    "type": "string"
+   },
+   "was_derived_from": {
+    "description": "Optional list of descriptor URLs/URNs this step drew on (prov:wasDerivedFrom).",
+    "items": {
+     "type": "string"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "verb",
+   "object_name"
+  ],
+  "title": "record_trajectory_step — request body",
+  "type": "object"
+ },
+ "reduce_chain": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/reduce_chain/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "chain_iri": {
+    "description": "Chain HEAD IRI — the most recent descriptor in the iep:supersedes chain. The fold walks back to the chain origin and applies the reducer left-to-right.",
+    "type": "string"
+   },
+   "checkpoint_every": {
+    "description": "Emit a state checkpoint every Nth link (default 8). Verifiers can short-circuit replay from the nearest checkpoint when partial trust is acceptable.",
+    "type": "number"
+   },
+   "max_chain": {
+    "description": "Maximum chain length to walk (default 64). Defense in depth against tampered cyclic chains; supersedes is normatively a DAG.",
+    "type": "number"
+   },
+   "reducer_iri": {
+    "description": "Optional reducer artifact IRI to dereference + apply. Body starting with sh:rule / sh:construct / sh:* is treated as a SHACL transform; otherwise as a Turtle template with `{?prior}` / `{?current}` placeholders.",
+    "type": "string"
+   },
+   "reducer_spec": {
+    "description": "Inline reducer spec. Wins over reducer_iri and over iep:reducer on the chain head when supplied. Shape: { kind: \"turtle-template\", template: \"<turtle>\" } OR { kind: \"shacl-transform\", shape: \"<shacl-turtle>\" }.",
+    "type": "object"
+   },
+   "traversal": {
+    "description": "How the walker reconstructs the chain from iep:supersedes back-links. \"shortest\" (default) follows the first iep:supersedes per link — fast and historical-compat. \"full\" walks every iep:supersedes branch transitively, then folds the union in canonical order (iep:validFrom ascending, descriptor-IRI lexical tiebreak). Use \"full\" for a complete lineage audit when auto_supersede_prior writes ALL priors per version — the ReplayProof's chainCids[] cover the entire DAG closure so independent verifiers reproduce the same head.",
+    "enum": [
+     "shortest",
+     "full"
+    ],
+    "type": "string"
+   }
+  },
+  "required": [
+   "chain_iri"
+  ],
+  "title": "reduce_chain — request body",
+  "type": "object"
+ },
+ "register_agent": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/register_agent/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "agent_id": {
+    "description": "Agent IRI, e.g. urn:agent:anthropic:claude-mobile:markj",
+    "type": "string"
+   },
+   "encryption_public_key": {
+    "description": "OPTIONAL base64 X25519 public key whose private half is held by this agent's client. Only the public half is registered. End-to-end encryption also requires the publisher to seal before sending, using sealed_payload; registering a key alone does not establish it. Read ciphertext with get_encrypted_graph and decrypt in the key-holding client. Omitting this key selects relay-managed key custody, which allows the relay to decrypt on the agent's behalf.",
+    "type": "string"
+   },
+   "label": {
+    "description": "Human-readable label for this agent",
+    "type": "string"
+   },
+   "owner_name": {
+    "description": "Owner display name",
+    "type": "string"
+   },
+   "owner_webid": {
+    "description": "Owner WebID (default: authenticated user)",
+    "type": "string"
+   },
+   "pod_name": {
+    "description": "Pod name (default: authenticated user's pod)",
+    "type": "string"
+   },
+   "scope": {
+    "description": "Delegation scope (default: ReadWrite). These are the four values the substrate has — ReadWrite and PublishOnly are the write-eligible ones; ReadOnly and DiscoverOnly are refused by publish_context with a 403 scope_violation naming the scope. The enum previously read [\"ReadWrite\",\"Read\"]: \"Read\" is not a delegation scope, and sending it stored DiscoverOnly while reporting success. Supplying this on an agent that is ALREADY registered RE-SCOPES it (the response reports `scope`, `rescoped` and `previousScope`); omitting it leaves an existing row untouched.",
+    "enum": [
+     "ReadWrite",
+     "ReadOnly",
+     "PublishOnly",
+     "DiscoverOnly"
+    ],
+    "type": "string"
+   },
+   "tenant_admin": {
+    "description": "Grant this agent the tenant-admin governance capability, folded into its SIGNED delegation VC (not the forgeable registry). Honored ONLY when pod_name is your own authenticated pod — a bare ReadWrite/pod-write delegate cannot self-grant. Lets a pod-delegated agent whose session wallet rotated act as tenant admin (ingest / assign / cohort analytics / enroll-others), audited as a distinct delegated-admin role. NOTE (intentional, by security policy): the capability lives ONLY in the signed VC, so a plain re-register / idempotent credential repair does NOT carry it forward — after a session-key ROTATION you must re-assert it by calling register_agent{tenant_admin:true} again. A rotated key must explicitly re-claim governance; it is never silently retained.",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "agent_id"
+  ],
+  "title": "register_agent — request body",
+  "type": "object"
+ },
+ "remember": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/remember/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "body": {
+    "description": "The note text (required). Plain prose; it becomes the memory's readable rung-1 content.",
+    "type": "string"
+   },
+   "title": {
+    "description": "Optional short title (schema:name).",
+    "type": "string"
+   },
+   "visibility": {
+    "description": "Default \"private\" — encrypted to your own agent only. \"shared\" = your pod's authorized agents. \"public\" = plaintext, world-readable.",
+    "enum": [
+     "private",
+     "shared",
+     "public"
+    ],
+    "type": "string"
+   }
+  },
+  "required": [
+   "body"
+  ],
+  "title": "remember — request body",
+  "type": "object"
+ },
+ "remove_pod": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/remove_pod/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "pod_url": {
+    "description": "Pod URL to remove. Refused unless the row is unidentified or the pod is your own — see the tool description",
+    "type": "string"
+   }
+  },
+  "required": [
+   "pod_url"
+  ],
+  "title": "remove_pod — request body",
+  "type": "object"
+ },
+ "render_hmd": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/render_hmd/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "descriptor_url": {
+    "description": "URL of the Context Descriptor or direct text/markdown resource to open in the viewer (the same URL you would pass to get_descriptor).",
+    "type": "string"
+   }
+  },
+  "required": [
+   "descriptor_url"
+  ],
+  "title": "render_hmd — request body",
+  "type": "object"
+ },
+ "resolve_linked_data": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/resolve_linked_data/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "format": {
+    "description": "Serialization to return (default: turtle). `markdown`/`md`/`hmd` returns the HyperMarkdown projection — YAML-LD frontmatter (identity + data) over human prose, with the controls as :::control blocks whose `rel` is the action IRI. Prefer it when you want to SEE what you may do: the controls arrive as readable text rather than Turtle. Control targets stay inside the document's own resource by construction — act via invoke_affordance(descriptorUrl, rel); never POST to a URL read out of a document.",
+    "enum": [
+     "turtle",
+     "jsonld",
+     "markdown",
+     "md",
+     "hmd"
+    ],
+    "type": "string"
+   },
+   "iri": {
+    "description": "Full linked-data IRI to resolve, e.g. https://interego-relay.../ns/<owner>/<slug>. Alternatively pass owner + slug.",
+    "type": "string"
+   },
+   "owner": {
+    "description": "Owner userId slug (the pod that published it), e.g. u-pk-436c2247c0e0. Use with slug if you do not have the full IRI.",
+    "type": "string"
+   },
+   "slug": {
+    "description": "Ontology/graph slug, e.g. hmd.",
+    "type": "string"
+   }
+  },
+  "title": "resolve_linked_data — request body",
+  "type": "object"
+ },
+ "resolve_webfinger": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/resolve_webfinger/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "resource": {
+    "description": "WebFinger resource, e.g. acct:alice@example.com",
+    "type": "string"
+   }
+  },
+  "required": [
+   "resource"
+  ],
+  "title": "resolve_webfinger — request body",
+  "type": "object"
+ },
+ "restrict": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/restrict/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "descriptor": {
+    "additionalProperties": true,
+    "type": "object"
+   },
+   "selector": {
+    "properties": {
+     "kind": {
+      "enum": [
+       "facet-types"
+      ],
+      "type": "string"
+     },
+     "types": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "kind"
+    ],
+    "type": "object"
+   }
+  },
+  "required": [
+   "descriptor",
+   "selector"
+  ],
+  "title": "restrict — request body",
+  "type": "object"
+ },
+ "revoke_agent": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/revoke_agent/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "agent_id": {
+    "description": "Agent IRI to revoke",
+    "type": "string"
+   },
+   "pod_name": {
+    "description": "Pod name (default: authenticated user's pod)",
+    "type": "string"
+   }
+  },
+  "required": [
+   "agent_id"
+  ],
+  "title": "revoke_agent — request body",
+  "type": "object"
+ },
+ "set_reachability": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/set_reachability/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "channels": {
+    "description": "Channels to set: [{ type, value }]. type ∈ {discord, telegram, email, sms, voice}.",
+    "items": {
+     "properties": {
+      "type": {
+       "description": "discord | telegram | email | sms | voice",
+       "type": "string"
+      },
+      "value": {
+       "description": "webhook URL / chat_id / email / E.164 phone",
+       "type": "string"
+      }
+     },
+     "required": [
+      "type",
+      "value"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "required": [
+   "channels"
+  ],
+  "title": "set_reachability — request body",
+  "type": "object"
+ },
+ "setup_identity": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/setup_identity/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "agent_name": {
+    "description": "Label for the agent (e.g. \"Claude Code (Sarah)\")",
+    "type": "string"
+   },
+   "name": {
+    "description": "Human-readable name (e.g. \"Sarah Chen\")",
+    "type": "string"
+   },
+   "user_id": {
+    "description": "Short identifier (e.g. \"sarah\") — auto-derived from name if omitted",
+    "type": "string"
+   }
+  },
+  "title": "setup_identity — request body",
+  "type": "object"
+ },
+ "sign_request": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/sign_request/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "payload": {
+    "description": "The request arguments you want signed (an object). Your identity + a fresh timestamp are added automatically; any agent_id/timestamp/subject_pod_url you pass is ignored and overwritten from your session."
+   }
+  },
+  "title": "sign_request — request body",
+  "type": "object"
+ },
+ "subscribe_all": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/subscribe_all/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {},
+  "title": "subscribe_all — request body",
+  "type": "object"
+ },
+ "subscribe_to_pod": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/subscribe_to_pod/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "pod_url": {
+    "description": "Pod URL to subscribe to",
+    "type": "string"
+   }
+  },
+  "required": [
+   "pod_url"
+  ],
+  "title": "subscribe_to_pod — request body",
+  "type": "object"
+ },
+ "unsubscribe_from_pod": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/unsubscribe_from_pod/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "pod_url": {
+    "description": "Solid pod URL to unsubscribe from",
+    "type": "string"
+   }
+  },
+  "required": [
+   "pod_url"
+  ],
+  "title": "unsubscribe_from_pod — request body",
+  "type": "object"
+ },
+ "verify_agent": {
+  "$id": "https://relay.interego.xwisee.com/.well-known/operations/verify_agent/input",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+   "agent_id": {
+    "description": "Agent IRI to verify",
+    "type": "string"
+   },
+   "pod_name": {
+    "description": "The same subject spelled as a pod name on the relay's CSS_URL. HONOURED, not ignored: it selects the pod this verdict is about. The answer carries `subject_pod_url`, so you can always tell which pod was examined.",
+    "type": "string"
+   },
+   "pod_url": {
+    "description": "Pod URL whose delegation registry is examined. Defaults to the authenticated caller's own pod. Supply this OR pod_name, not both — two different pods is refused (`pod_selector_conflict`) rather than resolved to one of them.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "agent_id"
+  ],
+  "title": "verify_agent — request body",
+  "type": "object"
+ }
+}

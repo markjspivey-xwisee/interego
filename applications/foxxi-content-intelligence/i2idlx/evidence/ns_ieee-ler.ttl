@@ -1,0 +1,313 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vc: <https://www.w3.org/2018/credentials#> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix hela: <https://markjspivey-xwisee.github.io/interego/ns/hela#> .
+@prefix ler: <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#> .
+@prefix tla: <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> a owl:Ontology ;
+    rdfs:label "IEEE Learning & Employment Records — emergent composable ontology" ;
+    rdfs:comment "An OWL vocabulary for the IEEE LER family (P2997 Enterprise Learner Record, 1484.20.1 RCD, 1484.20.3 SCD, 1484.2 LER Ecosystems), modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate's attestation, event-record, resource-descriptor and aggregation primitives, not new classes." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+
+ler:construction a owl:AnnotationProperty ;
+    rdfs:label "construction" ;
+    rdfs:comment "How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value)." ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:CompetencyDefinition a owl:Class ;
+    rdfs:label "Competency Definition" ;
+    rdfs:comment "A formal, context-neutral representation of one competency — a skill, knowledge, ability, attitude, habit of practice, or learning outcome — with a stable identity, a human-readable description, and optional structured statements." ;
+    dct:source "IEEE 1484.20.1-2007 (RCD); IEEE 1484.20.3-2022 (SCD)" ;
+    ler:construction "minted" ;
+    rdfs:subClassOf skos:Concept ;
+    owl:equivalentClass tla:Competency ;
+    skos:exactMatch <https://schema.cassproject.org/0.4/Competency> ;
+    skos:exactMatch <http://purl.org/ctdlasn/terms/Competency> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:CompetencyStatement a owl:Class ;
+    rdfs:label "Competency Statement" ;
+    rdfs:comment "A single structured assertion within a competency definition — statement text, an optional controlled-vocabulary token, and an identifier. RCD's decomposition of a competency into its constituent claims." ;
+    dct:source "IEEE 1484.20.1-2007 (RCD) §definition/statement" ;
+    ler:construction "minted" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:CompetencyFramework a owl:Class ;
+    rdfs:label "Competency Framework" ;
+    rdfs:comment "A structured collection of competency definitions and the typed relationships between them — a blueprint of excellent performance." ;
+    dct:source "IEEE 1484.20.3-2022 (SCD)" ;
+    ler:construction "minted" ;
+    rdfs:subClassOf skos:ConceptScheme ;
+    owl:equivalentClass tla:CompetencyFramework ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:CompetencyRelationship a owl:Class ;
+    rdfs:label "Competency Relationship" ;
+    rdfs:comment "A typed, directed edge between two competency definitions — narrows, broadens, requires, is-enabled-by, is-equivalent-to." ;
+    dct:source "IEEE 1484.20.3-2022 (SCD)" ;
+    ler:construction "minted" ;
+    owl:equivalentClass tla:Relation ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:ProficiencyLevel a owl:Class ;
+    rdfs:label "Proficiency Level" ;
+    rdfs:comment "An ordinal level of mastery a learner may attain on a competency — the scale an assertion is measured against." ;
+    dct:source "IEEE 1484.20.1 (statementToken); IEEE 1484.20.3 (RubricLevel)" ;
+    ler:construction "minted" ;
+    owl:equivalentClass tla:Level ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Rubric a owl:Class ;
+    rdfs:label "Rubric" ;
+    rdfs:comment "A structured set of evaluation criteria for assessing attainment of a competency." ;
+    dct:source "IEEE 1484.20.3-2022 (SCD)" ;
+    ler:construction "minted" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:RubricCriterion a owl:Class ;
+    rdfs:label "Rubric Criterion" ;
+    rdfs:comment "A single dimension being assessed within a rubric." ;
+    dct:source "IEEE 1484.20.3-2022 (SCD)" ;
+    ler:construction "minted" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:EnterpriseLearnerRecord a owl:Class ;
+    rdfs:label "Enterprise Learner Record" ;
+    rdfs:comment "The aggregate, enterprise-level record of one learner. P2997 defines it deliberately as a ledger / registry — it holds indications of where subordinate data lives, not the raw data. It therefore emerges as the union of its record entries, scoped to one learner, carrying provenance — not a monolithic class." ;
+    dct:source "IEEE P2997 Part 1 (Enterprise Learner Record)" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf iep:ComposedDescriptor ;
+    rdfs:subClassOf prov:Collection ;
+    owl:equivalentClass tla:LearnerProfile ;
+    iep:constructedFrom ler:RecordEntry ;
+    iep:constructedFrom iep:ProvenanceFacet ;
+    iep:constructedFrom iep:AgentFacet ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:RecordEntry a owl:Class ;
+    rdfs:label "Learner Record Entry" ;
+    rdfs:comment "A single record generated by one system about one learner with respect to one activity, linked to its performance evidence and aligned competency or credential. It IS an attestation — an agent asserting a claim about a learner — so it composes the substrate's attestation primitive rather than minting a new shape." ;
+    dct:source "IEEE P2997 Part 1; ADL ELRR conceptual data model" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf amta:Attestation ;
+    iep:constructedFrom amta:Attestation ;
+    iep:constructedFrom iep:ProvenanceFacet ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:LearnerProfile a owl:Class ;
+    rdfs:label "Learner Profile" ;
+    rdfs:comment "A per-learner container assembling demographics, competency and credential history, aptitudes, preferences, goals and career trajectory. A view-bearing aggregation keyed by a resolved learner identity." ;
+    dct:source "IEEE P2997; ADL TLA Learner Management" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf iep:ComposedDescriptor ;
+    iep:constructedFrom ler:EnterpriseLearnerRecord ;
+    iep:constructedFrom iep:AgentFacet ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Transcript a owl:Class ;
+    rdfs:label "Transcript" ;
+    rdfs:comment "The learner's permanent academic record — courses, dates, grades, degrees. A projection (query view) over the verified record entries of an Enterprise Learner Record, optionally re-packaged as a Comprehensive Learner Record credential." ;
+    dct:source "IEEE P2997; 1EdTech CLR 2.0" ;
+    ler:construction "view" ;
+    skos:closeMatch <https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential> ;
+    iep:constructedFrom ler:EnterpriseLearnerRecord ;
+    iep:constructedFrom iep:CompositionOperator ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:CompetencyAssertion a owl:Class ;
+    rdfs:label "Competency Assertion" ;
+    rdfs:comment "A claim, made by one party, that a learner can perform a competency at a stated proficiency level, with some confidence, backed by evidence. The same shape as a CaSS Assertion and a MOM `asserted` statement — one attestation primitive, three trust tiers." ;
+    dct:source "IEEE P2997; ADL ELRR (Assertion)" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf amta:Attestation ;
+    owl:equivalentClass tla:Assertion ;
+    iep:constructedFrom amta:Attestation ;
+    iep:constructedFrom iep:assertingAgent ;
+    iep:constructedFrom iep:modalStatus ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Evidence a owl:Class ;
+    rdfs:label "Evidence" ;
+    rdfs:comment "Anything presented in support of an assertion of competency. Reuses the substrate's provenance entity — evidence is a prov:Entity that an assertion was derived from." ;
+    dct:source "IEEE P2997; ADL ELRR (Evidence)" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf prov:Entity ;
+    iep:constructedFrom prov:Entity ;
+    iep:constructedFrom iep:provenanceChain ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:PerformanceRecord a owl:Class ;
+    rdfs:label "Performance Record" ;
+    rdfs:comment "The learner-performance evidence underpinning a record entry. In practice an xAPI Statement (or a pointer to one in an LRS) — so it composes the substrate's event-record primitive directly." ;
+    dct:source "IEEE P2997 (references IEEE 9274.1 xAPI)" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf hela:Statement ;
+    iep:constructedFrom hela:Statement ;
+    iep:constructedFrom hela:Trace ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Credential a owl:Class ;
+    rdfs:label "Credential" ;
+    rdfs:comment "An attestation of qualification, competence or authority issued by an authority. A signed attestation — i.e. a W3C Verifiable Credential whose subject carries one or more competency claims. Open Badges 3.0 and CLR 2.0 credentials are subtypes." ;
+    dct:source "IEEE P2997; IEEE 1484.2-2024 (an LER IS a Verifiable Credential)" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf vc:VerifiableCredential ;
+    rdfs:subClassOf amta:Attestation ;
+    skos:closeMatch <https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential> ;
+    iep:constructedFrom vc:VerifiableCredential ;
+    iep:constructedFrom iep:verifiableCredential ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Endorsement a owl:Class ;
+    rdfs:label "Endorsement" ;
+    rdfs:comment "An attestation whose subject is itself another attestation, credential, or issuer — a party vouching for a claim or for a claimant. The attestation primitive applied reflexively." ;
+    dct:source "IEEE P2997; Open Badges 3.0 EndorsementCredential" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf amta:Attestation ;
+    iep:constructedFrom amta:Attestation ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Accreditation a owl:Class ;
+    rdfs:label "Accreditation" ;
+    rdfs:comment "Official certification that a learning activity or learning source is acceptable for a specific purpose. An attestation about a course or a source." ;
+    dct:source "ADL ELRR (Accreditation)" ;
+    ler:construction "composed" ;
+    rdfs:subClassOf amta:Attestation ;
+    iep:constructedFrom amta:Attestation ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:LearnerIdentityBinding a owl:Class ;
+    rdfs:label "Learner Identity Binding" ;
+    rdfs:comment "The resolution of a learner's many local account names and UUIDs across systems to one enterprise identity. Not a content class — a set of identity-equivalence assertions with provenance." ;
+    dct:source "ADL ELRR §federated Identity Management" ;
+    ler:construction "composed" ;
+    iep:constructedFrom iep:AgentFacet ;
+    iep:constructedFrom iep:provenanceChain ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Learner a owl:Class ;
+    rdfs:label "Learner" ;
+    rdfs:comment "The natural person who is the subject of a learner record and, in the LER ecosystem, curates and controls access to it. A role a prov:Agent plays — the same person is an Issuer in another record." ;
+    dct:source "IEEE P2997; IEEE 1484.2-2024 (LER Holder)" ;
+    ler:construction "role" ;
+    rdfs:subClassOf prov:Agent ;
+    iep:constructedFrom prov:Agent ;
+    iep:constructedFrom iep:agentRole ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Issuer a owl:Class ;
+    rdfs:label "Issuer" ;
+    rdfs:comment "The authority — an education, training, work-based provider or evaluator — that confers a credential or makes an assertion about a learner. A role of a prov:Agent." ;
+    dct:source "IEEE P2997; IEEE 1484.2-2024 (LER Awarder)" ;
+    ler:construction "role" ;
+    rdfs:subClassOf prov:Agent ;
+    iep:constructedFrom prov:Agent ;
+    iep:constructedFrom iep:agentRole ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Endorser a owl:Class ;
+    rdfs:label "Endorser" ;
+    rdfs:comment "A party that vouches for an issuer or for a credential. A role of a prov:Agent." ;
+    dct:source "IEEE P2997; IEEE 1484.2-2024" ;
+    ler:construction "role" ;
+    rdfs:subClassOf prov:Agent ;
+    iep:constructedFrom prov:Agent ;
+    iep:constructedFrom iep:agentRole ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:Verifier a owl:Class ;
+    rdfs:label "Verifier" ;
+    rdfs:comment "A party — typically an employer — to whom a learner presents records for review. A role of a prov:Agent." ;
+    dct:source "IEEE 1484.2-2024 (LER Reviewer)" ;
+    ler:construction "role" ;
+    rdfs:subClassOf prov:Agent ;
+    iep:constructedFrom prov:Agent ;
+    iep:constructedFrom iep:agentRole ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:LearningSource a owl:Class ;
+    rdfs:label "Learning Source" ;
+    rdfs:comment "Any source that provides a learning activity and supplies evidence and assertions about it. A role of a prov:Agent / organization." ;
+    dct:source "ADL ELRR (Learning Source)" ;
+    ler:construction "role" ;
+    rdfs:subClassOf prov:Agent ;
+    iep:constructedFrom prov:Agent ;
+    iep:constructedFrom iep:agentRole ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:recordEntry a owl:ObjectProperty ;
+    rdfs:label "record entry" ;
+    rdfs:comment "Relates an Enterprise Learner Record to one of the entries it aggregates." ;
+    dct:source "IEEE P2997 Part 1" ;
+    ler:construction "minted" ;
+    rdfs:subPropertyOf prov:hadMember ;
+    rdfs:domain ler:EnterpriseLearnerRecord ;
+    rdfs:range ler:RecordEntry ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:holder a owl:ObjectProperty ;
+    rdfs:label "holder" ;
+    rdfs:comment "Relates an Enterprise Learner Record or credential to the Learner it is about." ;
+    dct:source "IEEE P2997; IEEE 1484.2-2024" ;
+    ler:construction "minted" ;
+    rdfs:range ler:Learner ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:aboutCompetency a owl:ObjectProperty ;
+    rdfs:label "about competency" ;
+    rdfs:comment "Relates a competency assertion to the competency definition it claims mastery of." ;
+    dct:source "IEEE P2997 (Assertion)" ;
+    ler:construction "minted" ;
+    rdfs:domain ler:CompetencyAssertion ;
+    rdfs:range ler:CompetencyDefinition ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:atProficiency a owl:ObjectProperty ;
+    rdfs:label "at proficiency" ;
+    rdfs:comment "Relates a competency assertion to the proficiency level claimed." ;
+    dct:source "ADL ELRR (Proficiency)" ;
+    ler:construction "minted" ;
+    rdfs:domain ler:CompetencyAssertion ;
+    rdfs:range ler:ProficiencyLevel ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:supportedByEvidence a owl:ObjectProperty ;
+    rdfs:label "supported by evidence" ;
+    rdfs:comment "Relates an assertion or record entry to the evidence presented in support of it." ;
+    dct:source "IEEE P2997 (Evidence)" ;
+    ler:construction "minted" ;
+    rdfs:subPropertyOf prov:wasDerivedFrom ;
+    rdfs:range ler:Evidence ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:issuedBy a owl:ObjectProperty ;
+    rdfs:label "issued by" ;
+    rdfs:comment "Relates a credential or assertion to the Issuer that conferred it." ;
+    dct:source "IEEE P2997" ;
+    ler:construction "minted" ;
+    rdfs:range ler:Issuer ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:frameworkMember a owl:ObjectProperty ;
+    rdfs:label "framework member" ;
+    rdfs:comment "Relates a competency framework to a competency definition it contains." ;
+    dct:source "IEEE 1484.20.3-2022" ;
+    ler:construction "minted" ;
+    rdfs:domain ler:CompetencyFramework ;
+    rdfs:range ler:CompetencyDefinition ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+ler:recordStatus a owl:DatatypeProperty ;
+    rdfs:label "record status" ;
+    rdfs:comment "The status of a learner record entry within the ledger — one of success, partial, failure." ;
+    dct:source "ADL ELRR (Status)" ;
+    ler:construction "minted" ;
+    rdfs:domain ler:RecordEntry ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .

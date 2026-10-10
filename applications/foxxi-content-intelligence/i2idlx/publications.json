@@ -1,0 +1,41 @@
+{
+ "comment": "Signed descriptor (authority) for each published graph, as returned by publish_context. Republishing a graph supersedes its descriptor: add the new URL here and move the old one to 'superseded'. Refresh dist/published.json with: python3 -I tools/publication_record.py <i2idlx-root>",
+ "descriptors": {
+  "i2idlx-shapes": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791580647207.ttl",
+  "i2idlx": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791581323976.ttl",
+  "i2idlx-rules": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791581502710.ttl",
+  "i2idlx-catalog": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791582409369.ttl",
+  "i2idlx-enactments": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791518156383.ttl",
+  "i2idlx-mappings": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791571838847.ttl",
+  "i2idlx-releases": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791518327228.ttl",
+  "i2idlx-changes": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791572048263.ttl",
+  "i2idlx-alignments": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791581996075.ttl",
+  "i2idlx-referents": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791582228386.ttl"
+ },
+ "superseded": {
+  "i2idlx-shapes": [
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791571202398.ttl",
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791517052855.ttl"
+  ],
+  "i2idlx": [
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791573069666.ttl",
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791571472918.ttl",
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791517216012.ttl"
+  ],
+  "i2idlx-rules": [
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791571560992.ttl",
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791517581826.ttl"
+  ],
+  "i2idlx-catalog": [
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791581785851.ttl",
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791571713112.ttl",
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791518850197.ttl",
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791517725902.ttl"
+  ],
+  "i2idlx-mappings": [
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791518254759.ttl"
+  ],
+  "i2idlx-alignments": [],
+  "i2idlx-referents": []
+ }
+}

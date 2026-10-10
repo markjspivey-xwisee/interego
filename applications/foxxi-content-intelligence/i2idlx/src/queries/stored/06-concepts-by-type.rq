@@ -1,0 +1,11 @@
+# label: Concepts of a type
+# form: SELECT
+# params: type
+# description: Concepts whose primary type collection is $type (an <https://id.i2idl.org/collections/type/...> IRI). The I2X agentic kind follows from the type.
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX gs: <https://glossarystudio.app/ns/>
+SELECT ?concept ?label
+WHERE {
+  ?concept gs:typeCollection $type ; skos:prefLabel ?label .
+}
+ORDER BY ?label

@@ -1,0 +1,217 @@
+{
+ "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#AuthoritativeLRS": {
+  "definition": "The tier holding only digitally-signed competency-assertion and career verbs, access-restricted. A restriction view partitioned by verb-set, trust tier and signature.",
+  "from": "ns_adl-tla.ttl",
+  "label": "Authoritative LRS"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#Competency": {
+  "definition": "A skill, knowledge, ability, trait, or combination required to perform a task or job — the common currency that gives the four TLA data pillars a shared semantics.",
+  "from": "ns_adl-tla.ttl",
+  "label": "Competency"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#LearnerProfile": {
+  "definition": "Each learner's aggregate competency level, credentials, aptitudes, preferences, goals and career trajectory. The TLA pillar that the IEEE P2997 study group grew from — equivalent to the IEEE Enterprise Learner Record.",
+  "from": "ns_adl-tla.ttl",
+  "label": "Learner Profile / Enterprise Learner Record"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#LearningActivityMetadata": {
+  "definition": "A typed metadata descriptor of a learning resource — course, section, activity or content object. The substrate's resource-descriptor primitive specialised for learning resources.",
+  "from": "ns_adl-tla.ttl",
+  "label": "Learning Activity Metadata"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#NoisyLRS": {
+  "definition": "The tier holding every raw xAPI statement, with data ownership retained by the activity owner. A view over the statement set — the unfiltered partition.",
+  "from": "ns_adl-tla.ttl",
+  "label": "Noisy LRS"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#TransactionalLRS": {
+  "definition": "The tier holding only the normalised MOM roll-up verbs — the evidence base for competency inference. A restriction view over the statement set, partitioned by verb-set.",
+  "from": "ns_adl-tla.ttl",
+  "label": "Transactional LRS"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#CompetencyDefinition": {
+  "definition": "A formal, context-neutral representation of one competency — a skill, knowledge, ability, attitude, habit of practice, or learning outcome — with a stable identity, a human-readable description, and optional structured statements.",
+  "from": "ns_ieee-ler.ttl",
+  "label": "Competency Definition"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#CompetencyFramework": {
+  "definition": "A structured collection of competency definitions and the typed relationships between them — a blueprint of excellent performance.",
+  "from": "ns_ieee-ler.ttl",
+  "label": "Competency Framework"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#Credential": {
+  "definition": "An attestation of qualification, competence or authority issued by an authority. A signed attestation — i.e. a W3C Verifiable Credential whose subject carries one or more competency claims. Open Badges 3.0 and CLR 2.0 credentials are subtypes.",
+  "from": "ns_ieee-ler.ttl",
+  "label": "Credential"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#EnterpriseLearnerRecord": {
+  "definition": "The aggregate, enterprise-level record of one learner. P2997 defines it deliberately as a ledger / registry — it holds indications of where subordinate data lives, not the raw data. It therefore emerges as the union of its record entries, scoped to one learner, carrying provenance — not a monolithic class.",
+  "from": "ns_ieee-ler.ttl",
+  "label": "Enterprise Learner Record"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#ProficiencyLevel": {
+  "definition": "An ordinal level of mastery a learner may attain on a competency — the scale an assertion is measured against.",
+  "from": "ns_ieee-ler.ttl",
+  "label": "Proficiency Level"
+ },
+ "https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance": {
+  "definition": "A capability that a pod or manifest supports. Used for HATEOAS-style agent discovery of what operations are available.",
+  "from": "iep.ttl",
+  "label": "Affordance"
+ },
+ "https://schema.org/Course": {
+  "definition": "A description of an educational course which may be offered as distinct instances which take place at different times or take place at different locations, or be offered through different media or modes of study. An educational course is a sequence of one or more educational events and/or creative works which aims to build knowledge, competence or ability of learners.",
+  "from": "schema.org",
+  "label": "Course"
+ },
+ "https://schema.org/EducationalOccupationalCredential": {
+  "definition": "An educational or occupational credential. A diploma, academic degree, certification, qualification, badge, etc., that may be awarded to a person or other entity that meets the requirements defined by the credentialer.",
+  "from": "schema.org",
+  "label": "EducationalOccupationalCredential"
+ },
+ "https://schema.org/EducationalOrganization": {
+  "definition": "An educational organization.",
+  "from": "schema.org",
+  "label": "EducationalOrganization"
+ },
+ "https://schema.org/LearningResource": {
+  "definition": "The LearningResource type can be used to indicate [[CreativeWork]]s (whether physical or digital) that have a particular and explicit orientation towards learning, education, skill acquisition, and other educational purposes.\n\n[[LearningResource]] is expected to be used as an addition to a primary type such as [[Book]], [[VideoObject]], [[Product]] etc.\n\n[[EducationEvent]] serves a similar purpose for event-like things (e.g. a [[Trip]]). A [[LearningResource]] may be created as a result of an [[EducationEvent]], for example by recording one.",
+  "from": "schema.org",
+  "label": "LearningResource"
+ },
+ "https://w3id.org/xapi/ontology#Account": {
+  "definition": "The Class used for the Account object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Account"
+ },
+ "https://w3id.org/xapi/ontology#Activity": {
+  "definition": "The Class used for the Activity Object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Activity"
+ },
+ "https://w3id.org/xapi/ontology#ActivityDefinition": {
+  "definition": "The Class used for the ActivityDefinition object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Activity"
+ },
+ "https://w3id.org/xapi/ontology#ActivityExtension": {
+  "definition": "The Class used to classify an ActivityExtension in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "ActivityExtension"
+ },
+ "https://w3id.org/xapi/ontology#ActivityProfileResource": {
+  "definition": "The Class used for Activity profile data in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "ActivityProfileResource"
+ },
+ "https://w3id.org/xapi/ontology#Actor": {
+  "definition": "The Class used for the Actor object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Actor"
+ },
+ "https://w3id.org/xapi/ontology#Agent": {
+  "definition": "The Class used for the Agent object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Agent"
+ },
+ "https://w3id.org/xapi/ontology#AgentProfileResource": {
+  "definition": "The Class used for Agent Profile data in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "AgentProfileResource"
+ },
+ "https://w3id.org/xapi/ontology#Attachments": {
+  "definition": "The Class used for the Attachments object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Attachments"
+ },
+ "https://w3id.org/xapi/ontology#ContextActivities": {
+  "definition": "The Class used for a ContextActivities object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "ContextActivities"
+ },
+ "https://w3id.org/xapi/ontology#ContextExtension": {
+  "definition": "The Class used to classify a ContextExtension in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "ContextExtension"
+ },
+ "https://w3id.org/xapi/ontology#DocumentResource": {
+  "definition": "The Class used for Document Resources data in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "DocumentResource"
+ },
+ "https://w3id.org/xapi/ontology#Extension": {
+  "definition": "The Class used for the Extension object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Extension"
+ },
+ "https://w3id.org/xapi/ontology#Group": {
+  "definition": "The Class used for an Anonymous or Identified Group object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Group"
+ },
+ "https://w3id.org/xapi/ontology#InteractionComponent": {
+  "definition": "The Class used for an interaction component activity definition in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "InteractionComponent"
+ },
+ "https://w3id.org/xapi/ontology#Result": {
+  "definition": "The Class used for a Result object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Result"
+ },
+ "https://w3id.org/xapi/ontology#ResultExtension": {
+  "definition": "The Class used to classify a ResultExtension in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "ResultExtension"
+ },
+ "https://w3id.org/xapi/ontology#StateResource": {
+  "definition": "The Class used for State Resource data in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "StateResource"
+ },
+ "https://w3id.org/xapi/ontology#Statement": {
+  "definition": "The Class used to represent a Statement object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Statement"
+ },
+ "https://w3id.org/xapi/ontology#StatementRef": {
+  "definition": "The Class used to represent a StatementRef object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "StatementRef"
+ },
+ "https://w3id.org/xapi/ontology#SubStatement": {
+  "definition": "The Class used to represent a SubStatement object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "SubStatement"
+ },
+ "https://w3id.org/xapi/ontology#Verb": {
+  "definition": "The Class used for a Verb object in xAPI.",
+  "from": "xapi-ontology.ttl",
+  "label": "Verb"
+ },
+ "https://w3id.org/xapi/profiles/ontology#Pattern": {
+  "definition": "The Class used to represent a Pattern of Statement Templates in a Profile.",
+  "from": "xapi-profile-ontology.ttl",
+  "label": "Pattern"
+ },
+ "https://w3id.org/xapi/profiles/ontology#Profile": {
+  "definition": "The Class used to represent an xAPI Profile.",
+  "from": "xapi-profile-ontology.ttl",
+  "label": "Profile"
+ },
+ "https://w3id.org/xapi/profiles/ontology#StatementTemplate": {
+  "definition": "The Class used to represent a Statement Template in a Profile.",
+  "from": "xapi-profile-ontology.ttl",
+  "label": "StatementTemplate"
+ },
+ "https://w3id.org/xapi/profiles/ontology#StatementTemplateRule": {
+  "definition": "The Class used to represent a Statement Template Rule associated with a Statement Template.",
+  "from": "xapi-profile-ontology.ttl",
+  "label": "StatementTemplateRule"
+ },
+ "https://www.w3.org/2018/credentials#VerifiableCredential": {
+  "definition": null,
+  "from": "w3.org/2018/credentials",
+  "label": "Verifiable credential"
+ }
+}

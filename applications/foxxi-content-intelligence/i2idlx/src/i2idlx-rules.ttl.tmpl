@@ -1,0 +1,104 @@
+@prefix i2x:       <{{NS}}> .
+@prefix i2xr:      <{{RULES}}#> .
+@prefix gs:        <https://glossarystudio.app/ns/> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix skos:      <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct:       <http://purl.org/dc/terms/> .
+@prefix sh:        <http://www.w3.org/ns/shacl#> .
+@prefix owl:       <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:      <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf:       <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:       <http://www.w3.org/2001/XMLSchema#> .
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  I2IDL-X rules — SHACL Advanced Features, sh:TripleRule ONLY.
+#
+#  Interego's substrate executes a SHACL-AF subset that excludes sh:SPARQLRule
+#  and sequence paths, so every rule here is a TripleRule whose conditions are
+#  core node shapes and whose node expressions are sh:this, constants, or a
+#  single-predicate sh:path. Rules that need string construction (concrete
+#  hydra:target IRIs) live in the CONSTRUCT projection instead, and inheritance
+#  along skos:broaderTransitive is an OWL property chain in the ontology.
+#
+#  Run over: the I2IDL glossary graph (+ i2idlx-enactments / i2idlx-mappings
+#  for the materialization rules). Output: kinds, modality, definition
+#  provenance, and the plain triples behind ratified records.
+#  Referent rules run over your own data + i2idlx-referents: anything linked to
+#  an I2IDL concept with i2x:isClassifiedBy gets the referent class of the
+#  concept's category and its parents — what the ontology's OWL axioms entail,
+#  for engines without an OWL reasoner. Upper-ontology classes then follow by
+#  rdfs:subClassOf from i2idlx-alignments.
+#  The kind rules below the marker are GENERATED from i2x:kindForTypeCollection
+#  in the ontology, so the type→kind mapping exists in exactly one place.
+# ══════════════════════════════════════════════════════════════════════════════
+
+<{{RULES}}> a owl:Ontology ;
+    dct:title "I2IDL-X rules"@en ;
+    owl:versionInfo "{{VERSION}}" ;
+    rdfs:seeAlso <{{ONTO}}> .
+
+# ── Glossary membership ───────────────────────────────────────────────────────
+
+i2xr:ConceptRules a sh:NodeShape ;
+    sh:targetClass skos:Concept ;
+    sh:rule [
+        a sh:TripleRule ; sh:order 0 ;
+        rdfs:comment "In the I2IDL scheme ⇒ i2x:GlossaryConcept."@en ;
+        sh:condition [ a sh:NodeShape ; sh:property [ sh:path skos:inScheme ; sh:hasValue <https://id.i2idl.org/scheme> ] ] ;
+        sh:subject sh:this ; sh:predicate rdf:type ; sh:object i2x:GlossaryConcept
+    ] , [
+        a sh:TripleRule ; sh:order 1 ;
+        rdfs:comment "Editorially approved ⇒ modal status Asserted."@en ;
+        sh:condition [ a sh:NodeShape ; sh:property [ sh:path gs:editorialStatus ; sh:hasValue "approved" ] ] ;
+        sh:subject sh:this ; sh:predicate i2x:editorialModality ; sh:object iep:Asserted
+    ] , [
+        a sh:TripleRule ; sh:order 1 ;
+        rdfs:comment "Any other editorial status ⇒ modal status Hypothetical."@en ;
+        sh:condition [ a sh:NodeShape ; sh:property [ sh:path gs:editorialStatus ; sh:minCount 1 ] ] ,
+                     [ a sh:NodeShape ; sh:not [ a sh:NodeShape ; sh:property [ sh:path gs:editorialStatus ; sh:hasValue "approved" ] ] ] ;
+        sh:subject sh:this ; sh:predicate i2x:editorialModality ; sh:object iep:Hypothetical
+    ] .
+
+# ── Definition provenance (direct evidence vs. synthesis) ────────────────────
+
+i2xr:DirectEvidence a sh:NodeShape ;
+    sh:property [ sh:path gs:evidenceRelation ; sh:hasValue "direct" ] .
+
+i2xr:DefinitionRules a sh:NodeShape ;
+    sh:targetClass gs:Definition ;
+    sh:rule [
+        a sh:TripleRule ; sh:order 2 ;
+        rdfs:comment "At least one 'direct' evidence record ⇒ source-grounded."@en ;
+        sh:condition [ a sh:NodeShape ; sh:property [ sh:path gs:evidence ; sh:qualifiedValueShape i2xr:DirectEvidence ; sh:qualifiedMinCount 1 ] ] ;
+        sh:subject sh:this ; sh:predicate rdf:type ; sh:object i2x:SourceGroundedDefinition
+    ] , [
+        a sh:TripleRule ; sh:order 2 ;
+        rdfs:comment "Evidence present but none 'direct' ⇒ synthesized."@en ;
+        sh:condition [ a sh:NodeShape ; sh:property [ sh:path gs:evidence ; sh:minCount 1 ] ] ,
+                     [ a sh:NodeShape ; sh:property [ sh:path gs:evidence ; sh:qualifiedValueShape i2xr:DirectEvidence ; sh:qualifiedMaxCount 0 ] ] ;
+        sh:subject sh:this ; sh:predicate rdf:type ; sh:object i2x:SynthesizedDefinition
+    ] .
+
+# ── Ratified records → plain triples ──────────────────────────────────────────
+
+i2xr:MappingRules a sh:NodeShape ;
+    sh:targetClass i2x:MappingProposal ;
+{{MAPPING_RULES}} .
+
+i2xr:EnactmentRules a sh:NodeShape ;
+    sh:targetClass i2x:Enactment ;
+{{ENACTMENT_RULES}} .
+
+# ── Agentic kinds (GENERATED from i2x:kindForTypeCollection) ─────────────────
+
+i2xr:KindRules a sh:NodeShape ;
+    sh:targetClass skos:Concept ;
+{{KIND_RULES}} .
+
+# ── Referents (GENERATED from the referent categories in the ontology) ───────
+
+i2xr:ReferentRules a sh:NodeShape ;
+    sh:targetSubjectsOf i2x:isClassifiedBy ;
+{{REFERENT_RULES}} .
+
+{{REFERENT_CONDITIONS}}

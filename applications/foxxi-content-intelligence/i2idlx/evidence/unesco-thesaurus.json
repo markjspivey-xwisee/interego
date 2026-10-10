@@ -1,0 +1,362 @@
+{
+ "fetchedAt": "2026-10-09T18:11:05+00:00",
+ "i2idlRelease": "v0.0.80",
+ "scheme": {
+  "iri": "http://vocabularies.unesco.org/thesaurus",
+  "title": "UNESCO Thesaurus",
+  "license": "http://creativecommons.org/licenses/by-sa/3.0/igo/",
+  "rightsHolder": "UNESCO",
+  "modified": "2026-08-31"
+ },
+ "terms": {
+  "http://vocabularies.unesco.org/thesaurus/concept2": {
+   "label": "Education",
+   "alt": [],
+   "scopeNote": "Process by which one develops abilities, attitudes and other forms of behaviour considered to have value in the society in which one lives. Use more specific descriptor.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 0,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.05",
+     "label": "Educational sciences and environment"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept2",
+   "citedBy": [
+    {
+     "concept": "unesco-education-domain",
+     "definition": "https://id.i2idl.org/definitions/unesco-education-domain-1",
+     "relation": "direct",
+     "citation": "Education · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept2"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept4": {
+   "label": "Educational sciences",
+   "alt": [
+    "Pedagogy"
+   ],
+   "scopeNote": null,
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 9,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.05",
+     "label": "Educational sciences and environment"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept4",
+   "citedBy": [
+    {
+     "concept": "unesco-educational-sciences-and-environment",
+     "definition": "https://id.i2idl.org/definitions/unesco-educational-sciences-and-environment-1",
+     "relation": "direct",
+     "citation": "Educational sciences · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept4"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept9": {
+   "label": "Educational policy",
+   "alt": [],
+   "scopeNote": "Official statements of goals to which the system of education is directed.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 16,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.10",
+     "label": "Educational policy"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept9",
+   "citedBy": [
+    {
+     "concept": "unesco-educational-policy",
+     "definition": "https://id.i2idl.org/definitions/unesco-educational-policy-1",
+     "relation": "direct",
+     "citation": "Educational policy · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept9"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept21": {
+   "label": "Educational administration",
+   "alt": [],
+   "scopeNote": "Relating to part or the whole of the educational system.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 1,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.20",
+     "label": "Educational administration"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept21",
+   "citedBy": [
+    {
+     "concept": "unesco-educational-administration",
+     "definition": "https://id.i2idl.org/definitions/unesco-educational-administration-1",
+     "relation": "direct",
+     "citation": "Educational administration · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept21"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept31": {
+   "label": "Educational management",
+   "alt": [
+    "Academic management",
+    "School administration",
+    "School management"
+   ],
+   "scopeNote": "Use to mean the management of educational establishments.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 1,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.25",
+     "label": "Educational management"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept31",
+   "citedBy": [
+    {
+     "concept": "unesco-educational-management",
+     "definition": "https://id.i2idl.org/definitions/unesco-educational-management-1",
+     "relation": "direct",
+     "citation": "Educational management · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept31"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept37": {
+   "label": "Educational systems",
+   "alt": [
+    "National educational systems"
+   ],
+   "scopeNote": "Arrangement into an organic whole of the interdependent institutions and programmes providing formal and nonformal education.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 6,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.30",
+     "label": "Educational systems and levels"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept37",
+   "citedBy": [
+    {
+     "concept": "unesco-educational-systems-and-levels",
+     "definition": "https://id.i2idl.org/definitions/unesco-educational-systems-and-levels-1",
+     "relation": "direct",
+     "citation": "Educational systems · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept37"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept44": {
+   "label": "Educational institutions",
+   "alt": [],
+   "scopeNote": null,
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 0,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.35",
+     "label": "Educational institutions"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept44",
+   "citedBy": [
+    {
+     "concept": "unesco-educational-institutions",
+     "definition": "https://id.i2idl.org/definitions/unesco-educational-institutions-1",
+     "relation": "direct",
+     "citation": "Educational institutions · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept44"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept49": {
+   "label": "Curriculum",
+   "alt": [
+    "Course content",
+    "Curriculum content",
+    "Programme of study",
+    "Syllabus"
+   ],
+   "scopeNote": "Use to mean the subjects taught, the time allotted to each, and the sequence.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 9,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.40",
+     "label": "Curriculum"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept49",
+   "citedBy": [
+    {
+     "concept": "unesco-curriculum",
+     "definition": "https://id.i2idl.org/definitions/unesco-curriculum-1",
+     "relation": "direct",
+     "citation": "Curriculum · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept49"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept71": {
+   "label": "Vocational education",
+   "alt": [
+    "Professional education"
+   ],
+   "scopeNote": "Formal education designed to prepare for skilled occupations.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 9,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.50",
+     "label": "Technical and vocational study subjects"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept71",
+   "citedBy": [
+    {
+     "concept": "unesco-technical-and-vocational-study-subjects",
+     "definition": "https://id.i2idl.org/definitions/unesco-technical-and-vocational-study-subjects-1",
+     "relation": "direct",
+     "citation": "Vocational education · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept71"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept83": {
+   "label": "Teaching methods",
+   "alt": [
+    "Didactics",
+    "Educational methods",
+    "Instructional methods",
+    "Teaching strategies",
+    "Teaching techniques"
+   ],
+   "scopeNote": "Patterns of teacher behaviour that are recurrent, applicable to various subject matters, characteristic of more than one teacher and relevant to learning.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 17,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.60",
+     "label": "Teaching and training"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept83",
+   "citedBy": [
+    {
+     "concept": "unesco-teaching-and-training",
+     "definition": "https://id.i2idl.org/definitions/unesco-teaching-and-training-1",
+     "relation": "direct",
+     "citation": "Teaching methods · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept83"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept84": {
+   "label": "Training",
+   "alt": [],
+   "scopeNote": "Systematic educative process by which one learns new skills.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 5,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.60",
+     "label": "Teaching and training"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept84",
+   "citedBy": [
+    {
+     "concept": "unesco-teaching-and-training",
+     "definition": "https://id.i2idl.org/definitions/unesco-teaching-and-training-1",
+     "relation": "direct",
+     "citation": "Training · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept84"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept88": {
+   "label": "Educational evaluation",
+   "alt": [],
+   "scopeNote": null,
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 5,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.65",
+     "label": "Educational evaluation"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept88",
+   "citedBy": [
+    {
+     "concept": "unesco-educational-evaluation",
+     "definition": "https://id.i2idl.org/definitions/unesco-educational-evaluation-1",
+     "relation": "direct",
+     "citation": "Educational evaluation · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept88"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept95": {
+   "label": "Educational facilities",
+   "alt": [
+    "Academic facilities",
+    "School facilities"
+   ],
+   "scopeNote": null,
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 0,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.70",
+     "label": "Educational facilities"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept95",
+   "citedBy": [
+    {
+     "concept": "unesco-educational-facilities",
+     "definition": "https://id.i2idl.org/definitions/unesco-educational-facilities-1",
+     "relation": "direct",
+     "citation": "Educational facilities · Preferred term",
+     "page": "https://vocabularies.unesco.org/unesco/en/page/concept95"
+    }
+   ]
+  }
+ }
+}

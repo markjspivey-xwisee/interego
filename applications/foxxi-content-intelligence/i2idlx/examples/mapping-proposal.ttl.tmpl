@@ -1,0 +1,18 @@
+# What an agent publishes through cat:port-propose-mapping (modal status Hypothetical,
+# conforms_to_shapes = the I2IDL-X shapes graph, so the relay validates it before writing).
+@prefix i2x:   <{{NS}}> .
+@prefix i2idl: <https://id.i2idl.org/concepts/> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+@prefix prov:  <http://www.w3.org/ns/prov#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:example:proposal:learning-event-statement> a i2x:MappingProposal ;
+    i2x:proposedSubject i2idl:learning-event ;
+    i2x:proposedPredicate skos:relatedMatch ;
+    i2x:proposedObject <https://w3id.org/xapi/ontology#Statement> ;
+    i2x:rationale "An xAPI Statement is the record an LRS keeps of a learning event; related, not equivalent."@en ;
+    i2x:confidence "0.60"^^xsd:decimal ;
+    i2x:reviewStatus i2x:status-proposed ;
+    i2x:mappingMethod i2x:method-ai-drafted ;
+    prov:wasAttributedTo <urn:example:agent> ;
+    prov:generatedAtTime "2026-10-08T22:00:00Z"^^xsd:dateTime .

@@ -1,0 +1,29 @@
+# A fictional organization's knowledge graph, classified with I2IDL concepts. The build reasons over it with
+# i2idlx-alignments and i2idlx-referents and checks each individual lands in the expected upper-ontology classes.
+# Everything here is invented (example.org).
+@prefix ex:    <https://example.org/academy/> .
+@prefix i2x:   <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#> .
+@prefix i2idl: <https://id.i2idl.org/concepts/> .
+@prefix xapi:  <https://w3id.org/xapi/ontology#> .
+@prefix tla:   <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:academy          rdfs:label "Example Academy" ;                          i2x:isClassifiedBy i2idl:educational-institution .
+ex:teacher-1        rdfs:label "A classroom teacher at the academy" ;      i2x:isClassifiedBy i2idl:classroom-teacher .
+ex:lrs-main         rdfs:label "The academy's learning record store" ;      i2x:isClassifiedBy i2idl:learning-record-store-lrs .
+ex:statements-api   rdfs:label "Its /statements resource" ;                 i2x:isClassifiedBy i2idl:statement-resource .
+ex:quiz-2026-10-01  rdfs:label "A formative quiz session, 1 October 2026" ; i2x:isClassifiedBy i2idl:formative-assessment .
+ex:mentoring-07     rdfs:label "A mentoring session" ;                      i2x:isClassifiedBy i2idl:mentorship .
+ex:course-le101     rdfs:label "Learning Engineering 101, run as a MOOC" ;  i2x:isClassifiedBy i2idl:massive-open-online-course-mooc .
+ex:badge-le101      rdfs:label "A micro-credential issued for LE 101" ;     i2x:isClassifiedBy i2idl:micro-credential .
+ex:skill-t1-digital rdfs:label "Teacher 1's digital skills" ;               i2x:isClassifiedBy i2idl:digital-skills .
+ex:statement-42     rdfs:label "One xAPI statement in the LRS" ;            i2x:isClassifiedBy i2idl:xapi-statement .
+ex:campus-north     rdfs:label "North campus buildings and equipment" ;    i2x:isClassifiedBy i2idl:unesco-educational-facilities .
+ex:ai-use-policy    rdfs:label "The academy's AI-use policy" ;              i2x:isClassifiedBy i2idl:unesco-educational-policy .
+ex:le-team          rdfs:label "The academy's learning engineering team" ;  i2x:isClassifiedBy i2idl:learning-engineering-team .
+ex:reading-2026     rdfs:label "The district's 2026 learning-poverty rate" ; i2x:isClassifiedBy i2idl:learning-poverty .
+ex:spaced-plan      rdfs:label "The academy's spaced-repetition schedule" ; i2x:isClassifiedBy i2idl:spaced-repetition .
+
+# Typed with peer classes only: the crosswalk bridges classify them.
+ex:statement-43     rdfs:label "Another statement, typed only as xapi:Statement" ; a xapi:Statement .
+ex:lrs-transactional rdfs:label "The transactional tier of the LRS, typed with the ADL TLA class" ; a tla:TransactionalLRS .

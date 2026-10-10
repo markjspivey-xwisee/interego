@@ -1,0 +1,12 @@
+# label: Definition provenance profile
+# form: SELECT
+# params:
+# description: How many active definitions are source-grounded (at least one direct evidence record) versus synthesized.
+PREFIX gs: <https://glossarystudio.app/ns/>
+SELECT ?provenance (COUNT(DISTINCT ?def) AS ?definitions)
+WHERE {
+  ?concept gs:activeDefinition ?def .
+  BIND ( EXISTS { ?def gs:evidence ?e . ?e gs:evidenceRelation "direct" } AS ?direct )
+  BIND ( IF(?direct, "source-grounded", "synthesized") AS ?provenance )
+}
+GROUP BY ?provenance
