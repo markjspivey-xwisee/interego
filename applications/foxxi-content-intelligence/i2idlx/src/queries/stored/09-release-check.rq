@@ -1,0 +1,6 @@
+# label: Is the glossary still at a given release?
+# form: ASK
+# params: version
+# description: True when the published scheme still reports $version (a quoted literal such as "v0.0.80"). False means re-verify decorations against the new release.
+PREFIX gs: <https://glossarystudio.app/ns/>
+ASK { <https://id.i2idl.org/scheme> gs:publicationVersion $version }

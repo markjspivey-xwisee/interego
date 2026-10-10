@@ -1,0 +1,11 @@
+# label: Members of a collection
+# form: SELECT
+# params: collection
+# description: Concepts in a field, type or curated collection. Substitute $collection with <collection IRI>, e.g. <https://id.i2idl.org/collections/curated/competency-and-assessment>.
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+SELECT ?concept ?label
+WHERE {
+  $collection skos:member ?concept .
+  ?concept skos:prefLabel ?label .
+}
+ORDER BY ?label

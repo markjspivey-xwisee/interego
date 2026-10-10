@@ -1,0 +1,777 @@
+{
+  "checked": "2026-10-09",
+  "terms": {
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#": {
+      "label": "case",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#CFAssociationGroupURI": {
+      "label": "CFAssociationGroupingURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#CFAssociationTypeEnumDType": {
+      "label": "associationType",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#CFDocumentURI": {
+      "label": "CFDocumentURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#CFItemTypeURI": {
+      "label": "CFItemTypeURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#CFItemURI": {
+      "label": "CFItemURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#CFPackageURI": {
+      "label": "CFPackageURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#abbreviatedStatement": {
+      "label": "abbreviatedStatement",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#adoptionStatus": {
+      "label": "adoptionStatus",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#alternativeLabel": {
+      "label": "alternativeLabel",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#category": {
+      "label": "category",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#conceptKeywords": {
+      "label": "conceptKeywords",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#conceptKeywordsURI": {
+      "label": "conceptKeywordsURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#creator": {
+      "label": "creator",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#description": {
+      "label": "description",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#destinationNodeURI": {
+      "label": "destinationNodeURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtAssociationLink": {
+      "label": "dtAssociationLink",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCASE-LD": {
+      "label": "dtCASE-LD",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFAssociation": {
+      "label": "dtCFAssociation",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFAssociationGrouping": {
+      "label": "dtCFAssociationGrouping",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFAssociationSet": {
+      "label": "dtCFAssociationSet",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFConcept": {
+      "label": "dtCFConcept",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFConceptSet": {
+      "label": "dtCFConceptSet",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFDefinition": {
+      "label": "dtCFDefinition",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFDocument": {
+      "label": "dtCFDocument",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFDocumentSet": {
+      "label": "dtCFDocumentSet",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFItem": {
+      "label": "dtCFItem",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFItemType": {
+      "label": "dtCFItemType",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFItemTypeSet": {
+      "label": "dtCFItemTypeSet",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFLicense": {
+      "label": "dtCFLicense",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFPackage": {
+      "label": "dtCFPackage",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFPckgAssociation": {
+      "label": "dtCFPckgAssociation",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFPckgDocument": {
+      "label": "dtCFPckgDocument",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFPckgItem": {
+      "label": "dtCFPckgItem",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFRubric": {
+      "label": "dtCFRubric",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFRubricCriterion": {
+      "label": "dtCFRubricCriterion",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFRubricCriterionLevel": {
+      "label": "dtCFRubricCriterionLevel",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFSubject": {
+      "label": "dtCFSubject",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtCFSubjectSet": {
+      "label": "dtCFSubjectSet",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtLinkGenURI": {
+      "label": "dtLinkGenURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtLinkURI": {
+      "label": "dtLinkURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtURL": {
+      "label": "dtURL",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#dtUUID": {
+      "label": "dtUUID",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#educationLevel": {
+      "label": "educationLevel",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#feedback": {
+      "label": "feedback",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#fullStatement": {
+      "label": "fullStatement",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#hierarchyCode": {
+      "label": "hierarchyCode",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#humanCodingScheme": {
+      "label": "humanCodingScheme",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#identifier": {
+      "label": "identifier",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#keywords": {
+      "label": "keywords",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#lastChangeDateTime": {
+      "label": "lastChangeDateTime",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#licenseText": {
+      "label": "licenseText",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#licenseURI": {
+      "label": "licenseURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#listEnumeration": {
+      "label": "listEnumeration",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#notes": {
+      "label": "notes",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#originNodeURI": {
+      "label": "originNodeURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#position": {
+      "label": "position",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#publisher": {
+      "label": "publisher",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#quality": {
+      "label": "quality",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#score": {
+      "label": "score",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#sequenceNumber": {
+      "label": "sequenceNumber",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#statusEndDate": {
+      "label": "statusEndDate",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#statusStartDate": {
+      "label": "statusStartDate",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#subject": {
+      "label": "subject",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#subjectURI": {
+      "label": "subjectURI",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#targetId": {
+      "label": "targetId",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#title": {
+      "label": "title",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#typeCode": {
+      "label": "typeCode",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#version": {
+      "label": "version",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/case/v1p0/vocab#weight": {
+      "label": "weight",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#Achievement": {
+      "label": "Achievement",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#AchievementSubject": {
+      "label": "AchievementSubject",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#Address": {
+      "label": "Address",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#CountryCode": {
+      "label": "addressCountryCode",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#Criteria": {
+      "label": "criteria",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#EndorsementCredential": {
+      "label": "EndorsementCredential",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#EndorsementSubject": {
+      "label": "EndorsementSubject",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#Evidence": {
+      "label": "Evidence",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#GeoCoordinates": {
+      "label": "geo",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#IdentifierEntry": {
+      "label": "IdentifierEntry",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#IdentityObject": {
+      "label": "IdentityObject",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#Image": {
+      "label": "Image",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential": {
+      "label": "OpenBadgeCredential",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#Profile": {
+      "label": "Profile",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#Related": {
+      "label": "Related",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#Result": {
+      "label": "Result",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#ResultDescription": {
+      "label": "ResultDescription",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#RubricCriterionLevel": {
+      "label": "RubricCriterionLevel",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#achievedLevel": {
+      "label": "achievedLevel",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#achievement": {
+      "label": "achievement",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#achievementType": {
+      "label": "achievementType",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#activityEndDate": {
+      "label": "activityEndDate",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#activityStartDate": {
+      "label": "activityStartDate",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#address": {
+      "label": "address",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#alignment": {
+      "label": "alignment",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#allowedValue": {
+      "label": "allowedValue",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#awardedDate": {
+      "label": "awardedDate",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#creator": {
+      "label": "creator",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#creditsAvailable": {
+      "label": "creditsAvailable",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#creditsEarned": {
+      "label": "creditsEarned",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#dateOfBirth": {
+      "label": "dateOfBirth",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#endorsement": {
+      "label": "endorsement",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#endorsementComment": {
+      "label": "endorsementComment",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#endorsementJwt": {
+      "label": "endorsementJwt",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#familyNamePrefix": {
+      "label": "familyNamePrefix",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#fieldOfStudy": {
+      "label": "fieldOfStudy",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#hashed": {
+      "label": "hashed",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#humanCode": {
+      "label": "humanCode",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#identifier": {
+      "label": "identifier",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#identifierType": {
+      "label": "identifierType",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#identityHash": {
+      "label": "identityHash",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#identityType": {
+      "label": "identityType",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#image": {
+      "label": "image",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#level": {
+      "label": "level",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#licenseNumber": {
+      "label": "licenseNumber",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#narrative": {
+      "label": "narrative",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#official": {
+      "label": "official",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#otherIdentifier": {
+      "label": "otherIdentifier",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#parentOrg": {
+      "label": "parentOrg",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#patronymicName": {
+      "label": "patronymicName",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#phone": {
+      "label": "phone",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#points": {
+      "label": "points",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#related": {
+      "label": "related",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#requiredLevel": {
+      "label": "requiredLevel",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#requiredValue": {
+      "label": "requiredValue",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#result": {
+      "label": "result",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#resultDescription": {
+      "label": "resultDescription",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#resultType": {
+      "label": "resultType",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#role": {
+      "label": "role",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#rubricCriterionLevel": {
+      "label": "rubricCriterionLevel",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#salt": {
+      "label": "salt",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#source": {
+      "label": "source",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#specialization": {
+      "label": "specialization",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#status": {
+      "label": "status",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#targetCode": {
+      "label": "targetCode",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#targetType": {
+      "label": "targetType",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#term": {
+      "label": "term",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#valueMax": {
+      "label": "valueMax",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#valueMin": {
+      "label": "valueMin",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.imsglobal.org/spec/vc/ob/vocab.html#version": {
+      "label": "version",
+      "method": "JSON-LD context",
+      "source": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json"
+    },
+    "https://purl.org/ctdl/terms/AssessmentProfile": {
+      "definition": null,
+      "label": "AssessmentProfile",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdl/terms/Course": {
+      "definition": null,
+      "label": "Course",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdl/terms/Credential": {
+      "definition": null,
+      "label": "Credential",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdl/terms/CredentialOrganization": {
+      "definition": null,
+      "label": "CredentialOrganization",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdl/terms/LearningOpportunity": {
+      "definition": "Structured and unstructured learning and development opportunities based in direct experience, formal and informal study\u2026",
+      "label": "LearningOpportunity",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdl/terms/LearningProgram": {
+      "definition": null,
+      "label": "LearningProgram",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdl/terms/Occupation": {
+      "definition": null,
+      "label": "Occupation",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdl/terms/Pathway": {
+      "definition": "Resource composed of a structured set of PathwayComponents defining points along a route to fulfillment of a goal or objective.",
+      "label": "Pathway",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdl/terms/Task": {
+      "definition": "Specific activity, typically related to performing a function or achieving a goal.",
+      "label": "Task",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdl/terms/WorkRole": {
+      "definition": "Collection of tasks and competencies that embody a particular function in one or more jobs.",
+      "label": "WorkRole",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdl/terms"
+    },
+    "https://purl.org/ctdlasn/terms/Competency": {
+      "definition": null,
+      "label": "Competency",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdlasn/terms"
+    },
+    "https://purl.org/ctdlasn/terms/CompetencyFramework": {
+      "definition": null,
+      "label": "CompetencyFramework",
+      "method": "class index, read 2026-10-09",
+      "source": "https://purl.org/ctdlasn/terms"
+    }
+  }
+}

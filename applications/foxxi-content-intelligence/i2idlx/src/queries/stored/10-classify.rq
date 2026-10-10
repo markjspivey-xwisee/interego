@@ -1,0 +1,18 @@
+# label: Type classified data in upper ontologies and peer vocabularies
+# form: CONSTRUCT
+# params:
+# runsOver: port-vocabulary port-alignments port-referents
+# description: Run over your own data together with the I2IDL-X vocabulary, alignments and referents. Everything linked to an I2IDL concept with i2x:isClassifiedBy (or typed with a peer class a crosswalk bridge ties to one, such as xapi:Statement) gets the referent class of the concept's category and every class that class is aligned to in BFO 2020 (IAO, CCO), gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and peer vocabularies. No reasoner needed; like the alignments, the result is Hypothetical.
+PREFIX i2x: <{{NS}}>
+PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+CONSTRUCT { ?thing a ?class ; i2x:isClassifiedBy ?concept }
+WHERE {
+  { ?thing i2x:isClassifiedBy ?concept }
+  UNION { ?thing a ?peer . ?peer owl:equivalentClass|rdfs:subClassOf ?bridge .
+  ?bridge owl:onProperty i2x:isClassifiedBy ; owl:hasValue ?concept }
+  { ?concept i2x:referentCategory/i2x:referentClass/rdfs:subClassOf* ?class }
+  UNION { ?wider owl:onProperty i2x:isClassifiedBy ; owl:hasValue ?concept ; rdfs:subClassOf ?class }
+  UNION { ?class owl:equivalentClass ?same . ?same owl:onProperty i2x:isClassifiedBy ; owl:hasValue ?concept }
+  FILTER isIRI(?class)
+}

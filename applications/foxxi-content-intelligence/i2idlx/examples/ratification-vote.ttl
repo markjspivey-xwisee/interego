@@ -1,0 +1,13 @@
+# A vote through cat:port-ratify on one of the published standards-text proposals.
+# Composed under Interego's ratification algebra: Asserted = for.
+@prefix i2x:  <{{NS}}> .
+@prefix mp:   <{{MAPPINGS}}#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:example:vote:xapi-statement-1> a i2x:RatificationVote ;
+    i2x:votesOn mp:m-xapi-statement-1 ;
+    i2x:vote iep:Asserted ;
+    prov:wasAttributedTo <urn:example:reviewer> ;
+    prov:generatedAtTime "2026-10-09T09:00:00Z"^^xsd:dateTime .

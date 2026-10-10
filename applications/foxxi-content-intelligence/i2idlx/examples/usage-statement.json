@@ -1,0 +1,33 @@
+{
+  "id": "6f1c2b9e-3d4a-4f7e-9b1a-2c8d5e7f9a10",
+  "timestamp": "2026-10-08T21:40:00Z",
+  "actor": {
+    "objectType": "Agent",
+    "name": "Example learner",
+    "account": { "homePage": "https://identity.interego.xwisee.com", "name": "example-learner" }
+  },
+  "verb": {
+    "id": "http://adlnet.gov/expapi/verbs/completed",
+    "display": { "en-US": "completed" }
+  },
+  "object": {
+    "objectType": "Activity",
+    "id": "urn:example:foxxi:course:intro-to-xapi/lesson/lrs-basics",
+    "definition": {
+      "type": "http://adlnet.gov/expapi/activities/lesson",
+      "name": { "en-US": "LRS basics" }
+    }
+  },
+  "context": {
+    "contextActivities": {
+      "category": [ { "id": "https://foxxi-bridge.interego.xwisee.com/xapi/profile" } ]
+    },
+    "extensions": {
+      "https://foxxi-bridge.interego.xwisee.com/ns/foxxi#conceptIds": [
+        "https://id.i2idl.org/concepts/learning-record-store-lrs",
+        "https://id.i2idl.org/concepts/xapi-statement",
+        "https://id.i2idl.org/concepts/learning-record"
+      ]
+    }
+  }
+}

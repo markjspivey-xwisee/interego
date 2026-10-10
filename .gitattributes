@@ -57,6 +57,7 @@
 *.yaml   text eol=lf diff
 *.sh     text eol=lf diff
 *.sql    text eol=lf diff
+*.rq     text eol=lf diff
 *.xml    text eol=lf diff
 *.svg    text eol=lf diff
 *.txt    text eol=lf diff

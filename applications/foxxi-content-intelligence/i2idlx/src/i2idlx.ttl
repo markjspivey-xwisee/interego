@@ -1,0 +1,812 @@
+@prefix i2x:       <{{NS}}> .
+@prefix gs:        <https://glossarystudio.app/ns/> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh:       <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ie:        <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
+@prefix hyprcat:   <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
+@prefix hypragent: <https://markjspivey-xwisee.github.io/interego/ns/hypragent#> .
+@prefix foxxi:     <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#> .
+@prefix xapi:      <https://w3id.org/xapi/ontology#> .
+@prefix fxa:       <https://relay.interego.xwisee.com/ns/iep/action/foxxi/> .
+@prefix rla:       <https://relay.interego.xwisee.com/ns/iep/action/relay/> .
+@prefix hydra:     <http://www.w3.org/ns/hydra/core#> .
+@prefix skos:      <http://www.w3.org/2004/02/skos/core#> .
+@prefix schema:    <https://schema.org/> .
+@prefix dct:       <http://purl.org/dc/terms/> .
+@prefix prov:      <http://www.w3.org/ns/prov#> .
+@prefix dcat:      <http://www.w3.org/ns/dcat#> .
+@prefix odrl:      <http://www.w3.org/ns/odrl/2/> .
+@prefix prof:      <http://www.w3.org/ns/dx/prof/> .
+@prefix sh:        <http://www.w3.org/ns/shacl#> .
+@prefix owl:       <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:      <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf:       <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:       <http://www.w3.org/2001/XMLSchema#> .
+@prefix vann:      <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  I2IDL-X — an Interego / Foxxi agentic superset of the I2IDL Digital Learning
+#  Glossary.
+#
+#  WHAT IT IS. A Layer-3 (domain-adjacent) Interego ontology that DECORATES the
+#  I2IDL glossary (https://id.i2idl.org/) without restating or mutating it. Every
+#  I2IDL concept keeps its own IRI, label, definition, evidence and editorial
+#  relationships; this vocabulary only adds axioms, kinds, hypermedia controls
+#  and crosswalks ABOUT those IRIs. Its import closure contains the glossary, so
+#  it is a superset in the literal sense: anything valid against I2IDL is valid
+#  here, and nothing here contradicts it.
+#
+#  ORGANIZING IDEA — the pragmatic maxim. "Consider what effects, that might
+#  conceivably have practical bearings, we conceive the object of our conception
+#  to have." I2IDL already fixes each concept's editorial (immediate) interpretant
+#  — its definition. I2IDL-X makes two further interpretants explicit and
+#  machine-actionable:
+#     • the PRAGMATIC interpretant: which live affordances enact the concept
+#       (Foxxi bridge capabilities, Interego relay operations), and
+#     • the USAGE interpretant: what agents and learners actually did under it
+#       (xAPI statements tagging the concept), so meaning accrues from use.
+#
+#  HOW IT IS AGENTIC. A HyprCat catalog (graph i2idlx-catalog) exposes the
+#  glossary as a hyprcat:FederatedDataProduct whose ports are hypermedia controls
+#  on the REAL I2IDL service (dumps, resolver, SPARQL with its published limits)
+#  plus Interego/Foxxi input ports (propose / ratify mappings, align course
+#  concepts, record concept usage). Concept-level controls are produced by
+#  ieh:AffordanceDecorator individuals declared below — the decoration program
+#  is data, and I2IDL stays the single source of truth for the concepts.
+#
+#  EPISTEMIC DISCIPLINE. Crosswalks (graphs i2idlx-enactments, i2idlx-mappings)
+#  are proposals — AI-drafted, standards-text or evidence-cited — published with
+#  modal status iep:Hypothetical. They become Asserted only through ratification
+#  (i2x:RatificationVote), consistent with I2IDL's own policy that mappings
+#  require editorial judgement and must not overstate equivalence. Facts derived
+#  from I2IDL's own data (kinds, definition provenance, the release feed and the
+#  change history in i2idlx-changes) are computed, never asserted by hand.
+#
+#  WHAT'S WHOSE. Everything shown alongside I2IDL carries an origin label
+#  (section K, i2x:Origins): I2IDL's own record; I2IDL-X derived, added or
+#  proposed; Interego; Foxxi; or a reviewing team. Each origin names the graphs
+#  that hold it, so a reader can always tell I2IDL's word from this superset's.
+#
+#  SEMANTIC LAYER. An I2IDL concept is a term; i2x:isClassifiedBy links a thing
+#  in the world to the concept it is an instance of. Every concept has one
+#  referent category (section L), and graphs i2idlx-alignments and
+#  i2idlx-referents line the categories up with BFO 2020 (IAO, CCO), gist,
+#  DOLCE-UltraLite, gUFO, PROV-O, schema.org and peer learning vocabularies, so
+#  data classified by I2IDL concepts can be typed, and checked for
+#  contradictions, in all of them. Those alignments are proposals (Hypothetical).
+# ══════════════════════════════════════════════════════════════════════════════
+
+<{{ONTO}}>
+    a owl:Ontology , prof:Profile ;
+    dct:title "I2IDL-X — Interego/Foxxi agentic superset of the I2IDL Digital Learning Glossary"@en ;
+    dct:description "Decorates the I2IDL Digital Learning Glossary with Interego context semantics, Foxxi learning-vertical crosswalks, Peircean interpretant layers, and HyprCat/HyprAgent hypermedia affordances and controls, so agents can discover, query, enact and extend the glossary without a second source of truth."@en ;
+    dct:creator "Mark Spivey (Foxxi Mediums Inc.)" ;
+    dct:contributor "Claude (Anthropic) — AI-drafted; crosswalks pending human ratification" ;
+    dct:license <https://creativecommons.org/licenses/by/4.0/> ;
+    dct:created "{{BUILT}}"^^xsd:date ;
+    dct:modified "{{MODIFIED}}"^^xsd:date ;
+    owl:versionInfo "{{VERSION}}" ;
+    vann:preferredNamespacePrefix "i2x" ;
+    vann:preferredNamespaceUri "{{NS}}" ;
+    prof:isProfileOf <https://id.i2idl.org/scheme> ;
+    owl:imports <https://id.i2idl.org/glossary.ttl> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/hypragent> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/interego> ;
+    i2x:builtAgainstRelease "{{I2IDL_RELEASE}}" ;
+    prov:wasDerivedFrom <https://github.com/blakeplock/i2idl-linked-data/blob/{{COMMIT}}/public/glossary.jsonld> ;
+    rdfs:seeAlso <{{SHAPES}}> , <{{RULES}}> , <{{CATALOG}}> , <{{ENACT}}> , <{{MAPPINGS}}> , <{{RELEASES}}> , <{{CHANGES}}> , <{{ALIGNMENTS}}> , <{{REFERENTS}}> ;
+    rdfs:comment "Layer 3 in Interego's layer discipline: every term here is learning-domain specific. Terms in iep:, ieh:, ie:, hyprcat: and hypragent: are reused, never redefined. The glossary itself is imported, not copied; concept-level controls are derived by the decorators below or by the CONSTRUCT projection shipped with this ontology."@en .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  A. The decorated view of I2IDL
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:GlossaryConcept a owl:Class ;
+    rdfs:label "Glossary concept"@en ;
+    owl:equivalentClass [
+        a owl:Class ;
+        owl:intersectionOf ( skos:Concept
+                             [ a owl:Restriction ; owl:onProperty skos:inScheme ; owl:hasValue <https://id.i2idl.org/scheme> ] )
+    ] ;
+    rdfs:subClassOf ie:Object , schema:DefinedTerm ;
+    rdfs:comment "Any concept in the I2IDL concept scheme. Classified automatically (OWL equivalence, or the GlossaryConcept rule in i2idlx-rules); never asserted by hand. Read semiotically as the OBJECT the glossary term stands for: the term is the sign, the I2IDL definition its editorial interpretant."@en .
+
+i2x:NotionConcept a owl:Class ;
+    rdfs:subClassOf i2x:GlossaryConcept ;
+    rdfs:label "Notion concept"@en ;
+    i2x:kindForTypeCollection <https://id.i2idl.org/collections/type/concept> ;
+    rdfs:comment "An abstract idea (I2IDL type 'Concept'). Agentically: resolvable, explainable and taggable in usage; it is enacted only through narrower practices, methods or systems."@en .
+
+i2x:EnactableConcept a owl:Class ;
+    rdfs:subClassOf i2x:GlossaryConcept ;
+    rdfs:label "Enactable concept"@en ;
+    i2x:kindForTypeCollection <https://id.i2idl.org/collections/type/method> ,
+                              <https://id.i2idl.org/collections/type/practice> ,
+                              <https://id.i2idl.org/collections/type/process> ,
+                              <https://id.i2idl.org/collections/type/evaluation> ;
+    rdfs:comment "Something one DOES (I2IDL types Method, Practice, Process, Evaluation). The primary carrier of pragmatic interpretants: i2x:operationalizedBy / i2x:measuredBy links name the affordances that perform it."@en .
+
+i2x:SystemConcept a owl:Class ;
+    rdfs:subClassOf i2x:GlossaryConcept ;
+    rdfs:label "System concept"@en ;
+    i2x:kindForTypeCollection <https://id.i2idl.org/collections/type/system> ,
+                              <https://id.i2idl.org/collections/type/infrastructure> ;
+    rdfs:comment "Something an agent can interact with (I2IDL types System, Infrastructure): stores, endpoints, tutors, dashboards. Linked by i2x:realizedBy to the running services that realize it."@en .
+
+i2x:StandardConcept a owl:Class ;
+    rdfs:subClassOf i2x:GlossaryConcept ;
+    rdfs:label "Standard concept"@en ;
+    i2x:kindForTypeCollection <https://id.i2idl.org/collections/type/standard> ;
+    rdfs:comment "A specification or a normative element of one (I2IDL type Standard). Linked by i2x:implementedBy to conforming affordances and by i2x:specification to the specification document."@en .
+
+i2x:FrameworkConcept a owl:Class ;
+    rdfs:subClassOf i2x:GlossaryConcept ;
+    rdfs:label "Framework concept"@en ;
+    i2x:kindForTypeCollection <https://id.i2idl.org/collections/type/framework> ;
+    rdfs:comment "A structured reference model such as a competency or maturity framework (I2IDL type Framework). Typically enacted by framework export, alignment and gap-analysis affordances."@en .
+
+i2x:ActorConcept a owl:Class ;
+    rdfs:subClassOf i2x:GlossaryConcept ;
+    rdfs:label "Actor concept"@en ;
+    i2x:kindForTypeCollection <https://id.i2idl.org/collections/type/role> ,
+                              <https://id.i2idl.org/collections/type/population> ,
+                              <https://id.i2idl.org/collections/type/institutional-concept> ;
+    rdfs:comment "A role, population or institution (I2IDL types Role, Population, Institutional Concept). Role concepts double as agent role templates: i2x:roleCapability names the affordances an agent acting in that role is expected to wield."@en .
+
+i2x:NormativeConcept a owl:Class ;
+    rdfs:subClassOf i2x:GlossaryConcept ;
+    rdfs:label "Normative concept"@en ;
+    i2x:kindForTypeCollection <https://id.i2idl.org/collections/type/policy> ,
+                              <https://id.i2idl.org/collections/type/principle> ;
+    rdfs:comment "A policy or principle (I2IDL types Policy, Principle). Agentically a constraint on conduct: i2x:enforcedBy names the affordances through which it is put into force."@en .
+
+i2x:DomainConcept a owl:Class ;
+    rdfs:subClassOf i2x:GlossaryConcept ;
+    rdfs:label "Domain concept"@en ;
+    i2x:kindForTypeCollection <https://id.i2idl.org/collections/type/discipline> ,
+                              <https://id.i2idl.org/collections/type/field> ;
+    rdfs:comment "A discipline or field of study (I2IDL types Discipline, Field). Several I2IDL disciplines name practitioners (learning engineer, instructional designer); those carry i2x:roleCapability links in the enactments graph."@en .
+
+i2x:kindForTypeCollection a owl:AnnotationProperty ;
+    rdfs:label "kind for type collection"@en ;
+    rdfs:range skos:Collection ;
+    rdfs:comment "Data, not prose: the I2IDL type collection(s) whose members are classified into this agentic kind. The classification rules in i2idlx-rules are generated from these annotations, so the mapping lives in exactly one place."@en .
+
+i2x:editorialModality a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "editorial modality"@en ;
+    rdfs:domain i2x:GlossaryConcept ;
+    rdfs:range iep:ModalStatusEnum ;
+    rdfs:comment "I2IDL's gs:editorialStatus read as an Interego modal status: 'approved' is iep:Asserted; any other status is iep:Hypothetical. Lets the substrate's modal algebra treat glossary content uniformly with every other descriptor."@en .
+
+i2x:builtAgainstRelease a owl:AnnotationProperty ;
+    rdfs:label "built against release"@en ;
+    rdfs:comment "The I2IDL publication version (gs:publicationVersion) this artifact was generated and verified against."@en .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  B. Interpretant layers (Peirce, via ie:Sign / ie:Object / ie:Interpretant)
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:EditorialInterpretant a owl:Class ;
+    rdfs:subClassOf ie:Interpretant ;
+    rdfs:label "Editorial interpretant"@en ;
+    rdfs:comment "The interpretant fixed by editorial judgement: an I2IDL gs:Definition. Stable, versioned, evidence-backed."@en .
+
+gs:Definition rdfs:subClassOf i2x:EditorialInterpretant .
+
+i2x:SourceGroundedDefinition a owl:Class ;
+    rdfs:subClassOf i2x:EditorialInterpretant ;
+    rdfs:label "Source-grounded definition"@en ;
+    skos:altLabel "Direct source definition"@en ;
+    rdfs:comment "A definition with at least one evidence record whose gs:evidenceRelation is 'direct' — the wording is traceable to a source. Derived by rule; makes the provenance distinction I2IDL plans to surface queryable today. The altLabel is the card wording I2IDL's README proposes (priority 3)."@en .
+
+i2x:SynthesizedDefinition a owl:Class ;
+    rdfs:subClassOf i2x:EditorialInterpretant ;
+    rdfs:label "Synthesized definition"@en ;
+    skos:altLabel "I2IDL synthesis supported by source evidence"@en ;
+    rdfs:comment "A definition supported by evidence but with no 'direct' evidence record — an I2IDL synthesis. Derived by rule. The altLabel is the card wording I2IDL's README proposes (priority 3)."@en .
+
+i2x:PragmaticInterpretant a owl:Class ;
+    rdfs:subClassOf ie:Interpretant ;
+    rdfs:label "Pragmatic interpretant"@en ;
+    rdfs:comment "The conceivable practical effects of a concept, made explicit as the affordances that enact it. Instances are i2x:Enactment records."@en .
+
+i2x:UsageInterpretant a owl:Class ;
+    rdfs:subClassOf ie:Interpretant ;
+    rdfs:label "Usage interpretant"@en ;
+    rdfs:comment "An interpretant accrued from use: an observed act (typically an xAPI statement) in which an agent or learner worked under the concept. Usage interpretants are where 'meaning is usage' becomes data an analytics affordance can fold."@en .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  C. Pragmatic layer — concepts → affordances that enact them
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:enactedBy a owl:ObjectProperty ;
+    rdfs:label "enacted by"@en ;
+    rdfs:domain i2x:GlossaryConcept ;
+    rdfs:comment "Links a concept to an action identity (an iep:action IRI, URL form) whose affordance enacts it. The object dereferences: Foxxi and relay action IRIs 302 to the manifest that defines target, method and input shape, so this link never duplicates a capability definition."@en ;
+    i2x:answersInterrogative ie:How .
+
+i2x:operationalizedBy a owl:ObjectProperty ; rdfs:subPropertyOf i2x:enactedBy ;
+    rdfs:label "operationalized by"@en ;
+    rdfs:comment "The affordance performs the practice, method or process the concept names."@en .
+i2x:realizedBy a owl:ObjectProperty ; rdfs:subPropertyOf i2x:enactedBy ;
+    rdfs:label "realized by"@en ;
+    rdfs:comment "The affordance is (an interface to) a running instance of the system the concept names."@en .
+i2x:implementedBy a owl:ObjectProperty ; rdfs:subPropertyOf i2x:enactedBy ;
+    rdfs:label "implemented by"@en ;
+    rdfs:comment "The affordance implements or conforms to the standard the concept names."@en .
+i2x:measuredBy a owl:ObjectProperty ; rdfs:subPropertyOf i2x:enactedBy ;
+    rdfs:label "measured by"@en ;
+    rdfs:comment "The affordance quantifies or assesses the construct the concept names."@en ;
+    i2x:answersInterrogative ie:HowMuch .
+i2x:recordedBy a owl:ObjectProperty ; rdfs:subPropertyOf i2x:enactedBy ;
+    rdfs:label "recorded by"@en ;
+    rdfs:comment "The affordance writes evidence of the concept into a record (LRS, pod, ledger)."@en .
+i2x:credentialedBy a owl:ObjectProperty ; rdfs:subPropertyOf i2x:enactedBy ;
+    rdfs:label "credentialed by"@en ;
+    rdfs:comment "The affordance issues, verifies or presents credentials evidencing the concept."@en .
+i2x:enforcedBy a owl:ObjectProperty ; rdfs:subPropertyOf i2x:enactedBy ;
+    rdfs:label "enforced by"@en ;
+    rdfs:comment "The affordance puts the policy or principle the concept names into force."@en ;
+    i2x:answersInterrogative ie:Whether .
+i2x:explainedBy a owl:ObjectProperty ; rdfs:subPropertyOf i2x:enactedBy ;
+    rdfs:label "explained by"@en ;
+    rdfs:comment "The affordance explains or explores the concept for a learner or agent (grounded Q&A, concept-map exploration)."@en .
+
+i2x:inheritedEnactedBy a owl:ObjectProperty ;
+    rdfs:label "inherited enacted by"@en ;
+    owl:propertyChainAxiom ( skos:broaderTransitive i2x:enactedBy ) ;
+    rdfs:comment "Enactments inherited from broader concepts: if machine learning is narrower than artificial intelligence, whatever enacts AI-level governance also bears on ML. The restriction maps of the decoration presheaf along skos:broader. Kept separate from i2x:enactedBy so inherited links never masquerade as curated ones."@en .
+
+i2x:roleCapability a owl:ObjectProperty ;
+    rdfs:label "role capability"@en ;
+    rdfs:domain i2x:GlossaryConcept ;
+    rdfs:comment "From a role-bearing concept (a role, or a discipline naming practitioners) to an action identity an agent acting in that role is expected to wield. Turns I2IDL roles into HyprAgent role templates."@en .
+
+i2x:exemplifiedBy a owl:AnnotationProperty ;
+    rdfs:subPropertyOf skos:example ;
+    rdfs:label "exemplified by"@en ;
+    rdfs:comment "A live resource that is an instance of what the concept names. Reflexive by design: the glossary's own concepts of SPARQL, JSON-LD, SKOS, endpoint and technology affordance are exemplified by the very services and controls that serve the glossary."@en .
+
+i2x:specification a owl:AnnotationProperty ;
+    rdfs:subPropertyOf rdfs:seeAlso ;
+    rdfs:label "specification"@en ;
+    rdfs:comment "The specification document a standard concept refers to."@en .
+
+i2x:Enactment a owl:Class ;
+    rdfs:subClassOf i2x:PragmaticInterpretant , prov:Entity ;
+    rdfs:label "Enactment"@en ;
+    rdfs:comment "A reified concept→affordance link carrying the governance metadata the plain i2x:enactedBy triple cannot: role, rationale, confidence, review status and attribution. The plain triple is materialized alongside it for simple consumers."@en .
+
+i2x:enactedConcept a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "enacted concept"@en ; rdfs:domain i2x:Enactment ; rdfs:range i2x:GlossaryConcept ;
+    rdfs:comment "The I2IDL concept an enactment is about."@en .
+i2x:viaAction a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "via action"@en ; rdfs:domain i2x:Enactment ;
+    rdfs:comment "The action identity (URL form iep:action) that enacts the concept."@en .
+i2x:enactmentRole a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "enactment role"@en ; rdfs:domain i2x:Enactment ; rdfs:range skos:Concept ;
+    rdfs:comment "One concept from i2x:EnactmentRoles; it names which sub-property of i2x:enactedBy the enactment materializes."@en .
+i2x:rationale a owl:DatatypeProperty ;
+    rdfs:label "rationale"@en ; rdfs:range xsd:string ;
+    rdfs:comment "Why the link holds, in one reviewable sentence."@en .
+i2x:confidence a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "confidence"@en ; rdfs:range xsd:decimal ;
+    rdfs:comment "Drafter's confidence in [0,1]. Not a probability of truth; a triage signal for reviewers."@en .
+i2x:reviewStatus a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "review status"@en ; rdfs:range skos:Concept ;
+    rdfs:comment "One concept from i2x:ReviewStatuses."@en .
+
+i2x:asProperty a owl:AnnotationProperty ;
+    rdfs:label "as property"@en ;
+    rdfs:comment "Links an enactment-role concept to the i2x:enactedBy sub-property it materializes."@en .
+
+i2x:EnactmentRoles a skos:ConceptScheme ;
+    skos:prefLabel "Enactment roles"@en ;
+    skos:hasTopConcept i2x:role-operationalizes , i2x:role-realizes , i2x:role-implements , i2x:role-measures ,
+                       i2x:role-records , i2x:role-credentials , i2x:role-enforces , i2x:role-explains ;
+    rdfs:comment "How an affordance bears on a concept. Each role materializes as one sub-property of i2x:enactedBy."@en .
+
+i2x:role-operationalizes a skos:Concept ; skos:inScheme i2x:EnactmentRoles ; skos:topConceptOf i2x:EnactmentRoles ;
+    skos:prefLabel "operationalizes"@en ; i2x:asProperty i2x:operationalizedBy ;
+    skos:definition "Performs the practice, method or process."@en .
+i2x:role-realizes a skos:Concept ; skos:inScheme i2x:EnactmentRoles ; skos:topConceptOf i2x:EnactmentRoles ;
+    skos:prefLabel "realizes"@en ; i2x:asProperty i2x:realizedBy ;
+    skos:definition "Is or fronts a running instance of the system."@en .
+i2x:role-implements a skos:Concept ; skos:inScheme i2x:EnactmentRoles ; skos:topConceptOf i2x:EnactmentRoles ;
+    skos:prefLabel "implements"@en ; i2x:asProperty i2x:implementedBy ;
+    skos:definition "Implements or conforms to the standard."@en .
+i2x:role-measures a skos:Concept ; skos:inScheme i2x:EnactmentRoles ; skos:topConceptOf i2x:EnactmentRoles ;
+    skos:prefLabel "measures"@en ; i2x:asProperty i2x:measuredBy ;
+    skos:definition "Quantifies or assesses the construct."@en .
+i2x:role-records a skos:Concept ; skos:inScheme i2x:EnactmentRoles ; skos:topConceptOf i2x:EnactmentRoles ;
+    skos:prefLabel "records"@en ; i2x:asProperty i2x:recordedBy ;
+    skos:definition "Writes evidence of it into a record."@en .
+i2x:role-credentials a skos:Concept ; skos:inScheme i2x:EnactmentRoles ; skos:topConceptOf i2x:EnactmentRoles ;
+    skos:prefLabel "credentials"@en ; i2x:asProperty i2x:credentialedBy ;
+    skos:definition "Issues, verifies or presents credentials about it."@en .
+i2x:role-enforces a skos:Concept ; skos:inScheme i2x:EnactmentRoles ; skos:topConceptOf i2x:EnactmentRoles ;
+    skos:prefLabel "enforces"@en ; i2x:asProperty i2x:enforcedBy ;
+    skos:definition "Puts the policy or principle into force."@en .
+i2x:role-explains a skos:Concept ; skos:inScheme i2x:EnactmentRoles ; skos:topConceptOf i2x:EnactmentRoles ;
+    skos:prefLabel "explains"@en ; i2x:asProperty i2x:explainedBy ;
+    skos:definition "Explains or explores it for a learner or agent."@en .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  D. Mapping governance — proposals, ratification, review status
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:MappingProposal a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Mapping proposal"@en ;
+    skos:closeMatch iep:Ratifiable ;
+    rdfs:comment "A proposed SKOS mapping from an I2IDL concept to a concept in an external vocabulary, held as a record rather than asserted as a triple. Its mapping triple is materialized (by rule) only once the proposal is ratified, so a published crosswalk never overstates equivalence. When ratification runs through the substrate, the proposal is republished as its own iep:Ratifiable descriptor."@en .
+
+i2x:proposedSubject a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "proposed subject"@en ; rdfs:domain i2x:MappingProposal ;
+    rdfs:comment "The I2IDL concept the mapping starts from."@en .
+i2x:proposedPredicate a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "proposed predicate"@en ; rdfs:domain i2x:MappingProposal ;
+    rdfs:comment "One of skos:exactMatch, skos:closeMatch, skos:relatedMatch, skos:broadMatch, skos:narrowMatch — used with the meanings I2IDL's SEMANTIC-RELATIONSHIPS.md assigns them."@en .
+i2x:proposedObject a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "proposed object"@en ; rdfs:domain i2x:MappingProposal ;
+    rdfs:comment "The external concept or class the mapping points to. Must dereference."@en .
+i2x:citedIn a owl:ObjectProperty ;
+    rdfs:label "cited in"@en ; rdfs:domain i2x:MappingProposal ;
+    rdfs:comment "The I2IDL definition (a gs:Definition, by IRI) whose evidence cites the proposal's target; required for i2x:method-evidence-cited. No rdfs:range is declared, so this graph never re-types I2IDL's resources."@en .
+i2x:mappingMethod a owl:ObjectProperty ;
+    rdfs:label "mapping method"@en ; rdfs:range skos:Concept ;
+    rdfs:comment "How the proposal was produced; one concept from i2x:MappingMethods."@en .
+
+i2x:ReviewStatuses a skos:ConceptScheme ;
+    skos:prefLabel "Review statuses"@en ;
+    skos:hasTopConcept i2x:status-proposed , i2x:status-ratified , i2x:status-rejected , i2x:status-superseded .
+i2x:status-proposed a skos:Concept ; skos:inScheme i2x:ReviewStatuses ; skos:topConceptOf i2x:ReviewStatuses ;
+    skos:prefLabel "proposed"@en ; skos:closeMatch iep:Hypothetical ;
+    skos:definition "Drafted; awaiting review. Published under modal status Hypothetical."@en .
+i2x:status-ratified a skos:Concept ; skos:inScheme i2x:ReviewStatuses ; skos:topConceptOf i2x:ReviewStatuses ;
+    skos:prefLabel "ratified"@en ; skos:closeMatch iep:Asserted ;
+    skos:definition "Accepted by a reviewer with standing; its mapping or enactment triple may be asserted."@en .
+i2x:status-rejected a skos:Concept ; skos:inScheme i2x:ReviewStatuses ; skos:topConceptOf i2x:ReviewStatuses ;
+    skos:prefLabel "rejected"@en ; skos:closeMatch iep:Counterfactual ;
+    skos:definition "Reviewed and declined; kept as a road not taken."@en .
+i2x:status-superseded a skos:Concept ; skos:inScheme i2x:ReviewStatuses ; skos:topConceptOf i2x:ReviewStatuses ;
+    skos:prefLabel "superseded"@en ;
+    skos:definition "Replaced by a later proposal (follow iep:supersedes on the publishing descriptor)."@en .
+
+i2x:MappingMethods a skos:ConceptScheme ;
+    skos:prefLabel "Mapping methods"@en ;
+    skos:hasTopConcept i2x:method-editorial , i2x:method-ai-drafted , i2x:method-standards-text , i2x:method-evidence-cited , i2x:method-lexical .
+i2x:method-editorial a skos:Concept ; skos:inScheme i2x:MappingMethods ; skos:topConceptOf i2x:MappingMethods ;
+    skos:prefLabel "editorial review"@en ;
+    skos:definition "A person with domain standing compared both concepts' definitions, scope and sources."@en .
+i2x:method-ai-drafted a skos:Concept ; skos:inScheme i2x:MappingMethods ; skos:topConceptOf i2x:MappingMethods ;
+    skos:prefLabel "AI-drafted"@en ;
+    skos:definition "Drafted by a language model that read both definitions; requires editorial review before ratification."@en .
+i2x:method-standards-text a skos:Concept ; skos:inScheme i2x:MappingMethods ; skos:topConceptOf i2x:MappingMethods ;
+    skos:prefLabel "standards-text alignment"@en ;
+    skos:definition "Both concepts are defined by the same normative text (e.g. the I2IDL concept cites the specification that defines the external class)."@en .
+i2x:method-evidence-cited a skos:Concept ; skos:inScheme i2x:MappingMethods ; skos:topConceptOf i2x:MappingMethods ;
+    skos:prefLabel "evidence-cited"@en ;
+    skos:definition "I2IDL's own definition cites the target term as direct evidence; the proposal turns that citation into a mapping. The predicate still needs editorial review: a citation shows provenance, not necessarily equivalence."@en .
+i2x:method-lexical a skos:Concept ; skos:inScheme i2x:MappingMethods ; skos:topConceptOf i2x:MappingMethods ;
+    skos:prefLabel "lexical candidate"@en ;
+    skos:definition "Found by label similarity only. Per I2IDL policy, never ratifiable without editorial review."@en .
+
+i2x:RatificationVote a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Ratification vote"@en ;
+    rdfs:comment "One vote on a proposal or enactment, composed under Interego's ratification algebra: iep:Asserted = for, iep:Counterfactual = against, iep:Hypothetical = abstain."@en .
+i2x:votesOn a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "votes on"@en ; rdfs:domain i2x:RatificationVote ;
+    rdfs:comment "The i2x:MappingProposal or i2x:Enactment being voted on."@en .
+i2x:vote a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "vote"@en ; rdfs:domain i2x:RatificationVote ; rdfs:range iep:ModalStatusEnum ;
+    rdfs:comment "iep:Asserted, iep:Counterfactual or iep:Hypothetical."@en .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  E. Usage layer — Foxxi xAPI and course concept graphs
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:UsageRecord a owl:Class ;
+    rdfs:subClassOf i2x:UsageInterpretant , prov:Entity ;
+    rdfs:label "Usage record"@en ;
+    rdfs:comment "The RDF projection of one xAPI statement that tags I2IDL concepts. Tagging reuses Foxxi's existing context extension foxxi:conceptIds with I2IDL concept IRIs as values — no new xAPI extension is minted."@en .
+i2x:aboutConcept a owl:ObjectProperty ;
+    rdfs:label "about concept"@en ; rdfs:domain i2x:UsageInterpretant ; rdfs:range i2x:GlossaryConcept ;
+    rdfs:comment "The I2IDL concept a usage interpretant accrues to."@en .
+i2x:statement a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "statement"@en ; rdfs:domain i2x:UsageRecord ; rdfs:range xapi:Statement ;
+    rdfs:comment "The xAPI statement (by its id IRI, e.g. urn:uuid:...) this record projects."@en .
+i2x:usageVerb a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "usage verb"@en ; rdfs:domain i2x:UsageRecord ; rdfs:range xapi:Verb ;
+    rdfs:comment "The statement's verb IRI."@en .
+i2x:usageActivity a owl:ObjectProperty ;
+    rdfs:label "usage activity"@en ; rdfs:domain i2x:UsageRecord ; rdfs:range xapi:Activity ;
+    rdfs:comment "The statement's object activity IRI."@en .
+
+i2x:CourseConceptAlignment a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Course concept alignment"@en ;
+    rdfs:comment "Aligns a node of a Foxxi course concept graph (activity type foxxi:conceptGraphNode) to an I2IDL concept, making I2IDL the shared reference space for Foxxi concept-coverage analysis across courses and tenants. Same review discipline as i2x:MappingProposal."@en .
+i2x:courseConcept a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "course concept"@en ; rdfs:domain i2x:CourseConceptAlignment ;
+    rdfs:comment "The Foxxi course concept-graph node IRI."@en .
+i2x:alignedTo a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "aligned to"@en ; rdfs:domain i2x:CourseConceptAlignment ; rdfs:range i2x:GlossaryConcept ;
+    rdfs:comment "The I2IDL concept the course node is aligned to."@en .
+i2x:alignmentPredicate a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "alignment predicate"@en ; rdfs:domain i2x:CourseConceptAlignment ;
+    rdfs:comment "The SKOS mapping property relating course node to I2IDL concept."@en .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  F. HyprCat / HyprAgent agentic layer
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:GlossaryProduct a owl:Class ;
+    rdfs:subClassOf hyprcat:FederatedDataProduct ;
+    rdfs:label "Glossary product"@en ;
+    rdfs:comment "A published glossary described as a HyprCat federated data product: distributed identity, three-world boundary, and affordance-bearing ports onto its live service."@en .
+
+i2x:GlossaryCatalog a owl:Class ;
+    rdfs:subClassOf hyprcat:FederatedCatalog , iep:AffordanceManifest ;
+    rdfs:label "Glossary catalog"@en ;
+    rdfs:comment "The agent entry point: a HyprCat catalog that is also an Interego affordance manifest (hence a hydra:ApiDocumentation)."@en .
+
+i2x:TemplatedAffordance a owl:Class ;
+    rdfs:subClassOf iep:Affordance , hydra:Operation ;
+    rdfs:label "Templated affordance"@en ;
+    rdfs:comment "An affordance whose target is an RFC 6570 template over a resource's own data (hydra:IriTemplate mapping variables to properties such as dct:identifier). Interego's strict follower requires a concrete hydra:target, so a templated affordance is either expanded by the agent or materialized per resource by the decorator projection — never both in one graph for one resource."@en .
+i2x:targetTemplate a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "target template"@en ; rdfs:domain i2x:TemplatedAffordance ; rdfs:range hydra:IriTemplate ;
+    rdfs:comment "The template that yields the concrete hydra:target."@en .
+
+i2x:ActionIdentity a owl:Class ;
+    rdfs:label "Action identity"@en ;
+    rdfs:comment "An action IRI minted by this ontology for use as an iep:action value. Each dereferences to its definition here; skos:broadMatch points at the relay or vertical action it specializes, if any. Invocation is keyed by (descriptor, action), so within one graph every followable control needs its own action: catalog ports each carry a distinct identity defined here, and materialized per-concept controls are self-identifying (their action is their own IRI, as in Interego's own manifests) and point back here with skos:broadMatch and ieh:affordanceType."@en .
+
+i2x:act-get-glossary-jsonld a i2x:ActionIdentity ; rdfs:label "Get the full glossary graph (JSON-LD)"@en ;
+    rdfs:comment "Download the complete I2IDL graph as JSON-LD, the canonical publication file."@en .
+i2x:act-get-glossary-turtle a i2x:ActionIdentity ; rdfs:label "Get the full glossary graph (Turtle)"@en ;
+    rdfs:comment "Download the complete I2IDL graph as Turtle."@en .
+i2x:act-get-release-feed a i2x:ActionIdentity ; rdfs:label "Get the release feed"@en ;
+    rdfs:comment "Read the derived I2IDL release feed (graph i2idlx-releases)."@en .
+i2x:act-get-change-history a i2x:ActionIdentity ; rdfs:label "Get the change history"@en ;
+    rdfs:comment "Read the derived I2IDL change history (graph i2idlx-changes): one PROV activity per release, one event per kind of change."@en .
+i2x:act-get-scheme a i2x:ActionIdentity ; rdfs:label "Get the concept scheme"@en ;
+    rdfs:comment "Fetch the I2IDL concept-scheme record (release, rights, base IRI)."@en .
+i2x:act-query-glossary a i2x:ActionIdentity ; rdfs:label "Query the glossary (SPARQL GET)"@en ;
+    rdfs:comment "Run a read-only SPARQL query by GET within the service limits."@en .
+i2x:act-query-glossary-post a i2x:ActionIdentity ; rdfs:label "Query the glossary (SPARQL POST)"@en ;
+    rdfs:comment "Run a read-only SPARQL query by POST (application/sparql-query) within the service limits."@en .
+i2x:act-resolve-concept a i2x:ActionIdentity ; rdfs:label "Resolve a concept (Turtle)"@en ;
+    rdfs:comment "Dereference a concept with its active definition, evidence and sources."@en .
+i2x:act-resolve-concept-jsonld a i2x:ActionIdentity ; rdfs:label "Resolve a concept (JSON-LD)"@en ;
+    rdfs:comment "As act-resolve-concept, in JSON-LD."@en .
+i2x:act-resolve-definition a i2x:ActionIdentity ; rdfs:label "Resolve a definition"@en ;
+    rdfs:comment "Dereference a definition record with its evidence."@en .
+i2x:act-resolve-source a i2x:ActionIdentity ; rdfs:label "Resolve a source"@en ;
+    rdfs:comment "Dereference a bibliographic source record."@en .
+i2x:act-concept-neighborhood a i2x:ActionIdentity ; rdfs:label "Get a concept's semantic neighborhood"@en ;
+    rdfs:comment "CONSTRUCT the concept's broader, narrower and related concepts with labels, via the SPARQL service."@en .
+i2x:act-open-human-page a i2x:ActionIdentity ; rdfs:label "Open the human glossary"@en ;
+    rdfs:comment "Open the human-readable glossary (for a person in the loop)."@en .
+i2x:act-open-concept-card a i2x:ActionIdentity ; rdfs:label "Open a concept card"@en ;
+    rdfs:comment "Open one concept's card in the human glossary (for a person in the loop)."@en .
+i2x:act-propose-mapping a i2x:ActionIdentity ; rdfs:label "Propose a crosswalk mapping"@en ;
+    skos:broadMatch rla:publish_context ;
+    rdfs:comment "Publish an i2x:MappingProposal (modal status Hypothetical) to your own pod."@en .
+i2x:act-ratify a i2x:ActionIdentity ; rdfs:label "Vote on a proposal or enactment"@en ;
+    skos:broadMatch rla:publish_context ;
+    rdfs:comment "Publish an i2x:RatificationVote."@en .
+i2x:act-align-course-concept a i2x:ActionIdentity ; rdfs:label "Align a course concept to I2IDL"@en ;
+    skos:broadMatch rla:publish_context ;
+    rdfs:comment "Publish an i2x:CourseConceptAlignment from a Foxxi course concept-graph node to an I2IDL concept."@en .
+i2x:act-request-upstream-review a i2x:ActionIdentity ; rdfs:label "Request upstream editorial review"@en ;
+    rdfs:comment "Open a prefilled issue on the I2IDL repository so a human editor can consider a ratified proposal. Human-mediated by design."@en .
+i2x:act-record-concept-usage a i2x:ActionIdentity ; rdfs:label "Record concept usage"@en ;
+    skos:broadMatch fxa:write-xapi-statements-signed ;
+    rdfs:comment "Write an xAPI statement through Foxxi whose context.extensions carry foxxi:conceptIds with I2IDL concept IRIs."@en .
+i2x:act-get-vocabulary a i2x:ActionIdentity ; rdfs:label "Get the I2IDL-X vocabulary"@en ;
+    rdfs:comment "Read the I2IDL-X ontology itself: classes and properties, the referent categories (section L) and the origin labels (section K)."@en .
+i2x:act-get-alignments a i2x:ActionIdentity ; rdfs:label "Get the alignments"@en ;
+    rdfs:comment "Read graph i2idlx-alignments: the referent categories, I2IDL's record types and the Interego and Foxxi vocabularies aligned to BFO 2020 (IAO, CCO), gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and peer learning vocabularies, with the crosswalk bridges."@en .
+i2x:act-get-referents a i2x:ActionIdentity ; rdfs:label "Get what each concept classifies"@en ;
+    rdfs:comment "Read graph i2idlx-referents: the referent category of every I2IDL concept, with the reason."@en .
+i2x:act-publish-classified a i2x:ActionIdentity ; rdfs:label "Publish data classified by I2IDL concepts"@en ;
+    skos:broadMatch rla:publish_context ;
+    rdfs:comment "Publish your own resources (an LRS deployment, a course, a credential, a team), each linked with i2x:isClassifiedBy to the I2IDL concept it is an instance of, as a context graph on your own pod."@en .
+
+i2x:canResolveGlossary a hypragent:Capability ; rdfs:label "Can resolve the glossary"@en ;
+    rdfs:comment "Consumes the read-side ports: dumps, scheme, concept/definition/source resolution."@en .
+i2x:canQueryGlossary a hypragent:Capability ; rdfs:label "Can query the glossary"@en ;
+    rdfs:comment "Can compose SPARQL within the published service limits (query length, rate, result caps, no Update/SERVICE/FROM)."@en .
+i2x:canProposeMapping a hypragent:Capability ; rdfs:label "Can propose mappings"@en ;
+    rdfs:comment "Produces i2x:MappingProposal and i2x:CourseConceptAlignment records."@en .
+i2x:canRatifyMapping a hypragent:Capability ; rdfs:label "Can ratify mappings"@en ;
+    rdfs:comment "Has standing to cast i2x:RatificationVote on proposals; typically a human principal or a delegate holding an explicit delegation chain."@en .
+i2x:canRecordConceptUsage a hypragent:Capability ; rdfs:label "Can record concept usage"@en ;
+    rdfs:comment "Can write concept-tagged xAPI statements through Foxxi (requires a signed request as the actor)."@en .
+i2x:canPublishClassifiedData a hypragent:Capability ; rdfs:label "Can publish classified data"@en ;
+    rdfs:comment "Speaks for an organization's resources and can publish them, classified by I2IDL concepts, to that organization's pod."@en .
+
+i2x:requiresCapability a owl:ObjectProperty ;
+    rdfs:label "requires capability"@en ; rdfs:range hypragent:Capability ;
+    rdfs:comment "A HyprAgent capability an agent should hold before invoking this affordance — lets a catalog client route to agents that can actually act (hypragent:consumable / hypragent:producible)."@en .
+
+i2x:delegatesTo a owl:ObjectProperty ;
+    rdfs:label "delegates to"@en ;
+    rdfs:comment "The authoritative action this affordance fronts. Its manifest, reached by dereferencing the action IRI, owns the input contract; this catalog adds guidance, never a competing contract."@en .
+
+i2x:usageBinding a owl:AnnotationProperty ;
+    rdfs:label "usage binding"@en ;
+    rdfs:comment "Guidance for binding glossary concepts into a payload the delegated affordance accepts (for example, which xAPI extension carries the concept IRIs)."@en .
+
+i2x:StoredQuery a owl:Class ;
+    rdfs:subClassOf prov:Plan ;
+    rdfs:label "Stored query"@en ;
+    rdfs:comment "A named, parameterized SPARQL query. Most run against the glossary's SPARQL port (i2x:runsAgainst); semantic-layer queries run client-side over graphs no single endpoint holds (i2x:runsOver). Parameters are $-prefixed placeholders the agent substitutes (IRIs in angle brackets, strings escaped) before URL-encoding."@en .
+i2x:sparql a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "SPARQL text"@en ; rdfs:domain i2x:StoredQuery ; rdfs:range xsd:string .
+i2x:queryForm a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "query form"@en ; rdfs:domain i2x:StoredQuery ; rdfs:range xsd:string .
+i2x:parameter a owl:DatatypeProperty ;
+    rdfs:label "parameter"@en ; rdfs:domain i2x:StoredQuery ; rdfs:range xsd:string ;
+    rdfs:comment "Name of a $-placeholder in the query text."@en .
+i2x:runsAgainst a owl:ObjectProperty ;
+    rdfs:label "runs against"@en ; rdfs:domain i2x:StoredQuery ;
+    rdfs:comment "The port (affordance) that executes the query."@en .
+i2x:runsOver a owl:ObjectProperty ;
+    rdfs:label "runs over"@en ; rdfs:domain i2x:StoredQuery ;
+    rdfs:comment "A port whose result the query reads, client-side: follow each such port, load the results together with your own data into any SPARQL 1.1 engine, and run the query there."@en .
+
+i2x:ServiceLimits a owl:Class ;
+    rdfs:label "Service limits"@en ;
+    rdfs:comment "Machine-readable operating limits of a data service, published so an agent can plan within them instead of discovering them by failure."@en .
+i2x:serviceLimits a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "service limits"@en ; rdfs:range i2x:ServiceLimits .
+i2x:maxQueryLength a owl:DatatypeProperty ; rdfs:label "max query length (characters)"@en ; rdfs:domain i2x:ServiceLimits ; rdfs:range xsd:integer .
+i2x:maxRequestBytes a owl:DatatypeProperty ; rdfs:label "max request body (bytes)"@en ; rdfs:domain i2x:ServiceLimits ; rdfs:range xsd:integer .
+i2x:executionTimeout a owl:DatatypeProperty ; rdfs:label "execution timeout"@en ; rdfs:domain i2x:ServiceLimits ; rdfs:range xsd:dayTimeDuration .
+i2x:maxResultRows a owl:DatatypeProperty ; rdfs:label "max SELECT rows"@en ; rdfs:domain i2x:ServiceLimits ; rdfs:range xsd:integer .
+i2x:maxResultQuads a owl:DatatypeProperty ; rdfs:label "max CONSTRUCT/DESCRIBE quads"@en ; rdfs:domain i2x:ServiceLimits ; rdfs:range xsd:integer .
+i2x:rateLimitPerMinute a owl:DatatypeProperty ; rdfs:label "rate limit (requests per minute)"@en ; rdfs:domain i2x:ServiceLimits ; rdfs:range xsd:integer .
+i2x:supportedQueryForm a owl:DatatypeProperty ; rdfs:label "supported query form"@en ; rdfs:domain i2x:ServiceLimits ; rdfs:range xsd:string .
+i2x:disallowedFeature a owl:DatatypeProperty ; rdfs:label "disallowed feature"@en ; rdfs:domain i2x:ServiceLimits ; rdfs:range xsd:string .
+
+i2x:SparqlUpdate a odrl:Action ; rdfs:label "SPARQL Update"@en ;
+    rdfs:comment "Any SPARQL 1.1 Update operation. Prohibited on the I2IDL endpoint."@en .
+i2x:SparqlFederation a odrl:Action ; rdfs:label "SPARQL federation"@en ;
+    rdfs:comment "SERVICE clauses, and FROM / FROM NAMED remote-dataset clauses. Prohibited on the I2IDL endpoint."@en .
+
+i2x:selects a owl:ObjectProperty ;
+    rdfs:label "selects"@en ; rdfs:domain ieh:AffordanceDecorator ;
+    rdfs:comment "The class (or SHACL node shape) of resources a decorator applies to."@en .
+i2x:produces a owl:ObjectProperty ;
+    rdfs:label "produces"@en ; rdfs:domain ieh:AffordanceDecorator ;
+    rdfs:comment "An affordance template the decorator instantiates for each selected resource."@en .
+i2x:hasDecorator a owl:ObjectProperty ;
+    rdfs:label "has decorator"@en ; rdfs:domain ieh:DecoratorRegistry ; rdfs:range ieh:AffordanceDecorator .
+
+i2x:registry a ieh:DecoratorRegistry ;
+    rdfs:label "I2IDL-X decorator registry"@en ;
+    rdfs:comment "Applied to each I2IDL concept in ieh:priority order; later decorators see earlier output. Executable form: the CONSTRUCT projection shipped with this ontology."@en ;
+    i2x:hasDecorator i2x:decorator-resolve , i2x:decorator-neighborhood , i2x:decorator-human , i2x:decorator-enactment , i2x:decorator-inheritance .
+
+i2x:decorator-resolve a ieh:AffordanceDecorator ;
+    ieh:decoratorId "i2idlx.resolve" ; ieh:decoratorName "Resolve concept and definition"@en ; ieh:domain "i2idl" ; ieh:priority 10 ;
+    i2x:selects i2x:GlossaryConcept ;
+    rdfs:comment "Per concept: GET the concept as Turtle and as JSON-LD, and GET its active definition with evidence. Targets are the concept's own dereferenceable IRIs on id.i2idl.org."@en .
+i2x:decorator-neighborhood a ieh:AffordanceDecorator ;
+    ieh:decoratorId "i2idlx.neighborhood" ; ieh:decoratorName "Semantic neighborhood"@en ; ieh:domain "i2idl" ; ieh:priority 20 ;
+    i2x:selects i2x:GlossaryConcept ;
+    rdfs:comment "Per concept: a GET on the SPARQL service whose query CONSTRUCTs the editorial neighborhood (broader, narrower, related, with labels)."@en .
+i2x:decorator-human a ieh:AffordanceDecorator ;
+    ieh:decoratorId "i2idlx.human" ; ieh:decoratorName "Human-in-the-loop page"@en ; ieh:domain "i2idl" ; ieh:priority 30 ;
+    i2x:selects i2x:GlossaryConcept ;
+    rdfs:comment "Per concept: open the concept card in the human glossary."@en .
+i2x:decorator-enactment a ieh:AffordanceDecorator ;
+    ieh:decoratorId "i2idlx.enactment" ; ieh:decoratorName "Enacting capabilities"@en ; ieh:domain "foxxi" ; ieh:priority 40 ;
+    i2x:selects i2x:GlossaryConcept ;
+    rdfs:comment "Per concept with enactments: surface the linked Foxxi / relay actions. Links only — target, method and input shape stay in the manifest each action IRI dereferences to."@en .
+i2x:decorator-inheritance a ieh:AffordanceDecorator ;
+    ieh:decoratorId "i2idlx.inheritance" ; ieh:decoratorName "Inherited enactments"@en ; ieh:domain "foxxi" ; ieh:priority 50 ;
+    i2x:selects i2x:GlossaryConcept ;
+    rdfs:comment "Per concept: enactments of broader concepts, as i2x:inheritedEnactedBy."@en .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  G. Interrogative alignment (Interego ie:)
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:answersInterrogative a owl:AnnotationProperty ;
+    rdfs:label "answers interrogative"@en ;
+    rdfs:range ie:Interrogative ;
+    rdfs:comment "Declares which canonical Interego interrogative a property answers, so interrogative routing over a descriptor can reach glossary content: What → definition, Why → editorial explanation, WhatKind → type, Where → field, Whose → evidence, How → enactment."@en .
+
+skos:definition i2x:answersInterrogative ie:What .
+gs:editorialExplanation i2x:answersInterrogative ie:Why .
+gs:typeCollection i2x:answersInterrogative ie:WhatKind .
+gs:fieldCollection i2x:answersInterrogative ie:Where .
+gs:evidence i2x:answersInterrogative ie:Whose .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  H. Glossary Studio (gs:) terms used by I2IDL — declared for OWL hygiene only.
+#     Normative meaning is I2IDL's (see its README and SEMANTIC-RELATIONSHIPS.md).
+# ──────────────────────────────────────────────────────────────────────────────
+
+gs:Definition a owl:Class ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:label "Definition"@en ;
+    rdfs:comment "A first-class, versioned definition record (declared here for OWL hygiene)."@en .
+gs:Evidence a owl:Class ; rdfs:subClassOf prov:Entity ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:label "Evidence"@en ;
+    rdfs:comment "A source citation supporting a definition, classified direct or supporting."@en .
+gs:activeDefinition a owl:ObjectProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:range gs:Definition ; rdfs:label "active definition"@en .
+gs:evidence a owl:ObjectProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:domain gs:Definition ; rdfs:range gs:Evidence ; rdfs:label "evidence"@en .
+gs:evidenceRelation a owl:DatatypeProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:domain gs:Evidence ; rdfs:label "evidence relation"@en .
+gs:fieldCollection a owl:ObjectProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:range skos:Collection ; rdfs:label "primary field collection"@en .
+gs:typeCollection a owl:ObjectProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:range skos:Collection ; rdfs:label "type collection"@en .
+gs:editorialStatus a owl:DatatypeProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:label "editorial status"@en .
+gs:editorialExplanation a owl:DatatypeProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:label "editorial explanation"@en .
+gs:definitionSequence a owl:DatatypeProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:label "definition sequence"@en .
+gs:facet a owl:DatatypeProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:label "collection facet"@en .
+gs:publicationVersion a owl:DatatypeProperty ; rdfs:isDefinedBy <https://glossarystudio.app/ns/> ; rdfs:label "publication version"@en .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  I. Releases (for the change feed)
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:GlossaryRelease a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Glossary release"@en ;
+    rdfs:comment "One published state of the I2IDL graph, identified by its commit; successive releases chain by prov:wasRevisionOf."@en .
+i2x:releaseVersion a owl:DatatypeProperty , owl:FunctionalProperty ; rdfs:label "release version"@en ; rdfs:domain i2x:GlossaryRelease ; rdfs:range xsd:string .
+i2x:releaseCommit a owl:DatatypeProperty , owl:FunctionalProperty ; rdfs:label "release commit"@en ; rdfs:domain i2x:GlossaryRelease ; rdfs:range xsd:string .
+i2x:conceptCount a owl:DatatypeProperty ; rdfs:label "concept count"@en ; rdfs:domain i2x:GlossaryRelease ; rdfs:range xsd:integer .
+i2x:relatedPairCount a owl:DatatypeProperty ; rdfs:label "related pair count"@en ; rdfs:domain i2x:GlossaryRelease ; rdfs:range xsd:integer .
+i2x:broaderPairCount a owl:DatatypeProperty ; rdfs:label "broader pair count"@en ; rdfs:domain i2x:GlossaryRelease ; rdfs:range xsd:integer .
+i2x:addedConcept a owl:ObjectProperty ; rdfs:label "added concept"@en ; rdfs:domain i2x:GlossaryRelease .
+i2x:removedConcept a owl:ObjectProperty ; rdfs:label "removed concept"@en ; rdfs:domain i2x:GlossaryRelease .
+i2x:revisedDefinitionOf a owl:ObjectProperty ; rdfs:label "revised definition of"@en ; rdfs:domain i2x:GlossaryRelease .
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  J. Change history (I2IDL README, "Next development priorities" 4)
+#     Derived from the public git history of public/glossary.jsonld. Facts about
+#     upstream, recorded with PROV: each release is generated by one
+#     i2x:ReleaseChange that used the previous release; its i2x:ChangeEvents say
+#     what kind of change touched which concepts, collections or sources.
+#     Before/after values for set-valued changes live in the two release
+#     snapshots (each release records its commit); scalar changes carry them.
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:ReleaseChange a owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:label "Release change"@en ;
+    rdfs:comment "The editorial activity between two successive I2IDL releases: prov:used the previous i2x:GlossaryRelease, prov:generated the next. Its parts are i2x:ChangeEvents."@en .
+i2x:ChangeEvent a owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:label "Change event"@en ;
+    rdfs:comment "One kind of change within a release change, with everything it touched and how many facts changed."@en .
+i2x:partOfChange a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:subPropertyOf dct:isPartOf ;
+    rdfs:label "part of change"@en ; rdfs:domain i2x:ChangeEvent ; rdfs:range i2x:ReleaseChange .
+i2x:changeKind a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "change kind"@en ; rdfs:domain i2x:ChangeEvent ; rdfs:range skos:Concept ;
+    rdfs:comment "One concept from i2x:ChangeKinds."@en .
+i2x:changeCount a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "change count"@en ; rdfs:range xsd:integer ;
+    rdfs:comment "How many facts changed: pairs for relationships, concepts for memberships, records for evidence."@en .
+i2x:changedConcept a owl:ObjectProperty ;
+    rdfs:label "changed concept"@en ; rdfs:domain i2x:ChangeEvent ;
+    rdfs:comment "An I2IDL concept the event touched (both ends, for a relationship). Removed concepts stay named here although they no longer resolve, so no rdfs:range is declared."@en .
+i2x:changedCollection a owl:ObjectProperty ;
+    rdfs:label "changed collection"@en ; rdfs:domain i2x:ChangeEvent ;
+    rdfs:comment "The I2IDL collection (a skos:Collection, by IRI) the event concerns."@en .
+i2x:changedSource a owl:ObjectProperty ;
+    rdfs:label "changed source"@en ; rdfs:domain i2x:ChangeEvent ;
+    rdfs:comment "The I2IDL source record the event concerns (for source and evidence changes)."@en .
+i2x:viaProperty a owl:ObjectProperty ;
+    rdfs:label "via property"@en ; rdfs:domain i2x:ChangeEvent ; rdfs:range rdf:Property ;
+    rdfs:comment "For relationship changes: skos:related, or skos:broader (pairs counted once; skos:narrower is its inverse)."@en .
+i2x:priorValue a rdf:Property ;
+    rdfs:label "prior value"@en ; rdfs:domain i2x:ChangeEvent ;
+    rdfs:comment "The value before a scalar change (a literal, or a collection IRI for type and field changes)."@en .
+i2x:newValue a rdf:Property ;
+    rdfs:label "new value"@en ; rdfs:domain i2x:ChangeEvent ;
+    rdfs:comment "The value after a scalar change, or the evidence relation assigned."@en .
+i2x:baselineRelease a owl:ObjectProperty ;
+    rdfs:label "baseline release"@en ;
+    rdfs:comment "The first release in the derived history; earlier states are not in the public record."@en .
+
+i2x:ChangeKinds a skos:ConceptScheme ;
+    skos:prefLabel "Change kinds"@en ;
+    skos:definition "The kinds of change between I2IDL releases. They refine the event types in I2IDL's README (concept added, definition revised, source changed, relationship added, collection membership changed, evidence reclassified, external mapping added or revised) wherever the git history distinguishes cases, e.g. an evidence record's first classification versus a reclassification."@en ;
+    rdfs:seeAlso <https://github.com/blakeplock/i2idl-linked-data/blob/{{COMMIT}}/README.md#4-add-machine-readable-change-history> .
+{{CHANGE_KINDS}}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  K. What's whose — the origin of everything shown alongside I2IDL
+#     One concept per origin label. The workbench labels every zone and layer
+#     with one of them, the reference page renders its table from them, and
+#     both take the wording from the same source (src/origins.json).
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:Origins a skos:ConceptScheme ;
+    skos:prefLabel "{{ORIGINS_LABEL}}"@en ;
+    skos:definition "{{ORIGINS_DEFINITION}}"@en .
+i2x:heldIn a owl:ObjectProperty ;
+    rdfs:label "held in"@en ;
+    rdfs:domain skos:Concept ;
+    rdfs:comment "A graph, service or manifest where statements of this origin live. No range is declared: the objects are other publishers' resources."@en .
+{{ORIGINS}}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  L. Semantic layer — what I2IDL concepts classify
+#     An I2IDL concept is a term. i2x:isClassifiedBy links a thing in the world
+#     (an LRS deployment, a quiz session, a teacher) to the I2IDL concept it is
+#     an instance of. Every concept has one referent category; each category is
+#     an OWL class here, and its alignments to BFO 2020 (IAO, CCO), gist,
+#     DOLCE-UltraLite, gUFO, PROV-O, schema.org and peer learning vocabularies
+#     are proposals in i2idlx-alignments, with each concept's category in
+#     i2idlx-referents. A reasoner then types classified data in all of them.
+# ──────────────────────────────────────────────────────────────────────────────
+
+i2x:isClassifiedBy a owl:ObjectProperty ;
+    rdfs:label "is classified by"@en ;
+    owl:inverseOf i2x:classifies ;
+    rdfs:comment "From a thing to the I2IDL concept it is an instance of: this LRS deployment is classified by i2idl:learning-record-store-lrs; this quiz session by i2idl:formative-assessment. Strictly instance-of. For subject tagging use dct:subject or schema:about; for an illustration, i2x:exemplifiedBy (a JSON-LD file exemplifies JSON-LD but is not a format). A reasoner types the thing by the concept's referent category."@en .
+i2x:classifies a owl:ObjectProperty ;
+    rdfs:label "classifies"@en ;
+    rdfs:comment "From an I2IDL concept to a thing that is an instance of what it names (the inverse of i2x:isClassifiedBy)."@en .
+i2x:referentCategory a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "referent category"@en ;
+    rdfs:range skos:Concept ;
+    rdfs:comment "From an I2IDL concept to the category of the things it classifies, one concept of i2x:ReferentCategories. The assignments are proposals, published in i2idlx-referents."@en .
+i2x:referentClass a owl:AnnotationProperty ;
+    rdfs:label "referent class"@en ;
+    rdfs:comment "From a referent category to the OWL class its referents join."@en .
+i2x:classificationMode a owl:AnnotationProperty ;
+    rdfs:label "classification mode"@en ;
+    rdfs:comment "'classify': the category's concepts classify things and type them; 'subject': its concepts are subjects (link to them with dct:subject), so nothing is typed from them; 'none': its concepts have no single upper category."@en .
+i2x:expressibleAs a owl:AnnotationProperty ;
+    rdfs:label "expressible as"@en ;
+    rdfs:comment "A peer-vocabulary class under which a description of this category's referents can be published: a CTDL WorkRole for a role, a CTDL-ASN Competency for a competence. An export target, not a typing."@en .
+i2x:alignmentRationale a owl:AnnotationProperty ;
+    rdfs:label "alignment rationale"@en ;
+    rdfs:comment "Why a class is aligned to the upper-ontology and peer classes it is aligned to."@en .
+i2x:categoryRationale a owl:AnnotationProperty ;
+    rdfs:label "category rationale"@en ;
+    rdfs:comment "Why a concept's referents fall in its referent category."@en .
+i2x:assignmentBasis a owl:AnnotationProperty ;
+    rdfs:label "assignment basis"@en ;
+    rdfs:comment "'type' when the category follows from I2IDL's own type collection, 'definition' when the concept's definition decides it."@en .
+i2x:sourceOfEvidence a owl:ObjectProperty ;
+    rdfs:label "source of evidence"@en ;
+    owl:inverseOf dct:source ;
+    rdfs:comment "From a source to an evidence record that cites it (the inverse of dct:source)."@en .
+
+i2x:Referent a owl:Class ;
+    rdfs:label "Referent"@en ;
+    rdfs:comment "Anything an I2IDL concept classifies."@en .
+[ a owl:Restriction ; owl:onProperty i2x:isClassifiedBy ; owl:someValuesFrom i2x:GlossaryConcept ] rdfs:subClassOf i2x:Referent .
+i2x:GlossarySource a owl:Class ;
+    rdfs:label "Glossary source"@en ;
+    owl:equivalentClass [ a owl:Restriction ; owl:onProperty i2x:sourceOfEvidence ; owl:someValuesFrom gs:Evidence ] ;
+    rdfs:comment "A source cited by evidence in the I2IDL glossary."@en .
+i2x:GlossaryCollection a owl:Class ;
+    rdfs:label "Glossary collection"@en ;
+    owl:equivalentClass [ a owl:Class ; owl:intersectionOf ( skos:Collection [ a owl:Restriction ; owl:onProperty skos:member ; owl:someValuesFrom i2x:GlossaryConcept ] ) ] ;
+    rdfs:comment "A SKOS collection of I2IDL concepts: I2IDL's type, field and curated collections."@en .
+
+i2x:ReferentCategories a skos:ConceptScheme ;
+    skos:prefLabel "Referent categories"@en ;
+    skos:definition "What kind of thing an I2IDL concept classifies: a process, an activity, an information artifact, a person in a role, a capacity, a software system, and so on. Each category is also an OWL class of referents."@en .
+{{REFERENT_CATEGORIES}}

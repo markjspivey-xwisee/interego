@@ -1,0 +1,109 @@
+{
+  "comment": "What's whose: the one source for the origin labels. build.py publishes them in the ontology (i2x:Origins), build_app.py gives them to the workbench (every zone and layer carries one), build_site.py renders the reference page's table from the published ontology. 'what' and 'trust' are shared; 'definition' and 'scope', where present, replace them in the ontology when the workbench wording speaks of 'this page'. {nTypes}, {nFields}, {nCurated} and {nSources} are counted from the pinned release; 'where' is the workbench's wording, with {release}, {commit7}, {base} and {foxxi} filled in at build time; 'heldIn' names the graphs, services and manifests where statements of that origin live ({ontology}, {catalog}, ... are I2IDL-X graph IRIs, {foxxiManifest} the Foxxi bridge manifest).",
+  "scheme": {
+    "label": "What's whose",
+    "definition": "Where a statement shown alongside the I2IDL glossary comes from: I2IDL's own published record, one of the three kinds of I2IDL-X layer (derived, added, proposed), Interego, Foxxi, or a reviewing team. I2IDL's record is never restated or edited; everything else carries its own label."
+  },
+  "groups": [
+    {
+      "id": "x",
+      "label": "I2IDL-X",
+      "definition": "Everything this superset puts on top of I2IDL, in three kinds kept apart: derived from I2IDL's own data, added links, and proposals awaiting review.",
+      "heldIn": [
+        "{ontology}"
+      ]
+    }
+  ],
+  "origins": [
+    {
+      "id": "i2idl",
+      "label": "I2IDL",
+      "group": "I2IDL",
+      "what": "Labels and alternate labels, definitions, editorial notes, editorial status, the {nTypes} types, {nFields} fields and {nCurated} curated collections, broader / narrower / related links, evidence records and their direct / supporting classification, the {nSources} sources and their rights, the release itself.",
+      "where": "id.i2idl.org — I2IDL's JSON-LD graph, SPARQL service and concept pages. This page embeds {release} (commit {commit7}) unchanged.",
+      "trust": "Approved by I2IDL's editors. Canonical.",
+      "heldIn": [
+        "https://id.i2idl.org/scheme",
+        "https://id.i2idl.org/glossary.jsonld",
+        "https://id.i2idl.org/sparql"
+      ]
+    },
+    {
+      "id": "derived",
+      "label": "I2IDL-X · derived",
+      "group": "I2IDL-X",
+      "broader": "x",
+      "what": "Computed from I2IDL's own data, adding no claim about meaning: definition provenance (from evidence relations), agentic kind (from type collections), reuse class (from source rights), in-text links and unlinked mentions, the eight-question view, per-term change history (from the public git history), editorial health checks, map layout, per-concept agent controls.",
+      "where": "Rules and graphs on Interego (i2idlx, i2idlx-rules, i2idlx-changes) and this page's build, which re-checks every derived fact against I2IDL's graph.",
+      "trust": "Deterministic. Recomputed from each new release.",
+      "definition": "Computed from I2IDL's own data, adding no claim about meaning: definition provenance (from evidence relations), agentic kind (from type collections), reuse class (from source rights), the release feed and change history (from the public git history), in-text links and unlinked mentions, editorial health checks, per-concept agent controls.",
+      "heldIn": [
+        "{rules}",
+        "{releases}",
+        "{changes}"
+      ]
+    },
+    {
+      "id": "added",
+      "label": "I2IDL-X · added",
+      "group": "I2IDL-X",
+      "broader": "x",
+      "what": "Links I2IDL-X asserts about I2IDL concepts: the specification document for a standard, a live exemplar of a concept.",
+      "where": "i2idlx-catalog on Interego.",
+      "trust": "Asserted by I2IDL-X, not by I2IDL.",
+      "heldIn": [
+        "{catalog}"
+      ]
+    },
+    {
+      "id": "proposed",
+      "label": "I2IDL-X · proposed",
+      "group": "I2IDL-X",
+      "broader": "x",
+      "what": "Capability links (enactments) to live Foxxi and Interego actions, crosswalks to external vocabularies (UNESCO Thesaurus, xAPI, IEEE, schema.org, W3C VC), role capabilities, inherited enactments, and the semantic layer: what each concept classifies and how that lines up with BFO, gist, DUL, gUFO, PROV-O, schema.org and peer learning vocabularies.",
+      "where": "i2idlx-enactments, i2idlx-mappings, i2idlx-alignments and i2idlx-referents on Interego, published Hypothetical.",
+      "trust": "Hypothetical until reviewers ratify. A mapping triple exists only after ratification; a ratified crosswalk becomes a prefilled suggestion to I2IDL's editors, never an edit.",
+      "heldIn": [
+        "{enactments}",
+        "{mappings}",
+        "{alignments}",
+        "{referents}"
+      ]
+    },
+    {
+      "id": "interego",
+      "label": "Interego",
+      "group": "Interego",
+      "what": "Where I2IDL-X lives and how agents act on it: dereferenceable graphs with signed descriptors, the HyprCat agent catalog and its controls, ratification algebra (for = Asserted, against = Counterfactual, abstain = Hypothetical), publish and act calls.",
+      "where": "{base}/…",
+      "trust": "Signed by the publishing agent; content-hashed.",
+      "heldIn": [
+        "{catalog}",
+        "{shapes}",
+        "https://relay.interego.xwisee.com/.well-known/operations"
+      ]
+    },
+    {
+      "id": "foxxi",
+      "label": "Foxxi",
+      "group": "Foxxi",
+      "what": "The live learning capabilities enactments point to (Foxxi bridge affordances), xAPI usage statements tagged with I2IDL IRIs, course-concept alignment and coverage.",
+      "where": "{foxxi}",
+      "trust": "Foxxi's own services and contracts.",
+      "heldIn": [
+        "{foxxiManifest}"
+      ]
+    },
+    {
+      "id": "team",
+      "label": "Your team",
+      "group": "Team",
+      "what": "Votes, notes and “I use this” marks (shared on this page); packs, stars and recent terms (private to you).",
+      "where": "This page's shared storage.",
+      "trust": "Visible to everyone with access to this page.",
+      "definition": "Reviewers' votes, notes and usage marks. In the workbench they are shared with everyone who can open it; made through Interego, a vote is an i2x:RatificationVote in the reviewer's own pod.",
+      "scope": "Each reviewer's own record; a ratified outcome is computed from the votes, never typed in.",
+      "heldIn": []
+    }
+  ]
+}

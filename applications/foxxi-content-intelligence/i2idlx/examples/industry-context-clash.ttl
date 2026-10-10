@@ -1,0 +1,6 @@
+# A category error the semantic layer must catch: one thing classified as both a formative assessment (a process)
+# and a classroom teacher (a person). BFO, DUL and gUFO all make processes and enduring things disjoint.
+@prefix ex:    <https://example.org/academy/> .
+@prefix i2x:   <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#> .
+@prefix i2idl: <https://id.i2idl.org/concepts/> .
+ex:confused i2x:isClassifiedBy i2idl:formative-assessment , i2idl:classroom-teacher .

@@ -1,0 +1,1348 @@
+{
+ "@context": {
+  "iep": "https://markjspivey-xwisee.github.io/interego/ns/iep#",
+  "ieh": "https://markjspivey-xwisee.github.io/interego/ns/harness#",
+  "hydra": "http://www.w3.org/ns/hydra/core#",
+  "sh": "http://www.w3.org/ns/shacl#",
+  "prov": "http://www.w3.org/ns/prov#",
+  "dcat": "http://www.w3.org/ns/dcat#",
+  "dct": "http://purl.org/dc/terms/",
+  "xsd": "http://www.w3.org/2001/XMLSchema#",
+  "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+  "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+  "affordances": {
+   "@id": "https://markjspivey-xwisee.github.io/interego/ns/iep#affordance",
+   "@container": "@set"
+  },
+  "conformsToShape": {
+   "@id": "http://www.w3.org/ns/shacl#shapesGraph",
+   "@type": "@id"
+  },
+  "operandIris": {
+   "@id": "https://markjspivey-xwisee.github.io/interego/ns/iep#operand",
+   "@container": "@set",
+   "@type": "@id"
+  },
+  "action": {
+   "@id": "https://markjspivey-xwisee.github.io/interego/ns/iep#action",
+   "@type": "@id"
+  },
+  "target": {
+   "@id": "http://www.w3.org/ns/hydra/core#target",
+   "@type": "@id"
+  },
+  "method": {
+   "@id": "http://www.w3.org/ns/hydra/core#method"
+  },
+  "mediaType": {
+   "@id": "http://www.w3.org/ns/hydra/core#returnsContentType"
+  },
+  "expects": {
+   "@id": "http://www.w3.org/ns/hydra/core#expects",
+   "@type": "@id"
+  },
+  "returns": {
+   "@id": "http://www.w3.org/ns/hydra/core#returns",
+   "@type": "@id"
+  },
+  "apex": {
+   "@id": "https://markjspivey-xwisee.github.io/interego/ns/iep#apex",
+   "@type": "@id"
+  },
+  "left": {
+   "@id": "https://markjspivey-xwisee.github.io/interego/ns/iep#left",
+   "@type": "@id"
+  },
+  "right": {
+   "@id": "https://markjspivey-xwisee.github.io/interego/ns/iep#right",
+   "@type": "@id"
+  },
+  "overlap": {
+   "@id": "https://markjspivey-xwisee.github.io/interego/ns/iep#overlap",
+   "@type": "@id"
+  }
+ },
+ "@id": "https://relay.interego.xwisee.com/.well-known/operations",
+ "@type": [
+  "hydra:Collection",
+  "urn:iep:type:OperationsCatalog"
+ ],
+ "conformsToShape": "urn:iep:shape:OperationsCatalog",
+ "dct:identifier": "sha256:c03234a7dbd5e41f51bd87c9ecd4b521a2b56a9819fcffeffd3633f41e825883",
+ "hydra:totalItems": 51,
+ "hydra:member": [
+  {
+   "@id": "urn:iep:operation:mint",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/mint",
+   "target": "https://relay.interego.xwisee.com/tool/mint",
+   "method": "POST",
+   "title": "Mint a holon",
+   "description": "Kernel verb \u2014 content-addressed holon construction. Same content always yields the same IRI (Identity-by-reference, Invariant 1). Kinds: atom (default), fragment, descriptor, opaque.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/mint/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/mint/output",
+   "classification": "kernel-verb",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:dereference",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/dereference",
+   "target": "https://relay.interego.xwisee.com/tool/dereference",
+   "method": "POST",
+   "title": "Dereference an IRI",
+   "description": "Kernel verb \u2014 Peircean Secondness: resolve an IRI to its representation, affordances, and provenance. Manifests return entry lists decorated with affordances, BOUNDED \u2014 see `limit`; when the pod holds more, the result carries manifestPartial:true and manifestTotalEntries. Encrypted envelopes return status: encrypted-no-key when no key supplied.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/dereference/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/dereference/output",
+   "classification": "kernel-verb",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:compose",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/compose",
+   "target": "https://relay.interego.xwisee.com/tool/compose",
+   "method": "POST",
+   "title": "Compose descriptors",
+   "description": "Kernel verb \u2014 operadic composition over typed-hyperedge category. Operators: union (join), intersection (meet), restriction (project), override (left-biased). IMPORTANT: `descriptors` takes the descriptor OBJECTS themselves, not IRIs referring to them. Descriptors are not stored, so an id returned by `mint(kind:\"descriptor\")` cannot be resolved back \u2014 passing one is refused.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/compose/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/compose/output",
+   "classification": "kernel-verb",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:act",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/act",
+   "target": "https://relay.interego.xwisee.com/tool/act",
+   "method": "POST",
+   "title": "Act on an affordance",
+   "description": "Kernel verb \u2014 Peircean Thirdness operational. Follows an affordance via {descriptor_url, action_iri} or via pre-resolved {target, action, method}. SUBMITTING AN AMEP ACT (memory exchange): set target to `<relay>/amep/acts`, method POST, and payload to a COMPLETE amep:Exchange envelope \u2014 a bare {body} or {act:\"Ask\"} returns 422. Shape: {\"@context\":[\"https://markjspivey-xwisee.github.io/affordant-memory-protocol/0.1/context.jsonld\"],\"@type\":\"amep:Exchange\",\"actor\":{\"@id\":\"<did>\",\"@type\":\"prov:SoftwareAgent\"},\"act\":{\"@id\":\"urn:act:...\",\"@type\":\"amep:ProtocolAct\",\"actType\":\"amep:Ask|Assert|Challenge|Accept|Fork|Compose\",\"actor\":\"<did>\",\"createdAt\":\"<iso8601>\",\"proof\":{\"@type\":\"iep:SignedAuthorship\",\"verificationMethod\":\"<did>#k\",\"created\":\"<iso8601>\",\"proofValue\":\"z\"}},\"memory\":{...for Assert/Challenge}}. The OAuth session auto-fills actor to your authenticated identity (no impersonation). NOTE: a placeholder proofValue yields `integrityStatus: amep:Unverified` \u2014 an honest label, not an error; genuine session-bound signing is a separate step.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/act/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/act/output",
+   "classification": "kernel-verb",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:restrict",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/restrict",
+   "target": "https://relay.interego.xwisee.com/tool/restrict",
+   "method": "POST",
+   "title": "Restrict a holon",
+   "description": "Kernel verb \u2014 adjunction left half (whole \u2192 part). Projects a descriptor to a facet-type subset.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/restrict/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/restrict/output",
+   "classification": "kernel-verb",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:extend",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/extend",
+   "target": "https://relay.interego.xwisee.com/tool/extend",
+   "method": "POST",
+   "title": "Extend a part to a whole",
+   "description": "Kernel verb \u2014 adjunction right half (part \u2192 whole). Inverse of restrict; back-links via iep:supersedes.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/extend/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/extend/output",
+   "classification": "kernel-verb",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:promote",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/promote",
+   "target": "https://relay.interego.xwisee.com/tool/promote",
+   "method": "POST",
+   "title": "Promote atoms",
+   "description": "Kernel verb \u2014 PGSL fibration upward (level k \u2192 k+1). Builds the lattice and returns the apex + pullback square (when level \u2265 2).",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/promote/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/promote/output",
+   "classification": "kernel-verb",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:decompose",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/decompose",
+   "target": "https://relay.interego.xwisee.com/tool/decompose",
+   "method": "POST",
+   "title": "Decompose a fragment",
+   "description": "Kernel verb \u2014 PGSL fibration downward (level k \u2192 k-1). Returns left/right/overlap for fragment of level \u2265 2.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/decompose/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/decompose/output",
+   "classification": "kernel-verb",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:reduce_chain",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/reduce_chain",
+   "target": "https://relay.interego.xwisee.com/tool/reduce_chain",
+   "method": "POST",
+   "title": "Reduce a supersedes chain",
+   "description": "Kernel verb \u2014 fold a iep:supersedes chain through a declarative reducer (Turtle-template OR SHACL-transform) and return the canonical head state alongside a content-addressed ReplayProof. The proof carries each chain link's CID in walk order, the reducer artifact's CID, periodic state checkpoints, and the final head-state CID. Any third party can independently re-fetch by CID and replay the same fold to verify the result \u2014 no trust in the original kernel is required. Reducer resolution order: (1) inline reducer_spec wins, (2) reducer_iri is dereferenced and classified, (3) the kernel reads `iep:reducer <iri>` declared on the chain head.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/reduce_chain/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/reduce_chain/output",
+   "classification": "kernel-verb",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:publish_context",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/publish_context",
+   "target": "https://relay.interego.xwisee.com/tool/publish_context",
+   "method": "POST",
+   "title": "Publish context graph",
+   "description": "Compatibility shim \u2014 publishes a context-annotated graph through the generic kernel with its descriptor, attribution and optional authorship proof. Unsealed graph_content is Turtle; visibility selects public plaintext or relay-managed encryption. With sealed_payload=true, graph_content is an envelope created by the client and stored unchanged; the client chooses recipients and must hold its private keys for client-held E2EE. The SHACL gate enforces caller and container shapes before writes of unsealed input. For sealed input it reports conformance.status=deferred-to-clients and the shape requirements; it cannot validate encrypted plaintext or attest to client validation.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/publish_context/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/publish_context/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:remember",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/remember",
+   "target": "https://relay.interego.xwisee.com/tool/remember",
+   "method": "POST",
+   "title": "Remember (create a memory/note)",
+   "description": "Create a memory or note \u2014 the SIMPLE, default path. Use this (not `act`/AMEP) whenever you just want to record something. A memory is a stored, addressable context graph on your pod; it is NOT an AMEP exchange (Ask/Assert/Challenge/Compose is only for governed, multi-party, contestable claims). Give `{ title?, body, visibility? }` \u2014 nothing else. Who you are (owner + agent + pod) is filled from your authenticated session; the note is written as an ieh:AgentMemory, encrypted-PRIVATE by default, and signed with a GENUINE authorship proof (verifies to CryptographicallyVerified on read \u2014 no placeholder). Returns `rendered` (the complete HyperMarkdown note \u2014 prose + fields + describedby/alternate links + its controls \u2014 ready to display inline) and `view.url` (its dereferenceable HTTPS identity; GET it with your bearer + Accept: text/markdown to re-fetch live). Display `rendered` directly.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/remember/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/remember/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:record_trajectory_step",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/record_trajectory_step",
+   "target": "https://relay.interego.xwisee.com/tool/record_trajectory_step",
+   "method": "POST",
+   "title": "Record trajectory step",
+   "description": "Record one step of the calling agent's OODA trajectory as a substrate-native ContextDescriptor. Each step lands on the agent's own pod, signed (sign_authorship default true), discoverable via discover_context with `graph_iri: \"urn:graph:trajectory:<agentSlug>\"`, and consumable by verifyCapabilityTransfer and any calibration loop that reads trajectories. Use Hypothetical when recording intent BEFORE acting, then call again with Asserted + supersedes_step_id pointing at the Hypothetical to mark it executed. The `verb` + `object_name` pair is what verifyCapabilityTransfer pattern-matches against signal/anti-signal markers, so write them as the action you took, e.g. verb: \"ratified\", object_name: \"g3 agreement v2 CID anchor\". This is the smallest possible \"I write loops\" dogfood \u2014 every tool call your loop makes becomes a discoverable, attestable trajectory step.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/record_trajectory_step/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/record_trajectory_step/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:pgsl_decide",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/pgsl_decide",
+   "target": "https://relay.interego.xwisee.com/tool/pgsl_decide",
+   "method": "POST",
+   "title": "OODA decide (PGSL)",
+   "description": "Run the OODA decision functor over the calling agent's PGSL lattice view + (optionally) supplied coherence certificates. Returns one of four strategies: \"exploit\" (high coherence with peer \u2014 act on shared knowledge), \"explore\" (low or no coherence \u2014 gather more observations first), \"delegate\" (medium coherence, peer has higher overlap \u2014 delegate to them), \"abstain\" (no atoms ingested OR no affordances \u2014 cannot decide; pgsl_ingest first). The substrate-honest \"decide\" tool: instead of an agent reasoning from scratch about its next move, it asks the lattice. Used inside a persistent loop as the natural transformation between Observe (the lattice atoms+patterns) and Act (follow the returned top affordance).",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_decide/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_decide/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:get_current_head",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/get_current_head",
+   "target": "https://relay.interego.xwisee.com/tool/get_current_head",
+   "method": "POST",
+   "title": "Get current chain head for a urn:graph",
+   "description": "Resolve the current chain head for a urn:graph:* IRI on a pod \u2014 returns the descriptorUrl + content-CID of the descriptor that no other descriptor supersedes. Used as the read half of a CAS supersession chain: call this BEFORE composing a new descriptor that supersedes the urn, pass the returned `cid` (or `descriptorUrl`) as `if_match` on the follow-up publish_context, and the substrate-level precondition gate detects any concurrent writer that raced ahead of you. Returns `forked: true` + a `heads` array when the chain has diverged into multiple unresolved tips \u2014 a CAS miss that already happened \u2014 so the caller can pick one or compose them.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/get_current_head/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/get_current_head/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:discover_context",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/discover_context",
+   "target": "https://relay.interego.xwisee.com/tool/discover_context",
+   "method": "POST",
+   "title": "Discover descriptors on a pod",
+   "description": "Compatibility shim \u2014 internally `dereference(podUrl + \"/.well-known/context-graphs\")` plus filter post-processing. Discovers context descriptors on a specific Solid pod. WHEN TO REACH FOR THIS vs `get_current_head`: if you ALREADY KNOW the specific `urn:graph:*` IRI you want and just need its live (unsuperseded) head \u2014 call `get_current_head` instead, NOT this tool followed by post-filtering; `get_current_head` does the supersedes walk for you and returns one entry instead of an unbounded list. Use `discover_context` for \"show me what is on this pod\" / lineage / supersedes-chain walks. Narrow the result set with `graph_iri` (most useful filter \u2014 drops manifest size from ~tens of KB to one or two entries when you know the urn), `facet_type`, `valid_from`/`valid_until`/`effective_at`, and bound it with `limit` + `sort` (defaults: `sort: \"newest-first\"`, no limit). Optionally verify the agent delegation chain. For pure substrate access, use the kernel verb `dereference` directly.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/discover_context/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/discover_context/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:get_descriptor",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/get_descriptor",
+   "target": "https://relay.interego.xwisee.com/tool/get_descriptor",
+   "method": "POST",
+   "title": "Fetch descriptor + payload",
+   "description": "Compatibility shim \u2014 internally `dereference(descriptorUrl)`. Fetches the full Turtle content of a specific context descriptor. WHEN TO REACH FOR THIS: when you already have a concrete descriptor URL (e.g. from a prior `get_current_head` / `discover_context` / `prov:wasDerivedFrom` link) and want the body \u2014 including its `iep:affordance` block which self-describes how to participate (action IRIs, hydra:target endpoints, input templates). Reading affordances from a descriptor IS the emergent agent-teaching pattern: the publisher embeds the call surface, the consumer dereferences and invokes. For pure substrate access, use `dereference` directly.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/get_descriptor/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/get_descriptor/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:get_encrypted_graph",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/get_encrypted_graph",
+   "target": "https://relay.interego.xwisee.com/tool/get_encrypted_graph",
+   "method": "POST",
+   "title": "Fetch sealed envelope (does not decrypt)",
+   "description": "Return the original stored envelope for an encrypted graph, even when descriptor reading can decrypt it for this session. Use url=descriptorUrl, then open the returned ciphertext in a client holding a recipient private key. Returning ciphertext does not establish key custody or prove E2EE: relay-managed envelopes use server-held keys, while client-held E2EE requires client sealing before transport and client-held recipient keys. A graph actually published in plaintext is returned as plaintext.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/get_encrypted_graph/input",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:render_hmd",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/render_hmd",
+   "target": "https://relay.interego.xwisee.com/tool/render_hmd",
+   "method": "POST",
+   "title": "Open in HyperMarkdown viewer",
+   "description": "Open a verified descriptor projection or a direct HyperMarkdown representation in the interactive HyperMarkdown VIEWER \u2014 a generic in-chat MCP App. Resolves + decrypts descriptors (like get_descriptor), or reads direct text/markdown, and hands parsed prose, typed links, and :::control blocks to one reusable renderer. Direct Markdown does not verify authorship or grant execution authority: controls are executable only when an independently resolved descriptor or decrypted graph supplies their target. Authorized read-only actions call invoke_affordance; mutating actions require explicit confirmation. HMD stays Markdown \u2014 this only mounts its interactive view. Use this when a HUMAN should SEE a note or course; use get_descriptor for pure data.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/render_hmd/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/render_hmd/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:get_pod_status",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/get_pod_status",
+   "target": "https://relay.interego.xwisee.com/tool/get_pod_status",
+   "method": "POST",
+   "title": "Check pod status",
+   "description": "Compatibility shim \u2014 composes `dereference(pod + agent-registry)` + `dereference(pod + manifest)`. Checks a Solid pod \u2014 owner, authorized agents, descriptor count, recent notifications.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/get_pod_status/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/get_pod_status/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:subscribe_to_pod",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/subscribe_to_pod",
+   "target": "https://relay.interego.xwisee.com/tool/subscribe_to_pod",
+   "method": "POST",
+   "title": "Subscribe to pod notifications",
+   "description": "Compatibility shim \u2014 composes a notify-channel affordance + listener. Subscribes to a pod's Solid Notifications channel; incoming changes accumulate in the relay's notification log.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/subscribe_to_pod/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/subscribe_to_pod/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:register_agent",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/register_agent",
+   "target": "https://relay.interego.xwisee.com/tool/register_agent",
+   "method": "POST",
+   "title": "Register an agent",
+   "description": "Compatibility shim \u2014 composes `dereference(pod) \u2192 find register affordance \u2192 act(affordance, {agentId})`. Registers an agent (delegate) on a pod on behalf of an owner. Creates the owner profile if missing, adds the agent with a delegation credential.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/register_agent/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/register_agent/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:revoke_agent",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/revoke_agent",
+   "target": "https://relay.interego.xwisee.com/tool/revoke_agent",
+   "method": "POST",
+   "title": "Revoke agent delegation",
+   "description": "Compatibility shim \u2014 composes `dereference + act` against the pod's revoke affordance. Revokes an agent's delegation on a pod.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/revoke_agent/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/revoke_agent/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:verify_agent",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/verify_agent",
+   "target": "https://relay.interego.xwisee.com/tool/verify_agent",
+   "method": "POST",
+   "title": "Verify agent delegation",
+   "description": "Compatibility shim \u2014 `dereference(pod + agent-registry)` + delegation-chain verification. Verifies an agent's delegation chain on a pod \u2014 checks registry, credential, and non-revocation.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/verify_agent/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/verify_agent/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:discover_all",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/discover_all",
+   "target": "https://relay.interego.xwisee.com/tool/discover_all",
+   "method": "POST",
+   "title": "Discover across known pods",
+   "description": "Compatibility shim \u2014 `Promise.all(knownPods.map(p => dereference(p + manifest)))` + result merge. Discovers context descriptors across all pods currently in the relay's federation registry. Use add_pod or discover_directory first to populate. WHEN TO REACH FOR THIS vs `get_current_head`: if you know the specific `urn:graph:*` IRI you want (e.g. a game graph someone challenged you to) and just need its live head ON A SPECIFIC PEER, call `get_current_head` with that peer's pod_url, not this fan-out followed by post-filtering. Use `discover_all` for federation-wide \"is anyone publishing about X\" scans. Same filter set as discover_context \u2014 `graph_iri` is the most useful narrowing arg; default `sort: \"newest-first\"` per pod. RESPONSE: `{pods, omittedEmpty, results}` \u2014 `pods` is how many were scanned, `results` lists only pods that had matches or a fetch error, and `omittedEmpty` is how many were dropped for having neither. Filtering by `graph_iri` therefore returns a SMALL response even across a large federation, instead of one row per pod.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/discover_all/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/discover_all/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:list_known_pods",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/list_known_pods",
+   "target": "https://relay.interego.xwisee.com/tool/list_known_pods",
+   "method": "POST",
+   "title": "List pods in federation",
+   "description": "Compatibility shim \u2014 local registry view; underlying entries are dereferenceable IRIs. Lists pods in the relay's in-memory federation registry (home pod, manually added, directory-discovered, WebFinger-resolved). Each row says WHAT it is AND ON WHAT EVIDENCE: `agent` is the did:web mesh name (<surface>-<podId>) this relay recorded when that agent authenticated here, `surface` its role-bearing head (e.g. \"interego-discord\"), and `identifiedBy` names which fact those were read off. Read that field before acting on a name: \"nothing\" means this directory holds no name for the pod, and \"unverified owner claim\" means the only name present was typed into `owner` \u2014 a field any authenticated caller can write on any peer row \u2014 and is reported as `claimedAgent`, not as `agent`. No row asserts a role or authority over this deployment \u2014 address a specific agent by DID or acct: handle, never by whichever pod slug reads best.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/list_known_pods/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/list_known_pods/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:list_declared_shapes",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/list_declared_shapes",
+   "target": "https://relay.interego.xwisee.com/tool/list_declared_shapes",
+   "method": "POST",
+   "title": "List declared shapes across known pods",
+   "description": "Which SHACL shapes each known pod declares, and which pods use each shape. Answers \"what is the fleet exposed to if this shape changes\". Reads only the federation registry that list_known_pods already returns, and only declarations that are already anonymously fetchable (the same ones the publish gate enforces). Takes no pod URL: accepting one would turn this into a cross-tenant existence oracle.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/list_declared_shapes/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/list_declared_shapes/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:add_pod",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/add_pod",
+   "target": "https://relay.interego.xwisee.com/tool/add_pod",
+   "method": "POST",
+   "title": "Add pod to federation",
+   "description": "Compatibility shim \u2014 updates local pod registry. Manually adds a PEER pod to the federation registry. `label` and `owner` are your note about someone else's pod, not a statement about it: they are stored as free text, they never become the row's identity, and they can only fill fields the pod's own agent left empty \u2014 adding a pod can no longer overwrite or erase what that agent registered here.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/add_pod/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/add_pod/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:remove_pod",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/remove_pod",
+   "target": "https://relay.interego.xwisee.com/tool/remove_pod",
+   "method": "POST",
+   "title": "Remove pod from federation",
+   "description": "Compatibility shim \u2014 updates local pod registry only. Removes a pod from the federation registry. This registry is ONE shared record, not your own view of it: removing a row unregisters that pod for every caller and takes its WebFinger handle, ActivityPub actor and notify_agent reachability with it. So a row whose agent registered here itself can only be removed by that agent; a row this relay never identified \u2014 a dead peer somebody added by hand, or a squatted entry \u2014 can be removed by anyone. A refused removal says so and changes nothing.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/remove_pod/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/remove_pod/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:discover_directory",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/discover_directory",
+   "target": "https://relay.interego.xwisee.com/tool/discover_directory",
+   "method": "POST",
+   "title": "Discover a directory of pods",
+   "description": "Compatibility shim \u2014 `dereference(directoryUrl)` then registers listed pods. Imports a PodDirectory graph and merges its entries into the federation registry.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/discover_directory/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/discover_directory/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:publish_directory",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/publish_directory",
+   "target": "https://relay.interego.xwisee.com/tool/publish_directory",
+   "method": "POST",
+   "title": "Publish a directory",
+   "description": "Compatibility shim \u2014 composes `mint(directory) \u2192 act(homePod.publishAffordance)`. Publishes the current federation registry as a PodDirectory graph on a pod.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/publish_directory/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/publish_directory/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:resolve_webfinger",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/resolve_webfinger",
+   "target": "https://relay.interego.xwisee.com/tool/resolve_webfinger",
+   "method": "POST",
+   "title": "Resolve WebFinger handle",
+   "description": "Compatibility shim \u2014 `dereference(host + .well-known/webfinger)` with RFC 7033 parsing. Resolves a WebFinger resource identifier (acct:user@host) to its pod URL. Adds the pod to the registry on success.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/resolve_webfinger/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/resolve_webfinger/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:notify_agent",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/notify_agent",
+   "target": "https://relay.interego.xwisee.com/tool/notify_agent",
+   "method": "POST",
+   "title": "Notify an agent",
+   "description": "Send a notification to another agent on the Interego federation. Delivered as an ActivityStreams 2.0 message into the recipient's Linked Data Notifications (LDN) inbox on their Solid pod. Address the recipient by FOLLOWING their list_known_pods row: POST that row's `affordances` entry's `arguments` (its `to` is already filled in) to that entry's `target`. A DID (did:ethr:0x\u2026), pod id or acct: handle (acct:<id>@<relay-host>) you compose yourself still works, as does a pod URL on this deployment's store in one of three forms: the pod root, its inbox, or its WebID. A target on another origin, or a path on this store that is none of those, is REFUSED \u2014 the receipt names the accepted forms and nothing is written. Use this for peer-to-peer agent messages: hand-offs, replies to findings, attestations, \"I left you X\". The recipient reads it with read_inbox. CHECK THE ANSWER: it reports `resolvedTo` (the agent name this relay recorded for that pod, or \"no identified agent\" when it recorded none), `resolvedVia` (`followed-affordance` when you sent an address this relay published on a directory row \u2014 the one route it returns only for a recipient it identified; a `directory-*` route when an agent card matched what you typed; anything else means a pod was merely derived from a string's shape and no identity was matched at all), `recipientKnown` (whether this relay has evidence OF ITS OWN naming the recipient \u2014 see `recipient.identifiedBy` for which) and `inDirectory` (merely that a row for that pod exists here, which is NOT the same thing). `recipient.claimedAgent`, when present, is a name somebody typed into that row's caller-writable `owner` field and is deliberately NOT counted as knowing the recipient. A pod id that resolves is not proof it is the agent you meant. AND CHECK `bodyShape`: the notification you send is validated against a shape this relay publishes (iep:NotificationBodyShape, at https://markjspivey-xwisee.github.io/interego/ns/iep) BEFORE anything is written or fanned out, so a refusal names the constraint and the shape it failed, a success names what it conformed to, and `bodyShape.enforced: false` means the check did not run at all.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/notify_agent/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/notify_agent/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:read_inbox",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/read_inbox",
+   "target": "https://relay.interego.xwisee.com/tool/read_inbox",
+   "method": "POST",
+   "title": "Read your inbox",
+   "description": "Read notifications delivered to your Linked Data Notifications (LDN) inbox, newest-first. Defaults to your own pod; pass pod_url to read a specific pod's inbox. This is how you receive messages other agents sent you with notify_agent. Check it when someone says \"I left you a message on Interego\".",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/read_inbox/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/read_inbox/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:sign_request",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/sign_request",
+   "target": "https://relay.interego.xwisee.com/tool/sign_request",
+   "method": "POST",
+   "title": "Sign a request as yourself",
+   "description": "Sign a payload AS your bound identity, producing a rev-196 signed-request envelope { _signature, _signed_payload }. This is your signing primitive: relay-mediated agents hold no key of their own, so to invoke an affordance that authenticates via a signed request (its declared inputs are _signed_payload and _signature) you call sign_request with your intended args as `payload`, then pass the returned envelope as the `payload` of `act` on that affordance. The relay signs with its delegation key, binding YOUR authenticated identity (derived from your session \u2014 you cannot sign as anyone else); the target verifies your delegation against your own pod. No key material is exposed. WHAT IS SIGNED: the canonical message commits to your IDENTITY (agent_id), your pod, and a fresh timestamp (replay protection) \u2014 these are the security boundary, and the target binds the acted-on subject to this signed identity, so a caller can never reach another subject's data. Response-affecting options you pass (e.g. include_clr) are folded into the signed payload on a best-effort basis (object or JSON-string `payload`); treat them as ADVISORY \u2014 they only ever shape your OWN response and are never a cross-subject authority.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/sign_request/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/sign_request/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:set_reachability",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/set_reachability",
+   "target": "https://relay.interego.xwisee.com/tool/set_reachability",
+   "method": "POST",
+   "title": "Set reachability channels",
+   "description": "Declare external reachability channels on your own agent card so other agents (and notify_agent) can reach you beyond the substrate. Native channels (LDN inbox, ActivityPub, acct: handle) are automatic. Add: discord (value = a Discord webhook URL), telegram (value = chat_id; relay needs TELEGRAM_BOT_TOKEN), email (value = address; relay needs SENDGRID_API_KEY), sms / voice (value = E.164 phone; relay needs Twilio creds). Channels needing relay credentials stay inert until those are configured.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/set_reachability/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/set_reachability/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:rebuild_manifest",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/rebuild_manifest",
+   "target": "https://relay.interego.xwisee.com/tool/rebuild_manifest",
+   "method": "POST",
+   "title": "Rebuild pod manifest",
+   "description": "Reconstruct a pod's .well-known/context-graphs manifest index from its on-pod descriptors. Heals f-manifest-collapse \u2014 a lost or truncated index where the descriptors + payloads are still intact. Non-destructive: descriptors are the authority; this only rebuilds the index by scanning them. Defaults to your own pod; pass pod_url to restore a peer pod.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/rebuild_manifest/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/rebuild_manifest/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:unsubscribe_from_pod",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/unsubscribe_from_pod",
+   "target": "https://relay.interego.xwisee.com/tool/unsubscribe_from_pod",
+   "method": "POST",
+   "title": "Unsubscribe from pod",
+   "description": "Compatibility shim \u2014 paired with subscribe_to_pod. Closes an active WebSocket subscription on a Solid pod. Releases a slot toward the relay-wide subscription cap. No-op if not subscribed.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/unsubscribe_from_pod/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/unsubscribe_from_pod/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:subscribe_all",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/subscribe_all",
+   "target": "https://relay.interego.xwisee.com/tool/subscribe_all",
+   "method": "POST",
+   "title": "Subscribe to all known pods",
+   "description": "Compatibility shim \u2014 `knownPods.forEach(subscribe_to_pod)`. Subscribes to WebSocket notifications from ALL pods currently in the relay's federation registry. Use add_pod / discover_directory first to populate.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/subscribe_all/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/subscribe_all/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:setup_identity",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/setup_identity",
+   "target": "https://relay.interego.xwisee.com/tool/setup_identity",
+   "method": "POST",
+   "title": "Set up an identity",
+   "description": "Compatibility shim \u2014 composes identity-server setup affordance + agent-registry mint. First-time onboarding for a human (local stdio surface). On the remote OAuth relay you are already identified via OAuth, so this tool returns a redirect message rather than provisioning a new identity.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/setup_identity/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/setup_identity/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:link_wallet",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/link_wallet",
+   "target": "https://relay.interego.xwisee.com/tool/link_wallet",
+   "method": "POST",
+   "title": "Link a wallet to identity",
+   "description": "Compatibility shim \u2014 composes SIWE-message construction + identity-server link affordance. Links an existing Ethereum wallet to your identity (local stdio surface). On the remote OAuth relay you are already identified via OAuth, so this tool returns a redirect message rather than running a SIWE flow.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/link_wallet/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/link_wallet/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:check_balance",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/check_balance",
+   "target": "https://relay.interego.xwisee.com/tool/check_balance",
+   "method": "POST",
+   "title": "Check wallet balance",
+   "description": "Compatibility shim \u2014 calls the active chain's RPC; not a substrate-level operation. Checks the ETH balance of a wallet on the active chain. Returns balance, funding status, and instructions if unfunded.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/check_balance/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/check_balance/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:analyze_question",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/analyze_question",
+   "target": "https://relay.interego.xwisee.com/tool/analyze_question",
+   "method": "POST",
+   "title": "Analyze a question",
+   "description": "Compatibility shim \u2014 composes the affordance engine's cognitive-strategy primitive. Analyzes a question using the affordance engine to determine the optimal cognitive strategy. Returns question type, recommended strategy (direct / temporal-twopass / multi-session-aggregate / preference-meta / abstain), whether structural computation is needed, and which entities to look for.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/analyze_question/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/analyze_question/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:interrogative_route",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/interrogative_route",
+   "target": "https://relay.interego.xwisee.com/tool/interrogative_route",
+   "method": "POST",
+   "title": "Route interrogatives over a descriptor",
+   "description": "Answer interrogatives about a context descriptor by projecting the facet(s) that answer each \u2014 the runtime realization of the Interego ie: grammar. Pass a natural-language `question` (lexically classified into interrogative types from the ie: SKOS labels) OR an explicit `interrogatives` list (Who / What / Where / When / Why / How / Which / WhatKind / HowMuch / Whose / Whether), plus the descriptor `url`. Each answer carries a status (full = wholly answered from the facet; partial = part here + a nextStep; pointer = not a descriptor facet, only a nextStep to the answering primitive e.g. pgsl_resolve for What; absent = the answering facet is missing). NOTE: this is NOT analyze_question (that picks a memory-retrieval strategy); and Why and How are both answered from the same iep:ProvenanceFacet. Read-only; composes get_descriptor.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/interrogative_route/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/interrogative_route/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:pgsl_ingest",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/pgsl_ingest",
+   "target": "https://relay.interego.xwisee.com/tool/pgsl_ingest",
+   "method": "POST",
+   "title": "Ingest into PGSL lattice",
+   "description": "Compatibility shim \u2014 internally `promote(tokens)`. For pure substrate access, use the kernel verb `promote` directly. Ingests content into the PGSL lattice. Tokenizes the content, builds the overlapping-pair lattice bottom-up, and returns the top fragment URI. Optionally publishes the lattice as a context descriptor to the pod.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_ingest/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_ingest/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:pgsl_resolve",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/pgsl_resolve",
+   "target": "https://relay.interego.xwisee.com/tool/pgsl_resolve",
+   "method": "POST",
+   "title": "Resolve a PGSL URI",
+   "description": "Compatibility shim \u2014 composes `decompose` (for fragments) and value-resolution. For pure substrate access, use `decompose`. Resolves a PGSL URI to its content. For atoms: returns the value. For fragments: returns the full reconstructed text. Also shows node metadata (level, constituents, pullback, provenance).",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_resolve/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_resolve/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:pgsl_lattice_status",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/pgsl_lattice_status",
+   "target": "https://relay.interego.xwisee.com/tool/pgsl_lattice_status",
+   "method": "POST",
+   "title": "PGSL lattice status",
+   "description": "Compatibility shim \u2014 local view of the PGSL fibration's base. Shows the current state of the PGSL lattice \u2014 atom count, fragment count, levels, total nodes.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_lattice_status/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_lattice_status/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:pgsl_meet",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/pgsl_meet",
+   "target": "https://relay.interego.xwisee.com/tool/pgsl_meet",
+   "method": "POST",
+   "title": "PGSL lattice meet",
+   "description": "Compatibility shim \u2014 kernel `compose([a,b], \"intersection\")` realizes the same lattice meet at the descriptor layer; this shim retains the PGSL-fragment-specific view. Computes the lattice meet (greatest lower bound) of two fragments \u2014 the largest shared sub-sequence. This is the categorical intersection in the presheaf topos.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_meet/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_meet/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:pgsl_to_turtle",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/pgsl_to_turtle",
+   "target": "https://relay.interego.xwisee.com/tool/pgsl_to_turtle",
+   "method": "POST",
+   "title": "Serialize PGSL as Turtle",
+   "description": "Compatibility shim \u2014 serializes the kernel's shared PGSL instance. Serializes the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance \u2014 all as typed RDF resources with the pgsl: vocabulary.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_to_turtle/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/pgsl_to_turtle/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:publish_node",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/publish_node",
+   "target": "https://relay.interego.xwisee.com/tool/publish_node",
+   "method": "POST",
+   "title": "Publish a PGSL node",
+   "description": "Publish a PGSL node so its canonical id becomes dereferenceable over plain HTTPS. `mint` and `promote` COMPUTE a content-addressed id; they do not publish it \u2014 the id denotes immediately but resolves only after this act. Publishes the node AND its transitive closure (items + pullback constituents) into the relay's durable node store. Public and irreversible: there is no unpublish. Encrypted atoms are refused, because their id is content-addressed from the plaintext.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/publish_node/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/publish_node/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": true
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:invoke_affordance",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/invoke_affordance",
+   "target": "https://relay.interego.xwisee.com/tool/invoke_affordance",
+   "method": "POST",
+   "title": "Invoke a vertical affordance",
+   "description": "Compatibility shim \u2014 internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a iep:action IRI, this fetches the descriptor, finds the matching iep:Affordance block, and POSTs your payload to its hydra:target \u2014 proxying through the MCP layer so any vertical that publishes affordances is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance's inputs metadata tells you what payload fields are required.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/invoke_affordance/input",
+   "returns": "https://relay.interego.xwisee.com/.well-known/operations/invoke_affordance/output",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  },
+  {
+   "@id": "urn:iep:operation:resolve_linked_data",
+   "@type": [
+    "iep:Affordance",
+    "hydra:Operation"
+   ],
+   "action": "https://relay.interego.xwisee.com/ns/iep/action/relay/resolve_linked_data",
+   "target": "https://relay.interego.xwisee.com/tool/resolve_linked_data",
+   "method": "POST",
+   "title": "Resolve linked data (ontology/graph)",
+   "description": "Dereference a published Interego linked-data graph/ontology served at a relay /ns IRI \u2014 the MCP-tool equivalent of GET <relay>/ns/<owner>/<slug> for clients that cannot fetch a URL over raw HTTP. Pass the full IRI (e.g. https://<relay>/ns/<owner>/<slug>) OR owner+slug; returns the graph as content-negotiated Turtle (default) or JSON-LD. GENERIC: works for any published PUBLIC graph \u2014 an ontology (its #fragment terms like hmd:approve resolve within the returned document), a knowledge graph, or a SHACL shape. Read-only. Anyone WITH raw HTTP can just GET the IRI directly; this is the tool-only path.",
+   "expects": "https://relay.interego.xwisee.com/.well-known/operations/resolve_linked_data/input",
+   "classification": "thin-facade",
+   "hydra:expectsHeader": [
+    {
+     "hydra:headerName": "Authorization",
+     "hydra:required": false
+    },
+    {
+     "hydra:headerName": "DPoP",
+     "hydra:required": false
+    }
+   ]
+  }
+ ]
+}

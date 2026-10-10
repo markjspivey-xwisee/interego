@@ -1,0 +1,21 @@
+# A HyprAgent dispatch record: an AgentWorld agent invoking a ServiceWorld port
+# (a world crossing), with the policy decision that allowed it.
+@prefix cat:       <{{CATALOG}}#> .
+@prefix i2x:       <{{NS}}> .
+@prefix hyprcat:   <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
+@prefix hypragent: <https://markjspivey-xwisee.github.io/interego/ns/hypragent#> .
+@prefix ieh:       <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix prov:      <http://www.w3.org/ns/prov#> .
+@prefix xsd:       <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:example:agent> a hypragent:Agent ;
+    hyprcat:world hyprcat:AgentWorld ;
+    hypragent:consumable i2x:canResolveGlossary , i2x:canQueryGlossary ;
+    hypragent:producible i2x:canProposeMapping .
+
+<urn:example:dispatch:1> a hypragent:WorldCrossing ;
+    prov:wasAssociatedWith <urn:example:agent> ;
+    hypragent:dispatchedOn cat:port-sparql-get ;
+    hypragent:policyDecision [ a ieh:PolicyDecision ; ieh:allowed true ] ;
+    prov:used cat:q-concept-search ;
+    prov:startedAtTime "2026-10-08T22:01:00Z"^^xsd:dateTime .

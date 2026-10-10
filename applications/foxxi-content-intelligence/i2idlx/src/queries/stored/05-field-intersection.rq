@@ -1,0 +1,12 @@
+# label: Concepts shared by two collections
+# form: SELECT
+# params: fieldA fieldB
+# description: Pairwise intersection of two collections. Substitute $fieldA and $fieldB with <collection IRI>s.
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+SELECT ?concept ?label
+WHERE {
+  $fieldA skos:member ?concept .
+  $fieldB skos:member ?concept .
+  ?concept skos:prefLabel ?label .
+}
+ORDER BY ?label

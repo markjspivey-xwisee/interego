@@ -1,0 +1,20 @@
+# label: Definition with classified evidence
+# form: CONSTRUCT
+# params: concept
+# description: The active definition and every evidence record (direct or supporting) with source and citation. Substitute $concept with <concept IRI>.
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX gs: <https://glossarystudio.app/ns/>
+PREFIX dcterms: <http://purl.org/dc/terms/>
+CONSTRUCT {
+  $concept skos:definition ?text ; gs:activeDefinition ?def .
+  ?def gs:evidence ?e .
+  ?e gs:evidenceRelation ?rel ; dcterms:source ?src ; gs:citationDetail ?cite .
+  ?src dcterms:title ?title .
+}
+WHERE {
+  $concept gs:activeDefinition ?def ; skos:definition ?text .
+  ?def gs:evidence ?e .
+  ?e gs:evidenceRelation ?rel ; dcterms:source ?src .
+  OPTIONAL { ?e gs:citationDetail ?cite }
+  OPTIONAL { ?src dcterms:title ?title }
+}

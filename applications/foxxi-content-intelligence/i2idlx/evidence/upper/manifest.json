@@ -1,0 +1,242 @@
+{
+  "fetchedAt": "2026-10-09T19:52:17+00:00",
+  "sources": [
+    {
+      "key": "bfo",
+      "url": "https://raw.githubusercontent.com/BFO-ontology/BFO-2020/bd1fb61c5fa4e358fc9690f0d214b1ac63fae594/21838-2/owl/bfo-core.ttl",
+      "version": "BFO 2020 (ISO/IEC 21838-2:2021), BFO-ontology/BFO-2020 commit bd1fb61",
+      "license": "CC BY 4.0",
+      "sha256": "a7f0385eb859e707fa81bad532ff252427dc3490e3896a929332016fc53d9ece",
+      "triples": 1014,
+      "kept": 1014,
+      "mode": "whole",
+      "seeds": 8,
+      "missing": [],
+      "file": "evidence/upper/bfo.ttl"
+    },
+    {
+      "key": "iao",
+      "url": "http://purl.obolibrary.org/obo/iao/2026-03-30/iao.owl",
+      "version": "IAO 2026-03-30",
+      "license": "CC BY 4.0",
+      "sha256": "c27ff2964a2ad8165bc365698b628aae95108411384aa4450e6e1b1e82bf0f41",
+      "triples": 5210,
+      "kept": 188,
+      "mode": "upward module",
+      "seeds": 11,
+      "missing": [],
+      "file": "evidence/upper/iao.ttl"
+    },
+    {
+      "key": "cco",
+      "url": "https://raw.githubusercontent.com/CommonCoreOntology/CommonCoreOntologies/be13b74cccf85617739c5288f9fdac805437386c/src/cco-merged/CommonCoreOntologiesMerged.ttl",
+      "version": "CCO 2 merged, CommonCoreOntologies commit be13b74 (2026-08-13)",
+      "license": "BSD 3-Clause",
+      "sha256": "a9453382b25b40781c181d6ba44981f228abb76d90d548846713adba9baadb42",
+      "triples": 13875,
+      "kept": 272,
+      "mode": "upward module",
+      "seeds": 20,
+      "missing": [],
+      "file": "evidence/upper/cco.ttl"
+    },
+    {
+      "key": "gist",
+      "url": "https://raw.githubusercontent.com/semanticarts/gist/v14.1.0/ontologies/gistCore.ttl",
+      "version": "gist 14.1.0",
+      "license": "CC BY 4.0",
+      "sha256": "0d8230f3a4df9aa7782ec79bfa83def34a13a066f60d5f5ef0f00b9cecce08b1",
+      "triples": 2317,
+      "kept": 2317,
+      "mode": "whole",
+      "seeds": 24,
+      "missing": [],
+      "file": "evidence/upper/gist.ttl"
+    },
+    {
+      "key": "dul",
+      "url": "http://www.ontologydesignpatterns.org/ont/dul/DUL.owl",
+      "version": "DOLCE+DnS Ultralite (as served)",
+      "license": "CC BY 4.0",
+      "sha256": "e5f6429596d2c7014730bad85aaaa9c39530235f27f596cd0e7ce85e6bbcba66",
+      "triples": 1917,
+      "kept": 1917,
+      "mode": "whole",
+      "seeds": 25,
+      "missing": [],
+      "file": "evidence/upper/dul.ttl"
+    },
+    {
+      "key": "gufo",
+      "url": "https://purl.org/nemo/gufo",
+      "version": "gUFO 1.0.0",
+      "license": "CC BY 4.0",
+      "sha256": "1226e62867ee4b42bbcd0b8d8304fc83b0af6749339bd96e0e68cbb4acef1852",
+      "triples": 765,
+      "kept": 765,
+      "mode": "whole",
+      "seeds": 7,
+      "missing": [],
+      "file": "evidence/upper/gufo.ttl"
+    },
+    {
+      "key": "prov",
+      "url": "https://www.w3.org/ns/prov-o",
+      "version": "PROV-O (W3C Recommendation 2013-04-30)",
+      "license": "W3C Document License",
+      "sha256": "7d203989f67b38bca572253942acc5a1bf24ce3ccfece16f072dcb4be2b79a96",
+      "triples": 1146,
+      "kept": 1146,
+      "mode": "whole",
+      "seeds": 6,
+      "missing": [],
+      "file": "evidence/upper/prov.ttl"
+    },
+    {
+      "key": "schema",
+      "url": "https://raw.githubusercontent.com/schemaorg/schemaorg/v30.1/data/releases/30.1/schemaorg-current-https.ttl",
+      "version": "schema.org 30.1",
+      "license": "CC BY-SA 3.0",
+      "sha256": "7f15ca89398c4f235f478a4b3b8d1f975d63c5a860b77c8a8fce01f791b7ae2f",
+      "triples": 17515,
+      "kept": 144,
+      "mode": "upward module",
+      "seeds": 18,
+      "missing": [],
+      "file": "evidence/upper/schema.ttl"
+    },
+    {
+      "key": "org",
+      "url": "https://www.w3.org/ns/org",
+      "version": "W3C Organization Ontology (2014-01-16)",
+      "license": "W3C Document License",
+      "sha256": "3e01f89a17475a88f8b1606ca0fae04800d34dbbf93adc6db12dc30929848729",
+      "triples": 748,
+      "kept": 748,
+      "mode": "whole",
+      "seeds": 1,
+      "missing": [],
+      "file": "evidence/upper/org.ttl"
+    },
+    {
+      "key": "dct",
+      "url": "https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl",
+      "version": "DCMI Metadata Terms (as served)",
+      "license": "CC BY 4.0",
+      "sha256": "13df401072dd7015bf9d75162f3e41c8138075304b7b9cc1aa1e9c16db976797",
+      "triples": 700,
+      "kept": 5,
+      "mode": "upward module",
+      "seeds": 1,
+      "missing": [],
+      "file": "evidence/upper/dct.ttl"
+    },
+    {
+      "key": "dcat",
+      "url": "https://www.w3.org/ns/dcat.ttl",
+      "version": "DCAT 3 (as served)",
+      "license": "W3C Software and Document License",
+      "sha256": "d1624d3bbf364f6fc1d43b9a188bbb9e67639b1a7d46a5cb7ea3f5d47d02b62f",
+      "triples": 1695,
+      "kept": 178,
+      "mode": "upward module",
+      "seeds": 1,
+      "missing": [],
+      "file": "evidence/upper/dcat.ttl"
+    },
+    {
+      "key": "lrmi",
+      "url": "https://purl.org/dcx/lrmi-terms/",
+      "version": "LRMI DCMI terms (as served)",
+      "license": "CC BY 4.0",
+      "sha256": "d562d8fc83086d2facf0e17c635d72695ac691b2495dd6c88babe2716fb57e4b",
+      "triples": 219,
+      "kept": 219,
+      "mode": "whole",
+      "seeds": 1,
+      "missing": [],
+      "file": "evidence/upper/lrmi.ttl"
+    },
+    {
+      "key": "esco",
+      "url": "https://data.europa.eu/esco/model",
+      "version": "ESCO model (as served)",
+      "license": "European Commission reuse policy (see ESCO)",
+      "sha256": "65dc9b2cfd345f246a1e7bd3ee8688e2646f6f6042f1f587b552eb5d49b53360",
+      "triples": 1419,
+      "kept": 82,
+      "mode": "upward module",
+      "seeds": 4,
+      "missing": [],
+      "file": "evidence/upper/esco.ttl"
+    },
+    {
+      "key": "elm",
+      "url": "http://data.europa.eu/snb/model/elm",
+      "version": "European Learning Model 3 (as served)",
+      "license": "European Commission reuse policy (see Europass)",
+      "sha256": "73a22887c7ff772eedfe84d00ffbba7b1f9bc00d738e5deabca19b22cff6b20e",
+      "triples": 12737,
+      "kept": 74,
+      "mode": "upward module",
+      "seeds": 6,
+      "missing": [],
+      "file": "evidence/upper/elm.ttl"
+    },
+    {
+      "key": "asn",
+      "url": "http://purl.org/ASN/schema/core/",
+      "version": "ASN core schema (as served)",
+      "license": "CC BY 4.0 (University of Washington)",
+      "sha256": "49f0abe80df5fd458a6c1b62c4b064d7649812694d0c088ada38f499f3d52585",
+      "triples": 465,
+      "kept": 16,
+      "mode": "upward module",
+      "seeds": 4,
+      "missing": [],
+      "file": "evidence/upper/asn.ttl"
+    },
+    {
+      "key": "interego-interego",
+      "url": "https://markjspivey-xwisee.github.io/interego/ns/interego.ttl",
+      "sha256": "d3038d641724a28ee57f9567929b67e2bf5a09a33dd9a4e14be00f3144947cf0",
+      "file": "evidence/interego-interego.ttl",
+      "mode": "whole"
+    },
+    {
+      "key": "interego-hypragent",
+      "url": "https://markjspivey-xwisee.github.io/interego/ns/hypragent.ttl",
+      "sha256": "95a26e30191730683f2f2d6ffbc7a12e9e03a3b5b198b8fb6fda9e16b20fb8e4",
+      "file": "evidence/interego-hypragent.ttl",
+      "mode": "whole"
+    },
+    {
+      "key": "interego-hyprcat",
+      "url": "https://markjspivey-xwisee.github.io/interego/ns/hyprcat.ttl",
+      "sha256": "273808110f88d8399b262afb63161646e51b8ee1112dd96e04a1a5eff9ddbff6",
+      "file": "evidence/interego-hyprcat.ttl",
+      "mode": "whole"
+    },
+    {
+      "key": "interego-harness",
+      "url": "https://markjspivey-xwisee.github.io/interego/ns/harness.ttl",
+      "sha256": "6ef0342c36e0de4176c5193885e91413f1deb4620d4e29716898810b2764870e",
+      "file": "evidence/interego-harness.ttl",
+      "mode": "whole"
+    },
+    {
+      "key": "ob3",
+      "url": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json",
+      "sha256": "3d34f4d4ef1bce691106e63798beb5e7b862ba841423f5ee1e53ab7ddf3bca84",
+      "mode": "context terms",
+      "terms": 70
+    },
+    {
+      "key": "case",
+      "url": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld",
+      "sha256": "ed4e4ce92aac01ff84c610733583649b42be1d25688b0da18dda1aec34ffa3e9",
+      "mode": "context terms",
+      "terms": 70
+    }
+  ]
+}

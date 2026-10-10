@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-09 — Foxxi: I2IDL-X, the I2IDL glossary as an agentic vocabulary and a semantic layer
+
+The Foxxi vertical gains `applications/foxxi-content-intelligence/i2idlx/`, which makes the I2IDL Digital Learning Glossary (397 concepts, published by I2IDL as linked data) something agents act on and something learning data can be typed by. It decorates I2IDL's IRIs and never restates the glossary. Its ten graphs are published on Interego as signed, public context graphs: an `i2x:` ontology, shapes, SHACL rules, a HyprCat agent catalog with 23 controls, enactments that link concepts to live Foxxi and relay actions, crosswalk proposals governed by ratification, a release feed, a change history, and the semantic layer — one of 35 referent categories per concept, aligned to BFO 2020 (with IAO and CCO), gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and the peer learning vocabularies. Everything proposed is published Hypothetical.
+
+Validation: the build checks every aligned term against pinned snapshots of its publisher's file, runs an OWL 2 RL closure and HermiT per upper ontology (all consistent), confirms that the stored classification query, the SHACL-AF rules and OWL 2 RL agree, and verifies each published graph as isomorphic to the build at its Interego IRI. The package adds no term to any Interego namespace; `.gitattributes` declares its SPARQL query files (`*.rq`).
+
 ## 2026-10-08 — Private HyperMarkdown controls retain the caller's identity
 
 A private signed note could render an executable control but refuse its click with an affordance-not-found error. The graph-action fallback fetched the descriptor without the invoking session, so it could not decrypt the same graph the viewer had read. It now resolves that graph with the caller's session and without projecting another application view. Descriptor-form `act` follows the same fallback as `invoke_affordance`.

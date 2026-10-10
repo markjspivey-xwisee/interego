@@ -1,0 +1,241 @@
+@prefix i2x:       <{{NS}}> .
+@prefix i2xsh:     <{{SHAPES}}#> .
+@prefix gs:        <https://glossarystudio.app/ns/> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix hydra:     <http://www.w3.org/ns/hydra/core#> .
+@prefix skos:      <http://www.w3.org/2004/02/skos/core#> .
+@prefix schema:    <https://schema.org/> .
+@prefix dct:       <http://purl.org/dc/terms/> .
+@prefix prov:      <http://www.w3.org/ns/prov#> .
+@prefix sh:        <http://www.w3.org/ns/shacl#> .
+@prefix owl:       <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:      <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf:       <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:       <http://www.w3.org/2001/XMLSchema#> .
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  I2IDL-X shapes. Two families, deliberately kept apart:
+#
+#   1. UPSTREAM CONTRACT — what I2IDL-X assumes about each I2IDL release. Run
+#      against a new release before trusting the decorations: if these fail,
+#      the glossary changed shape and the decorations may be stale.
+#   2. SUPERSET — the records I2IDL-X itself introduces (enactments, mapping
+#      proposals, votes, usage records, course alignments, affordances,
+#      templates, stored queries, limits, referent categories, classified
+#      data). Usable as Interego publish gates (conforms_to_shapes), so a
+#      malformed proposal cannot land on a pod.
+#
+#  Core SHACL only (no SPARQL constraints, no sequence paths) so the same
+#  file runs in pySHACL, TopBraid/SHACL-JS and the Interego substrate gate.
+# ══════════════════════════════════════════════════════════════════════════════
+
+<{{SHAPES}}> a owl:Ontology ;
+    dct:title "I2IDL-X shapes"@en ;
+    dct:description "Upstream-contract and superset shapes for I2IDL-X."@en ;
+    owl:versionInfo "{{VERSION}}" ;
+    rdfs:seeAlso <{{ONTO}}> .
+
+
+# ── 1. Upstream contract ──────────────────────────────────────────────────────
+
+i2xsh:UpstreamConceptShape a sh:NodeShape ;
+    sh:targetSubjectsOf schema:inDefinedTermSet ;
+    rdfs:comment "Every I2IDL concept (targeted through schema:inDefinedTermSet, which only I2IDL concepts carry, so I2IDL-X's own SKOS vocabularies are never mistaken for glossary concepts): one IRI under /concepts/, one label, one slug identifier, one active definition, exactly one type collection, at least one field collection, in the scheme."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https://id\\.i2idl\\.org/concepts/[a-z0-9][a-z0-9-]*$" ;
+    sh:property [ sh:path skos:prefLabel ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ;
+                  sh:name "prefLabel" ] ,
+                [ sh:path dct:identifier ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[a-z0-9][a-z0-9-]*$" ;
+                  sh:name "identifier" ; sh:description "The slug every templated control expands." ] ,
+                [ sh:path skos:inScheme ; sh:hasValue <https://id.i2idl.org/scheme> ] ,
+                [ sh:path schema:inDefinedTermSet ; sh:hasValue <https://id.i2idl.org/scheme> ] ,
+                [ sh:path gs:activeDefinition ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                  sh:pattern "^https://id\\.i2idl\\.org/definitions/" ; sh:class gs:Definition ] ,
+                [ sh:path gs:typeCollection ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:pattern "^https://id\\.i2idl\\.org/collections/type/" ;
+                  sh:description "Drives the agentic kind (i2x:kindForTypeCollection)." ] ,
+                [ sh:path gs:fieldCollection ; sh:minCount 1 ;
+                  sh:pattern "^https://id\\.i2idl\\.org/collections/field/" ] ,
+                [ sh:path gs:editorialStatus ; sh:minCount 1 ; sh:maxCount 1 ] ,
+                [ sh:path skos:broader ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/concepts/" ] ,
+                [ sh:path skos:related ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/concepts/" ] .
+
+i2xsh:UpstreamCoverageShape a sh:NodeShape ;
+    sh:targetClass skos:Concept ;
+    rdfs:comment "Guard: no SKOS concept with an I2IDL concept IRI escapes the contract above."@en ;
+    sh:or ( [ a sh:NodeShape ; sh:not [ a sh:NodeShape ; sh:pattern "^https://id\\.i2idl\\.org/concepts/" ] ]
+            [ a sh:NodeShape ; sh:property [ sh:path schema:inDefinedTermSet ; sh:minCount 1 ] ] ) ;
+    sh:message "An I2IDL concept must declare schema:inDefinedTermSet so the upstream contract applies to it." .
+
+i2xsh:UpstreamDefinitionShape a sh:NodeShape ;
+    sh:targetClass gs:Definition ;
+    rdfs:comment "Every definition: a value, a language, and at least one classified evidence record citing a resolvable source."@en ;
+    sh:property [ sh:path rdf:value ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] ,
+                [ sh:path dct:language ; sh:minCount 1 ] ,
+                [ sh:path gs:evidence ; sh:minCount 1 ; sh:node i2xsh:UpstreamEvidenceShape ] .
+
+i2xsh:UpstreamEvidenceShape a sh:NodeShape ;
+    sh:property [ sh:path gs:evidenceRelation ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "direct" "supporting" ) ] ,
+                [ sh:path dct:source ; sh:minCount 1 ; sh:nodeKind sh:IRI ;
+                  sh:pattern "^https://id\\.i2idl\\.org/sources/" ] .
+
+
+# ── 2. Superset records ───────────────────────────────────────────────────────
+
+i2xsh:I2IDLConceptRef a sh:NodeShape ;
+    rdfs:comment "A reference to an I2IDL concept (by IRI)."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https://id\\.i2idl\\.org/concepts/[a-z0-9][a-z0-9-]*$" .
+
+i2xsh:ActionRef a sh:NodeShape ;
+    rdfs:comment "An action identity: an IRI, preferably the dereferenceable URL form."@en ;
+    sh:nodeKind sh:IRI .
+
+i2xsh:EnactmentShape a sh:NodeShape ;
+    sh:targetClass i2x:Enactment ;
+    sh:property [ sh:path i2x:enactedConcept ; sh:minCount 1 ; sh:maxCount 1 ; sh:node i2xsh:I2IDLConceptRef ] ,
+                [ sh:path i2x:viaAction ; sh:minCount 1 ; sh:maxCount 1 ; sh:node i2xsh:ActionRef ] ,
+                [ sh:path i2x:enactmentRole ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:in ( i2x:role-operationalizes i2x:role-realizes i2x:role-implements i2x:role-measures
+                          i2x:role-records i2x:role-credentials i2x:role-enforces i2x:role-explains ) ] ,
+                [ sh:path i2x:rationale ; sh:minCount 1 ; sh:minLength 12 ; sh:maxLength 240 ] ,
+                [ sh:path i2x:confidence ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ;
+                  sh:minInclusive 0 ; sh:maxInclusive 1 ] ,
+                [ sh:path i2x:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:in ( i2x:status-proposed i2x:status-ratified i2x:status-rejected i2x:status-superseded ) ] ,
+                [ sh:path i2x:mappingMethod ; sh:minCount 1 ] .
+
+i2xsh:MappingProposalShape a sh:NodeShape ;
+    sh:targetClass i2x:MappingProposal ;
+    rdfs:comment "A crosswalk proposal: an I2IDL concept, an allowed SKOS mapping predicate, an EXTERNAL object, a rationale, a confidence, a review status and a method. An evidence-cited proposal names the I2IDL definition whose evidence cites its target. Lexical-only proposals may never be marked ratified."@en ;
+    sh:property [ sh:path i2x:proposedSubject ; sh:minCount 1 ; sh:maxCount 1 ; sh:node i2xsh:I2IDLConceptRef ] ,
+                [ sh:path i2x:proposedPredicate ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:in ( skos:exactMatch skos:closeMatch skos:relatedMatch skos:broadMatch skos:narrowMatch ) ] ,
+                [ sh:path i2x:proposedObject ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                  sh:not [ sh:pattern "^https://id\\.i2idl\\.org/" ] ;
+                  sh:message "A crosswalk points outside I2IDL; internal relationships are I2IDL's editorial domain." ] ,
+                [ sh:path i2x:rationale ; sh:minCount 1 ; sh:minLength 12 ; sh:maxLength 240 ] ,
+                [ sh:path i2x:confidence ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ;
+                  sh:minInclusive 0 ; sh:maxInclusive 1 ] ,
+                [ sh:path i2x:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:in ( i2x:status-proposed i2x:status-ratified i2x:status-rejected i2x:status-superseded ) ] ,
+                [ sh:path i2x:mappingMethod ; sh:minCount 1 ;
+                  sh:in ( i2x:method-editorial i2x:method-ai-drafted i2x:method-standards-text i2x:method-evidence-cited i2x:method-lexical ) ] ,
+                [ sh:path i2x:citedIn ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/definitions/" ] ;
+    sh:or ( [ sh:not [ sh:property [ sh:path i2x:mappingMethod ; sh:hasValue i2x:method-evidence-cited ] ] ]
+            [ sh:property [ sh:path i2x:citedIn ; sh:minCount 1 ] ] ) ;
+    sh:not [ sh:and (
+                 [ sh:property [ sh:path i2x:reviewStatus ; sh:hasValue i2x:status-ratified ] ]
+                 [ sh:property [ sh:path i2x:mappingMethod ; sh:hasValue i2x:method-lexical ] ]
+             ) ] ;
+    sh:message "A lexical-candidate proposal cannot be ratified without editorial review (I2IDL policy)." .
+
+i2xsh:RatificationVoteShape a sh:NodeShape ;
+    sh:targetClass i2x:RatificationVote ;
+    sh:property [ sh:path i2x:votesOn ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ,
+                [ sh:path i2x:vote ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:in ( iep:Asserted iep:Counterfactual iep:Hypothetical ) ] ,
+                [ sh:path prov:wasAttributedTo ; sh:minCount 1 ; sh:nodeKind sh:IRI ] ,
+                [ sh:path prov:generatedAtTime ; sh:minCount 1 ; sh:datatype xsd:dateTime ] .
+
+i2xsh:UsageRecordShape a sh:NodeShape ;
+    sh:targetClass i2x:UsageRecord ;
+    sh:property [ sh:path i2x:aboutConcept ; sh:minCount 1 ; sh:node i2xsh:I2IDLConceptRef ] ,
+                [ sh:path i2x:statement ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ,
+                [ sh:path i2x:usageVerb ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ,
+                [ sh:path prov:generatedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] .
+
+i2xsh:CourseConceptAlignmentShape a sh:NodeShape ;
+    sh:targetClass i2x:CourseConceptAlignment ;
+    sh:property [ sh:path i2x:courseConcept ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ;
+                  sh:not [ sh:pattern "^https://id\\.i2idl\\.org/" ] ] ,
+                [ sh:path i2x:alignedTo ; sh:minCount 1 ; sh:maxCount 1 ; sh:node i2xsh:I2IDLConceptRef ] ,
+                [ sh:path i2x:alignmentPredicate ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:in ( skos:exactMatch skos:closeMatch skos:relatedMatch skos:broadMatch skos:narrowMatch ) ] ,
+                [ sh:path i2x:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+i2xsh:AffordanceShape a sh:NodeShape ;
+    sh:targetClass iep:Affordance ;
+    rdfs:comment "The contract Interego's affordance extractor enforces, plus the hints a planner needs: one action IRI; a concrete hydra:target or (for templated controls) one i2x:targetTemplate; an HTTP method; boolean hints."@en ;
+    sh:property [ sh:path iep:action ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ,
+                [ sh:path hydra:method ; sh:maxCount 1 ; sh:in ( "GET" "POST" "PUT" "PATCH" "DELETE" ) ] ,
+                [ sh:path iep:readOnlyHint ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ,
+                [ sh:path iep:idempotentHint ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ,
+                [ sh:path iep:destructiveHint ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ,
+                [ sh:path iep:openWorldHint ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:xone ( [ sh:property [ sh:path hydra:target ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+                sh:property [ sh:path i2x:targetTemplate ; sh:maxCount 0 ] ]
+              [ sh:property [ sh:path i2x:targetTemplate ; sh:minCount 1 ; sh:maxCount 1 ] ;
+                sh:property [ sh:path hydra:target ; sh:maxCount 0 ] ] ) .
+
+i2xsh:IriTemplateShape a sh:NodeShape ;
+    sh:targetClass hydra:IriTemplate ;
+    sh:property [ sh:path hydra:template ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ,
+                [ sh:path hydra:mapping ; sh:minCount 1 ;
+                  sh:node [ sh:property [ sh:path hydra:variable ; sh:minCount 1 ; sh:maxCount 1 ] ,
+                                        [ sh:path hydra:property ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ] ] .
+
+i2xsh:StoredQueryShape a sh:NodeShape ;
+    sh:targetClass i2x:StoredQuery ;
+    rdfs:comment "A stored query either runs against a port (the glossary's SPARQL service) or runs client-side over the results of ports — never both, never neither."@en ;
+    sh:property [ sh:path i2x:sparql ; sh:minCount 1 ; sh:maxCount 1 ; sh:maxLength 12000 ] ,
+                [ sh:path i2x:queryForm ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "SELECT" "ASK" "CONSTRUCT" "DESCRIBE" ) ] ,
+                [ sh:path i2x:runsAgainst ; sh:nodeKind sh:IRI ] ,
+                [ sh:path i2x:runsOver ; sh:nodeKind sh:IRI ] ,
+                [ sh:path rdfs:label ; sh:minCount 1 ] ;
+    sh:xone ( [ sh:property [ sh:path i2x:runsAgainst ; sh:minCount 1 ] ; sh:property [ sh:path i2x:runsOver ; sh:maxCount 0 ] ]
+              [ sh:property [ sh:path i2x:runsOver ; sh:minCount 1 ] ; sh:property [ sh:path i2x:runsAgainst ; sh:maxCount 0 ] ] ) .
+
+i2xsh:ServiceLimitsShape a sh:NodeShape ;
+    sh:targetClass i2x:ServiceLimits ;
+    sh:property [ sh:path i2x:maxQueryLength ; sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minExclusive 0 ] ,
+                [ sh:path i2x:rateLimitPerMinute ; sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minExclusive 0 ] ,
+                [ sh:path i2x:maxResultRows ; sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minExclusive 0 ] ,
+                [ sh:path dct:source ; sh:minCount 1 ] .
+
+i2xsh:ReleaseShape a sh:NodeShape ;
+    sh:targetClass i2x:GlossaryRelease ;
+    sh:property [ sh:path i2x:releaseCommit ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{7,40}$" ] ,
+                [ sh:path prov:generatedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ,
+                [ sh:path i2x:conceptCount ; sh:minCount 1 ; sh:datatype xsd:integer ] .
+
+i2xsh:ReleaseChangeShape a sh:NodeShape ;
+    sh:targetClass i2x:ReleaseChange ;
+    rdfs:comment "One release change: it used the previous release and generated the next, at the release commit's time."@en ;
+    sh:property [ sh:path prov:generated ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ,
+                [ sh:path prov:used ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ,
+                [ sh:path prov:endedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ,
+                [ sh:path i2x:changeCount ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ] .
+
+i2xsh:ChangeEventShape a sh:NodeShape ;
+    sh:targetClass i2x:ChangeEvent ;
+    rdfs:comment "One kind of change within a release change: a known kind, a positive count, and what it touched (I2IDL concepts, a collection or a source, by IRI)."@en ;
+    sh:property [ sh:path i2x:partOfChange ; sh:minCount 1 ; sh:maxCount 1 ; sh:class i2x:ReleaseChange ] ,
+                [ sh:path i2x:changeKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( {{CHANGE_KIND_LIST}} ) ] ,
+                [ sh:path i2x:changeCount ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ,
+                [ sh:path i2x:changedConcept ; sh:node i2xsh:I2IDLConceptRef ] ,
+                [ sh:path i2x:changedCollection ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/collections/" ] ,
+                [ sh:path i2x:changedSource ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/sources/" ] ,
+                [ sh:path i2x:viaProperty ; sh:maxCount 1 ; sh:in ( skos:related skos:broader ) ] ;
+    sh:or ( [ sh:property [ sh:path i2x:changedConcept ; sh:minCount 1 ] ]
+            [ sh:property [ sh:path i2x:changedCollection ; sh:minCount 1 ] ]
+            [ sh:property [ sh:path i2x:changedSource ; sh:minCount 1 ] ] ) ;
+    sh:message "A change event says what kind of change it was, how many facts changed, and what it touched."@en .
+
+
+# ── 2b. Superset records: the semantic layer ────────────────────────────────
+
+i2xsh:ClassificationShape a sh:NodeShape ;
+    sh:targetSubjectsOf i2x:isClassifiedBy ;
+    rdfs:comment "Classified data, as published through cat:port-publish-classified: i2x:isClassifiedBy names an I2IDL concept by IRI — the concept a thing is an instance of. Only this link is checked; everything else said about the thing is the publisher's own business."@en ;
+    sh:property [ sh:path i2x:isClassifiedBy ; sh:minCount 1 ; sh:node i2xsh:I2IDLConceptRef ;
+                  sh:message "i2x:isClassifiedBy names the I2IDL concept a thing is an instance of, by its IRI under https://id.i2idl.org/concepts/."@en ] .
+
+i2xsh:ReferentAssignmentShape a sh:NodeShape ;
+    sh:targetSubjectsOf i2x:referentCategory ;
+    rdfs:comment "What an I2IDL concept classifies (graph i2idlx-referents): exactly one referent category from i2x:ReferentCategories, the basis of the assignment (I2IDL's type collection or the concept's definition) and the reason."@en ;
+    sh:node i2xsh:I2IDLConceptRef ;
+    sh:property [ sh:path i2x:referentCategory ; sh:minCount 1 ; sh:maxCount 1 ;
+                  sh:in ( {{REFERENT_CATEGORY_LIST}} ) ] ,
+                [ sh:path i2x:assignmentBasis ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "type" "definition" ) ] ,
+                [ sh:path i2x:categoryRationale ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype rdf:langString ; sh:minLength 8 ] .

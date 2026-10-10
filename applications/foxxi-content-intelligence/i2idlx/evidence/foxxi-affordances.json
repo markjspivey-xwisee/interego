@@ -1,0 +1,1708 @@
+[
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ai-assess-competency",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ai-assess-competency",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/ai_assess_competency",
+  "method": "POST",
+  "title": "AI mentor signs a (Hypothetical) CompetencyAssertion VC",
+  "desc": "AI agent reviews evidence (cited slide IDs, Q&A traces, performance results) and signs a CompetencyAssertion VC with its own did:key. Modal status: Hypothetical until a human countersigns via foxxi.countersign_assessment.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1761",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ask-course-question",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ask-course-question",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/ask_course_question",
+  "method": "POST",
+  "title": "Ask a question about a course",
+  "desc": "Grounded Q&A over a course's narration transcripts + extracted concepts. The learner asks \"what is handicap?\" and the substrate returns verbatim-cited transcript segments + concept snippets that overlap the question. Composes the existing l",
+  "expects": "nee9e4d9625084cf38664c056c1953510b489",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ask-course-question-agentic",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ask-course-question-agentic",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/ask_course_question_agentic",
+  "method": "POST",
+  "title": "Agentic RAG Q&A over a course federation (with LLM synthesis)",
+  "desc": "Multi-step agentic retrieval + LLM synthesis: (1) federated concept-graph search across the primary course + any loaded federation peers, (2) prereq + modifier-of edge expansion within each concept's home course, (3) round-robin slide alloc",
+  "expects": "nee9e4d9625084cf38664c056c1953510b519",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/assemble-learner-record",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/assemble-learner-record",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/assemble_learner_record",
+  "method": "POST",
+  "title": "Assemble an Enterprise Learner Record (IEEE P2997 \u2014 human or AI agent)",
+  "desc": "Compose an IEEE P2997 Enterprise Learner Record \u2014 the unified, provenance-pointed aggregate of a subject's path. Pulls learning EXPERIENCES + on-the-job PERFORMANCE records from Foxxi-as-LRS xAPI statements, CREDENTIALS from the subject's p",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1550",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/assess-agent-disposition",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/assess-agent-disposition",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/assess_agent_disposition",
+  "method": "POST",
+  "title": "Assess a team of agents' disposition (Agent Performance Technology)",
+  "desc": "Read a team of agents' DISPOSITION from their trajectories \u2014 deliberately NOT a gap analysis. There is no ideal future state and no score-vs-exemplary; the gap model only fits knowable work, and a team of agents is a complex, adaptive syste",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1588",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/assign-audience",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/assign-audience",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/assign_audience",
+  "method": "POST",
+  "title": "[admin] Assign a course to an audience group via a policy",
+  "desc": "Bind a course to an audience group (by audience_tag) via a Foxxi assignment policy descriptor. Trigger options: on-hire, on-role-change, on-cycle (annually), manual. Due-by relative days control when the assignment expires.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1480",
+  "collections": [
+   "groups",
+   "policies"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/attest-content-judgments",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/attest-content-judgments",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/attest_content_judgments",
+  "method": "POST",
+  "title": "[learning-engineer] Turn the content-judgment calibration into an attestation",
+  "desc": "Reads every foxxi:ContentJudgmentOutcome on the tenant pod, computes the calibration, and publishes a Self amta-shaped attestation by the judging agent about itself, grounded in the judgments container: accuracy from the evidence-level hit ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2041",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/audit-compliance-trail",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/audit-compliance-trail",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/audit_compliance_trail",
+  "method": "POST",
+  "title": "[admin] Compose a single-query audit chain for a learner window",
+  "desc": "Walk the learner's pod, pull every descriptor with a Provenance facet or dct:conformsTo tag in the time window, return them ordered as a chain. Each step carries its framework citations so the auditor sees which controls every hop reference",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1777",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/autonomy-status",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/autonomy-status",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/autonomy_status",
+  "method": "GET",
+  "title": "[learning-engineer] Who may assert what without a person, and why",
+  "desc": "The autonomy policy in force and, for every judge the pod attests about and every kind of question, whether that judge may assert without a person: its registry rating on the kind's axis, the outcomes the latest attestation rests on, how ma",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2171",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/backup-tenant-pod",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/backup-tenant-pod",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/backup_tenant_pod",
+  "method": "POST",
+  "title": "[admin] One-shot backup of every descriptor on the tenant pod",
+  "desc": "Pulls the manifest + every descriptor + every reachable graph into one JSON object. Encrypted graphs come back as ciphertext.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1952",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/best-judge",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/best-judge",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/best_judge",
+  "method": "GET",
+  "title": "[learning-engineer] Who has earned the most on this kind of question",
+  "desc": "Every judge the pod holds attestations about, ranked by the registry's rating on the axis that kind of question is scored on \u2014 accuracy for evidence-level, competence for work-regime \u2014 with how many attestations contributed. Unrated judges ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2137",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/bootstrap-tenant",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/bootstrap-tenant",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/bootstrap_tenant",
+  "method": "POST",
+  "title": "Bootstrap a fresh Foxxi tenant on a Solid pod",
+  "desc": "Publish tenant-metadata + emit env-var configuration so the bridge can switch over to a new tenant. Wizard backend.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1838",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/build-did-web-document",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/build-did-web-document",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/build_did_web_document",
+  "method": "POST",
+  "title": "[admin] Build a publishable did:web document for a tenant",
+  "desc": "Returns the DID document JSON the operator uploads to https://<tenant-domain>/.well-known/did.json so verifiers can resolve tenant credentials.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1945",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/calibration-merge",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/calibration-merge",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/calibration/merge",
+  "method": "POST",
+  "title": "Merge signed calibration contributions into a federated memory (k-anon)",
+  "desc": "Federated calibration: pool SIGNED (regime \u00d7 cause \u00d7 intervention \u2192 verdict) aggregate tallies from multiple orgs WITHOUT sharing a single raw record. The bridge recovers each contributor from its signature (authenticated, not asserted; sam",
+  "expects": "nee9e4d9625084cf38664c056c1953510b950",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/claim-credential",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/claim-credential",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/claim_credential",
+  "method": "POST",
+  "title": "Claim a credential the record has earned",
+  "desc": "The tenant issues an Open Badges 3.0 completion credential for a catalog course only from the learner's own record: a passed, mastered, satisfied or waived xAPI statement about the course, with success not false and any score at or above th",
+  "expects": "nee9e4d9625084cf38664c056c1953510b349",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/claim-credential-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/claim-credential-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/credentials/claim",
+  "method": "POST",
+  "title": "Claim a credential the record earned, signed as myself",
+  "desc": "foxxi.claim_credential for a course this bridge's SCORM engine grades, signed by your wallet or by an agent holding your delegation (a relay connection, such as a Claude connector). The tenant issues an Open Badges 3.0 completion credential",
+  "expects": "nee9e4d9625084cf38664c056c1953510b415",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/cmi5-launch-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/cmi5-launch-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/cmi5/launch",
+  "method": "POST",
+  "title": "Launch a cmi5 activity for myself",
+  "desc": "Launch an Assignable Unit of a cmi5 course published on this bridge, for yourself, signed by your wallet or by an agent holding your delegation (a relay connection, such as a Claude connector). The launch is for the signer and nobody else. ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b437",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/cohort-concept-intelligence",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/cohort-concept-intelligence",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/cohort_concept_intelligence",
+  "method": "POST",
+  "title": "[admin] Cross-pod cohort concept-overlap analytics",
+  "desc": "Walk a list of learner pods, pull every fxa:LearnerQuestionEvent in the time window, compute concept overlap across the cohort: which concepts >= 50% of learners asked about (reinforcement signal). Real PGSL composition with lighter set-int",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1808",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/compare-agent-evaluation",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/compare-agent-evaluation",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/compare_agent_evaluation",
+  "method": "POST",
+  "title": "Compare the cohort \u2014 the complexity-aware portfolio read (NOT a leaderboard)",
+  "desc": "Produce the comparative read for an evaluation cohort \u2014 deliberately NOT a benchmark leaderboard and it emits no overall score. A leaderboard assumes the choice is knowable (a single best, found by measurement); whether to standardise on on",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1665",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/confirm-content-judgment",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/confirm-content-judgment",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/confirm_content_judgment",
+  "method": "POST",
+  "title": "[learning-engineer] Say what is true about a judged claim: the outcome supersedes the judgment",
+  "desc": "A person confirms or refutes a ContentJudgment: confirmed_answer must be one of the answers the judgment weighed (an evidence level, or a work regime). Publishes an Asserted foxxi:ContentJudgmentOutcome to the tenant pod that supersedes the",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2005",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/confirm-next",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/confirm-next",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/confirm_next",
+  "method": "GET",
+  "title": "[learning-engineer] Which content judgment to confirm next",
+  "desc": "The pending Hypothetical foxxi:ContentJudgment entities on the tenant pod, ranked by what a person's confirmation would teach: the model's own uncertainty (1 \u2212 confidence), how far the question kind's calibration cell is from earning anythi",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2075",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/connect-lms",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/connect-lms",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/connect_lms",
+  "method": "POST",
+  "title": "[admin] Register an external LMS connector",
+  "desc": "Register an external LMS (Cornerstone OnDemand, Workday Learning, SAP SuccessFactors, etc.) as a content source. Composes with src/connectors/ \u2014 uses the existing OAuth 2.0 / Basic-auth / SCORM-Cloud-API flows where supported. The connector",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1467",
+  "collections": [
+   "integrations"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/consume-lesson",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/consume-lesson",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/consume_lesson",
+  "method": "POST",
+  "title": "Consume a lesson + emit consumption descriptor",
+  "desc": "Stream-load a Foxxi-parsed lesson's structural stratum (slides, audio, transcripts) for consumption, and emit an fxa:ConsumptionEvent descriptor + an xAPI Statement (via the lrs-adapter) for each slide the learner advances past. Composes wi",
+  "expects": "nee9e4d9625084cf38664c056c1953510b469",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-admissions-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-admissions-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/content/admissions",
+  "method": "POST",
+  "title": "Read which forms of content you keep at each competency",
+  "desc": "Read back what you keep with foxxi.content_admit: the standing admission at each competency, a withdrawal included, newest first. It is read from the list on your own pod, sealed to the bridge and to you. A list that cannot be read now answ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1218",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-admit-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-admit-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/content/admit",
+  "method": "POST",
+  "title": "Keep which forms of content suit you at a competency",
+  "desc": "Keep, on your own pod, which forms of content suit you at a competency, or withdraw that. A plan made for your work (contextualize_and_plan) offers the admission it implies: a plan for Emergent work admits probes and reflection, never a les",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1208",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-compose-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-compose-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/content/composition",
+  "method": "POST",
+  "title": "Compose fragments into a lesson, module, course or curriculum",
+  "desc": "Author a composition as yourself: a path of positions, each naming a competency and the alternatives that can fill it (fragments or other compositions, by their IRIs). Lesson, module, course and curriculum are one composition at different s",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1128",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-fold-course-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-fold-course-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/content/fold-course",
+  "method": "POST",
+  "title": "Fold a course you authored, or a SCORM package hosted here, into fragments and compositions",
+  "desc": "Fold a course you authored (foxxi.scorm_author), an emergent course as POST /content/compose-course returns it, or a package hosted here (GET /scorm/packages lists them: SCORM packages, and authoring tools' own exports kept to be folded), i",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1166",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-fragment-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-fragment-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/content/fragment",
+  "method": "POST",
+  "title": "Author a fragment of teaching or support",
+  "desc": "Author a fragment as yourself: one piece of teaching or support that compositions use by reference. Its IRI is the hash of its content, so the same content is the same fragment anywhere and nobody can change what a learner is shown under it",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1110",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-judgment-calibration",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-judgment-calibration",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/content_judgment_calibration",
+  "method": "GET",
+  "title": "[learning-engineer] How the content judgments have done, per question kind",
+  "desc": "Reads every foxxi:ContentJudgmentOutcome on the tenant pod and reports, per question kind (evidence-level, work-regime), how often the model had the confirmed answer and the mean Brier score of its probabilities; a cell is Hypothetical unti",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2029",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-judgment-reputation",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-judgment-reputation",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/content_judgment_reputation",
+  "method": "GET",
+  "title": "[learning-engineer] What the pod attests about the content-judging agent",
+  "desc": "Every foxxi:ContentJudgmentAttestation on the tenant pod about the judging agent (its own, grounded in the calibration, and any a learning engineer publishes as a Peer), aggregated by the registry under the content policy: a self-attestatio",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2059",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-launch-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-launch-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/content/launch",
+  "method": "POST",
+  "title": "Launch a composition for yourself and get the first step",
+  "desc": "Resolve a composition for yourself (as foxxi.content_resolve does, from your own record) and start playing it: the first step comes back as you receive it, the fragment's Markdown and rendering and its questions without their verifiers. Con",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1260",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-mine-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-mine-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/content/mine",
+  "method": "POST",
+  "title": "List the compositions you made and the ones you played",
+  "desc": "List the compositions you authored and the ones you have played, to launch one (foxxi.content_launch) or read what it has learned (GET <composition IRI>/efficacy). Nothing new is kept to answer this. Played compositions are read from your o",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1230",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-next-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-next-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/content/next",
+  "method": "POST",
+  "title": "Answer the step you are on and go on",
+  "desc": "Answer the questions of the step you are on, if it has any, and move to the next. The bridge grades graded questions against their verifiers (never your word) and records the step in your own record as xAPI: an answered statement per questi",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1284",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-resolve-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/content-resolve-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/content/resolve",
+  "method": "POST",
+  "title": "Resolve a composition for yourself, from your own record",
+  "desc": "Resolve a composition for yourself: which fragment you are shown at each position and why. A position whose competency your record shows you have demonstrated (an Asserted competency, from performance or a credential, at the position's rank",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1196",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/countersign-assessment",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/countersign-assessment",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/countersign_assessment",
+  "method": "POST",
+  "title": "[admin] Countersign an AI mentor's CompetencyAssertion \u2192 full OB3",
+  "desc": "Human admin reviews + countersigns the AI mentor's Hypothetical CompetencyAssertion. Result: a dual-issuer credential whose modal status is Asserted (= OB3-eligible). Both signatures are preserved on the descriptor for auditability.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1772",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-analyze",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-analyze",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/course/analyze",
+  "method": "POST",
+  "title": "Analyze a SCORM package: fingerprint the authoring tool + build a course KG",
+  "desc": "Fingerprint WHICH authoring tool produced a SCORM package (from its imsmanifest.xml + file list/contents), build the concept/slide knowledge-graph, and compose it into a per-course PGSL lattice holon (dereferenceable + interrogable). Open +",
+  "expects": "nee9e4d9625084cf38664c056c1953510b800",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-analyze-authored",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-analyze-authored",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/course/analyze-authored",
+  "method": "POST",
+  "title": "Analyze an agent-authored course (cryptographic provenance fingerprint)",
+  "desc": "Analyze a course an agent authored via /agent/scorm/author. Because the structured course + signed authoredBy provenance is known, the \"fingerprint\" reports that ground truth (a Foxxi agent authored it) rather than sniffing a third-party to",
+  "expects": "nee9e4d9625084cf38664c056c1953510b822",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-analyze-skill",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-analyze-skill",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/course/analyze-skill",
+  "method": "POST",
+  "title": "Ingest a SKILL.md as a course knowledge-graph",
+  "desc": "Ingest an agent skill (SKILL.md string) as a course: parse it, report the agent-skill provenance fingerprint (ground truth \u2014 a skills.md, not a SCORM tool), and compose it into a PGSL course-KG holon so it can be interrogated, chatted with,",
+  "expects": "nee9e4d9625084cf38664c056c1953510b886",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-ask",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-ask",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/course/ask",
+  "method": "POST",
+  "title": "Ask a role-framed, grounded question about an analyzed course",
+  "desc": "Grounded Q&A over a FoxxiAgenticCourse (from /agent/course/analyze*). A role (author / performance-manager / assessor / meta / learner) sets the lens; the answer stays grounded in the course knowledge-graph. Without llm_api_key it returns t",
+  "expects": "nee9e4d9625084cf38664c056c1953510b842",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-propose-successor",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-propose-successor",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/course/propose-successor",
+  "method": "POST",
+  "title": "A course proposes its own successor (regime-engine-routed, iep:supersedes)",
+  "desc": "The Living Curriculum: a course reasons about ITSELF concept by concept. Each concept routes a performance signal through the work-regime engine, which REFUSES the universal content-gap frame (only the Knowable regime runs a gap analysis; a",
+  "expects": "nee9e4d9625084cf38664c056c1953510b922",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-skill",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/course-skill",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/course/skill",
+  "method": "POST",
+  "title": "Project a course to a SKILL.md an agent can load",
+  "desc": "Pure projection: turn a FoxxiAgenticCourse (from /agent/course/analyze*) into a SKILL.md document an agent can load \u2014 carrying the course provenance (tool, authoredBy, holonUri, courseId). No pod write, no signing. The inverse of /agent/cou",
+  "expects": "nee9e4d9625084cf38664c056c1953510b864",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/coverage-query",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/coverage-query",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/coverage_query",
+  "method": "POST",
+  "title": "[admin] Query concept coverage across the catalog",
+  "desc": "Privacy-respecting coverage query: across the catalog, which concepts are taught vs only mentioned, by which courses, in which categories. Defaults to v2 merkle-attested-opt-in (count of courses per concept); v3 zk-distribution mode returns",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1493",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/cross-confirm",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/cross-confirm",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/cross_confirm",
+  "method": "POST",
+  "title": "[learning-engineer] Judges confirm each other: every two judges' newest judgments of one claim score each other, once",
+  "desc": "For every claim two or more judges have judged, each judge's newest judgment gets an outcome from each other judge's answer \u2014 an agent confirmation naming the peer judgment it came from \u2014 so every judge's calibration counts agreement with i",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2121",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/decide-evaluation-candidate",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/decide-evaluation-candidate",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/decide_evaluation_candidate",
+  "method": "POST",
+  "title": "Accept or decline a candidate agent (the cross-pod delegation grant)",
+  "desc": "The evaluation owner accepts or declines a requested candidate. Accepting it IS the cross-pod delegation grant \u2014 the candidate agent (whose DID may belong to another team / pod) becomes a managed member of the cohort and may record runs int",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1626",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/declare-framework-alignment",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/declare-framework-alignment",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/declare_framework_alignment",
+  "method": "POST",
+  "title": "[admin] Declare an alignment between this tenant's competency and another tenant's",
+  "desc": "Publishes a fxa:CASEAlignment descriptor binding one of this tenant's fxk:Skill / rcd:CompetencyDefinition items to an item in a foreign tenant's framework. The alignment becomes a substrate-discoverable artifact + lifts into the next CASE ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1786",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/derive-adaptive-policy",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/derive-adaptive-policy",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/derive_adaptive_policy",
+  "method": "POST",
+  "title": "[admin] Derive an adaptive-sequencing policy from cohort intelligence",
+  "desc": "Takes the output of foxxi.cohort_concept_intelligence and derives a fxa:AdaptiveSequencingPolicy document naming the concepts a cohort is struggling with and the reinforcement each suggests. NOT ENFORCED: nothing currently consumes it \u2014 fox",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1872",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/derive-bbs-presentation",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/derive-bbs-presentation",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/derive_bbs_presentation",
+  "method": "POST",
+  "title": "Derive a selective-disclosure presentation from a BBS+ credential",
+  "desc": "Holder-side. Given a BBS+-issued credential + a list of which claim paths to reveal, produce a zero-knowledge BBS+ proof + the revealed claims for the verifier. The full credential never leaves the holder.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1721",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-assigned-courses",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-assigned-courses",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/discover_assigned_courses",
+  "method": "POST",
+  "title": "Discover assigned courses",
+  "desc": "Walk the L&D admin's policy descriptors + the learner's audience-tag membership, returning the courses currently assigned to this learner (required + suggested) with due-by dates derived from policy triggers.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b289",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-course-catalogs",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-course-catalogs",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/discover_course_catalogs",
+  "method": "POST",
+  "title": "Discover course catalogs across pods",
+  "desc": "Every federated course catalog the given pods publish, found by its descriptor type (hyprcat:FederatedCatalog) in each pod's manifest and read back: the catalog's issuer and world, and each course as a data product with its title, category,",
+  "expects": "nee9e4d9625084cf38664c056c1953510b303",
+  "collections": [
+   "catalog"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-framework-registry",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-framework-registry",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/discover_framework_registry",
+  "method": "POST",
+  "title": "Federated discovery of competency frameworks across tenant pods",
+  "desc": "Walk N pod URLs, return every fxs:CourseCatalog / fxs:SkillFramework / fxa:CASEAlignment descriptor \u2014 the public-registry pattern without a central registry.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1906",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-lrs",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-lrs",
+  "target": "https://foxxi-bridge.interego.xwisee.com/xapi/about",
+  "method": "GET",
+  "title": "Find the xAPI Learning Record Store this bridge serves",
+  "desc": "Dereference the LRS's own discovery document (xAPI 2.0 \u00a74.1.6 `about`). Returns the xAPI versions supported plus extensions naming the backend, the tenancy model, the published xAPI Profile, and the IEEE-LER / ADL-TLA spec ontologies. FROM ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b277",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/earned-credentials",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/earned-credentials",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/earned_credentials",
+  "method": "POST",
+  "title": "Where every assigned course stands",
+  "desc": "For each course assigned to the learner: credentialed (a verified, unexpired completion credential in their pod wallet), claimable (their own xAPI record demonstrates mastery \u2014 a passed, mastered, satisfied or waived statement about the cou",
+  "expects": "nee9e4d9625084cf38664c056c1953510b319",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/earned-credentials-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/earned-credentials-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/credentials/earned",
+  "method": "POST",
+  "title": "Where my courses stand, signed as myself",
+  "desc": "foxxi.earned_credentials for the courses this bridge's SCORM engine grades, signed the way the engine's own routes are: by your wallet, or by an agent holding your delegation (a relay connection, such as a Claude connector). Reads your own ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b391",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/emit-cmi5-session",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/emit-cmi5-session",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/emit_cmi5_session",
+  "method": "POST",
+  "title": "Emit a cmi5-conformant xAPI session trace (launched \u2192 terminated)",
+  "desc": "Build the full cmi5 statement trace (launched + initialized + completed + passed/failed + terminated, plus optional satisfied if moveOn rule fires) for a learner's AU session. Each statement carries the cmi5 context category, session ID, an",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1671",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/explore-concept-map",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/explore-concept-map",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/explore_concept_map",
+  "method": "POST",
+  "title": "Explore the published concept map for a course",
+  "desc": "Fetch the concept graph a course PUBLISHED (concepts with tier + confidence, prerequisite edges, modifier-of relations) from its on-pod fxa:CoursePackageBundle, and return it as a navigation graph: pick any concept with focus_concept_id, fo",
+  "expects": "nee9e4d9625084cf38664c056c1953510b573",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/export-case-framework",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/export-case-framework",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/export_case_framework",
+  "method": "POST",
+  "title": "[admin] Export the tenant's competency framework as 1EdTech CASE 1.0 JSON-LD",
+  "desc": "Project the tenant's fxk:SkillFramework + fxk:Skill (+ rcd:CompetencyDefinition for skills that have RDCEO proficiency levels) into a 1EdTech CASE 1.0 CFDocument JSON-LD payload. The CASE document is consumable by any CASE-compliant tool (C",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1668",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/export-clr",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/export-clr",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/export_clr",
+  "method": "POST",
+  "title": "Export a learner's Comprehensive Learner Record (1EdTech CLR 2.0)",
+  "desc": "Walk the learner's pod via iep:discover(), aggregate every fxa:CourseCompletionCredential + fxa:CompetencyAssertion the pod holds, verify each embedded W3C VC's DataIntegrityProof, and return a 1EdTech CLR 2.0-shaped envelope wrapping all v",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1545",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/export-clr-v1",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/export-clr-v1",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/export_clr_v1",
+  "method": "POST",
+  "title": "Export a learner's record as 1EdTech CLR 1.0 (legacy pre-VC) JSON",
+  "desc": "Project the learner's pod credentials into the legacy 1EdTech CLR 1.0 shape for institutional consumers still on the pre-VC format. The 1.0 payload is plaintext JSON \u2014 institutional signing is the operator's responsibility.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1703",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/extend-standards",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/extend-standards",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/extend-standards",
+  "method": "POST",
+  "title": "Extend a standard (xAPI / IEEE-LER / ADL-TLA) \u2014 afforded by the agentic-performance layer",
+  "desc": "Emergent, self-descriptive capability: an agent extends a standard IN THE FLOW OF WORK \u2014 a new xAPI context extension, an xAPI Profile fragment, or an IEEE-LER / ADL-TLA term \u2014 COMPOSING Foxxi's standards (built with Foxxi's own buildProfil",
+  "expects": "nee9e4d9625084cf38664c056c1953510b595",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/find-tutor-for-competency",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/find-tutor-for-competency",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/find_tutor_for_competency",
+  "method": "POST",
+  "title": "Search the tutor marketplace for a specific competency",
+  "desc": "Rank-search tutor candidates by competency match + number of independent human-countersigned competency assertions they've signed (a proxy for teaching quality).",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1922",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/generate-dpia",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/generate-dpia",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/generate_dpia",
+  "method": "POST",
+  "title": "[admin] Generate a Data Protection Impact Assessment for a learner window",
+  "desc": "Wraps foxxi.audit_compliance_trail. Returns a structured DPIA with summary stats, framework controls cited, data-category breakdown, risk-rated findings + suggested mitigations (GDPR Art. 35 + EU AI Act \u00a7 13 shape).",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1931",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/get-agent-evaluation",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/get-agent-evaluation",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/get_agent_evaluation",
+  "method": "POST",
+  "title": "Get an evaluation cohort \u2014 its candidates and their enrollment status",
+  "desc": "Return an evaluation cohort: the decision question, the shared task set, and every candidate with its team, harness, enrollment status (requested / accepted / declined) and run count. The read view for tracking who is in the bake-off and ho",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1662",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/get-agent-trajectory",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/get-agent-trajectory",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/get_agent_trajectory",
+  "method": "POST",
+  "title": "Get an agent's native trajectory (what the xAPI projection drops)",
+  "desc": "Return an agent's full agentic-native trajectory \u2014 every step at every modal status (including the Hypothetical intentions + Counterfactual branches xAPI cannot represent) and every granularity. Includes a projection summary: how many steps",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1585",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ingest-content-package",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ingest-content-package",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/ingest_content_package",
+  "method": "POST",
+  "title": "[admin] Ingest a SCORM/cmi5/xAPI content package",
+  "desc": "Unwrap a SCORM 1.2 / SCORM 2004 / cmi5 zip package, run the Foxxi storyline parser (deterministic structural rendering + Whisper-transcribed audio + concept extraction with morphology + prerequisite-edge inference), and emit three-stratum d",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1447",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ingest-course-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/ingest-course-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/ingest-course",
+  "method": "POST",
+  "title": "Author + publish a course to your own pod (as yourself)",
+  "desc": "Author a Foxxi course (cmi5/SCORM-shaped: modules \u2192 lessons \u2192 fragments; assessment-item fragments are scored) and PUBLISH it to your OWN pod, authenticated by your delegation (the agent-drivable counterpart of foxxi.ingest_content_package)",
+  "expects": "nee9e4d9625084cf38664c056c1953510b998",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/issue-bbs-credential",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/issue-bbs-credential",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/issue_bbs_credential",
+  "method": "POST",
+  "title": "[admin] Issue a BBS+-signed OB3 completion credential (supports selective disclosure)",
+  "desc": "Build an OB3-shaped W3C VC, sign it with the tenant's BBS+ key over a flattened message list. The full credential goes to the holder; the holder later derives a zero-knowledge proof revealing only the claims they choose. Verifier learns not",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1708",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/issue-completion-credential",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/issue-completion-credential",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/issue_completion_credential",
+  "method": "POST",
+  "title": "[admin] Issue a W3C VC / Open Badges 3.0 completion credential",
+  "desc": "Mint a W3C Verifiable Credential (Open Badges 3.0-shaped) for a learner who completed a course, sign it with the tenant's deterministic Ed25519 issuer key (eddsa-jcs-2022 DataIntegrityProof), and publish it to the learner's pod in the foxxi",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1526",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/issue-credential",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/issue-credential",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/issue-credential",
+  "method": "POST",
+  "title": "Issue a competency credential as the authority for your vertical",
+  "desc": "Issue an Open Badges 3.0 / W3C Verifiable Credential to an agent who demonstrated a competency you defined, as the AUTHORITY for your own vertical. The credential is signed by your stable, platform-custodied issuer identity (derived from yo",
+  "expects": "nee9e4d9625084cf38664c056c1953510b658",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/judge-content-claim",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/judge-content-claim",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/judge_content_claim",
+  "method": "POST",
+  "title": "[learning-engineer] Judge a content claim with a System One model: a typed answer with probabilities, Hypothetical until confirmed",
+  "desc": "One narrow question to TypeSafe System One about a unit of course content, answered as typed probabilities rather than prose. judgment_kind evidence-level scores how well claim_text is supported by context and evidence on a five-level scale",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1981",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/launch-au-with-prereq",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/launch-au-with-prereq",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/launch_au_with_prereq_check",
+  "method": "POST",
+  "title": "Launch a cmi5 AU gated on a verified-credential prerequisite",
+  "desc": "Compose: walk the learner's pod for a credential satisfying the declared prereq (verify Data Integrity Proof, check achievement IRI + proficiency level + expiry + accepted issuers); if satisfied, emit the cmi5 launched + initialized stateme",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1744",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-analyze-learning-curve",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-analyze-learning-curve",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/le_analyze_learning_curve",
+  "method": "POST",
+  "title": "[learning-engineer] Detect plateaus in a per-concept learning curve",
+  "desc": "Plots mastery-rate-per-attempt + detects plateaus (3 consecutive attempts with <1pp improvement). Returns diagnosis (rising / plateau-low / plateau-high / insufficient-data) + an actionable recommendation.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2221",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-calibrate-mastery-threshold",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-calibrate-mastery-threshold",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/le_calibrate_mastery_threshold",
+  "method": "POST",
+  "title": "[learning-engineer] Calibrate the cmi5 mastery threshold against downstream success",
+  "desc": "Find the score threshold that maximizes Youden's J (sensitivity + specificity \u2212 1) against downstream prereq-dependent performance. Returns ROC curve + recommended threshold.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2228",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-design-ab-experiment",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-design-ab-experiment",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/le_design_ab_experiment",
+  "method": "POST",
+  "title": "[learning-engineer] Pre-register an A/B experiment between two course variants",
+  "desc": "Power-analysis + analysis plan for an instructional A/B. Returns required sample size per arm, recommended statistical test for the primary metric, and (if perWeekEnrolment is supplied) an estimated duration. Pre-registration prevents p-hac",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1953",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-estimate-concept-difficulty",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-estimate-concept-difficulty",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/le_estimate_concept_difficulty",
+  "method": "POST",
+  "title": "[learning-engineer] Rank a course's concepts by estimated difficulty",
+  "desc": "Composes prereq-graph topology + cohort question-frequency to produce a per-concept difficulty score (0..1). Foundational concepts (\u22653 dependents) flagged. The right-shape proxy for IRT until per-learner response data is available.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2216",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-framework-gap-analysis",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/le-framework-gap-analysis",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/le_framework_gap_analysis",
+  "method": "POST",
+  "title": "[learning-engineer] Cross-reference framework competencies against taught concepts",
+  "desc": "Finds (a) competencies in the framework with no taught concept (assessments can't be grounded) and (b) taught concepts not aligned to any competency (credentials can't reference the framework). Returns coverage % + per-direction gap lists.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2233",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/lti-gradebook-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/lti-gradebook-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/lti/gradebook",
+  "method": "POST",
+  "title": "Read my grades in Foxxi's own LMS",
+  "desc": "Your row of the gradebook in Foxxi's own LMS, signed by your wallet or by an agent holding your delegation: every course in the LMS course context, and the grade the Tool posted for you over LTI Assignment and Grade Services, or null where ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b463",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/lti-launch-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/lti-launch-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/lti/launch",
+  "method": "POST",
+  "title": "Launch a course from Foxxi's own LMS over LTI 1.3",
+  "desc": "Launch a course this bridge's SCORM engine grades from Foxxi's own LMS, the LTI 1.3 Platform this bridge runs beside its Tool, for yourself, signed by your wallet or by an agent holding your delegation (a relay connection, such as a Claude ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b453",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/manager-team-view",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/manager-team-view",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/manager_team_view",
+  "method": "POST",
+  "title": "[manager] Build a competency map for the manager's direct reports",
+  "desc": "Walk each report's pod, aggregate credentials, return per-report breakdown + team skill coverage roll-up.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1940",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/open-agent-evaluation",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/open-agent-evaluation",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/open_agent_evaluation",
+  "method": "POST",
+  "title": "Open an agent / harness evaluation cohort",
+  "desc": "Open a named, shared evaluation \u2014 the place where several teams' competing agents or harnesses are compared head-to-head. Carries the decision the cohort exists to inform (e.g. \"should we standardise on one agentic harness, or fund several?",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1606",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/prove-competency",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/prove-competency",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/prove_competency",
+  "method": "POST",
+  "title": "Prove a competency privately (BBS+ selective disclosure, end-to-end)",
+  "desc": "Holder-facing competency proof. Composes the three BBS+ steps \u2014 issue (the bridge as tenant issuer signs a multi-claim credential), derive (disclose only a minimal privacy-preserving subset), verify \u2014 into ONE operation a learner can trigge",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1731",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/prove-competency-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/prove-competency-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/prove_competency",
+  "method": "POST",
+  "title": "Prove a competency privately end-to-end (BBS+ selective disclosure)",
+  "desc": "Holder-facing BBS+ proof, GROUNDED IN THE HOLDER'S ACTUAL RECORD: the bridge assembles the holder's learner record, refuses any competency that record does not assert (\"you can only prove a demonstrated competency, not a claimed one\"), and ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b708",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-authoring-policy",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-authoring-policy",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/publish_authoring_policy",
+  "method": "POST",
+  "title": "[admin] Publish an authoring-tool / standard policy",
+  "desc": "Declare which authoring tools (Articulate Storyline, Adobe Captivate, Camtasia, etc.) and which package standards (SCORM 1.2, SCORM 2004, cmi5, xAPI) are accepted into the catalog. Reuses the abac policy descriptor pattern; ingestion reject",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1458",
+  "collections": [
+   "courses",
+   "policies"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-compliance-evidence",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-compliance-evidence",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/publish_compliance_evidence",
+  "method": "POST",
+  "title": "[admin] Publish L&D compliance evidence (SOC 2 / EU AI Act / NIST RMF)",
+  "desc": "Emit an ops event (assignment/completion/exception/audit) wrapped via compliance-overlay so the L&D activity becomes a framework-cited descriptor. Composes integrations/compliance-overlay/ + src/ops/ \u2014 same path the substrate uses for its o",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1515",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-concept-map",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-concept-map",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/publish_concept_map",
+  "method": "POST",
+  "title": "[admin] Publish a course's extracted concept map as a federated artifact",
+  "desc": "Publish the fxk: knowledge-stratum graph for a course as a federated pod artifact (using the federation_iri_base pattern from federation_payload.json). Lets peer tenants discover + cite concept nodes by IRI without re-ingesting the course c",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1508",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-course-catalog-product",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-course-catalog-product",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/publish_course_catalog_product",
+  "method": "POST",
+  "title": "Publish the course catalog as a federated data product",
+  "desc": "The tenant's course catalog as a HyprCat FederatedCatalog on the tenant pod: a public, Asserted descriptor that conforms to hyprcat:FederatedCatalog, so any pod walk finds it by type, describing a graph in which each course is a FederatedDa",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1901",
+  "collections": [
+   "catalog"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-encryption-key",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-encryption-key",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/publish-encryption-key",
+  "method": "POST",
+  "title": "Publish your X25519 encryption public key (self-sovereign)",
+  "desc": "Publish YOUR X25519 public key to your OWN pod so the bridge encrypts your canonical PGSL holons TO YOU (not just to itself) \u2014 making your recorded performances/credentials owner-readable. You generate + hold the private key; only the publi",
+  "expects": "nee9e4d9625084cf38664c056c1953510b784",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-memory-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-memory-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/publish-memory",
+  "method": "POST",
+  "title": "Publish a job aid / quick reference as a dereferenceable memory",
+  "desc": "Author a job aid or quick reference as yourself. It composes into a PUBLIC shared PGSL lattice at triple granularity, so the memory and its points become dereferenceable URL atoms that RESOLVE (via the relay id authority) to their descripti",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1092",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-ontology",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/publish-ontology",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/publish_ontology",
+  "method": "POST",
+  "title": "Publish + host an ontology on Interego (a vocabulary is just RDF)",
+  "desc": "Host an OWL/SHACL ontology the substrate way \u2014 not a raw file PUT, and not a developer-baked route. Send a rev-196 proof-of-possession envelope + the ontology Turtle; the bridge composes the substrate publish() primitive to write a PUBLIC, ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1827",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/push-to-cass",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/push-to-cass",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/push_to_cass",
+  "method": "POST",
+  "title": "[admin] Push the tenant's competency framework to an ADL CaSS server",
+  "desc": "POST the tenant's CASE 1.0 CFDocument (from foxxi.export_case_framework) to a CaSS server's /api/framework endpoint. Downstream CaSS-integrated tooling can then query learner competencies without re-implementing Foxxi semantics.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1696",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/query-experience-index",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/query-experience-index",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/query_experience_index",
+  "method": "POST",
+  "title": "Federate an xAPI Statement query across multiple LRSs (ADL TLA Experience Index)",
+  "desc": "Implements the read side of the ADL Total Learning Architecture Experience Index. Given a filter (actor / verb / activity / since / until / registration), queries every configured LRS endpoint in parallel, deduplicates statements by id, and",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1691",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/read-intervention-methods",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/read-intervention-methods",
+  "target": "https://foxxi-bridge.interego.xwisee.com/performance/methods",
+  "method": "GET",
+  "title": "Read performance consulting and intervention methods",
+  "desc": "Discover the versioned consulting and management cycle and the implementation method for each intervention. Profiles carry steps, revision links, required work products and evidence criteria. Contextualize and diagnose before choosing a met",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1394",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/read-private-performance-calibration-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/read-private-performance-calibration-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/performance/calibration",
+  "method": "POST",
+  "title": "Read your own empirical calibration, excluding seeds",
+  "desc": "Signed payload {agent_id,timestamp}. Counts one learner/intervention episode, with eligibility, source and sample counts. No public aggregate publication. Full input contract: /agent/performance/schema.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b267",
+  "collections": [],
+  "readOnly": null
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/read-private-performance-outcomes-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/read-private-performance-outcomes-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/performance/outcomes",
+  "method": "POST",
+  "title": "Read your private server plans and measured outcomes",
+  "desc": "Signed payload {agent_id,timestamp,episode_id?}. Reads only the verified caller own encrypted pod. Full input contract: /agent/performance/schema.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b226",
+  "collections": [],
+  "readOnly": null
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/read-xapi-statements-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/read-xapi-statements-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/read",
+  "method": "POST",
+  "title": "Read your actual xAPI LRS statements",
+  "desc": "Signed transport to GET /xapi/statements in your own lens. Returns the actual LRS response, without merging a pod snapshot or learner-record summary. query accepts standard statementId, verb, activity, registration, since, until, ascending,",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1062",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-agent-trajectory",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-agent-trajectory",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/record_agent_trajectory",
+  "method": "POST",
+  "title": "Record an agentic-native trajectory (modal \u00b7 poly-granular \u00b7 composable)",
+  "desc": "Record an agent run in the AGENTIC-NATIVE form \u2014 not as flat xAPI statements but as a trajectory of Context Descriptors emergent from Interego L1: each step is MODAL (Hypothetical = an intention/plan, Asserted = executed, Counterfactual = a",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1578",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-content-judgment",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-content-judgment",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/record_content_judgment",
+  "method": "POST",
+  "title": "[learning-engineer] Record a content judgment you made yourself, as a judge in your own right",
+  "desc": "The same foxxi:ContentJudgment entity foxxi.judge_content_claim publishes for the bridge's model, with the answer, the distribution and the model you declare, and you as its judge. The answer must be one of the kind's alternatives; the dist",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2087",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-course-completion-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-course-completion-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/record-course-completion",
+  "method": "POST",
+  "title": "Record a cmi5 course completion as yourself",
+  "desc": "Record completing + passing a course as cmi5 xAPI (launched/initialized/completed/passed/terminated) into your OWN lens, authenticated by your delegation (the agent-drivable counterpart of foxxi.emit_cmi5_session). A passed completion (scor",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1022",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-external-agent-run",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-external-agent-run",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/record_external_agent_run",
+  "method": "POST",
+  "title": "Record one completed run of an external agent (Codex, OpenClaw, Hermes, enterprise)",
+  "desc": "The one-call adapter for an EXTERNAL agent \u2014 one that does its work outside Foxxi (a Codex doing real coding, an OpenClaw or Hermes agent, a custom enterprise agent) and is therefore invisible to the trajectory layer and the ELR. Emit a sin",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1633",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-performance",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-performance",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/record_performance",
+  "method": "POST",
+  "title": "Record a performance event (on-the-job work \u2014 human or AI agent)",
+  "desc": "Record one unit of on-the-job production work as an xAPI `performed` statement \u2014 the IEEE P2997 employment-history leg, kept distinct from training experiences. The performer (actor_did) may be a human exercising a workplace task OR an AI a",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1559",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-performance-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-performance-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/record-performance",
+  "method": "POST",
+  "title": "Record a production-work performance event as yourself",
+  "desc": "Record one unit of on-the-job production work as an xAPI performed statement, into your OWN Foxxi lens, authenticated by your delegation (the agent-drivable counterpart of the session-token foxxi.record_performance). Declare an activity_typ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b982",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-private-performance-outcome-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/record-private-performance-outcome-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/performance/outcome",
+  "method": "POST",
+  "title": "Record a private measured intervention episode",
+  "desc": "Signed payload {agent_id,timestamp,outcome:{episode_id,plan_id,plan_sha256,intervention:{type,delivered,artifact:{uri,version,sha256},delivered_at},post,fresh?,assistance,observed_at}}. The server plan is created using private_evidence on c",
+  "expects": "nee9e4d9625084cf38664c056c1953510b206",
+  "collections": [],
+  "readOnly": null
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/register-self-sovereign-learner",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/register-self-sovereign-learner",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/register_self_sovereign_learner",
+  "method": "POST",
+  "title": "Register a learner identity (human or AI agent) with their own DID + pod",
+  "desc": "Self-enroll into a self-sovereign tenant. Send a rev-196 proof-of-possession envelope ({_signature,_signed_payload}) signed by your wallet; the bridge recovers your address and appends it to a PUBLIC tenant-membership allowlist on your own ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1815",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/register-tutor-agent",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/register-tutor-agent",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/register_tutor_agent",
+  "method": "POST",
+  "title": "Register an AI tutor agent in the marketplace",
+  "desc": "Builds a fxa:TutorAgentProfile descriptor from your specialties + contact endpoint. WRITES NOTHING: this route is unauthenticated pure-compute and echoes your arguments back shaped as a descriptor \u2014 verified live, your pod is untouched. age",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1909",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/request-evaluation-enrollment",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/request-evaluation-enrollment",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/request_evaluation_enrollment",
+  "method": "POST",
+  "title": "Request enrollment of an agent into an evaluation cohort (cross-pod delegation)",
+  "desc": "A team requests that its agent / harness join an evaluation cohort as a candidate. The candidate agent is identified by its own DID \u2014 which may live on a different team's pod \u2014 so enrolling it is a cross-pod delegation: the request starts a",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1613",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/resolve-aligned-competency",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/resolve-aligned-competency",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/resolve_aligned_competency",
+  "method": "POST",
+  "title": "Resolve whether a held competency satisfies a required competency via alignments",
+  "desc": "Given the held credential's competency IRI + a required competency IRI + the alignment graph, BFS over isAlignedTo / isEquivalentTo edges. Returns the alignment chain (could be 0 hops for direct match, N hops for transitive) so the verifier",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1801",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/resolve-did",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/resolve-did",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/resolve_did",
+  "method": "POST",
+  "title": "Resolve a W3C DID (did:key / did:web / did:ethr) to its DID document",
+  "desc": "Composes the substrate's DID resolver. For did:key, decodes the embedded Ed25519 public key. For did:web, fetches .well-known/did.json over HTTPS and returns the parsed document. For did:ethr, derives the verification method from the Ethere",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1688",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/retrieve-course-context",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/retrieve-course-context",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/retrieve_course_context",
+  "method": "POST",
+  "title": "Retrieval-only path (MCP-client-as-LLM \u2014 your agent does synthesis)",
+  "desc": "Pure retrieval, no LLM call. Designed for MCP clients where the AGENT itself (Claude.ai connector / Claude Desktop / Claude Code / Cursor / Codex) is the LLM and uses the user's existing subscription. Returns the same federated concept-grap",
+  "expects": "nee9e4d9625084cf38664c056c1953510b543",
+  "collections": [
+   "courses"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/review-method-evidence",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/review-method-evidence",
+  "target": "https://foxxi-bridge.interego.xwisee.com/performance/methods/review",
+  "method": "POST",
+  "title": "Check intervention method evidence coverage",
+  "desc": "Check supplied artifact pointers and notes against the selected method criteria. Returns missing-evidence or documented-unverified, coverage percent and missing work products. Does not inspect linked contents, approve quality, verify author",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1421",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/review-record",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/review-record",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/review-record",
+  "method": "POST",
+  "title": "Review your own performance record (ELR + CLR) as yourself",
+  "desc": "Review your IEEE P2997 Enterprise Learner Record + 1EdTech CLR 2.0 credential wallet, virtualized by Foxxi entirely over your OWN pod. Authenticate with a rev-196 signed-request envelope \u2014 Foxxi verifies your own signature and binds identit",
+  "expects": "nee9e4d9625084cf38664c056c1953510b631",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/revise-claim",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/revise-claim",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/revise_claim",
+  "method": "POST",
+  "title": "[learning-engineer] Revise a claim: new words, evidence from outside the passage, judged again at once",
+  "desc": "Records a foxxi:ContentRevision \u2014 the claim as it stood and the grade it had, the words now and the evidence cited, who revised it (a person, or an agent recorded as such) \u2014 and has the bridge's judge grade the revised claim immediately und",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2197",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/run-performance-probe",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/run-performance-probe",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/run_performance_probe",
+  "method": "POST",
+  "title": "Run a safe-to-fail performance probe on an agent team",
+  "desc": "Record a safe-to-fail probe on an agent team \u2014 the disposition-based intervention. A probe nudges a CONSTRAINT (an affordance scope, a delegation bound, a connecting constraint), never an outcome: manage constraints, not targets. It is a de",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1591",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/schedule-spaced-repetition",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/schedule-spaced-repetition",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/schedule_spaced_repetition",
+  "method": "POST",
+  "title": "Schedule spaced-repetition reminders for a learner",
+  "desc": "Ebbinghaus 1/7/30-day intervals, with early-week reminders for concepts other concepts depend on (foundation signal).",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1877",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-author-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-author-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/scorm/author",
+  "method": "POST",
+  "title": "Author a real conformant SCORM 2004 course as yourself",
+  "desc": "Author a SCORM 2004 course as yourself. Foxxi generates a CONFORMANT imsmanifest.xml and validates it parses on the real SCORM SN runtime, then composes the full course losslessly into your shared PGSL lattice (launchable cross-restart + cr",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1336",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-cloud-pull",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-cloud-pull",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/scorm_cloud_pull",
+  "method": "POST",
+  "title": "[admin] Pull a SCORM Cloud catalog into the tenant",
+  "desc": "Use SCORM Cloud Application API v2 to list courses + project them as fxs:CourseCatalog stub entries on the tenant pod. Requires FOXXI_SCORM_CLOUD_APP_ID + FOXXI_SCORM_CLOUD_SECRET_KEY env on the bridge.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1851",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-cloud-register",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-cloud-register",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/scorm_cloud_register",
+  "method": "POST",
+  "title": "[admin] Create a SCORM Cloud registration for a learner",
+  "desc": "POST to /registrations on SCORM Cloud; the returned registration ID becomes the cmi5 sessionId.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1854",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-launch-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-launch-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/scorm/launch",
+  "method": "POST",
+  "title": "Launch a SCORM course (start an attempt on the SN engine)",
+  "desc": "Launch an authored SCORM course as yourself. The SCORM 2004 SN runtime parses the manifest, starts an attempt, and delivers the first SCO (its content +, for an assessment SCO, the questions). The course is resolved from the in-memory catal",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1356",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-submit-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/scorm-submit-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/scorm/submit",
+  "method": "POST",
+  "title": "Submit the current SCO + advance (graded, committed to the SN engine)",
+  "desc": "Submit the current SCO. For an assessment SCO pass { answers:[...] } \u2014 the player GRADES them against the package answer hashes (not self-reported), commitTracking()s cmi.completion/success/score into the SN engine, and advances (Continue).",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1382",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/self-assert-competency",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/self-assert-competency",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/prove-competency",
+  "method": "POST",
+  "title": "Self-assert a competency with selective disclosure (SelfAsserted \u2014 not an authority attestation)",
+  "desc": "Mint a BBS+ credential about YOURSELF and derive a selective-disclosure presentation from it. The issuer is always the authenticated signer: this route will not issue under another party's identity, and it does not read score or proficiency",
+  "expects": "nee9e4d9625084cf38664c056c1953510b734",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/set-autonomy-policy",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/set-autonomy-policy",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/set_autonomy_policy",
+  "method": "POST",
+  "title": "[learning-engineer] Amend the autonomy policy: when a judge may assert on a kind of question without a person",
+  "desc": "Per kind of question, the registry rating on its axis a judge must reach (accuracy for evidence-level, competence for work-regime), over how many outcomes the latest attestation about it must rest, and how many of those a person must have c",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2153",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/set-forwarding-targets-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/set-forwarding-targets-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/forwarding/targets",
+  "method": "POST",
+  "title": "Manage your own downstream xAPI forwarding targets",
+  "desc": "Set / list / remove the downstream LRS endpoints YOUR OWN xAPI statements are forwarded to (per-user Statement Forwarding). Owner = your verified delegation; targets are scoped to your own lens, so only your statements forward to them, neve",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1036",
+  "collections": [
+   "integrations",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/set-inbound-credentials-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/set-inbound-credentials-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/credentials",
+  "method": "POST",
+  "title": "Manage your own inbound forwarding credentials",
+  "desc": "Mint / list / revoke the Basic-auth credentials an upstream system uses to forward xAPI statements INTO your OWN lens. Owner = your verified delegation; credentials are scoped to your lens, so forwarded-in statements land in your record. Se",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1076",
+  "collections": [
+   "integrations",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/skill-affordance",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/skill-affordance",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/skill/affordance",
+  "method": "POST",
+  "title": "Translate a SKILL.md to a typed iep:Affordance descriptor graph (round-trip)",
+  "desc": "The STRICT SKILL.md \u21c4 iep:Affordance translator (core @interego/skills bridge): translate a SKILL.md into a real iep:Affordance ContextDescriptor graph (subject typed iep:Affordance, ieh:Affordance, hydra:Operation, dcat:Distribution) and r",
+  "expects": "nee9e4d9625084cf38664c056c1953510b904",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/upload-scorm-package",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/upload-scorm-package",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/upload_scorm_package",
+  "method": "POST",
+  "title": "Upload a SCORM zip package for ingestion",
+  "desc": "Upload a SCORM / cmi5 .zip. Parsed IN-PROCESS on arrival \u2014 no queue, no external runner: the manifest, course title, standard, SCO list, activity structure and authoring-tool fingerprint are read out of the zip synchronously and returned. P",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1867",
+  "collections": [],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/verify-bbs-presentation",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/verify-bbs-presentation",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/verify_bbs_presentation",
+  "method": "POST",
+  "title": "Verify a selective-disclosure BBS+ presentation",
+  "desc": "Verifier-side. Takes a presentation produced by foxxi.derive_bbs_presentation; returns whether the issuer signed a credential containing the disclosed claims at the disclosed positions. Verifier learns ONLY the revealed claims.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1728",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/verify-credential",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/verify-credential",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/verify_credential",
+  "method": "POST",
+  "title": "Verify a credential",
+  "desc": "What a relying party should check before believing an Open Badges 3.0 credential: the Data Integrity proof verifies against the issuer's key and the proof's key is the stated issuer; validUntil has not passed and validFrom has; the issuer i",
+  "expects": "nee9e4d9625084cf38664c056c1953510b375",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/verify-extension",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/verify-extension",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/verify-extension",
+  "method": "POST",
+  "title": "Independently verify a subject extended a standard (issuer due diligence)",
+  "desc": "Independently verify, from the SUBJECT's own authoritative pod records, that they (a) completed an engine-graded course and (b) recorded a domain-typed StandardsExtension performance, and that the named extension (c) conforms to the agp:Sta",
+  "expects": "nee9e4d9625084cf38664c056c1953510b680",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/verify-presentation",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/verify-presentation",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/verify-presentation",
+  "method": "POST",
+  "title": "Verify a selective-disclosure BBS+ presentation",
+  "desc": "Verifier-side. Takes a presentation produced by foxxi.prove_competency; returns whether the issuer signed a credential containing exactly the disclosed claims at the disclosed positions. The verifier learns ONLY the revealed claims. Externa",
+  "expects": "nee9e4d9625084cf38664c056c1953510b754",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/void-credential",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/void-credential",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/void-credential",
+  "method": "POST",
+  "title": "Void (remove) a credential from your own wallet",
+  "desc": "Remove a credential you hold from your OWN pod wallet by its descriptor URL (the sourceDescriptor of a CLR entry returned by review-record). Deletes the credential resource + its graph AND rebuilds your pod manifest from actual contents, so",
+  "expects": "nee9e4d9625084cf38664c056c1953510b770",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/weakest-claims",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/weakest-claims",
+  "target": "https://foxxi-bridge.interego.xwisee.com/foxxi/weakest_claims",
+  "method": "GET",
+  "title": "[learning-engineer] The weakest claims on the pod: where the content needs revising first",
+  "desc": "Every evidence-level claim judged on the pod, graded and ranked weakest first: a person's confirmation if one exists, else an agent's, else the judges' answers \u2014 the newest per judge, the lowest of them when they disagree. Each carries the ",
+  "expects": "nee9e4d9625084cf38664c056c1953510b2181",
+  "collections": [],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/write-xapi-statements-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/write-xapi-statements-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/write",
+  "method": "POST",
+  "title": "Record your own xAPI activity and preserve its native evidence",
+  "desc": "Signed transport over the standard xAPI Statements Resource, scoped to your own lens. Accepts 1\u201320 JSON Activity statements (128 KiB maximum), each with a UUID id, observed timestamp and actor.account.name equal to your authenticated DID. U",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1052",
+  "collections": [
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/xapi-author-signed",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/foxxi/xapi-author-signed",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/xapi/author",
+  "method": "POST",
+  "title": "Author a native xAPI course as yourself",
+  "desc": "Author teaching and checks natively as content-addressed fragments and compositions, kept on your own pod. The native composition engine grades stored question verifiers and records xAPI 2.0 directly; it does not require SCORM sequencing or",
+  "expects": "nee9e4d9625084cf38664c056c1953510b1310",
+  "collections": [
+   "courses",
+   "profiles"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/capture-read",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/capture-read",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/llm-telemetry/capture/read",
+  "method": "POST",
+  "title": "Read capture settings",
+  "desc": "Read your independent server and client reporting opt-ins. Both default to off. The server observer covers Interego /mcp requests; client reporters use the existing connection with host hook configuration and review.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b116",
+  "collections": [
+   "entry",
+   "telemetry"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/capture-update",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/capture-update",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/llm-telemetry/capture/update",
+  "method": "POST",
+  "title": "Change capture settings",
+  "desc": "Opt this authenticated observer into server reporting, client reporting, both or neither. Omitted switches retain their value. Disabling refuses new automatic deliveries; it does not erase history or disable hooks in another host. Client in",
+  "expects": "nee9e4d9625084cf38664c056c1953510b130",
+  "collections": [
+   "telemetry"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/client-setup",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/client-setup",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/llm-telemetry/client-setup",
+  "method": "POST",
+  "title": "Set up client reporting",
+  "desc": "Read hosted metadata-only hook configuration for an existing Interego MCP connection. Supports Codex CLI and Claude Code CLI/VS Code contracts; other surfaces report their coverage limits explicitly. Does not install a plugin, connect anoth",
+  "expects": "nee9e4d9625084cf38664c056c1953510b148",
+  "collections": [
+   "entry",
+   "telemetry"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/collector-create",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/collector-create",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/llm-telemetry/collector/create",
+  "method": "POST",
+  "title": "Create native collector credential",
+  "desc": "Create a private, expiring, ingest-only credential bound to this authenticated observer. Requires client consent. Returns native Claude Code OTLP HTTP/JSON settings. Does not configure a host. Keep the credential private.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b170",
+  "collections": [
+   "telemetry"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/collector-revoke",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/collector-revoke",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/llm-telemetry/collector/revoke",
+  "method": "POST",
+  "title": "Revoke collector credential",
+  "desc": "Revoke one own collector credential. Existing observations are preserved.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b186",
+  "collections": [
+   "telemetry"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/ingest",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/llm-telemetry/ingest",
+  "method": "POST",
+  "title": "Record LLM observations",
+  "desc": "Sign {events:[...]} with the authenticated observer using sign_request then act, or act(sign_payload:true). Server and client deliveries require their independent capture opt-in; explicit manual-observation events are a signed one-off actio",
+  "expects": "nee9e4d9625084cf38664c056c1953510b28",
+  "collections": [
+   "telemetry"
+  ],
+  "readOnly": "false"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/profile",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/profile",
+  "target": "https://foxxi-bridge.interego.xwisee.com/llm-telemetry/profile",
+  "method": "GET",
+  "title": "Read the LLM xAPI profile",
+  "desc": "Read the versioned, general LLM telemetry vocabulary, statement templates and observation-stream pattern.",
+  "expects": "nee9e4d9625084cf38664c056c1953510b14",
+  "collections": [
+   "entry",
+   "profiles",
+   "telemetry"
+  ],
+  "readOnly": "true"
+ },
+ {
+  "subject": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/query",
+  "action": "https://relay.interego.xwisee.com/ns/iep/action/llm-telemetry/query",
+  "target": "https://foxxi-bridge.interego.xwisee.com/agent/llm-telemetry/query",
+  "method": "POST",
+  "title": "Query sessions and insights",
+  "desc": "Sign the query with your bound identity. Read only your observer records from the actual LRS lens and a fresh encrypted PGSL snapshot, preserving provenance and exposing unavailable sources and conflicting IDs. Returns sessions, timeline, m",
+  "expects": "nee9e4d9625084cf38664c056c1953510b60",
+  "collections": [
+   "entry",
+   "profiles",
+   "telemetry"
+  ],
+  "readOnly": "true"
+ }
+]

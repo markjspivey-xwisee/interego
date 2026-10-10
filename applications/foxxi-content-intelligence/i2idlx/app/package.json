@@ -1,0 +1,13 @@
+{
+  "name": "interpretant",
+  "private": true,
+  "description": "Interpretant: a Foxxi workbench for the I2IDL Digital Learning Glossary, decorated with I2IDL-X. Built by tools/build_app.py.",
+  "devDependencies": {
+    "d3-force": "3.0.0",
+    "esbuild": "0.23.1",
+    "n3": "1.17.4"
+  },
+  "scripts": {
+    "build": "cd .. && python3 -I tools/build_app.py ."
+  }
+}

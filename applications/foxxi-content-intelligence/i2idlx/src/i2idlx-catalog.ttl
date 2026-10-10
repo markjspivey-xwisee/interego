@@ -1,0 +1,564 @@
+@prefix i2x:       <{{NS}}> .
+@prefix cat:       <{{CATALOG}}#> .
+@prefix iep:       <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix ieh:       <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix hyprcat:   <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
+@prefix hypragent: <https://markjspivey-xwisee.github.io/interego/ns/hypragent#> .
+@prefix foxxi:     <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#> .
+@prefix fxa:       <https://relay.interego.xwisee.com/ns/iep/action/foxxi/> .
+@prefix rla:       <https://relay.interego.xwisee.com/ns/iep/action/relay/> .
+@prefix hydra:     <http://www.w3.org/ns/hydra/core#> .
+@prefix dcat:      <http://www.w3.org/ns/dcat#> .
+@prefix dct:       <http://purl.org/dc/terms/> .
+@prefix prov:      <http://www.w3.org/ns/prov#> .
+@prefix odrl:      <http://www.w3.org/ns/odrl/2/> .
+@prefix skos:      <http://www.w3.org/2004/02/skos/core#> .
+@prefix sh:        <http://www.w3.org/ns/shacl#> .
+@prefix rdfs:      <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:       <http://www.w3.org/2001/XMLSchema#> .
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  I2IDL-X HyprCat catalog — the agent entry point.
+#
+#  Start here. The glossary is described as a hyprcat:FederatedDataProduct in
+#  the ServiceWorld; every port is a dcat:Distribution that is also a
+#  hydra:Operation, an iep:Affordance and an ieh:Affordance, so any client
+#  speaking any of those dialects can act on it. Output ports are live
+#  controls on id.i2idl.org; input ports publish governed records through the
+#  Interego relay or delegate to Foxxi. Concept-level controls are templated
+#  here and materialized per concept by the decorator projection.
+#  Nothing in this graph restates an I2IDL concept, definition or relationship.
+# ══════════════════════════════════════════════════════════════════════════════
+
+<{{CATALOG}}>
+    a i2x:GlossaryCatalog , hyprcat:FederatedCatalog , iep:AffordanceManifest , hydra:ApiDocumentation , dcat:Catalog ;
+    dct:title "I2IDL-X agent catalog"@en ;
+    dct:description "HyprCat entry point for agents working with the I2IDL Digital Learning Glossary: what can be read, queried, enacted, proposed, classified and recorded, under which limits and policies."@en ;
+    dct:conformsTo <{{ONTO}}> ;
+    hydra:entrypoint <{{CATALOG}}> ;
+    hyprcat:world hyprcat:ServiceWorld ;
+    dcat:dataset cat:glossary ;
+    dcat:service cat:sparql-service ;
+    iep:affordance cat:port-glossary-jsonld , cat:port-glossary-turtle , cat:port-scheme ,
+                   cat:port-sparql-get , cat:port-sparql-post , cat:port-human , cat:port-release-feed , cat:port-change-history ,
+                   cat:port-vocabulary , cat:port-alignments , cat:port-referents ,
+                   cat:tmpl-concept-turtle , cat:tmpl-concept-jsonld , cat:tmpl-definition , cat:tmpl-source , cat:tmpl-human ,
+                   cat:port-propose-mapping , cat:port-ratify , cat:port-align-course-concept , cat:port-publish-classified ,
+                   cat:port-record-usage , cat:port-coverage , cat:port-upstream-review ;
+    rdfs:seeAlso <{{ONTO}}> , <{{SHAPES}}> , <{{RULES}}> , <{{ENACT}}> , <{{MAPPINGS}}> , <{{RELEASES}}> , <{{CHANGES}}> ,
+                 <{{ALIGNMENTS}}> , <{{REFERENTS}}> , <https://foxxi-bridge.interego.xwisee.com/affordances> ;
+    rdfs:comment "Read ports carry iep:readOnlyHint true and need only i2x:canResolveGlossary / i2x:canQueryGlossary. Write ports name the HyprAgent capability they require and the shape the relay will enforce before anything lands on a pod."@en .
+
+
+# ── The product ───────────────────────────────────────────────────────────────
+
+cat:glossary
+    a i2x:GlossaryProduct , hyprcat:FederatedDataProduct , dcat:Dataset ;
+    dct:title "I2IDL Digital Learning Glossary"@en ;
+    dct:description "Editorially reviewed SKOS knowledge graph of digital-learning concepts with first-class definitions, classified evidence and provenance ({{N_CONCEPTS}} concepts, {{N_RELATED}} related pairs, {{N_BROADER}} broader/narrower pairs at {{I2IDL_RELEASE}})."@en ;
+    dct:publisher <https://www.i2idl.org/> ;
+    hyprcat:issuedBy <https://www.i2idl.org/> ;
+    hyprcat:world hyprcat:ServiceWorld ;
+    dct:relation <https://id.i2idl.org/scheme> ;
+    dct:license <https://creativecommons.org/licenses/by/4.0/> ;
+    dct:rights "Mixed rights. I2IDL-original material defaults to CC BY 4.0; source-specific rights are preserved per source and evidence record (see each dct:source)."@en ;
+    dct:conformsTo <http://www.w3.org/2004/02/skos/core> ;
+    dcat:version "{{I2IDL_RELEASE}}" ;
+    dcat:landingPage <https://www.i2idl.org/glossary> ;
+    dct:source <https://github.com/blakeplock/i2idl-linked-data> ;
+    prov:wasDerivedFrom <https://github.com/blakeplock/i2idl-linked-data/blob/{{COMMIT}}/public/glossary.jsonld> ;
+    hyprcat:outputPort cat:port-glossary-jsonld , cat:port-glossary-turtle , cat:port-scheme ,
+                       cat:port-sparql-get , cat:port-sparql-post , cat:port-human , cat:port-release-feed , cat:port-change-history ,
+                       cat:port-vocabulary , cat:port-alignments , cat:port-referents ;
+    hyprcat:inputPort cat:port-propose-mapping , cat:port-ratify , cat:port-align-course-concept , cat:port-publish-classified ;
+    hyprcat:dispatchPolicy cat:policy-use .
+
+cat:store-i2idl a iep:EvidenceSource ;
+    rdfs:label "I2IDL glossary graph"@en ;
+    dct:description "The canonical JSON-LD graph published by I2IDL; every read port answers from it. Queryable in place — prefer the SPARQL service over copying the dump."@en ;
+    dcat:accessService cat:sparql-service ;
+    dcat:accessURL <https://id.i2idl.org/glossary.jsonld> .
+
+cat:sparql-service a dcat:DataService ;
+    dct:title "I2IDL SPARQL service"@en ;
+    dcat:endpointURL <https://id.i2idl.org/sparql> ;
+    dct:conformsTo <https://www.w3.org/TR/sparql11-protocol/> ;
+    dcat:servesDataset cat:glossary ;
+    i2x:serviceLimits cat:sparql-limits ;
+    hyprcat:dispatchPolicy cat:policy-sparql .
+
+cat:sparql-limits a i2x:ServiceLimits ;
+    rdfs:label "Published I2IDL SPARQL limits"@en ;
+    i2x:maxQueryLength 12000 ;
+    i2x:maxRequestBytes 16384 ;
+    i2x:executionTimeout "PT10S"^^xsd:dayTimeDuration ;
+    i2x:maxResultRows 5000 ;
+    i2x:maxResultQuads 5000 ;
+    i2x:rateLimitPerMinute 30 ;
+    i2x:supportedQueryForm "SELECT" , "ASK" , "CONSTRUCT" , "DESCRIBE" ;
+    i2x:disallowedFeature "SPARQL Update" , "SERVICE" , "FROM" , "FROM NAMED" ;
+    dct:source <https://github.com/blakeplock/i2idl-linked-data/blob/{{COMMIT}}/README.md> ;
+    rdfs:comment "Copied from the upstream README at {{I2IDL_RELEASE}}; upstream may adjust them. Rate limit applies per client on a warm serverless instance."@en .
+
+
+# ── Policies (ODRL) ───────────────────────────────────────────────────────────
+
+cat:policy-use a odrl:Set ;
+    odrl:uid cat:policy-use ;
+    rdfs:label "Use with attribution"@en ;
+    odrl:permission [
+        odrl:target cat:glossary ;
+        odrl:action odrl:use ;
+        odrl:duty [ odrl:action odrl:attribute ]
+    ] ;
+    rdfs:comment "I2IDL-original material is CC BY 4.0: attribute I2IDL. Third-party source-derived material keeps its own terms (some sources are NC or used with permission) — honour the dct:rights on each source."@en .
+
+cat:policy-sparql a odrl:Set ;
+    odrl:uid cat:policy-sparql ;
+    rdfs:label "Bounded, read-only query"@en ;
+    odrl:permission [
+        odrl:target cat:sparql-service ;
+        odrl:action odrl:use ;
+        odrl:constraint [ odrl:leftOperand odrl:count ; odrl:operator odrl:lteq ; odrl:rightOperand 30 ] ,
+                        [ odrl:leftOperand odrl:timeInterval ; odrl:operator odrl:eq ; odrl:rightOperand "PT1M"^^xsd:duration ]
+    ] ;
+    odrl:prohibition [ odrl:target cat:sparql-service ; odrl:action i2x:SparqlUpdate ] ,
+                     [ odrl:target cat:sparql-service ; odrl:action i2x:SparqlFederation ] .
+
+
+# ── Output ports (live controls on id.i2idl.org) ─────────────────────────────
+
+cat:port-glossary-jsonld
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Download the glossary (JSON-LD)"@en ;
+    hydra:title "Download the full I2IDL graph as JSON-LD"@en ;
+    hydra:description "The canonical publication file. Large ({{GRAPH_BYTES}} bytes); prefer the SPARQL service for targeted reads."@en ;
+    iep:action i2x:act-get-glossary-jsonld ;
+    hydra:target <https://id.i2idl.org/glossary.jsonld> ;
+    hydra:method "GET" ;
+    dcat:mediaType "application/ld+json" ;
+    dcat:downloadURL <https://id.i2idl.org/glossary.jsonld> ;
+    dcat:byteSize "{{GRAPH_BYTES}}"^^xsd:nonNegativeInteger ;
+    iep:reads cat:store-i2idl ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "entry" ;
+    i2x:requiresCapability i2x:canResolveGlossary ;
+    hyprcat:world hyprcat:ServiceWorld ;
+    hyprcat:dispatchPolicy cat:policy-use .
+
+cat:port-glossary-turtle
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Download the glossary (Turtle)"@en ;
+    hydra:title "Download the full I2IDL graph as Turtle"@en ;
+    iep:action i2x:act-get-glossary-turtle ;
+    hydra:target <https://id.i2idl.org/glossary.ttl> ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    dcat:downloadURL <https://id.i2idl.org/glossary.ttl> ;
+    iep:reads cat:store-i2idl ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "entry" ;
+    i2x:requiresCapability i2x:canResolveGlossary ;
+    hyprcat:world hyprcat:ServiceWorld ;
+    hyprcat:dispatchPolicy cat:policy-use .
+
+cat:port-scheme
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Get the concept scheme"@en ;
+    hydra:title "Get the I2IDL concept scheme (release, rights, base IRI)"@en ;
+    hydra:description "Cheap release check: compare gs:publicationVersion with i2x:builtAgainstRelease before trusting decorations."@en ;
+    iep:action i2x:act-get-scheme ;
+    hydra:target <https://id.i2idl.org/scheme.ttl> ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    iep:reads cat:store-i2idl ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "entry" ;
+    i2x:requiresCapability i2x:canResolveGlossary ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-sparql-get
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Query the glossary (GET)"@en ;
+    hydra:title "Run a read-only SPARQL query against the I2IDL graph"@en ;
+    hydra:description "SELECT/ASK return application/sparql-results+json; CONSTRUCT/DESCRIBE return text/turtle. Stay within cat:sparql-limits; the stored queries in this catalog are ready to parameterize. The query travels as the ?query= URL parameter, which a plain HTTP client appends. Interego's affordance follower sends no payload on GET, so agents acting through Interego use cat:port-sparql-post instead."@en ;
+    iep:action i2x:act-query-glossary ;
+    hydra:target <https://id.i2idl.org/sparql> ;
+    hydra:method "GET" ;
+    dcat:mediaType "application/sparql-results+json" ;
+    dcat:accessService cat:sparql-service ;
+    hydra:expects cat:SparqlQueryInput ;
+    iep:reads cat:store-i2idl ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "entry" , "concepts" ;
+    i2x:requiresCapability i2x:canQueryGlossary ;
+    hyprcat:world hyprcat:ServiceWorld ;
+    hyprcat:dispatchPolicy cat:policy-sparql .
+
+cat:port-sparql-post
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Query the glossary (POST)"@en ;
+    hydra:title "Run a read-only SPARQL query by POST (application/sparql-query body)"@en ;
+    hydra:description "The request body is the query text itself. Through Interego, call act with this catalog's descriptor, this action and the query as a plain string payload (not an object): the follower sends dcat:mediaType as the Content-Type and a string payload as-is. SELECT/ASK return application/sparql-results+json; CONSTRUCT/DESCRIBE return text/turtle."@en ;
+    iep:action i2x:act-query-glossary-post ;
+    hydra:target <https://id.i2idl.org/sparql> ;
+    hydra:method "POST" ;
+    dcat:mediaType "application/sparql-query" ;
+    dcat:accessService cat:sparql-service ;
+    hydra:expects cat:SparqlQueryText ;
+    iep:reads cat:store-i2idl ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "entry" ;
+    i2x:requiresCapability i2x:canQueryGlossary ;
+    hyprcat:world hyprcat:ServiceWorld ;
+    hyprcat:dispatchPolicy cat:policy-sparql .
+
+cat:port-human
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Open the human glossary"@en ;
+    hydra:title "Open the human-readable I2IDL glossary"@en ;
+    iep:action i2x:act-open-human-page ;
+    hydra:target <https://www.i2idl.org/glossary> ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/html" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "entry" ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-release-feed
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Release feed"@en ;
+    hydra:title "What changed in each I2IDL release (derived feed, hosted on Interego)"@en ;
+    hydra:description "One i2x:GlossaryRelease per version with additions, removals, definition revisions and relationship counts. Read it when q-release-check answers false."@en ;
+    iep:action i2x:act-get-release-feed ;
+    hydra:target <{{RELEASES}}> ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint false ;
+    iep:appliesToCollection "entry" ;
+    i2x:requiresCapability i2x:canResolveGlossary ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-change-history
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Change history"@en ;
+    hydra:title "Every change between I2IDL releases, as PROV activities (derived, hosted on Interego)"@en ;
+    hydra:description "One i2x:ReleaseChange per release (prov:used the previous release, prov:generated the next) whose i2x:ChangeEvents name the kind of change (concept added, definition revised, relationship added, membership added, evidence classified or reclassified, source revised, ...), how many facts changed and which concepts, collections or sources they touched. Derived from the public git history; it reconciles exactly with the current release."@en ;
+    iep:action i2x:act-get-change-history ;
+    hydra:target <{{CHANGES}}> ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint false ;
+    iep:appliesToCollection "entry" ;
+    i2x:requiresCapability i2x:canResolveGlossary ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+
+# ── Semantic layer (graphs hosted on Interego) ────────────────────────────────
+#  The three graphs that let any data classified by I2IDL concepts be typed in
+#  upper ontologies and peer vocabularies. Follow all three, add your own data,
+#  and run cat:q-classify locally — or hand the union to an OWL 2 RL or DL
+#  reasoner. Everything they say is a proposal (modal status Hypothetical).
+
+cat:port-vocabulary
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "I2IDL-X vocabulary"@en ;
+    hydra:title "The I2IDL-X ontology: classes, properties, referent categories and origin labels (hosted on Interego)"@en ;
+    hydra:description "Defines i2x:isClassifiedBy (from a thing to the I2IDL concept it is an instance of), the referent categories and their OWL classes (section L), and every action identity in this catalog. The other semantic-layer graphs import it."@en ;
+    iep:action i2x:act-get-vocabulary ;
+    hydra:target <{{ONTO}}> ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint false ;
+    iep:appliesToCollection "entry" ;
+    i2x:requiresCapability i2x:canResolveGlossary ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-alignments
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Alignments to upper ontologies and peers"@en ;
+    hydra:title "Referent categories, I2IDL's records, Interego and Foxxi aligned to BFO 2020 (IAO, CCO), gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and peer vocabularies (hosted on Interego)"@en ;
+    hydra:description "TBox bridges with a rationale on every aligned class, checked against pinned snapshots of each vocabulary; plus the crosswalk proposals that target a class, made executable as OWL axioms (exactMatch ≡, broadMatch ⊒, narrowMatch ⊑). Upper ontologies are referenced, not copied: load their own files to reason in them."@en ;
+    iep:action i2x:act-get-alignments ;
+    hydra:target <{{ALIGNMENTS}}> ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint false ;
+    iep:appliesToCollection "entry" ;
+    i2x:requiresCapability i2x:canResolveGlossary ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-referents
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "What each concept classifies"@en ;
+    hydra:title "The referent category of every I2IDL concept, with the reason (hosted on Interego)"@en ;
+    hydra:description "One i2x:referentCategory per concept, decided by I2IDL's own type collection or, where the definition says otherwise, by the definition (i2x:assignmentBasis, i2x:categoryRationale). Also classifies I2IDL's own services with I2IDL's own concepts."@en ;
+    iep:action i2x:act-get-referents ;
+    hydra:target <{{REFERENTS}}> ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint false ;
+    iep:appliesToCollection "concepts" ;
+    i2x:requiresCapability i2x:canResolveGlossary ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:SparqlQueryInput a sh:NodeShape ;
+    rdfs:label "SPARQL query input"@en ;
+    sh:property [ sh:path cat:query ; sh:name "query" ; sh:datatype xsd:string ;
+                  sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ; sh:maxLength 12000 ;
+                  sh:description "A read-only SPARQL query (SELECT, ASK, CONSTRUCT or DESCRIBE). No Update, SERVICE, FROM or FROM NAMED."@en ] .
+
+cat:SparqlQueryText a sh:NodeShape ;
+    rdfs:label "SPARQL query text"@en ;
+    rdfs:comment "The payload is the query itself: one string sent as the request body, not an object with fields. Read-only forms only (SELECT, ASK, CONSTRUCT, DESCRIBE); no Update, SERVICE, FROM or FROM NAMED; at most 12,000 characters."@en ;
+    sh:datatype xsd:string ;
+    sh:minLength 1 ;
+    sh:maxLength 12000 .
+
+
+# ── Templated per-concept controls (expanded by the agent, or materialized) ──
+
+cat:tmpl-concept-turtle
+    a i2x:TemplatedAffordance , iep:Affordance , hydra:Operation ;
+    rdfs:label "Resolve a concept (Turtle)"@en ;
+    hydra:title "Dereference a concept with its definition, evidence and sources"@en ;
+    iep:action i2x:act-resolve-concept ;
+    i2x:targetTemplate [ a hydra:IriTemplate ;
+        hydra:template "https://id.i2idl.org/concepts/{id}.ttl" ;
+        hydra:variableRepresentation hydra:BasicRepresentation ;
+        hydra:mapping [ a hydra:IriTemplateMapping ; hydra:variable "id" ; hydra:property dct:identifier ; hydra:required true ] ] ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "concepts" ;
+    i2x:requiresCapability i2x:canResolveGlossary .
+
+cat:tmpl-concept-jsonld
+    a i2x:TemplatedAffordance , iep:Affordance , hydra:Operation ;
+    rdfs:label "Resolve a concept (JSON-LD)"@en ;
+    iep:action i2x:act-resolve-concept-jsonld ;
+    i2x:targetTemplate [ a hydra:IriTemplate ;
+        hydra:template "https://id.i2idl.org/concepts/{id}.jsonld" ;
+        hydra:variableRepresentation hydra:BasicRepresentation ;
+        hydra:mapping [ a hydra:IriTemplateMapping ; hydra:variable "id" ; hydra:property dct:identifier ; hydra:required true ] ] ;
+    hydra:method "GET" ;
+    dcat:mediaType "application/ld+json" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "concepts" ;
+    i2x:requiresCapability i2x:canResolveGlossary .
+
+cat:tmpl-definition
+    a i2x:TemplatedAffordance , iep:Affordance , hydra:Operation ;
+    rdfs:label "Resolve the active definition"@en ;
+    hydra:title "Dereference a concept's active definition with its evidence"@en ;
+    iep:action i2x:act-resolve-definition ;
+    i2x:targetTemplate [ a hydra:IriTemplate ;
+        hydra:template "{+definition}.ttl" ;
+        hydra:variableRepresentation hydra:BasicRepresentation ;
+        hydra:mapping [ a hydra:IriTemplateMapping ; hydra:variable "definition" ;
+                        hydra:property <https://glossarystudio.app/ns/activeDefinition> ; hydra:required true ] ] ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "concepts" ;
+    i2x:requiresCapability i2x:canResolveGlossary .
+
+cat:tmpl-source
+    a i2x:TemplatedAffordance , iep:Affordance , hydra:Operation ;
+    rdfs:label "Resolve an evidence source"@en ;
+    iep:action i2x:act-resolve-source ;
+    i2x:targetTemplate [ a hydra:IriTemplate ;
+        hydra:template "{+source}.ttl" ;
+        hydra:variableRepresentation hydra:BasicRepresentation ;
+        hydra:mapping [ a hydra:IriTemplateMapping ; hydra:variable "source" ; hydra:property dct:source ; hydra:required true ] ] ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/turtle" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "concepts" ;
+    i2x:requiresCapability i2x:canResolveGlossary .
+
+cat:tmpl-human
+    a i2x:TemplatedAffordance , iep:Affordance , hydra:Operation ;
+    rdfs:label "Open a concept card"@en ;
+    iep:action i2x:act-open-concept-card ;
+    i2x:targetTemplate [ a hydra:IriTemplate ;
+        hydra:template "https://www.i2idl.org/glossary{#id}" ;
+        hydra:variableRepresentation hydra:BasicRepresentation ;
+        hydra:mapping [ a hydra:IriTemplateMapping ; hydra:variable "id" ; hydra:property dct:identifier ; hydra:required true ] ] ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/html" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "concepts" .
+
+
+# ── Input ports (governed writes) ─────────────────────────────────────────────
+
+cat:port-propose-mapping
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Propose a crosswalk mapping"@en ;
+    hydra:title "Publish an i2x:MappingProposal to your own pod (modal status Hypothetical)"@en ;
+    hydra:description "graph_content is Turtle containing one or more i2x:MappingProposal records. Keep conforms_to_shapes pointing at the I2IDL-X shapes graph: the relay then rejects a malformed proposal (422) before anything is written."@en ;
+    iep:action i2x:act-propose-mapping ;
+    i2x:delegatesTo rla:publish_context ;
+    hydra:target <https://relay.interego.xwisee.com/tool/publish_context> ;
+    hydra:method "POST" ;
+    dcat:mediaType "application/json" ;
+    hydra:expects cat:ProposeMappingInput ;
+    iep:readOnlyHint false ; iep:idempotentHint false ; iep:destructiveHint false ; iep:openWorldHint false ;
+    iep:appliesToCollection "concepts" ;
+    i2x:requiresCapability i2x:canProposeMapping ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-ratify
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Vote on a proposal or enactment"@en ;
+    hydra:title "Publish an i2x:RatificationVote (Asserted = for, Counterfactual = against, Hypothetical = abstain)"@en ;
+    iep:action i2x:act-ratify ;
+    i2x:delegatesTo rla:publish_context ;
+    hydra:target <https://relay.interego.xwisee.com/tool/publish_context> ;
+    hydra:method "POST" ;
+    dcat:mediaType "application/json" ;
+    hydra:expects cat:RatifyInput ;
+    iep:readOnlyHint false ; iep:idempotentHint false ; iep:destructiveHint false ; iep:openWorldHint false ;
+    i2x:requiresCapability i2x:canRatifyMapping ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-align-course-concept
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Align a Foxxi course concept to I2IDL"@en ;
+    hydra:title "Publish an i2x:CourseConceptAlignment (course concept-graph node → I2IDL concept)"@en ;
+    hydra:description "Makes I2IDL the shared reference space for Foxxi concept-coverage analysis. Find course nodes first with Foxxi's explore-concept-map."@en ;
+    iep:action i2x:act-align-course-concept ;
+    i2x:delegatesTo rla:publish_context ;
+    hydra:target <https://relay.interego.xwisee.com/tool/publish_context> ;
+    hydra:method "POST" ;
+    dcat:mediaType "application/json" ;
+    hydra:expects cat:AlignCourseConceptInput ;
+    iep:readOnlyHint false ; iep:idempotentHint false ; iep:destructiveHint false ; iep:openWorldHint false ;
+    iep:appliesToCollection "courses" ;
+    i2x:requiresCapability i2x:canProposeMapping ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-publish-classified
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Publish classified data"@en ;
+    hydra:title "Publish your organization's resources, classified by I2IDL concepts, as a context graph on your own pod"@en ;
+    hydra:description "graph_content is Turtle in which each resource (an LRS deployment, a course, a credential, a team, a policy) is linked with i2x:isClassifiedBy to the I2IDL concept it is an instance of. The relay checks it against the I2IDL-X shapes before anything is written; any agent can then type it in BFO 2020, gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org and peer vocabularies with cat:q-classify, and find it by the shapes it conforms to."@en ;
+    iep:action i2x:act-publish-classified ;
+    i2x:delegatesTo rla:publish_context ;
+    hydra:target <https://relay.interego.xwisee.com/tool/publish_context> ;
+    hydra:method "POST" ;
+    dcat:mediaType "application/json" ;
+    hydra:expects cat:PublishClassifiedInput ;
+    i2x:usageBinding "Use i2x:isClassifiedBy only for instance-of (this LRS deployment is a learning record store). For aboutness use dct:subject or schema:about. A concept whose referent category has classification mode 'subject' (the disciplines) is never a type: link to it with dct:subject."@en ;
+    iep:readOnlyHint false ; iep:idempotentHint false ; iep:destructiveHint false ; iep:openWorldHint false ;
+    iep:appliesToCollection "concepts" ;
+    i2x:requiresCapability i2x:canPublishClassifiedData ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-record-usage
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Record concept usage (xAPI via Foxxi)"@en ;
+    hydra:title "Write concept-tagged xAPI statements through Foxxi's signed statements resource"@en ;
+    hydra:description "Fronts Foxxi's own affordance: same action identity, same target. The input contract (signed envelope, 1–20 statements, 128 KiB) is Foxxi's — dereference the action IRI for it."@en ;
+    iep:action fxa:write-xapi-statements-signed ;
+    i2x:delegatesTo fxa:write-xapi-statements-signed ;
+    hydra:target <https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/write> ;
+    hydra:method "POST" ;
+    dcat:mediaType "application/json" ;
+    i2x:usageBinding "Put I2IDL concept IRIs in statement.context.extensions[\"https://foxxi-bridge.interego.xwisee.com/ns/foxxi#conceptIds\"] (an array). Each such statement projects to an i2x:UsageRecord — a usage interpretant of every concept it names."@en ;
+    iep:readOnlyHint false ; iep:idempotentHint false ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "profiles" ;
+    i2x:requiresCapability i2x:canRecordConceptUsage ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-coverage
+    a hyprcat:PortAffordance , hyprcat:FederatedDistribution , dcat:Distribution , iep:Affordance , ieh:Affordance , hydra:Operation ;
+    rdfs:label "Concept coverage across the Foxxi catalog"@en ;
+    hydra:title "Which concepts are taught vs only mentioned, by which courses (Foxxi coverage query)"@en ;
+    hydra:description "Fronts Foxxi's coverage query. Once course concepts are aligned to I2IDL (port-align-course-concept), coverage can be read against the shared I2IDL concept space."@en ;
+    iep:action fxa:coverage-query ;
+    i2x:delegatesTo fxa:coverage-query ;
+    hydra:target <https://foxxi-bridge.interego.xwisee.com/foxxi/coverage_query> ;
+    hydra:method "POST" ;
+    dcat:mediaType "application/json" ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
+    iep:appliesToCollection "courses" ;
+    hyprcat:world hyprcat:ServiceWorld .
+
+cat:port-upstream-review
+    a i2x:TemplatedAffordance , iep:Affordance , hydra:Operation ;
+    rdfs:label "Request upstream editorial review"@en ;
+    hydra:title "Open a prefilled issue on the I2IDL repository (a human submits it)"@en ;
+    hydra:description "For ratified proposals only. I2IDL publishes relationships and mappings by editorial judgement; this control hands a candidate to that process instead of bypassing it."@en ;
+    iep:action i2x:act-request-upstream-review ;
+    i2x:targetTemplate [ a hydra:IriTemplate ;
+        hydra:template "https://github.com/blakeplock/i2idl-linked-data/issues/new{?title,body}" ;
+        hydra:variableRepresentation hydra:BasicRepresentation ;
+        hydra:mapping [ a hydra:IriTemplateMapping ; hydra:variable "title" ; hydra:property dct:title ; hydra:required true ] ,
+                      [ a hydra:IriTemplateMapping ; hydra:variable "body" ; hydra:property dct:description ; hydra:required true ] ] ;
+    hydra:method "GET" ;
+    dcat:mediaType "text/html" ;
+    iep:externallyRouted true ;
+    iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true .
+
+cat:ProposeMappingInput a sh:NodeShape ;
+    rdfs:label "Propose-mapping input"@en ;
+    sh:property
+        [ sh:path cat:graph_iri ; sh:name "graph_iri" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ;
+          sh:description "IRI for the proposal graph. Use <relay>/ns/<your-owner>/<slug> if it should dereference publicly."@en ] ,
+        [ sh:path cat:graph_content ; sh:name "graph_content" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 40 ;
+          sh:description "Turtle with i2x:MappingProposal records (proposedSubject, proposedPredicate, proposedObject, rationale, confidence, reviewStatus i2x:status-proposed, mappingMethod)."@en ] ,
+        [ sh:path cat:modal_status ; sh:name "modal_status" ; sh:datatype xsd:string ; sh:maxCount 1 ;
+          sh:pattern "^Hypothetical$" ; sh:defaultValue "Hypothetical" ;
+          sh:description "Proposals are always Hypothetical; ratification is a separate vote."@en ] ,
+        [ sh:path cat:visibility ; sh:name "visibility" ; sh:datatype xsd:string ; sh:maxCount 1 ;
+          sh:pattern "^(public|shared|private)$" ; sh:defaultValue "shared" ;
+          sh:description "'public' is plaintext on the open web with no unpublish; required only if the proposal must dereference at /ns."@en ] ,
+        [ sh:path cat:conforms_to_shapes ; sh:name "conforms_to_shapes" ; sh:datatype xsd:string ; sh:minCount 1 ;
+          sh:defaultValue "{{SHAPES}}" ;
+          sh:description "Shape documents the relay validates the payload against before writing."@en ] .
+
+cat:RatifyInput a sh:NodeShape ;
+    rdfs:label "Ratification input"@en ;
+    sh:property
+        [ sh:path cat:graph_iri ; sh:name "graph_iri" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ,
+        [ sh:path cat:graph_content ; sh:name "graph_content" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 40 ;
+          sh:description "Turtle with one i2x:RatificationVote (votesOn, vote, prov:wasAttributedTo, prov:generatedAtTime)."@en ] ,
+        [ sh:path cat:modal_status ; sh:name "modal_status" ; sh:datatype xsd:string ; sh:maxCount 1 ;
+          sh:pattern "^(Asserted|Counterfactual|Hypothetical)$" ;
+          sh:description "Mirror the vote: Asserted = for, Counterfactual = against, Hypothetical = abstain."@en ] ,
+        [ sh:path cat:conforms_to_shapes ; sh:name "conforms_to_shapes" ; sh:datatype xsd:string ; sh:minCount 1 ;
+          sh:defaultValue "{{SHAPES}}" ] .
+
+cat:AlignCourseConceptInput a sh:NodeShape ;
+    rdfs:label "Course-concept alignment input"@en ;
+    sh:property
+        [ sh:path cat:graph_iri ; sh:name "graph_iri" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ] ,
+        [ sh:path cat:graph_content ; sh:name "graph_content" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 40 ;
+          sh:description "Turtle with i2x:CourseConceptAlignment records (courseConcept, alignedTo, alignmentPredicate, reviewStatus)."@en ] ,
+        [ sh:path cat:modal_status ; sh:name "modal_status" ; sh:datatype xsd:string ; sh:maxCount 1 ; sh:defaultValue "Hypothetical" ] ,
+        [ sh:path cat:conforms_to_shapes ; sh:name "conforms_to_shapes" ; sh:datatype xsd:string ; sh:minCount 1 ;
+          sh:defaultValue "{{SHAPES}}" ] .
+
+cat:PublishClassifiedInput a sh:NodeShape ;
+    rdfs:label "Classified-data input"@en ;
+    rdfs:comment "Your own facts about your own resources: publish them Asserted. Classifications you are unsure of go Hypothetical."@en ;
+    sh:property
+        [ sh:path cat:graph_iri ; sh:name "graph_iri" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ;
+          sh:description "IRI for the context graph. Use <relay>/ns/<your-owner>/<slug> if it should dereference publicly."@en ] ,
+        [ sh:path cat:graph_content ; sh:name "graph_content" ; sh:datatype xsd:string ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 40 ;
+          sh:description "Turtle: your resources, each with i2x:isClassifiedBy <https://id.i2idl.org/concepts/…>, plus whatever else you say about them (labels, schema.org or peer types, links between them)."@en ] ,
+        [ sh:path cat:modal_status ; sh:name "modal_status" ; sh:datatype xsd:string ; sh:maxCount 1 ;
+          sh:pattern "^(Asserted|Hypothetical)$" ; sh:defaultValue "Asserted" ] ,
+        [ sh:path cat:visibility ; sh:name "visibility" ; sh:datatype xsd:string ; sh:maxCount 1 ;
+          sh:pattern "^(public|shared|private)$" ; sh:defaultValue "private" ;
+          sh:description "'public' is plaintext on the open web with no unpublish: choose it only for what your organization already publishes."@en ] ,
+        [ sh:path cat:conforms_to_shapes ; sh:name "conforms_to_shapes" ; sh:datatype xsd:string ; sh:minCount 1 ;
+          sh:defaultValue "{{SHAPES}}" ;
+          sh:description "The relay validates i2x:isClassifiedBy against the I2IDL-X shapes (it must name an I2IDL concept) before writing."@en ] .
+
+
+# ── Stored queries (substitute $-parameters; run by POST through Interego, or GET ?query= over plain HTTP) ─
+#  Queries with i2x:runsOver run client-side: follow the ports they name, add your own data, run locally.
+{{STORED_QUERIES}}

@@ -1,0 +1,28 @@
+{
+ "relayNsRoot": "https://relay.interego.xwisee.com/ns",
+ "owner": "u-pk-33d42e6b33dc",
+ "slugs": {
+  "ontology": "i2idlx",
+  "shapes": "i2idlx-shapes",
+  "rules": "i2idlx-rules",
+  "catalog": "i2idlx-catalog",
+  "enactments": "i2idlx-enactments",
+  "mappings": "i2idlx-mappings",
+  "decorations": "i2idlx-decorations",
+  "releases": "i2idlx-releases",
+  "changes": "i2idlx-changes",
+  "alignments": "i2idlx-alignments",
+  "referents": "i2idlx-referents"
+ },
+ "i2idl": {
+  "release": "v0.0.80",
+  "repo": "https://github.com/blakeplock/i2idl-linked-data",
+  "localClone": "../../../../i2idl-linked-data",
+  "graphPath": "public/glossary.jsonld"
+ },
+ "foxxiManifest": "https://foxxi-bridge.interego.xwisee.com/affordances",
+ "version": "0.3.0",
+ "interegoCoreSrc": "../../../packages/core/src",
+ "tsx": "../../../node_modules/.bin/tsx",
+ "appArtifactUrl": "https://claude.ai/artifact/Finrenoq17CtZMBYXo4bNC"
+}

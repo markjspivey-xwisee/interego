@@ -1,0 +1,14 @@
+# label: Concepts spanning several fields
+# form: SELECT
+# params:
+# description: Concepts that belong to more than one field collection, most-connected first — candidates for cross-domain enactment.
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+PREFIX gs: <https://glossarystudio.app/ns/>
+SELECT ?concept ?label (COUNT(DISTINCT ?field) AS ?fields)
+WHERE {
+  ?field gs:facet "field" ; skos:member ?concept .
+  ?concept skos:prefLabel ?label .
+}
+GROUP BY ?concept ?label
+HAVING (COUNT(DISTINCT ?field) > 1)
+ORDER BY DESC(?fields) ?label
