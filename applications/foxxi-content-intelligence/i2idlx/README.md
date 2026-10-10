@@ -24,7 +24,7 @@ Everything shown alongside I2IDL carries one of seven origin labels. They are da
 
 Hosted *on Interego*, not on a static site: each graph is published with `publish_context` (public, signed authorship) to the pod `u-pk-33d42e6b33dc`, and the relay's generic `/ns/<owner>/<slug>` surface dereferences it with content negotiation (Turtle, JSON-LD, HTML, HyperMarkdown). `#terms` resolve in-document; nothing is minted under foxximediums.com.
 
-All ten graphs are live and serve exactly what `dist/` contains: `tools/verify_published.py` checks every IRI in all three formats against the build (RDF isomorphism). `dist/published.json` records each graph's signed descriptor (the authority), modal status, `validFrom` and signed content hash; refresh it with `tools/publication_record.py` after a republish.
+All ten graphs are live and serve exactly what `dist/` contains: `tools/verify_published.py` fetches every IRI as Turtle, JSON-LD and HyperMarkdown, requires the Turtle and the JSON-LD to be RDF-isomorphic to the build, and exits non-zero on any miss. `dist/published.json` records each graph's signed descriptor (the authority), modal status, `validFrom` and signed content hash; refresh it with `tools/publication_record.py` after a republish.
 
 | Graph | IRI (`https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/…`) | Origin | Modal status | Triples | Size |
 |---|---|---|---|---|---|
@@ -146,6 +146,7 @@ Machine-specific paths live in `config.json` and can be overridden with environm
 
 ```bash
 pip install --break-system-packages rdflib pyshacl owlrl owlready2   # owlready2 bundles HermiT; it needs a Java runtime
+bash tools/refresh-evidence.sh         # network: Foxxi affordances, relay operations, xAPI, LER, TLA and iep vocabularies
 python3 -I tools/refresh_upper.py .     # network: upper-ontology and peer-vocabulary snapshots → evidence/upper/
 python3 -I tools/refresh_unesco.py .    # network: UNESCO Thesaurus terms I2IDL's evidence cites
 python3 -I build.py --live              # needs the local I2IDL clone and the fetched evidence; see config.json
@@ -155,7 +156,7 @@ I2IDLX_BUILT_DATE=2026-10-08 I2IDLX_MODIFIED=2026-10-09 I2IDLX_NOW=2026-10-09T18
 I2IDLX_NOW_ENACTMENTS=2026-10-09T03:35:48+00:00 I2IDLX_NOW_RELEASES=2026-10-09T03:35:48+00:00 \
 python3 -I build.py --live
 
-python3 -I tools/verify_published.py .      # every /ns IRI serves exactly dist/ (Turtle, JSON-LD, Markdown)
+python3 -I tools/verify_published.py .      # every /ns IRI serves exactly dist/ (Turtle and JSON-LD isomorphic; Markdown resolves)
 python3 -I tools/publication_record.py .    # refresh dist/published.json from publications.json
 python3 -I tools/agent_walk.py . > dist/agent-walkthrough.md   # the live, read-only agent walk
 python3 -I tools/build_site.py .            # → site/index.html
@@ -163,4 +164,4 @@ python3 -I tools/build_site.py .            # → site/index.html
 
 Without the pins, a rebuild stamps the current date and time into the graphs that carry one, and the build's published-state lines will then ask for those graphs to be republished. A full build takes about six minutes, most of it reasoning.
 
-`evidence/` holds the snapshots everything was checked against: the Foxxi manifest summary, relay operations, the xAPI, xAPI Profiles, IEEE LER and ADL TLA vocabularies, the UNESCO terms, the peer-vocabulary term index, and `upper/manifest.json`, which records the pinned source, version, license and SHA-256 of each upper-ontology and peer-vocabulary file (BFO, IAO, CCO, gist, DUL, gUFO, PROV-O, schema.org, ORG, DCMI, DCAT, LRMI, ESCO, ELM, ASN). Those files, and the Interego namespace files, are other publishers' work: the package references them rather than redistributing them, and `tools/refresh_upper.py` fetches them again before a rebuild.
+`evidence/` holds the snapshots everything was checked against: the Foxxi manifest summary, relay operations, the xAPI, xAPI Profiles, IEEE LER and ADL TLA vocabularies, the UNESCO terms, the peer-vocabulary term index, and `upper/manifest.json`, which records the pinned source, version, license and SHA-256 of each upper-ontology and peer-vocabulary file (BFO, IAO, CCO, gist, DUL, gUFO, PROV-O, schema.org, ORG, DCMI, DCAT, LRMI, ESCO, ELM, ASN). Those files, like the xAPI and xAPI Profiles ontologies, are other publishers' work: the package references them rather than redistributing them. `tools/refresh_upper.py` and `tools/refresh-evidence.sh` fetch them again before a rebuild, together with snapshots of Interego's namespace files (`evidence/interego-*.ttl`, the same files as `docs/ns/` in the Interego repository).

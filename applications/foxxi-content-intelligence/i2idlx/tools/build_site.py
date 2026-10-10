@@ -1030,6 +1030,7 @@ manifest = sorted({str(p.relative_to(PKG_PARENT)) for p in ROOT.rglob("*")
                    # them again from the pinned sources that evidence/upper/manifest.json records, with their SHA-256.
                    and not (p.parent == ROOT / "evidence" / "upper" and p.suffix == ".ttl")
                    and not (p.parent == ROOT / "evidence" and p.name.startswith("interego-") and p.suffix == ".ttl")
+                   and not (p.parent == ROOT / "evidence" and p.name.startswith("xapi-") and p.suffix == ".ttl")
                    and "node_modules" not in p.parts and not p.relative_to(ROOT).as_posix().startswith("app/build/")}
                   | {str(OUT.relative_to(PKG_PARENT))})
 pkg_mb = sum((PKG_PARENT / m).stat().st_size for m in manifest if (PKG_PARENT / m).exists()) / 1e6

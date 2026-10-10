@@ -4,9 +4,10 @@
 site/
 app/build/
 app/node_modules/
-# Other publishers' vocabulary files: fetched by tools/refresh_upper.py and tools/refresh-evidence.sh,
-# referenced rather than redistributed.
+# Fetched by tools/refresh_upper.py and tools/refresh-evidence.sh before a rebuild: other publishers'
+# vocabulary files, referenced rather than redistributed,
 evidence/upper/*.ttl
-evidence/interego-*.ttl
 evidence/xapi-ontology.ttl
 evidence/xapi-profile-ontology.ttl
+# and snapshots of this repository's own namespace files (the same files as docs/ns/).
+evidence/interego-*.ttl
