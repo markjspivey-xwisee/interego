@@ -20,6 +20,8 @@ const wsKey = (id) => (id ? "workspace.u." + id : ANON_WS);
 // a whole-copy write over a document the page has not seen.
 const draftKey = (id) => wsKey(id) + ".held";
 const NO_CHANGE = { put: [], drop: [], star: [], unstar: [] };
+// Set once this version has settled a viewer's workspace; until then, what earlier versions left is taken in.
+const formatKey = (id) => wsKey(id) + ".format";
 const changeOf = (base, next) => {
   const before = new Map((base.packs || []).map((x) => [x.id, x]));
   const after = new Set((next.packs || []).map((x) => x.id));
@@ -242,15 +244,22 @@ export function CapsProvider({ children }) {
     const seen = new Set();
     return { ...w, stars: [...new Set(w.stars || [])], packs: (w.packs || []).filter((x) => x && !seen.has(x.id) && seen.add(x.id)) };
   };
+  // The changes kept for a viewer. An earlier version kept them as the workspace they were made on and the
+  // result ({base, next}); that is read as the change between the two.
+  const keptChange = (id) => {
+    const kept = id ? store.get(draftKey(id), null) : null;
+    if (!kept) return null;
+    if (kept.change) return kept.change;
+    return kept.base && kept.next ? changeOf(kept.base, kept.next) : null;
+  };
   // Add what one edit changed (from the workspace before it to the one after) to the changes kept for a viewer.
   const keepChange = (id, before, after) => {
     if (!id) return;
-    const kept = store.get(draftKey(id), null);
-    store.set(draftKey(id), { change: compose((kept && kept.change) || NO_CHANGE, changeOf(before, after)), at: Date.now() });
+    store.set(draftKey(id), { change: compose(keptChange(id) || NO_CHANGE, changeOf(before, after)), at: Date.now() });
   };
   const replayKept = (id) => {
-    const kept = id ? store.get(draftKey(id), null) : null;
-    if (kept && kept.change) wsQueue.current.unshift((w) => withChange(w, kept.change));
+    const change = keptChange(id);
+    if (change) wsQueue.current.unshift((w) => withChange(w, change));
   };
 
   // Send a workspace to the document. Once it lands, if nothing newer was made meanwhile, there are no changes
@@ -286,6 +295,7 @@ export function CapsProvider({ children }) {
     setWsSource(source);
     store.set(wsKey(id), next);
     if (source !== "db" || !id) return;
+    store.set(formatKey(id), 2);
     if (!held.length && start === serverHas) { store.del(draftKey(id)); return; }
     // What is sent is the document with the kept changes made again on it (and, with no document yet, what this
     // browser carried in); the changes stay kept until it lands.
@@ -339,6 +349,15 @@ export function CapsProvider({ children }) {
       // A change kept from a save that did not land is made again on top of this document. (While the
       // workspace is still being settled, the held edits already include it.)
       if (wsReady.current && !wsQueue.current.length) replayKept(myId);
+      if (remote && !wsReady.current && store.get(formatKey(myId), 0) < 2) {
+        // An earlier version kept no changes for a save that did not land, only a browser copy newer than the
+        // document. On the first visit with this one, that difference is taken as this viewer's change.
+        const copy = store.get(wsKey(myId), null);
+        if (copy && (copy.at || 0) > (remote.at || 0)) {
+          const change = changeOf(remote, copy);
+          wsQueue.current.unshift((w) => withChange(w, change));
+        }
+      }
       if (remote) { settle(remote, "db", remote); return; }
       // No document yet: start it from this viewer's own copy, else from what this browser kept while signed
       // out, which moves (not copies) into the first account that signs in here.
