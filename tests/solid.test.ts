@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { Parser as N3Parser } from 'n3';
 import {
   ContextDescriptor,
   generateKeyPair,
@@ -444,6 +445,46 @@ describe('publish', () => {
     expect(parsed.prefixes.get('ex')).toBe('http://example.org/');
     const exThing = parsed.subjects.find(s => s.subject === 'http://example.org/Thing');
     expect(exThing).toBeDefined();
+  });
+
+  // Prefix names are PN_PREFIX, not \w*: `foxxi-xapi:`, `a.b-c:` and the empty prefix `:` are
+  // all legal Turtle. The emitter recognised only [A-Za-z0-9_]* names, so a payload binding
+  // `foxxi-xapi:` (I2IDL-X 0.4.0, 2026-10-13) had that one directive left inside the
+  // named-graph block: strict TriG parsers rejected the stored document ("Expected entity
+  // but got @prefix"), lenient ones read it, and the relay's /ns view hid the difference.
+  it('hoists prefix names with hyphens, dots and the empty name, so strict TriG parsers accept the document', async () => {
+    const writes: { url: string; body?: string }[] = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method === 'PUT') writes.push({ url: urlStr, body: init?.body as string });
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 404, ok: false });
+      }
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const graphContent = [
+      '@prefix foxxi-xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .',
+      'PREFIX a.b-c: <http://example.org/abc#>',
+      '@prefix : <http://example.org/default#> .',
+      '<http://example.org/s> a foxxi-xapi:Statement ; <http://example.org/p> a.b-c:o , :d .',
+    ].join('\n');
+    await publish(testDescriptor(), graphContent, 'https://alice.pod/', { fetch: mockFetch, visibility: 'public' });
+
+    const body = writes.find(w => w.url.endsWith('-graph.trig'))!.body!;
+    const braceIdx = body.indexOf('<urn:graph:g1> {');
+    const block = body.slice(body.indexOf('{', braceIdx) + 1, body.lastIndexOf('}'));
+    expect(block).not.toMatch(/@prefix|PREFIX/);
+    for (const directive of ['@prefix foxxi-xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .',
+      '@prefix a.b-c: <http://example.org/abc#> .', '@prefix : <http://example.org/default#> .']) {
+      expect(body.indexOf(directive)).toBeGreaterThanOrEqual(0);
+      expect(body.indexOf(directive)).toBeLessThan(braceIdx);
+    }
+    const quads = new N3Parser({ format: 'application/trig' }).parse(body);
+    expect(quads.filter(q => q.graph.value === 'urn:graph:g1').map(q => q.object.value).sort()).toEqual([
+      'http://example.org/abc#o', 'http://example.org/default#d', 'https://foxxi-bridge.interego.xwisee.com/ns/xapi#Statement',
+    ]);
   });
 
   // Alias-collision path: caller-supplied graphContent re-declares a prefix the descriptor
