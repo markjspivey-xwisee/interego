@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-13 — I2IDL-X 0.4.0 is published
+
+The six graphs 0.4.0 changed (shapes, ontology, rules, mappings, alignments, referents) are republished, signed, to their `/ns` IRIs; the catalog, enactments, release feed and change history were already identical to the build. The ontology, alignments and referents were published once more after the prefix fix below reached the relay, so every stored document now parses as strict TriG; the first copies had kept `foxxi-*` prefix lines inside the graph block. `publications.json` records the new descriptors and moves each replaced one to `superseded`. The pinned rebuild reports all ten graphs identical to what is live and 88 of 88 proposals published. Its one failing check, that the live glossary still reports v0.0.80, failed before too: I2IDL has published a newer release than the one this build is pinned to.
+
 ## 2026-10-13 — Publishing: payload prefix names with hyphens are hoisted too
 
 `wrapAsTriG` (`packages/solid`) moves the caller's `@prefix` and `PREFIX` lines out of the named-graph block, because TriG allows no directive inside one. It recognised a prefix name only as `\w*`, so a name like `foxxi-xapi:` stayed inside the block. N3.js and other strict TriG parsers then rejected the whole stored document ("Expected entity but got @prefix"), while lenient parsers and the relay's `/ns` view read it. I2IDL-X 0.4.0 hit this on publish: its ontology, alignments and referents graphs all bind `foxxi-*` prefixes. The four patterns now use Turtle's PN_PREFIX, which covers letters, digits, `_`, `-`, `.` inside the name, and the empty prefix. A regression test publishes `foxxi-xapi:`, `a.b-c:` and `:` and parses the stored document with N3.js. Graphs already stored this way still read correctly through `/ns`, and republishing rewrites them.
