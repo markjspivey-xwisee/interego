@@ -10,7 +10,11 @@
  * This gate sits in front of CSS and:
  *   GET / HEAD / OPTIONS  →  passthrough (anonymous reads stay open —
  *                            the pod-browser, federation discover(),
- *                            descriptor dereferencing all still work)
+ *                            descriptor dereferencing all still work),
+ *                            EXCEPT the identity server's own record in
+ *                            each pod (PRIVATE_POD_DOCUMENTS below), which
+ *                            is read like a write: by its owner or the
+ *                            operator only
  *   POST / PUT / PATCH / DELETE  →  require Authorization: Bearer; one
  *                                   of two acceptable bearer types:
  *
@@ -168,6 +172,21 @@ if (RELAY_VERIFY_URL && !RELAY_INTROSPECTION_SECRET) {
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * ★ POD DOCUMENTS ONLY THEIR OWNER READS.
+ *
+ * `auth-methods.jsonld` is the identity server's record of a user's sign-in credentials: their
+ * display name, wallet addresses, passkey ids, labels, public keys and counters, and DID keys. It
+ * is plaintext, because the identity server must read it to sign anyone in, and CSS behind this
+ * gate is allow-all. Read anonymously, as every other pod document is, the gate served all of
+ * them to anyone who listed the root container — every account's name tied to its wallets, its
+ * passkeys' device labels and its DIDs. Nothing outside the identity server reads it, and that
+ * server reads it from CSS directly over the private network, not through this gate; a user
+ * audits their own through the identity server's `GET /auth-methods/me`. So it is read here as a
+ * write is: by the pod's owner or by the operator.
+ */
+const PRIVATE_POD_DOCUMENTS = new Set(['auth-methods.jsonld']);
 
 // ── CORS allowlist ─────────────────────────────────────────────────
 //
@@ -660,20 +679,52 @@ function buildResponseHeaders(upstreamHeaders, corsHeaders) {
   return out;
 }
 
-function firstPathSegment(reqUrl) {
-  // reqUrl is the request-target (path?query). Strip query / fragment.
-  const q = reqUrl.indexOf('?');
-  const path = q >= 0 ? reqUrl.slice(0, q) : reqUrl;
-  if (!path.startsWith('/')) return null;
-  const rest = path.slice(1);
-  const slash = rest.indexOf('/');
-  const seg = slash < 0 ? rest : rest.slice(0, slash);
-  if (!seg) return null;
-  try {
-    return decodeURIComponent(seg);
-  } catch {
-    return seg;
-  }
+/**
+ * The URL this gate forwards a request to. Built once per request, and every decision about the
+ * request's path is made on IT, never on the raw request-target.
+ *
+ * ── ★★ THE RAW PATH IS NOT THE PATH CSS RECEIVES ────────────────────────────
+ *
+ * WHATWG URL parsing removes `.` and `..` segments, percent-encoded ones (`%2e%2e`) included,
+ * and reads `\` as `/`. The write gate used to take the pod from the raw request-target and
+ * forward this parsed URL, so `PUT /alice/../bob/x` with alice's bearer passed as a write to
+ * `alice` and reached CSS as `PUT /bob/x`: any signed-in user could write into any other pod —
+ * including the identity server's `auth-methods.jsonld` there. Deciding on the forwarded URL
+ * closes that whatever spelling a client uses.
+ */
+function forwardedUrl(reqUrl) {
+  return new URL(`${CSS_INTERNAL_URL.replace(/\/+$/, '')}${reqUrl}`);
+}
+
+/**
+ * The forwarded path relative to CSS's root, percent-decoded: the segments CSS resolves.
+ * `encodedSeparator` is true when a segment decodes to something holding `/` or `\` (sent as
+ * `%2F` / `%5C`): a server that decodes those before resolving a path would read segments the
+ * parsed URL does not show, so the gate refuses to authorize such a path rather than guess.
+ */
+function podPath(upstreamUrl) {
+  const base = new URL(CSS_INTERNAL_URL).pathname.replace(/\/+$/, '');
+  const path = base && upstreamUrl.pathname.startsWith(`${base}/`)
+    ? upstreamUrl.pathname.slice(base.length) : upstreamUrl.pathname;
+  const segments = path.split('/').slice(1).map((s) => {
+    try { return decodeURIComponent(s); } catch { return s; }
+  });
+  return {
+    pod: segments[0] || null,
+    segments,
+    // The path as the most lenient server could read it: decoded separators split, empty
+    // segments dropped. Used only to recognise a private document, so leniency denies more.
+    parts: segments.join('/').split(/[\\/]+/).filter(Boolean),
+    encodedSeparator: segments.some((s) => s.includes('/') || s.includes('\\')),
+  };
+}
+
+/**
+ * The pod whose private document (PRIVATE_POD_DOCUMENTS) this path names, however the name is
+ * cased or its separators spelled; null when it names none.
+ */
+function privateDocumentPod({ parts }) {
+  return parts.length === 2 && PRIVATE_POD_DOCUMENTS.has(parts[1].toLowerCase()) ? parts[0] : null;
 }
 
 /**
@@ -783,7 +834,8 @@ const server = createServer(async (req, res) => {
       ...(saturated
         ? { warning: 'every upstream connection is busy and requests are queuing — proxied requests may be hanging even though this endpoint answers' }
         : {}),
-      gating: 'writes-only',
+      gating: 'writes, and reads of each pod\'s private documents',
+      privateDocuments: [...PRIVATE_POD_DOCUMENTS],
       upstream: CSS_INTERNAL_URL,
       perUserBearers: Boolean(IDENTITY_URL) || Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
       identityVerify: Boolean(IDENTITY_URL),
@@ -800,8 +852,24 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // Write-method gate.
-  if (WRITE_METHODS.has(method)) {
+  // The URL this request is forwarded to. Every decision below is made on it (see forwardedUrl).
+  let upstreamUrl;
+  try {
+    upstreamUrl = forwardedUrl(req.url ?? '/');
+  } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
+    res.end(JSON.stringify({ error: 'bad request-target', detail: 'the request-target is not a path this gate can forward' }));
+    return;
+  }
+  const target = podPath(upstreamUrl);
+  const isWrite = WRITE_METHODS.has(method);
+  // A read of a pod's private document is authorized as a write to that pod is.
+  const privatePod = isWrite ? null : privateDocumentPod(target);
+
+  // Write-method gate, and the owner-only read of a private pod document.
+  if (isWrite || privatePod) {
+    const act = isWrite ? 'write' : 'read';
+    const pod = isWrite ? target.pod : privatePod;
     const auth = req.headers['authorization'] ?? '';
     if (!auth.startsWith('Bearer ')) {
       res.writeHead(401, {
@@ -809,10 +877,15 @@ const server = createServer(async (req, res) => {
         'WWW-Authenticate': 'Bearer realm="interego-css-gate"',
         ...corsHeaders,
       });
-      res.end(JSON.stringify({
-        error: 'anonymous writes denied',
-        detail: `${method} requires Authorization: Bearer <token>; reads (GET/HEAD/OPTIONS) remain anonymous.`,
-      }));
+      res.end(JSON.stringify(isWrite
+        ? {
+          error: 'anonymous writes denied',
+          detail: `${method} requires Authorization: Bearer <token>; reads (GET/HEAD/OPTIONS) remain anonymous, except each pod's sign-in record.`,
+        }
+        : {
+          error: 'anonymous read denied',
+          detail: `${upstreamUrl.pathname} is the identity server's sign-in record for this pod; it is readable with its owner's bearer, and a user sees their own through the identity server's GET /auth-methods/me.`,
+        }));
       return;
     }
     const token = auth.slice(7);
@@ -823,7 +896,7 @@ const server = createServer(async (req, res) => {
     const isOperator = safeEqual(auth, `Bearer ${WRITE_SECRET}`);
     if (!isOperator) {
       // Path 2: per-user bearer. Verify via identity, then enforce
-      // that the request path is rooted at the verified userId.
+      // that the forwarded path is rooted at the verified userId.
       const verified = await verifyUserBearer(token);
       if (!verified.ok) {
         res.writeHead(verified.status ?? 401, {
@@ -838,18 +911,28 @@ const server = createServer(async (req, res) => {
         return;
       }
       const userId = verified.userId;
-      const seg = firstPathSegment(req.url ?? '/');
-      if (seg !== userId) {
-        // Cross-pod write attempt. The verified user owns
-        // `/<userId>/...` only.
-        res.writeHead(403, { 'Content-Type': 'application/json', ...corsHeaders });
+      if (isWrite && target.encodedSeparator) {
+        // A `%2F` or `%5C` inside a segment: which pod CSS writes to would depend on whether it
+        // decodes them first. No Interego client names a resource that way.
+        res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
         res.end(JSON.stringify({
-          error: 'cross-pod write denied',
-          detail: `bearer is scoped to userId="${userId}" but request targets path segment "${seg ?? '(root)'}"; user bearers can only write to /<userId>/...`,
+          error: 'encoded path separator',
+          detail: 'a user bearer cannot write to a path with an encoded "/" or "\\" (%2F, %5C) in a segment',
         }));
         return;
       }
-      // Authorized per-user write. Fall through to strip + proxy.
+      if (pod !== userId) {
+        // Cross-pod attempt. The verified user owns `/<userId>/...` only.
+        res.writeHead(403, { 'Content-Type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({
+          error: `cross-pod ${act} denied`,
+          detail: isWrite
+            ? `bearer is scoped to userId="${userId}" but the request is forwarded to pod "${pod ?? '(root)'}"; user bearers can only write to /<userId>/...`
+            : `bearer is scoped to userId="${userId}" but ${upstreamUrl.pathname} is pod "${pod}"'s sign-in record; only its owner reads it`,
+        }));
+        return;
+      }
+      // Authorized per-user request. Fall through to strip + proxy.
     }
 
     // Strip the bearer before forwarding so CSS doesn't try to parse it
@@ -869,8 +952,7 @@ const server = createServer(async (req, res) => {
   // freedom of raw http.request AND ALPN-negotiated h2 multiplexing
   // (which eliminates the ECONNRESET storms the raw path produced
   // against Container Apps' envoy under sustained load) AND pooled
-  // keep-alive.
-  const upstreamUrl = new URL(`${CSS_INTERNAL_URL.replace(/\/+$/, '')}${req.url}`);
+  // keep-alive. `upstreamUrl` is the forwarded URL the checks above decided on.
   const hostHeader = CSS_HOST_HEADER ?? upstreamUrl.host;
   const headers = buildUpstreamHeaders(req.headers, hostHeader);
 
@@ -1010,5 +1092,5 @@ if (process.env.CSS_GATE_AUTOSTART !== '0') server.listen(PORT, () => {
   } else {
     console.log(`[css-gate]   • per-user bearers DISABLED (neither IDENTITY_URL nor RELAY_VERIFY_URL+SECRET set)`);
   }
-  console.log(`[css-gate] read methods (GET/HEAD/OPTIONS) pass through anonymously`);
+  console.log(`[css-gate] read methods (GET/HEAD/OPTIONS) pass through anonymously, except /<pod>/{${[...PRIVATE_POD_DOCUMENTS].join(',')}} (owner or operator bearer)`);
 });
