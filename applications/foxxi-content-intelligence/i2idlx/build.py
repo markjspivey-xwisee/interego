@@ -774,23 +774,36 @@ _mp_fields = 'i2x:confidence "0.8"^^xsd:decimal ; i2x:mappingMethod i2x:method-a
 bad = Graph().parse(data=f"""@prefix i2x: <{NS}> . @prefix skos: <http://www.w3.org/2004/02/skos/core#> . @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 @prefix dct: <http://purl.org/dc/terms/> . @prefix prov: <http://www.w3.org/ns/prov#> . @prefix c: <https://id.i2idl.org/concepts/> .
 <urn:x:new-verb> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-1> ;
-  i2x:rationale "the proposal that replaces others" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:replaces <urn:x:orphan> .
+  i2x:rationale "the proposal that replaces old-verb" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:replaces <urn:x:old-verb> .
+<urn:x:old-verb> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-0> ;
+  i2x:rationale "superseded, properly" ; i2x:reviewStatus i2x:status-superseded ; {_mp_fields}
+  dct:isReplacedBy <urn:x:new-verb> ; prov:invalidatedAtTime "2026-10-13T00:00:00Z"^^xsd:dateTime .
 <urn:x:orphan> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-0> ;
   i2x:rationale "superseded, but names no replacement" ; i2x:reviewStatus i2x:status-superseded ; {_mp_fields}
   prov:invalidatedAtTime "2026-10-13T00:00:00Z"^^xsd:dateTime .
 <urn:x:elsewhere> a i2x:MappingProposal ; i2x:proposedSubject c:activity ; i2x:proposedObject <urn:x:target-0> ;
   i2x:rationale "replaced by a proposal about another concept" ; i2x:reviewStatus i2x:status-superseded ; {_mp_fields}
-  dct:isReplacedBy <urn:x:new-verb> ; prov:invalidatedAtTime "2026-10-13T00:00:00Z"^^xsd:dateTime .
+  dct:isReplacedBy <urn:x:new-for-elsewhere> ; prov:invalidatedAtTime "2026-10-13T00:00:00Z"^^xsd:dateTime .
+<urn:x:new-for-elsewhere> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-1> ;
+  i2x:rationale "replaces a proposal about another concept" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:replaces <urn:x:elsewhere> .
 <urn:x:undated> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-2> ;
-  i2x:rationale "superseded without saying when" ; i2x:reviewStatus i2x:status-superseded ; {_mp_fields} dct:isReplacedBy <urn:x:new-verb> .
+  i2x:rationale "superseded without saying when" ; i2x:reviewStatus i2x:status-superseded ; {_mp_fields} dct:isReplacedBy <urn:x:new-for-undated> .
+<urn:x:new-for-undated> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-1> ;
+  i2x:rationale "replaces the undated proposal" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:replaces <urn:x:undated> .
 <urn:x:still-open> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-3> ;
-  i2x:rationale "names a replacement but is still open" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:isReplacedBy <urn:x:new-verb> .
+  i2x:rationale "names a replacement but is still open" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:isReplacedBy <urn:x:new-for-open> .
+<urn:x:new-for-open> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-1> ;
+  i2x:rationale "replaces the proposal still open" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:replaces <urn:x:still-open> .
+<urn:x:claims-phantom> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-4> ;
+  i2x:rationale "claims to replace a proposal that is not there" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:replaces <urn:x:phantom> .
 """, format="turtle")
 ok, rg, _ = shacl_validate(bad, shacl_graph=shapes, ont_graph=onto, inference="rdfs", advanced=True)
 focus = {str(o) for o in rg.objects(None, SH.focusNode)}
-check(not ok and focus == {"urn:x:orphan", "urn:x:elsewhere", "urn:x:undated", "urn:x:still-open"},
-      "rejects a superseded proposal with no replacement, one replaced by a proposal about another concept, one without "
-      "its time, and an open proposal that names a replacement; accepts the replacing proposal")
+want = {"urn:x:orphan", "urn:x:elsewhere", "urn:x:new-for-elsewhere", "urn:x:undated", "urn:x:still-open", "urn:x:claims-phantom"}
+check(not ok and focus == want,
+      "rejects a superseded proposal with no replacement, one replaced by a proposal about another concept (and that proposal), one "
+      "without its time, an open proposal that names a replacement, and a claim to replace a proposal that is not there; accepts "
+      "both sides of a proper replacement" + ("" if focus == want else f" — flagged {sorted(focus)}"))
 bad = Graph().parse(data=f"""@prefix i2x: <{NS}> . @prefix prov: <http://www.w3.org/ns/prov#> . @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 <urn:x:rc> a i2x:ReleaseChange ; prov:used <urn:x:r1> ; prov:generated <urn:x:r2> ; prov:endedAtTime "2026-10-08T00:00:00Z"^^xsd:dateTime ; i2x:changeCount 3 .
 <urn:x:nothing> a i2x:ChangeEvent ; i2x:partOfChange <urn:x:rc> ; i2x:changeKind i2x:change-concept-added ; i2x:changeCount 1 .

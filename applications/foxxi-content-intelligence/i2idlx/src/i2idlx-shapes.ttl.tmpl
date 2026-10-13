@@ -25,8 +25,8 @@
 #      data). Usable as Interego publish gates (conforms_to_shapes), so a
 #      malformed proposal cannot land on a pod.
 #
-#  Core SHACL only (no SPARQL constraints, no sequence paths) so the same
-#  file runs in pySHACL, TopBraid/SHACL-JS and the Interego substrate gate.
+#  Core SHACL only (no SPARQL-based constraints) so the same file runs in
+#  pySHACL, TopBraid/SHACL-JS and the Interego substrate gate.
 # ══════════════════════════════════════════════════════════════════════════════
 
 <{{SHAPES}}> a owl:Ontology ;
@@ -132,18 +132,27 @@ i2xsh:MappingProposalShape a sh:NodeShape ;
 
 i2xsh:SupersededProposalShape a sh:NodeShape ;
     sh:targetClass i2x:MappingProposal ;
-    rdfs:comment "A superseded proposal names exactly one proposal that replaces it, for the same I2IDL concept, and says when it was replaced; a proposal that names a replacement is superseded."@en ;
+    rdfs:comment "A superseded proposal names exactly one proposal that replaces it, for the same I2IDL concept and naming it back (dct:replaces), and says when it was replaced."@en ;
     sh:or ( [ sh:not [ sh:property [ sh:path i2x:reviewStatus ; sh:hasValue i2x:status-superseded ] ] ]
             [ sh:property [ sh:path dct:isReplacedBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:class i2x:MappingProposal ] ,
                           [ sh:path ( dct:isReplacedBy i2x:proposedSubject ) ; sh:equals i2x:proposedSubject ] ,
+                          [ sh:path [ sh:inversePath dct:replaces ] ; sh:equals dct:isReplacedBy ] ,
                           [ sh:path prov:invalidatedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ] ) ;
-    sh:message "A superseded proposal names one replacement for the same concept (dct:isReplacedBy) and when it was replaced (prov:invalidatedAtTime)." .
+    sh:message "A superseded proposal names one replacement for the same concept (dct:isReplacedBy), which names it back (dct:replaces), and when it was replaced (prov:invalidatedAtTime)." .
 
 i2xsh:ReplacedProposalShape a sh:NodeShape ;
     sh:targetClass i2x:MappingProposal ;
     sh:or ( [ sh:property [ sh:path dct:isReplacedBy ; sh:maxCount 0 ] ]
             [ sh:property [ sh:path i2x:reviewStatus ; sh:hasValue i2x:status-superseded ] ] ) ;
     sh:message "Only a superseded proposal names a replacement (dct:isReplacedBy)." .
+
+i2xsh:ReplacingProposalShape a sh:NodeShape ;
+    sh:targetSubjectsOf dct:replaces ;
+    rdfs:comment "A proposal that says it replaces another names exactly one, a mapping proposal for the same I2IDL concept that names it back (dct:isReplacedBy). So a claim to replace a proposal that is absent, about another concept, or replaced by something else does not pass."@en ;
+    sh:property [ sh:path dct:replaces ; sh:maxCount 1 ; sh:class i2x:MappingProposal ] ,
+                [ sh:path ( dct:replaces i2x:proposedSubject ) ; sh:equals i2x:proposedSubject ] ,
+                [ sh:path [ sh:inversePath dct:isReplacedBy ] ; sh:equals dct:replaces ] ;
+    sh:message "A replacing proposal names the one proposal it replaces (dct:replaces), for the same concept, and that proposal names it back (dct:isReplacedBy)." .
 
 i2xsh:RatificationVoteShape a sh:NodeShape ;
     sh:targetClass i2x:RatificationVote ;
