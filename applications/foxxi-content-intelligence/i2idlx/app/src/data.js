@@ -159,7 +159,7 @@ export const RIGHTS = {
   nc: { label: "Non-commercial", short: "Non-commercial", note: "Not for commercial use without permission from the rights holder." },
   permission: { label: "Permission / terms", short: "Permission", note: "Used by I2IDL with permission or under the publisher's terms; ask before reuse." },
 };
-// I2IDL's own card wording for definition provenance (README, next priority 3), computed from its evidence relations.
+// I2IDL's own card wording for definition provenance (its roadmap, next priority 3), computed from its evidence relations.
 export const provenanceLine = (c) => (c.pv === "g" ? META.upstream.provenance[0] : META.upstream.provenance[1]);
 export const unescoByConcept = (() => {
   const m = new Map();

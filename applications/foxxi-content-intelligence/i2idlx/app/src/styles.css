@@ -336,8 +336,10 @@ button.chip { cursor: pointer; }
 .rels { display: grid; gap: 12px; }
 .relrow { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; align-items: start; }
 .relrow > .lab { font-size: 12px; font-weight: 700; color: var(--muted); padding-top: 6px; }
+.relrow.xw { grid-template-columns: 136px minmax(0, 1fr); } /* a SKOS property, not a relation name, labels each row */
+.relrow.xw > .lab { padding-top: 1px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-@media (max-width: 560px) { .relrow { grid-template-columns: minmax(0, 1fr); gap: 4px; } .relrow > .lab { padding-top: 0; } }
+@media (max-width: 560px) { .relrow, .relrow.xw { grid-template-columns: minmax(0, 1fr); gap: 4px; } .relrow > .lab { padding-top: 0; } }
 .evlist { display: grid; gap: 8px; }
 .ev { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 4px 12px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 9px; background: var(--surface); }
 .ev .rel { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding-top: 2px; }

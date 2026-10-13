@@ -5,7 +5,8 @@ graph (PROV activities per release), build_app.py turns them into per-concept ti
 
 Every fact that differs between two successive releases becomes exactly one event, so
 the history reconciles: first release + additions - removals = current release, for
-concepts, relationship pairs, collection memberships and evidence records.
+concepts, relationship pairs, collection memberships, evidence records, I2IDL's own
+external mappings and its proposed ontology associations.
 """
 from __future__ import annotations
 
@@ -41,11 +42,16 @@ KINDS = [
     ("evidence-removed", "Evidence removed", "An evidence record was removed from a concept's active definition."),
     ("evidence-classified", "Evidence classified", "An evidence record received its first evidence relation (direct or supporting)."),
     ("evidence-reclassified", "Evidence reclassified", "An evidence record's relation changed (for example supporting to direct)."),
-    ("external-mapping-added", "External mapping added", "A crosswalk to an external vocabulary became an asserted mapping (for I2IDL-X: a mapping proposal was ratified). None yet."),
-    ("external-mapping-revised", "External mapping revised", "An asserted crosswalk changed predicate or target, or was withdrawn. None yet."),
+    ("external-mapping-added", "External mapping added", "I2IDL's record asserts a new crosswalk from a concept to a term of an external vocabulary (skos:exactMatch, closeMatch, broadMatch, narrowMatch or relatedMatch)."),
+    ("external-mapping-revised", "External mapping revised", "An asserted crosswalk changed its mapping property, or I2IDL withdrew it."),
+    ("association-added", "Ontology association added", "A proposed association from a concept to a term of an external ontology (gs:externalOntologyAssociations) was added."),
+    ("association-revised", "Ontology association revised", "A proposed association's label, note, target kind or review status changed."),
+    ("association-removed", "Ontology association removed", "A proposed association was removed."),
 ]
 KIND_CODES = [k[0] for k in KINDS]
 REL_PROPS = ("skos:broader", "skos:narrower", "skos:related")
+# I2IDL's own crosswalks to external vocabularies (from v0.0.82).
+MATCH_PROPS = ("skos:exactMatch", "skos:closeMatch", "skos:broadMatch", "skos:narrowMatch", "skos:relatedMatch")
 
 
 def aslist(v):
@@ -93,6 +99,14 @@ def snapshot(doc: dict) -> dict:
             "status": n.get("gs:editorialStatus"),
             "rel": {p: set(ids(n.get(p))) for p in REL_PROPS},
             "ev": ev,
+            # {target: {mapping properties}}: what I2IDL asserts the concept matches, and how
+            "match": {t: {p for p in MATCH_PROPS if t in ids(n.get(p))}
+                      for t in {t for p in MATCH_PROPS for t in ids(n.get(p))}},
+            # {(target, association type): the association's other fields} — proposed, not asserted
+            # (v0.0.84 published six to CTDL-ASN and CTDL and v0.0.84.1 withdrew them)
+            "assoc": {(ids(a.get("gs:target"))[0] if ids(a.get("gs:target")) else None, a.get("gs:associationType")):
+                      {k: v for k, v in a.items() if k not in ("gs:target", "gs:associationType")}
+                      for a in aslist(n.get("gs:externalOntologyAssociations")) if isinstance(a, dict)},
         }
     return s
 
@@ -116,6 +130,16 @@ def memberships(s: dict) -> set:
 
 def evidence(s: dict) -> dict:
     return {(c,) + k: rel for c, x in s["concepts"].items() for k, rel in x["ev"].items()}
+
+
+def mappings(s: dict) -> dict[tuple, frozenset]:
+    """(concept, target) → the mapping properties I2IDL asserts between them."""
+    return {(c, t): frozenset(ps) for c, x in s["concepts"].items() for t, ps in x["match"].items()}
+
+
+def associations(s: dict) -> dict[tuple, dict]:
+    """(concept, target, association type) → the association's other fields."""
+    return {(c,) + k: v for c, x in s["concepts"].items() for k, v in x["assoc"].items()}
 
 
 def changed_fields(a: dict, b: dict) -> dict[str, tuple]:
@@ -177,6 +201,25 @@ def diff(p: dict, s: dict) -> list[dict]:
         if se[k] != pe[k]:
             kind = "evidence-classified" if pe[k] is None else "evidence-reclassified"
             ev.append({"kind": kind, "concept": k[0], "source": k[1], "prior": pe[k], "new": se[k] or "unclassified"})
+    pmx, smx = mappings(p), mappings(s)
+    for c, t in sorted(set(smx) - set(pmx)):
+        for prop in sorted(smx[(c, t)]):
+            ev.append({"kind": "external-mapping-added", "concept": c, "target": t, "new": prop})
+    for c, t in sorted(set(pmx) | set(smx)):
+        before, after = pmx.get((c, t)), smx.get((c, t))
+        if before and before != after:  # a changed mapping property, or withdrawn (after is None)
+            ev.append({"kind": "external-mapping-revised", "concept": c, "target": t,
+                       "prior": " ".join(sorted(before)), "new": " ".join(sorted(after)) if after else None})
+    pa, sa = associations(p), associations(s)
+    for k in sorted(set(sa) - set(pa), key=str):
+        ev.append({"kind": "association-added", "concept": k[0], "target": k[1], "new": k[2],
+                   "status": sa[k].get("gs:reviewStatus")})
+    for k in sorted(set(pa) & set(sa), key=str):
+        if pa[k] != sa[k]:
+            ev.append({"kind": "association-revised", "concept": k[0], "target": k[1], "new": k[2],
+                       "fields": changed_fields(pa[k], sa[k])})
+    for k in sorted(set(pa) - set(sa), key=str):
+        ev.append({"kind": "association-removed", "concept": k[0], "target": k[1], "prior": k[2]})
     return ev
 
 
@@ -211,7 +254,7 @@ def totals(s: dict) -> dict[str, int]:
     p = pairs(s)
     return {"concepts": len(s["concepts"]), "related": len(p["skos:related"]), "broader": len(p["skos:broader"]),
             "memberships": len(memberships(s)), "evidence": len(evidence(s)), "sources": len(s["sources"]),
-            "collections": len(s["collections"])}
+            "collections": len(s["collections"]), "mappings": len(mappings(s)), "associations": len(associations(s))}
 
 
 def reconcile(rels: list[dict]) -> dict[str, tuple[int, int]]:
@@ -219,7 +262,8 @@ def reconcile(rels: list[dict]) -> dict[str, tuple[int, int]]:
     first, last = totals(rels[0]["snap"]), totals(rels[-1]["snap"])
     signed = {"concepts": ("concept-added", "concept-removed"), "memberships": ("membership-added", "membership-removed"),
               "evidence": ("evidence-added", "evidence-removed"), "sources": ("source-added", "source-removed"),
-              "collections": ("collection-added", "collection-removed")}
+              "collections": ("collection-added", "collection-removed"),
+              "associations": ("association-added", "association-removed")}
     out = {}
     for name, (plus, minus) in signed.items():
         n = first[name]
@@ -232,4 +276,11 @@ def reconcile(rels: list[dict]) -> dict[str, tuple[int, int]]:
             n += sum(1 for e in r["events"] if e.get("property") == prop and e["kind"] == "relationship-added")
             n -= sum(1 for e in r["events"] if e.get("property") == prop and e["kind"] == "relationship-removed")
         out[name] = (n, last[name])
+    # Mapped (concept, target) pairs: an addition maps a new pair, a withdrawal unmaps one, and a
+    # changed mapping property leaves the count alone.
+    n = first["mappings"]
+    for r in rels[1:]:
+        n += sum(1 for e in r["events"] if e["kind"] == "external-mapping-added")
+        n -= sum(1 for e in r["events"] if e["kind"] == "external-mapping-revised" and e["new"] is None)
+    out["mappings"] = (n, last["mappings"])
     return out

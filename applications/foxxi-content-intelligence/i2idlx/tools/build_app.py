@@ -296,6 +296,9 @@ for n in concept_nodes:
         "di": d["@id"], "ds": d.get("gs:editorialStatus"), "dq": d.get("gs:definitionSequence"),
         "dc": ids(d.get("dcterms:creator"))[0] if d.get("dcterms:creator") else None, "dl": d.get("dcterms:language"),
         "ev": ev,
+        # I2IDL's own crosswalks (from v0.0.82): [property, target]; label and proposal filled in below
+        "xm": [[p.split(":")[1], t] for p in ("skos:exactMatch", "skos:closeMatch", "skos:relatedMatch",
+                                              "skos:broadMatch", "skos:narrowMatch") for t in ids(n.get(p))],
     })
 cidx = {c["id"]: i for i, c in enumerate(concepts)}
 check(len(concepts) == 397, f"{len(concepts)} concepts extracted")
@@ -446,10 +449,15 @@ DCT_REPLACES = URIRef("http://purl.org/dc/terms/replaces")
 maps_src = (DIST / f"{SLUG['mappings']}.ttl").read_text()
 mappings = []
 n_superseded = 0
+adopted_of: dict[tuple, str] = {}  # (concept id, target) → the adopted proposal's id
 for m in re.finditer(r"^mp:([A-Za-z0-9_.-]+) a i2x:MappingProposal", maps_src, re.M):
     s = MP[m.group(1)]
     if maps.value(s, I2X.reviewStatus) == I2X["status-superseded"]:
         n_superseded += 1  # replaced by a later proposal (dct:isReplacedBy): in the graph, not in the review queue
+        continue
+    if maps.value(s, I2X.reviewStatus) == I2X["status-adopted"]:
+        # I2IDL asserts it itself: shown with I2IDL's own crosswalks on the concept, not in the review queue
+        adopted_of[(local(str(maps.value(s, I2X.proposedSubject)), CONCEPTS), str(maps.value(s, I2X.proposedObject)))] = m.group(1)
         continue
     obj = str(maps.value(s, I2X.proposedObject))
     term = ext_terms.get(obj) or {}
@@ -469,25 +477,42 @@ for m in re.finditer(r"^mp:([A-Za-z0-9_.-]+) a i2x:MappingProposal", maps_src, r
         rec["oa"] = term.get("alt") or []
         if term.get("noteKind"):
             rec["on"] = term["noteKind"]
+    ip = sorted(str(o).rsplit("#", 1)[-1] for o in maps.objects(s, I2X.i2idlPredicate))
+    if ip:  # I2IDL's own record maps the same target, with another property
+        rec["ip"] = ip
     old = maps.value(s, DCT_REPLACES)
     if old is not None:  # the proposal this one replaces: its id and the target it proposed
         rec["rp"] = {"id": str(old).rsplit("#", 1)[-1], "o": str(maps.value(old, I2X.proposedObject))}
     mappings.append(rec)
+# I2IDL's own crosswalks on each concept: [property, target, target label, adopted proposal id, open proposal [id, property]]
+open_of = {(m["c"], m["o"]): [m["id"], m["p"]] for m in mappings}
+for c in concepts:
+    c["xm"] = [[p, t, (ext_terms.get(t) or {}).get("label"), adopted_of.get((c["id"], t)), open_of.get((c["id"], t))]
+               for p, t in c["xm"]]
+    if not c["xm"]:
+        del c["xm"]
+n_own = sum(len(c.get("xm", [])) for c in concepts)
+check(n_own > 0 and all(x[3] or x[4] is None or x[4][1] != x[0] for c in concepts for x in c.get("xm", []))
+      and len(adopted_of) == sum(1 for c in concepts for x in c.get("xm", []) if x[3]),
+      f"{n_own} of I2IDL's own crosswalks on the concepts that carry them; {len(adopted_of)} of them adopt an I2IDL-X proposal, "
+      f"{sum(1 for c in concepts for x in c.get('xm', []) if x[4])} sit beside an open proposal with another property")
 n_unesco = sum(1 for m in mappings if m["v"] == "UNESCO Thesaurus")
-check(len(mappings) == 73 and all(m["c"] in cidx for m in mappings),
-      f"73 open mapping proposals on concepts in the release; the {n_superseded} superseded stay out of the review queue")
+check(len(mappings) + len(adopted_of) == 73 and all(m["c"] in cidx for m in mappings),
+      f"{len(mappings)} open mapping proposals on concepts in the release; the {len(adopted_of)} adopted by I2IDL and the "
+      f"{n_superseded} superseded stay out of the review queue")
 check(n_superseded == 15 and sum(1 for m in mappings if m.get("rp")) == 15
       and all(m["rp"]["o"].startswith("https://w3id.org/xapi/ontology#") and m["v"] == "xAPI (Foxxi)" for m in mappings if m.get("rp")),
       "15 proposals to Foxxi's xAPI ontology each name the proposal to ADL's they replace")
-check(n_unesco == 13 and all(m.get("ci") and m["m"] == "evidence-cited" for m in mappings if m["v"] == "UNESCO Thesaurus"),
-      "13 UNESCO Thesaurus proposals, each citing the I2IDL definition whose evidence names its target")
+check(n_unesco + sum(1 for (_, o) in adopted_of if o.startswith("http://vocabularies.unesco.org/")) == 13
+      and all(m.get("ci") and m["m"] == "evidence-cited" for m in mappings if m["v"] == "UNESCO Thesaurus"),
+      f"{n_unesco} open UNESCO Thesaurus proposals (of 13), each citing the I2IDL definition whose evidence names its target")
 check(all(any(c["concept"] == m["c"] and c["definition"] == m["ci"] for c in unesco["terms"][m["o"]]["citedBy"])
           for m in mappings if m.get("ci")), "every evidence-cited proposal's definition really cites its target (UNESCO snapshot)")
 n_other = sum(1 for m in mappings if m["v"] != "UNESCO Thesaurus")
 check(sum(1 for m in mappings if m["od"] and m["v"] != "UNESCO Thesaurus") >= n_other - 2
       and all(m["od"] for m in mappings if "(Foxxi)" in m["v"]),
       f"{sum(1 for m in mappings if m['od'] and m['v'] != 'UNESCO Thesaurus')} of {n_other} other targets carry their own vocabulary's definition "
-      f"(every Foxxi target does); {sum(1 for m in mappings if m['od'] and m['v'] == 'UNESCO Thesaurus')} of 13 UNESCO targets carry a scope note")
+      f"(every Foxxi target does); {sum(1 for m in mappings if m['od'] and m['v'] == 'UNESCO Thesaurus')} of {n_unesco} UNESCO targets carry a scope note")
 
 # ── Releases ───────────────────────────────────────────────────────────────────────────────────────
 releases = []
@@ -501,8 +526,8 @@ for s in rels.subjects(RDF.type, I2X.GlossaryRelease):
                      "rev": sorted(local(str(o), CONCEPTS) for o in rels.objects(s, I2X.revisedDefinitionOf)),
                      "diff": str(cmp_) if cmp_ is not None else None, "note": text(rels, s, RDFS.comment)})
 releases.sort(key=lambda r: tuple(int(x) for x in r["v"].lstrip("v").split(".")))
-check(len(releases) == 17 and releases[-1]["v"] == release and releases[-1]["n"] == 397,
-      "17 releases ending at the pinned release with 397 concepts")
+check(len(releases) == 23 and releases[-1]["v"] == release and releases[-1]["n"] == 397,
+      "23 releases ending at the pinned release with 397 concepts")
 
 # ── Change history: the same derivation (src/history.py) as the published i2idlx-changes graph ─────
 hrels = hist.releases(cfg["i2idl"]["localClone"], cfg["i2idl"]["graphPath"])
@@ -558,6 +583,8 @@ for ri, h in enumerate(hrels):
                 rec.setdefault("er", []).append([e.get("prior"), e["new"], src])
             elif k.startswith("alt-label"):
                 rec.setdefault("al" + ("+" if k.endswith("added") else "-"), []).append(e.get("new") or e.get("prior"))
+            elif "target" in e:  # one of I2IDL's own crosswalks or ontology associations: [kind, target, prior, new]
+                rec.setdefault("x", []).append([k, e["target"], e.get("prior"), e.get("new")])
             else:  # scalar: label, definition, explanation, type, field, status
                 rec.setdefault("s", {})[k] = [e.get("prior"), e.get("new")]
     for cid, rec in per.items():
@@ -573,27 +600,40 @@ changes_meta = {"baseline": hrels[0]["version"], "baselineDate": hrels[0]["date"
                 "reconcile": {k: v[1] for k, v in recon.items()}, "baselineCounts": hist.totals(hrels[0]["snap"])}
 print("     history:", changes_meta["byKind"])
 
-# ── I2IDL's own roadmap, read from its README at the pinned commit (credited, not paraphrased) ─────
-readme = subprocess.run(["git", "-C", cfg["i2idl"]["localClone"], "show", f"{commit_sha}:README.md"],
-                        capture_output=True, text=True, check=True).stdout
+# ── I2IDL's own roadmap, read from its repository at the pinned commit (credited, not paraphrased) ─
+# I2IDL keeps its roadmap in docs/ROADMAP.md and its development principle in docs/ARCHITECTURE.md
+# (both lived in README.md before v0.0.86); read whichever the pinned commit has.
+def i2idl_doc(heading, *paths):
+    """The first of `paths` that, at the pinned commit, has a line `heading`."""
+    for path in paths:
+        r = subprocess.run(["git", "-C", cfg["i2idl"]["localClone"], "show", f"{commit_sha}:{path}"], capture_output=True, text=True)
+        if r.returncode == 0 and re.search("^" + re.escape(heading) + "$", r.stdout, re.M):
+            return path, r.stdout
+    raise SystemExit(f"no {heading!r} in any of {paths} at {commit_sha[:7]}")
+roadmap_path, roadmap = i2idl_doc("## Next development priorities", "docs/ROADMAP.md", "README.md")
+principle_path, principle_doc = i2idl_doc("## Development principle", "docs/ARCHITECTURE.md", "README.md")
 phases = []
-for mm in re.finditer(r"^### Phase (\d+): (.+?)\n+\*\*(.+?)\*\*", readme, re.M):
+for mm in re.finditer(r"^### Phase (\d+): (.+?)\n+\*\*(.+?)\*\*", roadmap, re.M):
     phases.append({"n": int(mm.group(1)), "title": mm.group(2).strip(), "status": mm.group(3).strip().rstrip(".")})
-prio_block = readme.split("## Next development priorities", 1)[1].split("\n## ", 1)[0]
+prio_block = roadmap.split("## Next development priorities", 1)[1].split("\n## ", 1)[0]
 priorities = []
 for mm in re.finditer(r"^### (\d+)\. (.+)$", prio_block, re.M):
     priorities.append({"n": int(mm.group(1)), "title": mm.group(2).strip(),
                        "anchor": re.sub(r"[^a-z0-9 -]", "", (mm.group(1) + ". " + mm.group(2)).lower()).replace(" ", "-")})
-principle = " ".join(readme.split("## Development principle", 1)[1].split("\n## ", 1)[0].split())
+principle = " ".join(principle_doc.split("## Development principle", 1)[1].split("\n## ", 1)[0].split())
 principle = re.sub(r"`([^`]+)`", r"\1", principle)
 routes = re.findall(r"^(/api/[^\s]+)$", prio_block, re.M)
 prov_lines = re.findall(r"^Definition provenance: (.+)$", prio_block, re.M)
-check(len(phases) == 7 and len(priorities) == 4 and len(routes) == 3 and len(prov_lines) == 2,
-      f"I2IDL's README at {commit_sha[:7]}: {len(phases)} phases, {len(priorities)} next priorities, {len(routes)} example API routes, {len(prov_lines)} provenance wordings")
+check(len(phases) == 7 and len(priorities) == 4 and len(routes) == 3 and len(prov_lines) == 2 and principle,
+      f"I2IDL's {roadmap_path} at {commit_sha[:7]}: {len(phases)} phases, {len(priorities)} next priorities, {len(routes)} example API routes, "
+      f"{len(prov_lines)} provenance wordings; development principle from {principle_path}")
 check(prov_lines == ["Direct source definition", "I2IDL synthesis supported by source evidence"],
       "the app's provenance wording is I2IDL's own: " + " / ".join(prov_lines))
+blob = f"{cfg['i2idl']['repo']}/blob/{commit_sha}/"
 upstream = {"phases": phases, "priorities": priorities, "principle": principle, "routes": routes, "provenance": prov_lines,
-            "readme": f"{cfg['i2idl']['repo']}/blob/{commit_sha}/README.md"}
+            "roadmap": blob + roadmap_path, "roadmapName": "roadmap" if roadmap_path != "README.md" else "README",
+            "principleSource": blob + principle_path,
+            "principleName": "architecture notes" if principle_path != "README.md" else "README"}
 
 # ── UNESCO microthesaurus groups I2IDL cites (a group is not a concept: no mapping predicate applies) ─
 unesco_groups = []
@@ -982,7 +1022,10 @@ meta = {
                "altLabels": sum(len(c["a"]) for c in concepts), "enactments": len(enactments),
                "mappings": len(mappings), "roleCaps": len(role_caps), "inherited": len(inherited),
                "actions": len(actions), "releases": len(releases), "grounded": sum(1 for c in concepts if c["pv"] == "g"),
-               "links": n_links, "suggestions": len(suggestions), "unesco": n_unesco},
+               "links": n_links, "suggestions": len(suggestions), "unesco": n_unesco,
+               "ownCrosswalks": n_own, "ownUnesco": sum(1 for c in concepts for x in c.get("xm", [])
+                                                        if x[1].startswith("http://vocabularies.unesco.org/")),
+               "adopted": len(adopted_of)},
     "neighborhoodQuery": neigh_q,
     "changes": changes_meta, "upstream": upstream, "unesco": unesco_meta, "origins": origins,
 }

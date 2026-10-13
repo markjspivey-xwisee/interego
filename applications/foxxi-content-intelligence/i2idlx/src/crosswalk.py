@@ -367,7 +367,7 @@ MAPPINGS = [
     ("anonymous-group", "relatedMatch", FX_XAPI + "Group", 0.70, ST, "I2IDL's concept is the representation of a Group known only by its members; the class is the group itself, of either kind (§5.2.2.1)."),
     ("interaction-activity", "relatedMatch", FX_XAPI + "ActivityDefinition", 0.65, ST, "I2IDL defines it as an Activity Definition with an interaction type (§5.2.2.3) but files it under Activity; related until that is settled."),
     ("xapi-extension", "relatedMatch", FX_XAPI + "Extensions", 0.55, AI, "An extension is one IRI-keyed entry of an extensions map; the class is the map, a node whose properties are the extension IRIs."),
-    # Foxxi's SCORM 2004 and cmi5 ontologies. I2IDL v0.0.80 has no SCORM or cmi5 concept of its own (its SCORM-related
+    # Foxxi's SCORM 2004 and cmi5 ontologies. I2IDL (through v0.0.86) has no SCORM or cmi5 concept of its own (its SCORM-related
     # concepts are the IEEE 1484.11 and 1484.13 standards), so these are the concepts whose referents the classes model.
     ("interaction-activity", "relatedMatch", FX_SCORM_RTE + "Interaction", 0.55, AI, "xAPI defines its interaction types after SCORM 2004's run-time interactions (cmi.interactions), whose recorded responses the class models."),
     ("learning-record", "narrowMatch", FX_SCORM_RTE + "DataModel", 0.60, AI, "SCORM's run-time data for one learner's attempt on a SCO is one machine-readable form of a learning record."),

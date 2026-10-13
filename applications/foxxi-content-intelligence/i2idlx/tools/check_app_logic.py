@@ -60,7 +60,8 @@ other_rows = [l for l in sec("## 2. Other crosswalk candidates").splitlines() if
 change_rows = [l for l in sec("## 4. Change history").splitlines() if l.startswith("| v")]
 todo = [l for l in sec("## 5. Unlinked mentions").splitlines() if l.startswith("- [ ]")]
 n_mentions = sum(l.count("(in the ") for l in todo)
-check(len(unesco_rows) == 13 and len(other_rows) == len(data["mappings"]) - 13,
+n_unesco_open = sum(1 for m in data["mappings"] if m["v"] == "UNESCO Thesaurus")
+check(len(unesco_rows) == n_unesco_open == data["meta"]["counts"]["unesco"] and len(other_rows) == len(data["mappings"]) - n_unesco_open,
       f"editorial packet: {len(unesco_rows)} UNESCO rows and {len(other_rows)} other crosswalk rows")
 check(len(change_rows) == len(data["releases"]) - 1 and n_mentions == len(data["suggestions"]) and len(todo) == len({s["a"] for s in data["suggestions"]}),
       f"editorial packet: {len(change_rows)} release rows, {n_mentions} unlinked mentions as {len(todo)} checklist items")
