@@ -268,7 +268,15 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // before it are Foxxi's rounds since the last pin (the dashboard's Learn, Work and Author pages
 // and its browser bundle, the record's voids and partial reads, what the store kept, session
 // keys, and hosted SCORM packages), and none was removed.
-export const MIN_TEST_MODULES = 482;
+// 482 -> 509, measured on the tree that tripped the allowance: the Foxxi ontology-engineering
+// round's five modules (`each-alignment-is-published-as-a-mapping-set`,
+// `every-ns-document-is-one-graph-in-every-form`, `ns-documents-are-negotiated-by-accept`,
+// `an-enterprise-learner-record-reads-as-rdf`, `the-lrs-admin-reads-its-vocabularies-as-rdf`) used
+// the last of it. The twenty-two before them are the rounds since the last pin (each authoring
+// tool's own export read in its own model, package question banks and typed answers, the base
+// running without verticals, the extension catalog, the deploy and rebuild triggers), and none
+// was removed.
+export const MIN_TEST_MODULES = 509;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

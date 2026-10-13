@@ -1,0 +1,241 @@
+# IEEE LER — Enterprise Learner Record and competency assertion shapes — SHACL shapes — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix foxxi-ieee-ler: <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes> a owl:Ontology ;
+    dct:title "IEEE LER — Enterprise Learner Record and competency assertion shapes — SHACL shapes"@en ;
+    dct:description "SHACL shapes for IEEE LER — Enterprise Learner Record and competency assertion shapes: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by IEEE or ADL. Where this document and the published standard differ, the standard governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). IEEE LER — Enterprise Learner Record and competency assertion shapes — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes/2026.10.0" ;
+    dct:source <https://standards.ieee.org/ieee/2997/10632/> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.0> .
+
+shapes:EnterpriseLearnerRecordShape a sh:NodeShape ;
+    sh:targetClass foxxi-ieee-ler:EnterpriseLearnerRecord ;
+    rdfs:label "Enterprise Learner Record shape"@en ;
+    rdfs:comment "An Enterprise Learner Record as Foxxi assembles it (IEEE P2997): identified by an http(s) IRI; conforming to IEEE P2997; saying whether its subject is a human or an agent; held for one subject, identified by a DID or URL; with an organisation path and at least one indication of where its raw data is kept."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:pattern "^https?://" ;
+    sh:message "Enterprise Learner Record shape: the node must be identified by an IRI matching ^https?:// — the record is identified by an http(s) IRI"@en ;
+    sh:property shapes:EnterpriseLearnerRecordShape-conformsTo ,
+        shapes:EnterpriseLearnerRecordShape-subjectKind ,
+        shapes:EnterpriseLearnerRecordShape-learner-did ,
+        shapes:EnterpriseLearnerRecordShape-organizationPath ,
+        shapes:EnterpriseLearnerRecordShape-provenance-rawDataLocations ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes> .
+
+shapes:EnterpriseLearnerRecordShape-conformsTo a sh:PropertyShape ;
+    sh:path dct:conformsTo ;
+    sh:name "conformsTo" ;
+    sh:description "conforms to IEEE P2997"@en ;
+    sh:message "Enterprise Learner Record shape — conformsTo: at least 1 value, including https://standards.ieee.org/ieee/2997/10632/ — conforms to IEEE P2997"@en ;
+    sh:minCount 1 ;
+    sh:hasValue <https://standards.ieee.org/ieee/2997/10632/> .
+
+shapes:EnterpriseLearnerRecordShape-subjectKind a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:subjectKind ;
+    sh:name "subjectKind" ;
+    sh:description "a human learner or performer, or an AI agent"@en ;
+    sh:message "Enterprise Learner Record shape — subjectKind: exactly 1 value, of type xsd:string, one of \"human\", \"agent\" — a human learner or performer, or an AI agent"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( "human" "agent" ) .
+
+shapes:EnterpriseLearnerRecordShape-learner-did a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:aboutLearner ;
+    sh:name "learner.did" ;
+    sh:description "the subject the record is about, identified by a DID or URL"@en ;
+    sh:message "Enterprise Learner Record shape — learner.did: exactly 1 value, an IRI — the subject the record is about, identified by a DID or URL"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:EnterpriseLearnerRecordShape-organizationPath a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:organizationPath ;
+    sh:name "organizationPath" ;
+    sh:description "the organisation path (P2997), each step checked by the organisation path step shape"@en ;
+    sh:message "Enterprise Learner Record shape — organizationPath: at least 1 value — the organisation path (P2997), each step checked by the organisation path step shape"@en ;
+    sh:minCount 1 .
+
+shapes:EnterpriseLearnerRecordShape-provenance-rawDataLocations a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:rawDataLocation ;
+    sh:name "provenance.rawDataLocations" ;
+    sh:description "where each class of raw data is kept (P2997)"@en ;
+    sh:message "Enterprise Learner Record shape — provenance.rawDataLocations: at least 1 value — where each class of raw data is kept (P2997)"@en ;
+    sh:minCount 1 .
+
+shapes:CompetencyAssertionShape a sh:NodeShape ;
+    sh:targetClass foxxi-ieee-ler:CompetencyAssertion ;
+    rdfs:label "Competency Assertion shape"@en ;
+    rdfs:comment "A competency assertion: about one subject and one competency, at one proficiency level identified by an http(s) IRI, with a success confidence from 0 to 1, produced by a named roll-up rule, attributed to the agent making it, backed by at least one evidence IRI, with an evidence basis and a modal status."@en ;
+    sh:property shapes:CompetencyAssertionShape-subject ,
+        shapes:CompetencyAssertionShape-aboutCompetency ,
+        shapes:CompetencyAssertionShape-proficiencyLevel ,
+        shapes:CompetencyAssertionShape-confidence ,
+        shapes:CompetencyAssertionShape-rolledUpBy ,
+        shapes:CompetencyAssertionShape-assertingAgent ,
+        shapes:CompetencyAssertionShape-evidence ,
+        shapes:CompetencyAssertionShape-basis ,
+        shapes:CompetencyAssertionShape-modalStatus ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes> .
+
+shapes:CompetencyAssertionShape-subject a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:assertionSubject ;
+    sh:name "subject" ;
+    sh:description "the subject the assertion is about, identified by a DID or URL"@en ;
+    sh:message "Competency Assertion shape — subject: exactly 1 value, an IRI — the subject the assertion is about, identified by a DID or URL"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:CompetencyAssertionShape-aboutCompetency a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:aboutCompetency ;
+    sh:name "aboutCompetency" ;
+    sh:description "the competency definition, an http(s) IRI"@en ;
+    sh:message "Competency Assertion shape — aboutCompetency: exactly 1 value, an IRI, matching ^https?:// — the competency definition, an http(s) IRI"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^https?://" .
+
+shapes:CompetencyAssertionShape-proficiencyLevel a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:atProficiency ;
+    sh:name "proficiencyLevel" ;
+    sh:description "the proficiency level, an http(s) IRI from the published framework"@en ;
+    sh:message "Competency Assertion shape — proficiencyLevel: exactly 1 value, an IRI, matching ^https?:// — the proficiency level, an http(s) IRI from the published framework"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^https?://" .
+
+shapes:CompetencyAssertionShape-confidence a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:successConfidence ;
+    sh:name "confidence" ;
+    sh:description "a success confidence from 0 to 1 (the Wilson lower bound on the success rate)"@en ;
+    sh:message "Competency Assertion shape — confidence: exactly 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — a success confidence from 0 to 1 (the Wilson lower bound on the success rate)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:CompetencyAssertionShape-rolledUpBy a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:rolledUpBy ;
+    sh:name "rolledUpBy" ;
+    sh:description "the roll-up rule that produced it, an http(s) IRI"@en ;
+    sh:message "Competency Assertion shape — rolledUpBy: exactly 1 value, an IRI, matching ^https?:// — the roll-up rule that produced it, an http(s) IRI"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^https?://" .
+
+shapes:CompetencyAssertionShape-assertingAgent a sh:PropertyShape ;
+    sh:path prov:wasAttributedTo ;
+    sh:name "assertingAgent" ;
+    sh:description "the agent making the assertion, identified by a DID or URL"@en ;
+    sh:message "Competency Assertion shape — assertingAgent: at least 1 value, an IRI — the agent making the assertion, identified by a DID or URL"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 .
+
+shapes:CompetencyAssertionShape-evidence a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:supportedByEvidence ;
+    sh:name "evidence" ;
+    sh:description "at least one evidence IRI whose SYNTAX is an http(s) URL. Nothing is dereferenced: conformance means the pointer is well-formed, not that it resolves or that a reader may fetch it. An LRS statement URL here answers 401 anonymously, so the assembler also lists the pod-side artifact the performance cited, which does not."@en ;
+    sh:message "Competency Assertion shape — evidence: at least 1 value, an IRI, matching ^https?:// — at least one evidence IRI whose SYNTAX is an http(s) URL. Nothing is dereferenced: conformance means the pointer is well-formed, not that it resolves or that a reader may fetch it. An LRS statement URL here answers 401 anonymously, so the assembler also lists the pod-side artifact the performance cited, which does not."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:pattern "^https?://" .
+
+shapes:CompetencyAssertionShape-basis a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:evidenceBasis ;
+    sh:name "basis" ;
+    sh:description "the evidence basis"@en ;
+    sh:message "Competency Assertion shape — basis: exactly 1 value, of type xsd:string, one of \"performance\", \"credential\", \"inferred\" — the evidence basis"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( "performance" "credential" "inferred" ) .
+
+shapes:CompetencyAssertionShape-modalStatus a sh:PropertyShape ;
+    sh:path iep:modalStatus ;
+    sh:name "modalStatus" ;
+    sh:description "Asserted (demonstrated or credentialed) or Hypothetical (inferred)"@en ;
+    sh:message "Competency Assertion shape — modalStatus: exactly 1 value, one of iep:Asserted, iep:Hypothetical — Asserted (demonstrated or credentialed) or Hypothetical (inferred)"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( iep:Asserted iep:Hypothetical ) .
+
+shapes:OrganizationPathStepShape a sh:NodeShape ;
+    sh:targetObjectsOf foxxi-ieee-ler:organizationPath ;
+    rdfs:label "Organization path step shape"@en ;
+    rdfs:comment "A step of an Enterprise Learner Record's organisation path (P2997): one organisation or system, identified by a DID or URL; the role it plays for the record; and its place on the path, counting from 1."@en ;
+    sh:property shapes:OrganizationPathStepShape-id ,
+        shapes:OrganizationPathStepShape-role ,
+        shapes:OrganizationPathStepShape-position ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes> .
+
+shapes:OrganizationPathStepShape-id a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:pathOrganization ;
+    sh:name "id" ;
+    sh:description "the organisation or system, by its DID or URL"@en ;
+    sh:message "Organization path step shape — id: exactly 1 value, an IRI — the organisation or system, by its DID or URL"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:OrganizationPathStepShape-role a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:pathRole ;
+    sh:name "role" ;
+    sh:description "the role it plays for this record"@en ;
+    sh:message "Organization path step shape — role: exactly 1 value, of type xsd:string — the role it plays for this record"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:OrganizationPathStepShape-position a sh:PropertyShape ;
+    sh:path foxxi-ieee-ler:pathPosition ;
+    sh:name "position" ;
+    sh:description "its place on the path, from 1"@en ;
+    sh:message "Organization path step shape — position: exactly 1 value, of type xsd:positiveInteger, at least 1 — its place on the path, from 1"@en ;
+    sh:datatype xsd:positiveInteger ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:minInclusive 1 .
+
+shapes:EvidenceShape a sh:NodeShape ;
+    sh:targetClass foxxi-ieee-ler:Evidence ;
+    rdfs:label "Evidence shape"@en ;
+    rdfs:comment "An evidence node is identified by an IRI locating the raw record."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "Evidence shape: the node must be identified by an IRI — the evidence location"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes> .

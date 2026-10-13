@@ -34,10 +34,17 @@
  * A `composed` / `view` / `role` term is rendered with explicit
  * `iep:constructedFrom` triples pointing at the substrate primitives it
  * emerges from — the "emergent composable" claim made machine-readable.
- * Cross-standard identity (TLA Competency ≡ IEEE CompetencyDefinition ≡
- * CaSS Competency) is asserted with `owl:equivalentClass` /
- * `skos:exactMatch`, so the two families compose into one federated
- * layer rather than sitting side by side.
+ * The two families are aligned to each other, and to CaSS, CTDL-ASN and
+ * 1EdTech, with `skos:closeMatch` — an editorial alignment between two
+ * standards' notions. This used to be `owl:equivalentClass`, which tells a
+ * reasoner the two classes have the SAME instances: a logical claim no one
+ * is in a position to make about two independently maintained standards,
+ * and one OOPS! rightly flagged as critical.
+ *
+ * Each family is published as one OWL 2 DL graph (`semOntologyGraph`) and
+ * every representation — Turtle, RDF/XML, N-Triples, JSON-LD, HTML — is a
+ * serialization of that graph (see ns/rdf.ts), with the shared document
+ * header from ns/catalog.ts and MIREOT declarations of every external term.
  *
  * Layer: L3 vertical vocabulary. Two scoped namespaces OUTSIDE the
  * protocol IRI space; the bridge serves both as dereferenceable linked
@@ -51,9 +58,15 @@ import { fileURLToPath } from 'node:url';
 // `performanceProficiencyBands`. These are the substrate's own reader, used the substrate's way.
 import { parseTrig, findSubjectsOfType, readStringValue, readIriValue } from '@interego/core';
 import type { IRI } from '@interego/core';
-// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
-// scattered-subsets drift that this import ends.
-import { escapeTurtleLiteral } from '@interego/core';
+// Every serialization goes through the one graph model and its serializers (ns/rdf.ts), which
+// escape with the substrate's single Turtle-literal escaper.
+import {
+  Graph, iri, en, str, typed, RDF, RDFS, OWL, XSD, SKOS, DCT, toTurtle, toJsonLd, toNTriples, toRdfXml, parseTurtle,
+  type NamedNode, type BlankNode, type JsonLdTerm,
+} from './ns/rdf.js';
+import { ALL_PREFIXES, addHeader, declareExternalTerms, foxxiPrefix, versionIri, alternates, type DocMeta } from './ns/catalog.js';
+import { renderOntologyHtml } from './ns/html.js';
+import { mappingSetIri } from './ns/sssom.js';
 
 // ── Namespace bases ──────────────────────────────────────────────────
 
@@ -64,6 +77,14 @@ export const LER_NS = `${BRIDGE}/ns/ieee-ler#`;
 export const TLA_NS = `${BRIDGE}/ns/adl-tla#`;
 export const LER_DOC = LER_NS.replace(/#$/, '');
 export const TLA_DOC = TLA_NS.replace(/#$/, '');
+/** IEEE P2997, the Enterprise Learner Record project: its IEEE SA project page, the one IRI every
+ *  Foxxi document and record uses for it (https://standards.ieee.org/ieee/2997/ only redirects to a
+ *  search). An active PAR, not a published standard. */
+export const P2997 = 'https://standards.ieee.org/ieee/2997/10632/';
+
+/** Each document's version (YYYY.MM.PATCH; see ns/catalog.ts). */
+const LER_VERSION = '2026.10.0';
+const TLA_VERSION = '2026.10.0';
 
 /** Interego substrate prefixes the two ontologies compose over. */
 const PREFIXES: Record<string, string> = {
@@ -100,20 +121,26 @@ export interface SemTerm {
   construction: Construction;
   subClassOf?: readonly string[];
   subPropertyOf?: readonly string[];
-  domain?: string;
-  range?: string;
-  /** Cross-standard `owl:equivalentClass` targets (prefixed or absolute). */
-  equivalentClass?: readonly string[];
-  /** `skos:exactMatch` (strict identity) to external published standards. */
-  exactMatch?: readonly string[];
-  /** `skos:closeMatch` (close, non-identical alignment) to external published standards. */
+  /** One class, or several — written as their `owl:unionOf`. */
+  domain?: string | readonly string[];
+  /** One class or datatype, or several (an `owl:unionOf`). For a datatype property with `oneOf`,
+   *  omit it: the range is the enumeration. */
+  range?: string | readonly string[];
+  /** A datatype property whose values are a closed list of strings: its range is
+   *  `[ a rdfs:Datatype ; owl:oneOf ( … ) ]`. */
+  oneOf?: readonly string[];
+  /** Declared `owl:FunctionalProperty` — the subject has at most one value. */
+  functional?: boolean;
+  /** `skos:closeMatch` — an alignment to a term of ANOTHER standard (or of the sibling Foxxi
+   *  ontology) that names a closely related notion. Never `owl:equivalentClass`: two independently
+   *  maintained standards naming similar things does not make their instances interchangeable, and
+   *  a reasoner would merge both class extensions on the strength of an editorial judgement. */
   closeMatch?: readonly string[];
   /** Substrate primitives a composed/view/role term emerges from. */
   constructedFrom?: readonly string[];
-  /** For `Concept` terms — the ConceptScheme it is `skos:inScheme`. */
-  inScheme?: string;
-  /** For `Concept` terms — the `skos:Collection` (MOM conformance level). */
-  memberOf?: string;
+  /** owl:deprecated: kept so what cites it still resolves, and dct:isReplacedBy the term to use. */
+  deprecated?: boolean;
+  replacedBy?: string;
 }
 
 // ── IEEE LER family ──────────────────────────────────────────────────
@@ -124,67 +151,69 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'CompetencyDefinition', kind: 'Class', construction: 'minted',
     label: 'Competency Definition',
     definition: 'A formal, context-neutral representation of one competency — a skill, knowledge, ability, attitude, habit of practice, or learning outcome — with a stable identity, a human-readable description, and optional structured statements.',
-    source: 'IEEE 1484.20.1-2007 (RCD); IEEE 1484.20.3-2022 (SCD)',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions); IEEE 1484.20.1-2007 (Reusable Competency Definitions, now inactive-reserved)',
     subClassOf: ['skos:Concept'],
-    equivalentClass: ['tla:Competency'],
-    exactMatch: ['https://schema.cassproject.org/0.4/Competency', 'http://purl.org/ctdlasn/terms/Competency'],
+    // closeMatch, not exactMatch: skos:exactMatch is transitive, so asserting it to both CaSS and
+    // CTDL-ASN would also assert that those two vocabularies' classes are interchangeable — a
+    // claim neither publisher makes.
+    closeMatch: ['tla:Competency', 'https://schema.cassproject.org/0.4/Competency', 'https://purl.org/ctdlasn/terms/Competency'],
   },
   {
     family: 'ler', name: 'CompetencyStatement', kind: 'Class', construction: 'minted',
     label: 'Competency Statement',
     definition: 'A single structured assertion within a competency definition — statement text, an optional controlled-vocabulary token, and an identifier. RCD\'s decomposition of a competency into its constituent claims.',
-    source: 'IEEE 1484.20.1-2007 (RCD) §definition/statement',
+    source: 'IEEE 1484.20.1-2007 (Reusable Competency Definitions), definition statements',
   },
   {
     family: 'ler', name: 'CompetencyFramework', kind: 'Class', construction: 'minted',
     label: 'Competency Framework',
     definition: 'A structured collection of competency definitions and the typed relationships between them — a blueprint of excellent performance.',
-    source: 'IEEE 1484.20.3-2022 (SCD)',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
     subClassOf: ['skos:ConceptScheme'],
-    equivalentClass: ['tla:CompetencyFramework'],
+    closeMatch: ['tla:CompetencyFramework'],
   },
   {
     family: 'ler', name: 'CompetencyRelationship', kind: 'Class', construction: 'minted',
     label: 'Competency Relationship',
-    definition: 'A typed, directed edge between two competency definitions — narrows, broadens, requires, is-enabled-by, is-equivalent-to.',
-    source: 'IEEE 1484.20.3-2022 (SCD)',
-    equivalentClass: ['tla:Relation'],
+    definition: 'A typed, directed edge between two competency definitions — for example narrows, broadens, requires, is-enabled-by, is-equivalent-to — reified so that the edge itself can carry a type and provenance.',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
+    closeMatch: ['tla:Relation'],
   },
   {
     family: 'ler', name: 'ProficiencyLevel', kind: 'Class', construction: 'minted',
     label: 'Proficiency Level',
     definition: 'An ordinal level of mastery a learner may attain on a competency — the scale an assertion is measured against.',
-    source: 'IEEE 1484.20.1 (statementToken); IEEE 1484.20.3 (RubricLevel)',
-    equivalentClass: ['tla:Level'],
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions); CaSS schema 0.4 (Level)',
+    closeMatch: ['tla:Level'],
   },
   {
     family: 'ler', name: 'Rubric', kind: 'Class', construction: 'minted',
     label: 'Rubric',
     definition: 'A structured set of evaluation criteria for assessing attainment of a competency.',
-    source: 'IEEE 1484.20.3-2022 (SCD)',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
   },
   {
     family: 'ler', name: 'RubricCriterion', kind: 'Class', construction: 'minted',
     label: 'Rubric Criterion',
     definition: 'A single dimension being assessed within a rubric.',
-    source: 'IEEE 1484.20.3-2022 (SCD)',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
   },
 
   // ── The Enterprise Learner Record — composed, not a content class ──
   {
     family: 'ler', name: 'EnterpriseLearnerRecord', kind: 'Class', construction: 'composed',
     label: 'Enterprise Learner Record',
-    definition: 'The aggregate, enterprise-level record of one learner. P2997 defines it deliberately as a ledger / registry — it holds indications of where subordinate data lives, not the raw data. It therefore emerges as the union of its record entries, scoped to one learner, carrying provenance — not a monolithic class.',
-    source: 'IEEE P2997 Part 1 (Enterprise Learner Record)',
+    definition: 'The aggregate, enterprise-level record of one learner. The P2997 project describes it as a ledger or registry: it holds indications of where subordinate data lives, not the raw data. It therefore emerges as the union of its record entries, scoped to one learner and carrying provenance — not a monolithic class.',
+    source: 'IEEE P2997 (Enterprise Learner Record) — an active standards project; this term follows its published scope, not a ratified text',
     subClassOf: ['iep:ComposedDescriptor', 'prov:Collection'],
     constructedFrom: ['ler:RecordEntry', 'iep:ProvenanceFacet', 'iep:AgentFacet'],
-    equivalentClass: ['tla:LearnerProfile'],
+    closeMatch: ['tla:LearnerProfile'],
   },
   {
     family: 'ler', name: 'RecordEntry', kind: 'Class', construction: 'composed',
     label: 'Learner Record Entry',
     definition: 'A single record generated by one system about one learner with respect to one activity, linked to its performance evidence and aligned competency or credential. It IS an attestation — an agent asserting a claim about a learner — so it composes the substrate\'s attestation primitive rather than minting a new shape.',
-    source: 'IEEE P2997 Part 1; ADL ELRR conceptual data model',
+    source: 'IEEE P2997 (Enterprise Learner Record); ADL ELRR conceptual data model',
     subClassOf: ['amta:Attestation'],
     constructedFrom: ['amta:Attestation', 'iep:ProvenanceFacet'],
   },
@@ -192,15 +221,16 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'LearnerProfile', kind: 'Class', construction: 'composed',
     label: 'Learner Profile',
     definition: 'A per-learner container assembling demographics, competency and credential history, aptitudes, preferences, goals and career trajectory. A view-bearing aggregation keyed by a resolved learner identity.',
-    source: 'IEEE P2997; ADL TLA Learner Management',
+    source: 'IEEE P2997 (Enterprise Learner Record); ADL TLA Learner Profile pillar',
     subClassOf: ['iep:ComposedDescriptor'],
     constructedFrom: ['ler:EnterpriseLearnerRecord', 'iep:AgentFacet'],
+    closeMatch: ['tla:LearnerProfile'],
   },
   {
     family: 'ler', name: 'Transcript', kind: 'Class', construction: 'view',
     label: 'Transcript',
     definition: 'The learner\'s permanent academic record — courses, dates, grades, degrees. A projection (query view) over the verified record entries of an Enterprise Learner Record, optionally re-packaged as a Comprehensive Learner Record credential.',
-    source: 'IEEE P2997; 1EdTech CLR 2.0',
+    source: 'IEEE P2997 (Enterprise Learner Record); 1EdTech Comprehensive Learner Record 2.0',
     constructedFrom: ['ler:EnterpriseLearnerRecord', 'iep:CompositionOperator'],
     // closeMatch (NOT exactMatch): a Transcript is a PROJECTION over the ELR, closely related to
     // — but not identical with — a CLR 2.0 credential, so we do not assert strict identity.
@@ -214,32 +244,32 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'CompetencyAssertion', kind: 'Class', construction: 'composed',
     label: 'Competency Assertion',
     definition: 'A claim, made by one party, that a learner can perform a competency at a stated proficiency level, with some confidence, backed by evidence. The same shape as a CaSS Assertion and a MOM `asserted` statement — one attestation primitive, three trust tiers.',
-    source: 'IEEE P2997; ADL ELRR (Assertion)',
+    source: 'IEEE P2997 (Enterprise Learner Record); ADL ELRR (Assertion)',
     subClassOf: ['amta:Attestation'],
     constructedFrom: ['amta:Attestation', 'iep:assertingAgent', 'iep:modalStatus'],
-    equivalentClass: ['tla:Assertion'],
+    closeMatch: ['tla:Assertion', 'https://schema.cassproject.org/0.4/Assertion'],
   },
   {
     family: 'ler', name: 'Evidence', kind: 'Class', construction: 'composed',
     label: 'Evidence',
     definition: 'Anything presented in support of an assertion of competency. Reuses the substrate\'s provenance entity — evidence is a prov:Entity that an assertion was derived from.',
-    source: 'IEEE P2997; ADL ELRR (Evidence)',
+    source: 'IEEE P2997 (Enterprise Learner Record); ADL ELRR (Evidence)',
     subClassOf: ['prov:Entity'],
     constructedFrom: ['prov:Entity', 'iep:provenanceChain'],
   },
   {
     family: 'ler', name: 'PerformanceRecord', kind: 'Class', construction: 'composed',
     label: 'Performance Record',
-    definition: 'The learner-performance evidence underpinning a record entry. In practice an xAPI Statement (or a pointer to one in an LRS) — so it composes the substrate\'s event-record primitive directly.',
-    source: 'IEEE P2997 (references IEEE 9274.1 xAPI)',
-    subClassOf: ['hela:Statement'],
+    definition: 'The record of a learner\'s performance that underpins a record entry: in practice an xAPI Statement held in an LRS, or a pointer to one. The RECORD is evidence (a prov:Entity); the performance it records is the activity the substrate models as a hela:Statement, so this class is built from that primitive rather than being one.',
+    source: 'IEEE P2997 (Enterprise Learner Record), referencing IEEE 9274.1.1-2023 (xAPI 2.0)',
+    subClassOf: ['ler:Evidence'],
     constructedFrom: ['hela:Statement', 'hela:Trace'],
   },
   {
     family: 'ler', name: 'Credential', kind: 'Class', construction: 'composed',
     label: 'Credential',
-    definition: 'An attestation of qualification, competence or authority issued by an authority. A signed attestation — i.e. a W3C Verifiable Credential whose subject carries one or more competency claims. Open Badges 3.0 and CLR 2.0 credentials are subtypes.',
-    source: 'IEEE P2997; IEEE 1484.2-2024 (an LER IS a Verifiable Credential)',
+    definition: 'An attestation of qualification, competence or authority issued by an authority, expressed as a W3C Verifiable Credential whose subject carries one or more claims. Open Badges 3.0 and CLR 2.0 credentials are kinds of it.',
+    source: 'IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); W3C Verifiable Credentials Data Model 2.0',
     subClassOf: ['vc:VerifiableCredential', 'amta:Attestation'],
     constructedFrom: ['vc:VerifiableCredential', 'iep:verifiableCredential'],
     // closeMatch (NOT exactMatch): OB3 OpenBadgeCredential is a SUBTYPE of this broader Credential
@@ -252,7 +282,7 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'Endorsement', kind: 'Class', construction: 'composed',
     label: 'Endorsement',
     definition: 'An attestation whose subject is itself another attestation, credential, or issuer — a party vouching for a claim or for a claimant. The attestation primitive applied reflexively.',
-    source: 'IEEE P2997; Open Badges 3.0 EndorsementCredential',
+    source: 'IEEE P2997 (Enterprise Learner Record); 1EdTech Open Badges 3.0 (EndorsementCredential)',
     subClassOf: ['amta:Attestation'],
     constructedFrom: ['amta:Attestation'],
   },
@@ -270,8 +300,14 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'LearnerIdentityBinding', kind: 'Class', construction: 'composed',
     label: 'Learner Identity Binding',
     definition: 'The resolution of a learner\'s many local account names and UUIDs across systems to one enterprise identity. Not a content class — a set of identity-equivalence assertions with provenance.',
-    source: 'ADL ELRR §federated Identity Management',
+    source: 'ADL ELRR (federated identity management)',
     constructedFrom: ['iep:AgentFacet', 'iep:provenanceChain'],
+  },
+  {
+    family: 'ler', name: 'RawDataLocation', kind: 'Class', construction: 'minted',
+    label: 'Raw Data Location',
+    definition: 'An indication of where one class of the raw data behind an Enterprise Learner Record is kept — the subject\'s own pod, an LRS, a credential descriptor — so a reader can go to the source instead of trusting the summary.',
+    source: 'IEEE P2997 (Enterprise Learner Record: raw data location)',
   },
 
   // ── Roles (a generic Agent in a role — not a subclass of Person) ───
@@ -279,7 +315,7 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'Learner', kind: 'Class', construction: 'role',
     label: 'Learner',
     definition: 'The natural person who is the subject of a learner record and, in the LER ecosystem, curates and controls access to it. A role a prov:Agent plays — the same person is an Issuer in another record.',
-    source: 'IEEE P2997; IEEE 1484.2-2024 (LER Holder)',
+    source: 'IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)',
     subClassOf: ['prov:Agent'],
     constructedFrom: ['prov:Agent', 'iep:agentRole'],
   },
@@ -287,7 +323,7 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'Issuer', kind: 'Class', construction: 'role',
     label: 'Issuer',
     definition: 'The authority — an education, training, work-based provider or evaluator — that confers a credential or makes an assertion about a learner. A role of a prov:Agent.',
-    source: 'IEEE P2997; IEEE 1484.2-2024 (LER Awarder)',
+    source: 'IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); W3C Verifiable Credentials Data Model 2.0 (issuer)',
     subClassOf: ['prov:Agent'],
     constructedFrom: ['prov:Agent', 'iep:agentRole'],
   },
@@ -295,7 +331,7 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'Endorser', kind: 'Class', construction: 'role',
     label: 'Endorser',
     definition: 'A party that vouches for an issuer or for a credential. A role of a prov:Agent.',
-    source: 'IEEE P2997; IEEE 1484.2-2024',
+    source: 'IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); 1EdTech Open Badges 3.0 (endorsement)',
     subClassOf: ['prov:Agent'],
     constructedFrom: ['prov:Agent', 'iep:agentRole'],
   },
@@ -303,7 +339,7 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'Verifier', kind: 'Class', construction: 'role',
     label: 'Verifier',
     definition: 'A party — typically an employer — to whom a learner presents records for review. A role of a prov:Agent.',
-    source: 'IEEE 1484.2-2024 (LER Reviewer)',
+    source: 'IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); W3C Verifiable Credentials Data Model 2.0 (verifier)',
     subClassOf: ['prov:Agent'],
     constructedFrom: ['prov:Agent', 'iep:agentRole'],
   },
@@ -321,63 +357,433 @@ const LER_TERMS: readonly SemTerm[] = [
     family: 'ler', name: 'recordEntry', kind: 'ObjectProperty', construction: 'minted',
     label: 'record entry',
     definition: 'Relates an Enterprise Learner Record to one of the entries it aggregates.',
-    source: 'IEEE P2997 Part 1',
+    source: 'IEEE P2997 (Enterprise Learner Record)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'ler:RecordEntry',
     subPropertyOf: ['prov:hadMember'],
   },
   {
     family: 'ler', name: 'holder', kind: 'ObjectProperty', construction: 'minted',
     label: 'holder',
-    definition: 'Relates an Enterprise Learner Record or credential to the Learner it is about.',
-    source: 'IEEE P2997; IEEE 1484.2-2024',
-    range: 'ler:Learner',
+    definition: 'Relates an Enterprise Learner Record or a credential to the one Learner it is about. Deprecated: the name reads as a Verifiable Credential\'s holder, a different relation (who presents a credential, not whom it is about); about learner replaces it.',
+    deprecated: true, replacedBy: 'ler:aboutLearner',
+    source: 'IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)',
+    domain: ['ler:EnterpriseLearnerRecord', 'ler:Credential'], range: 'ler:Learner',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'aboutLearner', kind: 'ObjectProperty', construction: 'minted',
+    label: 'about learner',
+    definition: 'Relates an Enterprise Learner Record or a credential to the one Learner it is about — its subject, not whoever holds or presents it.',
+    source: 'IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)',
+    domain: ['ler:EnterpriseLearnerRecord', 'ler:Credential'], range: 'ler:Learner',
+    functional: true,
   },
   {
     family: 'ler', name: 'aboutCompetency', kind: 'ObjectProperty', construction: 'minted',
     label: 'about competency',
-    definition: 'Relates a competency assertion to the competency definition it claims mastery of.',
-    source: 'IEEE P2997 (Assertion)',
+    definition: 'Relates a competency assertion to the one competency definition it claims mastery of.',
+    source: 'IEEE P2997 (Enterprise Learner Record); ADL ELRR (Assertion)',
     domain: 'ler:CompetencyAssertion', range: 'ler:CompetencyDefinition',
+    functional: true,
   },
   {
     family: 'ler', name: 'atProficiency', kind: 'ObjectProperty', construction: 'minted',
     label: 'at proficiency',
-    definition: 'Relates a competency assertion to the proficiency level claimed.',
+    definition: 'Relates a competency assertion to the one proficiency level it claims.',
     source: 'ADL ELRR (Proficiency)',
     domain: 'ler:CompetencyAssertion', range: 'ler:ProficiencyLevel',
+    functional: true,
   },
   {
     family: 'ler', name: 'supportedByEvidence', kind: 'ObjectProperty', construction: 'minted',
     label: 'supported by evidence',
     definition: 'Relates an assertion or record entry to the evidence presented in support of it.',
-    source: 'IEEE P2997 (Evidence)',
-    range: 'ler:Evidence',
+    source: 'IEEE P2997 (Enterprise Learner Record); ADL ELRR (Evidence)',
+    domain: ['ler:CompetencyAssertion', 'ler:RecordEntry'], range: 'ler:Evidence',
     subPropertyOf: ['prov:wasDerivedFrom'],
   },
   {
     family: 'ler', name: 'issuedBy', kind: 'ObjectProperty', construction: 'minted',
     label: 'issued by',
     definition: 'Relates a credential or assertion to the Issuer that conferred it.',
-    source: 'IEEE P2997',
-    range: 'ler:Issuer',
+    source: 'IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); W3C Verifiable Credentials Data Model 2.0 (issuer)',
+    domain: ['ler:Credential', 'ler:CompetencyAssertion'], range: 'ler:Issuer',
+    subPropertyOf: ['prov:wasAttributedTo'],
   },
   {
     family: 'ler', name: 'frameworkMember', kind: 'ObjectProperty', construction: 'minted',
     label: 'framework member',
     definition: 'Relates a competency framework to a competency definition it contains.',
-    source: 'IEEE 1484.20.3-2022',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
     domain: 'ler:CompetencyFramework', range: 'ler:CompetencyDefinition',
+  },
+  {
+    family: 'ler', name: 'hasStatement', kind: 'ObjectProperty', construction: 'minted',
+    label: 'has statement',
+    definition: 'Relates a competency definition to one of the structured statements it is decomposed into.',
+    source: 'IEEE 1484.20.1-2007 (Reusable Competency Definitions), definition statements',
+    domain: 'ler:CompetencyDefinition', range: 'ler:CompetencyStatement',
+  },
+  {
+    family: 'ler', name: 'fromCompetency', kind: 'ObjectProperty', construction: 'minted',
+    label: 'from competency',
+    definition: 'Relates a competency relationship to the competency definition at which the directed edge starts.',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
+    domain: 'ler:CompetencyRelationship', range: 'ler:CompetencyDefinition',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'toCompetency', kind: 'ObjectProperty', construction: 'minted',
+    label: 'to competency',
+    definition: 'Relates a competency relationship to the competency definition at which the directed edge ends.',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
+    domain: 'ler:CompetencyRelationship', range: 'ler:CompetencyDefinition',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'hasCriterion', kind: 'ObjectProperty', construction: 'minted',
+    label: 'has criterion',
+    definition: 'Relates a rubric to one of the criteria it assesses.',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
+    domain: 'ler:Rubric', range: 'ler:RubricCriterion',
+  },
+  {
+    family: 'ler', name: 'criterionFor', kind: 'ObjectProperty', construction: 'minted',
+    label: 'criterion for',
+    definition: 'Relates a rubric criterion to the competency definition whose attainment it assesses.',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
+    domain: 'ler:RubricCriterion', range: 'ler:CompetencyDefinition',
+  },
+  {
+    family: 'ler', name: 'criterionLevel', kind: 'ObjectProperty', construction: 'minted',
+    label: 'criterion level',
+    definition: 'Relates a rubric criterion to a proficiency level it distinguishes.',
+    source: 'IEEE 1484.20.3-2022 (Shareable Competency Definitions)',
+    domain: 'ler:RubricCriterion', range: 'ler:ProficiencyLevel',
+  },
+  {
+    family: 'ler', name: 'bindsLearner', kind: 'ObjectProperty', construction: 'minted',
+    label: 'binds learner',
+    definition: 'Relates a learner identity binding to the one learner whose local identities it resolves.',
+    source: 'ADL ELRR (federated identity management)',
+    domain: 'ler:LearnerIdentityBinding', range: 'ler:Learner',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'transcriptOf', kind: 'ObjectProperty', construction: 'minted',
+    label: 'transcript of',
+    definition: 'Relates a transcript to the one Enterprise Learner Record it is a projection of.',
+    source: 'IEEE P2997 (Enterprise Learner Record)',
+    domain: 'ler:Transcript', range: 'ler:EnterpriseLearnerRecord',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'accredits', kind: 'ObjectProperty', construction: 'minted',
+    label: 'accredits',
+    definition: 'Relates an accreditation to what it certifies as acceptable: a learning source, or a learning activity (identified by its metadata descriptor).',
+    source: 'ADL ELRR (Accreditation)',
+    domain: 'ler:Accreditation', range: ['ler:LearningSource', 'tla:LearningActivityMetadata'],
+  },
+  {
+    family: 'ler', name: 'endorses', kind: 'ObjectProperty', construction: 'minted',
+    label: 'endorses',
+    definition: 'Relates an endorsement to what it vouches for: another attestation (a credential or an assertion) or an issuer.',
+    source: '1EdTech Open Badges 3.0 (EndorsementCredential)',
+    domain: 'ler:Endorsement', range: ['amta:Attestation', 'ler:Issuer'],
+  },
+  {
+    family: 'ler', name: 'endorser', kind: 'ObjectProperty', construction: 'minted',
+    label: 'endorsed by',
+    definition: 'Relates an endorsement to the party that makes it.',
+    source: '1EdTech Open Badges 3.0 (EndorsementCredential)',
+    domain: 'ler:Endorsement', range: 'ler:Endorser',
+    subPropertyOf: ['prov:wasAttributedTo'],
   },
   {
     family: 'ler', name: 'recordStatus', kind: 'DatatypeProperty', construction: 'minted',
     label: 'record status',
-    definition: 'The status of a learner record entry within the ledger — one of success, partial, failure.',
+    definition: 'The status of a learner record entry within the ledger — exactly one of success, partial, failure.',
     source: 'ADL ELRR (Status)',
+    domain: 'ler:RecordEntry', oneOf: ['success', 'partial', 'failure'],
+    functional: true,
+  },
+
+  // ── The Enterprise Learner Record as Foxxi assembles it ────────────
+  // What the ELR's JSON-LD context (ELR_CONTEXT_URL) maps its fields to, and what the published
+  // EnterpriseLearnerRecordShape and CompetencyAssertionShape constrain.
+  {
+    family: 'ler', name: 'subjectKind', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'subject kind',
+    definition: 'Whether the subject of an Enterprise Learner Record is a human learner or performer, or an AI agent. The record has the same shape either way.',
+    source: 'Foxxi extension to IEEE P2997 (whose records describe people)',
+    domain: 'ler:EnterpriseLearnerRecord', oneOf: ['human', 'agent'],
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'organizationPath', kind: 'ObjectProperty', construction: 'minted',
+    label: 'organization path',
+    definition: 'Relates an Enterprise Learner Record to a step on its organisation path: an organisation or system — one that issued a credential in it, holds an LRS it draws on, or is the tenant it was assembled for — in the role it plays for this record, at its place on the path.',
+    source: 'IEEE P2997 (Enterprise Learner Record: organisation path)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'ler:OrganizationPathStep',
+  },
+  {
+    family: 'ler', name: 'OrganizationPathStep', kind: 'Class', construction: 'minted',
+    label: 'Organization Path Step',
+    definition: 'One step of an Enterprise Learner Record\'s organisation path: which organisation or system, the role it plays for this record, and its place on the path. A node of its own, because the role belongs to the step, not to the organisation: the tenant of one record is the issuer in another.',
+    source: 'IEEE P2997 (Enterprise Learner Record: organisation path); W3C Defining N-ary Relations on the Semantic Web (pattern 1)',
+  },
+  {
+    family: 'ler', name: 'pathOrganization', kind: 'ObjectProperty', construction: 'minted',
+    label: 'path organization',
+    definition: 'The organisation or system at a step of an organisation path, identified by its DID or URL.',
+    source: 'IEEE P2997 (Enterprise Learner Record: organisation path)',
+    domain: 'ler:OrganizationPathStep', range: 'prov:Agent',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'pathRole', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'path role',
+    definition: 'The role the organisation or system at a step of an organisation path plays for the record: the tenant it was assembled for, the authority of an LRS it draws on, the issuer of a credential in it.',
+    source: 'IEEE P2997 (Enterprise Learner Record: organisation path)',
+    domain: 'ler:OrganizationPathStep', range: 'xsd:string',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'pathPosition', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'path position',
+    definition: 'The place of a step on its organisation path, counting from 1: the order the path is listed in, which RDF keeps no other way.',
+    source: 'IEEE P2997 (Enterprise Learner Record: organisation path)',
+    domain: 'ler:OrganizationPathStep', range: 'xsd:positiveInteger',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'rawDataLocation', kind: 'ObjectProperty', construction: 'minted',
+    label: 'raw data location',
+    definition: 'Relates an Enterprise Learner Record to an indication of where one class of its raw data is kept.',
+    source: 'IEEE P2997 (Enterprise Learner Record: raw data location)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'ler:RawDataLocation',
+  },
+  {
+    family: 'ler', name: 'rawDataKind', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'raw data kind',
+    definition: 'Which class of raw data a location holds: the subject\'s own pod, an LRS, or a credential descriptor.',
+    source: 'IEEE P2997 (Enterprise Learner Record: raw data location)',
+    domain: 'ler:RawDataLocation', oneOf: ['subject-pod', 'lrs', 'credential-descriptor'],
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'dataLocation', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'data location',
+    definition: 'The URL where a class of raw data, or the raw record behind an entry, is kept.',
+    source: 'IEEE P2997 (Enterprise Learner Record: raw data location)',
+    domain: ['ler:RawDataLocation', 'ler:RecordEntry'], range: 'xsd:anyURI',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'hasAssertion', kind: 'ObjectProperty', construction: 'minted',
+    label: 'has assertion',
+    definition: 'Relates an Enterprise Learner Record to a competency assertion it carries about its subject.',
+    source: 'IEEE P2997 (Enterprise Learner Record: competencies)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'ler:CompetencyAssertion',
+  },
+  {
+    family: 'ler', name: 'assertionSubject', kind: 'ObjectProperty', construction: 'minted',
+    label: 'assertion subject',
+    definition: 'Relates a competency assertion to the one person or agent it is about — who need not be the agent making it.',
+    source: 'IEEE P2997 (Enterprise Learner Record); ADL ELRR (Assertion)',
+    domain: 'ler:CompetencyAssertion', range: 'prov:Agent',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'successConfidence', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'success confidence',
+    definition: 'How confident the asserting party is that the subject succeeds at the competency: a number from 0 to 1, in Foxxi the Wilson lower bound on the observed success rate. A decimal, or a double, which is what JSON-LD makes of a JSON number.',
+    source: 'ADL ELRR (Assertion: confidence); CaSS schema 0.4 (Assertion: confidence)',
+    domain: 'ler:CompetencyAssertion', range: ['xsd:decimal', 'xsd:double'],
+    functional: true,
+    closeMatch: ['tla:confidence'],
+  },
+  {
+    family: 'ler', name: 'rolledUpBy', kind: 'ObjectProperty', construction: 'minted',
+    label: 'rolled up by',
+    definition: 'Relates a competency assertion to the published roll-up rule whose evaluation produced its proficiency level and confidence.',
+    source: 'CaSS schema 0.4 (RollupRule); ADL TLA (competency roll-up)',
+    domain: 'ler:CompetencyAssertion', range: 'tla:RollupRule',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'evidenceBasis', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'evidence basis',
+    definition: 'The strongest class of evidence a competency assertion rests on: observed performance, a held credential, or inference from learning experiences.',
+    source: 'Foxxi (the three evidence classes an Enterprise Learner Record ranks)',
+    domain: 'ler:CompetencyAssertion', oneOf: ['performance', 'credential', 'inferred'],
+    functional: true,
+  },
+  // ── What a record entry says about the statement it was projected from ──
+  // An entry is not the xAPI statement: it is a claim the record makes about one, so it has its own
+  // terms. With the xAPI ontology's verb and timestamp, whose domain is a Statement, every entry
+  // read as an xAPI Statement — and the xAPI shapes, which select what has a verb, took it for one
+  // with no actor and no object.
+  {
+    family: 'ler', name: 'aboutActivity', kind: 'ObjectProperty', construction: 'minted',
+    label: 'about activity',
+    definition: 'Relates a record entry to the learning or work activity it is about — the object of the statement it was projected from — identified by an IRI.',
+    source: 'IEEE P2997 (Enterprise Learner Record); IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.3',
     domain: 'ler:RecordEntry',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'activityType', kind: 'ObjectProperty', construction: 'minted',
+    label: 'activity type',
+    definition: 'Relates a record entry to the type of the activity it is about (the activity\'s xAPI activity type).',
+    source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.3 (Activity Definition: type)',
+    domain: 'ler:RecordEntry',
+  },
+  {
+    family: 'ler', name: 'entryVerb', kind: 'ObjectProperty', construction: 'minted',
+    label: 'entry verb',
+    definition: 'Relates a record entry to the xAPI verb of the statement it was projected from, identified by the verb\'s IRI.',
+    source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.2',
+    domain: 'ler:RecordEntry',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'occurredAt', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'occurred at',
+    definition: 'When what a record entry records happened: the timestamp of the statement it was projected from.',
+    source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.7 (Timestamps)',
+    domain: 'ler:RecordEntry', range: 'xsd:dateTime',
+    functional: true,
+  },
+  {
+    family: 'ler', name: 'succeeded', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'succeeded',
+    definition: 'Whether the performance a record entry records succeeded: the result.success of the statement it was projected from.',
+    source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.4 (Result: success)',
+    domain: 'ler:RecordEntry', range: 'xsd:boolean',
+    functional: true,
   },
 ];
 
+/** The JSON-LD context of a Foxxi Enterprise Learner Record, used after the W3C VC 2.0 context —
+ *  at the version of the vocabulary it maps a record into. A record cites its context by URL, and
+ *  what the record means must not change under it, so each version has its own context, which
+ *  never changes; /ns/ieee-ler/context answers with the current one. */
+export const ELR_CONTEXT_URL = `${LER_DOC}/context/${LER_VERSION}`;
+
+/**
+ * The JSON-LD 1.1 context that gives a Foxxi Enterprise Learner Record its RDF reading.
+ *
+ * ★ AN ELR IS JSON-LD, SO ITS CONTEXT MUST BE ONE. The record used to list the IEEE P2997 web page
+ * as its second context; a JSON-LD processor fetches that, finds HTML, and stops, so no RDF reading
+ * of any record existed and the shapes published for records constrained data nothing could
+ * produce. This context maps the record's fields to this vocabulary (and to dct:, prov: and iep:
+ * where those already name the thing) and is listed after the W3C VC 2.0
+ * context, whose protected terms (id, type, name, description) it leaves alone — except inside a
+ * competency assertion, where `id` names the competency and `assertionId` the assertion node (a
+ * property-scoped context may do that; JSON-LD 1.1 §4.1.11).
+ *
+ * ★ EVERY FIELD THAT STATES A FACT HAS A TERM. Who the record is about, the organisations on its
+ * path, each entry's activity, verb, time and outcome, each assertion's competency, level,
+ * confidence, rule, agent and evidence, and where the raw data is kept: each is read into this
+ * vocabulary, an IRI as an IRI. A review found the record's activity and task IRIs, an assertion's
+ * type and a performance's success read as issuer-dependent terms (strings, for the IRIs), and an
+ * entry's verb and time read with the xAPI ontology's terms — whose domain made every entry an xAPI
+ * Statement, and every entry a Statement the xAPI shapes refused. Entries have their own terms now.
+ * What is left without a term is presentation derived from the rest — the display names of things
+ * named by IRI (verbDisplay, activityName, taskName, label, proficiencyLabel, proficiencyRank,
+ * conformsToLabel) and the summary counts — which the record lists VC 2.0's undefined-terms context
+ * last to read as issuer-dependent IRIs (VC 2.0 §5.2), not to drop.
+ *
+ * ★ AN ORGANISATION PATH IS A LIST OF STEPS. Each step is a node of its own (ler:OrganizationPathStep,
+ * the W3C n-ary relation pattern): its `id` names the organisation (ler:pathOrganization), and its
+ * role and position belong to the step. Read the other way — `id` as the step's own IRI — a role
+ * became a claim about the organisation's DID everywhere ("did:web:tenant is a tenant"), and the
+ * order of the path was lost.
+ *
+ * ★ AN ENTRY'S `id` IS ITS STATEMENT'S UUID, NOT AN IRI. Each experience and performance record
+ * carries the id of the xAPI statement it was projected from — a bare UUID, which JSON-LD reads as
+ * a relative IRI reference (a verifier in safe mode refuses the record; one that is not resolves it
+ * against wherever the record was fetched from). Inside those two lists `id` is the entry's
+ * dct:identifier, a literal, and the entry is a node of its own. And the links projection the
+ * bridge serves by default replaces the two lists with hydra:Collection references, so `hydra:`
+ * is Hydra's namespace here rather than an unknown IRI scheme.
+ */
+/** The context as it is served and archived: indented JSON, one trailing newline. */
+export const renderElrContext = (): string => `${JSON.stringify(elrJsonLdContext(), null, 2)}\n`;
+
+export function elrJsonLdContext(): Record<string, unknown> {
+  /** A record entry (an experience or a performance record): what it says about the statement it was
+   *  projected from. `id` is that statement's UUID — a literal (above). */
+  const entry = {
+    id: 'dct:identifier',
+    verb: { '@id': 'ler:entryVerb', '@type': '@id' },
+    timestamp: { '@id': 'ler:occurredAt', '@type': 'xsd:dateTime' },
+    activityId: { '@id': 'ler:aboutActivity', '@type': '@id' },
+    taskId: { '@id': 'ler:aboutActivity', '@type': '@id' },
+    taskType: { '@id': 'ler:activityType', '@type': '@id' },
+    success: 'ler:succeeded',
+  };
+  return {
+    '@context': {
+      '@version': 1.1,
+      '@protected': true,
+      ler: LER_NS, tla: TLA_NS,
+      iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+      prov: 'http://www.w3.org/ns/prov#', dct: 'http://purl.org/dc/terms/',
+      xsd: 'http://www.w3.org/2001/XMLSchema#', hydra: 'http://www.w3.org/ns/hydra/core#',
+      EnterpriseLearnerRecord: 'ler:EnterpriseLearnerRecord',
+      CompetencyAssertion: 'ler:CompetencyAssertion',
+      Asserted: 'iep:Asserted',
+      Hypothetical: 'iep:Hypothetical',
+      conformsTo: { '@id': 'dct:conformsTo', '@type': '@id' },
+      // prov:generatedAtTime, not dct:created: the Foxxi documents use dct:created as an annotation
+      // property in their headers, and OWL 2 DL cannot read one IRI as two kinds of property.
+      assembledAt: { '@id': 'prov:generatedAtTime', '@type': 'xsd:dateTime' },
+      subjectKind: 'ler:subjectKind',
+      learner: { '@id': 'ler:aboutLearner', '@context': { did: '@id' } },
+      organizationPath: {
+        '@id': 'ler:organizationPath', '@container': '@set',
+        '@context': {
+          id: { '@id': 'ler:pathOrganization', '@type': '@id' },
+          role: 'ler:pathRole',
+          position: { '@id': 'ler:pathPosition', '@type': 'xsd:positiveInteger' },
+        },
+      },
+      provenance: '@nest',
+      rawDataLocations: {
+        '@id': 'ler:rawDataLocation', '@nest': 'provenance', '@container': '@set',
+        '@context': { kind: 'ler:rawDataKind', location: { '@id': 'ler:dataLocation', '@type': 'xsd:anyURI' } },
+      },
+      experiences: { '@id': 'ler:recordEntry', '@container': '@set', '@context': entry },
+      performanceRecords: { '@id': 'ler:recordEntry', '@container': '@set', '@context': entry },
+      rawDataLocation: { '@id': 'ler:dataLocation', '@type': 'xsd:anyURI' },
+      modalStatus: { '@id': 'iep:modalStatus', '@type': '@vocab' },
+      competencies: {
+        '@id': 'ler:hasAssertion', '@container': '@set',
+        '@context': {
+          assertionId: '@id',
+          // The assertion's type again, for readers of the JSON that do not read @type: the same
+          // rdf:type triple. (An alias of @type would collide with the @type the entry also has.)
+          assertionType: { '@id': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', '@type': '@id' },
+          id: { '@id': 'ler:aboutCompetency', '@type': '@id' },
+          aboutCompetency: { '@id': 'ler:aboutCompetency', '@type': '@id' },
+          subject: { '@id': 'ler:assertionSubject', '@type': '@id' },
+          proficiencyLevel: { '@id': 'ler:atProficiency', '@type': '@id' },
+          confidence: 'ler:successConfidence',
+          rolledUpBy: { '@id': 'ler:rolledUpBy', '@type': '@id' },
+          assertingAgent: { '@id': 'prov:wasAttributedTo', '@type': '@id' },
+          evidence: { '@id': 'ler:supportedByEvidence', '@type': '@id', '@container': '@set' },
+          basis: 'ler:evidenceBasis',
+        },
+      },
+    },
+  };
+}
+
 // ── ADL TLA family ───────────────────────────────────────────────────
+
+const CASS = 'https://schema.cassproject.org/0.4/';
 
 const TLA_TERMS: readonly SemTerm[] = [
   // ── Competency pillar (CaSS model) ─────────────────────────────────
@@ -385,53 +791,62 @@ const TLA_TERMS: readonly SemTerm[] = [
     family: 'tla', name: 'Competency', kind: 'Class', construction: 'minted',
     label: 'Competency',
     definition: 'A skill, knowledge, ability, trait, or combination required to perform a task or job — the common currency that gives the four TLA data pillars a shared semantics.',
-    source: 'ADL TLA Competency pillar; CaSS schema 0.4',
+    source: 'ADL TLA Competency pillar; CaSS schema 0.4 (Competency)',
     subClassOf: ['skos:Concept'],
-    equivalentClass: ['ler:CompetencyDefinition'],
-    exactMatch: ['https://schema.cassproject.org/0.4/Competency'],
+    closeMatch: ['ler:CompetencyDefinition', `${CASS}Competency`],
   },
   {
     family: 'tla', name: 'CompetencyFramework', kind: 'Class', construction: 'minted',
     label: 'Competency Framework',
     definition: 'A structured, directed graph of competencies with typed relations, levels and roll-up rules.',
-    source: 'ADL TLA; CaSS schema 0.4 (Framework)',
+    source: 'ADL TLA Competency pillar; CaSS schema 0.4 (Framework)',
     subClassOf: ['skos:ConceptScheme'],
-    equivalentClass: ['ler:CompetencyFramework'],
+    closeMatch: ['ler:CompetencyFramework', `${CASS}Framework`],
   },
   {
     family: 'tla', name: 'Relation', kind: 'Class', construction: 'minted',
     label: 'Competency Relation',
     definition: 'A typed edge between two competencies — narrows, broadens, requires, is-related-to, is-equivalent-to — with an optional validity window.',
     source: 'CaSS schema 0.4 (Relation)',
-    equivalentClass: ['ler:CompetencyRelationship'],
+    closeMatch: ['ler:CompetencyRelationship', `${CASS}Relation`],
   },
   {
     family: 'tla', name: 'Level', kind: 'Class', construction: 'minted',
-    label: 'Proficiency Level',
+    // CaSS's word for it; "Proficiency Level" is the IEEE LER class it closely matches, and two
+    // classes of one document's import closure should not share a label.
+    label: 'Competency Level',
     definition: 'A named proficiency level or assessment criterion attached to a competency.',
     source: 'CaSS schema 0.4 (Level)',
-    equivalentClass: ['ler:ProficiencyLevel'],
+    closeMatch: ['ler:ProficiencyLevel', `${CASS}Level`],
+  },
+  {
+    family: 'tla', name: 'ProficiencyScale', kind: 'Class', construction: 'minted',
+    label: 'Proficiency Scale',
+    definition: 'A published, ordered scale of proficiency levels that competency assertions are measured against — a scheme of levels, not of competencies.',
+    source: 'CaSS schema 0.4 (Level); IEEE 1484.20.3-2022 (proficiency scale)',
+    subClassOf: ['skos:ConceptScheme'],
   },
   {
     family: 'tla', name: 'RollupRule', kind: 'Class', construction: 'minted',
     label: 'Roll-up Rule',
     definition: 'A rule for deriving a competency\'s attainment state from the states of its sub-competencies — the competency-graph analogue of cmi5 move-on logic.',
     source: 'CaSS schema 0.4 (RollupRule)',
+    closeMatch: [`${CASS}RollupRule`],
   },
   {
     family: 'tla', name: 'MoveOnRule', kind: 'Class', construction: 'minted',
     label: 'Move-On Rule',
     definition: 'The criterion (Passed, Completed, CompletedAndPassed, CompletedOrPassed, NotApplicable) that decides whether a learner has satisfied an activity well enough to advance. TLA generalises cmi5 move-on into its Control Loop 2.',
-    source: 'cmi5; ADL TLA Control Loops',
+    source: 'cmi5 (Quartz) §13.1.4 (AU moveOn); ADL TLA control loops',
   },
   {
     family: 'tla', name: 'Assertion', kind: 'Class', construction: 'composed',
     label: 'Competency Assertion',
-    definition: 'A CaSS assertion: a declaration by one party that a subject can perform a competency at a level, with a confidence in [-1,1], over a timespan, backed by evidence. The same attestation primitive as an IEEE record entry — confidence and evidence are facets, not new shapes.',
+    definition: 'A CaSS assertion: a declaration by one party that a subject can perform a competency at a level, with a confidence, over a timespan, backed by evidence. The same attestation primitive as an IEEE record entry — confidence and evidence are facets, not new shapes.',
     source: 'CaSS schema 0.4 (Assertion); MOM `asserted` verb',
     subClassOf: ['amta:Attestation'],
     constructedFrom: ['amta:Attestation', 'amta:CompetenceRating', 'iep:modalStatus'],
-    equivalentClass: ['ler:CompetencyAssertion'],
+    closeMatch: ['ler:CompetencyAssertion', `${CASS}Assertion`],
   },
 
   // ── Learning-activity-metadata pillar ──────────────────────────────
@@ -439,7 +854,7 @@ const TLA_TERMS: readonly SemTerm[] = [
     family: 'tla', name: 'LearningActivityMetadata', kind: 'Class', construction: 'composed',
     label: 'Learning Activity Metadata',
     definition: 'A typed metadata descriptor of a learning resource — course, section, activity or content object. The substrate\'s resource-descriptor primitive specialised for learning resources.',
-    source: 'IEEE P2881 Learning Activity Metadata (extends IEEE 1484.12.1 LOM)',
+    source: 'IEEE 2881-2025 (Standard for Learning Metadata Terms), the outcome of the P2881 learning-activity-metadata project, which builds on IEEE 1484.12.1 (LOM)',
     subClassOf: ['iep:ContextDescriptor'],
     constructedFrom: ['iep:ContextDescriptor', 'iep:SemioticFacet'],
   },
@@ -464,40 +879,50 @@ const TLA_TERMS: readonly SemTerm[] = [
     family: 'tla', name: 'MasterObjectModel', kind: 'Class', construction: 'composed',
     label: 'Master Object Model',
     definition: 'TLA\'s xAPI profile (https://w3id.org/xapi/tla): the MOM verb set (organised in this vocabulary into five thematic levels — our own pedagogical grouping, not ADL-numbered conformance tiers), 11 activity types, three learner-state machines, and a set of context extensions. Every MOM record is an xAPI Statement.',
-    source: 'ADL Master Object Model (MOM_Spec.md)',
+    source: 'ADL Master Object Model (MOM) specification',
     subClassOf: ['iep:ContextDescriptor'],
     constructedFrom: ['hela:Statement', 'hela:Verb'],
   },
   {
     family: 'tla', name: 'LearnerProfile', kind: 'Class', construction: 'composed',
-    label: 'Learner Profile / Enterprise Learner Record',
-    definition: 'Each learner\'s aggregate competency level, credentials, aptitudes, preferences, goals and career trajectory. The TLA pillar that the IEEE P2997 study group grew from — equivalent to the IEEE Enterprise Learner Record.',
+    label: 'Learner Profile',
+    definition: 'Each learner\'s aggregate competency level, credentials, aptitudes, preferences, goals and career trajectory. The TLA pillar from which the IEEE P2997 Enterprise Learner Record work grew, and the counterpart of that record.',
     source: 'ADL TLA Learner Profile pillar; ADL ELRR',
     subClassOf: ['iep:ComposedDescriptor'],
     constructedFrom: ['hela:Statement', 'iep:AgentFacet'],
-    equivalentClass: ['ler:EnterpriseLearnerRecord'],
+    closeMatch: ['ler:EnterpriseLearnerRecord', 'ler:LearnerProfile'],
   },
 
   // ── The three federated LRS tiers — VIEWS, not three data stores ───
+  {
+    family: 'tla', name: 'FederatedLRSTier', kind: 'Class', construction: 'view',
+    label: 'Federated LRS Tier',
+    definition: 'One tier of the TLA federated LRS layer: a partition of the xAPI statement stream selected by verb set, trust tier and signature. A view over the statements, not a separate store.',
+    source: 'ADL TLA federated LRS layer',
+    constructedFrom: ['hela:Statement', 'iep:CompositionOperator'],
+  },
   {
     family: 'tla', name: 'NoisyLRS', kind: 'Class', construction: 'view',
     label: 'Noisy LRS',
     definition: 'The tier holding every raw xAPI statement, with data ownership retained by the activity owner. A view over the statement set — the unfiltered partition.',
     source: 'ADL TLA federated LRS layer',
+    subClassOf: ['tla:FederatedLRSTier'],
     constructedFrom: ['hela:Statement', 'hela:Trace'],
   },
   {
     family: 'tla', name: 'TransactionalLRS', kind: 'Class', construction: 'view',
     label: 'Transactional LRS',
-    definition: 'The tier holding only the normalised MOM roll-up verbs — the evidence base for competency inference. A restriction view over the statement set, partitioned by verb-set.',
+    definition: 'The tier holding only the normalised MOM roll-up verbs — the evidence base for competency inference. A restriction view over the statement set, partitioned by verb set.',
     source: 'ADL TLA federated LRS layer',
+    subClassOf: ['tla:FederatedLRSTier'],
     constructedFrom: ['hela:Statement', 'hela:Verb', 'iep:CompositionOperator'],
   },
   {
     family: 'tla', name: 'AuthoritativeLRS', kind: 'Class', construction: 'view',
     label: 'Authoritative LRS',
-    definition: 'The tier holding only digitally-signed competency-assertion and career verbs, access-restricted. A restriction view partitioned by verb-set, trust tier and signature.',
+    definition: 'The tier holding only digitally-signed competency-assertion and career verbs, access-restricted. A restriction view partitioned by verb set, trust tier and signature.',
     source: 'ADL TLA federated LRS layer',
+    subClassOf: ['tla:FederatedLRSTier'],
     constructedFrom: ['hela:Statement', 'iep:TrustFacet', 'iep:CompositionOperator'],
   },
 
@@ -506,7 +931,7 @@ const TLA_TERMS: readonly SemTerm[] = [
     family: 'tla', name: 'LearnerState', kind: 'Class', construction: 'view',
     label: 'Learner State',
     definition: 'A learner\'s current state — the materialised projection of the latest MOM statement per state dimension. A function of the event log, not stored vocabulary.',
-    source: 'ADL TLA / MOM learner-state machines',
+    source: 'ADL MOM learner-state machines',
     constructedFrom: ['hela:Statement', 'iep:TemporalFacet', 'iep:supersedes'],
   },
   {
@@ -537,9 +962,9 @@ const TLA_TERMS: readonly SemTerm[] = [
   // ── TLA services (roles / components) ──────────────────────────────
   {
     family: 'tla', name: 'CompetencyManagementService', kind: 'Class', construction: 'role',
-    label: 'Competency Management Service (CaSS)',
-    definition: 'The service that reads MOM statements from the Transactional LRS, joins actor to learner and object to activity-metadata-to-competency, estimates proficiency and emits signed assertions.',
-    source: 'ADL TLA Competency Management (CaSS)',
+    label: 'Competency Management Service',
+    definition: 'The service (CaSS, in the reference implementation) that reads MOM statements from the Transactional LRS, joins actor to learner and object to activity-metadata-to-competency, estimates proficiency and emits signed assertions.',
+    source: 'ADL TLA competency management (CaSS)',
     subClassOf: ['iep:Affordance'],
     constructedFrom: ['iep:Affordance'],
   },
@@ -556,37 +981,93 @@ const TLA_TERMS: readonly SemTerm[] = [
   {
     family: 'tla', name: 'aboutCompetency', kind: 'ObjectProperty', construction: 'minted',
     label: 'about competency',
-    definition: 'Relates a CaSS assertion to the competency it asserts.',
-    source: 'CaSS schema 0.4',
+    definition: 'Relates a CaSS assertion to the one competency it asserts.',
+    source: 'CaSS schema 0.4 (Assertion)',
     domain: 'tla:Assertion', range: 'tla:Competency',
+    functional: true,
   },
   {
     family: 'tla', name: 'confidence', kind: 'DatatypeProperty', construction: 'minted',
     label: 'confidence',
-    definition: 'The asserting party\'s confidence in a competency assertion, a decimal in [-1, 1].',
-    source: 'CaSS schema 0.4 (Assertion.confidence); MOM context extension',
-    domain: 'tla:Assertion',
+    definition: 'The asserting party\'s confidence in a competency assertion, a decimal.',
+    source: 'CaSS schema 0.4 (Assertion); MOM confidence context extension',
+    domain: 'tla:Assertion', range: 'xsd:decimal',
+    functional: true,
   },
   {
     family: 'tla', name: 'decayFunction', kind: 'DatatypeProperty', construction: 'minted',
     label: 'decay function',
-    definition: 'A function describing how the confidence of a competency assertion decays over time.',
-    source: 'CaSS schema 0.4 (Assertion.decayFunction)',
-    domain: 'tla:Assertion',
+    definition: 'An expression describing how the confidence of a competency assertion decays over time.',
+    source: 'CaSS schema 0.4 (Assertion)',
+    domain: 'tla:Assertion', range: 'xsd:string',
+    functional: true,
   },
   {
     family: 'tla', name: 'relationType', kind: 'DatatypeProperty', construction: 'minted',
     label: 'relation type',
-    definition: 'The type of a competency relation — narrows, broadens, requires, isEnabledBy, isEquivalentTo.',
-    source: 'CaSS schema 0.4 (Relation.relationType)',
-    domain: 'tla:Relation',
+    definition: 'The type of a competency relation, as a token — for example narrows, broadens, requires, isEnabledBy, isRelatedTo, isEquivalentTo.',
+    source: 'CaSS schema 0.4 (Relation)',
+    domain: 'tla:Relation', range: 'xsd:string',
+    functional: true,
   },
   {
     family: 'tla', name: 'rollupRule', kind: 'DatatypeProperty', construction: 'minted',
     label: 'roll-up rule expression',
     definition: 'The rule expression a roll-up rule evaluates against sub-competency states.',
-    source: 'CaSS schema 0.4 (RollupRule.rule)',
-    domain: 'tla:RollupRule',
+    source: 'CaSS schema 0.4 (RollupRule)',
+    domain: 'tla:RollupRule', range: 'xsd:string',
+  },
+  {
+    family: 'tla', name: 'onScale', kind: 'ObjectProperty', construction: 'minted',
+    label: 'on scale',
+    definition: 'Relates a roll-up rule to the proficiency scale whose levels it assigns.',
+    source: 'CaSS schema 0.4 (RollupRule, Level)',
+    domain: 'tla:RollupRule', range: 'tla:ProficiencyScale',
+    functional: true,
+  },
+  {
+    family: 'tla', name: 'moveOnCriterion', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'move-on criterion',
+    definition: 'The criterion a move-on rule applies — one of the five values cmi5 defines for an assignable unit\'s moveOn.',
+    source: 'cmi5 (Quartz) §13.1.4 (AU moveOn)',
+    domain: 'tla:MoveOnRule', oneOf: ['Passed', 'Completed', 'CompletedAndPassed', 'CompletedOrPassed', 'NotApplicable'],
+    functional: true,
+  },
+  {
+    family: 'tla', name: 'governsActivity', kind: 'ObjectProperty', construction: 'minted',
+    label: 'governs activity',
+    definition: 'Relates a move-on rule to the learning activity (identified by its metadata descriptor) whose satisfaction it decides.',
+    source: 'cmi5 (Quartz) §13.1.4 (AU moveOn); ADL TLA control loops',
+    domain: 'tla:MoveOnRule', range: 'tla:LearningActivityMetadata',
+  },
+  {
+    family: 'tla', name: 'indexes', kind: 'ObjectProperty', construction: 'minted',
+    label: 'indexes',
+    definition: 'Relates an experience index or an enterprise course catalog to a learning-activity metadata descriptor it federates.',
+    source: 'ADL TLA Experience Index (XI); ADL TLA Enterprise Course Catalog (ECC)',
+    domain: ['tla:ExperienceIndex', 'tla:EnterpriseCourseCatalog'], range: 'tla:LearningActivityMetadata',
+  },
+  {
+    family: 'tla', name: 'admitsVerb', kind: 'ObjectProperty', construction: 'minted',
+    label: 'admits verb',
+    definition: 'Relates a federated LRS tier to a MOM verb whose statements the tier admits — the verb set that defines the partition.',
+    source: 'ADL TLA federated LRS layer',
+    domain: 'tla:FederatedLRSTier', range: 'skos:Concept',
+  },
+  {
+    family: 'tla', name: 'stateOf', kind: 'ObjectProperty', construction: 'minted',
+    label: 'state of',
+    definition: 'Relates a learner state to the one learner whose state it is.',
+    source: 'ADL MOM learner-state machines',
+    domain: 'tla:LearnerState', range: 'ler:Learner',
+    functional: true,
+  },
+  {
+    family: 'tla', name: 'projectedFrom', kind: 'ObjectProperty', construction: 'minted',
+    label: 'projected from',
+    definition: 'Relates a learner state to a MOM statement it is the projection of: the latest statement in its state dimension.',
+    source: 'ADL MOM learner-state machines',
+    domain: 'tla:LearnerState', range: 'hela:Statement',
   },
 ];
 
@@ -630,6 +1111,103 @@ const MOM_EXTENSIONS: readonly MomConcept[] = [
 
 const MOM_CONCEPTS: readonly MomConcept[] = [...MOM_VERBS, ...MOM_ACTIVITY_TYPES, ...MOM_EXTENSIONS];
 
+/**
+ * What each MOM concept records — this vocabulary's own one-line summaries, in plain words. The MOM
+ * specification is authoritative; these exist so that every published concept carries a definition
+ * a reader can act on, rather than a bare token.
+ */
+const MOM_DEFINITIONS: Readonly<Record<string, string>> = {
+  // Level 1 — completion and certification
+  certified: 'The learner was awarded a certification attesting to an attained competency or a completed programme.',
+  completed: 'The learner finished the activity.',
+  passed: 'The learner met the activity\'s success criterion, such as a passing score.',
+  failed: 'The learner did not meet the activity\'s success criterion.',
+  // Level 2 — session lifecycle (cmi5-aligned)
+  launched: 'The activity was launched for the learner: the start of a session, before the content reports that it is running.',
+  initialized: 'The launched content began reporting for the session.',
+  attended: 'The learner was present for a scheduled, instructor-led or live activity.',
+  experienced: 'The learner viewed, read, watched, listened to or otherwise took in the content.',
+  suspended: 'The session was paused, with the intention of resuming it later.',
+  resumed: 'A suspended session was continued.',
+  terminated: 'The session ended normally; no further statements are expected for it.',
+  abandoned: 'The session ended abnormally, without a terminated statement — for example a closed window or a lost connection.',
+  scored: 'A score was recorded for the learner\'s performance on the activity.',
+  mastered: 'The learner demonstrated mastery of the activity\'s content.',
+  registered: 'The learner was enrolled in, or registered for, the activity.',
+  waived: 'The activity\'s requirement was determined to be met by means other than its move-on criteria, and was waived.',
+  satisfied: 'The learner met the move-on criteria of the activity, or of the block that contains it.',
+  // Level 3 — competency assertions
+  assessed: 'The learner\'s competency was assessed, by an instrument or an evaluator.',
+  contextualized: 'Evidence or an assertion was related to the context — role, task or conditions — in which it was produced or applies.',
+  located: 'Evidence or a resource relevant to the learner\'s competency record was found and associated with it.',
+  asserted: 'A party asserted that the learner holds a competency at a level, with a confidence.',
+  validated: 'An assertion or a piece of evidence was checked and confirmed as valid.',
+  inferred: 'A competency state was inferred from other evidence rather than observed directly.',
+  qualified: 'The learner was determined to be qualified for a role, job or duty.',
+  verified: 'A credential or an assertion was verified as authentic.',
+  conferred: 'A credential, rank or award was formally granted to the learner.',
+  // Level 4 — adaptive learning paths and goal management
+  recommended: 'An activity or a path was recommended to the learner.',
+  prioritized: 'Goals or activities were ordered by priority for the learner.',
+  organized: 'Activities were arranged into a structured sequence or plan for the learner.',
+  projected: 'A future competency state or completion was forecast for the learner.',
+  planned: 'An activity or a goal was placed on the learner\'s plan.',
+  deselected: 'An activity previously selected or recommended was removed from the learner\'s plan.',
+  requested: 'An activity was requested, by the learner or on the learner\'s behalf.',
+  approved: 'A request for an activity was approved.',
+  augmented: 'An existing plan or path was supplemented with further activities.',
+  explored: 'The learner browsed or investigated the available activities or options.',
+  clarified: 'A goal, a requirement or an instruction was clarified for the learner.',
+  directed: 'The learner was directed — assigned by an authority — to an activity.',
+  scheduled: 'An activity was scheduled for the learner at a stated time.',
+  // Level 5 — career and human capital
+  recruited: 'The individual was recruited into the organization.',
+  appraised: 'The individual\'s performance was formally appraised.',
+  detailed: 'The individual was temporarily assigned (detailed) to another unit, role or duty.',
+  mobilized: 'The individual was mobilized — called to active service or deployed.',
+  employed: 'The individual was employed in a job or position.',
+  schooled: 'The individual was sent to formal schooling or training.',
+  promoted: 'The individual was promoted in grade or rank.',
+  screened: 'The individual was screened against the requirements of a role.',
+  selected: 'The individual was selected for a role, position or opportunity.',
+  transitioned: 'The individual moved between roles, careers or organizations.',
+  released: 'The individual was released from a role, from service or from the organization.',
+  restricted: 'A restriction was placed on the individual\'s eligibility or duties.',
+  voided: 'A previously recorded statement was voided: retracted, as though it had not been made.',
+  // Activity types
+  'activity-type/activity': 'A learning activity.',
+  'activity-type/assessment': 'An assessment: an instrument that measures performance or competency.',
+  'activity-type/competency': 'A competency, as the object of a statement.',
+  'activity-type/activity_cluster': 'A grouping of related learning activities.',
+  'activity-type/career': 'A career, as the object of career-state statements.',
+  'activity-type/badge': 'A digital badge.',
+  'activity-type/job': 'A job or a position.',
+  'activity-type/credential': 'A credential.',
+  'activity-type/job_duty_gig': 'A job duty, or a short-term assignment (gig).',
+  'activity-type/career_state': 'A state in a learner\'s career trajectory.',
+  'activity-type/rank': 'A rank or a grade.',
+  // Context extensions
+  'extension/learner': 'The learner a statement concerns, where that is not its actor.',
+  'extension/evidence': 'References to the evidence that supports the statement.',
+  'extension/confidence': 'The confidence attached to an assertion.',
+  'extension/instance': 'The particular instance — offering, cohort or occurrence — of an activity.',
+  'extension/due_date': 'The date by which an activity is due.',
+  'extension/location': 'Where the activity takes, or took, place.',
+  'extension/unit_identification_code': 'The unit identification code (UIC) of the organizational unit associated with the learner or the activity.',
+  'extension/permanent_change_of_station': 'A permanent change of station (PCS): the individual\'s relocation to a new duty station.',
+  'extension/restriction': 'A restriction that applies to the statement\'s subject or activity.',
+  'extension/reason': 'The reason for the action the statement records.',
+  'extension/recommendation_order': 'The position of a recommendation in an ordered list of recommendations.',
+  'extension/expiration': 'When the claim, credential or assignment the statement records expires.',
+};
+
+/** The words a MOM concept is published with: its token's words, qualified by what kind of term
+ *  it is where a bare word would collide with a class (`Competency`) or a property (`confidence`). */
+function momLabel(c: MomConcept): string {
+  const words = c.label.replace(/_/g, ' ');
+  return c.scheme === 'activityType' ? `${words} activity type` : c.scheme === 'extension' ? `${words} extension` : words;
+}
+
 /** The canonical xAPI verb IRI a MOM verb skos:closeMatch-es. The cmi5-DEFINED verbs
  *  (satisfied / abandoned / waived) live at w3id.org/xapi/adl/verbs — the SAME authority the
  *  Foxxi xAPI profile declares and emits them at — so the two published surfaces agree; every
@@ -641,7 +1219,7 @@ const CMI5_W3ID_VERBS = new Set(['satisfied', 'abandoned', 'waived']);
 // adlnet.gov/expapi/verbs/<label> asserted an alignment to a URL that 404s (a dressed-404 +
 // everything-is-a-URL violation). Those get NO closeMatch.
 const ADL_CORE_VERBS = new Set(['completed', 'passed', 'failed', 'launched', 'initialized', 'attended', 'experienced', 'suspended', 'resumed', 'terminated', 'mastered', 'registered', 'voided', 'scored']);
-function momVerbCloseMatch(label: string): string | null {
+function momVerbMatch(label: string): string | null {
   if (CMI5_W3ID_VERBS.has(label)) return `https://w3id.org/xapi/adl/verbs/${label}`;
   if (ADL_CORE_VERBS.has(label)) return `http://adlnet.gov/expapi/verbs/${label}`;
   return null;
@@ -906,31 +1484,6 @@ const PROF_FRAMEWORK_SOURCE = 'Dreyfus, S.E. & Dreyfus, H.L. (1980) — A Five-S
 const PROF_ROLLUP_LABEL = 'Production-performance proficiency roll-up rule';
 const PROF_ROLLUP_COMMENT = "Maps a subject's production-performance evidence to a proficiency level in the Foxxi Production-Performance Proficiency Framework, with a confidence. Cited by every performance-basis ler:CompetencyAssertion the ELR emits.";
 
-function renderProficiencyTurtle(): string {
-  const fw = `tla:PerformanceProficiencyFramework a tla:CompetencyFramework , skos:ConceptScheme ;
-    rdfs:label "${esc(PROF_FRAMEWORK_LABEL)}" ;
-    rdfs:comment "${esc(PROF_FRAMEWORK_COMMENT)}" ;
-    dct:source "${esc(PROF_FRAMEWORK_SOURCE)}" ;
-    ler:construction "minted" ;
-    rdfs:isDefinedBy <${TLA_DOC}> .`;
-  const levels = PROFICIENCY_LEVELS.map(l =>
-    `tla:Level${l.name} a tla:Level , ler:ProficiencyLevel , skos:Concept ;
-    rdfs:label "${esc(l.label)}" ;
-    rdfs:comment "${esc(l.comment)}" ;
-    skos:inScheme tla:PerformanceProficiencyFramework ;
-    skos:notation "${l.rank}" ;
-    ler:construction "concept" ;
-    rdfs:isDefinedBy <${TLA_DOC}> .`).join('\n\n');
-  const rule = `tla:PerformanceProficiencyRollupRule a tla:RollupRule ;
-    rdfs:label "${esc(PROF_ROLLUP_LABEL)}" ;
-    rdfs:comment "${esc(PROF_ROLLUP_COMMENT)}" ;
-    tla:rollupRule "${esc(perfRollupRuleText())}" ;
-    skos:inScheme tla:PerformanceProficiencyFramework ;
-    ler:construction "minted" ;
-    rdfs:isDefinedBy <${TLA_DOC}> .`;
-  return `${fw}\n\n${levels}\n\n${rule}`;
-}
-
 // ── Indexes + public accessors ───────────────────────────────────────
 
 const ALL_TERMS: readonly SemTerm[] = [...LER_TERMS, ...TLA_TERMS];
@@ -969,377 +1522,357 @@ export function semLayerStats(): {
   };
 }
 
-// ── Turtle rendering ─────────────────────────────────────────────────
+// ── The two ontologies as graphs ─────────────────────────────────────
 
-function esc(s: string): string {
-  /**
-   * ★★ THIS ONE DID NOT ESCAPE THE NEWLINE — IT REPLACED IT WITH A SPACE.
-   *
-   * That is not an escape, it is a silent CONTENT CHANGE: a value published through this helper
-   * came back different from the one handed in, with nothing recording that it had been altered.
-   * Measured by round-tripping through a parse — the payload did not survive. A carriage return
-   * was not handled at all and still produced unparseable Turtle.
-   *
-   * The core helper escapes rather than rewrites, so the value round-trips losslessly.
-   */
-  return escapeTurtleLiteral(s);
+/** Token prefixes the term data above is written with (`ler:X`, `iep:Y`, …). Output prefixes are
+ *  the catalog's (`foxxi-ieee-ler:`, `foxxi-adl-tla:`, …) — see ns/catalog.ts. */
+const TOKEN_PREFIXES: Record<string, string> = { ...ALL_PREFIXES, ler: LER_NS, tla: TLA_NS, ...PREFIXES };
+function abs(ref: string): string {
+  if (/^https?:\/\//.test(ref)) return ref;
+  const m = /^([a-z][\w-]*):(.+)$/i.exec(ref);
+  const base = m ? TOKEN_PREFIXES[m[1]!] : undefined;
+  if (m && base !== undefined) return base + m[2]!;
+  throw new Error(`ler-tla-vocab: unresolvable term reference ${JSON.stringify(ref)}`);
 }
 
-/** Resolve a possibly-prefixed name to a Turtle term (prefixed or <IRI>). */
-function ttlRef(ref: string): string {
-  if (ref.startsWith('http://') || ref.startsWith('https://')) return `<${ref}>`;
-  return ref; // already prefixed (iep:, prov:, ler:, tla:, skos:, vc:, amta:, hela:)
-}
-
-/** A term as a Turtle CURIE when its local name is a valid PN_LOCAL, else a FULL angle-bracket
- *  IRI. MOM activityType/extension concept names are PATH-STRUCTURED (activity-type/completed,
- *  extension/…) — the '/' is a legal IRI char but ILLEGAL in a prefixed name, so `tla:x/y` made
- *  the whole /ns/adl-tla document unparseable. The full IRI preserves the term's identity. */
-function termCurie(family: string, name: string): string {
-  if (/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(name)) return `${family}:${name}`;
-  const base = PREFIXES[family];
-  return base ? `<${base}${name}>` : `${family}:${name}`;
-}
-
-function prefixHeader(): string {
-  return Object.entries(PREFIXES)
-    .map(([p, iri]) => `@prefix ${p}: <${iri}> .`)
-    .join('\n') + '\n';
-}
-
-function renderTermTurtle(t: SemTerm): string {
-  const self = termCurie(t.family, t.name);
-  const lines: string[] = [];
-  const rdfType = t.kind === 'Class' ? 'owl:Class'
-    : t.kind === 'ObjectProperty' ? 'owl:ObjectProperty'
-    : t.kind === 'DatatypeProperty' ? 'owl:DatatypeProperty'
-    : t.kind === 'Collection' ? 'skos:Collection' : 'skos:Concept';
-  lines.push(`${self} a ${rdfType} ;`);
-  lines.push(`    rdfs:label "${esc(t.label)}" ;`);
-  lines.push(`    rdfs:comment "${esc(t.definition)}" ;`);
-  lines.push(`    dct:source "${esc(t.source)}" ;`);
-  // The emergent-composable facet — machine-readable.
-  lines.push(`    ler:construction "${t.construction}" ;`);
-  for (const sc of t.subClassOf ?? []) lines.push(`    rdfs:subClassOf ${ttlRef(sc)} ;`);
-  for (const sp of t.subPropertyOf ?? []) lines.push(`    rdfs:subPropertyOf ${ttlRef(sp)} ;`);
-  if (t.domain) lines.push(`    rdfs:domain ${ttlRef(t.domain)} ;`);
-  if (t.range) lines.push(`    rdfs:range ${ttlRef(t.range)} ;`);
-  for (const eq of t.equivalentClass ?? []) lines.push(`    owl:equivalentClass ${ttlRef(eq)} ;`);
-  for (const xm of t.exactMatch ?? []) lines.push(`    skos:exactMatch ${ttlRef(xm)} ;`);
-  for (const cm of t.closeMatch ?? []) lines.push(`    skos:closeMatch ${ttlRef(cm)} ;`);
-  // A composed / view / role term names the substrate primitives it
-  // emerges from — the "emergent composable" claim, in RDF.
-  for (const cf of t.constructedFrom ?? []) lines.push(`    iep:constructedFrom ${ttlRef(cf)} ;`);
-  lines.push(`    rdfs:isDefinedBy <${t.family === 'ler' ? LER_DOC : TLA_DOC}> .`);
-  return lines.join('\n');
-}
-
-// Ontology-level title + comment, shared verbatim by the Turtle and the
-// JSON-LD renderers so the two projections of the SAME URL carry an IDENTICAL
-// rdfs:label / rdfs:comment (content-negotiation faithfulness).
-function ontologyMeta(family: 'ler' | 'tla'): { title: string; blurb: string } {
+/** Ontology-level title, abstract and publication record for each family. */
+export function semDocMeta(family: 'ler' | 'tla'): DocMeta {
   return family === 'ler'
     ? {
-        title: 'IEEE Learning & Employment Records — emergent composable ontology',
-        blurb: 'An OWL vocabulary for the IEEE LER family (P2997 Enterprise Learner Record, 1484.20.1 RCD, 1484.20.3 SCD, 1484.2 LER Ecosystems), modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate\'s attestation, event-record, resource-descriptor and aggregation primitives, not new classes.',
+        iri: LER_DOC, ns: LER_NS, prefix: foxxiPrefix('ieee-ler'),
+        title: 'IEEE Learning and Employment Records (LER) — Foxxi composable ontology',
+        description: 'An OWL 2 DL vocabulary for the IEEE learning-and-employment-record family — the IEEE P2997 Enterprise Learner Record (active PAR), IEEE 1484.20.3-2022 Shareable Competency Definitions, IEEE 1484.2-2024 LER Ecosystems and the earlier IEEE 1484.20.1-2007 Reusable Competency Definitions (now inactive-reserved) — modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate\'s attestation, event-record, resource-descriptor and aggregation primitives, not new classes. Each term records how it is built (foxxi-ieee-ler:construction) and from which substrate primitives (iep:constructedFrom).',
+        version: LER_VERSION, created: '2026-05-20', modified: '2026-10-12', issued: '2026-10-12',
+        standards: [
+          { title: 'IEEE P2997 — Standard for Enterprise Learner Record (active PAR)', url: P2997 },
+          { title: 'IEEE 1484.20.3-2022 — Data Model for Shareable Competency Definitions', url: 'https://standards.ieee.org/ieee/1484.20.3/10749/' },
+          { title: 'IEEE 1484.2-2024 — Recommended Practice for Learning and Employment Record (LER) Ecosystems', url: 'https://standards.ieee.org/ieee/1484.2/11164/' },
+          { title: 'IEEE 1484.20.1-2007 — Data Model for Reusable Competency Definitions (inactive-reserved)', url: 'https://standards.ieee.org/ieee/1484.20.1/4012/' },
+        ],
+        bodies: ['IEEE', 'ADL', '1EdTech'],
+        seeAlso: [TLA_DOC, `${LER_DOC}/shapes`, mappingSetIri(LER_DOC), 'https://markjspivey-xwisee.github.io/interego/ns/iep#'],
+        sourceCode: ['applications/foxxi-content-intelligence/src/ler-tla-vocab.ts'],
+        notes: [
+          `Cross-standard alignments to the ADL TLA ontology and to CaSS, CTDL-ASN, Open Badges and CLR are SKOS mapping relations (closeMatch / exactMatch), never owl:equivalentClass: they record that two standards name closely related notions, not that their instances are interchangeable. They are also published as an SSSOM mapping set at ${mappingSetIri(LER_DOC)}.`,
+          'Interego substrate terms (iep:, amta:, hela:) are referenced, not imported: the substrate ontologies are declared here term by term so this document is self-contained OWL 2 DL and loads without network access to them.',
+          `A Foxxi Enterprise Learner Record is JSON-LD read through the W3C VC 2.0 context and the record context published at ${ELR_CONTEXT_URL}, which maps its fields to this vocabulary; the shapes at ${LER_DOC}/shapes constrain that RDF reading.`,
+        ],
       }
     : {
-        title: 'ADL Total Learning Architecture — emergent composable ontology',
-        blurb: 'An OWL vocabulary for the ADL TLA (the four data pillars, the Master Object Model, the CaSS competency model, the federated LRS tiers and the learner-state machines), modelled as compositions over the Interego substrate. The three LRS tiers and the learner-state machines are rendered as views, not stores.',
+        iri: TLA_DOC, ns: TLA_NS, prefix: foxxiPrefix('adl-tla'),
+        title: 'ADL Total Learning Architecture (TLA) — Foxxi composable ontology',
+        description: 'An OWL 2 DL vocabulary for the ADL Total Learning Architecture: the four data pillars (competency, learning-activity metadata, learning performance, learner profile), the Master Object Model (MOM) xAPI vocabulary, the CaSS competency model, the federated LRS tiers and the learner-state machines — modelled as compositions over the Interego substrate. The three LRS tiers and the learner-state machines are views over the statement stream, not stores. Also publishes the Foxxi production-performance proficiency framework (Dreyfus) and the roll-up rule, whose bands are data the evaluator reads.',
+        version: TLA_VERSION, created: '2026-05-20', modified: '2026-10-12', issued: '2026-10-12',
+        standards: [
+          { title: 'ADL Total Learning Architecture (TLA) — reference implementation and service definitions', url: 'https://adlnet.gov/projects/tla/' },
+          { title: 'IEEE 2881-2025 — Standard for Learning Metadata Terms', url: 'https://standards.ieee.org/ieee/2881/11719/' },
+          { title: 'CaSS competency schema 0.4', url: 'https://schema.cassproject.org/0.4/' },
+        ],
+        bodies: ['ADL', 'IEEE', 'the CaSS project'],
+        seeAlso: [LER_DOC, `${LER_DOC}/shapes`, mappingSetIri(TLA_DOC), 'https://markjspivey-xwisee.github.io/interego/ns/iep#'],
+        sourceCode: ['applications/foxxi-content-intelligence/src/ler-tla-vocab.ts', 'docs/ns/adl-tla-proficiency.ttl'],
+        notes: [
+          `Cross-standard alignments to the IEEE LER ontology, CaSS and the ADL xAPI verb registry are SKOS mapping relations, never owl:equivalentClass. They are also published as an SSSOM mapping set at ${mappingSetIri(TLA_DOC)}.`,
+          'The proficiency roll-up rule is DATA: its bands (foxxi-adl-tla:ProficiencyBand) are published here and parsed at runtime from the same triples by the evaluator; the human-readable rule text is generated from them.',
+        ],
       };
 }
 
-// The MOM verb ConceptScheme comment, shared by both projections.
-const MOM_SCHEME_COMMENT = `The ${MOM_VERBS.length} Master Object Model performance verbs, grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb carries skos:closeMatch ONLY when it has a genuinely registered counterpart — the ADL core verbs at adlnet.gov/expapi/verbs and the cmi5 verbs at w3id.org/xapi/adl/verbs; the remaining verbs are coined by this project and assert no external alignment (no closeMatch to a non-existent IRI).`;
+const KIND_TYPE: Record<TermKind, string> = {
+  Class: OWL + 'Class', ObjectProperty: OWL + 'ObjectProperty', DatatypeProperty: OWL + 'DatatypeProperty',
+  Concept: SKOS + 'Concept', Collection: SKOS + 'Collection',
+};
+const IEP_CONSTRUCTED_FROM = 'https://markjspivey-xwisee.github.io/interego/ns/iep#constructedFrom';
+const CONSTRUCTION = `${LER_NS}construction`;
 
-function renderOntologyTurtle(family: 'ler' | 'tla'): string {
-  const terms = family === 'ler' ? LER_TERMS : TLA_TERMS;
-  const doc = family === 'ler' ? LER_DOC : TLA_DOC;
-  const { title, blurb } = ontologyMeta(family);
-  let out = prefixHeader() + '\n';
-  out += `<${doc}> a owl:Ontology ;
-    rdfs:label "${esc(title)}" ;
-    rdfs:comment "${esc(blurb)}" ;
-    owl:imports <${PREFIXES.iep}> .\n\n`;
-  // The annotation property that carries the emergent-composable facet.
-  // Defined once, in the IEEE-LER ontology; the ADL-TLA ontology reuses
-  // it (a dereferencing client follows it back here) — the two ontologies
-  // are one composable layer, so a shared annotation is correct.
-  if (family === 'ler') {
-    out += `ler:construction a owl:AnnotationProperty ;
-    rdfs:label "construction" ;
-    rdfs:comment "How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value)." ;
-    rdfs:isDefinedBy <${LER_DOC}> .\n\n`;
+function addTerm(g: Graph, t: SemTerm, O: NamedNode): void {
+  const S = iri((t.family === 'ler' ? LER_NS : TLA_NS) + t.name);
+  const A = iri(RDF + 'type');
+  g.add(S, A, iri(KIND_TYPE[t.kind]));
+  if (t.functional) g.add(S, A, iri(OWL + 'FunctionalProperty'));
+  // A deprecated term's label begins "obsolete " (the OBO Foundry convention ROBOT checks).
+  g.add(S, iri(RDFS + 'label'), en(t.deprecated ? `obsolete ${t.label}` : t.label));
+  g.add(S, iri(RDFS + 'comment'), en(t.definition));
+  g.add(S, iri(DCT + 'source'), str(t.source));
+  // The emergent-composable facet — machine-readable.
+  g.add(S, iri(CONSTRUCTION), str(t.construction));
+  for (const sc of t.subClassOf ?? []) g.add(S, iri(RDFS + 'subClassOf'), iri(abs(sc)));
+  for (const sp of t.subPropertyOf ?? []) g.add(S, iri(RDFS + 'subPropertyOf'), iri(abs(sp)));
+  // One reference, or the union of several. A datatype property's range is a DATA range
+  // (rdfs:Datatype), never an owl:Class — OWL 2 DL keeps the two strictly apart.
+  const expr = (refs: string | readonly string[], data: boolean): NamedNode | BlankNode => {
+    const list = typeof refs === 'string' ? [refs] : [...refs];
+    if (list.length === 1) return iri(abs(list[0]!));
+    const u = g.bnode();
+    g.add(u, A, iri(data ? RDFS + 'Datatype' : OWL + 'Class'));
+    g.add(u, iri(OWL + 'unionOf'), g.list(list.map(x => iri(abs(x)))));
+    return u;
+  };
+  if (t.domain) g.add(S, iri(RDFS + 'domain'), expr(t.domain, false));
+  if (t.oneOf) {
+    const e = g.bnode();
+    g.add(e, A, iri(RDFS + 'Datatype')).add(e, iri(OWL + 'oneOf'), g.list(t.oneOf.map(v => str(v))));
+    g.add(S, iri(RDFS + 'range'), e);
+  } else if (t.range) {
+    g.add(S, iri(RDFS + 'range'), expr(t.range, t.kind === 'DatatypeProperty'));
   }
-  out += terms.map(renderTermTurtle).join('\n\n');
-  if (family === 'tla') out += '\n\n' + renderMomTurtle() + '\n\n' + renderProficiencyTurtle();
-  return out + '\n';
+  for (const cm of t.closeMatch ?? []) g.add(S, iri(SKOS + 'closeMatch'), iri(abs(cm)));
+  // A composed / view / role term names the substrate primitives it
+  // emerges from — the "emergent composable" claim, in RDF.
+  for (const cf of t.constructedFrom ?? []) g.add(S, iri(IEP_CONSTRUCTED_FROM), iri(abs(cf)));
+  if (t.deprecated) {
+    g.add(S, iri(OWL + 'deprecated'), typed('true', XSD + 'boolean'));
+    if (t.replacedBy) g.add(S, iri(DCT + 'isReplacedBy'), iri(abs(t.replacedBy)));
+  }
+  g.add(S, iri(RDFS + 'isDefinedBy'), O);
 }
 
-function renderMomTurtle(): string {
-  const scheme = `tla:MOMVerbScheme a skos:ConceptScheme ;
-    rdfs:label "MOM performance verb scheme" ;
-    rdfs:comment "${esc(MOM_SCHEME_COMMENT)}" ;
-    rdfs:isDefinedBy <${TLA_DOC}> .`;
-  // skos:member relates a Collection TO its members (domain skos:Collection), so the level
-  // Collection carries its verbs — NOT each verb pointing back at the level (which was inverted).
-  const levels = [1, 2, 3, 4, 5].map(lvl =>
-    `tla:MOMLevel${lvl} a skos:Collection ;
-    rdfs:label "${esc(MOM_LEVEL_LABEL[lvl]!)}" ;
-    skos:inScheme tla:MOMVerbScheme ;
-${MOM_CONCEPTS.filter(c => c.scheme === 'verb' && c.level === lvl).map(c => `    skos:member ${termCurie('tla', c.name)} ;`).join('\n')}
-    rdfs:isDefinedBy <${TLA_DOC}> .`,
-  ).join('\n\n');
-  const concepts = MOM_CONCEPTS.map(c => {
-    const lines = [`${termCurie('tla', c.name)} a skos:Concept ;`];
-    lines.push(`    rdfs:label "${esc(c.label)}" ;`);
-    lines.push(`    ler:construction "concept" ;`);
-    if (c.scheme === 'verb') {
-      lines.push(`    skos:inScheme tla:MOMVerbScheme ;`);
-      const cm = momVerbCloseMatch(c.label);
-      // Only emit closeMatch to a REGISTERED counterpart — a coined MOM verb asserts no alignment
-      // (never a closeMatch to a fabricated adlnet.gov IRI that 404s).
-      if (cm) lines.push(`    skos:closeMatch <${cm}> ;`);
-    }
-    // activityType / extension MOM concepts are project-coined (activity_cluster, job_duty_gig,
-    // career_state, …) — they have no reliably-registered adlnet.gov counterpart, so no
-    // fabricated skos:closeMatch is asserted for them either.
-    lines.push(`    rdfs:isDefinedBy <${TLA_DOC}> .`);
-    return lines.join('\n');
-  }).join('\n\n');
-  return `${scheme}\n\n${levels}\n\n${concepts}`;
-}
-
-// ── JSON-LD rendering ────────────────────────────────────────────────
-
-const JSONLD_CONTEXT: Record<string, unknown> = {
-  rdfs: PREFIXES.rdfs, owl: PREFIXES.owl, skos: PREFIXES.skos, dct: PREFIXES.dct,
-  iep: PREFIXES.iep, prov: PREFIXES.prov, vc: PREFIXES.vc, amta: PREFIXES.amta,
-  hela: PREFIXES.hela, ler: LER_NS, tla: TLA_NS,
-  label: 'rdfs:label', comment: 'rdfs:comment', source: 'dct:source',
-  construction: 'ler:construction',
-  subClassOf: { '@id': 'rdfs:subClassOf', '@type': '@id' },
-  equivalentClass: { '@id': 'owl:equivalentClass', '@type': '@id' },
-  exactMatch: { '@id': 'skos:exactMatch', '@type': '@id' },
-  closeMatch: { '@id': 'skos:closeMatch', '@type': '@id' },
-  domain: { '@id': 'rdfs:domain', '@type': '@id' },
-  range: { '@id': 'rdfs:range', '@type': '@id' },
-  subPropertyOf: { '@id': 'rdfs:subPropertyOf', '@type': '@id' },
-  inScheme: { '@id': 'skos:inScheme', '@type': '@id' },
-  constructedFrom: { '@id': 'iep:constructedFrom', '@type': '@id' },
-  isDefinedBy: { '@id': 'rdfs:isDefinedBy', '@type': '@id' },
-  imports: { '@id': 'owl:imports', '@type': '@id' },
-  member: { '@id': 'skos:member', '@type': '@id' },
+/**
+ * Classes whose extensions cannot overlap, stated so a reasoner can catch a record typed as two
+ * of them. Chosen narrowly: the agent ROLES are deliberately absent (one person is a Learner in
+ * one record and an Issuer in another), as are the attestation kinds a credential can package
+ * (an Open Badge can carry a competency assertion; an endorsement can itself be a credential).
+ */
+const DISJOINT: Readonly<Record<'ler' | 'tla', readonly (readonly string[])[]>> = {
+  ler: [[
+    'ler:CompetencyDefinition', 'ler:CompetencyStatement', 'ler:CompetencyFramework', 'ler:CompetencyRelationship',
+    'ler:ProficiencyLevel', 'ler:Rubric', 'ler:RubricCriterion', 'ler:CompetencyAssertion',
+    'ler:EnterpriseLearnerRecord', 'ler:LearnerIdentityBinding', 'ler:RawDataLocation',
+  ]],
+  tla: [
+    ['tla:Competency', 'tla:CompetencyFramework', 'tla:ProficiencyScale', 'tla:Relation', 'tla:Level', 'tla:RollupRule', 'tla:MoveOnRule',
+      'tla:Assertion', 'tla:ProficiencyBand'],
+    ['tla:NoisyLRS', 'tla:TransactionalLRS', 'tla:AuthoritativeLRS'],
+    ['tla:LearnerActivityState', 'tla:LearnerEventState', 'tla:LearnerCareerState'],
+  ],
 };
 
-function jsonldExpand(ref: string): string {
-  return ref; // JSON-LD keeps the prefixed/absolute form; the context resolves it.
-}
-
-function termJsonLd(t: SemTerm): Record<string, unknown> {
-  const ns = t.family === 'ler' ? LER_NS : TLA_NS;
-  const doc = t.family === 'ler' ? LER_DOC : TLA_DOC;
-  const node: Record<string, unknown> = {
-    '@id': `${ns}${t.name}`,
-    '@type': t.kind === 'Class' ? 'owl:Class'
-      : t.kind === 'ObjectProperty' ? 'owl:ObjectProperty'
-      : t.kind === 'DatatypeProperty' ? 'owl:DatatypeProperty' : 'skos:Concept',
-    label: t.label,
-    comment: t.definition,
-    source: t.source,
-    construction: t.construction,
-    isDefinedBy: doc,
-  };
-  if (t.subClassOf) node.subClassOf = t.subClassOf.map(jsonldExpand);
-  if (t.equivalentClass) node.equivalentClass = t.equivalentClass.map(jsonldExpand);
-  if (t.exactMatch) node.exactMatch = [...t.exactMatch];
-  if (t.closeMatch) node.closeMatch = [...t.closeMatch];
-  // Faithful to the Turtle projection: property terms carry domain/range/subPropertyOf too.
-  if (t.domain) node.domain = jsonldExpand(t.domain);
-  if (t.range) node.range = jsonldExpand(t.range);
-  if (t.subPropertyOf) node.subPropertyOf = t.subPropertyOf.map(jsonldExpand);
-  if (t.constructedFrom) node.constructedFrom = t.constructedFrom.map(jsonldExpand);
-  node._links = { self: { href: `${doc}/term/${t.name}` }, ontology: { href: doc } };
-  return node;
-}
-
-/** A whole ontology (`ler` | `tla`) as a JSON-LD document. */
-export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, unknown> {
-  const terms = family === 'ler' ? LER_TERMS : TLA_TERMS;
-  const doc = family === 'ler' ? LER_DOC : TLA_DOC;
-  const nodes = terms.map(termJsonLd);
-  if (family === 'tla') {
-    // Faithful to the Turtle projection of the SAME URL: the MOM verb scheme + its five level
-    // Collections (with members), and each concept's inScheme / closeMatch / inLevel. Dropping
-    // these made the default application/ld+json graph materially unequal to the Turtle graph.
-    nodes.push({
-      '@id': `${TLA_NS}MOMVerbScheme`, '@type': 'skos:ConceptScheme',
-      label: 'MOM performance verb scheme', comment: MOM_SCHEME_COMMENT, isDefinedBy: doc,
-    });
-    for (const lvl of [1, 2, 3, 4, 5]) {
-      nodes.push({
-        '@id': `${TLA_NS}MOMLevel${lvl}`, '@type': 'skos:Collection',
-        label: MOM_LEVEL_LABEL[lvl]!, 'skos:inScheme': { '@id': `${TLA_NS}MOMVerbScheme` },
-        'skos:member': MOM_CONCEPTS.filter(c => c.scheme === 'verb' && c.level === lvl).map(c => ({ '@id': `${TLA_NS}${c.name}` })),
-        isDefinedBy: doc,
-      });
-    }
-    for (const c of MOM_CONCEPTS) {
-      const node: Record<string, unknown> = {
-        '@id': `${TLA_NS}${c.name}`,
-        '@type': 'skos:Concept',
-        label: c.label,
-        construction: 'concept',
-        isDefinedBy: doc,
-      };
-      if (c.scheme === 'verb') {
-        node['skos:inScheme'] = { '@id': `${TLA_NS}MOMVerbScheme` };
-        // Level membership is carried by the level Collection's skos:member (Collection→verb,
-        // matching the Turtle). Do NOT also emit a verb→level `tla:inLevel` here: that predicate
-        // is undefined + absent from the Turtle, so it made the JSON-LD graph unequal to the Turtle.
-        const cm = momVerbCloseMatch(c.label);
-        if (cm) node['skos:closeMatch'] = { '@id': cm };
-      }
-      nodes.push(node);
-    }
-    // The published proficiency framework + levels + roll-up rule.
-    // Shared metadata + {'@id':…} for skos:inScheme so these nodes are
-    // triple-isomorphic to renderProficiencyTurtle (a bare-string inScheme was
-    // coerced to an xsd:string LITERAL, not the framework IRI, under this context).
-    nodes.push({
-      '@id': PERF_FRAMEWORK_IRI, '@type': ['tla:CompetencyFramework', 'skos:ConceptScheme'],
-      label: PROF_FRAMEWORK_LABEL,
-      comment: PROF_FRAMEWORK_COMMENT,
-      source: PROF_FRAMEWORK_SOURCE, construction: 'minted', isDefinedBy: doc,
-    });
-    for (const l of PROFICIENCY_LEVELS) {
-      nodes.push({
-        '@id': proficiencyLevelIri(l.name), '@type': ['tla:Level', 'ler:ProficiencyLevel', 'skos:Concept'],
-        label: l.label, comment: l.comment, construction: 'concept',
-        'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI }, 'skos:notation': String(l.rank), isDefinedBy: doc,
-      });
-    }
-    nodes.push({
-      '@id': PERF_ROLLUP_RULE_IRI, '@type': 'tla:RollupRule',
-      label: PROF_ROLLUP_LABEL,
-      comment: PROF_ROLLUP_COMMENT,
-      'tla:rollupRule': perfRollupRuleText(),
-      'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI }, construction: 'minted', isDefinedBy: doc,
-    });
+function addDisjointness(g: Graph, family: 'ler' | 'tla'): void {
+  for (const set of DISJOINT[family]) {
+    const d = g.bnode();
+    g.add(d, iri(RDF + 'type'), iri(OWL + 'AllDisjointClasses'));
+    g.add(d, iri(OWL + 'members'), g.list(set.map(c => iri(abs(c)))));
   }
-  // A flat @graph (ontology node + all term nodes) so JSON-LD expansion yields real triples.
-  // The prior bare `terms` key was NOT in @context and there was no @vocab/@graph, so
-  // expansion DROPPED the whole vocabulary (the default application/ld+json projection served
-  // an empty graph). Term nodes' label/comment are context aliases and expand inside @graph.
-  // Ontology node — IDENTICAL label/comment/imports to the Turtle projection
-  // (ontologyMeta), so content negotiation returns a triple-faithful graph.
-  const meta = ontologyMeta(family);
-  const ontologyNode: Record<string, unknown> = {
-    '@id': doc, '@type': 'owl:Ontology',
-    label: meta.title,
-    comment: meta.blurb,
-    imports: PREFIXES.iep,
-  };
-  const graph: Array<Record<string, unknown>> = [ontologyNode];
-  // The construction annotation property is declared once (in ieee-ler), exactly
-  // as the Turtle does — the ADL-TLA ontology reuses it by dereference.
-  if (family === 'ler') {
-    graph.push({
-      '@id': `${LER_NS}construction`, '@type': 'owl:AnnotationProperty',
-      label: 'construction',
-      comment: 'How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value).',
-      isDefinedBy: LER_DOC,
-    });
-  }
-  graph.push(...nodes);
-  return {
-    '@context': JSONLD_CONTEXT,
-    '@graph': graph,
-    _links: {
-      self: { href: doc },
-      counterpart: { href: family === 'ler' ? TLA_DOC : LER_DOC },
-      // Follow-your-nose to the machine-checkable conformance layer that governs
-      // this ontology (the bridge mounts both for ieee-ler + adl-tla).
-      shapes: { href: `${doc}/shapes`, type: 'text/turtle' },
-      validate: { href: `${doc}/validate`, method: 'POST' },
-    },
-  };
 }
 
-/** A minimal human-readable HTML view (content negotiation: Accept: text/html). */
-export function renderSemOntologyHtml(family: 'ler' | 'tla'): string {
-  const doc = family === 'ler' ? LER_DOC : TLA_DOC;
-  const title = family === 'ler' ? 'IEEE Learning & Employment Records' : 'ADL Total Learning Architecture';
-  const esch = (s: string): string => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const terms = ALL_TERMS.filter(t => t.family === family);
-  const rows = terms.map(t => `<tr><td><a href="${doc}/term/${esch(t.name)}"><code>${esch(t.name)}</code></a></td><td>${esch(t.kind)}</td><td>${esch(t.label)}</td></tr>`).join('');
-  return `<!doctype html><meta charset="utf-8"><title>${esch(title)}</title>`
-    + `<body style="font-family:system-ui;max-width:60rem;margin:2rem auto;line-height:1.5">`
-    + `<h1>${esch(title)} — emergent composable ontology</h1>`
-    + `<p>Also available as <a href="${doc}" type="text/turtle">Turtle</a>, JSON-LD (Accept: application/ld+json), `
-    + `and <a href="${doc}/shapes">SHACL shapes</a>.</p>`
-    + `<table border="1" cellpadding="6" style="border-collapse:collapse"><thead><tr><th>term</th><th>kind</th><th>label</th></tr></thead><tbody>${rows}</tbody></table>`
-    + `</body>`;
+// The MOM verb ConceptScheme comment.
+const MOM_SCHEME_COMMENT = `The ${MOM_VERBS.length} Master Object Model performance verbs, grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb that is a registered xAPI verb — an ADL core verb at adlnet.gov/expapi/verbs, or a cmi5 verb at w3id.org/xapi/adl/verbs — is an exact match of it and names it as its source; every other verb was coined by this project and says so in an editorial note, with no mapping to an IRI that does not exist.`;
+
+function addMom(g: Graph, O: NamedNode): void {
+  const A = iri(RDF + 'type');
+  const scheme = iri(`${TLA_NS}MOMVerbScheme`);
+  g.add(scheme, A, iri(SKOS + 'ConceptScheme'))
+    .add(scheme, iri(RDFS + 'label'), en('MOM performance verb scheme'))
+    .add(scheme, iri(SKOS + 'prefLabel'), en('MOM performance verb scheme'))
+    .add(scheme, iri(RDFS + 'comment'), en(MOM_SCHEME_COMMENT))
+    .add(scheme, iri(RDFS + 'isDefinedBy'), O);
+  for (const kind of ['activityType', 'extension'] as const) {
+    const s = iri(`${TLA_NS}${kind === 'activityType' ? 'MOMActivityTypeScheme' : 'MOMExtensionScheme'}`);
+    const label = kind === 'activityType' ? 'MOM activity types' : 'MOM context extensions';
+    g.add(s, A, iri(SKOS + 'ConceptScheme')).add(s, iri(RDFS + 'label'), en(label)).add(s, iri(SKOS + 'prefLabel'), en(label))
+      .add(s, iri(RDFS + 'comment'), en(kind === 'activityType'
+        ? 'The activity types the Master Object Model names, as project-coined concepts. None asserts an external alignment: the MOM does not register them under an ADL namespace.'
+        : 'The context-extension keys the Master Object Model names, as project-coined concepts with no external alignment.'))
+      .add(s, iri(RDFS + 'isDefinedBy'), O);
+  }
+  // skos:member relates a Collection TO its members (domain skos:Collection), so the level
+  // Collection carries its verbs — NOT each verb pointing back at the level.
+  for (const lvl of [1, 2, 3, 4, 5]) {
+    const L = iri(`${TLA_NS}MOMLevel${lvl}`);
+    g.add(L, A, iri(SKOS + 'Collection')).add(L, iri(RDFS + 'label'), en(MOM_LEVEL_LABEL[lvl]!))
+      .add(L, iri(SKOS + 'prefLabel'), en(MOM_LEVEL_LABEL[lvl]!))
+      .add(L, iri(RDFS + 'comment'), en(`The MOM verbs this vocabulary groups under "${MOM_LEVEL_LABEL[lvl]!.replace(/^Level \d — /, '')}". A thematic grouping of this project, not an ADL-defined conformance level.`));
+    for (const c of MOM_CONCEPTS.filter(x => x.scheme === 'verb' && x.level === lvl)) g.add(L, iri(SKOS + 'member'), iri(TLA_NS + c.name));
+    g.add(L, iri(RDFS + 'isDefinedBy'), O);
+  }
+  for (const c of MOM_CONCEPTS) {
+    const C = iri(TLA_NS + c.name);
+    const s = c.scheme === 'verb' ? scheme : iri(`${TLA_NS}${c.scheme === 'activityType' ? 'MOMActivityTypeScheme' : 'MOMExtensionScheme'}`);
+    const definition = MOM_DEFINITIONS[c.name];
+    if (!definition) throw new Error(`ler-tla-vocab: MOM concept ${c.name} has no definition`);
+    g.add(C, A, iri(SKOS + 'Concept'))
+      .add(C, iri(RDFS + 'label'), en(momLabel(c))).add(C, iri(SKOS + 'prefLabel'), en(momLabel(c)))
+      .add(C, iri(SKOS + 'definition'), en(definition))
+      .add(C, iri(SKOS + 'notation'), str(c.label))
+      .add(C, iri(SKOS + 'inScheme'), s).add(C, iri(SKOS + 'topConceptOf'), s).add(s, iri(SKOS + 'hasTopConcept'), C)
+      .add(C, iri(CONSTRUCTION), str('concept'));
+    if (c.scheme === 'verb') {
+      // A MOM verb that is a registered xAPI verb IS that verb — a statement carries its IRI — so it
+      // is an exact match, as the cmi5 ontology maps the same verbs. A verb with no registered
+      // counterpart says it was coined here; no IRI is ever fabricated for one.
+      const registered = momVerbMatch(c.label);
+      if (registered) g.add(C, iri(SKOS + 'exactMatch'), iri(registered)).add(C, iri(DCT + 'source'), iri(registered));
+      else g.add(C, iri(SKOS + 'editorialNote'), en('Coined by this vocabulary: no registered xAPI verb has this meaning.'));
+    }
+    g.add(C, iri(RDFS + 'isDefinedBy'), O);
+  }
 }
+
+/** The proficiency framework, its levels, the roll-up rule — and the rule's BANDS, as data. */
+function addProficiency(g: Graph, O: NamedNode): void {
+  const A = iri(RDF + 'type');
+  const FW = iri(PERF_FRAMEWORK_IRI);
+  // A scale of proficiency levels, not a framework of competencies (it holds no competency).
+  g.add(FW, A, iri(`${TLA_NS}ProficiencyScale`)).add(FW, A, iri(SKOS + 'ConceptScheme'))
+    .add(FW, iri(RDFS + 'label'), en(PROF_FRAMEWORK_LABEL)).add(FW, iri(SKOS + 'prefLabel'), en(PROF_FRAMEWORK_LABEL))
+    .add(FW, iri(RDFS + 'comment'), en(PROF_FRAMEWORK_COMMENT))
+    .add(FW, iri(DCT + 'source'), str(PROF_FRAMEWORK_SOURCE))
+    .add(FW, iri(CONSTRUCTION), str('minted'))
+    .add(FW, iri(RDFS + 'isDefinedBy'), O);
+  for (const l of PROFICIENCY_LEVELS) {
+    const L = iri(proficiencyLevelIri(l.name));
+    g.add(L, A, iri(`${TLA_NS}Level`)).add(L, A, iri(`${LER_NS}ProficiencyLevel`)).add(L, A, iri(SKOS + 'Concept'))
+      .add(L, iri(RDFS + 'label'), en(l.label)).add(L, iri(SKOS + 'prefLabel'), en(l.label))
+      .add(L, iri(RDFS + 'comment'), en(l.comment))
+      .add(L, iri(SKOS + 'inScheme'), FW).add(L, iri(SKOS + 'topConceptOf'), FW).add(FW, iri(SKOS + 'hasTopConcept'), L)
+      .add(L, iri(SKOS + 'notation'), str(String(l.rank)))
+      .add(L, iri(CONSTRUCTION), str('concept'))
+      .add(L, iri(RDFS + 'isDefinedBy'), O);
+  }
+  const R = iri(PERF_ROLLUP_RULE_IRI);
+  g.add(R, A, iri(`${TLA_NS}RollupRule`))
+    .add(R, iri(RDFS + 'label'), en(PROF_ROLLUP_LABEL))
+    .add(R, iri(RDFS + 'comment'), en(PROF_ROLLUP_COMMENT))
+    .add(R, iri(`${TLA_NS}rollupRule`), str(perfRollupRuleText()))
+    // The scale whose levels it assigns. Not skos:inScheme: a rule is not one of the scale's concepts.
+    .add(R, iri(`${TLA_NS}onScale`), FW)
+    .add(R, iri(CONSTRUCTION), str('minted'))
+    .add(R, iri(RDFS + 'isDefinedBy'), O);
+  // ★ THE BANDS ARE THE RULE, AND THEY ARE PUBLISHED AS THE RULE FILE'S OWN TRIPLES. The graph
+  // `evaluateProficiency` walks is merged in verbatim — band thresholds, their comments, and the
+  // declarations of the band vocabulary — so what /ns/adl-tla publishes cannot differ from what the
+  // engine ran. Re-describing the bands here from the parsed numbers would be a second copy.
+  // (The rollupRule SENTENCE above is generated from the same triples, for the same reason.)
+  const rule = parseTurtle(loadProficiencyRuleTurtle());
+  g.merge(rule);
+  for (const t of rule.triples) {
+    if (t.s.termType === 'NamedNode' && t.s.value.startsWith(TLA_NS)) g.add(t.s, iri(RDFS + 'isDefinedBy'), O);
+  }
+}
+
+/** The construction annotation property — declared once, in the IEEE-LER ontology. */
+function addConstructionProperty(g: Graph, O: NamedNode): void {
+  const C = iri(CONSTRUCTION);
+  g.add(C, iri(RDF + 'type'), iri(OWL + 'AnnotationProperty'))
+    .add(C, iri(RDFS + 'label'), en('construction'))
+    .add(C, iri(RDFS + 'comment'), en('How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value).'))
+    .add(C, iri(RDFS + 'range'), iri(XSD + 'string'))
+    .add(C, iri(RDFS + 'isDefinedBy'), O);
+}
+
+const _graphs = new Map<'ler' | 'tla', Graph>();
+
+/** The complete OWL 2 DL ontology of one family. Built once per process: its inputs — the term
+ *  data above and the memoised proficiency rule — do not change while it runs. Treat the result
+ *  as read-only. */
+export function semOntologyGraph(family: 'ler' | 'tla'): Graph {
+  const hit = _graphs.get(family);
+  if (hit) return hit;
+  const g = buildSemOntologyGraph(family);
+  _graphs.set(family, g);
+  return g;
+}
+
+function buildSemOntologyGraph(family: 'ler' | 'tla'): Graph {
+  const g = new Graph();
+  const O = addHeader(g, semDocMeta(family));
+  if (family === 'ler') addConstructionProperty(g, O);
+  for (const t of family === 'ler' ? LER_TERMS : TLA_TERMS) addTerm(g, t, O);
+  if (family === 'tla') { addMom(g, O); addProficiency(g, O); }
+  addDisjointness(g, family);
+  const declared = declareExternalTerms(g, [family === 'ler' ? LER_NS : TLA_NS]);
+  // The sibling document's terms this one uses get MIREOT's minimum here as other external terms do:
+  // their label and the document that defines them. They were bare declarations.
+  const sibling = family === 'ler' ? 'tla' : 'ler';
+  const siblingNs = sibling === 'ler' ? LER_NS : TLA_NS;
+  for (const u of [...declared.classes, ...declared.object, ...declared.datatype, ...declared.annotation]) {
+    if (!u.startsWith(siblingNs)) continue;
+    const local = u.slice(siblingNs.length);
+    const label = u === CONSTRUCTION ? 'construction' : TERM_INDEX.get(`${sibling}:${local}`)?.label;
+    if (!label) throw new Error(`ler-tla-vocab: ${u} is used in /ns/${family === 'ler' ? 'ieee-ler' : 'adl-tla'} but defined nowhere`);
+    if (!g.objects(iri(u), RDFS + 'label').length) g.add(iri(u), iri(RDFS + 'label'), en(label));
+    g.add(iri(u), iri(RDFS + 'isDefinedBy'), iri(sibling === 'ler' ? LER_DOC : TLA_DOC));
+  }
+  return g;
+}
+
+// ── Serializations ───────────────────────────────────────────────────
+
+/** Short keys the JSON-LD has always used for these documents (kept for JS consumers). */
+const JSONLD_TERMS: Record<string, JsonLdTerm> = {
+  label: { '@id': RDFS + 'label', '@language': 'en' },
+  comment: { '@id': RDFS + 'comment', '@language': 'en' },
+  source: { '@id': DCT + 'source' },
+  construction: { '@id': CONSTRUCTION },
+  subClassOf: { '@id': RDFS + 'subClassOf', '@type': '@id' },
+  equivalentClass: { '@id': OWL + 'equivalentClass', '@type': '@id' },
+  exactMatch: { '@id': SKOS + 'exactMatch', '@type': '@id' },
+  closeMatch: { '@id': SKOS + 'closeMatch', '@type': '@id' },
+  domain: { '@id': RDFS + 'domain', '@type': '@id' },
+  range: { '@id': RDFS + 'range', '@type': '@id' },
+  subPropertyOf: { '@id': RDFS + 'subPropertyOf', '@type': '@id' },
+  inScheme: { '@id': SKOS + 'inScheme', '@type': '@id' },
+  constructedFrom: { '@id': IEP_CONSTRUCTED_FROM, '@type': '@id' },
+  isDefinedBy: { '@id': RDFS + 'isDefinedBy', '@type': '@id' },
+  imports: { '@id': OWL + 'imports', '@type': '@id' },
+  member: { '@id': SKOS + 'member', '@type': '@id' },
+};
+const docOf = (family: 'ler' | 'tla'): string => family === 'ler' ? LER_DOC : TLA_DOC;
+const turtleHeader = (m: DocMeta): string[] => [
+  `${m.title} — version ${m.version}`,
+  `${m.iri}  (this version: ${versionIri(m)})`,
+  'Generated from the Foxxi single-source term model; served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML.',
+];
 
 /** A whole ontology as Turtle. */
 export function renderSemOntologyTurtle(family: 'ler' | 'tla'): string {
-  return renderOntologyTurtle(family);
+  return toTurtle(semOntologyGraph(family), ALL_PREFIXES, { header: turtleHeader(semDocMeta(family)) });
+}
+export function renderSemOntologyNTriples(family: 'ler' | 'tla'): string { return toNTriples(semOntologyGraph(family)); }
+export function renderSemOntologyRdfXml(family: 'ler' | 'tla'): string { return toRdfXml(semOntologyGraph(family), ALL_PREFIXES); }
+
+/** A whole ontology (`ler` | `tla`) as a flat JSON-LD document — the same graph as the Turtle. */
+export function renderSemOntologyJsonLd(family: 'ler' | 'tla'): Record<string, unknown> {
+  // No HAL `_links` beside the @graph: JSON-LD drops them, so a processor in safe mode refused the
+  // document. The response's Link header and the header triples (owl:versionIRI, rdfs:seeAlso the
+  // counterpart family and the shapes) carry the same links.
+  return toJsonLd(semOntologyGraph(family), ALL_PREFIXES, { terms: JSONLD_TERMS, first: [docOf(family)] });
 }
 
-/** A single term as a JSON-LD resource with HATEOAS `_links`. */
-export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record<string, unknown> | null {
-  const doc = family === 'ler' ? LER_DOC : TLA_DOC;
-  const ns = family === 'ler' ? LER_NS : TLA_NS;
-  const t = lookupSemTerm(family, name);
-  if (t) return { '@context': JSONLD_CONTEXT, ...termJsonLd(t) };
-  const mom = family === 'tla' ? MOM_CONCEPTS.find(c => c.name === name) : undefined;
-  if (mom) {
-    // Parity with the doc-level Turtle: carry scheme membership + closeMatch so the
-    // per-term dereference a follow-your-nose client lands on is not a bare concept.
-    const node: Record<string, unknown> = {
-      '@context': JSONLD_CONTEXT,
-      '@id': `${ns}${name}`,
-      '@type': 'skos:Concept',
-      label: mom.label,
-      construction: 'concept',
-      isDefinedBy: doc,
-    };
-    if (mom.scheme === 'verb') {
-      node['skos:inScheme'] = { '@id': `${TLA_NS}MOMVerbScheme` };
-      // Level membership lives on the level Collection (skos:member); the doc-level graph carries
-      // it. No verb→level `tla:inLevel` (undefined predicate, absent from the Turtle projection).
-      // Only a registered counterpart gets a closeMatch (no alignment to a fabricated 404 IRI).
-      const cm = momVerbCloseMatch(mom.label);
-      if (cm) node['skos:closeMatch'] = { '@id': cm };
+/** Human-readable documentation (content negotiation: Accept: text/html). */
+export function renderSemOntologyHtml(family: 'ler' | 'tla'): string {
+  const meta = semDocMeta(family);
+  return renderOntologyHtml({
+    graph: semOntologyGraph(family), meta, prefixes: ALL_PREFIXES,
+    links: [...alternates(meta.iri), { label: 'SHACL shapes', href: `${LER_DOC}/shapes`, type: 'text/turtle' }, { label: `this version (${meta.version})`, href: versionIri(meta) }],
+  });
+}
+
+/** One term's triples (and the blank nodes they reach), or null for an unknown name. */
+export function semTermGraph(family: 'ler' | 'tla', name: string): Graph | null {
+  const full = (family === 'ler' ? LER_NS : TLA_NS) + name;
+  const g = semOntologyGraph(family);
+  if (!g.triples.some(t => t.s.termType === 'NamedNode' && t.s.value === full)) return null;
+  const out = new Graph();
+  const visit = (s: NamedNode | BlankNode, seen: Set<string>): void => {
+    for (const t of g.triples) {
+      if (t.s.termType !== s.termType || t.s.value !== s.value) continue;
+      out.add(t.s, t.p, t.o);
+      if (t.o.termType === 'BlankNode' && !seen.has(t.o.value)) { seen.add(t.o.value); visit(t.o, seen); }
     }
-    // activityType / extension MOM concepts are project-coined — no fabricated adlnet.gov closeMatch.
-    node._links = { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } };
-    return node;
-  }
-  // Published proficiency framework / levels / roll-up rule — resolve the per-term
-  // route to their real definitions (they were only in the doc-level render before).
-  if (family === 'tla') {
-    const lvl = PROFICIENCY_LEVELS.find(l => `Level${l.name}` === name);
-    if (lvl) return {
-      '@context': JSONLD_CONTEXT, '@id': `${ns}${name}`, '@type': ['tla:Level', 'ler:ProficiencyLevel', 'skos:Concept'],
-      label: lvl.label, comment: lvl.comment, 'skos:notation': String(lvl.rank), 'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI },
-      construction: 'concept', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc }, scheme: { href: PERF_FRAMEWORK_IRI } },
-    };
-    if (name === 'PerformanceProficiencyRollupRule') return {
-      '@context': JSONLD_CONTEXT, '@id': PERF_ROLLUP_RULE_IRI, '@type': 'tla:RollupRule',
-      label: PROF_ROLLUP_LABEL, comment: PROF_ROLLUP_COMMENT, 'tla:rollupRule': perfRollupRuleText(),
-      'skos:inScheme': { '@id': PERF_FRAMEWORK_IRI },
-      construction: 'minted', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
-    };
-    if (name === 'PerformanceProficiencyFramework') return {
-      '@context': JSONLD_CONTEXT, '@id': PERF_FRAMEWORK_IRI, '@type': ['tla:CompetencyFramework', 'skos:ConceptScheme'],
-      label: PROF_FRAMEWORK_LABEL, comment: PROF_FRAMEWORK_COMMENT, source: PROF_FRAMEWORK_SOURCE,
-      construction: 'minted', isDefinedBy: doc, _links: { self: { href: `${doc}/term/${name}` }, ontology: { href: doc } },
-    };
-  }
-  // Unknown fragment → null so the route 404s. Owning the namespace is not a licence to
-  // fabricate an rdfs:Resource for any string (that returned HTTP 200 for IRIs that resolve to
-  // nothing and injected false triples, contradicting the generic /ns/<m>/term routes).
-  return null;
+  };
+  visit(iri(full), new Set());
+  return out;
+}
+
+/** A single term as a JSON-LD resource (null → the route 404s); the route links it to its document
+ *  in the Link header. Owning the namespace is not a licence to fabricate an rdfs:Resource for any
+ *  string. */
+export function renderSemTermJsonLd(family: 'ler' | 'tla', name: string): Record<string, unknown> | null {
+  const tg = semTermGraph(family, name);
+  if (!tg) return null;
+  const full = (family === 'ler' ? LER_NS : TLA_NS) + name;
+  const j = toJsonLd(tg, ALL_PREFIXES, { terms: JSONLD_TERMS, first: [full] });
+  const [node, ...rest] = j['@graph'] as Array<Record<string, unknown>>;
+  return { '@context': j['@context'], ...node!, '@id': full, ...(rest.length ? { '@included': rest } : {}) };
 }

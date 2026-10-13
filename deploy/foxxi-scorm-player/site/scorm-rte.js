@@ -25,9 +25,10 @@
  *   - IEEE 1484.11.2 (SCORM 2004 4th Ed Run-Time Environment)
  *   - ADL CMI001 (SCORM 1.2 CMI Interactions Specification)
  *   - IEEE 9274.1.1 (xAPI 2.0)
- *   - IEEE 9274.2.1 (cmi5)
+ *   - cmi5 (AICC; maintained by ADL; being standardized as IEEE P9274.3.1)
  *
- * suspend_data: enforced 64KB max for SCORM 2004 4th Ed (§4.2.27.2),
+ * suspend_data: up to 65536 characters for SCORM 2004 4th Ed — above the
+ * 64000-character smallest permitted maximum (SPM) every LMS must accept;
  * 4096-char max for SCORM 1.2 (§5.5.2 cmi.suspend_data).
  */
 (function installRte() {
@@ -87,7 +88,7 @@
   };
 
   // ── Limits (per SCORM specs) ──
-  const SUSPEND_DATA_MAX_2004 = 64 * 1024;   // SCORM 2004 4th Ed §4.2.27.2 — 64KB
+  const SUSPEND_DATA_MAX_2004 = 64 * 1024;   // SCORM 2004 4th Ed: at least the 64000-character SPM
   const SUSPEND_DATA_MAX_12   = 4096;        // SCORM 1.2 — 4096 chars
 
   // ── Common state ──

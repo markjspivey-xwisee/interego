@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildFoxxiProfileDoc } from '../src/xapi-profile.js';
-import { renderSemOntologyTurtle, renderSemOntologyJsonLd } from '../src/ler-tla-vocab.js';
-import { renderVocabTurtle, renderVocabJsonLd, FOXXI_VOCAB_COMMENT } from '../src/foxxi-vocab.js';
+import { renderSemOntologyTurtle, renderSemOntologyJsonLd, LER_NS, TLA_NS } from '../src/ler-tla-vocab.js';
+import { renderVocabTurtle, renderVocabJsonLd, FOXXI_VOCAB_COMMENT, FOXXI_VOCAB_DOC, FOXXI_NS, FOXXI_TERMS } from '../src/foxxi-vocab.js';
+import { jsonLdQuads, turtleQuads, canonical, objectsOf, iriObjectsOf, subjectsOfType, OWL, RDFS, SKOS, DCT } from './support/ns-graph.js';
 import { renderInForm } from '../src/content-forms.js';
 import type { ContentUnit } from '../src/content-channels.js';
 
@@ -28,8 +29,10 @@ describe('round-11 — every xAPI Profile Statement Template has a definition (s
 describe('round-11 — IEEE-LER OB3/CLR closeMatch targets are the canonical vocab.html IRIs', () => {
   const ttl = renderSemOntologyTurtle('ler');
   it('closeMatch points at vc/ob and vc/clr vocab.html (which resolve 200)', () => {
-    expect(ttl).toMatch(/skos:closeMatch <https:\/\/purl\.imsglobal\.org\/spec\/vc\/ob\/vocab\.html#OpenBadgeCredential>/);
-    expect(ttl).toMatch(/skos:closeMatch <https:\/\/purl\.imsglobal\.org\/spec\/vc\/clr\/vocab\.html#ClrCredential>/);
+    // ★ REVISED: read as triples (the Turtle now writes these IRIs with 1EdTech's ob:/clr: prefixes).
+    const closeTargets = turtleQuads(ttl).filter(t => t.predicate.value === `${SKOS}closeMatch`).map(t => t.object.value);
+    expect(closeTargets).toContain('https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential');
+    expect(closeTargets).toContain('https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential');
   });
   it('the old 404-ing /spec/ob/v3p0 + /spec/clr/v2p0 class IRIs are gone', () => {
     expect(ttl).not.toMatch(/spec\/ob\/v3p0\/OpenBadgeCredential/);
@@ -39,23 +42,28 @@ describe('round-11 — IEEE-LER OB3/CLR closeMatch targets are the canonical voc
 
 // ── C3: adl-tla / ieee-ler JSON-LD is faithful to the Turtle (no phantom tla:inLevel; owl:imports; construction) ──
 describe('round-11 — adl-tla/ieee-ler JSON-LD is faithful to the Turtle projection', () => {
-  it('adl-tla JSON-LD asserts NO tla:inLevel (undefined predicate absent from the Turtle)', () => {
-    const j = renderSemOntologyJsonLd('tla') as { '@graph': Array<Record<string, unknown>> };
-    const withInLevel = j['@graph'].filter(n => 'tla:inLevel' in n);
-    expect(withInLevel).toEqual([]);
+  it('adl-tla JSON-LD asserts NO tla:inLevel (undefined predicate absent from the Turtle)', async () => {
+    const q = await jsonLdQuads(renderSemOntologyJsonLd('tla'));
+    expect(q.filter(x => x.predicate.value === `${TLA_NS}inLevel`)).toEqual([]);
     // Level membership is still carried, via the level Collection's skos:member.
-    const anyLevel = j['@graph'].find(n => String(n['@id']).endsWith('MOMLevel1'));
-    expect(anyLevel && anyLevel['skos:member']).toBeTruthy();
+    expect(iriObjectsOf(q, `${TLA_NS}MOMLevel1`, `${SKOS}member`).length).toBeGreaterThan(0);
   });
-  it('the adl-tla ontology node carries owl:imports (matching the Turtle)', () => {
-    const j = renderSemOntologyJsonLd('tla') as { '@graph': Array<Record<string, unknown>> };
-    const onto = j['@graph'].find(n => n['@type'] === 'owl:Ontology');
-    expect(onto && (onto as any).imports).toBeTruthy();
+  // ★ REVISED. This pinned `owl:imports` on the ontology node. The import named the Interego core
+  // ontology, whose IRI serves HTML (GitHub Pages), so no OWL tool could load the closure and the
+  // document was not OWL 2 DL. External terms are now DECLARED in the document (MIREOT) and the
+  // substrate is linked with rdfs:seeAlso. The intent — the JSON-LD says exactly what the Turtle
+  // says — is checked directly: the two are the same graph.
+  it('the adl-tla JSON-LD and Turtle are one graph — and neither imports an unloadable ontology', async () => {
+    const fromJson = await jsonLdQuads(renderSemOntologyJsonLd('tla'));
+    const fromTtl = turtleQuads(renderSemOntologyTurtle('tla'));
+    expect(await canonical(fromJson)).toBe(await canonical(fromTtl));
+    expect(fromTtl.filter(x => x.predicate.value === `${OWL}imports`)).toEqual([]);
+    expect(iriObjectsOf(fromTtl, TLA_NS.replace(/#$/, ''), `${RDFS}seeAlso`))
+      .toContain('https://markjspivey-xwisee.github.io/interego/ns/iep#');
   });
-  it('the ieee-ler JSON-LD declares the ler:construction annotation property (matching the Turtle)', () => {
-    const j = renderSemOntologyJsonLd('ler') as { '@graph': Array<Record<string, unknown>> };
-    const constr = j['@graph'].find(n => String(n['@id']).endsWith('#construction') && n['@type'] === 'owl:AnnotationProperty');
-    expect(constr).toBeTruthy();
+  it('the ieee-ler JSON-LD declares the ler:construction annotation property (matching the Turtle)', async () => {
+    const q = await jsonLdQuads(renderSemOntologyJsonLd('ler'));
+    expect(subjectsOfType(q, `${OWL}AnnotationProperty`)).toContain(`${LER_NS}construction`);
   });
   it('the ieee-ler JSON-LD ontology comment equals the Turtle blurb (same string both projections)', () => {
     const j = renderSemOntologyJsonLd('ler') as { '@graph': Array<Record<string, unknown>> };
@@ -68,11 +76,16 @@ describe('round-11 — adl-tla/ieee-ler JSON-LD is faithful to the Turtle projec
 
 // ── C4 + D2: foxxi vocab JSON-LD is faithful + the dead Azure owl:sameAs is gone ──
 describe('round-11 — foxxi vocab JSON-LD faithful; dead Azure owl:sameAs dropped', () => {
-  it('the vocab node comment matches the shared constant + carries isDefinedBy', () => {
-    const j = renderVocabJsonLd() as { '@graph': Array<Record<string, unknown>> };
-    const vocab = j['@graph'].find(n => n['@type'] === 'foxxi:Vocabulary') as Record<string, unknown>;
-    expect(vocab.comment).toBe(FOXXI_VOCAB_COMMENT);
-    expect(vocab.isDefinedBy).toBeTruthy();
+  // ★ REVISED. The vocabulary node was typed `foxxi:Vocabulary` — a class nothing declared — and
+  // carried rdfs:isDefinedBy pointing at itself. It is now an owl:Ontology whose description is
+  // the shared constant, and it is each TERM that is isDefinedBy the vocabulary. Same intent: one
+  // string, identical in every projection, and every term traceable to its defining document.
+  it('the vocab node comment matches the shared constant + carries isDefinedBy', async () => {
+    const q = await jsonLdQuads(renderVocabJsonLd());
+    expect(subjectsOfType(q, `${OWL}Ontology`)).toEqual([FOXXI_VOCAB_DOC]);
+    expect(objectsOf(q, FOXXI_VOCAB_DOC, `${DCT}description`)).toEqual([FOXXI_VOCAB_COMMENT]);
+    expect(objectsOf(turtleQuads(renderVocabTurtle()), FOXXI_VOCAB_DOC, `${DCT}description`)).toEqual([FOXXI_VOCAB_COMMENT]);
+    for (const t of FOXXI_TERMS) expect(iriObjectsOf(q, FOXXI_NS + t.name, `${RDFS}isDefinedBy`), t.name).toEqual([FOXXI_VOCAB_DOC]);
   });
   it('no owl:sameAs to the decommissioned Azure host in the Turtle', () => {
     const ttl = renderVocabTurtle();

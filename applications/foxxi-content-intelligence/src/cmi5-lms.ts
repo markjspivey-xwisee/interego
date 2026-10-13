@@ -1,5 +1,5 @@
 /**
- * The cmi5 LMS-side launch contract (cmi5 / IEEE 9274.2.1 §7–§8).
+ * The cmi5 LMS-side launch contract (cmi5 §7–§8; being standardized as IEEE P9274.3.1).
  *
  * Foxxi already emits every cmi5 Statement type and evaluates the
  * moveOn criterion (see cmi5.ts). What it could NOT do is be a cmi5

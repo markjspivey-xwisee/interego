@@ -1,0 +1,83 @@
+# AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria) — SHACL shapes — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-soc2: <https://foxxi-bridge.interego.xwisee.com/ns/soc2#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes> a owl:Ontology ;
+    dct:title "AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria) — SHACL shapes"@en ;
+    dct:description "SHACL shapes for AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria): the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/soc2/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by the AICPA. Where this document and the published standard differ, the standard governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria) — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes/2026.10.0" ;
+    dct:source <https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/soc2> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/soc2/2026.10.0> .
+
+shapes:OperationalEvidenceEventShape a sh:NodeShape ;
+    sh:targetClass foxxi-soc2:OperationalEvidenceEvent ;
+    rdfs:label "SOC 2 evidence-event conformance"@en ;
+    rdfs:comment "An operational evidence event MUST cite the criterion it evidences, carry the instant it occurred, and identify the recovered signer — so the audit pack proves WHO acted and WHICH control it evidences."@en ;
+    sh:property shapes:OperationalEvidenceEventShape-evidences ,
+        shapes:OperationalEvidenceEventShape-occurredAt ,
+        shapes:OperationalEvidenceEventShape-actor ,
+        shapes:OperationalEvidenceEventShape-signer ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes> .
+
+shapes:OperationalEvidenceEventShape-evidences a sh:PropertyShape ;
+    sh:path foxxi-soc2:evidences ;
+    sh:name "evidences" ;
+    sh:description "cite at least one Trust Services Criterion"@en ;
+    sh:message "SOC 2 evidence-event conformance — evidences: at least 1 value — cite at least one Trust Services Criterion"@en ;
+    sh:minCount 1 .
+
+shapes:OperationalEvidenceEventShape-occurredAt a sh:PropertyShape ;
+    sh:path foxxi-soc2:occurredAt ;
+    sh:name "occurredAt" ;
+    sh:description "one occurrence instant in the audit period"@en ;
+    sh:message "SOC 2 evidence-event conformance — occurredAt: exactly 1 value, of type xsd:dateTime — one occurrence instant in the audit period"@en ;
+    sh:datatype xsd:dateTime ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:OperationalEvidenceEventShape-actor a sh:PropertyShape ;
+    sh:path foxxi-soc2:actor ;
+    sh:name "actor" ;
+    sh:description "the acting DID"@en ;
+    sh:message "SOC 2 evidence-event conformance — actor: exactly 1 value, an IRI — the acting DID"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:OperationalEvidenceEventShape-signer a sh:PropertyShape ;
+    sh:path foxxi-soc2:signer ;
+    sh:name "signer" ;
+    sh:description "the recovered signer address"@en ;
+    sh:message "SOC 2 evidence-event conformance — signer: exactly 1 value, of type xsd:string — the recovered signer address"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .

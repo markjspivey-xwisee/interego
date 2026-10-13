@@ -23,6 +23,8 @@ import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { FOXXI_PROFILE_ID } from './xapi-profile.js';
 import { verifySessionToken, trustedAddressMap } from './auth.js';
 import { PERF_EXT } from './learner-record.js';
+import { parseTrig, readStringValue, type IRI, type ParsedDocument } from '@interego/core';
+import { LER_NS } from './ler-tla-vocab.js';
 import {
   listForwardingTargets, addForwardingTarget, updateForwardingTarget,
   deleteForwardingTarget, retryDeadLetter, deadLetterFor,
@@ -224,17 +226,32 @@ const ADL_CORE_VERBS = [
 let _foxxiVerbCache: { verbs: string[]; at: number } | null = null;
 const FOXXI_VERB_TTL_MS = 5 * 60_000;
 
+/**
+ * ★ READ AS RDF, NOT AS ONE JSON SHAPE. This used to read `doc.terms` out of the JSON-LD — a key
+ * the document stopped having when it moved to a JSON-LD `@graph` (so expansion would yield real
+ * triples), after which every read found zero verbs while still reporting `dereferenced: true`. It
+ * now asks for Turtle and reads triples with the substrate's parser, so it depends on what the
+ * vocabulary SAYS — `?verb a xapi:Verb` — and not on how one serializer happened to lay it out.
+ */
+const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+const XAPI_VERB = 'https://w3id.org/xapi/ontology#Verb';
+async function fetchGraph(url: string): Promise<ParsedDocument> {
+  const r = await fetch(url, { headers: { Accept: 'text/turtle' } });
+  if (!r.ok) throw new Error(`HTTP ${r.status} from ${url}`);
+  return parseTrig(await r.text());
+}
+const iriObjects = (s: ParsedDocument['subjects'][number], p: string): string[] =>
+  (s.properties.get(p as IRI) ?? []).flatMap(t => t.kind === 'iri' ? [t.iri as string] : []);
+
 async function dereferenceFoxxiVerbs(vocabUrl: string): Promise<{ verbs: string[]; dereferenced: boolean }> {
   if (_foxxiVerbCache && Date.now() - _foxxiVerbCache.at < FOXXI_VERB_TTL_MS) {
     return { verbs: _foxxiVerbCache.verbs, dereferenced: true };
   }
   try {
-    const r = await fetch(vocabUrl, { headers: { Accept: 'application/ld+json' } });
-    if (!r.ok) throw new Error(`vocab HTTP ${r.status}`);
-    const doc = await r.json() as { terms?: Array<{ '@id'?: string; '@type'?: string }> };
-    const verbs = (doc.terms ?? [])
-      .filter(t => typeof t['@type'] === 'string' && t['@type']!.endsWith('Verb') && typeof t['@id'] === 'string')
-      .map(t => t['@id'] as string);
+    const doc = await fetchGraph(vocabUrl);
+    const verbs = doc.subjects
+      .filter(s => typeof s.subject === 'string' && iriObjects(s, RDF_TYPE).includes(XAPI_VERB))
+      .map(s => s.subject as string);
     _foxxiVerbCache = { verbs, at: Date.now() };
     return { verbs, dereferenced: true };
   } catch {
@@ -259,6 +276,10 @@ interface SemLayerStatus {
   composedTermCount: number;
 }
 
+const OWL_ONTOLOGY = 'http://www.w3.org/2002/07/owl#Ontology';
+const RDFS_IS_DEFINED_BY = 'http://www.w3.org/2000/01/rdf-schema#isDefinedBy';
+const CONSTRUCTION = `${LER_NS}construction`;
+
 async function dereferenceSemLayer(selfBaseUrl: string): Promise<SemLayerStatus> {
   if (_semLayerCache && Date.now() - _semLayerCache.at < FOXXI_VERB_TTL_MS) {
     return _semLayerCache.result;
@@ -268,15 +289,17 @@ async function dereferenceSemLayer(selfBaseUrl: string): Promise<SemLayerStatus>
   try {
     for (const slug of ['ieee-ler', 'adl-tla']) {
       const url = `${selfBaseUrl}/ns/${slug}`;
-      const r = await fetch(url, { headers: { Accept: 'application/ld+json' } });
-      if (!r.ok) throw new Error(`${slug} HTTP ${r.status}`);
-      const doc = await r.json() as {
-        '@id'?: string;
-        terms?: Array<{ construction?: string }>;
-      };
-      const terms = doc.terms ?? [];
-      composed += terms.filter(t => t.construction && t.construction !== 'minted' && t.construction !== 'concept').length;
-      ontologies.push({ id: doc['@id'] ?? url, url, termCount: terms.length });
+      const doc = await fetchGraph(url);
+      // The document's own terms are the subjects it defines (rdfs:isDefinedBy the ontology);
+      // MIREOT declarations of other vocabularies' terms are not counted.
+      const onto = doc.subjects.find(s => iriObjects(s, RDF_TYPE).includes(OWL_ONTOLOGY));
+      const id = typeof onto?.subject === 'string' ? onto.subject : url;
+      const terms = doc.subjects.filter(s => typeof s.subject === 'string' && iriObjects(s, RDFS_IS_DEFINED_BY).includes(id));
+      composed += terms.filter(s => {
+        const c = readStringValue(s, CONSTRUCTION as IRI);
+        return c !== undefined && c !== 'minted' && c !== 'concept';
+      }).length;
+      ontologies.push({ id, url, termCount: terms.length });
     }
     const result: SemLayerStatus = { dereferenced: true, ontologies, composedTermCount: composed };
     _semLayerCache = { result, at: Date.now() };

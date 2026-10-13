@@ -1,0 +1,664 @@
+# SCORM 2004 4th Edition — Content Aggregation Model (content packaging) — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam  (this version: https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-scorm-cam: <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> a owl:Ontology ;
+    dct:title "SCORM 2004 4th Edition — Content Aggregation Model (content packaging)"@en ;
+    dct:description "An OWL 2 DL ontology and SHACL shapes for content packaging in the SCORM 2004 4th Edition Content Aggregation Model: the manifest of IMS Content Packaging 1.1.4 (manifest, metadata, organizations, organization, item, resources, resource, file, dependency) and ADL's extensions to it — the SCORM type of a resource, launch data, the time limit action, the completion threshold with its 4th Edition attributes, and shared data maps. A SCORM 2004 3rd Edition package conforms, since the 4th Edition additions are optional."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL or 1EdTech. Where this document and the published standard differ, the standard governs."@en ,
+        "Transcribed from the normative schema: imscp_v1p1.xsd (IMS Content Packaging 1.1.4) and adlcp_v1p3.xsd, as distributed with SCORM 2004 4th Edition."@en ,
+        "The sample package in deploy/foxxi-scorm-player/site/course is a SCORM 2004 3rd Edition package and ships the 3rd Edition schemas; it conforms to this ontology."@en ,
+        "Since 2026.10.0, schema, schemaversion and title are datatype properties holding the element's text, and the classes Schema, SchemaVersion and Title they pointed at are deprecated."@en ,
+        "The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology's classes. A parsed instance as JSON is checked against the same shapes at POST /ns/scorm-cam/validate, which routes it by its declared type; every result cites its shape."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). SCORM 2004 4th Edition — Content Aggregation Model (content packaging) (Version 2026.10.0) [Ontology]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/2026.10.0" ;
+    vann:preferredNamespacePrefix "foxxi-scorm-cam" ;
+    vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#" ;
+    dct:source <https://adlnet.gov/past-projects/scorm> , <https://www.imsglobal.org/content/packaging/index.html> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/scorm-cam.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+foxxi-scorm-cam:UnitInterval a rdfs:Datatype ;
+    rdfs:label "Unit interval"@en ;
+    rdfs:comment "A number from 0 to 1 inclusive: a decimal as the schema writes it, or a double, which is what JSON-LD 1.1 (§8.6) makes of a JSON number with a fraction."@en ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): minProgressMeasureType, progressWeightType" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:unionOf (
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:decimal ;
+                owl:withRestrictions ( [ xsd:minInclusive 0 ] [ xsd:maxInclusive 1 ] )
+            ]
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:double ;
+                owl:withRestrictions ( [ xsd:minInclusive "0.0E0"^^xsd:double ] [ xsd:maxInclusive "1.0E0"^^xsd:double ] )
+            ]
+        )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Manifest a owl:Class ;
+    rdfs:label "Manifest"@en ;
+    rdfs:comment "The <manifest> of a content package: its identifier, its metadata, the organizations of its content and the resources that content is made of, and any manifests nested in it."@en ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): manifestType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Metadata a owl:Class ;
+    rdfs:label "Metadata"@en ;
+    rdfs:comment "A <metadata> element: metadata about the package or one of its parts — the schema it follows, its version, and the location of any metadata record kept outside the manifest."@en ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): metadataType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Organizations a owl:Class ;
+    rdfs:label "Organizations"@en ;
+    rdfs:comment "The <organizations> element: the organizations of a package's content, and which of them is the default."@en ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): organizationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Organization a owl:Class ;
+    rdfs:label "Organization"@en ;
+    rdfs:comment "An <organization>: one structure of a package's content — a titled tree of items — that can be presented to a learner. In SCORM it is the root of an activity tree."@en ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): organizationType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Item a owl:Class ;
+    rdfs:label "Item"@en ;
+    rdfs:comment "An <item>: a node of an organization's tree, standing for a learning activity. An item that references a resource launches it; an item with child items aggregates them."@en ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): itemType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Resources a owl:Class ;
+    rdfs:label "Resources"@en ;
+    rdfs:comment "The <resources> element: the resources of a package."@en ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): resourcesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Resource a owl:Class ;
+    rdfs:label "Resource"@en ;
+    rdfs:comment "A <resource>: a set of files delivered together, with the file that launches it — a sharable content object (SCO), which communicates with the LMS at run time, or an asset, which does not."@en ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): resourceType; ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): scormType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:File a owl:Class ;
+    rdfs:label "File"@en ;
+    rdfs:comment "A <file>: one file a resource is made of."@en ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): fileType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Dependency a owl:Class ;
+    rdfs:label "Dependency"@en ;
+    rdfs:comment "A <dependency>: a resource's reference to another resource whose files it also needs."@en ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): dependencyType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:SharedDataMap a owl:Class ;
+    rdfs:label "Shared data map"@en ;
+    skos:notation "adlcp:map" ;
+    rdfs:comment "An <adlcp:map> in an item's <adlcp:data>: access, for the content the item launches, to a shared data store named by its target ID — to read it, to write it, or both. The content reaches the store through the adl.data run-time data model. Added in the 4th Edition."@en ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): mapType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Schema a owl:Class ;
+    rdfs:label "obsolete Schema"@en ;
+    rdfs:comment "Formerly the class of the <schema> element, which holds text; the text is now the value of the datatype property schema."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy foxxi-scorm-cam:schema ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:SchemaVersion a owl:Class ;
+    rdfs:label "obsolete Schema version"@en ;
+    rdfs:comment "Formerly the class of the <schemaversion> element, which holds text; the text is now the value of the datatype property schemaversion."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy foxxi-scorm-cam:schemaversion ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Title a owl:Class ;
+    rdfs:label "obsolete Title"@en ;
+    rdfs:comment "Formerly the class of the <title> element, which holds text; the text is now the value of the datatype property title."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy foxxi-scorm-cam:title ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:identifier a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "identifier"@en ;
+    rdfs:comment "The identifier of a manifest, organization, item or resource: an XML ID, unique within the manifest. xsd:ID is outside the OWL 2 datatype map, so the range is xsd:string."@en ;
+    rdfs:domain [
+        a owl:Class ;
+        owl:unionOf (
+            foxxi-scorm-cam:Manifest
+            foxxi-scorm-cam:Organization
+            foxxi-scorm-cam:Item
+            foxxi-scorm-cam:Resource
+        )
+    ] ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.identifier.req" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:identifierref a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "identifier reference"@en ;
+    skos:notation "identifierref" ;
+    rdfs:comment "A resource's identifier: on an item, the resource the item launches; on a dependency, the resource depended on."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-scorm-cam:Item foxxi-scorm-cam:Dependency ) ] ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.identifierref, attr.identifierref.req" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:version a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "version"@en ;
+    rdfs:comment "The version of a manifest, as its author writes it."@en ;
+    rdfs:domain foxxi-scorm-cam:Manifest ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.version" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:isvisible a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "is visible"@en ;
+    skos:notation "isvisible" ;
+    rdfs:comment "Whether an item is shown to the learner when its organization is presented. Default true."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.isvisible" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:parameters a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "parameters"@en ;
+    rdfs:comment "A query string an item adds to the URL of the resource it launches."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.parameters" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:structure a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "structure"@en ;
+    rdfs:comment "The shape of an organization. Default \"hierarchical\"."@en ;
+    rdfs:domain foxxi-scorm-cam:Organization ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.structure.req" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:href a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "href"@en ;
+    rdfs:comment "A URL: on a resource, the file that launches it; on a file, the file. Relative URLs resolve against the XML base in effect."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-scorm-cam:Resource foxxi-scorm-cam:File ) ] ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.href, attr.href.req" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:type a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "type"@en ;
+    rdfs:comment "The type of a resource, such as \"webcontent\"."@en ;
+    rdfs:domain foxxi-scorm-cam:Resource ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.resourcetype.req" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:base a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "XML base"@en ;
+    skos:notation "xml:base" ;
+    rdfs:comment "The base URL that relative URLs inside the element resolve against."@en ;
+    rdfs:domain [
+        a owl:Class ;
+        owl:unionOf ( foxxi-scorm-cam:Manifest foxxi-scorm-cam:Resources foxxi-scorm-cam:Resource )
+    ] ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.base" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:defaultOrganization a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "default organization"@en ;
+    skos:notation "default" ;
+    rdfs:comment "The identifier of the organization presented by default (an XML IDREF)."@en ;
+    rdfs:domain foxxi-scorm-cam:Organizations ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): attr.default" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:metadata a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "metadata"@en ;
+    rdfs:comment "The metadata of a manifest, organization, item, resource or file."@en ;
+    rdfs:domain [
+        a owl:Class ;
+        owl:unionOf (
+            foxxi-scorm-cam:Manifest
+            foxxi-scorm-cam:Organization
+            foxxi-scorm-cam:Item
+            foxxi-scorm-cam:Resource
+            foxxi-scorm-cam:File
+        )
+    ] ;
+    rdfs:range foxxi-scorm-cam:Metadata ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): metadata" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:organizations a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "organizations"@en ;
+    rdfs:comment "The organizations of a manifest."@en ;
+    rdfs:domain foxxi-scorm-cam:Manifest ;
+    rdfs:range foxxi-scorm-cam:Organizations ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): manifestType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:resources a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "resources"@en ;
+    rdfs:comment "The resources of a manifest."@en ;
+    rdfs:domain foxxi-scorm-cam:Manifest ;
+    rdfs:range foxxi-scorm-cam:Resources ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): manifestType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:subManifest a owl:ObjectProperty ;
+    rdfs:label "sub-manifest"@en ;
+    skos:notation "manifest" ;
+    rdfs:comment "A manifest nested in a manifest."@en ;
+    rdfs:domain foxxi-scorm-cam:Manifest ;
+    rdfs:range foxxi-scorm-cam:Manifest ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): manifestType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:organization a owl:ObjectProperty ;
+    rdfs:label "organization"@en ;
+    rdfs:comment "An organization of the package."@en ;
+    rdfs:domain foxxi-scorm-cam:Organizations ;
+    rdfs:range foxxi-scorm-cam:Organization ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): organizationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:item a owl:ObjectProperty ;
+    rdfs:label "item"@en ;
+    rdfs:comment "A child item: of an organization, one of its top-level items; of an item, one of the items it aggregates."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-scorm-cam:Organization foxxi-scorm-cam:Item ) ] ;
+    rdfs:range foxxi-scorm-cam:Item ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): organizationType, itemType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:position a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "position"@en ;
+    rdfs:comment "The position of an item among the children of its organization or parent item, counting from 1 in document order: the order SCORM sequencing takes them in. An RDF reading of a manifest states it, since RDF keeps no order of its own."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range xsd:positiveInteger ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): organizationType, itemType (the order of the item elements)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:resource a owl:ObjectProperty ;
+    rdfs:label "resource"@en ;
+    rdfs:comment "A resource of the package."@en ;
+    rdfs:domain foxxi-scorm-cam:Resources ;
+    rdfs:range foxxi-scorm-cam:Resource ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): resourcesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:file a owl:ObjectProperty ;
+    rdfs:label "file"@en ;
+    rdfs:comment "A file a resource is made of."@en ;
+    rdfs:domain foxxi-scorm-cam:Resource ;
+    rdfs:range foxxi-scorm-cam:File ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): resourceType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:dependency a owl:ObjectProperty ;
+    rdfs:label "dependency"@en ;
+    rdfs:comment "A dependency of a resource on another resource."@en ;
+    rdfs:domain foxxi-scorm-cam:Resource ;
+    rdfs:range foxxi-scorm-cam:Dependency ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): resourceType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:title a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "title"@en ;
+    rdfs:comment "The title of an organization or item, shown to the learner. (Until 2026.10.0 an object property pointing at the deprecated class Title.)"@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-scorm-cam:Organization foxxi-scorm-cam:Item ) ] ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): titleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:schema a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "schema"@en ;
+    rdfs:comment "The schema the metadata follows: \"ADL SCORM\" for a SCORM package. (Until 2026.10.0 an object property pointing at the deprecated class Schema.)"@en ;
+    rdfs:domain foxxi-scorm-cam:Metadata ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): schemaType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:schemaversion a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "schema version"@en ;
+    skos:notation "schemaversion" ;
+    rdfs:comment "The version of that schema: for SCORM 2004, \"2004 4th Edition\", \"2004 3rd Edition\", or \"CAM 1.3\" for the 2nd Edition. (Until 2026.10.0 an object property pointing at the deprecated class SchemaVersion.)"@en ;
+    rdfs:domain foxxi-scorm-cam:Metadata ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): schemaversionType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:scormType a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "SCORM type"@en ;
+    skos:notation "adlcp:scormType" ;
+    rdfs:comment "Whether a resource is a SCO, which communicates with the LMS at run time, or an asset, which does not. Every SCORM resource has one."@en ;
+    rdfs:domain foxxi-scorm-cam:Resource ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "sco" "asset" ) ] ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): scormType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:location a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "location"@en ;
+    skos:notation "adlcp:location" ;
+    rdfs:comment "The URL of a metadata record kept outside the manifest."@en ;
+    rdfs:domain foxxi-scorm-cam:Metadata ;
+    rdfs:range xsd:anyURI ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): locationType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:dataFromLMS a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "data from LMS"@en ;
+    skos:notation "adlcp:dataFromLMS" ;
+    rdfs:comment "Data an item gives the content it launches, which the content reads as cmi.launch_data."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range xsd:string ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): dataFromLMSType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:timeLimitAction a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "time limit action"@en ;
+    skos:notation "adlcp:timeLimitAction" ;
+    rdfs:comment "What the content an item launches should do when the learner exceeds the time allowed; the content reads it as cmi.time_limit_action."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range [
+        a rdfs:Datatype ;
+        owl:oneOf ( "exit,message" "exit,no message" "continue,message" "continue,no message" )
+    ] ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): timeLimitActionType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:completionThreshold a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "completion threshold"@en ;
+    skos:notation "adlcp:completionThreshold" ;
+    rdfs:comment "An item's completion threshold as SCORM 2004 3rd Edition writes it: the content of the element, a number from 0 to 1. The 4th Edition expresses the threshold as minProgressMeasure; its schema still admits the content, so 3rd Edition packages remain valid."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range foxxi-scorm-cam:UnitInterval ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): completionThresholdType (3rd Edition content)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:completedByMeasure a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "completed by measure"@en ;
+    skos:notation "adlcp:completionThreshold/@completedByMeasure" ;
+    rdfs:comment "Whether an item's completion is decided by comparing its progress measure with its minimum progress measure. Default false. Added in the 4th Edition."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): completionThresholdType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:minProgressMeasure a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "minimum progress measure"@en ;
+    skos:notation "adlcp:completionThreshold/@minProgressMeasure" ;
+    rdfs:comment "The progress measure, from 0 to 1, at or above which an item whose completion is decided by measure is complete. Default 1.0. The content reads it as cmi.completion_threshold. Added in the 4th Edition."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range foxxi-scorm-cam:UnitInterval ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): completionThresholdType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:progressWeight a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "progress weight"@en ;
+    skos:notation "adlcp:completionThreshold/@progressWeight" ;
+    rdfs:comment "The weight, from 0 to 1, that an item's progress measure carries when its parent's progress measure is rolled up. Default 1.0. Added in the 4th Edition."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range foxxi-scorm-cam:UnitInterval ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): completionThresholdType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:dataMap a owl:ObjectProperty ;
+    rdfs:label "shared data"@en ;
+    skos:notation "adlcp:data" ;
+    rdfs:comment "A shared data store the content an item launches has access to: one for each <adlcp:map> in the item's <adlcp:data>. Added in the 4th Edition."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range foxxi-scorm-cam:SharedDataMap ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): dataType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:targetID a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "target ID"@en ;
+    skos:notation "targetID" ;
+    rdfs:comment "The identifier of a shared data store. Required."@en ;
+    rdfs:domain foxxi-scorm-cam:SharedDataMap ;
+    rdfs:range xsd:anyURI ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): mapType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:readSharedData a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "read shared data"@en ;
+    skos:notation "readSharedData" ;
+    rdfs:comment "Whether the content can read the store. Default true."@en ;
+    rdfs:domain foxxi-scorm-cam:SharedDataMap ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): mapType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:writeSharedData a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "write shared data"@en ;
+    skos:notation "writeSharedData" ;
+    rdfs:comment "Whether the content can write the store. Default false."@en ;
+    rdfs:domain foxxi-scorm-cam:SharedDataMap ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): mapType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:sharedDataGlobalToSystem a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "shared data global to system"@en ;
+    skos:notation "adlcp:sharedDataGlobalToSystem" ;
+    rdfs:comment "Whether the shared data stores an organization's items map are global to the LMS, so other packages can reach them for the same learner (true, the default), or belong to this package (false). Added in the 4th Edition."@en ;
+    rdfs:domain foxxi-scorm-cam:Organization ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): sharedDataGlobalToSystem" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:ScormType a skos:ConceptScheme ;
+    rdfs:label "SCORM types"@en ;
+    skos:prefLabel "SCORM types"@en ;
+    rdfs:comment "The values of adlcp:scormType on a resource."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> ;
+    skos:hasTopConcept foxxi-scorm-cam:ScormType-sco , foxxi-scorm-cam:ScormType-asset .
+
+foxxi-scorm-cam:ScormType-sco a skos:Concept ;
+    skos:inScheme foxxi-scorm-cam:ScormType ;
+    skos:topConceptOf foxxi-scorm-cam:ScormType ;
+    skos:prefLabel "SCO"@en ;
+    rdfs:label "SCO (SCORM types)"@en ;
+    skos:notation "sco" ;
+    skos:definition "A sharable content object: launched by the LMS, it communicates with the LMS through the run-time API."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:ScormType-asset a skos:Concept ;
+    skos:inScheme foxxi-scorm-cam:ScormType ;
+    skos:topConceptOf foxxi-scorm-cam:ScormType ;
+    skos:prefLabel "asset"@en ;
+    rdfs:label "asset (SCORM types)"@en ;
+    skos:notation "asset" ;
+    skos:definition "Content the LMS can launch that does not communicate with the LMS."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:TimeLimitAction a skos:ConceptScheme ;
+    rdfs:label "Time limit actions"@en ;
+    skos:prefLabel "Time limit actions"@en ;
+    rdfs:comment "The values of adlcp:timeLimitAction, and so of cmi.time_limit_action."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> ;
+    skos:hasTopConcept foxxi-scorm-cam:TimeLimitAction-exit-message ,
+        foxxi-scorm-cam:TimeLimitAction-exit-no-message ,
+        foxxi-scorm-cam:TimeLimitAction-continue-message ,
+        foxxi-scorm-cam:TimeLimitAction-continue-no-message .
+
+foxxi-scorm-cam:TimeLimitAction-exit-message a skos:Concept ;
+    skos:inScheme foxxi-scorm-cam:TimeLimitAction ;
+    skos:topConceptOf foxxi-scorm-cam:TimeLimitAction ;
+    skos:prefLabel "exit with a message"@en ;
+    rdfs:label "exit with a message (Time limit actions)"@en ;
+    skos:notation "exit,message" ;
+    skos:definition "Leave the SCO, and tell the learner why."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:TimeLimitAction-exit-no-message a skos:Concept ;
+    skos:inScheme foxxi-scorm-cam:TimeLimitAction ;
+    skos:topConceptOf foxxi-scorm-cam:TimeLimitAction ;
+    skos:prefLabel "exit without a message"@en ;
+    rdfs:label "exit without a message (Time limit actions)"@en ;
+    skos:notation "exit,no message" ;
+    skos:definition "Leave the SCO without telling the learner."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:TimeLimitAction-continue-message a skos:Concept ;
+    skos:inScheme foxxi-scorm-cam:TimeLimitAction ;
+    skos:topConceptOf foxxi-scorm-cam:TimeLimitAction ;
+    skos:prefLabel "continue with a message"@en ;
+    rdfs:label "continue with a message (Time limit actions)"@en ;
+    skos:notation "continue,message" ;
+    skos:definition "Stay in the SCO, and tell the learner the time is up."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:TimeLimitAction-continue-no-message a skos:Concept ;
+    skos:inScheme foxxi-scorm-cam:TimeLimitAction ;
+    skos:topConceptOf foxxi-scorm-cam:TimeLimitAction ;
+    skos:prefLabel "continue without a message"@en ;
+    rdfs:label "continue without a message (Time limit actions)"@en ;
+    skos:notation "continue,no message" ;
+    skos:definition "Stay in the SCO without telling the learner."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+foxxi-scorm-cam:Structure a skos:ConceptScheme ;
+    rdfs:label "Organization structures"@en ;
+    skos:prefLabel "Organization structures"@en ;
+    rdfs:comment "The values of an organization's structure attribute that SCORM uses."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> ;
+    skos:hasTopConcept foxxi-scorm-cam:Structure-hierarchical .
+
+foxxi-scorm-cam:Structure-hierarchical a skos:Concept ;
+    skos:inScheme foxxi-scorm-cam:Structure ;
+    skos:topConceptOf foxxi-scorm-cam:Structure ;
+    skos:prefLabel "hierarchical"@en ;
+    rdfs:label "hierarchical (Organization structures)"@en ;
+    skos:notation "hierarchical" ;
+    skos:definition "A tree of items: the default structure, and the one SCORM content uses."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members (
+        foxxi-scorm-cam:Manifest
+        foxxi-scorm-cam:Metadata
+        foxxi-scorm-cam:Organizations
+        foxxi-scorm-cam:Organization
+        foxxi-scorm-cam:Item
+        foxxi-scorm-cam:Resources
+        foxxi-scorm-cam:Resource
+        foxxi-scorm-cam:File
+        foxxi-scorm-cam:Dependency
+        foxxi-scorm-cam:SharedDataMap
+    )
+] .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+    rdfs:label "was derived from"@en ;
+    rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Entity .
+
+skos:ConceptScheme a owl:Class ;
+    rdfs:label "Concept Scheme"@en ;
+    rdfs:comment "A set of concepts, optionally including statements about semantic relationships between those concepts. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    owl:disjointWith skos:Concept .
+
+skos:hasTopConcept a owl:ObjectProperty ;
+    rdfs:label "has top concept"@en ;
+    rdfs:comment "Relates, by convention, a concept scheme to a concept which is topmost in the broader/narrower concept hierarchies for that scheme. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range skos:Concept .
+
+skos:Concept a owl:Class ;
+    rdfs:label "Concept"@en ;
+    rdfs:comment "An idea or notion; a unit of thought. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> .
+
+skos:inScheme a owl:ObjectProperty ;
+    rdfs:label "is in scheme"@en ;
+    rdfs:comment "Relates a resource (for example a concept) to a concept scheme in which it is included. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:range skos:ConceptScheme .
+
+skos:topConceptOf a owl:ObjectProperty ;
+    rdfs:label "is top concept in scheme"@en ;
+    rdfs:comment "Relates a concept to the concept scheme that it is a top level concept of. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:subPropertyOf skos:inScheme ;
+    owl:inverseOf skos:hasTopConcept .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A physical, digital, conceptual, or other kind of thing with some fixed aspects. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+dct:title a owl:AnnotationProperty .
+
+dct:description a owl:AnnotationProperty .
+
+skos:historyNote a owl:AnnotationProperty .
+
+dct:creator a owl:AnnotationProperty .
+
+dct:contributor a owl:AnnotationProperty .
+
+dct:publisher a owl:AnnotationProperty .
+
+dct:license a owl:AnnotationProperty .
+
+dct:rights a owl:AnnotationProperty .
+
+dct:created a owl:AnnotationProperty .
+
+dct:modified a owl:AnnotationProperty .
+
+dct:issued a owl:AnnotationProperty .
+
+dct:language a owl:AnnotationProperty .
+
+bibo:status a owl:AnnotationProperty .
+
+dct:bibliographicCitation a owl:AnnotationProperty .
+
+vann:preferredNamespacePrefix a owl:AnnotationProperty .
+
+vann:preferredNamespaceUri a owl:AnnotationProperty .
+
+dct:source a owl:AnnotationProperty .
+
+skos:notation a owl:AnnotationProperty .
+
+dct:isReplacedBy a owl:AnnotationProperty .
+
+skos:prefLabel a owl:AnnotationProperty .
+
+skos:definition a owl:AnnotationProperty .

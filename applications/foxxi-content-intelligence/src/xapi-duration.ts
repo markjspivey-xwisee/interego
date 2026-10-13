@@ -24,5 +24,8 @@ export function isXapiDuration(v: unknown): boolean {
   if (typeof v !== 'string' || v.length < 2 || !DURATION_RE.test(v)) return false;
   // The week designator cannot be combined with any other component.
   if (v.includes('W')) return WEEK_DURATION_RE.test(v);
-  return true;
+  // Only the lowest-order component present may carry a decimal fraction (ISO 8601:2004
+  // §4.4.3.2): P1Y2.5M, never P1.5Y2M — the form the published ontology's pattern accepts.
+  const fractions = v.match(/\.\d+[YMDHS]/g) ?? [];
+  return fractions.length === 0 || (fractions.length === 1 && /\.\d+[YMDHS]$/.test(v));
 }

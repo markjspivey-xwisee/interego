@@ -1,0 +1,957 @@
+# Foxxi Content Intelligence vocabulary — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/foxxi  (this version: https://foxxi-bridge.interego.xwisee.com/ns/foxxi/2026.10.0)
+# Served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML; each is a serialization of one graph.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix xapi: <https://w3id.org/xapi/ontology#> .
+@prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix ob: <https://purl.imsglobal.org/spec/vc/ob/vocab.html#> .
+@prefix clr: <https://purl.imsglobal.org/spec/vc/clr/vocab.html#> .
+@prefix foxxi-ieee-ler: <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#> .
+@prefix foxxi: <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi> a owl:Ontology ;
+    dct:title "Foxxi Content Intelligence vocabulary"@en ;
+    dct:description "The vocabulary the Foxxi vertical emits: the xAPI verbs, activity types and context extensions its statements carry — typed with ADL's xAPI ontology classes, as the Foxxi xAPI Profile declares them — and the classes of the records it publishes to learner and tenant pods. It composes the standards ontologies it emerges from (rdfs:seeAlso)."@en ;
+    rdfs:comment "An original vocabulary of the Foxxi vertical, by Mark Spivey (Foxxi Mediums Inc.). It formalizes no standard; its xAPI concepts are typed with classes of ADL's xAPI ontology (https://w3id.org/xapi/ontology), which is not affiliated with or endorsing this vocabulary."@en ,
+        "Path-structured term names (verbs/…, activities/…) are part of the IRI: <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/asked> is one term. The Turtle writes such IRIs in full, which every reader takes; as a prefixed name the slash would have to be escaped (foxxi:verbs\\/asked)."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/foxxi/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-05-20"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). Foxxi Content Intelligence vocabulary (Version 2026.10.0) [Ontology]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/foxxi/2026.10.0" ;
+    vann:preferredNamespacePrefix "foxxi" ;
+    vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/foxxi#" ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/foxxi-vocab.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/xapi> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ,
+        <https://foxxi-bridge.interego.xwisee.com/xapi/profile> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi/mappings> .
+
+foxxi:VerbScheme a skos:ConceptScheme ;
+    rdfs:label "Foxxi xAPI verbs"@en ;
+    skos:prefLabel "Foxxi xAPI verbs"@en ;
+    rdfs:comment "The xAPI verbs Foxxi statements use that no other authority defines. Each is also a Concept of the Foxxi xAPI Profile."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> ;
+    skos:hasTopConcept <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/scene-completed> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/asked> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/retrieved> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/enrolled> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/credentialed> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/wallet-exported> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/framework-aligned> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/policy-decided> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/affordance-invoked> ,
+        foxxi:performed ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/asserted> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/intended> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/considered> .
+
+foxxi:ActivityTypeScheme a skos:ConceptScheme ;
+    rdfs:label "Foxxi xAPI activity types"@en ;
+    skos:prefLabel "Foxxi xAPI activity types"@en ;
+    rdfs:comment "The xAPI activity types Foxxi statements carry as object.definition.type."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> ;
+    skos:hasTopConcept <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/scene> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/concept-graph-node> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/credential> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/framework> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/affordance> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/fragment> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/composition> ,
+        foxxi:AssertedContext ,
+        foxxi:conceptGraphNode ,
+        foxxi:ProductionTask .
+
+foxxi:ExtensionScheme a skos:ConceptScheme ;
+    rdfs:label "Foxxi xAPI context extensions"@en ;
+    skos:prefLabel "Foxxi xAPI context extensions"@en ;
+    rdfs:comment "The keys Foxxi statements carry in context.extensions."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> ;
+    skos:hasTopConcept foxxi:slideId ,
+        foxxi:sceneTitle ,
+        foxxi:conceptIds ,
+        foxxi:masteryThreshold ,
+        foxxi:session ,
+        foxxi:affordanceTool ,
+        foxxi:policyId ,
+        foxxi:decision ,
+        foxxi:callerRole ,
+        foxxi:substrateDescriptorIri ,
+        foxxi:supersededDescriptor ,
+        foxxi:trustLevel ,
+        foxxi:judgmentKind ,
+        foxxi:epistemicConfidence ,
+        foxxi:groundTruth ,
+        foxxi:endorsed ,
+        foxxi:observedBy ,
+        foxxi:costUsd ,
+        foxxi:contextKind ,
+        foxxi:workTrajectory ,
+        foxxi:gradedTag ,
+        foxxi:deliveryChannel ,
+        foxxi:recipient ,
+        foxxi:deliveredBody ,
+        foxxi:deliveredVia ,
+        foxxi:contentForm ,
+        foxxi:actorKind ,
+        foxxi:competency ,
+        foxxi:compositionPosition ,
+        foxxi:alternativesOffered ,
+        foxxi:chosenBecause ,
+        foxxi:projectedFromTrajectoryStep ,
+        foxxi:bundleJson ,
+        foxxi:evaluationId ,
+        foxxi:candidateId ,
+        foxxi:harness .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/scene-completed> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "scene completed"@en ;
+    rdfs:label "scene completed"@en ;
+    skos:notation "scene-completed" ;
+    skos:definition "Every slide in a course scene has been viewed."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/asked> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "asked"@en ;
+    rdfs:label "asked"@en ;
+    skos:notation "asked" ;
+    skos:definition "A learner asked a content question to the concept-graph agentic retriever."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/retrieved> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "retrieved"@en ;
+    rdfs:label "retrieved"@en ;
+    skos:notation "retrieved" ;
+    skos:definition "Concept-graph retrieval traced a set of slides/concepts as evidence for an answer."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/enrolled> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "enrolled"@en ;
+    rdfs:label "enrolled"@en ;
+    skos:notation "enrolled" ;
+    skos:definition "A learner matched a tenant policy and was assigned a course."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/credentialed> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "credentialed"@en ;
+    rdfs:label "credentialed"@en ;
+    skos:notation "credentialed" ;
+    skos:definition "An Open Badges 3.0 / W3C VC credential was issued for the learner."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/wallet-exported> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "wallet exported"@en ;
+    rdfs:label "wallet exported"@en ;
+    skos:notation "wallet-exported" ;
+    skos:definition "A learner exported a CLR 2.0 envelope from their pod."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/framework-aligned> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "framework aligned"@en ;
+    rdfs:label "framework aligned"@en ;
+    skos:notation "framework-aligned" ;
+    skos:definition "An admin declared a CASE 1.0 cross-tenant alignment association."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/policy-decided> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "policy decided"@en ;
+    rdfs:label "policy decided"@en ;
+    skos:notation "policy-decided" ;
+    skos:definition "An ABAC policy returned an access decision (allow/deny) for a substrate call."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/affordance-invoked> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "affordance invoked"@en ;
+    rdfs:label "affordance invoked"@en ;
+    skos:notation "affordance-invoked" ;
+    skos:definition "A bridge affordance was called — the bridge instruments every handler with this verb."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:performed a skos:Concept , xapi:Verb ;
+    skos:prefLabel "performed"@en ;
+    rdfs:label "performed"@en ;
+    skos:notation "performed" ;
+    skos:definition "A unit of on-the-job production work was performed by a human or an AI agent (IEEE P2997 employment-history leg)."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/asserted> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "asserted"@en ;
+    rdfs:label "asserted"@en ;
+    skos:notation "asserted" ;
+    skos:definition "An agent asserted a settled context descriptor (modal status Asserted; groundTruth true). The work was committed."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/intended> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "intended"@en ;
+    rdfs:label "intended"@en ;
+    skos:notation "intended" ;
+    skos:definition "An agent recorded a Hypothetical context descriptor — an intention / plan (groundTruth undefined). No completion is claimed."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/considered> a skos:Concept , xapi:Verb ;
+    skos:prefLabel "considered"@en ;
+    rdfs:label "considered"@en ;
+    skos:notation "considered" ;
+    skos:definition "An agent recorded a Counterfactual (or Retracted) context descriptor — a road not taken / a withdrawn claim."@en ;
+    skos:inScheme foxxi:VerbScheme ;
+    skos:topConceptOf foxxi:VerbScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/scene> a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "scene activity type"@en ;
+    rdfs:label "scene activity type"@en ;
+    skos:notation "scene" ;
+    skos:definition "A course scene grouping multiple slides under a sub-theme."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/concept-graph-node> a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "concept graph node activity type"@en ;
+    rdfs:label "concept graph node activity type"@en ;
+    skos:notation "concept-graph-node" ;
+    skos:definition "A single concept in a course knowledge graph; carries prereq edges + slide membership."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/credential> a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "credential activity type"@en ;
+    rdfs:label "credential activity type"@en ;
+    skos:notation "credential" ;
+    skos:definition "A Verifiable Credential / Open Badge 3.0."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/framework> a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "framework activity type"@en ;
+    rdfs:label "framework activity type"@en ;
+    skos:notation "framework" ;
+    skos:definition "A CASE 1.0 / CaSS competency framework."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/affordance> a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "affordance activity type"@en ;
+    rdfs:label "affordance activity type"@en ;
+    skos:notation "affordance" ;
+    skos:definition "A bridge affordance / MCP tool, identified by toolName."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/fragment> a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "fragment activity type"@en ;
+    rdfs:label "fragment activity type"@en ;
+    skos:notation "fragment" ;
+    skos:definition "A piece of teaching or support whose IRI is the hash of its content: a concept, worked example, practice task, assessment item, job aid, reference, context, probe or reflection."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/composition> a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "composition activity type"@en ;
+    rdfs:label "composition activity type"@en ;
+    skos:notation "composition" ;
+    skos:definition "A path of positions holding fragments or compositions by reference, resolved per learner from their own record."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:AssertedContext a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "Asserted Context activity type"@en ;
+    rdfs:label "Asserted Context activity type"@en ;
+    skos:notation "AssertedContext" ;
+    skos:definition "A context-descriptor assertion whose payload type the publisher did not declare — the domain-agnostic fallback object type for a projected performance statement."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:conceptGraphNode a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "obsolete concept graph node activity type"@en ;
+    rdfs:label "obsolete concept graph node activity type"@en ;
+    skos:notation "conceptGraphNode" ;
+    skos:definition "Activity type for a concept-graph node referenced from an xAPI statement. Superseded by activities/concept-graph-node, which names the same thing and is the one Foxxi emits."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    owl:deprecated true ;
+    dct:isReplacedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/concept-graph-node> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:ProductionTask a skos:Concept , xapi:ActivityType ;
+    skos:prefLabel "Production Task activity type"@en ;
+    rdfs:label "Production Task activity type"@en ;
+    skos:notation "ProductionTask" ;
+    skos:definition "A unit of on-the-job production work — the object of a `performed` statement."@en ;
+    skos:inScheme foxxi:ActivityTypeScheme ;
+    skos:topConceptOf foxxi:ActivityTypeScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:TrajectoryStep a owl:Class ;
+    rdfs:label "Trajectory Step"@en ;
+    rdfs:comment "One step of an agentic-native trajectory — a modal, poly-granular Context Descriptor."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:CourseCompletionCredential a owl:Class ;
+    rdfs:label "Course Completion Credential"@en ;
+    rdfs:comment "A descriptor wrapping a W3C VC / Open Badges 3.0 course-completion credential in a learner pod wallet."@en ;
+    skos:closeMatch ob:OpenBadgeCredential ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:CompetencyAssertion a owl:Class ;
+    rdfs:label "Competency Assertion"@en ;
+    rdfs:comment "A descriptor asserting a learner holds a competency."@en ;
+    skos:closeMatch foxxi-ieee-ler:CompetencyAssertion ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:WalletEnvelope a owl:Class ;
+    rdfs:label "Wallet Envelope"@en ;
+    rdfs:comment "A CLR 2.0 wallet envelope aggregating verified credentials."@en ;
+    skos:closeMatch clr:ClrCredential ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:CASEAlignment a owl:Class ;
+    rdfs:label "CASE Alignment"@en ;
+    rdfs:comment "A 1EdTech CASE 1.0 cross-framework alignment association descriptor."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:TenantMetadata a owl:Class ;
+    rdfs:label "Tenant Metadata"@en ;
+    rdfs:comment "A descriptor carrying a Foxxi tenant's metadata."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:AdaptiveSequencingPolicy a owl:Class ;
+    rdfs:label "Adaptive Sequencing Policy"@en ;
+    rdfs:comment "A descriptor declaring an adaptive content-sequencing policy."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:PackageUpload a owl:Class ;
+    rdfs:label "Package Upload"@en ;
+    rdfs:comment "A descriptor recording that a SCORM / cmi5 package was uploaded. Hypothetical by construction: it records that bytes arrived, not what they contain."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:ParsedPackage a owl:Class ;
+    rdfs:label "Parsed Package"@en ;
+    rdfs:comment "A descriptor carrying what a SCORM / cmi5 package actually IS — manifest identifier, course title, standard, authoring-tool fingerprint, SCO list and activity structure — read out of the uploaded zip in-process. Asserted, and it supersedes (iep:supersedes) the PackageUpload receipt for the same graph."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:TutorAgentProfile a owl:Class ;
+    rdfs:label "Tutor Agent Profile"@en ;
+    rdfs:comment "A self-registered AI tutor agent's marketplace profile — DID, specialties (framework IRI + competency IRI + self-rated level) and contact endpoint. Self-asserted: foxxi.register_tutor_agent binds it to no signer, so what binds a profile to a tutor is publishing it to that tutor's own pod."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:PerformanceSituation a owl:Class ;
+    rdfs:label "Performance Situation"@en ;
+    rdfs:comment "A typed, modal-statused descriptor of a performer (human or agent), the work, and observed performance. The unit the system reasons from — it carries no idealised future state; content is never assumed."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:Diagnosis a owl:Class ;
+    rdfs:label "Diagnosis"@en ;
+    rdfs:comment "A contextualization of a performance situation: it reads the work regime and applies that regime’s method — apply an established practice (Evident), a cause-factor gap analysis (Knowable), a dispositional read (Emergent), or stabilise first (Turbulent)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:InterventionPlan a owl:Class ;
+    rdfs:label "Intervention Plan"@en ;
+    rdfs:comment "The full paradigm of interventions for a contextualized situation — instruction, performance-support, reference, practice, assessment, coaching, probe, environmental-fix, no-intervention — each marked selected or ruled-out with its reasoning."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:InterventionEvaluation a owl:Class ;
+    rdfs:label "Intervention Evaluation"@en ;
+    rdfs:comment "The Knowable regime’s closing move: a four-level evaluation — response, capability, transfer, outcome — as a modal-status progression; a closed gap supersedes the prior observed-state (iep:supersedes)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:OutcomeRecord a owl:Class ;
+    rdfs:label "Outcome Record"@en ;
+    rdfs:comment "One distilled intervention outcome — in a regime, having named a cause and chosen an intervention, the verdict reached; and, if it missed, the cause re-contextualization found instead. The evidence atom of calibration."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:CalibrationProfile a owl:Class ;
+    rdfs:label "Calibration Profile"@en ;
+    rdfs:comment "The system’s recorded track record of its own Knowable-regime recommendations: per (regime × cause × intervention) cell, how often that recommendation actually closed the gap. A cell is Hypothetical until it has the samples to Assert a rate; profiles compose across organizations by union."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:CapabilityTransfer a owl:Class ;
+    rdfs:label "Capability Transfer"@en ;
+    rdfs:comment "The performance reading of one agent teaching another. The unit taught is an ac:TeachingPackage (agent-collective); Foxxi frames a learner agent’s acquisition of it as an A2A instruction intervention, verifies the transfer by reading the learner’s own trajectories before and after, and emits an amta:Attestation that feeds ac:’s modal discipline and the reflexive calibration loop. Foxxi composes the teaching foundation; it does not redefine it."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:GroundingFragment a owl:Class ;
+    rdfs:label "Grounding Fragment"@en ;
+    rdfs:comment "A content-addressed atomic content unit (a PGSL atom) — the leaf of an emergent course; carries modality, cognitive level, provenance and disposition-suitability."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:Lesson a owl:Class ;
+    rdfs:label "Lesson"@en ;
+    rdfs:comment "A syntagm of grounding fragments toward one competency-point; each position holds a paradigm of interchangeable alternatives."@en ;
+    rdfs:subClassOf foxxi:Composition ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:Module a owl:Class ;
+    rdfs:label "Module"@en ;
+    rdfs:comment "A syntagm of lessons."@en ;
+    rdfs:subClassOf foxxi:Composition ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:Course a owl:Class ;
+    rdfs:label "Course"@en ;
+    rdfs:comment "A syntagm of modules. Not a stored artifact — a composition recipe that personalises (restriction + override) into a different resolved course per performer."@en ;
+    rdfs:subClassOf foxxi:Composition ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:Composition a owl:Class ;
+    rdfs:label "Composition"@en ;
+    rdfs:comment "One type for lesson, module, course and curriculum: a path of positions, each naming a competency and the fragments or compositions that can fill it, by reference. Its IRI is the hash of its content, and each learner gets it resolved from their own record."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:ContentAdmission a owl:Class ;
+    rdfs:label "Content Admission"@en ;
+    rdfs:comment "What a learner keeps on their own pod about which forms of content suit them at a competency: the fragment kinds admitted and why, the plan or situation it came from and the regime that plan read, and when. The latest record for a competency stands, a withdrawal included; resolution reads it whenever a request names no admission of its own. The learner keeps it; the bridge only reads it."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:AppliedVoid a owl:Class ;
+    rdfs:label "Applied Void"@en ;
+    rdfs:comment "That a statement in the record of a learner was voided, kept with that record by the bridge once the voiding took effect: the id of the voided statement and of the voiding one. The store of a lens is a view that eviction and restarts empty, while the copies of the voided statement in the lattice and on the pod of the learner outlive it; this record keeps them voided. Only a void that took effect is kept, never one a voiding statement merely names."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:ContentBundle a owl:Class ;
+    rdfs:label "Content Bundle"@en ;
+    rdfs:comment "What an author made in one act, kept together on their pod: a root composition and every fragment and composition it holds, each still named by the hash of its own content and checked against it when read back. A folded course is kept as one bundle, so the pod takes one write rather than one per item."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:Curriculum a owl:Class ;
+    rdfs:label "Curriculum"@en ;
+    rdfs:comment "A syntagm of courses toward a set of target competencies."@en ;
+    rdfs:subClassOf foxxi:Composition ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:InFlowPerformanceSupport a owl:Class ;
+    rdfs:label "In-Flow Performance Support"@en ;
+    rdfs:comment "A job-aid fragment delivered by an affordance attached to the work context — surfaced when a performer enters the triggering task, not on a training schedule."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:DeliveredContent a owl:Class ;
+    rdfs:label "Delivered Content"@en ;
+    rdfs:comment "A descriptor wrapping a unit of generated content delivered through a channel and published to the pod — so the delivery is itself a discoverable, federatable Context Descriptor, not a fire-and-forget send."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:WorkRegime a owl:Class ;
+    rdfs:label "Work Regime"@en ;
+    rdfs:comment "How knowable the relationship between act and outcome is for a piece of work — Evident, Knowable, Emergent, or Turbulent. The regime decides which consulting and knowledge method is valid."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:ContentRevision a owl:Class ;
+    rdfs:label "Content Revision"@en ;
+    rdfs:comment "A revision of a judged content claim: the claim as it stood and the grade it had, the words now and the evidence cited from outside the passage, who revised it and whether as a person or an agent, and — once the revised claim is judged — the new judgment and the grade before and after. The original judgment stands; the revision names it."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:AutonomyPolicy a owl:Class ;
+    rdfs:label "Autonomy Policy"@en ;
+    rdfs:comment "The constitutional policy that says when a judge may assert on a kind of question without a person: per kind, the registry rating on its axis the judge must reach, over how many outcomes the latest attestation must rest, and how many of those a person must have confirmed. Amended through propose, vote and ratify; each policy supersedes the last; a judgment cites the decision it was published under."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:ContentJudgmentAttestation a owl:Class ;
+    rdfs:label "Content Judgment Attestation"@en ;
+    rdfs:comment "An attestation about the content-judging agent, in the AMTA axes (accuracy, competence, honesty, recency): the agent about itself, grounded in the calibration its confirmed outcomes give, or a learning engineer as a peer. The registry aggregates every one on the pod into the reputation foxxi.content_judgment_reputation serves."@en ;
+    rdfs:subClassOf amta:Attestation ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:ContentJudgmentOutcome a owl:Class ;
+    rdfs:label "Content Judgment Outcome"@en ;
+    rdfs:comment "What a person held to be true about a content claim after a ContentJudgment: the confirmed answer, whether the model had it, and the Brier score of its probabilities. Asserted; it supersedes the judgment it scores, and the content judgment calibration is computed over these."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:ContentJudgment a owl:Class ;
+    rdfs:label "Content Judgment"@en ;
+    rdfs:comment "A System One model judgment about a unit of course content — how well a claim is supported by its context and evidence (evidence-level), or which work regime the work it describes falls in (work-regime) — carried as typed probabilities with the model confidence. Hypothetical until a person confirms or refutes it; the descriptor controls say how."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:CompetenceDecomposition a owl:Class ;
+    rdfs:label "Competence Decomposition"@en ;
+    rdfs:comment "A competency broken into knowledge components (recorded / trained / judged / lived / innate) by codifiability — how much of it can honestly become content."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:KnowledgeAsset a owl:Class ;
+    rdfs:label "Knowledge Asset"@en ;
+    rdfs:comment "A unit of knowledge — a codified artefact, a narrative, or a connection to a holder; carries a codification level and, for codified assets, an explicit uncodified residue."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:KnowledgeMap a owl:Class ;
+    rdfs:label "Knowledge Map"@en ;
+    rdfs:comment "A regime-routed knowledge strategy for a competency: what to codify into content and what to enable as a flow — connection, narrative, apprenticeship."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:slideId a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "slide ID extension"@en ;
+    rdfs:label "slide ID extension"@en ;
+    skos:notation "slideId" ;
+    skos:definition "Identifier of the slide a statement is about."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:sceneTitle a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "scene title extension"@en ;
+    rdfs:label "scene title extension"@en ;
+    skos:notation "sceneTitle" ;
+    skos:definition "Title of the scene grouping."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:conceptIds a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "concept ids extension"@en ;
+    rdfs:label "concept ids extension"@en ;
+    skos:notation "conceptIds" ;
+    skos:definition "List of concept-graph node IDs referenced by the activity."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:masteryThreshold a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "mastery threshold extension"@en ;
+    rdfs:label "mastery threshold extension"@en ;
+    skos:notation "masteryThreshold" ;
+    skos:definition "cmi5 mastery threshold applied to score.scaled for the pass/fail decision (0.0–1.0)."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:session a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "session extension"@en ;
+    rdfs:label "session extension"@en ;
+    skos:notation "session" ;
+    skos:definition "Foxxi session UUID — joins all statements from a single learner launch."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:affordanceTool a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "affordance tool extension"@en ;
+    rdfs:label "affordance tool extension"@en ;
+    skos:notation "affordanceTool" ;
+    skos:definition "MCP tool name of the invoked affordance."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:policyId a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "policy ID extension"@en ;
+    rdfs:label "policy ID extension"@en ;
+    skos:notation "policyId" ;
+    skos:definition "ABAC policy descriptor IRI that produced a decision."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:decision a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "decision extension"@en ;
+    rdfs:label "decision extension"@en ;
+    skos:notation "decision" ;
+    skos:definition "ABAC decision — allow / deny."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:callerRole a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "caller role extension"@en ;
+    rdfs:label "caller role extension"@en ;
+    skos:notation "callerRole" ;
+    skos:definition "Resolved caller role at the time of an affordance call."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:substrateDescriptorIri a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "substrate descriptor IRI extension"@en ;
+    rdfs:label "substrate descriptor IRI extension"@en ;
+    skos:notation "substrateDescriptorIri" ;
+    skos:definition "IRI of the substrate context descriptor produced by an affordance call (xAPI ↔ substrate cross-link)."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:supersededDescriptor a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "superseded descriptor extension"@en ;
+    rdfs:label "superseded descriptor extension"@en ;
+    skos:notation "supersededDescriptor" ;
+    skos:definition "IRI of a prior descriptor this one revises/closes — the iep:supersedes link carried into xAPI as a structural revision signal (not a domain closure verb)."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:trustLevel a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "trust level extension"@en ;
+    rdfs:label "trust level extension"@en ;
+    skos:notation "trustLevel" ;
+    skos:definition "The descriptor's TrustFacet level (SelfAsserted / ThirdPartyAttested / CryptographicallyVerified), passed through verbatim."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:judgmentKind a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "judgment kind extension"@en ;
+    rdfs:label "judgment kind extension"@en ;
+    skos:notation "judgmentKind" ;
+    skos:definition "On a ContentJudgment: which question the model was asked — evidence-level (a Score over the evidence scale) or work-regime (a Choice among the four regimes)."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:epistemicConfidence a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "epistemic confidence extension"@en ;
+    rdfs:label "epistemic confidence extension"@en ;
+    skos:notation "epistemicConfidence" ;
+    skos:definition "The descriptor's SemioticFacet epistemic confidence [0.0–1.0] — confidence that the DESCRIPTOR itself is accurate (infrastructure-level), NOT a performance score. Carried as its own extension, never as result.score.scaled."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:groundTruth a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "ground truth extension"@en ;
+    rdfs:label "ground truth extension"@en ;
+    skos:notation "groundTruth" ;
+    skos:definition "The descriptor's tri-state groundTruth (true for Asserted, false for Counterfactual, undefined for Hypothetical), passed through verbatim."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:endorsed a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "endorsed extension"@en ;
+    rdfs:label "endorsed extension"@en ;
+    skos:notation "endorsed" ;
+    skos:definition "False when the descriptor is Quoted (recorded with no endorsement / source-attributed)."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:observedBy a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "observed by extension"@en ;
+    rdfs:label "observed by extension"@en ;
+    skos:notation "observedBy" ;
+    skos:definition "DID of the observer/evaluator who attested a performance record (provenance)."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:costUsd a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "cost USD extension"@en ;
+    rdfs:label "cost USD extension"@en ;
+    skos:notation "costUsd" ;
+    skos:definition "Cost of a performance execution in USD — agent performance economics."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:contextKind a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "context kind extension"@en ;
+    rdfs:label "context kind extension"@en ;
+    skos:notation "contextKind" ;
+    skos:definition "Whether a statement records `production` work, `training`, or `performance-support`."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:workTrajectory a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "work trajectory extension"@en ;
+    rdfs:label "work trajectory extension"@en ;
+    skos:notation "workTrajectory" ;
+    skos:definition "How a unit of recorded production work went, as its performer recorded it with the work: its steps, each with a modal status (done, intended, or considered and dropped), a granularity (task, subtask or tool call), what it acted on and its result. Carried in the performance statement itself, so it lives with the record on the performer's pod, and a work regime can be read from it later."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:gradedTag a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "graded tag extension"@en ;
+    rdfs:label "graded tag extension"@en ;
+    skos:notation "gradedTag" ;
+    skos:definition "HMAC the bridge puts on a result it graded itself, keyed by a secret only it holds; a credential earned from evidence counts only mastery statements that carry it, so a learner's own report is in the record but is not evidence."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:deliveryChannel a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "delivery channel extension"@en ;
+    rdfs:label "delivery channel extension"@en ;
+    skos:notation "deliveryChannel" ;
+    skos:definition "The channel a generated text artifact was delivered through — document, email, chat, or sms."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:recipient a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "recipient extension"@en ;
+    rdfs:label "recipient extension"@en ;
+    skos:notation "recipient" ;
+    skos:definition "The recipient address/handle a generated artifact was delivered to."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:deliveredBody a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "delivered body extension"@en ;
+    rdfs:label "delivered body extension"@en ;
+    skos:notation "deliveredBody" ;
+    skos:definition "Base64-encoded body text of a delivered-content artifact published to the pod."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:deliveredVia a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "delivered via extension"@en ;
+    rdfs:label "delivered via extension"@en ;
+    skos:notation "deliveredVia" ;
+    skos:definition "How a delivery left the bridge — a pod-descriptor publish, a channel webhook, or none (recorded only)."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:contentForm a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "content form extension"@en ;
+    rdfs:label "content form extension"@en ;
+    skos:notation "contentForm" ;
+    skos:definition "The text form a unit of content was rendered in — plain, markdown, html, or interactive (dynamic hypermedia)."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:actorKind a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "actor kind extension"@en ;
+    rdfs:label "actor kind extension"@en ;
+    skos:notation "actorKind" ;
+    skos:definition "Whether the actor is a `human` or an `agent`."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:competency a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "competency extension"@en ;
+    rdfs:label "competency extension"@en ;
+    skos:notation "competency" ;
+    skos:definition "The competency IRI the composition position a fragment filled develops."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:compositionPosition a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "composition position extension"@en ;
+    rdfs:label "composition position extension"@en ;
+    skos:notation "compositionPosition" ;
+    skos:definition "The index of the position, in the composition holding it, that a fragment filled."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:alternativesOffered a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "alternatives offered extension"@en ;
+    rdfs:label "alternatives offered extension"@en ;
+    skos:notation "alternativesOffered" ;
+    skos:definition "The fragment and composition IRIs a position offered, of which the fragment experienced was chosen."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:chosenBecause a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "chosen because extension"@en ;
+    rdfs:label "chosen because extension"@en ;
+    skos:notation "chosenBecause" ;
+    skos:definition "Why resolution chose the fragment for this learner, in words."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:projectedFromTrajectoryStep a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "projected from trajectory step extension"@en ;
+    rdfs:label "projected from trajectory step extension"@en ;
+    skos:notation "projectedFromTrajectoryStep" ;
+    skos:definition "IRI of the agentic-native trajectory step an xAPI statement was projected from."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:bundleJson a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "bundle JSON extension"@en ;
+    rdfs:label "bundle JSON extension"@en ;
+    skos:notation "bundleJson" ;
+    skos:definition "Base64-encoded JSON payload (e.g. a signed VC) embedded in a descriptor graph."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:evaluationId a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "evaluation ID extension"@en ;
+    rdfs:label "evaluation ID extension"@en ;
+    skos:notation "evaluationId" ;
+    skos:definition "IRI of the agent/harness evaluation cohort a `performed` run is bound to — ties an external-agent run to a head-to-head portfolio comparison."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:candidateId a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "candidate ID extension"@en ;
+    rdfs:label "candidate ID extension"@en ;
+    skos:notation "candidateId" ;
+    skos:definition "IRI of the evaluation candidate (one team's agent/harness) a run is attributed to within an evaluation cohort."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+foxxi:harness a skos:Concept , xapi:ContextExtension ;
+    skos:prefLabel "harness extension"@en ;
+    rdfs:label "harness extension"@en ;
+    skos:notation "harness" ;
+    skos:definition "The harness / runtime label an external agent is built on (name, version, runtime) — lets a portfolio read attribute behaviour to the harness."@en ;
+    skos:inScheme foxxi:ExtensionScheme ;
+    skos:topConceptOf foxxi:ExtensionScheme ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+    rdfs:label "was derived from"@en ;
+    rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Entity .
+
+skos:ConceptScheme a owl:Class ;
+    rdfs:label "Concept Scheme"@en ;
+    rdfs:comment "A set of concepts, optionally including statements about semantic relationships between those concepts. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    owl:disjointWith skos:Concept .
+
+skos:Concept a owl:Class ;
+    rdfs:label "Concept"@en ;
+    rdfs:comment "An idea or notion; a unit of thought. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> .
+
+xapi:Verb a owl:Class ;
+    rdfs:label "Verb"@en ;
+    rdfs:comment "The class used for a Verb object in xAPI. (ADL xAPI ontology)"@en ;
+    rdfs:isDefinedBy <https://w3id.org/xapi/ontology> .
+
+skos:inScheme a owl:ObjectProperty ;
+    rdfs:label "is in scheme"@en ;
+    rdfs:comment "Relates a resource (for example a concept) to a concept scheme in which it is included. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:range skos:ConceptScheme .
+
+skos:topConceptOf a owl:ObjectProperty ;
+    rdfs:label "is top concept in scheme"@en ;
+    rdfs:comment "Relates a concept to the concept scheme that it is a top level concept of. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:subPropertyOf skos:inScheme ;
+    owl:inverseOf skos:hasTopConcept .
+
+skos:hasTopConcept a owl:ObjectProperty ;
+    rdfs:label "has top concept"@en ;
+    rdfs:comment "Relates, by convention, a concept scheme to a concept which is topmost in the broader/narrower concept hierarchies for that scheme. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range skos:Concept .
+
+xapi:ActivityType a owl:Class ;
+    rdfs:label "Activity type"@en ;
+    rdfs:comment "The class for an Activity Type in an xAPI vocabulary or profile. (ADL xAPI ontology)"@en ;
+    rdfs:isDefinedBy <https://w3id.org/xapi/ontology> .
+
+amta:Attestation a owl:Class ;
+    rdfs:label "AMTA Attestation"@en ;
+    rdfs:comment "A multi-dimensional trust attestation by one agent (the attestor) about another agent or claim (the subject). (Interego AMTA)"@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/amta> .
+
+xapi:ContextExtension a owl:Class ;
+    rdfs:label "Context extension"@en ;
+    rdfs:comment "The class used to classify a ContextExtension in xAPI. (ADL xAPI ontology)"@en ;
+    rdfs:isDefinedBy <https://w3id.org/xapi/ontology> .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A physical, digital, conceptual, or other kind of thing with some fixed aspects. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+dct:title a owl:AnnotationProperty .
+
+dct:description a owl:AnnotationProperty .
+
+skos:historyNote a owl:AnnotationProperty .
+
+dct:creator a owl:AnnotationProperty .
+
+dct:contributor a owl:AnnotationProperty .
+
+dct:publisher a owl:AnnotationProperty .
+
+dct:license a owl:AnnotationProperty .
+
+dct:rights a owl:AnnotationProperty .
+
+dct:created a owl:AnnotationProperty .
+
+dct:modified a owl:AnnotationProperty .
+
+dct:issued a owl:AnnotationProperty .
+
+dct:language a owl:AnnotationProperty .
+
+bibo:status a owl:AnnotationProperty .
+
+dct:bibliographicCitation a owl:AnnotationProperty .
+
+vann:preferredNamespacePrefix a owl:AnnotationProperty .
+
+vann:preferredNamespaceUri a owl:AnnotationProperty .
+
+skos:prefLabel a owl:AnnotationProperty .
+
+skos:notation a owl:AnnotationProperty .
+
+skos:definition a owl:AnnotationProperty .
+
+dct:isReplacedBy a owl:AnnotationProperty .
+
+skos:closeMatch a owl:AnnotationProperty .

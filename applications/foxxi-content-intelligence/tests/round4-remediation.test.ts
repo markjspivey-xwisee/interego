@@ -91,11 +91,16 @@ describe('round-4 — sh:class is enforced by validateAgainstShape', () => {
 });
 
 // ── MINOR: @context ordering (VC-DM 2.0 §4.1 — v2 MUST be first) ──────────────────
-describe('round-4 — @context ordering is enforced (firstValue)', () => {
+// ★ REVISED: the ordering is now `leading` patterns (VC 2.0 first, then the OB 3.0 context), and the
+// credential below is a complete one, so the order is the only thing these cases vary.
+describe('round-4 — @context ordering is enforced (leading)', () => {
   const ob3 = (ctx: string[]) => ({
-    '@context': ctx, type: ['VerifiableCredential', 'OpenBadgeCredential'],
+    '@context': ctx, id: 'urn:uuid:3f1c2b4a-5d6e-4f70-8a9b-0c1d2e3f4a5b', type: ['VerifiableCredential', 'OpenBadgeCredential'],
     issuer: 'did:key:z6Mk', validFrom: '2026-07-01T00:00:00Z',
-    credentialSubject: { id: 'did:key:z6Mkholder', achievement: { type: ['Achievement'], name: 'X' } },
+    credentialSubject: {
+      id: 'did:key:z6Mkholder', type: ['AchievementSubject'],
+      achievement: { id: 'https://issuer.example/a/1', type: ['Achievement'], name: 'X', description: 'An achievement.', criteria: { narrative: 'Do X.' } },
+    },
     proof: { type: 'DataIntegrityProof' },
   });
   it('rejects v2 NOT in first position', () => {
@@ -106,6 +111,7 @@ describe('round-4 — @context ordering is enforced (firstValue)', () => {
   it('accepts v2 first', () => {
     const r = validateInstanceWith(OB3_MODEL, ob3(['https://www.w3.org/ns/credentials/v2', 'https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json']));
     expect(r.results.some(x => x.path === '@context')).toBe(false);
+    expect(r.conforms).toBe(true);
   });
 });
 

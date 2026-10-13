@@ -36,7 +36,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
  *
  * ★ MEASURED, NOT CHOSEN. Lower it whenever sites are fixed — the gate prints the number to write.
  */
-export const MAX_RAW_IRI_INTERPOLATIONS = 652;
+export const MAX_RAW_IRI_INTERPOLATIONS = 638;
 
 /** How far below the budget the real count may sit before the budget is stale and must be lowered. */
 const SLACK = 10;

@@ -298,7 +298,7 @@ export function runScormConformance(ranAt: string): ComplianceReport {
   return tally('scorm-2004-sn', 'SCORM 2004 Sequencing & Navigation (S&N book only)', 'ADL SCORM 2004 3rd Ed — Sequencing & Navigation (IMS Simple Sequencing) + activity-tree/manifest parse (CAM) validated against the dereferenceable /ns/scorm-sn + /ns/scorm-cam SHACL shapes. The RTE book (API_1484_11 / CMI data model) runs browser-side in the SCORM player; cmi5 + the desktop ADL SCORM test suite are out of scope here.', 'in-process scorm-sequencing engine', ranAt, checks);
 }
 
-// ── cmi5 / IEEE 9274.2.1 conformance ──────────────────────────────────────────
+// ── cmi5 (IEEE P9274.3.1) conformance ──────────────────────────────────────────
 
 const CMI5_CAT = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 const CMI5_MOVEON_CAT = 'https://w3id.org/xapi/cmi5/context/categories/moveon';
@@ -352,7 +352,7 @@ export function runCmi5Conformance(ranAt: string): ComplianceReport {
   } catch (e) {
     add('cmi5 emitter executed', false, '§9', (e as Error).message);
   }
-  return tally('cmi5', 'cmi5 Conformance', 'IEEE 9274.2.1 / cmi5 v1.0 — the 9 statement types, §9 invariants, §10 moveOn category, §11 moveOn evaluation, §8 session/registration (in-process emitter)', 'in-process cmi5 emitter', ranAt, checks);
+  return tally('cmi5', 'cmi5 Conformance', 'cmi5 (Quartz; being standardized as IEEE P9274.3.1) — the 9 statement types, §9 invariants, §10 moveOn category, §11 moveOn evaluation, §8 session/registration (in-process emitter)', 'in-process cmi5 emitter', ranAt, checks);
 }
 
 // ── SCORM 2004 CAM (Content Aggregation Model — manifest) conformance ──────────

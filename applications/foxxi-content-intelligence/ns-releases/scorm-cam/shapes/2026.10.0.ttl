@@ -1,0 +1,495 @@
+# SCORM 2004 4th Edition — Content Aggregation Model (content packaging) — SHACL shapes — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-scorm-cam: <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> a owl:Ontology ;
+    dct:title "SCORM 2004 4th Edition — Content Aggregation Model (content packaging) — SHACL shapes"@en ;
+    dct:description "SHACL shapes for SCORM 2004 4th Edition — Content Aggregation Model (content packaging): the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL or 1EdTech. Where this document and the published standard differ, the standard governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). SCORM 2004 4th Edition — Content Aggregation Model (content packaging) — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes/2026.10.0" ;
+    dct:source <https://adlnet.gov/past-projects/scorm> , <https://www.imsglobal.org/content/packaging/index.html> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/scorm-cam.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/2026.10.0> .
+
+shapes:ManifestShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:Manifest ;
+    rdfs:label "Manifest conformance"@en ;
+    rdfs:comment "A manifest has an identifier, exactly one <organizations> and exactly one <resources> (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): manifestType), and, as SCORM requires, exactly one <metadata> declaring the schema \"ADL SCORM\" and a SCORM 2004 schema version (SCORM 2004 4th Edition Content Aggregation Model)."@en ;
+    sh:property shapes:ManifestShape-identifier ,
+        shapes:ManifestShape-organizations ,
+        shapes:ManifestShape-resources ,
+        shapes:ManifestShape-metadata ,
+        shapes:ManifestShape-metadata-schema ,
+        shapes:ManifestShape-metadata-schemaversion ,
+        shapes:ManifestShape-version ,
+        shapes:ManifestShape-base ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:ManifestShape-identifier a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:identifier ;
+    sh:name "identifier" ;
+    sh:description "required (attr.identifier.req)"@en ;
+    sh:message "Manifest conformance — identifier: exactly 1 value, of type xsd:string — required (attr.identifier.req)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ManifestShape-organizations a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:organizations ;
+    sh:name "organizations" ;
+    sh:description "exactly one <organizations>"@en ;
+    sh:message "Manifest conformance — organizations: exactly 1 value — exactly one <organizations>"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ManifestShape-resources a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:resources ;
+    sh:name "resources" ;
+    sh:description "exactly one <resources>"@en ;
+    sh:message "Manifest conformance — resources: exactly 1 value — exactly one <resources>"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ManifestShape-metadata a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:metadata ;
+    sh:name "metadata" ;
+    sh:description "SCORM requires the manifest's <metadata>"@en ;
+    sh:message "Manifest conformance — metadata: exactly 1 value — SCORM requires the manifest's <metadata>"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ManifestShape-metadata-schema a sh:PropertyShape ;
+    sh:path ( foxxi-scorm-cam:metadata foxxi-scorm-cam:schema ) ;
+    sh:name "metadata.schema" ;
+    sh:description "<schema>ADL SCORM</schema>"@en ;
+    sh:message "Manifest conformance — metadata.schema: exactly 1 value, of type xsd:string, one of \"ADL SCORM\" — <schema>ADL SCORM</schema>"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( "ADL SCORM" ) .
+
+shapes:ManifestShape-metadata-schemaversion a sh:PropertyShape ;
+    sh:path ( foxxi-scorm-cam:metadata foxxi-scorm-cam:schemaversion ) ;
+    sh:name "metadata.schemaversion" ;
+    sh:description "a SCORM 2004 schema version (4th, 3rd or 2nd Edition)"@en ;
+    sh:message "Manifest conformance — metadata.schemaversion: exactly 1 value, of type xsd:string, one of \"2004 4th Edition\", \"2004 3rd Edition\", \"CAM 1.3\" — a SCORM 2004 schema version (4th, 3rd or 2nd Edition)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( "2004 4th Edition" "2004 3rd Edition" "CAM 1.3" ) .
+
+shapes:ManifestShape-version a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:version ;
+    sh:name "version" ;
+    sh:description "optional (attr.version)"@en ;
+    sh:message "Manifest conformance — version: at most 1 value, of type xsd:string — optional (attr.version)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:ManifestShape-base a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:base ;
+    sh:name "base" ;
+    sh:description "optional xml:base"@en ;
+    sh:message "Manifest conformance — base: at most 1 value, of type xsd:anyURI — optional xml:base"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 .
+
+shapes:MetadataShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:Metadata ;
+    rdfs:label "Metadata conformance"@en ;
+    rdfs:comment "Metadata names at most one schema and schema version, and at most one external record (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): metadataType; ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): locationType)."@en ;
+    sh:property shapes:MetadataShape-schema , shapes:MetadataShape-schemaversion , shapes:MetadataShape-location ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:MetadataShape-schema a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:schema ;
+    sh:name "schema" ;
+    sh:description "at most one <schema>"@en ;
+    sh:message "Metadata conformance — schema: at most 1 value, of type xsd:string — at most one <schema>"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:MetadataShape-schemaversion a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:schemaversion ;
+    sh:name "schemaversion" ;
+    sh:description "at most one <schemaversion>"@en ;
+    sh:message "Metadata conformance — schemaversion: at most 1 value, of type xsd:string — at most one <schemaversion>"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:MetadataShape-location a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:location ;
+    sh:name "location" ;
+    sh:description "at most one adlcp:location"@en ;
+    sh:message "Metadata conformance — location: at most 1 value, of type xsd:anyURI — at most one adlcp:location"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 .
+
+shapes:OrganizationsShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:Organizations ;
+    rdfs:label "Organizations conformance"@en ;
+    rdfs:comment "Organizations name at most one default organization. A content aggregation package — one a learner can take as a course — has at least one organization (SCORM 2004 4th Edition Content Aggregation Model); a package of resources alone has none, and is not launchable."@en ;
+    sh:property shapes:OrganizationsShape-defaultOrganization , shapes:OrganizationsShape-organization ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:OrganizationsShape-defaultOrganization a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:defaultOrganization ;
+    sh:name "defaultOrganization" ;
+    sh:description "at most one default (attr.default)"@en ;
+    sh:message "Organizations conformance — defaultOrganization: at most 1 value, of type xsd:string — at most one default (attr.default)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:OrganizationsShape-organization a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:organization ;
+    sh:name "organization" ;
+    sh:description "at least one <organization> in a launchable package"@en ;
+    sh:message "Organizations conformance — organization: at least 1 value — at least one <organization> in a launchable package"@en ;
+    sh:minCount 1 .
+
+shapes:OrganizationShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:Organization ;
+    rdfs:label "Organization conformance"@en ;
+    rdfs:comment "An organization has an identifier, a title (which SCORM requires) and at least one item (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): organizationType); its structure is hierarchical; sharedDataGlobalToSystem is a boolean."@en ;
+    sh:property shapes:OrganizationShape-identifier ,
+        shapes:OrganizationShape-title ,
+        shapes:OrganizationShape-item ,
+        shapes:OrganizationShape-structure ,
+        shapes:OrganizationShape-sharedDataGlobalToSystem ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:OrganizationShape-identifier a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:identifier ;
+    sh:name "identifier" ;
+    sh:description "required (attr.identifier.req)"@en ;
+    sh:message "Organization conformance — identifier: exactly 1 value, of type xsd:string — required (attr.identifier.req)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:OrganizationShape-title a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:title ;
+    sh:name "title" ;
+    sh:description "SCORM requires a <title>"@en ;
+    sh:message "Organization conformance — title: exactly 1 value, of type xsd:string — SCORM requires a <title>"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:OrganizationShape-item a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:item ;
+    sh:name "item" ;
+    sh:description "at least one <item> (IMS CP 1.1.4)"@en ;
+    sh:message "Organization conformance — item: at least 1 value — at least one <item> (IMS CP 1.1.4)"@en ;
+    sh:minCount 1 .
+
+shapes:OrganizationShape-structure a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:structure ;
+    sh:name "structure" ;
+    sh:description "hierarchical, the default"@en ;
+    sh:message "Organization conformance — structure: at most 1 value, of type xsd:string, one of \"hierarchical\" — hierarchical, the default"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "hierarchical" ) .
+
+shapes:OrganizationShape-sharedDataGlobalToSystem a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:sharedDataGlobalToSystem ;
+    sh:name "sharedDataGlobalToSystem" ;
+    sh:description "adlcp:sharedDataGlobalToSystem"@en ;
+    sh:message "Organization conformance — sharedDataGlobalToSystem: at most 1 value, of type xsd:boolean — adlcp:sharedDataGlobalToSystem"@en ;
+    sh:datatype xsd:boolean ;
+    sh:maxCount 1 .
+
+shapes:ItemShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:Item ;
+    rdfs:label "Item conformance"@en ;
+    rdfs:comment "An item has an identifier and a title (which SCORM requires), and references at most one resource (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): itemType). Its completion threshold attributes are numbers from 0 to 1 and its time limit action is one of the four ADL values (ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd))."@en ;
+    sh:property shapes:ItemShape-identifier ,
+        shapes:ItemShape-title ,
+        shapes:ItemShape-identifierref ,
+        shapes:ItemShape-position ,
+        shapes:ItemShape-isvisible ,
+        shapes:ItemShape-parameters ,
+        shapes:ItemShape-timeLimitAction ,
+        shapes:ItemShape-dataFromLMS ,
+        shapes:ItemShape-completionThreshold ,
+        shapes:ItemShape-completedByMeasure ,
+        shapes:ItemShape-minProgressMeasure ,
+        shapes:ItemShape-progressWeight ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:ItemShape-identifier a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:identifier ;
+    sh:name "identifier" ;
+    sh:description "required (attr.identifier.req)"@en ;
+    sh:message "Item conformance — identifier: exactly 1 value, of type xsd:string — required (attr.identifier.req)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ItemShape-title a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:title ;
+    sh:name "title" ;
+    sh:description "SCORM requires a <title>"@en ;
+    sh:message "Item conformance — title: exactly 1 value, of type xsd:string — SCORM requires a <title>"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ItemShape-identifierref a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:identifierref ;
+    sh:name "identifierref" ;
+    sh:description "the resource it launches (attr.identifierref)"@en ;
+    sh:message "Item conformance — identifierref: at most 1 value, of type xsd:string — the resource it launches (attr.identifierref)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:ItemShape-position a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:position ;
+    sh:name "position" ;
+    sh:description "its place among its siblings, in document order"@en ;
+    sh:message "Item conformance — position: at most 1 value, of type xsd:positiveInteger, at least 1 — its place among its siblings, in document order"@en ;
+    sh:datatype xsd:positiveInteger ;
+    sh:maxCount 1 ;
+    sh:minInclusive 1 .
+
+shapes:ItemShape-isvisible a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:isvisible ;
+    sh:name "isvisible" ;
+    sh:description "attr.isvisible"@en ;
+    sh:message "Item conformance — isvisible: at most 1 value, of type xsd:boolean — attr.isvisible"@en ;
+    sh:datatype xsd:boolean ;
+    sh:maxCount 1 .
+
+shapes:ItemShape-parameters a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:parameters ;
+    sh:name "parameters" ;
+    sh:description "attr.parameters"@en ;
+    sh:message "Item conformance — parameters: at most 1 value, of type xsd:string — attr.parameters"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:ItemShape-timeLimitAction a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:timeLimitAction ;
+    sh:name "timeLimitAction" ;
+    sh:description "adlcp:timeLimitAction"@en ;
+    sh:message "Item conformance — timeLimitAction: at most 1 value, of type xsd:string, one of \"exit,message\", \"exit,no message\", \"continue,message\", \"continue,no message\" — adlcp:timeLimitAction"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "exit,message" "exit,no message" "continue,message" "continue,no message" ) .
+
+shapes:ItemShape-dataFromLMS a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:dataFromLMS ;
+    sh:name "dataFromLMS" ;
+    sh:description "adlcp:dataFromLMS"@en ;
+    sh:message "Item conformance — dataFromLMS: at most 1 value, of type xsd:string — adlcp:dataFromLMS"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:ItemShape-completionThreshold a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:completionThreshold ;
+    sh:name "completionThreshold" ;
+    sh:description "the 3rd Edition threshold, from 0 to 1"@en ;
+    sh:message "Item conformance — completionThreshold: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — the 3rd Edition threshold, from 0 to 1"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:ItemShape-completedByMeasure a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:completedByMeasure ;
+    sh:name "completedByMeasure" ;
+    sh:description "adlcp:completionThreshold/@completedByMeasure"@en ;
+    sh:message "Item conformance — completedByMeasure: at most 1 value, of type xsd:boolean — adlcp:completionThreshold/@completedByMeasure"@en ;
+    sh:datatype xsd:boolean ;
+    sh:maxCount 1 .
+
+shapes:ItemShape-minProgressMeasure a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:minProgressMeasure ;
+    sh:name "minProgressMeasure" ;
+    sh:description "adlcp:completionThreshold/@minProgressMeasure, from 0 to 1"@en ;
+    sh:message "Item conformance — minProgressMeasure: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — adlcp:completionThreshold/@minProgressMeasure, from 0 to 1"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:ItemShape-progressWeight a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:progressWeight ;
+    sh:name "progressWeight" ;
+    sh:description "adlcp:completionThreshold/@progressWeight, from 0 to 1"@en ;
+    sh:message "Item conformance — progressWeight: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — adlcp:completionThreshold/@progressWeight, from 0 to 1"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:SharedDataMapShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:SharedDataMap ;
+    rdfs:label "Shared data map conformance"@en ;
+    rdfs:comment "A shared data map names its store and says whether the content may read and write it (ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): mapType)."@en ;
+    sh:property shapes:SharedDataMapShape-targetID ,
+        shapes:SharedDataMapShape-readSharedData ,
+        shapes:SharedDataMapShape-writeSharedData ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:SharedDataMapShape-targetID a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:targetID ;
+    sh:name "targetID" ;
+    sh:description "required"@en ;
+    sh:message "Shared data map conformance — targetID: exactly 1 value, of type xsd:anyURI — required"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:SharedDataMapShape-readSharedData a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:readSharedData ;
+    sh:name "readSharedData" ;
+    sh:description "default true"@en ;
+    sh:message "Shared data map conformance — readSharedData: at most 1 value, of type xsd:boolean — default true"@en ;
+    sh:datatype xsd:boolean ;
+    sh:maxCount 1 .
+
+shapes:SharedDataMapShape-writeSharedData a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:writeSharedData ;
+    sh:name "writeSharedData" ;
+    sh:description "default false"@en ;
+    sh:message "Shared data map conformance — writeSharedData: at most 1 value, of type xsd:boolean — default false"@en ;
+    sh:datatype xsd:boolean ;
+    sh:maxCount 1 .
+
+shapes:ResourcesShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:Resources ;
+    rdfs:label "Resources conformance"@en ;
+    rdfs:comment "Resources may set an XML base for their relative URLs (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): resourcesType)."@en ;
+    sh:property shapes:ResourcesShape-base ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:ResourcesShape-base a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:base ;
+    sh:name "base" ;
+    sh:description "attr.base"@en ;
+    sh:message "Resources conformance — base: at most 1 value, of type xsd:anyURI — attr.base"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 .
+
+shapes:ResourceShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:Resource ;
+    rdfs:label "Resource conformance"@en ;
+    rdfs:comment "A resource has an identifier and a type (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): resourceType) and, in SCORM, a SCORM type: sco or asset. A SCO also needs an href to launch it, which the importer checks."@en ;
+    sh:property shapes:ResourceShape-identifier ,
+        shapes:ResourceShape-type ,
+        shapes:ResourceShape-scormType ,
+        shapes:ResourceShape-href ,
+        shapes:ResourceShape-base ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:ResourceShape-identifier a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:identifier ;
+    sh:name "identifier" ;
+    sh:description "required (attr.identifier.req)"@en ;
+    sh:message "Resource conformance — identifier: exactly 1 value, of type xsd:string — required (attr.identifier.req)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ResourceShape-type a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:type ;
+    sh:name "type" ;
+    sh:description "required (attr.resourcetype.req)"@en ;
+    sh:message "Resource conformance — type: exactly 1 value, of type xsd:string — required (attr.resourcetype.req)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ResourceShape-scormType a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:scormType ;
+    sh:name "scormType" ;
+    sh:description "adlcp:scormType, required in SCORM"@en ;
+    sh:message "Resource conformance — scormType: exactly 1 value, of type xsd:string, one of \"sco\", \"asset\" — adlcp:scormType, required in SCORM"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( "sco" "asset" ) .
+
+shapes:ResourceShape-href a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:href ;
+    sh:name "href" ;
+    sh:description "the launching file (attr.href)"@en ;
+    sh:message "Resource conformance — href: at most 1 value, of type xsd:anyURI — the launching file (attr.href)"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 .
+
+shapes:ResourceShape-base a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:base ;
+    sh:name "base" ;
+    sh:description "attr.base"@en ;
+    sh:message "Resource conformance — base: at most 1 value, of type xsd:anyURI — attr.base"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 .
+
+shapes:FileShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:File ;
+    rdfs:label "File conformance"@en ;
+    rdfs:comment "A file has exactly one href (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): fileType)."@en ;
+    sh:property shapes:FileShape-href , shapes:FileShape-metadata ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:FileShape-href a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:href ;
+    sh:name "href" ;
+    sh:description "required (attr.href.req)"@en ;
+    sh:message "File conformance — href: exactly 1 value, of type xsd:anyURI — required (attr.href.req)"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:FileShape-metadata a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:metadata ;
+    sh:name "metadata" ;
+    sh:description "at most one <metadata>"@en ;
+    sh:message "File conformance — metadata: at most 1 value — at most one <metadata>"@en ;
+    sh:maxCount 1 .
+
+shapes:DependencyShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-cam:Dependency ;
+    rdfs:label "Dependency conformance"@en ;
+    rdfs:comment "A dependency names exactly one resource (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): dependencyType)."@en ;
+    sh:property shapes:DependencyShape-identifierref ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
+
+shapes:DependencyShape-identifierref a sh:PropertyShape ;
+    sh:path foxxi-scorm-cam:identifierref ;
+    sh:name "identifierref" ;
+    sh:description "required (attr.identifierref.req)"@en ;
+    sh:message "Dependency conformance — identifierref: exactly 1 value, of type xsd:string — required (attr.identifierref.req)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .

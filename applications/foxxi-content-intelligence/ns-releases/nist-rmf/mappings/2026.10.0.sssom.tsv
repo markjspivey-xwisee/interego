@@ -1,0 +1,22 @@
+#curie_map:
+#  foxxi_nist_rmf: "https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf#"
+#  foxxi_ns: "https://foxxi-bridge.interego.xwisee.com/ns/"
+#  nist_rmf: "https://markjspivey-xwisee.github.io/interego/ns/nist-rmf#"
+#mapping_set_id: "https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/mappings"
+#mapping_set_version: "2026.10.0"
+#mapping_set_title: "NIST AI Risk Management Framework 1.0 — function mapping — mappings"
+#mapping_set_description: "Mappings from the terms of NIST AI Risk Management Framework 1.0 — function mapping (https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf) to other vocabularies: one row for each SKOS mapping the ontology makes, generated from it."
+#creator_label:
+#  - "Mark Spivey"
+#license: "https://opensource.org/licenses/MIT"
+#subject_source: "foxxi_ns:nist-rmf"
+#subject_source_version: "https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/2026.10.0"
+#mapping_provider: "https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf"
+#publication_date: 2026-10-12
+#comment: "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by NIST. Where this document and the published standard differ, the standard governs."
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	comment
+foxxi_nist_rmf:Govern	Govern	skos:closeMatch	nist_rmf:Govern	GOVERN function	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_nist_rmf:Manage	Manage	skos:closeMatch	nist_rmf:Manage	MANAGE function	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_nist_rmf:Map	Map	skos:closeMatch	nist_rmf:Map	MAP function	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_nist_rmf:Measure	Measure	skos:closeMatch	nist_rmf:Measure	MEASURE function	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_nist_rmf:addressesFunction	addresses function	skos:relatedMatch	nist_rmf:contributesTo	contributes evidence to	semapv:ManualMappingCuration	owl object property	owl object property		

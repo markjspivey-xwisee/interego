@@ -1,0 +1,34 @@
+#curie_map:
+#  cass: "https://schema.cassproject.org/0.4/"
+#  ceasn: "https://purl.org/ctdlasn/terms/"
+#  clr: "https://purl.imsglobal.org/spec/vc/clr/vocab.html#"
+#  foxxi_adl_tla: "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#"
+#  foxxi_ieee_ler: "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#"
+#  foxxi_ns: "https://foxxi-bridge.interego.xwisee.com/ns/"
+#  ob: "https://purl.imsglobal.org/spec/vc/ob/vocab.html#"
+#mapping_set_id: "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/mappings"
+#mapping_set_version: "2026.10.0"
+#mapping_set_title: "IEEE Learning and Employment Records (LER) — Foxxi composable ontology — mappings"
+#mapping_set_description: "Mappings from the terms of IEEE Learning and Employment Records (LER) — Foxxi composable ontology (https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler) to other vocabularies: one row for each SKOS mapping the ontology makes, generated from it."
+#creator_label:
+#  - "Mark Spivey"
+#license: "https://opensource.org/licenses/MIT"
+#subject_source: "foxxi_ns:ieee-ler"
+#subject_source_version: "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.0"
+#mapping_provider: "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler"
+#publication_date: 2026-10-12
+#comment: "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by IEEE, ADL or 1EdTech. Where this document and the published standard differ, the standard governs."
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	comment
+foxxi_ieee_ler:CompetencyAssertion	Competency Assertion	skos:closeMatch	cass:Assertion		semapv:ManualMappingCuration	owl class			
+foxxi_ieee_ler:CompetencyAssertion	Competency Assertion	skos:closeMatch	foxxi_adl_tla:Assertion	Competency Assertion	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_ieee_ler:CompetencyDefinition	Competency Definition	skos:closeMatch	cass:Competency		semapv:ManualMappingCuration	owl class			
+foxxi_ieee_ler:CompetencyDefinition	Competency Definition	skos:closeMatch	ceasn:Competency		semapv:ManualMappingCuration	owl class			
+foxxi_ieee_ler:CompetencyDefinition	Competency Definition	skos:closeMatch	foxxi_adl_tla:Competency	Competency	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_ieee_ler:CompetencyFramework	Competency Framework	skos:closeMatch	foxxi_adl_tla:CompetencyFramework	Competency Framework	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_ieee_ler:CompetencyRelationship	Competency Relationship	skos:closeMatch	foxxi_adl_tla:Relation	Competency Relation	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_ieee_ler:Credential	Credential	skos:closeMatch	ob:OpenBadgeCredential		semapv:ManualMappingCuration	owl class			
+foxxi_ieee_ler:EnterpriseLearnerRecord	Enterprise Learner Record	skos:closeMatch	foxxi_adl_tla:LearnerProfile	Learner Profile	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_ieee_ler:LearnerProfile	Learner Profile	skos:closeMatch	foxxi_adl_tla:LearnerProfile	Learner Profile	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_ieee_ler:ProficiencyLevel	Proficiency Level	skos:closeMatch	foxxi_adl_tla:Level	Competency Level	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_ieee_ler:Transcript	Transcript	skos:closeMatch	clr:ClrCredential		semapv:ManualMappingCuration	owl class			
+foxxi_ieee_ler:successConfidence	success confidence	skos:closeMatch	foxxi_adl_tla:confidence	confidence	semapv:ManualMappingCuration	owl data property	owl data property		

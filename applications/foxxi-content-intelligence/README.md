@@ -44,6 +44,38 @@ three-stratum ontology TTLs (the pre-Interego `vocab.foxximediums.com`
 namespace) are retained under [`imported/`](imported/) as the historical
 record — superseded by `foxxi-vocab.ts`, not loaded at runtime.
 
+## Ontologies of the standards (`/ns`)
+
+The bridge serves an OWL 2 DL ontology for each standard Foxxi implements,
+with SHACL shapes for the data the standard defines, at `<bridge>/ns/<module>`.
+Each is an independent formalization; see
+[`SOURCES-AND-ATTRIBUTION.md`](SOURCES-AND-ATTRIBUTION.md).
+
+| Module | Formalizes |
+|---|---|
+| `xapi` | xAPI 2.0 (IEEE 9274.1.1-2023) statements |
+| `scorm-cam`, `scorm-sn`, `scorm-rte` | SCORM 2004 4th Edition: content packaging, sequencing and navigation, the run-time data model |
+| `cmi5` | cmi5: its xAPI profile and course structure |
+| `ob3`, `clr` | Open Badges 3.0 and CLR 2.0 credentials |
+| `ieee-ler`, `adl-tla` | IEEE learning and employment records (P2997, still a draft; 1484.20.3; 1484.2); ADL TLA competencies and proficiency |
+| `soc2`, `eu-ai-act`, `nist-rmf` | SOC 2's logical and physical access criteria (CC6.1–CC6.8) and the evidence events that support them; EU AI Act Articles 9–15 and 50; NIST AI RMF 1.0 |
+| `ai-elearning` | An original xAPI 2.0 profile, not a published standard |
+| `foxxi` | Foxxi's own vocabulary |
+
+- **One graph, every form.** Each document IRI returns Turtle, RDF/XML,
+  N-Triples, JSON-LD or HTML documentation, chosen by `Accept`.
+- **Beside each ontology:** `/shapes` (its SHACL shapes), `/mappings` (an
+  SSSOM mapping set, for modules that align to another vocabulary, such as
+  `xapi` to ADL's xAPI ontology), `/term/<name>`, and `POST /validate`,
+  which checks a JSON instance against the shapes. `xapi/context` and
+  `ieee-ler/context` are the JSON-LD contexts that statements and learner
+  records are read through.
+- **Versions.** Every ontology, shapes graph, mapping set and context has
+  a version IRI, `<iri>/<YYYY.MM.PATCH>`. Imports and data cite those
+  version IRIs, and a released version never changes. The released files
+  are kept in [`ns-releases/`](ns-releases/), which explains how to
+  release a new version.
+
 ## Composition with existing substrate primitives
 
 | Foxxi need | Existing substrate primitive | Why it fits |

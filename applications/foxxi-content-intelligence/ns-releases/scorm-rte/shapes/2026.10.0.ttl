@@ -1,0 +1,601 @@
+# SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data) — SHACL shapes — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-scorm-rte: <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> a owl:Ontology ;
+    dct:title "SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data) — SHACL shapes"@en ;
+    dct:description "SHACL shapes for SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data): the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL or IEEE. Where this document and the published standard differ, the standard governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data) — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes/2026.10.0" ;
+    dct:source <https://adlnet.gov/past-projects/scorm> ,
+        <https://standards.ieee.org/ieee/1484.11.1/10324/> ,
+        <https://standards.ieee.org/ieee/1484.11.2/7698/> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/scorm-rte.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0> .
+
+shapes:DataModelShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:DataModel ;
+    rdfs:label "Run-time data conformance"@en ;
+    rdfs:comment "Every element has at most one value; the statuses, credit, entry, exit, mode and time limit action are from their vocabularies; measures and scores are in range; the times are timeintervals; suspend data beyond its SPM is reported as a warning; the navigation request is a navigation request (SCORM 2004 4th Edition Run-Time Environment)."@en ;
+    sh:property shapes:DataModelShape-completionStatus ,
+        shapes:DataModelShape-successStatus ,
+        shapes:DataModelShape-credit ,
+        shapes:DataModelShape-entry ,
+        shapes:DataModelShape-exit ,
+        shapes:DataModelShape-mode ,
+        shapes:DataModelShape-timeLimitAction ,
+        shapes:DataModelShape-completionThreshold ,
+        shapes:DataModelShape-progressMeasure ,
+        shapes:DataModelShape-scaledPassingScore ,
+        shapes:DataModelShape-sessionTime ,
+        shapes:DataModelShape-totalTime ,
+        shapes:DataModelShape-maxTimeAllowed ,
+        shapes:DataModelShape-suspendData ,
+        shapes:DataModelShape-navRequest ,
+        shapes:DataModelShape-navRequestValidContinue ,
+        shapes:DataModelShape-navRequestValidPrevious ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:DataModelShape-completionStatus a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:completionStatus ;
+    sh:name "completionStatus" ;
+    sh:description "cmi.completion_status"@en ;
+    sh:message "Run-time data conformance — completionStatus: at most 1 value, of type xsd:string, one of \"completed\", \"incomplete\", \"not attempted\", \"unknown\" — cmi.completion_status"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "completed" "incomplete" "not attempted" "unknown" ) .
+
+shapes:DataModelShape-successStatus a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:successStatus ;
+    sh:name "successStatus" ;
+    sh:description "cmi.success_status"@en ;
+    sh:message "Run-time data conformance — successStatus: at most 1 value, of type xsd:string, one of \"passed\", \"failed\", \"unknown\" — cmi.success_status"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "passed" "failed" "unknown" ) .
+
+shapes:DataModelShape-credit a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:credit ;
+    sh:name "credit" ;
+    sh:description "cmi.credit"@en ;
+    sh:message "Run-time data conformance — credit: at most 1 value, of type xsd:string, one of \"credit\", \"no-credit\" — cmi.credit"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "credit" "no-credit" ) .
+
+shapes:DataModelShape-entry a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:entry ;
+    sh:name "entry" ;
+    sh:description "cmi.entry"@en ;
+    sh:message "Run-time data conformance — entry: at most 1 value, of type xsd:string, one of \"ab-initio\", \"resume\", \"\" — cmi.entry"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "ab-initio" "resume" "" ) .
+
+shapes:DataModelShape-exit a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:exit ;
+    sh:name "exit" ;
+    sh:description "cmi.exit (logout is deprecated)"@en ;
+    sh:message "Run-time data conformance — exit: at most 1 value, of type xsd:string, one of \"time-out\", \"suspend\", \"logout\", \"normal\", \"\" — cmi.exit (logout is deprecated)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "time-out" "suspend" "logout" "normal" "" ) .
+
+shapes:DataModelShape-mode a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:mode ;
+    sh:name "mode" ;
+    sh:description "cmi.mode"@en ;
+    sh:message "Run-time data conformance — mode: at most 1 value, of type xsd:string, one of \"browse\", \"normal\", \"review\" — cmi.mode"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "browse" "normal" "review" ) .
+
+shapes:DataModelShape-timeLimitAction a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:timeLimitAction ;
+    sh:name "timeLimitAction" ;
+    sh:description "cmi.time_limit_action"@en ;
+    sh:message "Run-time data conformance — timeLimitAction: at most 1 value, of type xsd:string, one of \"exit,message\", \"exit,no message\", \"continue,message\", \"continue,no message\" — cmi.time_limit_action"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "exit,message" "exit,no message" "continue,message" "continue,no message" ) .
+
+shapes:DataModelShape-completionThreshold a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:completionThreshold ;
+    sh:name "completionThreshold" ;
+    sh:description "cmi.completion_threshold, from 0 to 1"@en ;
+    sh:message "Run-time data conformance — completionThreshold: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — cmi.completion_threshold, from 0 to 1"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:DataModelShape-progressMeasure a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:progressMeasure ;
+    sh:name "progressMeasure" ;
+    sh:description "cmi.progress_measure, from 0 to 1"@en ;
+    sh:message "Run-time data conformance — progressMeasure: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — cmi.progress_measure, from 0 to 1"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:DataModelShape-scaledPassingScore a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:scaledPassingScore ;
+    sh:name "scaledPassingScore" ;
+    sh:description "cmi.scaled_passing_score, from -1 to 1"@en ;
+    sh:message "Run-time data conformance — scaledPassingScore: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between -1 and 1 — cmi.scaled_passing_score, from -1 to 1"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive -1 ;
+    sh:maxInclusive 1 .
+
+shapes:DataModelShape-sessionTime a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:sessionTime ;
+    sh:name "sessionTime" ;
+    sh:description "cmi.session_time, timeinterval (second,10,2)"@en ;
+    sh:message "Run-time data conformance — sessionTime: at most 1 value, of type xsd:string, matching ^P(([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))$ — cmi.session_time, timeinterval (second,10,2)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^P(([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))$" .
+
+shapes:DataModelShape-totalTime a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:totalTime ;
+    sh:name "totalTime" ;
+    sh:description "cmi.total_time, timeinterval (second,10,2)"@en ;
+    sh:message "Run-time data conformance — totalTime: at most 1 value, of type xsd:string, matching ^P(([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))$ — cmi.total_time, timeinterval (second,10,2)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^P(([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))$" .
+
+shapes:DataModelShape-maxTimeAllowed a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:maxTimeAllowed ;
+    sh:name "maxTimeAllowed" ;
+    sh:description "cmi.max_time_allowed, timeinterval (second,10,2)"@en ;
+    sh:message "Run-time data conformance — maxTimeAllowed: at most 1 value, of type xsd:string, matching ^P(([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))$ — cmi.max_time_allowed, timeinterval (second,10,2)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^P(([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))$" .
+
+shapes:DataModelShape-suspendData a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:suspendData ;
+    sh:name "suspendData" ;
+    sh:description "cmi.suspend_data, within its SPM of 64000 characters to be portable"@en ;
+    sh:message "Run-time data conformance — suspendData: at most 1 value, of type xsd:string, matching ^[\\s\\S]{0,64000}$ — cmi.suspend_data, within its SPM of 64000 characters to be portable"@en ;
+    sh:severity sh:Warning ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[\\s\\S]{0,64000}$" .
+
+shapes:DataModelShape-navRequest a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:navRequest ;
+    sh:name "navRequest" ;
+    sh:description "adl.nav.request"@en ;
+    sh:message "Run-time data conformance — navRequest: at most 1 value, of type xsd:string, matching ^(continue|previous|exit|exitAll|abandon|abandonAll|suspendAll|_none_|\\{target=[^}]+\\}(choice|jump))$ — adl.nav.request"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^(continue|previous|exit|exitAll|abandon|abandonAll|suspendAll|_none_|\\{target=[^}]+\\}(choice|jump))$" .
+
+shapes:DataModelShape-navRequestValidContinue a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:navRequestValidContinue ;
+    sh:name "navRequestValidContinue" ;
+    sh:description "adl.nav.request_valid.continue"@en ;
+    sh:message "Run-time data conformance — navRequestValidContinue: at most 1 value, of type xsd:string, one of \"true\", \"false\", \"unknown\" — adl.nav.request_valid.continue"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "true" "false" "unknown" ) .
+
+shapes:DataModelShape-navRequestValidPrevious a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:navRequestValidPrevious ;
+    sh:name "navRequestValidPrevious" ;
+    sh:description "adl.nav.request_valid.previous"@en ;
+    sh:message "Run-time data conformance — navRequestValidPrevious: at most 1 value, of type xsd:string, one of \"true\", \"false\", \"unknown\" — adl.nav.request_valid.previous"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "true" "false" "unknown" ) .
+
+shapes:ScoreShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:Score ;
+    rdfs:label "Score conformance"@en ;
+    rdfs:comment "A scaled score is from -1 to 1; raw, minimum and maximum are real numbers (SCORM 2004 4th Edition Run-Time Environment: cmi.score)."@en ;
+    sh:property shapes:ScoreShape-scoreScaled ,
+        shapes:ScoreShape-scoreRaw ,
+        shapes:ScoreShape-scoreMin ,
+        shapes:ScoreShape-scoreMax ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:ScoreShape-scoreScaled a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:scoreScaled ;
+    sh:name "scoreScaled" ;
+    sh:description "score.scaled, from -1 to 1"@en ;
+    sh:message "Score conformance — scoreScaled: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between -1 and 1 — score.scaled, from -1 to 1"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive -1 ;
+    sh:maxInclusive 1 .
+
+shapes:ScoreShape-scoreRaw a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:scoreRaw ;
+    sh:name "scoreRaw" ;
+    sh:description "score.raw, real (10,7)"@en ;
+    sh:message "Score conformance — scoreRaw: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double — score.raw, real (10,7)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 .
+
+shapes:ScoreShape-scoreMin a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:scoreMin ;
+    sh:name "scoreMin" ;
+    sh:description "score.min, real (10,7)"@en ;
+    sh:message "Score conformance — scoreMin: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double — score.min, real (10,7)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 .
+
+shapes:ScoreShape-scoreMax a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:scoreMax ;
+    sh:name "scoreMax" ;
+    sh:description "score.max, real (10,7)"@en ;
+    sh:message "Score conformance — scoreMax: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double — score.max, real (10,7)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 .
+
+shapes:InteractionShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:Interaction ;
+    rdfs:label "Interaction conformance"@en ;
+    rdfs:comment "An interaction has an ID and a type from the vocabulary; its weighting is a real number, its result a judgement or a number, its latency a timeinterval and its timestamp a SCORM time (SCORM 2004 4th Edition Run-Time Environment: cmi.interactions)."@en ;
+    sh:property shapes:InteractionShape-interactionId ,
+        shapes:InteractionShape-interactionType ,
+        shapes:InteractionShape-weighting ,
+        shapes:InteractionShape-result ,
+        shapes:InteractionShape-latency ,
+        shapes:InteractionShape-interactionTimestamp ,
+        shapes:InteractionShape-interactionDescription ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:InteractionShape-interactionId a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:interactionId ;
+    sh:name "interactionId" ;
+    sh:description "cmi.interactions.n.id, required"@en ;
+    sh:message "Interaction conformance — interactionId: exactly 1 value, of type xsd:string — cmi.interactions.n.id, required"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:InteractionShape-interactionType a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:interactionType ;
+    sh:name "interactionType" ;
+    sh:description "cmi.interactions.n.type"@en ;
+    sh:message "Interaction conformance — interactionType: exactly 1 value, of type xsd:string, one of \"true-false\", \"choice\", \"fill-in\", \"long-fill-in\", \"likert\", \"matching\", \"performance\", \"sequencing\", \"numeric\", \"other\" — cmi.interactions.n.type"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in (
+        "true-false"
+        "choice"
+        "fill-in"
+        "long-fill-in"
+        "likert"
+        "matching"
+        "performance"
+        "sequencing"
+        "numeric"
+        "other"
+    ) .
+
+shapes:InteractionShape-weighting a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:weighting ;
+    sh:name "weighting" ;
+    sh:description "cmi.interactions.n.weighting, real (10,7)"@en ;
+    sh:message "Interaction conformance — weighting: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double — cmi.interactions.n.weighting, real (10,7)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 .
+
+shapes:InteractionShape-result a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:result ;
+    sh:name "result" ;
+    sh:description "cmi.interactions.n.result: correct, incorrect, unanticipated, neutral, or a number"@en ;
+    sh:message "Interaction conformance — result: at most 1 value, of type xsd:string, matching ^(correct|incorrect|unanticipated|neutral|-?([0-9]+(\\.[0-9]+)?|\\.[0-9]+))$ — cmi.interactions.n.result: correct, incorrect, unanticipated, neutral, or a number"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^(correct|incorrect|unanticipated|neutral|-?([0-9]+(\\.[0-9]+)?|\\.[0-9]+))$" .
+
+shapes:InteractionShape-latency a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:latency ;
+    sh:name "latency" ;
+    sh:description "cmi.interactions.n.latency, timeinterval (second,10,2)"@en ;
+    sh:message "Interaction conformance — latency: at most 1 value, of type xsd:string, matching ^P(([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))$ — cmi.interactions.n.latency, timeinterval (second,10,2)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^P(([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+M([0-9]+(\\.[0-9]{1,2})?S)?|[0-9]+(\\.[0-9]{1,2})?S))$" .
+
+shapes:InteractionShape-interactionTimestamp a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:interactionTimestamp ;
+    sh:name "interactionTimestamp" ;
+    sh:description "cmi.interactions.n.timestamp, time (second,10,0)"@en ;
+    sh:message "Interaction conformance — interactionTimestamp: at most 1 value, of type xsd:string, matching ^[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}(:[0-9]{2}(:[0-9]{2}(\\.[0-9]{1,2})?(Z|[+-][0-9]{2}(:[0-9]{2})?)?)?)?)?)?)?$ — cmi.interactions.n.timestamp, time (second,10,0)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}(:[0-9]{2}(:[0-9]{2}(\\.[0-9]{1,2})?(Z|[+-][0-9]{2}(:[0-9]{2})?)?)?)?)?)?)?$" .
+
+shapes:InteractionShape-interactionDescription a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:interactionDescription ;
+    sh:name "interactionDescription" ;
+    sh:description "cmi.interactions.n.description, localized_string_type"@en ;
+    sh:message "Interaction conformance — interactionDescription: at most 1 value, of type rdf:langString — cmi.interactions.n.description, localized_string_type"@en ;
+    sh:datatype rdf:langString ;
+    sh:maxCount 1 .
+
+shapes:ObjectiveShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:Objective ;
+    rdfs:label "Objective conformance"@en ;
+    rdfs:comment "An objective has an ID; its statuses are from their vocabularies; its progress measure is from 0 to 1 (SCORM 2004 4th Edition Run-Time Environment: cmi.objectives)."@en ;
+    sh:property shapes:ObjectiveShape-objectiveId ,
+        shapes:ObjectiveShape-objectiveSuccessStatus ,
+        shapes:ObjectiveShape-objectiveCompletionStatus ,
+        shapes:ObjectiveShape-objectiveProgressMeasure ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:ObjectiveShape-objectiveId a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:objectiveId ;
+    sh:name "objectiveId" ;
+    sh:description "cmi.objectives.n.id, required"@en ;
+    sh:message "Objective conformance — objectiveId: exactly 1 value, of type xsd:string — cmi.objectives.n.id, required"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ObjectiveShape-objectiveSuccessStatus a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:objectiveSuccessStatus ;
+    sh:name "objectiveSuccessStatus" ;
+    sh:description "cmi.objectives.n.success_status"@en ;
+    sh:message "Objective conformance — objectiveSuccessStatus: at most 1 value, of type xsd:string, one of \"passed\", \"failed\", \"unknown\" — cmi.objectives.n.success_status"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "passed" "failed" "unknown" ) .
+
+shapes:ObjectiveShape-objectiveCompletionStatus a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:objectiveCompletionStatus ;
+    sh:name "objectiveCompletionStatus" ;
+    sh:description "cmi.objectives.n.completion_status"@en ;
+    sh:message "Objective conformance — objectiveCompletionStatus: at most 1 value, of type xsd:string, one of \"completed\", \"incomplete\", \"not attempted\", \"unknown\" — cmi.objectives.n.completion_status"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:in ( "completed" "incomplete" "not attempted" "unknown" ) .
+
+shapes:ObjectiveShape-objectiveProgressMeasure a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:objectiveProgressMeasure ;
+    sh:name "objectiveProgressMeasure" ;
+    sh:description "cmi.objectives.n.progress_measure, from 0 to 1"@en ;
+    sh:message "Objective conformance — objectiveProgressMeasure: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — cmi.objectives.n.progress_measure, from 0 to 1"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:LearnerPreferenceShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:LearnerPreference ;
+    rdfs:label "Learner preference conformance"@en ;
+    rdfs:comment "The audio level and delivery speed are 0 or more; audio captioning is -1, 0 or 1; a language beyond its SPM is reported as a warning (SCORM 2004 4th Edition Run-Time Environment: cmi.learner_preference)."@en ;
+    sh:property shapes:LearnerPreferenceShape-audioLevel ,
+        shapes:LearnerPreferenceShape-deliverySpeed ,
+        shapes:LearnerPreferenceShape-audioCaptioning ,
+        shapes:LearnerPreferenceShape-preferenceLanguage ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:LearnerPreferenceShape-audioLevel a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:audioLevel ;
+    sh:name "audioLevel" ;
+    sh:description "audio_level, 0 or more"@en ;
+    sh:message "Learner preference conformance — audioLevel: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, at least 0 — audio_level, 0 or more"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 .
+
+shapes:LearnerPreferenceShape-deliverySpeed a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:deliverySpeed ;
+    sh:name "deliverySpeed" ;
+    sh:description "delivery_speed, 0 or more"@en ;
+    sh:message "Learner preference conformance — deliverySpeed: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, at least 0 — delivery_speed, 0 or more"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 .
+
+shapes:LearnerPreferenceShape-audioCaptioning a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:audioCaptioning ;
+    sh:name "audioCaptioning" ;
+    sh:description "audio_captioning: -1, 0 or 1"@en ;
+    sh:message "Learner preference conformance — audioCaptioning: at most 1 value, of type xsd:integer, between -1 and 1 — audio_captioning: -1, 0 or 1"@en ;
+    sh:datatype xsd:integer ;
+    sh:maxCount 1 ;
+    sh:minInclusive -1 ;
+    sh:maxInclusive 1 .
+
+shapes:LearnerPreferenceShape-preferenceLanguage a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:preferenceLanguage ;
+    sh:name "preferenceLanguage" ;
+    sh:description "language, within its SPM of 250 characters to be portable"@en ;
+    sh:message "Learner preference conformance — preferenceLanguage: at most 1 value, of type xsd:string, matching ^[\\s\\S]{0,250}$ — language, within its SPM of 250 characters to be portable"@en ;
+    sh:severity sh:Warning ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[\\s\\S]{0,250}$" .
+
+shapes:CommentFromLearnerShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:CommentFromLearner ;
+    rdfs:label "Comment from learner conformance"@en ;
+    rdfs:comment "A learner's comment has its text, and at most one location and one SCORM time (SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_learner)."@en ;
+    sh:property shapes:CommentFromLearnerShape-comment ,
+        shapes:CommentFromLearnerShape-commentLocation ,
+        shapes:CommentFromLearnerShape-commentTimestamp ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:CommentFromLearnerShape-comment a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:comment ;
+    sh:name "comment" ;
+    sh:description "cmi.comments_from_learner.n.comment"@en ;
+    sh:message "Comment from learner conformance — comment: exactly 1 value, of type rdf:langString — cmi.comments_from_learner.n.comment"@en ;
+    sh:datatype rdf:langString ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:CommentFromLearnerShape-commentLocation a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:commentLocation ;
+    sh:name "commentLocation" ;
+    sh:description "cmi.comments_from_learner.n.location"@en ;
+    sh:message "Comment from learner conformance — commentLocation: at most 1 value, of type xsd:string — cmi.comments_from_learner.n.location"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:CommentFromLearnerShape-commentTimestamp a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:commentTimestamp ;
+    sh:name "commentTimestamp" ;
+    sh:description "cmi.comments_from_learner.n.timestamp, time (second,10,0)"@en ;
+    sh:message "Comment from learner conformance — commentTimestamp: at most 1 value, of type xsd:string, matching ^[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}(:[0-9]{2}(:[0-9]{2}(\\.[0-9]{1,2})?(Z|[+-][0-9]{2}(:[0-9]{2})?)?)?)?)?)?)?$ — cmi.comments_from_learner.n.timestamp, time (second,10,0)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}(:[0-9]{2}(:[0-9]{2}(\\.[0-9]{1,2})?(Z|[+-][0-9]{2}(:[0-9]{2})?)?)?)?)?)?)?$" .
+
+shapes:CommentFromLMSShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:CommentFromLMS ;
+    rdfs:label "Comment from LMS conformance"@en ;
+    rdfs:comment "An LMS comment has its text, and at most one location and one SCORM time (SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_lms)."@en ;
+    sh:property shapes:CommentFromLMSShape-comment ,
+        shapes:CommentFromLMSShape-commentLocation ,
+        shapes:CommentFromLMSShape-commentTimestamp ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:CommentFromLMSShape-comment a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:comment ;
+    sh:name "comment" ;
+    sh:description "cmi.comments_from_lms.n.comment"@en ;
+    sh:message "Comment from LMS conformance — comment: exactly 1 value, of type rdf:langString — cmi.comments_from_lms.n.comment"@en ;
+    sh:datatype rdf:langString ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:CommentFromLMSShape-commentLocation a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:commentLocation ;
+    sh:name "commentLocation" ;
+    sh:description "cmi.comments_from_lms.n.location"@en ;
+    sh:message "Comment from LMS conformance — commentLocation: at most 1 value, of type xsd:string — cmi.comments_from_lms.n.location"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:CommentFromLMSShape-commentTimestamp a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:commentTimestamp ;
+    sh:name "commentTimestamp" ;
+    sh:description "cmi.comments_from_lms.n.timestamp, time (second,10,0)"@en ;
+    sh:message "Comment from LMS conformance — commentTimestamp: at most 1 value, of type xsd:string, matching ^[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}(:[0-9]{2}(:[0-9]{2}(\\.[0-9]{1,2})?(Z|[+-][0-9]{2}(:[0-9]{2})?)?)?)?)?)?)?$ — cmi.comments_from_lms.n.timestamp, time (second,10,0)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{4}(-[0-9]{2}(-[0-9]{2}(T[0-9]{2}(:[0-9]{2}(:[0-9]{2}(\\.[0-9]{1,2})?(Z|[+-][0-9]{2}(:[0-9]{2})?)?)?)?)?)?)?$" .
+
+shapes:InteractionObjectiveShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:InteractionObjective ;
+    rdfs:label "Interaction objective conformance"@en ;
+    rdfs:comment "An interaction's objective has an ID (SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.objectives)."@en ;
+    sh:property shapes:InteractionObjectiveShape-interactionObjectiveId ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:InteractionObjectiveShape-interactionObjectiveId a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:interactionObjectiveId ;
+    sh:name "interactionObjectiveId" ;
+    sh:description "cmi.interactions.n.objectives.m.id, required"@en ;
+    sh:message "Interaction objective conformance — interactionObjectiveId: exactly 1 value, of type xsd:string — cmi.interactions.n.objectives.m.id, required"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:CorrectResponseShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:CorrectResponse ;
+    rdfs:label "Correct response conformance"@en ;
+    rdfs:comment "A correct response has a pattern (SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.correct_responses)."@en ;
+    sh:property shapes:CorrectResponseShape-correctResponsePattern ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:CorrectResponseShape-correctResponsePattern a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:correctResponsePattern ;
+    sh:name "correctResponsePattern" ;
+    sh:description "cmi.interactions.n.correct_responses.m.pattern, required"@en ;
+    sh:message "Correct response conformance — correctResponsePattern: exactly 1 value, of type xsd:string — cmi.interactions.n.correct_responses.m.pattern, required"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:TargetedRequestValidityShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:TargetedRequestValidity ;
+    rdfs:label "Targeted request validity conformance"@en ;
+    rdfs:comment "A targeted request validity names its target and is true, false or unknown (SCORM 2004 4th Edition Run-Time Environment: adl.nav.request_valid)."@en ;
+    sh:property shapes:TargetedRequestValidityShape-requestTarget ,
+        shapes:TargetedRequestValidityShape-requestValidity ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:TargetedRequestValidityShape-requestTarget a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:requestTarget ;
+    sh:name "requestTarget" ;
+    sh:description "the target activity's identifier"@en ;
+    sh:message "Targeted request validity conformance — requestTarget: exactly 1 value, of type xsd:string — the target activity's identifier"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:TargetedRequestValidityShape-requestValidity a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:requestValidity ;
+    sh:name "requestValidity" ;
+    sh:description "true, false or unknown"@en ;
+    sh:message "Targeted request validity conformance — requestValidity: exactly 1 value, of type xsd:string, one of \"true\", \"false\", \"unknown\" — true, false or unknown"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( "true" "false" "unknown" ) .
+
+shapes:SharedDataShape a sh:NodeShape ;
+    sh:targetClass foxxi-scorm-rte:SharedData ;
+    rdfs:label "Shared data conformance"@en ;
+    rdfs:comment "A shared data store has an ID; content beyond its SPM is reported as a warning (SCORM 2004 4th Edition Run-Time Environment: adl.data)."@en ;
+    sh:property shapes:SharedDataShape-sharedDataId , shapes:SharedDataShape-sharedDataStore ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+
+shapes:SharedDataShape-sharedDataId a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:sharedDataId ;
+    sh:name "sharedDataId" ;
+    sh:description "adl.data.n.id"@en ;
+    sh:message "Shared data conformance — sharedDataId: exactly 1 value, of type xsd:string — adl.data.n.id"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:SharedDataShape-sharedDataStore a sh:PropertyShape ;
+    sh:path foxxi-scorm-rte:sharedDataStore ;
+    sh:name "sharedDataStore" ;
+    sh:description "adl.data.n.store, within its SPM of 64000 characters to be portable"@en ;
+    sh:message "Shared data conformance — sharedDataStore: at most 1 value, of type xsd:string, matching ^[\\s\\S]{0,64000}$ — adl.data.n.store, within its SPM of 64000 characters to be portable"@en ;
+    sh:severity sh:Warning ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[\\s\\S]{0,64000}$" .

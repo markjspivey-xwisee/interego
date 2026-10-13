@@ -28,6 +28,7 @@
 // their definition to the ontology.
 import { XAPI_INTERACTION_TYPES, XAPI_PATTERNS } from './spec/xapi.model.js';
 import { isXapiDuration } from './xapi-duration.js';
+import { RFC3339_UTC_TIMESTAMP } from './spec/patterns.js';
 
 const UUID_RE = new RegExp(XAPI_PATTERNS.uuid, 'i');
 
@@ -41,7 +42,7 @@ const IRI_RE = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$/;
  * requires. The date/time separator may be `T`, `t`, or a space: RFC 3339
  * §5.6 NOTE permits a space for readability, and the ADL conformance suite
  * sends `2008-09-15 15:53:00.601+00:00` as a VALID timestamp the LRS must
- * accept (it then normalizes to UTC on store).
+ * accept (it then converts it to UTC on store — utcTimestamp).
  */
 const TIMESTAMP_RE =
   // Seconds (and the fractional part) are OPTIONAL: ISO 8601 / ECMA-262 permit
@@ -50,6 +51,23 @@ const TIMESTAMP_RE =
   // normalize to UTC. (`-00:00` is still rejected below; basic-form offsets
   // `±hhmm`/`±hh` are rejected by requiring the `±hh:mm` colon form.)
   /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
+
+/**
+ * A timestamp in UTC, as xAPI 2.0 has an LRS store one: the LRS part (Timestamps) has it convert a
+ * timestamp sent with another offset to UTC instead of rejecting the statement, and lets it round to
+ * milliseconds. Reads the forms TIMESTAMP_RE accepts: T, t or a space between date and
+ * time, seconds optional, an offset or Z or none — a timestamp without one is read as UTC. One already
+ * in UTC, written as RFC 3339 and XML Schema both write it (T, seconds, Z or +00:00), is returned as it
+ * is; so is anything this does not read (the validator has refused it).
+ */
+export function utcTimestamp(ts: string): string {
+  if (UTC_RE.test(ts)) return ts;
+  const m = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}:\d{2})(:\d{2}(\.\d+)?)?([Zz]|[+-]\d{2}:\d{2})?$/.exec(ts);
+  if (!m) return ts;
+  const d = new Date(`${m[1]}T${m[2]}${m[3] ?? ':00'}${(m[5] ?? 'Z').toUpperCase()}`);
+  return Number.isNaN(d.getTime()) ? ts : d.toISOString();
+}
+const UTC_RE = new RegExp(RFC3339_UTC_TIMESTAMP);
 
 /** RFC 5646 language tag (loose — rejects whitespace / empty / junk). */
 const LANG_TAG_RE = /^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$/;

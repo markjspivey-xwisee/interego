@@ -36,9 +36,16 @@ import { CREDENTIAL_TYPES, deriveTenantIssuer } from './credentials.js';
 import { issueDataIntegrityProof } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 
+// CLR 2.0 B.1.1: the first three items are the VC 2.0, CLR 2.0 and OB 3.0 contexts, in that order
+// (the credentials a CLR bundles, and its achievements, are read with OB 3.0's terms). Last, VC 2.0's
+// undefined-terms context (VC 2.0 §5.2): the envelope's own fields — holderDid, exportedAt,
+// credentialEntries, summary — are Foxxi's, no context defines them, and without it a verifier
+// reading the CLR as JSON-LD drops them, and in safe mode refuses the credential.
 const CLR_CONTEXT = [
   'https://www.w3.org/ns/credentials/v2',
   'https://purl.imsglobal.org/spec/clr/v2p0/context-2.0.1.json',
+  'https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json',
+  'https://www.w3.org/ns/credentials/undefined-terms/v2',
 ] as const;
 
 const WALLET_TYPE = `${FOXXI_NS}WalletEnvelope`;
@@ -54,6 +61,8 @@ export interface ClrEnvelope {
   '@context': readonly string[];
   type: readonly string[];
   id: string;
+  /** CLR 2.0 name — what a wallet shows for the record (ClrCredential.name [1]). */
+  name: string;
   /** CLR 2.0 issuer (the tenant did:key) — present when signed. */
   issuer?: string;
   /** CLR 2.0 / W3C VC issuance time. */
@@ -163,8 +172,20 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
     if (!prev || (!prev.verified && e.verified)) byId.set(id, e);
   }
   const dedupedEntries = [...byId.values(), ...anon];
+  return assembleClr(dedupedEntries, config);
+}
 
-  const exportedAt = new Date().toISOString();
+/**
+ * The CLR envelope over credentials already gathered — signed as a CLR 2.0 credential by the tenant
+ * issuer when an issuerSeed is given and there is at least one credential to bundle (ClrSubject
+ * verifiableCredential [1..*]); otherwise an unsigned aggregate that does not claim to be one.
+ * `exportedAt` is the CLR's validFrom and its proof's creation time.
+ */
+export async function assembleClr(
+  dedupedEntries: ClrEntry[],
+  config: Pick<FetchClrConfig, 'learnerPodUrl' | 'learnerDid' | 'issuerSeed'>,
+  exportedAt: string = new Date().toISOString(),
+): Promise<ClrEnvelope> {
   const summary = {
     totalEntries: dedupedEntries.length,
     verifiedEntries: dedupedEntries.filter(e => e.verified).length,
@@ -198,6 +219,7 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
     '@context': CLR_CONTEXT,
     type: AGGREGATE_TYPE,
     id: clrId,
+    name: 'Comprehensive Learner Record',
     validFrom: exportedAt,
     holderDid: config.learnerDid,
     exportedAt,
@@ -205,12 +227,13 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
     credentialEntries: dedupedEntries,
     summary,
   };
-  // Sign as the tenant issuer when a seed is supplied → a real signed CLR 2.0 VC.
-  if (config.issuerSeed) {
+  // Sign as the tenant issuer when a seed is supplied → a real signed CLR 2.0 VC. Not over nothing:
+  // a CLR 2.0 subject bundles at least one credential, so an empty wallet stays an aggregate.
+  if (config.issuerSeed && dedupedEntries.length > 0) {
     try {
       const issuer = await deriveTenantIssuer(config.issuerSeed);
       const unsigned = { ...base, type: VC_TYPE, issuer: issuer.did } as unknown as Parameters<typeof issueDataIntegrityProof>[0];
-      const signed = issueDataIntegrityProof(unsigned, issuer) as unknown as ClrEnvelope;
+      const signed = issueDataIntegrityProof(unsigned, issuer, { created: exportedAt }) as unknown as ClrEnvelope;
       // Keep the VC typing ONLY if a proof was actually attached (fail-closed).
       if (signed && (signed as { proof?: unknown }).proof) return signed;
       // eslint-disable-next-line no-console

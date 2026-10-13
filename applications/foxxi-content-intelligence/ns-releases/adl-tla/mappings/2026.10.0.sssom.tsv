@@ -1,0 +1,50 @@
+#curie_map:
+#  adl: "http://adlnet.gov/expapi/verbs/"
+#  adl_w3id: "https://w3id.org/xapi/adl/verbs/"
+#  cass: "https://schema.cassproject.org/0.4/"
+#  foxxi_adl_tla: "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#"
+#  foxxi_ieee_ler: "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#"
+#  foxxi_ns: "https://foxxi-bridge.interego.xwisee.com/ns/"
+#mapping_set_id: "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/mappings"
+#mapping_set_version: "2026.10.0"
+#mapping_set_title: "ADL Total Learning Architecture (TLA) — Foxxi composable ontology — mappings"
+#mapping_set_description: "Mappings from the terms of ADL Total Learning Architecture (TLA) — Foxxi composable ontology (https://foxxi-bridge.interego.xwisee.com/ns/adl-tla) to other vocabularies: one row for each SKOS mapping the ontology makes, generated from it."
+#creator_label:
+#  - "Mark Spivey"
+#license: "https://opensource.org/licenses/MIT"
+#subject_source: "foxxi_ns:adl-tla"
+#subject_source_version: "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/2026.10.0"
+#mapping_provider: "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla"
+#publication_date: 2026-10-12
+#comment: "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL, IEEE or the CaSS project. Where this document and the published standard differ, the standard governs."
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	comment
+foxxi_adl_tla:Assertion	Competency Assertion	skos:closeMatch	cass:Assertion		semapv:ManualMappingCuration	owl class			
+foxxi_adl_tla:Assertion	Competency Assertion	skos:closeMatch	foxxi_ieee_ler:CompetencyAssertion	Competency Assertion	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_adl_tla:Competency	Competency	skos:closeMatch	cass:Competency		semapv:ManualMappingCuration	owl class			
+foxxi_adl_tla:Competency	Competency	skos:closeMatch	foxxi_ieee_ler:CompetencyDefinition	Competency Definition	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_adl_tla:CompetencyFramework	Competency Framework	skos:closeMatch	cass:Framework		semapv:ManualMappingCuration	owl class			
+foxxi_adl_tla:CompetencyFramework	Competency Framework	skos:closeMatch	foxxi_ieee_ler:CompetencyFramework	Competency Framework	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_adl_tla:LearnerProfile	Learner Profile	skos:closeMatch	foxxi_ieee_ler:EnterpriseLearnerRecord	Enterprise Learner Record	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_adl_tla:LearnerProfile	Learner Profile	skos:closeMatch	foxxi_ieee_ler:LearnerProfile	Learner Profile	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_adl_tla:Level	Competency Level	skos:closeMatch	cass:Level		semapv:ManualMappingCuration	owl class			
+foxxi_adl_tla:Level	Competency Level	skos:closeMatch	foxxi_ieee_ler:ProficiencyLevel	Proficiency Level	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_adl_tla:Relation	Competency Relation	skos:closeMatch	cass:Relation		semapv:ManualMappingCuration	owl class			
+foxxi_adl_tla:Relation	Competency Relation	skos:closeMatch	foxxi_ieee_ler:CompetencyRelationship	Competency Relationship	semapv:ManualMappingCuration	owl class	owl class		
+foxxi_adl_tla:RollupRule	Roll-up Rule	skos:closeMatch	cass:RollupRule		semapv:ManualMappingCuration	owl class			
+foxxi_adl_tla:abandoned	abandoned	skos:exactMatch	adl_w3id:abandoned		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:attended	attended	skos:exactMatch	adl:attended		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:completed	completed	skos:exactMatch	adl:completed		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:experienced	experienced	skos:exactMatch	adl:experienced		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:failed	failed	skos:exactMatch	adl:failed		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:initialized	initialized	skos:exactMatch	adl:initialized		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:launched	launched	skos:exactMatch	adl:launched		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:mastered	mastered	skos:exactMatch	adl:mastered		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:passed	passed	skos:exactMatch	adl:passed		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:registered	registered	skos:exactMatch	adl:registered		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:resumed	resumed	skos:exactMatch	adl:resumed		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:satisfied	satisfied	skos:exactMatch	adl_w3id:satisfied		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:scored	scored	skos:exactMatch	adl:scored		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:suspended	suspended	skos:exactMatch	adl:suspended		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:terminated	terminated	skos:exactMatch	adl:terminated		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:voided	voided	skos:exactMatch	adl:voided		semapv:ManualMappingCuration	skos concept			
+foxxi_adl_tla:waived	waived	skos:exactMatch	adl_w3id:waived		semapv:ManualMappingCuration	skos concept			

@@ -40,7 +40,7 @@ certification mark.
 |---|---|---|
 | xAPI 2.0 (IEEE 9274.1.1) | IEEE / ADL | Implemented as a conformant LRS; tested against the ADL conformance suite. |
 | SCORM 1.2 / 2004 | ADL | Run-time environment + a Sequencing & Navigation runtime. |
-| cmi5 (IEEE 9274.2.1) | IEEE / ADL | Implemented — the LMS launch contract, moveOn, course structure. |
+| cmi5 (being standardized as IEEE P9274.3.1) | AICC / ADL; IEEE | Implemented — the LMS launch contract, moveOn, course structure. |
 | LTI 1.3 Advantage | 1EdTech | Implemented as a Tool — JWKS, OIDC, Deep Linking, NRPS, AGS. |
 | OneRoster 1.2 | 1EdTech | Producer + an applying CSV consumer. |
 | CASE 1.0 | 1EdTech | Competency-framework alignment. |
@@ -55,6 +55,37 @@ certification mark.
 
 Conformance is re-verifiable — see `LMS-CONFORMANCE.md` and the
 `tools/*-smoke` runners.
+
+### Formalizations of standards (`/ns`)
+
+The bridge publishes OWL ontologies, SHACL shapes, SSSOM mapping sets and
+JSON-LD contexts under `https://foxxi-bridge.interego.xwisee.com/ns/` for
+standards in §1 and for three compliance frameworks (SOC 2, the EU AI
+Act, the NIST AI RMF). Every released version is kept, unchanged, in
+[`ns-releases/`](ns-releases/).
+
+- Each is an independent formalization by Mark Spivey (Foxxi Mediums
+  Inc.), not a publication of the standard's steward. Each document says
+  so, cites the standard it formalizes (`dct:source`), and says that the
+  standard's own text governs where the two differ. One, `ai-elearning`,
+  is an original xAPI profile rather than a formalization, and says that.
+- Definitions are written in the project's words. A clause, criterion or
+  article is cited by its number and paraphrased, never quoted. That
+  includes the AICPA's SOC 2 Trust Services Criteria: CC6.1–CC6.8 appear
+  as codes with paraphrased definitions.
+- The names a standard gives its own data (xAPI's `actor` and `verb`,
+  SCORM's `cmi.completion_status`) are used because a formalization of a
+  data model has to name what it models. This is the same nominative use
+  as above.
+- Other publishers' ontologies and contexts are referenced, not
+  redistributed. The alignment to ADL's xAPI ontology records the names,
+  kinds, labels and axioms of the terms it maps to, which are facts about
+  that ontology rather than its text (`src/spec/adl-xapi-ontology.ts`).
+  1EdTech's Open Badges 3.0.3 and CLR 2.0.1 contexts are named by URL and
+  SHA-256 digest (`tools/read-credential-fixtures.ts`) and are not in
+  this repository. The two W3C VC 2.0 contexts the tests read are, kept
+  unmodified under the W3C Software and Document License
+  (`tests/support/contexts/README.md`).
 
 ### Referenced vocabularies and glossaries (`i2idlx/`)
 

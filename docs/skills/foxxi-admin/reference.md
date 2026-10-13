@@ -401,7 +401,7 @@ Project the tenant's fxk:SkillFramework + fxk:Skill (+ rcd:CompetencyDefinition 
 
 **Emit a cmi5-conformant xAPI session trace (launched → terminated)**
 
-Build the full cmi5 statement trace (launched + initialized + completed + passed/failed + terminated, plus optional satisfied if moveOn rule fires) for a learner's AU session. Each statement carries the cmi5 context category, session ID, and registration UUID per IEEE 9274.2.1. Caller can either fan-out to a connected LRS via the lrs-adapter or persist directly to the pod as fxa:LearningExperience descriptors.
+Build the full cmi5 statement trace (launched + initialized + completed + passed/failed + terminated, plus optional satisfied if moveOn rule fires) for a learner's AU session. Each statement carries the cmi5 context category, session ID, and registration UUID per the cmi5 specification. Caller can either fan-out to a connected LRS via the lrs-adapter or persist directly to the pod as fxa:LearningExperience descriptors.
 
 - Action: `urn:iep:action:foxxi:emit-cmi5-session`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/emit_cmi5_session`

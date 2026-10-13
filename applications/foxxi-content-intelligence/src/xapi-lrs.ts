@@ -51,7 +51,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { randomUUID, createHash } from 'node:crypto';
 import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adapter/src/pod-publisher.js';
 import { createStatementStore, ConflictError, matchesFilter, decodeCursor, type StatementStore, type StoredStatement } from './statement-store.js';
-import { validateStatement, validateAgentObject } from './xapi-validate.js';
+import { validateStatement, validateAgentObject, utcTimestamp } from './xapi-validate.js';
 import { TenantPartition, DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import {
   forwardStatement as forwardToTargets,
@@ -593,6 +593,9 @@ function ensureStatementFields(stmt: Record<string, unknown>, authority: { homeP
   const out = { ...stmt };
   if (typeof out.id !== 'string' || !isUuid(out.id)) out.id = randomUUID();
   if (typeof out.timestamp !== 'string') out.timestamp = nowIso();
+  // xAPI 2.0 (LRS part, Timestamps): convert to UTC rather than reject — the stored statement
+  // states its time as RFC 3339 in UTC, as the published shapes require.
+  else out.timestamp = utcTimestamp(out.timestamp);
   // `stored` is always LRS-assigned (§4.1.8) — overwrite any caller value.
   out.stored = nowIso();
   if (!out.authority || typeof out.authority !== 'object') {
@@ -608,6 +611,7 @@ function ensureStatementFields(stmt: Record<string, unknown>, authority: { homeP
   if (object && typeof object === 'object') {
     if (!object.objectType) object.objectType = 'Activity';
     if (object.objectType === 'SubStatement') {
+      if (typeof object.timestamp === 'string') object.timestamp = utcTimestamp(object.timestamp);
       const subActor = object.actor as Record<string, unknown> | undefined;
       if (subActor && typeof subActor === 'object' && !subActor.objectType) {
         subActor.objectType = (Array.isArray(subActor.member) || subActor.member) ? 'Group' : 'Agent';
