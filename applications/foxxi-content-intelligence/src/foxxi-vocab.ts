@@ -277,7 +277,7 @@ function termLabel(t: FoxxiTerm): string {
 const notationOf = (t: FoxxiTerm): string => t.name.split('/').pop()!;
 
 /** The vocabulary document's version. */
-export const FOXXI_VOCAB_VERSION = '2026.10.0';
+export const FOXXI_VOCAB_VERSION = '2026.10.1';
 
 /** Self-description of the vocabulary document. */
 export function foxxiDocMeta(): DocMeta {
@@ -285,7 +285,8 @@ export function foxxiDocMeta(): DocMeta {
     iri: FOXXI_VOCAB_DOC, ns: FOXXI_NS, prefix: foxxiPrefix('foxxi'),
     title: 'Foxxi Content Intelligence vocabulary',
     description: FOXXI_VOCAB_COMMENT,
-    version: FOXXI_VOCAB_VERSION, created: '2026-05-20', modified: '2026-10-12', issued: '2026-10-12',
+    version: FOXXI_VOCAB_VERSION, created: '2026-05-20', modified: '2026-10-13', issued: '2026-10-13',
+    priorVersion: '2026.10.0', priorCompatibility: 'backward',
     standards: [],
     bodies: ['ADL'],
     notice: `An original vocabulary of the Foxxi vertical, by ${CREATOR} (${PUBLISHER}). It formalizes no standard; its xAPI concepts are typed with classes of ADL's xAPI ontology (https://w3id.org/xapi/ontology), which is not affiliated with or endorsing this vocabulary.`,
@@ -353,7 +354,7 @@ export function vocabGraph(): Graph {
     .add(C, iri(RDFS + 'label'), en('construction'))
     .add(C, iri(RDFS + 'comment'), en(CONSTRUCTION_DEFINITION)).add(C, iri(SKOS + 'definition'), en(CONSTRUCTION_DEFINITION))
     .add(C, iri(RDFS + 'range'), iri(XSD + 'string'))
-    .add(C, iri(SKOS + 'changeNote'), en('2026.10.0: new here. The IEEE LER and ADL TLA documents\' terms carry it, where they carried foxxi-ieee-ler:construction, a term of one of them.'))
+    .add(C, iri(SKOS + 'changeNote'), en('2026.10.1: new here. The IEEE LER and ADL TLA documents\' terms carry it, where they carried foxxi-ieee-ler:construction, a term of one of them.'))
     .add(C, iri(RDFS + 'isDefinedBy'), O);
   declareExternalTerms(g, [FOXXI_NS]);
   _graph = g;

@@ -11,8 +11,9 @@ name: Foxxi /ns release tags
 # every-released-version-stays-resolvable test fails while a document differs from its archived
 # version, so the archive and the source agree at that commit.
 #
-# A tag is made once and never moved. tools/release-ns.ts refuses to release anything more under
-# a version whose tag exists, so one version is one release.
+# A tag is made once and never moved, on the commit that brought its version to master even when
+# this job runs later. tools/release-ns.ts refuses to release anything more under a version whose
+# tag exists, so one version is one release.
 
 on:
   push:
@@ -53,7 +54,14 @@ jobs:
               echo "$tag exists — left as it is"
               continue
             fi
-            git tag -a "$tag" -m "Foxxi /ns release $v" "$GITHUB_SHA"
+            # The commit that brought the version to master: the first on master's first-parent line
+            # whose SHA256SUMS lists a file of it. That is this push for a new version, and an earlier
+            # commit for one released before this workflow ran (2026.10.0 reached master without it).
+            sha=$(git log --first-parent --reverse --format=%H "$GITHUB_SHA" -- "$SUMS" | while read -r c; do
+              if git show "$c:$SUMS" 2>/dev/null | awk '{print $2}' | grep -qF "/$v."; then echo "$c"; break; fi
+            done)
+            sha=${sha:-$GITHUB_SHA}
+            git tag -a "$tag" -m "Foxxi /ns release $v" "$sha"
             git push origin "refs/tags/$tag"
-            echo "::notice::tagged $GITHUB_SHA as $tag"
+            echo "::notice::tagged $sha as $tag"
           done

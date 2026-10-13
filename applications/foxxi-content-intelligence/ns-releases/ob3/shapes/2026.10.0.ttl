@@ -35,9 +35,9 @@
     bibo:status <http://purl.org/ontology/bibo/status/published> ;
     dct:bibliographicCitation "Spivey, M. (2026). Open Badges 3.0 — credential SHACL profile — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes/2026.10.0" ;
     dct:source <https://www.imsglobal.org/spec/ob/v3p0/> , <https://www.w3.org/TR/vc-data-model-2.0/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ob3/2026.10.0> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ob3> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/ob3/2026.10.0> .
 
 shapes:OpenBadgeCredentialShape a sh:NodeShape ;
@@ -98,8 +98,7 @@ shapes:OpenBadgeCredentialShape-credentialSubject-type a sh:PropertyShape ;
 shapes:AchievementSubjectShape a sh:NodeShape ;
     sh:targetClass ob:AchievementSubject ;
     rdfs:label "Achievement subject shape"@en ;
-    rdfs:comment "The recipient of an Open Badges 3.0 achievement (OB 3.0 B.1.3, AchievementSubject): identified by its id or by at least one identifier, with an achievement, an Achievement."@en ,
-        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): achievement (maxCount 1) — one achievement object in each credential (achievement [1]), which only the JSON keeps apart"@en ;
+    rdfs:comment "The recipient of an Open Badges 3.0 achievement (OB 3.0 B.1.3, AchievementSubject): identified by its id or by at least one identifier, with an achievement, an Achievement."@en ;
     sh:property shapes:AchievementSubjectShape-achievement , shapes:AchievementSubjectShape-achievement-type ;
     sh:or ( [ sh:nodeKind sh:IRI ] [ sh:path ob:identifier ; sh:minCount 1 ] ) ;
     sh:message "Achievement subject shape: the subject is identified by its id, or by at least one identifier"@en ;
@@ -108,8 +107,8 @@ shapes:AchievementSubjectShape a sh:NodeShape ;
 shapes:AchievementSubjectShape-achievement a sh:PropertyShape ;
     sh:path ob:achievement ;
     sh:name "achievement" ;
-    sh:description "the achievement being awarded (achievement [1]); no maximum in RDF, where the subject is the learner and a graph holding two of their credentials (a CLR) gives that one node two achievements"@en ;
-    sh:message "Achievement subject shape — achievement: at least 1 value — the achievement being awarded (achievement [1]); no maximum in RDF, where the subject is the learner and a graph holding two of their credentials (a CLR) gives that one node two achievements"@en ;
+    sh:description "the achievement being awarded (achievement [1])"@en ;
+    sh:message "Achievement subject shape — achievement: at least 1 value — the achievement being awarded (achievement [1])"@en ;
     sh:minCount 1 .
 
 shapes:AchievementSubjectShape-achievement-type a sh:PropertyShape ;

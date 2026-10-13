@@ -16,7 +16,7 @@
 
 <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes> a owl:Ontology ;
     dct:title "NIST AI Risk Management Framework 1.0 — function mapping — SHACL shapes"@en ;
-    dct:description "SHACL shapes for NIST AI Risk Management Framework 1.0 — function mapping: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/validate). Each validation result cites the shape it came from. An instance written as JSON is read into RDF through the JSON-LD context at https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/context/2026.10.0."@en ;
+    dct:description "SHACL shapes for NIST AI Risk Management Framework 1.0 — function mapping: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/validate). Each validation result cites the shape it came from."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by NIST. Where this document and the published standard differ, the standard governs."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -33,20 +33,15 @@
     bibo:status <http://purl.org/ontology/bibo/status/published> ;
     dct:bibliographicCitation "Spivey, M. (2026). NIST AI Risk Management Framework 1.0 — function mapping — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes/2026.10.0" ;
     dct:source <https://doi.org/10.6028/NIST.AI.100-1> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/2026.10.0> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/2026.10.0> .
 
 shapes:FunctionEvidenceShape a sh:NodeShape ;
-    sh:targetClass foxxi-nist-rmf:Function ,
-        foxxi-nist-rmf:Govern ,
-        foxxi-nist-rmf:Map ,
-        foxxi-nist-rmf:Measure ,
-        foxxi-nist-rmf:Manage ;
-    sh:targetSubjectsOf foxxi-nist-rmf:functionId ;
+    sh:targetClass foxxi-nist-rmf:Function ;
     rdfs:label "AI RMF function-evidence conformance"@en ;
-    rdfs:comment "A core function carries its id. Every CoreFunction concept of this document does; so does any function a record names by RDFS inference from addressesFunction's range, when it is one of them."@en ;
+    rdfs:comment "A function-evidence assertion MUST name the function id it addresses."@en ;
     sh:property shapes:FunctionEvidenceShape-functionId ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes> .
 
@@ -59,110 +54,3 @@ shapes:FunctionEvidenceShape-functionId a sh:PropertyShape ;
     sh:minCount 1 ;
     sh:maxCount 1 ;
     sh:in ( "GOVERN" "MAP" "MEASURE" "MANAGE" ) .
-
-shapes:FunctionClaimShape a sh:NodeShape ;
-    sh:targetSubjectsOf foxxi-nist-rmf:addressesFunction ;
-    rdfs:label "AI RMF function claim"@en ;
-    rdfs:comment "A record of an action that addresses a core function names one of the four: a concept of this document's CoreFunction list, by its token (\"GOVERN\") or its IRI."@en ;
-    sh:property shapes:FunctionClaimShape-addressesFunction ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes> .
-
-shapes:FunctionClaimShape-addressesFunction a sh:PropertyShape ;
-    sh:path foxxi-nist-rmf:addressesFunction ;
-    sh:name "addressesFunction" ;
-    sh:description "one of the four core functions"@en ;
-    sh:message "AI RMF function claim — addressesFunction: one of the concepts of NIST AI RMF Core Functions (GOVERN, MAP, MEASURE, MANAGE) — one of the four core functions"@en ;
-    sh:in (
-        foxxi-nist-rmf:CoreFunction-GOVERN
-        foxxi-nist-rmf:CoreFunction-MAP
-        foxxi-nist-rmf:CoreFunction-MEASURE
-        foxxi-nist-rmf:CoreFunction-MANAGE
-    ) .
-
-shapes:GovernCodeShape a sh:NodeShape ;
-    sh:targetClass foxxi-nist-rmf:Govern ;
-    rdfs:label "Govern: its functionId"@en ;
-    rdfs:comment "An instance of Govern is one of the concepts of NIST AI RMF Core Functions typed with it, so its functionId is theirs: GOVERN."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-nist-rmf:Map ]
-            [ sh:class foxxi-nist-rmf:Measure ]
-            [ sh:class foxxi-nist-rmf:Manage ]
-        )
-    ] ;
-    sh:message "Govern: its functionId: a Govern is not also of a kind this document declares disjoint with it"@en ;
-    sh:property shapes:GovernCodeShape-functionId ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes> .
-
-shapes:GovernCodeShape-functionId a sh:PropertyShape ;
-    sh:path foxxi-nist-rmf:functionId ;
-    sh:name "functionId" ;
-    sh:description "the functionId of a Govern"@en ;
-    sh:message "Govern: its functionId — functionId: one of \"GOVERN\" — the functionId of a Govern"@en ;
-    sh:in ( "GOVERN" ) .
-
-shapes:MapCodeShape a sh:NodeShape ;
-    sh:targetClass foxxi-nist-rmf:Map ;
-    rdfs:label "Map: its functionId"@en ;
-    rdfs:comment "An instance of Map is one of the concepts of NIST AI RMF Core Functions typed with it, so its functionId is theirs: MAP."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-nist-rmf:Govern ]
-            [ sh:class foxxi-nist-rmf:Measure ]
-            [ sh:class foxxi-nist-rmf:Manage ]
-        )
-    ] ;
-    sh:message "Map: its functionId: a Map is not also of a kind this document declares disjoint with it"@en ;
-    sh:property shapes:MapCodeShape-functionId ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes> .
-
-shapes:MapCodeShape-functionId a sh:PropertyShape ;
-    sh:path foxxi-nist-rmf:functionId ;
-    sh:name "functionId" ;
-    sh:description "the functionId of a Map"@en ;
-    sh:message "Map: its functionId — functionId: one of \"MAP\" — the functionId of a Map"@en ;
-    sh:in ( "MAP" ) .
-
-shapes:MeasureCodeShape a sh:NodeShape ;
-    sh:targetClass foxxi-nist-rmf:Measure ;
-    rdfs:label "Measure: its functionId"@en ;
-    rdfs:comment "An instance of Measure is one of the concepts of NIST AI RMF Core Functions typed with it, so its functionId is theirs: MEASURE."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-nist-rmf:Govern ]
-            [ sh:class foxxi-nist-rmf:Map ]
-            [ sh:class foxxi-nist-rmf:Manage ]
-        )
-    ] ;
-    sh:message "Measure: its functionId: a Measure is not also of a kind this document declares disjoint with it"@en ;
-    sh:property shapes:MeasureCodeShape-functionId ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes> .
-
-shapes:MeasureCodeShape-functionId a sh:PropertyShape ;
-    sh:path foxxi-nist-rmf:functionId ;
-    sh:name "functionId" ;
-    sh:description "the functionId of a Measure"@en ;
-    sh:message "Measure: its functionId — functionId: one of \"MEASURE\" — the functionId of a Measure"@en ;
-    sh:in ( "MEASURE" ) .
-
-shapes:ManageCodeShape a sh:NodeShape ;
-    sh:targetClass foxxi-nist-rmf:Manage ;
-    rdfs:label "Manage: its functionId"@en ;
-    rdfs:comment "An instance of Manage is one of the concepts of NIST AI RMF Core Functions typed with it, so its functionId is theirs: MANAGE."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-nist-rmf:Govern ]
-            [ sh:class foxxi-nist-rmf:Map ]
-            [ sh:class foxxi-nist-rmf:Measure ]
-        )
-    ] ;
-    sh:message "Manage: its functionId: a Manage is not also of a kind this document declares disjoint with it"@en ;
-    sh:property shapes:ManageCodeShape-functionId ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes> .
-
-shapes:ManageCodeShape-functionId a sh:PropertyShape ;
-    sh:path foxxi-nist-rmf:functionId ;
-    sh:name "functionId" ;
-    sh:description "the functionId of a Manage"@en ;
-    sh:message "Manage: its functionId — functionId: one of \"MANAGE\" — the functionId of a Manage"@en ;
-    sh:in ( "MANAGE" ) .

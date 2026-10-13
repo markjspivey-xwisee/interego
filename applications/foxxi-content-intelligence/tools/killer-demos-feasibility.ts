@@ -255,7 +255,7 @@ async function complianceOntologies(): Promise<void> {
     const r = await fetch(`${BRIDGE}/ns/${m}`, { headers: { Accept: 'text/turtle' } });
     check(`/ns/${m} dereferences (turtle)`, r.ok, `HTTP ${r.status}`);
   }
-  const ev = await postPlain('/ns/soc2/validate', { instance: { '@type': 'AccessChangeEvent', evidences: ['CC6.2'], occurredAt: '2026-06-20T00:00:00Z', actingAgent: 'did:ethr:0xabc', signer: '0xabc' } });
+  const ev = await postPlain('/ns/soc2/validate', { instance: { '@type': 'AccessChangeEvent', evidences: ['CC6.2'], occurredAt: '2026-06-20T00:00:00Z', actor: 'did:ethr:0xabc', signer: '0xabc' } });
   check('soc2 evidence event conforms to served shape', ev.status === 200 && ev.body?.conforms === true, `shapesIri=${String(ev.body?.shapesIri ?? '').slice(0, 50)}`);
 }
 

@@ -1,0 +1,196 @@
+# Open Badges 3.0 — credential SHACL profile — SHACL shapes — version 2026.10.1
+# https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes/2026.10.1)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix schema: <https://schema.org/> .
+@prefix vc: <https://www.w3.org/2018/credentials#> .
+@prefix ob: <https://purl.imsglobal.org/spec/vc/ob/vocab.html#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes> a owl:Ontology ;
+    dct:title "Open Badges 3.0 — credential SHACL profile — SHACL shapes"@en ;
+    dct:description "SHACL shapes for Open Badges 3.0 — credential SHACL profile: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/ob3/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by 1EdTech or W3C. Where this document and the published standard differ, the standard governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes/2026.10.1> ;
+    owl:versionInfo "2026.10.1" ;
+    owl:priorVersion <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes/2026.10.0> ;
+    owl:backwardCompatibleWith <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes/2026.10.0> ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-13"^^xsd:date ;
+    dct:issued "2026-10-13"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). Open Badges 3.0 — credential SHACL profile — SHACL shapes (Version 2026.10.1) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes/2026.10.1" ;
+    dct:source <https://www.imsglobal.org/spec/ob/v3p0/> , <https://www.w3.org/TR/vc-data-model-2.0/> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ob3/2026.10.1> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/ob3/2026.10.1> .
+
+shapes:OpenBadgeCredentialShape a sh:NodeShape ;
+    sh:targetClass ob:OpenBadgeCredential ;
+    rdfs:label "Open Badge credential shape"@en ;
+    rdfs:comment "An Open Badges 3.0 credential (OB 3.0 B.1.2, AchievementCredential): its @context begins with the W3C VC 2.0 context and the OB 3.0 context; it is identified by an IRI; it is a VerifiableCredential; it has one issuer, identified by an IRI, one validFrom date-time with its time zone, and one subject, an AchievementSubject. A proof is optional: a credential secured by an enveloping proof (VC-JOSE-COSE, VC-JWT) carries none, and an embedded proof is a graph of its own, which Data Integrity verification checks rather than these shapes."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): @context (minCount 2, beginning \"^https://www\\\\.w3\\\\.org/ns/credentials/v2$\", \"^https://purl\\\\.imsglobal\\\\.org/spec/ob/v3p0/context(-3\\\\.[0-9]+\\\\.[0-9]+)?\\\\.json$\") — the W3C VC 2.0 context first (VC 2.0 §4.1), then the OB 3.0 context (OB 3.0: @context [2..*])"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "Open Badge credential shape: the node must be identified by an IRI — an unambiguous reference to the credential (OB 3.0: id [1])"@en ;
+    sh:property shapes:OpenBadgeCredentialShape-type ,
+        shapes:OpenBadgeCredentialShape-issuer ,
+        shapes:OpenBadgeCredentialShape-validFrom ,
+        shapes:OpenBadgeCredentialShape-credentialSubject ,
+        shapes:OpenBadgeCredentialShape-credentialSubject-type ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes> .
+
+shapes:OpenBadgeCredentialShape-type a sh:PropertyShape ;
+    sh:path rdf:type ;
+    sh:name "type" ;
+    sh:description "a VerifiableCredential (VC 2.0 §4.5)"@en ;
+    sh:message "Open Badge credential shape — type: including vc:VerifiableCredential — a VerifiableCredential (VC 2.0 §4.5)"@en ;
+    sh:hasValue vc:VerifiableCredential .
+
+shapes:OpenBadgeCredentialShape-issuer a sh:PropertyShape ;
+    sh:path vc:issuer ;
+    sh:name "issuer" ;
+    sh:description "one issuer: an IRI, or a Profile identified by one (OB 3.0: issuer [1] ProfileRef)"@en ;
+    sh:message "Open Badge credential shape — issuer: exactly 1 value, an IRI — one issuer: an IRI, or a Profile identified by one (OB 3.0: issuer [1] ProfileRef)"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:OpenBadgeCredentialShape-validFrom a sh:PropertyShape ;
+    sh:path vc:validFrom ;
+    sh:name "validFrom" ;
+    sh:description "when the credential becomes valid, with its time zone (OB 3.0: validFrom [1] DateTimeZ)"@en ;
+    sh:message "Open Badge credential shape — validFrom: exactly 1 value, of type xsd:dateTime, matching ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$ — when the credential becomes valid, with its time zone (OB 3.0: validFrom [1] DateTimeZ)"@en ;
+    sh:datatype xsd:dateTime ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$" .
+
+shapes:OpenBadgeCredentialShape-credentialSubject a sh:PropertyShape ;
+    sh:path vc:credentialSubject ;
+    sh:name "credentialSubject" ;
+    sh:description "one subject (OB 3.0: credentialSubject [1])"@en ;
+    sh:message "Open Badge credential shape — credentialSubject: exactly 1 value — one subject (OB 3.0: credentialSubject [1])"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:OpenBadgeCredentialShape-credentialSubject-type a sh:PropertyShape ;
+    sh:path ( vc:credentialSubject rdf:type ) ;
+    sh:name "credentialSubject.type" ;
+    sh:description "the subject is an AchievementSubject (OB 3.0: credentialSubject AchievementSubject)"@en ;
+    sh:message "Open Badge credential shape — credentialSubject.type: including ob:AchievementSubject — the subject is an AchievementSubject (OB 3.0: credentialSubject AchievementSubject)"@en ;
+    sh:hasValue ob:AchievementSubject .
+
+shapes:AchievementSubjectShape a sh:NodeShape ;
+    sh:targetClass ob:AchievementSubject ;
+    rdfs:label "Achievement subject shape"@en ;
+    rdfs:comment "The recipient of an Open Badges 3.0 achievement (OB 3.0 B.1.3, AchievementSubject): identified by its id or by at least one identifier, with an achievement, an Achievement."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): achievement (maxCount 1) — one achievement object in each credential (achievement [1]), which only the JSON keeps apart"@en ;
+    sh:property shapes:AchievementSubjectShape-achievement , shapes:AchievementSubjectShape-achievement-type ;
+    sh:or ( [ sh:nodeKind sh:IRI ] [ sh:path ob:identifier ; sh:minCount 1 ] ) ;
+    sh:message "Achievement subject shape: the subject is identified by its id, or by at least one identifier"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes> .
+
+shapes:AchievementSubjectShape-achievement a sh:PropertyShape ;
+    sh:path ob:achievement ;
+    sh:name "achievement" ;
+    sh:description "the achievement being awarded (achievement [1]); no maximum in RDF, where the subject is the learner and a graph holding two of their credentials (a CLR) gives that one node two achievements"@en ;
+    sh:message "Achievement subject shape — achievement: at least 1 value — the achievement being awarded (achievement [1]); no maximum in RDF, where the subject is the learner and a graph holding two of their credentials (a CLR) gives that one node two achievements"@en ;
+    sh:minCount 1 .
+
+shapes:AchievementSubjectShape-achievement-type a sh:PropertyShape ;
+    sh:path ( ob:achievement rdf:type ) ;
+    sh:name "achievement.type" ;
+    sh:description "an Achievement (its type MUST include Achievement)"@en ;
+    sh:message "Achievement subject shape — achievement.type: including ob:Achievement — an Achievement (its type MUST include Achievement)"@en ;
+    sh:hasValue ob:Achievement .
+
+shapes:AchievementShape a sh:NodeShape ;
+    sh:targetClass ob:Achievement ;
+    rdfs:label "Achievement shape"@en ;
+    rdfs:comment "An Open Badges 3.0 achievement (OB 3.0 B.1.1, Achievement): identified by an IRI, with a name, a description and criteria."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "Achievement shape: the node must be identified by an IRI — a unique URI for the achievement (id [1])"@en ;
+    sh:property shapes:AchievementShape-name ,
+        shapes:AchievementShape-description ,
+        shapes:AchievementShape-criteria ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes> .
+
+shapes:AchievementShape-name a sh:PropertyShape ;
+    sh:path schema:name ;
+    sh:name "name" ;
+    sh:description "the achievement's name (name [1]; several values are one name in several languages)"@en ;
+    sh:message "Achievement shape — name: at least 1 value — the achievement's name (name [1]; several values are one name in several languages)"@en ;
+    sh:minCount 1 .
+
+shapes:AchievementShape-description a sh:PropertyShape ;
+    sh:path schema:description ;
+    sh:name "description" ;
+    sh:description "a short description (description [1])"@en ;
+    sh:message "Achievement shape — description: at least 1 value — a short description (description [1])"@en ;
+    sh:minCount 1 .
+
+shapes:AchievementShape-criteria a sh:PropertyShape ;
+    sh:path ob:Criteria ;
+    sh:name "criteria" ;
+    sh:description "how to earn it (criteria [1])"@en ;
+    sh:message "Achievement shape — criteria: at least 1 value — how to earn it (criteria [1])"@en ;
+    sh:minCount 1 .
+
+shapes:IdentityObjectShape a sh:NodeShape ;
+    sh:targetClass ob:IdentityObject ;
+    rdfs:label "Identity object shape"@en ;
+    rdfs:comment "An identifier of an Open Badges 3.0 recipient (OB 3.0 B.1.12, IdentityObject): whether it is hashed, the hash or plain value, and the kind of identity."@en ;
+    sh:property shapes:IdentityObjectShape-hashed ,
+        shapes:IdentityObjectShape-identityHash ,
+        shapes:IdentityObjectShape-identityType ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes> .
+
+shapes:IdentityObjectShape-hashed a sh:PropertyShape ;
+    sh:path ob:hashed ;
+    sh:name "hashed" ;
+    sh:description "whether identityHash is hashed (hashed [1] Boolean)"@en ;
+    sh:message "Identity object shape — hashed: exactly 1 value, of type xsd:boolean or https://www.w3.org/2001/XMLSchema#boolean — whether identityHash is hashed (hashed [1] Boolean)"@en ;
+    sh:or ( [ sh:datatype xsd:boolean ] [ sh:datatype <https://www.w3.org/2001/XMLSchema#boolean> ] ) ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:IdentityObjectShape-identityHash a sh:PropertyShape ;
+    sh:path ob:identityHash ;
+    sh:name "identityHash" ;
+    sh:description "the hash or the plain value (identityHash [1])"@en ;
+    sh:message "Identity object shape — identityHash: exactly 1 value — the hash or the plain value (identityHash [1])"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:IdentityObjectShape-identityType a sh:PropertyShape ;
+    sh:path ob:identityType ;
+    sh:name "identityType" ;
+    sh:description "the kind of identity (identityType [1])"@en ;
+    sh:message "Identity object shape — identityType: exactly 1 value — the kind of identity (identityType [1])"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ProfileShape a sh:NodeShape ;
+    sh:targetClass ob:Profile ;
+    rdfs:label "Profile shape"@en ;
+    rdfs:comment "An Open Badges 3.0 profile — an issuer, a creator, an endorser (OB 3.0 B.1.14, Profile): identified by an IRI."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "Profile shape: the node must be identified by an IRI — a unique URI for the profile (id [1])"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes> .

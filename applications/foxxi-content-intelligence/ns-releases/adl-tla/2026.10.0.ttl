@@ -16,7 +16,6 @@
 @prefix hela: <https://markjspivey-xwisee.github.io/interego/ns/hela#> .
 @prefix foxxi-ieee-ler: <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#> .
 @prefix foxxi-adl-tla: <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#> .
-@prefix foxxi: <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> a owl:Ontology ;
     dct:title "ADL Total Learning Architecture (TLA) — Foxxi composable ontology"@en ;
@@ -43,24 +42,18 @@
     dct:source <https://adlnet.gov/projects/tla/> ,
         <https://standards.ieee.org/ieee/2881/11719/> ,
         <https://schema.cassproject.org/0.4/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/ler-tla-vocab.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/docs/ns/adl-tla-proficiency.ttl> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/ler-tla-vocab.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/docs/ns/adl-tla-proficiency.ttl> ;
     rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> ,
-        <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes/2026.10.0> ,
-        <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/mappings/2026.10.0> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/mappings> ,
         iep: .
-
-foxxi:construction a owl:AnnotationProperty ;
-    rdfs:label "construction"@en ;
-    rdfs:comment "How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value)."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
 
 foxxi-adl-tla:Competency a owl:Class ;
     rdfs:label "Competency"@en ;
     rdfs:comment "A skill, knowledge, ability, trait, or combination required to perform a task or job — the common currency that gives the four TLA data pillars a shared semantics."@en ;
-    skos:definition "A skill, knowledge, ability, trait, or combination required to perform a task or job — the common currency that gives the four TLA data pillars a shared semantics."@en ;
     dct:source "ADL TLA Competency pillar; CaSS schema 0.4 (Competency)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:subClassOf skos:Concept ;
     skos:closeMatch foxxi-ieee-ler:CompetencyDefinition , <https://schema.cassproject.org/0.4/Competency> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -68,9 +61,8 @@ foxxi-adl-tla:Competency a owl:Class ;
 foxxi-adl-tla:CompetencyFramework a owl:Class ;
     rdfs:label "Competency Framework"@en ;
     rdfs:comment "A structured, directed graph of competencies with typed relations, levels and roll-up rules."@en ;
-    skos:definition "A structured, directed graph of competencies with typed relations, levels and roll-up rules."@en ;
     dct:source "ADL TLA Competency pillar; CaSS schema 0.4 (Framework)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:subClassOf skos:ConceptScheme ;
     skos:closeMatch foxxi-ieee-ler:CompetencyFramework , <https://schema.cassproject.org/0.4/Framework> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -78,53 +70,47 @@ foxxi-adl-tla:CompetencyFramework a owl:Class ;
 foxxi-adl-tla:Relation a owl:Class ;
     rdfs:label "Competency Relation"@en ;
     rdfs:comment "A typed edge between two competencies — narrows, broadens, requires, is-related-to, is-equivalent-to — with an optional validity window."@en ;
-    skos:definition "A typed edge between two competencies — narrows, broadens, requires, is-related-to, is-equivalent-to — with an optional validity window."@en ;
     dct:source "CaSS schema 0.4 (Relation)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     skos:closeMatch foxxi-ieee-ler:CompetencyRelationship , <https://schema.cassproject.org/0.4/Relation> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:Level a owl:Class ;
     rdfs:label "Competency Level"@en ;
     rdfs:comment "A named proficiency level or assessment criterion attached to a competency."@en ;
-    skos:definition "A named proficiency level or assessment criterion attached to a competency."@en ;
     dct:source "CaSS schema 0.4 (Level)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     skos:closeMatch foxxi-ieee-ler:ProficiencyLevel , <https://schema.cassproject.org/0.4/Level> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:ProficiencyScale a owl:Class ;
     rdfs:label "Proficiency Scale"@en ;
     rdfs:comment "A published, ordered scale of proficiency levels that competency assertions are measured against — a scheme of levels, not of competencies."@en ;
-    skos:definition "A published, ordered scale of proficiency levels that competency assertions are measured against — a scheme of levels, not of competencies."@en ;
     dct:source "CaSS schema 0.4 (Level); IEEE 1484.20.3-2022 (proficiency scale)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:subClassOf skos:ConceptScheme ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:RollupRule a owl:Class ;
     rdfs:label "Roll-up Rule"@en ;
     rdfs:comment "A rule for deriving a competency's attainment state from the states of its sub-competencies — the competency-graph analogue of cmi5 move-on logic."@en ;
-    skos:definition "A rule for deriving a competency's attainment state from the states of its sub-competencies — the competency-graph analogue of cmi5 move-on logic."@en ;
     dct:source "CaSS schema 0.4 (RollupRule)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     skos:closeMatch <https://schema.cassproject.org/0.4/RollupRule> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:MoveOnRule a owl:Class ;
     rdfs:label "Move-On Rule"@en ;
     rdfs:comment "The criterion (Passed, Completed, CompletedAndPassed, CompletedOrPassed, NotApplicable) that decides whether a learner has satisfied an activity well enough to advance. TLA generalises cmi5 move-on into its Control Loop 2."@en ;
-    skos:definition "The criterion (Passed, Completed, CompletedAndPassed, CompletedOrPassed, NotApplicable) that decides whether a learner has satisfied an activity well enough to advance. TLA generalises cmi5 move-on into its Control Loop 2."@en ;
     dct:source "cmi5 (Quartz) §13.1.4 (AU moveOn); ADL TLA control loops" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:Assertion a owl:Class ;
     rdfs:label "Competency Assertion"@en ;
     rdfs:comment "A CaSS assertion: a declaration by one party that a subject can perform a competency at a level, with a confidence, over a timespan, backed by evidence. The same attestation primitive as an IEEE record entry — confidence and evidence are facets, not new shapes."@en ;
-    skos:definition "A CaSS assertion: a declaration by one party that a subject can perform a competency at a level, with a confidence, over a timespan, backed by evidence. The same attestation primitive as an IEEE record entry — confidence and evidence are facets, not new shapes."@en ;
     dct:source "CaSS schema 0.4 (Assertion); MOM `asserted` verb" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf amta:Attestation ;
     skos:closeMatch foxxi-ieee-ler:CompetencyAssertion , <https://schema.cassproject.org/0.4/Assertion> ;
     iep:constructedFrom amta:Attestation , amta:CompetenceRating , iep:modalStatus ;
@@ -133,9 +119,8 @@ foxxi-adl-tla:Assertion a owl:Class ;
 foxxi-adl-tla:LearningActivityMetadata a owl:Class ;
     rdfs:label "Learning Activity Metadata"@en ;
     rdfs:comment "A typed metadata descriptor of a learning resource — course, section, activity or content object. The substrate's resource-descriptor primitive specialised for learning resources."@en ;
-    skos:definition "A typed metadata descriptor of a learning resource — course, section, activity or content object. The substrate's resource-descriptor primitive specialised for learning resources."@en ;
     dct:source "IEEE 2881-2025 (Standard for Learning Metadata Terms), the outcome of the P2881 learning-activity-metadata project, which builds on IEEE 1484.12.1 (LOM)" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf iep:ContextDescriptor ;
     iep:constructedFrom iep:ContextDescriptor , iep:SemioticFacet ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -143,18 +128,16 @@ foxxi-adl-tla:LearningActivityMetadata a owl:Class ;
 foxxi-adl-tla:ExperienceIndex a owl:Class ;
     rdfs:label "Experience Index"@en ;
     rdfs:comment "The server-side index of learning-activity metadata, federating local catalogs. Not a store of new vocabulary — a query view over Learning Activity Metadata descriptors."@en ;
-    skos:definition "The server-side index of learning-activity metadata, federating local catalogs. Not a store of new vocabulary — a query view over Learning Activity Metadata descriptors."@en ;
     dct:source "ADL TLA Experience Index (XI)" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     iep:constructedFrom foxxi-adl-tla:LearningActivityMetadata , iep:CompositionOperator ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:EnterpriseCourseCatalog a owl:Class ;
     rdfs:label "Enterprise Course Catalog"@en ;
     rdfs:comment "A network of federated course catalogs — an aggregation of learning-activity metadata descriptors across providers."@en ;
-    skos:definition "A network of federated course catalogs — an aggregation of learning-activity metadata descriptors across providers."@en ;
     dct:source "ADL TLA Enterprise Course Catalog (ECC)" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf iep:ComposedDescriptor ;
     iep:constructedFrom foxxi-adl-tla:LearningActivityMetadata , iep:FederationFacet ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -162,9 +145,8 @@ foxxi-adl-tla:EnterpriseCourseCatalog a owl:Class ;
 foxxi-adl-tla:MasterObjectModel a owl:Class ;
     rdfs:label "Master Object Model"@en ;
     rdfs:comment "TLA's xAPI profile (https://w3id.org/xapi/tla): the MOM verb set (organised in this vocabulary into five thematic levels — our own pedagogical grouping, not ADL-numbered conformance tiers), 11 activity types, three learner-state machines, and a set of context extensions. Every MOM record is an xAPI Statement."@en ;
-    skos:definition "TLA's xAPI profile (https://w3id.org/xapi/tla): the MOM verb set (organised in this vocabulary into five thematic levels — our own pedagogical grouping, not ADL-numbered conformance tiers), 11 activity types, three learner-state machines, and a set of context extensions. Every MOM record is an xAPI Statement."@en ;
     dct:source "ADL Master Object Model (MOM) specification" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf iep:ContextDescriptor ;
     iep:constructedFrom hela:Statement , hela:Verb ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -172,9 +154,8 @@ foxxi-adl-tla:MasterObjectModel a owl:Class ;
 foxxi-adl-tla:LearnerProfile a owl:Class ;
     rdfs:label "Learner Profile"@en ;
     rdfs:comment "Each learner's aggregate competency level, credentials, aptitudes, preferences, goals and career trajectory. The TLA pillar from which the IEEE P2997 Enterprise Learner Record work grew, and the counterpart of that record."@en ;
-    skos:definition "Each learner's aggregate competency level, credentials, aptitudes, preferences, goals and career trajectory. The TLA pillar from which the IEEE P2997 Enterprise Learner Record work grew, and the counterpart of that record."@en ;
     dct:source "ADL TLA Learner Profile pillar; ADL ELRR" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf iep:ComposedDescriptor ;
     skos:closeMatch foxxi-ieee-ler:EnterpriseLearnerRecord , foxxi-ieee-ler:LearnerProfile ;
     iep:constructedFrom hela:Statement , iep:AgentFacet ;
@@ -183,18 +164,16 @@ foxxi-adl-tla:LearnerProfile a owl:Class ;
 foxxi-adl-tla:FederatedLRSTier a owl:Class ;
     rdfs:label "Federated LRS Tier"@en ;
     rdfs:comment "One tier of the TLA federated LRS layer: a partition of the xAPI statement stream selected by verb set, trust tier and signature. A view over the statements, not a separate store."@en ;
-    skos:definition "One tier of the TLA federated LRS layer: a partition of the xAPI statement stream selected by verb set, trust tier and signature. A view over the statements, not a separate store."@en ;
     dct:source "ADL TLA federated LRS layer" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     iep:constructedFrom hela:Statement , iep:CompositionOperator ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:NoisyLRS a owl:Class ;
     rdfs:label "Noisy LRS"@en ;
     rdfs:comment "The tier holding every raw xAPI statement, with data ownership retained by the activity owner. A view over the statement set — the unfiltered partition."@en ;
-    skos:definition "The tier holding every raw xAPI statement, with data ownership retained by the activity owner. A view over the statement set — the unfiltered partition."@en ;
     dct:source "ADL TLA federated LRS layer" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     rdfs:subClassOf foxxi-adl-tla:FederatedLRSTier ;
     iep:constructedFrom hela:Statement , hela:Trace ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -202,9 +181,8 @@ foxxi-adl-tla:NoisyLRS a owl:Class ;
 foxxi-adl-tla:TransactionalLRS a owl:Class ;
     rdfs:label "Transactional LRS"@en ;
     rdfs:comment "The tier holding only the normalised MOM roll-up verbs — the evidence base for competency inference. A restriction view over the statement set, partitioned by verb set."@en ;
-    skos:definition "The tier holding only the normalised MOM roll-up verbs — the evidence base for competency inference. A restriction view over the statement set, partitioned by verb set."@en ;
     dct:source "ADL TLA federated LRS layer" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     rdfs:subClassOf foxxi-adl-tla:FederatedLRSTier ;
     iep:constructedFrom hela:Statement , hela:Verb , iep:CompositionOperator ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -212,9 +190,8 @@ foxxi-adl-tla:TransactionalLRS a owl:Class ;
 foxxi-adl-tla:AuthoritativeLRS a owl:Class ;
     rdfs:label "Authoritative LRS"@en ;
     rdfs:comment "The tier holding only digitally-signed competency-assertion and career verbs, access-restricted. A restriction view partitioned by verb set, trust tier and signature."@en ;
-    skos:definition "The tier holding only digitally-signed competency-assertion and career verbs, access-restricted. A restriction view partitioned by verb set, trust tier and signature."@en ;
     dct:source "ADL TLA federated LRS layer" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     rdfs:subClassOf foxxi-adl-tla:FederatedLRSTier ;
     iep:constructedFrom hela:Statement , iep:TrustFacet , iep:CompositionOperator ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -222,18 +199,16 @@ foxxi-adl-tla:AuthoritativeLRS a owl:Class ;
 foxxi-adl-tla:LearnerState a owl:Class ;
     rdfs:label "Learner State"@en ;
     rdfs:comment "A learner's current state — the materialised projection of the latest MOM statement per state dimension. A function of the event log, not stored vocabulary."@en ;
-    skos:definition "A learner's current state — the materialised projection of the latest MOM statement per state dimension. A function of the event log, not stored vocabulary."@en ;
     dct:source "ADL MOM learner-state machines" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     iep:constructedFrom hela:Statement , iep:TemporalFacet , iep:supersedes ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:LearnerActivityState a owl:Class ;
     rdfs:label "Learner Activity State"@en ;
     rdfs:comment "The cmi5-aligned tactical state machine: launched → initialized → attended → suspended/resumed → completed/abandoned/terminated."@en ;
-    skos:definition "The cmi5-aligned tactical state machine: launched → initialized → attended → suspended/resumed → completed/abandoned/terminated."@en ;
     dct:source "ADL MOM learner-state machines" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     rdfs:subClassOf foxxi-adl-tla:LearnerState ;
     iep:constructedFrom hela:Statement , iep:TemporalFacet ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -241,9 +216,8 @@ foxxi-adl-tla:LearnerActivityState a owl:Class ;
 foxxi-adl-tla:LearnerEventState a owl:Class ;
     rdfs:label "Learner Event State"@en ;
     rdfs:comment "The pre-activity / post-evidence state machine: requested → approved → scheduled → recommended, and validated / qualified / conferred / inferred."@en ;
-    skos:definition "The pre-activity / post-evidence state machine: requested → approved → scheduled → recommended, and validated / qualified / conferred / inferred."@en ;
     dct:source "ADL MOM learner-state machines" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     rdfs:subClassOf foxxi-adl-tla:LearnerState ;
     iep:constructedFrom hela:Statement , iep:TemporalFacet ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -251,9 +225,8 @@ foxxi-adl-tla:LearnerEventState a owl:Class ;
 foxxi-adl-tla:LearnerCareerState a owl:Class ;
     rdfs:label "Learner Career State"@en ;
     rdfs:comment "The slow, strategic human-capital state machine: recruited → appraised → screened/selected → promoted → detailed → transitioned → released."@en ;
-    skos:definition "The slow, strategic human-capital state machine: recruited → appraised → screened/selected → promoted → detailed → transitioned → released."@en ;
     dct:source "ADL MOM learner-state machines" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     rdfs:subClassOf foxxi-adl-tla:LearnerState ;
     iep:constructedFrom hela:Statement , iep:TemporalFacet ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -261,9 +234,8 @@ foxxi-adl-tla:LearnerCareerState a owl:Class ;
 foxxi-adl-tla:CompetencyManagementService a owl:Class ;
     rdfs:label "Competency Management Service"@en ;
     rdfs:comment "The service (CaSS, in the reference implementation) that reads MOM statements from the Transactional LRS, joins actor to learner and object to activity-metadata-to-competency, estimates proficiency and emits signed assertions."@en ;
-    skos:definition "The service (CaSS, in the reference implementation) that reads MOM statements from the Transactional LRS, joins actor to learner and object to activity-metadata-to-competency, estimates proficiency and emits signed assertions."@en ;
     dct:source "ADL TLA competency management (CaSS)" ;
-    foxxi:construction "role" ;
+    foxxi-ieee-ler:construction "role" ;
     rdfs:subClassOf iep:Affordance ;
     iep:constructedFrom iep:Affordance ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -271,9 +243,8 @@ foxxi-adl-tla:CompetencyManagementService a owl:Class ;
 foxxi-adl-tla:LearningEventManager a owl:Class ;
     rdfs:label "Learning Event Manager"@en ;
     rdfs:comment "The service that manages xAPI statement generation per profile, bridging learning activities into the LRS layer."@en ;
-    skos:definition "The service that manages xAPI statement generation per profile, bridging learning activities into the LRS layer."@en ;
     dct:source "ADL TLA Learning Event Manager (LEM)" ;
-    foxxi:construction "role" ;
+    foxxi-ieee-ler:construction "role" ;
     rdfs:subClassOf iep:Affordance ;
     iep:constructedFrom iep:Affordance ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -281,9 +252,8 @@ foxxi-adl-tla:LearningEventManager a owl:Class ;
 foxxi-adl-tla:aboutCompetency a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "about competency"@en ;
     rdfs:comment "Relates a CaSS assertion to the one competency it asserts."@en ;
-    skos:definition "Relates a CaSS assertion to the one competency it asserts."@en ;
     dct:source "CaSS schema 0.4 (Assertion)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:Assertion ;
     rdfs:range foxxi-adl-tla:Competency ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -291,9 +261,8 @@ foxxi-adl-tla:aboutCompetency a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:confidence a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "confidence"@en ;
     rdfs:comment "The asserting party's confidence in a competency assertion, a decimal."@en ;
-    skos:definition "The asserting party's confidence in a competency assertion, a decimal."@en ;
     dct:source "CaSS schema 0.4 (Assertion); MOM confidence context extension" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:Assertion ;
     rdfs:range xsd:decimal ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -301,9 +270,8 @@ foxxi-adl-tla:confidence a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:decayFunction a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "decay function"@en ;
     rdfs:comment "An expression describing how the confidence of a competency assertion decays over time."@en ;
-    skos:definition "An expression describing how the confidence of a competency assertion decays over time."@en ;
     dct:source "CaSS schema 0.4 (Assertion)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:Assertion ;
     rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -311,9 +279,8 @@ foxxi-adl-tla:decayFunction a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:relationType a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "relation type"@en ;
     rdfs:comment "The type of a competency relation, as a token — for example narrows, broadens, requires, isEnabledBy, isRelatedTo, isEquivalentTo."@en ;
-    skos:definition "The type of a competency relation, as a token — for example narrows, broadens, requires, isEnabledBy, isRelatedTo, isEquivalentTo."@en ;
     dct:source "CaSS schema 0.4 (Relation)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:Relation ;
     rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -321,9 +288,8 @@ foxxi-adl-tla:relationType a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:rollupRule a owl:DatatypeProperty ;
     rdfs:label "roll-up rule expression"@en ;
     rdfs:comment "The rule expression a roll-up rule evaluates against sub-competency states."@en ;
-    skos:definition "The rule expression a roll-up rule evaluates against sub-competency states."@en ;
     dct:source "CaSS schema 0.4 (RollupRule)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:RollupRule ;
     rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -331,9 +297,8 @@ foxxi-adl-tla:rollupRule a owl:DatatypeProperty ;
 foxxi-adl-tla:onScale a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "on scale"@en ;
     rdfs:comment "Relates a roll-up rule to the proficiency scale whose levels it assigns."@en ;
-    skos:definition "Relates a roll-up rule to the proficiency scale whose levels it assigns."@en ;
     dct:source "CaSS schema 0.4 (RollupRule, Level)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:RollupRule ;
     rdfs:range foxxi-adl-tla:ProficiencyScale ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -341,9 +306,8 @@ foxxi-adl-tla:onScale a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:moveOnCriterion a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "move-on criterion"@en ;
     rdfs:comment "The criterion a move-on rule applies — one of the five values cmi5 defines for an assignable unit's moveOn."@en ;
-    skos:definition "The criterion a move-on rule applies — one of the five values cmi5 defines for an assignable unit's moveOn."@en ;
     dct:source "cmi5 (Quartz) §13.1.4 (AU moveOn)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:MoveOnRule ;
     rdfs:range [
         a rdfs:Datatype ;
@@ -354,9 +318,8 @@ foxxi-adl-tla:moveOnCriterion a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:governsActivity a owl:ObjectProperty ;
     rdfs:label "governs activity"@en ;
     rdfs:comment "Relates a move-on rule to the learning activity (identified by its metadata descriptor) whose satisfaction it decides."@en ;
-    skos:definition "Relates a move-on rule to the learning activity (identified by its metadata descriptor) whose satisfaction it decides."@en ;
     dct:source "cmi5 (Quartz) §13.1.4 (AU moveOn); ADL TLA control loops" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:MoveOnRule ;
     rdfs:range foxxi-adl-tla:LearningActivityMetadata ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -364,9 +327,8 @@ foxxi-adl-tla:governsActivity a owl:ObjectProperty ;
 foxxi-adl-tla:indexes a owl:ObjectProperty ;
     rdfs:label "indexes"@en ;
     rdfs:comment "Relates an experience index or an enterprise course catalog to a learning-activity metadata descriptor it federates."@en ;
-    skos:definition "Relates an experience index or an enterprise course catalog to a learning-activity metadata descriptor it federates."@en ;
     dct:source "ADL TLA Experience Index (XI); ADL TLA Enterprise Course Catalog (ECC)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain [
         a owl:Class ;
         owl:unionOf ( foxxi-adl-tla:ExperienceIndex foxxi-adl-tla:EnterpriseCourseCatalog )
@@ -377,9 +339,8 @@ foxxi-adl-tla:indexes a owl:ObjectProperty ;
 foxxi-adl-tla:admitsVerb a owl:ObjectProperty ;
     rdfs:label "admits verb"@en ;
     rdfs:comment "Relates a federated LRS tier to a MOM verb whose statements the tier admits — the verb set that defines the partition."@en ;
-    skos:definition "Relates a federated LRS tier to a MOM verb whose statements the tier admits — the verb set that defines the partition."@en ;
     dct:source "ADL TLA federated LRS layer" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:FederatedLRSTier ;
     rdfs:range skos:Concept ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -387,9 +348,8 @@ foxxi-adl-tla:admitsVerb a owl:ObjectProperty ;
 foxxi-adl-tla:stateOf a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "state of"@en ;
     rdfs:comment "Relates a learner state to the one learner whose state it is."@en ;
-    skos:definition "Relates a learner state to the one learner whose state it is."@en ;
     dct:source "ADL MOM learner-state machines" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:LearnerState ;
     rdfs:range foxxi-ieee-ler:Learner ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -397,9 +357,8 @@ foxxi-adl-tla:stateOf a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:projectedFrom a owl:ObjectProperty ;
     rdfs:label "projected from"@en ;
     rdfs:comment "Relates a learner state to a MOM statement it is the projection of: the latest statement in its state dimension."@en ;
-    skos:definition "Relates a learner state to a MOM statement it is the projection of: the latest statement in its state dimension."@en ;
     dct:source "ADL MOM learner-state machines" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-adl-tla:LearnerState ;
     rdfs:range hela:Statement ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -407,8 +366,7 @@ foxxi-adl-tla:projectedFrom a owl:ObjectProperty ;
 foxxi-adl-tla:MOMVerbScheme a skos:ConceptScheme ;
     rdfs:label "MOM performance verb scheme"@en ;
     skos:prefLabel "MOM performance verb scheme"@en ;
-    rdfs:comment "The 52 performance verbs of the ADL TLA Master Object Model (MOM), grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb that is a registered verb of ADL's vocabulary — an ADL core verb at adlnet.gov/expapi/verbs, or a cmi5 verb at w3id.org/xapi/adl/verbs — is an exact match of it and names it as its source. Every other verb has an IRI of this vocabulary's, and says so in an editorial note; none is mapped to an IRI that was not found registered. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give some of them IRIs of its own, and has not been checked here."@en ;
-    skos:definition "The 52 performance verbs of the ADL TLA Master Object Model (MOM), grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb that is a registered verb of ADL's vocabulary — an ADL core verb at adlnet.gov/expapi/verbs, or a cmi5 verb at w3id.org/xapi/adl/verbs — is an exact match of it and names it as its source. Every other verb has an IRI of this vocabulary's, and says so in an editorial note; none is mapped to an IRI that was not found registered. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give some of them IRIs of its own, and has not been checked here."@en ;
+    rdfs:comment "The 52 Master Object Model performance verbs, grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb that is a registered xAPI verb — an ADL core verb at adlnet.gov/expapi/verbs, or a cmi5 verb at w3id.org/xapi/adl/verbs — is an exact match of it and names it as its source; every other verb was coined by this project and says so in an editorial note, with no mapping to an IRI that does not exist."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ;
     skos:hasTopConcept foxxi-adl-tla:certified ,
         foxxi-adl-tla:completed ,
@@ -467,7 +425,6 @@ foxxi-adl-tla:MOMActivityTypeScheme a skos:ConceptScheme ;
     rdfs:label "MOM activity types"@en ;
     skos:prefLabel "MOM activity types"@en ;
     rdfs:comment "The activity types the Master Object Model names, as project-coined concepts. None asserts an external alignment: the MOM does not register them under an ADL namespace."@en ;
-    skos:definition "The activity types the Master Object Model names, as project-coined concepts. None asserts an external alignment: the MOM does not register them under an ADL namespace."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ;
     skos:hasTopConcept <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/activity> ,
         <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/assessment> ,
@@ -485,7 +442,6 @@ foxxi-adl-tla:MOMExtensionScheme a skos:ConceptScheme ;
     rdfs:label "MOM context extensions"@en ;
     skos:prefLabel "MOM context extensions"@en ;
     rdfs:comment "The context-extension keys the Master Object Model names, as project-coined concepts with no external alignment."@en ;
-    skos:definition "The context-extension keys the Master Object Model names, as project-coined concepts with no external alignment."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ;
     skos:hasTopConcept <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/learner> ,
         <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/evidence> ,
@@ -504,7 +460,6 @@ foxxi-adl-tla:MOMLevel1 a skos:Collection ;
     rdfs:label "Level 1 — Completion & Certification"@en ;
     skos:prefLabel "Level 1 — Completion & Certification"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Completion & Certification\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
-    skos:definition "The MOM verbs this vocabulary groups under \"Completion & Certification\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:certified , foxxi-adl-tla:completed , foxxi-adl-tla:passed , foxxi-adl-tla:failed ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
@@ -512,7 +467,6 @@ foxxi-adl-tla:MOMLevel2 a skos:Collection ;
     rdfs:label "Level 2 — Session Lifecycle (cmi5-aligned)"@en ;
     skos:prefLabel "Level 2 — Session Lifecycle (cmi5-aligned)"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Session Lifecycle (cmi5-aligned)\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
-    skos:definition "The MOM verbs this vocabulary groups under \"Session Lifecycle (cmi5-aligned)\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:launched ,
         foxxi-adl-tla:initialized ,
         foxxi-adl-tla:attended ,
@@ -532,7 +486,6 @@ foxxi-adl-tla:MOMLevel3 a skos:Collection ;
     rdfs:label "Level 3 — Competency Assertions"@en ;
     skos:prefLabel "Level 3 — Competency Assertions"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Competency Assertions\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
-    skos:definition "The MOM verbs this vocabulary groups under \"Competency Assertions\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:assessed ,
         foxxi-adl-tla:contextualized ,
         foxxi-adl-tla:located ,
@@ -548,7 +501,6 @@ foxxi-adl-tla:MOMLevel4 a skos:Collection ;
     rdfs:label "Level 4 — Adaptive Learning Paths & Goal Management"@en ;
     skos:prefLabel "Level 4 — Adaptive Learning Paths & Goal Management"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Adaptive Learning Paths & Goal Management\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
-    skos:definition "The MOM verbs this vocabulary groups under \"Adaptive Learning Paths & Goal Management\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:recommended ,
         foxxi-adl-tla:prioritized ,
         foxxi-adl-tla:organized ,
@@ -568,7 +520,6 @@ foxxi-adl-tla:MOMLevel5 a skos:Collection ;
     rdfs:label "Level 5 — Career & Human-Capital"@en ;
     skos:prefLabel "Level 5 — Career & Human-Capital"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Career & Human-Capital\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
-    skos:definition "The MOM verbs this vocabulary groups under \"Career & Human-Capital\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:recruited ,
         foxxi-adl-tla:appraised ,
         foxxi-adl-tla:detailed ,
@@ -588,23 +539,21 @@ foxxi-adl-tla:certified a skos:Concept ;
     rdfs:label "certified"@en ;
     skos:prefLabel "certified"@en ;
     skos:definition "The learner was awarded a certification attesting to an attained competency or a completed programme."@en ;
-    rdfs:comment "The learner was awarded a certification attesting to an attained competency or a completed programme."@en ;
     skos:notation "certified" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:completed a skos:Concept ;
     rdfs:label "completed"@en ;
     skos:prefLabel "completed"@en ;
     skos:definition "The learner finished the activity."@en ;
-    rdfs:comment "The learner finished the activity."@en ;
     skos:notation "completed" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/completed> ;
     dct:source <http://adlnet.gov/expapi/verbs/completed> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -613,11 +562,10 @@ foxxi-adl-tla:passed a skos:Concept ;
     rdfs:label "passed"@en ;
     skos:prefLabel "passed"@en ;
     skos:definition "The learner met the activity's success criterion, such as a passing score."@en ;
-    rdfs:comment "The learner met the activity's success criterion, such as a passing score."@en ;
     skos:notation "passed" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/passed> ;
     dct:source <http://adlnet.gov/expapi/verbs/passed> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -626,11 +574,10 @@ foxxi-adl-tla:failed a skos:Concept ;
     rdfs:label "failed"@en ;
     skos:prefLabel "failed"@en ;
     skos:definition "The learner did not meet the activity's success criterion."@en ;
-    rdfs:comment "The learner did not meet the activity's success criterion."@en ;
     skos:notation "failed" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/failed> ;
     dct:source <http://adlnet.gov/expapi/verbs/failed> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -639,11 +586,10 @@ foxxi-adl-tla:launched a skos:Concept ;
     rdfs:label "launched"@en ;
     skos:prefLabel "launched"@en ;
     skos:definition "The activity was launched for the learner: the start of a session, before the content reports that it is running."@en ;
-    rdfs:comment "The activity was launched for the learner: the start of a session, before the content reports that it is running."@en ;
     skos:notation "launched" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/launched> ;
     dct:source <http://adlnet.gov/expapi/verbs/launched> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -652,11 +598,10 @@ foxxi-adl-tla:initialized a skos:Concept ;
     rdfs:label "initialized"@en ;
     skos:prefLabel "initialized"@en ;
     skos:definition "The launched content began reporting for the session."@en ;
-    rdfs:comment "The launched content began reporting for the session."@en ;
     skos:notation "initialized" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/initialized> ;
     dct:source <http://adlnet.gov/expapi/verbs/initialized> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -665,11 +610,10 @@ foxxi-adl-tla:attended a skos:Concept ;
     rdfs:label "attended"@en ;
     skos:prefLabel "attended"@en ;
     skos:definition "The learner was present for a scheduled, instructor-led or live activity."@en ;
-    rdfs:comment "The learner was present for a scheduled, instructor-led or live activity."@en ;
     skos:notation "attended" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/attended> ;
     dct:source <http://adlnet.gov/expapi/verbs/attended> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -678,11 +622,10 @@ foxxi-adl-tla:experienced a skos:Concept ;
     rdfs:label "experienced"@en ;
     skos:prefLabel "experienced"@en ;
     skos:definition "The learner viewed, read, watched, listened to or otherwise took in the content."@en ;
-    rdfs:comment "The learner viewed, read, watched, listened to or otherwise took in the content."@en ;
     skos:notation "experienced" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/experienced> ;
     dct:source <http://adlnet.gov/expapi/verbs/experienced> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -691,11 +634,10 @@ foxxi-adl-tla:suspended a skos:Concept ;
     rdfs:label "suspended"@en ;
     skos:prefLabel "suspended"@en ;
     skos:definition "The session was paused, with the intention of resuming it later."@en ;
-    rdfs:comment "The session was paused, with the intention of resuming it later."@en ;
     skos:notation "suspended" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/suspended> ;
     dct:source <http://adlnet.gov/expapi/verbs/suspended> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -704,11 +646,10 @@ foxxi-adl-tla:resumed a skos:Concept ;
     rdfs:label "resumed"@en ;
     skos:prefLabel "resumed"@en ;
     skos:definition "A suspended session was continued."@en ;
-    rdfs:comment "A suspended session was continued."@en ;
     skos:notation "resumed" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/resumed> ;
     dct:source <http://adlnet.gov/expapi/verbs/resumed> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -717,11 +658,10 @@ foxxi-adl-tla:terminated a skos:Concept ;
     rdfs:label "terminated"@en ;
     skos:prefLabel "terminated"@en ;
     skos:definition "The session ended normally; no further statements are expected for it."@en ;
-    rdfs:comment "The session ended normally; no further statements are expected for it."@en ;
     skos:notation "terminated" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/terminated> ;
     dct:source <http://adlnet.gov/expapi/verbs/terminated> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -730,11 +670,10 @@ foxxi-adl-tla:abandoned a skos:Concept ;
     rdfs:label "abandoned"@en ;
     skos:prefLabel "abandoned"@en ;
     skos:definition "The session ended abnormally, without a terminated statement — for example a closed window or a lost connection."@en ;
-    rdfs:comment "The session ended abnormally, without a terminated statement — for example a closed window or a lost connection."@en ;
     skos:notation "abandoned" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <https://w3id.org/xapi/adl/verbs/abandoned> ;
     dct:source <https://w3id.org/xapi/adl/verbs/abandoned> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -743,11 +682,10 @@ foxxi-adl-tla:scored a skos:Concept ;
     rdfs:label "scored"@en ;
     skos:prefLabel "scored"@en ;
     skos:definition "A score was recorded for the learner's performance on the activity."@en ;
-    rdfs:comment "A score was recorded for the learner's performance on the activity."@en ;
     skos:notation "scored" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/scored> ;
     dct:source <http://adlnet.gov/expapi/verbs/scored> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -756,11 +694,10 @@ foxxi-adl-tla:mastered a skos:Concept ;
     rdfs:label "mastered"@en ;
     skos:prefLabel "mastered"@en ;
     skos:definition "The learner demonstrated mastery of the activity's content."@en ;
-    rdfs:comment "The learner demonstrated mastery of the activity's content."@en ;
     skos:notation "mastered" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/mastered> ;
     dct:source <http://adlnet.gov/expapi/verbs/mastered> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -769,11 +706,10 @@ foxxi-adl-tla:registered a skos:Concept ;
     rdfs:label "registered"@en ;
     skos:prefLabel "registered"@en ;
     skos:definition "The learner was enrolled in, or registered for, the activity."@en ;
-    rdfs:comment "The learner was enrolled in, or registered for, the activity."@en ;
     skos:notation "registered" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/registered> ;
     dct:source <http://adlnet.gov/expapi/verbs/registered> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -782,11 +718,10 @@ foxxi-adl-tla:waived a skos:Concept ;
     rdfs:label "waived"@en ;
     skos:prefLabel "waived"@en ;
     skos:definition "The activity's requirement was determined to be met by means other than its move-on criteria, and was waived."@en ;
-    rdfs:comment "The activity's requirement was determined to be met by means other than its move-on criteria, and was waived."@en ;
     skos:notation "waived" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <https://w3id.org/xapi/adl/verbs/waived> ;
     dct:source <https://w3id.org/xapi/adl/verbs/waived> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -795,11 +730,10 @@ foxxi-adl-tla:satisfied a skos:Concept ;
     rdfs:label "satisfied"@en ;
     skos:prefLabel "satisfied"@en ;
     skos:definition "The learner met the move-on criteria of the activity, or of the block that contains it."@en ;
-    rdfs:comment "The learner met the move-on criteria of the activity, or of the block that contains it."@en ;
     skos:notation "satisfied" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <https://w3id.org/xapi/adl/verbs/satisfied> ;
     dct:source <https://w3id.org/xapi/adl/verbs/satisfied> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -808,419 +742,384 @@ foxxi-adl-tla:assessed a skos:Concept ;
     rdfs:label "assessed"@en ;
     skos:prefLabel "assessed"@en ;
     skos:definition "The learner's competency was assessed, by an instrument or an evaluator."@en ;
-    rdfs:comment "The learner's competency was assessed, by an instrument or an evaluator."@en ;
     skos:notation "assessed" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:contextualized a skos:Concept ;
     rdfs:label "contextualized"@en ;
     skos:prefLabel "contextualized"@en ;
     skos:definition "Evidence or an assertion was related to the context — role, task or conditions — in which it was produced or applies."@en ;
-    rdfs:comment "Evidence or an assertion was related to the context — role, task or conditions — in which it was produced or applies."@en ;
     skos:notation "contextualized" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:located a skos:Concept ;
     rdfs:label "located"@en ;
     skos:prefLabel "located"@en ;
     skos:definition "Evidence or a resource relevant to the learner's competency record was found and associated with it."@en ;
-    rdfs:comment "Evidence or a resource relevant to the learner's competency record was found and associated with it."@en ;
     skos:notation "located" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:asserted a skos:Concept ;
     rdfs:label "asserted"@en ;
     skos:prefLabel "asserted"@en ;
     skos:definition "A party asserted that the learner holds a competency at a level, with a confidence."@en ;
-    rdfs:comment "A party asserted that the learner holds a competency at a level, with a confidence."@en ;
     skos:notation "asserted" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:validated a skos:Concept ;
     rdfs:label "validated"@en ;
     skos:prefLabel "validated"@en ;
     skos:definition "An assertion or a piece of evidence was checked and confirmed as valid."@en ;
-    rdfs:comment "An assertion or a piece of evidence was checked and confirmed as valid."@en ;
     skos:notation "validated" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:inferred a skos:Concept ;
     rdfs:label "inferred"@en ;
     skos:prefLabel "inferred"@en ;
     skos:definition "A competency state was inferred from other evidence rather than observed directly."@en ;
-    rdfs:comment "A competency state was inferred from other evidence rather than observed directly."@en ;
     skos:notation "inferred" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:qualified a skos:Concept ;
     rdfs:label "qualified"@en ;
     skos:prefLabel "qualified"@en ;
     skos:definition "The learner was determined to be qualified for a role, job or duty."@en ;
-    rdfs:comment "The learner was determined to be qualified for a role, job or duty."@en ;
     skos:notation "qualified" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:verified a skos:Concept ;
     rdfs:label "verified"@en ;
     skos:prefLabel "verified"@en ;
     skos:definition "A credential or an assertion was verified as authentic."@en ;
-    rdfs:comment "A credential or an assertion was verified as authentic."@en ;
     skos:notation "verified" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:conferred a skos:Concept ;
     rdfs:label "conferred"@en ;
     skos:prefLabel "conferred"@en ;
     skos:definition "A credential, rank or award was formally granted to the learner."@en ;
-    rdfs:comment "A credential, rank or award was formally granted to the learner."@en ;
     skos:notation "conferred" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:recommended a skos:Concept ;
     rdfs:label "recommended"@en ;
     skos:prefLabel "recommended"@en ;
     skos:definition "An activity or a path was recommended to the learner."@en ;
-    rdfs:comment "An activity or a path was recommended to the learner."@en ;
     skos:notation "recommended" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:prioritized a skos:Concept ;
     rdfs:label "prioritized"@en ;
     skos:prefLabel "prioritized"@en ;
     skos:definition "Goals or activities were ordered by priority for the learner."@en ;
-    rdfs:comment "Goals or activities were ordered by priority for the learner."@en ;
     skos:notation "prioritized" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:organized a skos:Concept ;
     rdfs:label "organized"@en ;
     skos:prefLabel "organized"@en ;
     skos:definition "Activities were arranged into a structured sequence or plan for the learner."@en ;
-    rdfs:comment "Activities were arranged into a structured sequence or plan for the learner."@en ;
     skos:notation "organized" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:projected a skos:Concept ;
     rdfs:label "projected"@en ;
     skos:prefLabel "projected"@en ;
     skos:definition "A future competency state or completion was forecast for the learner."@en ;
-    rdfs:comment "A future competency state or completion was forecast for the learner."@en ;
     skos:notation "projected" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:planned a skos:Concept ;
     rdfs:label "planned"@en ;
     skos:prefLabel "planned"@en ;
     skos:definition "An activity or a goal was placed on the learner's plan."@en ;
-    rdfs:comment "An activity or a goal was placed on the learner's plan."@en ;
     skos:notation "planned" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:deselected a skos:Concept ;
     rdfs:label "deselected"@en ;
     skos:prefLabel "deselected"@en ;
     skos:definition "An activity previously selected or recommended was removed from the learner's plan."@en ;
-    rdfs:comment "An activity previously selected or recommended was removed from the learner's plan."@en ;
     skos:notation "deselected" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:requested a skos:Concept ;
     rdfs:label "requested"@en ;
     skos:prefLabel "requested"@en ;
     skos:definition "An activity was requested, by the learner or on the learner's behalf."@en ;
-    rdfs:comment "An activity was requested, by the learner or on the learner's behalf."@en ;
     skos:notation "requested" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:approved a skos:Concept ;
     rdfs:label "approved"@en ;
     skos:prefLabel "approved"@en ;
     skos:definition "A request for an activity was approved."@en ;
-    rdfs:comment "A request for an activity was approved."@en ;
     skos:notation "approved" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:augmented a skos:Concept ;
     rdfs:label "augmented"@en ;
     skos:prefLabel "augmented"@en ;
     skos:definition "An existing plan or path was supplemented with further activities."@en ;
-    rdfs:comment "An existing plan or path was supplemented with further activities."@en ;
     skos:notation "augmented" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:explored a skos:Concept ;
     rdfs:label "explored"@en ;
     skos:prefLabel "explored"@en ;
     skos:definition "The learner browsed or investigated the available activities or options."@en ;
-    rdfs:comment "The learner browsed or investigated the available activities or options."@en ;
     skos:notation "explored" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:clarified a skos:Concept ;
     rdfs:label "clarified"@en ;
     skos:prefLabel "clarified"@en ;
     skos:definition "A goal, a requirement or an instruction was clarified for the learner."@en ;
-    rdfs:comment "A goal, a requirement or an instruction was clarified for the learner."@en ;
     skos:notation "clarified" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:directed a skos:Concept ;
     rdfs:label "directed"@en ;
     skos:prefLabel "directed"@en ;
     skos:definition "The learner was directed — assigned by an authority — to an activity."@en ;
-    rdfs:comment "The learner was directed — assigned by an authority — to an activity."@en ;
     skos:notation "directed" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:scheduled a skos:Concept ;
     rdfs:label "scheduled"@en ;
     skos:prefLabel "scheduled"@en ;
     skos:definition "An activity was scheduled for the learner at a stated time."@en ;
-    rdfs:comment "An activity was scheduled for the learner at a stated time."@en ;
     skos:notation "scheduled" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:recruited a skos:Concept ;
     rdfs:label "recruited"@en ;
     skos:prefLabel "recruited"@en ;
     skos:definition "The individual was recruited into the organization."@en ;
-    rdfs:comment "The individual was recruited into the organization."@en ;
     skos:notation "recruited" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:appraised a skos:Concept ;
     rdfs:label "appraised"@en ;
     skos:prefLabel "appraised"@en ;
     skos:definition "The individual's performance was formally appraised."@en ;
-    rdfs:comment "The individual's performance was formally appraised."@en ;
     skos:notation "appraised" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:detailed a skos:Concept ;
     rdfs:label "detailed"@en ;
     skos:prefLabel "detailed"@en ;
     skos:definition "The individual was temporarily assigned (detailed) to another unit, role or duty."@en ;
-    rdfs:comment "The individual was temporarily assigned (detailed) to another unit, role or duty."@en ;
     skos:notation "detailed" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:mobilized a skos:Concept ;
     rdfs:label "mobilized"@en ;
     skos:prefLabel "mobilized"@en ;
     skos:definition "The individual was mobilized — called to active service or deployed."@en ;
-    rdfs:comment "The individual was mobilized — called to active service or deployed."@en ;
     skos:notation "mobilized" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:employed a skos:Concept ;
     rdfs:label "employed"@en ;
     skos:prefLabel "employed"@en ;
     skos:definition "The individual was employed in a job or position."@en ;
-    rdfs:comment "The individual was employed in a job or position."@en ;
     skos:notation "employed" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:schooled a skos:Concept ;
     rdfs:label "schooled"@en ;
     skos:prefLabel "schooled"@en ;
     skos:definition "The individual was sent to formal schooling or training."@en ;
-    rdfs:comment "The individual was sent to formal schooling or training."@en ;
     skos:notation "schooled" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:promoted a skos:Concept ;
     rdfs:label "promoted"@en ;
     skos:prefLabel "promoted"@en ;
     skos:definition "The individual was promoted in grade or rank."@en ;
-    rdfs:comment "The individual was promoted in grade or rank."@en ;
     skos:notation "promoted" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:screened a skos:Concept ;
     rdfs:label "screened"@en ;
     skos:prefLabel "screened"@en ;
     skos:definition "The individual was screened against the requirements of a role."@en ;
-    rdfs:comment "The individual was screened against the requirements of a role."@en ;
     skos:notation "screened" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:selected a skos:Concept ;
     rdfs:label "selected"@en ;
     skos:prefLabel "selected"@en ;
     skos:definition "The individual was selected for a role, position or opportunity."@en ;
-    rdfs:comment "The individual was selected for a role, position or opportunity."@en ;
     skos:notation "selected" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:transitioned a skos:Concept ;
     rdfs:label "transitioned"@en ;
     skos:prefLabel "transitioned"@en ;
     skos:definition "The individual moved between roles, careers or organizations."@en ;
-    rdfs:comment "The individual moved between roles, careers or organizations."@en ;
     skos:notation "transitioned" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:released a skos:Concept ;
     rdfs:label "released"@en ;
     skos:prefLabel "released"@en ;
     skos:definition "The individual was released from a role, from service or from the organization."@en ;
-    rdfs:comment "The individual was released from a role, from service or from the organization."@en ;
     skos:notation "released" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:restricted a skos:Concept ;
     rdfs:label "restricted"@en ;
     skos:prefLabel "restricted"@en ;
     skos:definition "A restriction was placed on the individual's eligibility or duties."@en ;
-    rdfs:comment "A restriction was placed on the individual's eligibility or duties."@en ;
     skos:notation "restricted" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
-    skos:editorialNote "The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary (adlnet.gov/expapi/verbs) or of cmi5's (w3id.org/xapi/adl/verbs) has its meaning. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here."@en ;
+    foxxi-ieee-ler:construction "concept" ;
+    skos:editorialNote "Coined by this vocabulary: no registered xAPI verb has this meaning."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:voided a skos:Concept ;
     rdfs:label "voided"@en ;
     skos:prefLabel "voided"@en ;
     skos:definition "A previously recorded statement was voided: retracted, as though it had not been made."@en ;
-    rdfs:comment "A previously recorded statement was voided: retracted, as though it had not been made."@en ;
     skos:notation "voided" ;
     skos:inScheme foxxi-adl-tla:MOMVerbScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMVerbScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     skos:exactMatch <http://adlnet.gov/expapi/verbs/voided> ;
     dct:source <http://adlnet.gov/expapi/verbs/voided> ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -1229,262 +1128,238 @@ foxxi-adl-tla:voided a skos:Concept ;
     rdfs:label "activity activity type"@en ;
     skos:prefLabel "activity activity type"@en ;
     skos:definition "A learning activity."@en ;
-    rdfs:comment "A learning activity."@en ;
     skos:notation "activity" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/assessment> a skos:Concept ;
     rdfs:label "assessment activity type"@en ;
     skos:prefLabel "assessment activity type"@en ;
     skos:definition "An assessment: an instrument that measures performance or competency."@en ;
-    rdfs:comment "An assessment: an instrument that measures performance or competency."@en ;
     skos:notation "assessment" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/competency> a skos:Concept ;
     rdfs:label "competency activity type"@en ;
     skos:prefLabel "competency activity type"@en ;
     skos:definition "A competency, as the object of a statement."@en ;
-    rdfs:comment "A competency, as the object of a statement."@en ;
     skos:notation "competency" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/activity_cluster> a skos:Concept ;
     rdfs:label "activity cluster activity type"@en ;
     skos:prefLabel "activity cluster activity type"@en ;
     skos:definition "A grouping of related learning activities."@en ;
-    rdfs:comment "A grouping of related learning activities."@en ;
     skos:notation "activity_cluster" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/career> a skos:Concept ;
     rdfs:label "career activity type"@en ;
     skos:prefLabel "career activity type"@en ;
     skos:definition "A career, as the object of career-state statements."@en ;
-    rdfs:comment "A career, as the object of career-state statements."@en ;
     skos:notation "career" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/badge> a skos:Concept ;
     rdfs:label "badge activity type"@en ;
     skos:prefLabel "badge activity type"@en ;
     skos:definition "A digital badge."@en ;
-    rdfs:comment "A digital badge."@en ;
     skos:notation "badge" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/job> a skos:Concept ;
     rdfs:label "job activity type"@en ;
     skos:prefLabel "job activity type"@en ;
     skos:definition "A job or a position."@en ;
-    rdfs:comment "A job or a position."@en ;
     skos:notation "job" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/credential> a skos:Concept ;
     rdfs:label "credential activity type"@en ;
     skos:prefLabel "credential activity type"@en ;
     skos:definition "A credential."@en ;
-    rdfs:comment "A credential."@en ;
     skos:notation "credential" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/job_duty_gig> a skos:Concept ;
     rdfs:label "job duty gig activity type"@en ;
     skos:prefLabel "job duty gig activity type"@en ;
     skos:definition "A job duty, or a short-term assignment (gig)."@en ;
-    rdfs:comment "A job duty, or a short-term assignment (gig)."@en ;
     skos:notation "job_duty_gig" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/career_state> a skos:Concept ;
     rdfs:label "career state activity type"@en ;
     skos:prefLabel "career state activity type"@en ;
     skos:definition "A state in a learner's career trajectory."@en ;
-    rdfs:comment "A state in a learner's career trajectory."@en ;
     skos:notation "career_state" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/rank> a skos:Concept ;
     rdfs:label "rank activity type"@en ;
     skos:prefLabel "rank activity type"@en ;
     skos:definition "A rank or a grade."@en ;
-    rdfs:comment "A rank or a grade."@en ;
     skos:notation "rank" ;
     skos:inScheme foxxi-adl-tla:MOMActivityTypeScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMActivityTypeScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/learner> a skos:Concept ;
     rdfs:label "learner extension"@en ;
     skos:prefLabel "learner extension"@en ;
     skos:definition "The learner a statement concerns, where that is not its actor."@en ;
-    rdfs:comment "The learner a statement concerns, where that is not its actor."@en ;
     skos:notation "learner" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/evidence> a skos:Concept ;
     rdfs:label "evidence extension"@en ;
     skos:prefLabel "evidence extension"@en ;
     skos:definition "References to the evidence that supports the statement."@en ;
-    rdfs:comment "References to the evidence that supports the statement."@en ;
     skos:notation "evidence" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/confidence> a skos:Concept ;
     rdfs:label "confidence extension"@en ;
     skos:prefLabel "confidence extension"@en ;
     skos:definition "The confidence attached to an assertion."@en ;
-    rdfs:comment "The confidence attached to an assertion."@en ;
     skos:notation "confidence" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/instance> a skos:Concept ;
     rdfs:label "instance extension"@en ;
     skos:prefLabel "instance extension"@en ;
     skos:definition "The particular instance — offering, cohort or occurrence — of an activity."@en ;
-    rdfs:comment "The particular instance — offering, cohort or occurrence — of an activity."@en ;
     skos:notation "instance" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/due_date> a skos:Concept ;
     rdfs:label "due date extension"@en ;
     skos:prefLabel "due date extension"@en ;
     skos:definition "The date by which an activity is due."@en ;
-    rdfs:comment "The date by which an activity is due."@en ;
     skos:notation "due_date" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/location> a skos:Concept ;
     rdfs:label "location extension"@en ;
     skos:prefLabel "location extension"@en ;
     skos:definition "Where the activity takes, or took, place."@en ;
-    rdfs:comment "Where the activity takes, or took, place."@en ;
     skos:notation "location" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/unit_identification_code> a skos:Concept ;
     rdfs:label "unit identification code extension"@en ;
     skos:prefLabel "unit identification code extension"@en ;
     skos:definition "The unit identification code (UIC) of the organizational unit associated with the learner or the activity."@en ;
-    rdfs:comment "The unit identification code (UIC) of the organizational unit associated with the learner or the activity."@en ;
     skos:notation "unit_identification_code" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/permanent_change_of_station> a skos:Concept ;
     rdfs:label "permanent change of station extension"@en ;
     skos:prefLabel "permanent change of station extension"@en ;
     skos:definition "A permanent change of station (PCS): the individual's relocation to a new duty station."@en ;
-    rdfs:comment "A permanent change of station (PCS): the individual's relocation to a new duty station."@en ;
     skos:notation "permanent_change_of_station" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/restriction> a skos:Concept ;
     rdfs:label "restriction extension"@en ;
     skos:prefLabel "restriction extension"@en ;
     skos:definition "A restriction that applies to the statement's subject or activity."@en ;
-    rdfs:comment "A restriction that applies to the statement's subject or activity."@en ;
     skos:notation "restriction" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/reason> a skos:Concept ;
     rdfs:label "reason extension"@en ;
     skos:prefLabel "reason extension"@en ;
     skos:definition "The reason for the action the statement records."@en ;
-    rdfs:comment "The reason for the action the statement records."@en ;
     skos:notation "reason" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/recommendation_order> a skos:Concept ;
     rdfs:label "recommendation order extension"@en ;
     skos:prefLabel "recommendation order extension"@en ;
     skos:definition "The position of a recommendation in an ordered list of recommendations."@en ;
-    rdfs:comment "The position of a recommendation in an ordered list of recommendations."@en ;
     skos:notation "recommendation_order" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/expiration> a skos:Concept ;
     rdfs:label "expiration extension"@en ;
     skos:prefLabel "expiration extension"@en ;
     skos:definition "When the claim, credential or assignment the statement records expires."@en ;
-    rdfs:comment "When the claim, credential or assignment the statement records expires."@en ;
     skos:notation "expiration" ;
     skos:inScheme foxxi-adl-tla:MOMExtensionScheme ;
     skos:topConceptOf foxxi-adl-tla:MOMExtensionScheme ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:PerformanceProficiencyFramework a foxxi-adl-tla:ProficiencyScale , skos:ConceptScheme ;
     rdfs:label "Foxxi Production-Performance Proficiency Framework"@en ;
     skos:prefLabel "Foxxi Production-Performance Proficiency Framework"@en ;
     rdfs:comment "A published proficiency scale for on-the-job production performance, using the Dreyfus five-stage model of skill acquisition. The tla:Level individuals below are the dereferenceable scale an ELR competency assertion is measured against (ler:atProficiency)."@en ;
-    skos:definition "A published proficiency scale for on-the-job production performance, using the Dreyfus five-stage model of skill acquisition. The tla:Level individuals below are the dereferenceable scale an ELR competency assertion is measured against (ler:atProficiency)."@en ;
     dct:source "Dreyfus, S.E. & Dreyfus, H.L. (1980) — A Five-Stage Model of the Mental Activities Involved in Directed Skill Acquisition" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ;
     skos:hasTopConcept foxxi-adl-tla:LevelNovice ,
         foxxi-adl-tla:LevelAdvancedBeginner ,
@@ -1496,64 +1371,58 @@ foxxi-adl-tla:LevelNovice a foxxi-adl-tla:Level , foxxi-ieee-ler:ProficiencyLeve
     rdfs:label "Novice"@en ;
     skos:prefLabel "Novice"@en ;
     rdfs:comment "Rule-bound, relies on instruction. Inferred from training completion only — not yet demonstrated in production."@en ;
-    skos:definition "Rule-bound, relies on instruction. Inferred from training completion only — not yet demonstrated in production."@en ;
     skos:inScheme foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:topConceptOf foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:notation "1" ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:LevelAdvancedBeginner a foxxi-adl-tla:Level , foxxi-ieee-ler:ProficiencyLevel , skos:Concept ;
     rdfs:label "Advanced Beginner"@en ;
     skos:prefLabel "Advanced Beginner"@en ;
     rdfs:comment "Has demonstrated the competency in production at least once with an asserted successful outcome; limited situational judgment."@en ;
-    skos:definition "Has demonstrated the competency in production at least once with an asserted successful outcome; limited situational judgment."@en ;
     skos:inScheme foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:topConceptOf foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:notation "2" ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:LevelCompetent a foxxi-adl-tla:Level , foxxi-ieee-ler:ProficiencyLevel , skos:Concept ;
     rdfs:label "Competent"@en ;
     skos:prefLabel "Competent"@en ;
     rdfs:comment "Consistent successful production performance over a meaningful sample; plans deliberately and handles the typical case."@en ;
-    skos:definition "Consistent successful production performance over a meaningful sample; plans deliberately and handles the typical case."@en ;
     skos:inScheme foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:topConceptOf foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:notation "3" ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:LevelProficient a foxxi-adl-tla:Level , foxxi-ieee-ler:ProficiencyLevel , skos:Concept ;
     rdfs:label "Proficient"@en ;
     skos:prefLabel "Proficient"@en ;
     rdfs:comment "Reliable, high-quality production performance across many executions; perceives situations holistically."@en ;
-    skos:definition "Reliable, high-quality production performance across many executions; perceives situations holistically."@en ;
     skos:inScheme foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:topConceptOf foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:notation "4" ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:LevelExpert a foxxi-adl-tla:Level , foxxi-ieee-ler:ProficiencyLevel , skos:Concept ;
     rdfs:label "Expert"@en ;
     skos:prefLabel "Expert"@en ;
     rdfs:comment "Sustained, near-flawless, high-quality production performance at scale; fluid, intuitive mastery."@en ;
-    skos:definition "Sustained, near-flawless, high-quality production performance at scale; fluid, intuitive mastery."@en ;
     skos:inScheme foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:topConceptOf foxxi-adl-tla:PerformanceProficiencyFramework ;
     skos:notation "5" ;
-    foxxi:construction "concept" ;
+    foxxi-ieee-ler:construction "concept" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:PerformanceProficiencyRollupRule a foxxi-adl-tla:RollupRule ;
     rdfs:label "Production-performance proficiency roll-up rule"@en ;
     rdfs:comment "Maps a subject's production-performance evidence to a proficiency level in the Foxxi Production-Performance Proficiency Framework, with a confidence. Cited by every performance-basis ler:CompetencyAssertion the ELR emits."@en ;
-    skos:definition "Maps a subject's production-performance evidence to a proficiency level in the Foxxi Production-Performance Proficiency Framework, with a confidence. Cited by every performance-basis ler:CompetencyAssertion the ELR emits."@en ;
-    foxxi-adl-tla:rollupRule "Given production performance evidence (n executions carrying an asserted outcome, k successes, mean scored quality q in 0..1): reliability is the Wilson score interval lower bound (z=1.96) on k/n, which rises with evidence and FALLS when a failure is added — so it carries both how often the work succeeded and how much of it there is, and no separate execution count is gated on. Expert if reliability>=0.75 and mean quality q is recorded and q>=0.85; Proficient if reliability>=0.6 and mean quality q is recorded and q>=0.7; Competent if reliability>=0.4; Advanced Beginner if k>=1; else Novice. Quality is a FLOOR, not a scale: every value at or above a band's floor ranks alike. A verified credential with no production evidence maps to Competent; training completion only maps to Novice (Hypothetical). The reported confidence IS the reliability above. This rule is data: its bands are the tla:ProficiencyBand individuals of this document (tla:hasBand), which the evaluator reads as they are published, and this sentence is generated from the same triples." ;
+    foxxi-adl-tla:rollupRule "Given production performance evidence (n executions carrying an asserted outcome, k successes, mean scored quality q in 0..1): reliability is the Wilson score interval lower bound (z=1.96) on k/n, which rises with evidence and FALLS when a failure is added — so it carries both how often the work succeeded and how much of it there is, and no separate execution count is gated on. Expert if reliability>=0.75 and mean quality q is recorded and q>=0.85; Proficient if reliability>=0.6 and mean quality q is recorded and q>=0.7; Competent if reliability>=0.4; Advanced Beginner if k>=1; else Novice. Quality is a FLOOR, not a scale: every value at or above a band's floor ranks alike. A verified credential with no production evidence maps to Competent; training completion only maps to Novice (Hypothetical). The reported confidence IS the reliability above. This rule is DATA: it is parsed at runtime from docs/ns/adl-tla-proficiency.ttl, and this sentence is generated from the same triples the evaluator walks." ;
     foxxi-adl-tla:onScale foxxi-adl-tla:PerformanceProficiencyFramework ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ;
     foxxi-adl-tla:hasBand foxxi-adl-tla:BandExpert , foxxi-adl-tla:BandProficient , foxxi-adl-tla:BandCompetent .
 
@@ -1561,13 +1430,11 @@ foxxi-adl-tla:ProficiencyBand a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Proficiency band"@en ;
     rdfs:comment "One band of the production-performance roll-up rule: the reliability and quality a subject's evidence must reach to be assigned a tla:Level. Bands are evaluated highest rank first and the first satisfied one wins."@en ;
-    skos:definition "One band of the production-performance roll-up rule: the reliability and quality a subject's evidence must reach to be assigned a tla:Level. Bands are evaluated highest rank first and the first satisfied one wins."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:hasBand a owl:ObjectProperty ;
     rdfs:label "has band"@en ;
     rdfs:comment "Relates a roll-up rule to one of the bands it evaluates."@en ;
-    skos:definition "Relates a roll-up rule to one of the bands it evaluates."@en ;
     rdfs:domain foxxi-adl-tla:RollupRule ;
     rdfs:range foxxi-adl-tla:ProficiencyBand ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -1575,7 +1442,6 @@ foxxi-adl-tla:hasBand a owl:ObjectProperty ;
 foxxi-adl-tla:minReliability a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "minimum reliability"@en ;
     rdfs:comment "The Wilson score interval lower bound (z=1.96) on the success rate that this band requires. Chosen over a raw execution count deliberately: the Wilson bound already rises with sample size and FALLS when a failure is added, so one number carries both 'how often it worked' and 'how much evidence there is'. Gating on a bare count alongside it let a failing record promote a subject."@en ;
-    skos:definition "The Wilson score interval lower bound (z=1.96) on the success rate that this band requires. Chosen over a raw execution count deliberately: the Wilson bound already rises with sample size and FALLS when a failure is added, so one number carries both 'how often it worked' and 'how much evidence there is'. Gating on a bare count alongside it let a failing record promote a subject."@en ;
     rdfs:domain foxxi-adl-tla:ProficiencyBand ;
     rdfs:range xsd:decimal ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -1583,7 +1449,6 @@ foxxi-adl-tla:minReliability a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:minQuality a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "minimum mean quality"@en ;
     rdfs:comment "Floor on the mean scored outcome quality (0..1). A FLOOR, not a scale — every value at or above it ranks alike."@en ;
-    skos:definition "Floor on the mean scored outcome quality (0..1). A FLOOR, not a scale — every value at or above it ranks alike."@en ;
     rdfs:domain foxxi-adl-tla:ProficiencyBand ;
     rdfs:range xsd:decimal ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -1591,7 +1456,6 @@ foxxi-adl-tla:minQuality a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:requiresQuality a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "requires recorded quality"@en ;
     rdfs:comment "Whether quality must have been RECORDED at all to win this band. A band whose published level speaks of high-quality performance may not be reached on unscored work."@en ;
-    skos:definition "Whether quality must have been RECORDED at all to win this band. A band whose published level speaks of high-quality performance may not be reached on unscored work."@en ;
     rdfs:domain foxxi-adl-tla:ProficiencyBand ;
     rdfs:range xsd:boolean ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -1599,7 +1463,6 @@ foxxi-adl-tla:requiresQuality a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-adl-tla:awardsLevel a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "awards level"@en ;
     rdfs:comment "The tla:Level a subject satisfying this band is assigned."@en ;
-    skos:definition "The tla:Level a subject satisfying this band is assigned."@en ;
     rdfs:domain foxxi-adl-tla:ProficiencyBand ;
     rdfs:range foxxi-adl-tla:Level ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
@@ -1611,9 +1474,7 @@ foxxi-adl-tla:BandExpert a foxxi-adl-tla:ProficiencyBand ;
     foxxi-adl-tla:minQuality 0.85 ;
     foxxi-adl-tla:requiresQuality true ;
     skos:notation "5" ;
-    rdfs:comment "The band of the production-performance roll-up rule that awards the Expert level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
-    skos:definition "The band of the production-performance roll-up rule that awards the Expert level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
-    skos:note "Reached at 12 consecutive successes (Wilson 0.757) and not before, matching the previous rule's transition exactly."@en ;
+    rdfs:comment "Reached at 12 consecutive successes (Wilson 0.757) and not before, matching the previous rule's transition exactly."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:BandProficient a foxxi-adl-tla:ProficiencyBand ;
@@ -1623,9 +1484,7 @@ foxxi-adl-tla:BandProficient a foxxi-adl-tla:ProficiencyBand ;
     foxxi-adl-tla:minQuality 0.70 ;
     foxxi-adl-tla:requiresQuality true ;
     skos:notation "4" ;
-    rdfs:comment "The band of the production-performance roll-up rule that awards the Proficient level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
-    skos:definition "The band of the production-performance roll-up rule that awards the Proficient level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
-    skos:note "Reached at 6 consecutive successes (Wilson 0.610). Six executions with one failure scores 0.436 and does NOT reach it — the case the previous count-gated rule promoted."@en ;
+    rdfs:comment "Reached at 6 consecutive successes (Wilson 0.610). Six executions with one failure scores 0.436 and does NOT reach it — the case the previous count-gated rule promoted."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:BandCompetent a foxxi-adl-tla:ProficiencyBand ;
@@ -1634,9 +1493,7 @@ foxxi-adl-tla:BandCompetent a foxxi-adl-tla:ProficiencyBand ;
     foxxi-adl-tla:minReliability 0.40 ;
     foxxi-adl-tla:requiresQuality false ;
     skos:notation "3" ;
-    rdfs:comment "The band of the production-performance roll-up rule that awards the Competent level, at the reliability it requires (tla:minReliability); it asks nothing of quality."@en ;
-    skos:definition "The band of the production-performance roll-up rule that awards the Competent level, at the reliability it requires (tla:minReliability); it asks nothing of quality."@en ;
-    skos:note "Reached at 3 consecutive successes (Wilson 0.438). Asks nothing of quality, because the level's own definition asks nothing of it."@en ;
+    rdfs:comment "Reached at 3 consecutive successes (Wilson 0.438). Asks nothing of quality, because the level's own definition asks nothing of it."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 [
@@ -1786,7 +1643,9 @@ vann:preferredNamespaceUri a owl:AnnotationProperty .
 
 dct:source a owl:AnnotationProperty .
 
-skos:definition a owl:AnnotationProperty .
+foxxi-ieee-ler:construction a owl:AnnotationProperty ;
+    rdfs:label "construction"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 skos:closeMatch a owl:AnnotationProperty .
 
@@ -1795,6 +1654,8 @@ foxxi-ieee-ler:Learner a owl:Class ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 skos:prefLabel a owl:AnnotationProperty .
+
+skos:definition a owl:AnnotationProperty .
 
 skos:notation a owl:AnnotationProperty .
 
@@ -1805,5 +1666,3 @@ skos:exactMatch a owl:AnnotationProperty .
 foxxi-ieee-ler:ProficiencyLevel a owl:Class ;
     rdfs:label "Proficiency Level"@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-skos:note a owl:AnnotationProperty .

@@ -40,6 +40,7 @@ export const LER_MODEL: OntologyModel = {
   title: 'IEEE LER — Enterprise Learner Record and competency assertion shapes',
   description: 'SHACL shapes for the IEEE P2997 Enterprise Learner Record as Foxxi assembles it, its competency assertions and their evidence — the machine-checkable layer over the /ns/ieee-ler vocabulary. A record is read through the W3C VC 2.0 context and the record context published with the vocabulary; the shapes constrain that reading, and the Foxxi validator checks the same requirements on the JSON.',
   version: LER_SHAPES_VERSION,
+  priorVersion: '2026.10.0', priorCompatibility: 'incompatible',
   // The vocabulary these shapes constrain is the IEEE LER ontology at /ns/ieee-ler, a document of its
   // own: the shapes graph imports it at its version.
   ontologyVersion: semDocMeta('ler').version,
@@ -153,7 +154,8 @@ export const OB3_MODEL: OntologyModel = {
   module: 'ob3',
   title: 'Open Badges 3.0 — credential SHACL profile',
   description: 'SHACL shapes for a 1EdTech Open Badges 3.0 credential — a W3C Verifiable Credential (VC Data Model 2.0) whose subject carries an achievement — the checks Foxxi applies to the credentials it issues and accepts. A profile of Open Badges 3.0: the shapes target 1EdTech\'s own classes and constrain the predicates the OB 3.0 and VC 2.0 JSON-LD contexts map a credential to, and each requirement is OB 3.0\'s (its data model, Appendix B).',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward',
   spec: 'https://www.imsglobal.org/spec/ob/v3p0/',
   standards: [
     { title: '1EdTech Open Badges 3.0 (JSON-LD context 3.0.3)', url: 'https://www.imsglobal.org/spec/ob/v3p0/' },
@@ -260,7 +262,8 @@ export const CLR_MODEL: OntologyModel = {
   module: 'clr',
   title: 'Comprehensive Learner Record 2.0 — credential SHACL profile',
   description: 'SHACL shapes for a 1EdTech Comprehensive Learner Record 2.0 — a W3C Verifiable Credential (VC Data Model 2.0) whose subject bundles achievement credentials. A profile of CLR 2.0: the shapes target 1EdTech\'s ClrCredential and ClrSubject classes and constrain the predicates the CLR 2.0, OB 3.0 and VC 2.0 JSON-LD contexts map a credential to, and each requirement is CLR 2.0\'s (its data model, Appendix B). The credentials a CLR bundles are Open Badges 3.0 credentials, which the Open Badges 3.0 profile checks. Registered as data — a second credential format needs no new engine.',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward',
   spec: 'https://www.imsglobal.org/spec/clr/v2p0/',
   standards: [
     { title: '1EdTech Comprehensive Learner Record 2.0 (JSON-LD context 2.0.1)', url: 'https://www.imsglobal.org/spec/clr/v2p0/' },

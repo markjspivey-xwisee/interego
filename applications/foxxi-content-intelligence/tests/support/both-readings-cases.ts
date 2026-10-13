@@ -373,48 +373,37 @@ export const READING_CASES: Readonly<Record<string, readonly ReadingCase[]>> = {
   ],
 
   soc2: [
-    { name: 'an access change', instance: { type: 'AccessChangeEvent', id: 'https://example.org/ev/1', evidences: ['CC6.2', 'CC6.3'], occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:admin.example.org', signer: '0xabc' } },
-    { name: 'an event that declares no type', instance: { id: 'https://example.org/ev/2', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00+02:00', actingAgent: 'did:web:ci.example.org', signer: '0xdef' } },
-    {
-      name: 'an event recorded before actingAgent replaced actor',
-      instance: { type: 'DeployEvent', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:ci.example.org', signer: '0xdef' },
-      violates: ['OperationalEvidenceEventShape-actingAgent'],
-    },
-    // owl:deprecated retracts no axiom: actor's domain still makes its subject an event.
-    {
-      name: 'an event recorded with actor that declares no type',
-      instance: { id: 'https://example.org/ev/3', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:ci.example.org', signer: '0xdef' },
-      violates: ['OperationalEvidenceEventShape-actingAgent'],
-    },
+    { name: 'an access change', instance: { type: 'AccessChangeEvent', id: 'https://example.org/ev/1', evidences: ['CC6.2', 'CC6.3'], occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:admin.example.org', signer: '0xabc' } },
+    { name: 'an event that declares no type', instance: { id: 'https://example.org/ev/2', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00+02:00', actor: 'did:web:ci.example.org', signer: '0xdef' } },
     {
       name: 'a key rotation whose time is not a time, and with two signers',
-      instance: { type: 'KeyRotationEvent', evidences: 'CC6.1', occurredAt: '1 October 2026', actingAgent: 'did:web:ops.example.org', signer: ['0x1', '0x2'] },
+      instance: { type: 'KeyRotationEvent', evidences: 'CC6.1', occurredAt: '1 October 2026', actor: 'did:web:ops.example.org', signer: ['0x1', '0x2'] },
       violates: ['OperationalEvidenceEventShape-occurredAt', 'OperationalEvidenceEventShape-signer'],
     },
-    { name: 'an incident that evidences no criterion', instance: { type: 'IncidentEvent', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:ops.example.org', signer: '0x1' }, violates: ['OperationalEvidenceEventShape-evidences'] },
+    { name: 'an incident that evidences no criterion', instance: { type: 'IncidentEvent', occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:ops.example.org', signer: '0x1' }, violates: ['OperationalEvidenceEventShape-evidences'] },
     {
       name: 'an event citing CC9.9, which the list does not have, beside CC6.2',
-      instance: { type: 'AccessChangeEvent', evidences: ['CC6.2', 'CC9.9'], occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:admin.example.org', signer: '0x1' },
+      instance: { type: 'AccessChangeEvent', evidences: ['CC6.2', 'CC9.9'], occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:admin.example.org', signer: '0x1' },
       violates: ['OperationalEvidenceEventShape-evidences'],
     },
     {
       name: 'an event citing an IRI from elsewhere',
-      instance: { type: 'DeployEvent', evidences: 'https://elsewhere.example/criteria/x', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:ci.example.org', signer: '0x1' },
+      instance: { type: 'DeployEvent', evidences: 'https://elsewhere.example/criteria/x', occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:ci.example.org', signer: '0x1' },
       violates: ['OperationalEvidenceEventShape-evidences'],
     },
     {
       name: 'an event citing a word that is one of the context\'s terms',
-      instance: { type: 'DeployEvent', evidences: 'occurredAt', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:ci.example.org', signer: '0x1' },
+      instance: { type: 'DeployEvent', evidences: 'occurredAt', occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:ci.example.org', signer: '0x1' },
       violates: ['OperationalEvidenceEventShape-evidences'],
     },
     {
       name: 'an event citing CC8.1 by its IRI',
-      instance: { type: 'DeployEvent', evidences: 'https://foxxi-bridge.interego.xwisee.com/ns/soc2#CommonCriterion-CC8.1', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:ci.example.org', signer: '0x1' },
+      instance: { type: 'DeployEvent', evidences: 'https://foxxi-bridge.interego.xwisee.com/ns/soc2#CommonCriterion-CC8.1', occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:ci.example.org', signer: '0x1' },
     },
     {
       name: 'an acting agent that is not an IRI',
-      instance: { type: 'DeployEvent', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'ci bot', signer: '0x1' },
-      refused: 'relative object reference', violates: ['OperationalEvidenceEventShape-actingAgent'],
+      instance: { type: 'DeployEvent', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00Z', actor: 'ci bot', signer: '0x1' },
+      refused: 'relative object reference', violates: ['OperationalEvidenceEventShape-actor'],
     },
   ],
 

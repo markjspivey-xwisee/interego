@@ -1,0 +1,833 @@
+# xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model — SHACL shapes — version 2026.10.1
+# https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes/2026.10.1)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> a owl:Ontology ;
+    dct:title "xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model — SHACL shapes"@en ;
+    dct:description "SHACL shapes for xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/xapi/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by IEEE or ADL. Where this document and the published standard differ, the standard governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes/2026.10.1> ;
+    owl:versionInfo "2026.10.1" ;
+    owl:priorVersion <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes/2026.10.0> ;
+    owl:incompatibleWith <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes/2026.10.0> ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-13"^^xsd:date ;
+    dct:issued "2026-10-13"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model — SHACL shapes (Version 2026.10.1) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes/2026.10.1" ;
+    dct:source <https://standards.ieee.org/ieee/9274.1.1/7321/> ,
+        <https://opensource.ieee.org/xapi/xapi-base-standard-documentation> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec/xapi.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1> .
+
+shapes:StatementShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Statement ;
+    sh:targetSubjectsOf foxxi-xapi:actor , foxxi-xapi:verb , foxxi-xapi:object ;
+    rdfs:label "xAPI Statement conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2: a Statement has exactly one actor, verb and object; its id (if present) is a UUID; its timestamps are RFC 3339 in UTC; its version follows the xAPI version grammar. Read through /ns/xapi/context a statement is untyped, as xAPI leaves it, so the shape also selects whatever has an actor, a verb or an object — a Statement, or a Sub-Statement, which the Sub-Statement shape further restricts."@en ;
+    sh:property shapes:StatementShape-actor ,
+        shapes:StatementShape-verb ,
+        shapes:StatementShape-object ,
+        shapes:StatementShape-id ,
+        shapes:StatementShape-result ,
+        shapes:StatementShape-context ,
+        shapes:StatementShape-timestamp ,
+        shapes:StatementShape-stored ,
+        shapes:StatementShape-version ,
+        shapes:StatementShape-authority ;
+    sh:or ( [ sh:node shapes:NotVoidingShape ] [ sh:node shapes:VoidingShape ] ) ;
+    sh:message "xAPI Statement conformance: a voiding Statement's object is a Statement Reference (§5.2.5)"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:StatementShape-actor a sh:PropertyShape ;
+    sh:path foxxi-xapi:actor ;
+    sh:name "actor" ;
+    sh:description "exactly one Actor (§5.2.2)"@en ;
+    sh:message "xAPI Statement conformance — actor: exactly 1 value — exactly one Actor (§5.2.2)"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:StatementShape-verb a sh:PropertyShape ;
+    sh:path foxxi-xapi:verb ;
+    sh:name "verb" ;
+    sh:description "exactly one Verb (§5.2.2)"@en ;
+    sh:message "xAPI Statement conformance — verb: exactly 1 value — exactly one Verb (§5.2.2)"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:StatementShape-object a sh:PropertyShape ;
+    sh:path foxxi-xapi:object ;
+    sh:name "object" ;
+    sh:description "exactly one Object (§5.2.2)"@en ;
+    sh:message "xAPI Statement conformance — object: exactly 1 value — exactly one Object (§5.2.2)"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:StatementShape-id a sh:PropertyShape ;
+    sh:path foxxi-xapi:id ;
+    sh:name "id" ;
+    sh:description "a UUID (§5.2.2, §5.2.7)"@en ;
+    sh:message "xAPI Statement conformance — id: at most 1 value, of type xsd:string, matching ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ — a UUID (§5.2.2, §5.2.7)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" .
+
+shapes:StatementShape-result a sh:PropertyShape ;
+    sh:path foxxi-xapi:result ;
+    sh:name "result" ;
+    sh:description "at most one Result (§5.2.2)"@en ;
+    sh:message "xAPI Statement conformance — result: at most 1 value — at most one Result (§5.2.2)"@en ;
+    sh:maxCount 1 .
+
+shapes:StatementShape-context a sh:PropertyShape ;
+    sh:path foxxi-xapi:context ;
+    sh:name "context" ;
+    sh:description "at most one Context (§5.2.2)"@en ;
+    sh:message "xAPI Statement conformance — context: at most 1 value — at most one Context (§5.2.2)"@en ;
+    sh:maxCount 1 .
+
+shapes:StatementShape-timestamp a sh:PropertyShape ;
+    sh:path foxxi-xapi:timestamp ;
+    sh:name "timestamp" ;
+    sh:description "RFC 3339, in UTC (§5.2.7)"@en ;
+    sh:message "xAPI Statement conformance — timestamp: at most 1 value, of type xsd:dateTime, matching ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|\\+00:00)$ — RFC 3339, in UTC (§5.2.7)"@en ;
+    sh:datatype xsd:dateTime ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|\\+00:00)$" .
+
+shapes:StatementShape-stored a sh:PropertyShape ;
+    sh:path foxxi-xapi:stored ;
+    sh:name "stored" ;
+    sh:description "RFC 3339, in UTC (§5.2.7)"@en ;
+    sh:message "xAPI Statement conformance — stored: at most 1 value, of type xsd:dateTime, matching ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|\\+00:00)$ — RFC 3339, in UTC (§5.2.7)"@en ;
+    sh:datatype xsd:dateTime ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|\\+00:00)$" .
+
+shapes:StatementShape-version a sh:PropertyShape ;
+    sh:path foxxi-xapi:version ;
+    sh:name "version" ;
+    sh:description "xAPI version grammar (§5.2.2)"@en ;
+    sh:message "xAPI Statement conformance — version: at most 1 value, of type xsd:string, matching ^(1\\.0(\\.[0-9]+)?|2\\.0(\\.[0-9]+)?)$ — xAPI version grammar (§5.2.2)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^(1\\.0(\\.[0-9]+)?|2\\.0(\\.[0-9]+)?)$" .
+
+shapes:StatementShape-authority a sh:PropertyShape ;
+    sh:path foxxi-xapi:authority ;
+    sh:name "authority" ;
+    sh:description "one authority Actor (§5.2.2)"@en ;
+    sh:message "xAPI Statement conformance — authority: at most 1 value — one authority Actor (§5.2.2)"@en ;
+    sh:maxCount 1 .
+
+shapes:NotVoidingShape a sh:NodeShape ;
+    rdfs:label "Not a voiding Statement"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.5: a Statement whose verb is not voided. Referred to by the Statement shape; it selects nothing itself."@en ;
+    sh:property shapes:NotVoidingShape-verb-id ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:NotVoidingShape-verb-id a sh:PropertyShape ;
+    sh:path foxxi-xapi:verb ;
+    sh:name "verb.id" ;
+    sh:description "the verb is not voided"@en ;
+    sh:message "Not a voiding Statement — verb.id: never http://adlnet.gov/expapi/verbs/voided — the verb is not voided"@en ;
+    sh:not [ sh:hasValue <http://adlnet.gov/expapi/verbs/voided> ] .
+
+shapes:VoidingShape a sh:NodeShape ;
+    rdfs:label "Voiding Statement"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.5: a Statement that voids another names it by a Statement Reference. Referred to by the Statement shape; it selects nothing itself."@en ;
+    sh:property shapes:VoidingShape-object-objectType ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:VoidingShape-object-objectType a sh:PropertyShape ;
+    sh:path ( foxxi-xapi:object rdf:type ) ;
+    sh:name "object.objectType" ;
+    sh:description "the object is a Statement Reference (§5.2.5)"@en ;
+    sh:message "Voiding Statement — object.objectType: including StatementRef — the object is a Statement Reference (§5.2.5)"@en ;
+    sh:hasValue foxxi-xapi:StatementRef .
+
+shapes:ActorShape a sh:NodeShape ;
+    sh:targetObjectsOf foxxi-xapi:actor , foxxi-xapi:authority , foxxi-xapi:instructor ;
+    rdfs:label "Actor conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.1: an Actor is a Group — which says so (objectType Group) — or else an Agent; read through /ns/xapi/context an Agent whose objectType is left out is untyped, so this shape holds whatever is an actor, an authority or an instructor to the Agent shape unless it is a Group."@en ;
+    sh:or ( [ sh:class foxxi-xapi:Group ] [ sh:node shapes:AgentShape ] ) ;
+    sh:message "Actor conformance: a Group, or an Agent (§5.2.2.1)"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:AgentShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Agent ;
+    sh:targetObjectsOf foxxi-xapi:member , foxxi-xapi:agent ;
+    rdfs:label "Agent conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.1: an Agent is identified by EXACTLY ONE Inverse Functional Identifier (mbox / mbox_sha1sum / openid / account) — rendered as sh:xone below and enforced by the validator."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): objectType (maxCount 1, in {Agent}) — Agent, when present (§5.2.2.1); read as rdf:type"@en ;
+    sh:property shapes:AgentShape-mbox ,
+        shapes:AgentShape-mbox_sha1sum ,
+        shapes:AgentShape-openid ,
+        shapes:AgentShape-account ;
+    sh:xone (
+        [ sh:path foxxi-xapi:mbox ; sh:minCount 1 ]
+        [ sh:path foxxi-xapi:mbox_sha1sum ; sh:minCount 1 ]
+        [ sh:path foxxi-xapi:openid ; sh:minCount 1 ]
+        [ sh:path foxxi-xapi:account ; sh:minCount 1 ]
+    ) ;
+    sh:message "Agent conformance: exactly one IFI (§5.2.2.1)"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:AgentShape-mbox a sh:PropertyShape ;
+    sh:path foxxi-xapi:mbox ;
+    sh:name "mbox" ;
+    sh:description "a mailto IRI (§5.2.2.1)"@en ;
+    sh:message "Agent conformance — mbox: at most 1 value, of type xsd:anyURI, matching ^mailto: — a mailto IRI (§5.2.2.1)"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 ;
+    sh:pattern "^mailto:" .
+
+shapes:AgentShape-mbox_sha1sum a sh:PropertyShape ;
+    sh:path foxxi-xapi:mbox_sha1sum ;
+    sh:name "mbox_sha1sum" ;
+    sh:description "hex SHA-1 (§5.2.2.1)"@en ;
+    sh:message "Agent conformance — mbox_sha1sum: at most 1 value, of type xsd:string, matching ^[0-9a-fA-F]{40}$ — hex SHA-1 (§5.2.2.1)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9a-fA-F]{40}$" .
+
+shapes:AgentShape-openid a sh:PropertyShape ;
+    sh:path foxxi-xapi:openid ;
+    sh:name "openid" ;
+    sh:description "an OpenID URI (§5.2.2.1)"@en ;
+    sh:message "Agent conformance — openid: at most 1 value, of type xsd:anyURI — an OpenID URI (§5.2.2.1)"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 .
+
+shapes:AgentShape-account a sh:PropertyShape ;
+    sh:path foxxi-xapi:account ;
+    sh:name "account" ;
+    sh:description "one account (§5.2.2.1)"@en ;
+    sh:message "Agent conformance — account: at most 1 value — one account (§5.2.2.1)"@en ;
+    sh:maxCount 1 .
+
+shapes:GroupShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Group ;
+    rdfs:label "Group conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.1: a Group is an Identified Group, with exactly one IFI (and members if it lists them), or an Anonymous Group, with members and no IFI."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): objectType (minCount 1, maxCount 1, in {Group}) — Group (§5.2.2.1); read as rdf:type"@en ;
+    sh:property shapes:GroupShape-mbox , shapes:GroupShape-mbox_sha1sum ;
+    sh:or ( [ sh:node shapes:IdentifiedGroupShape ] [ sh:node shapes:AnonymousGroupShape ] ) ;
+    sh:message "Group conformance: an Identified Group or an Anonymous Group (§5.2.2.1)"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:GroupShape-mbox a sh:PropertyShape ;
+    sh:path foxxi-xapi:mbox ;
+    sh:name "mbox" ;
+    sh:description "a mailto IRI (§5.2.2.1)"@en ;
+    sh:message "Group conformance — mbox: at most 1 value, of type xsd:anyURI, matching ^mailto: — a mailto IRI (§5.2.2.1)"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 ;
+    sh:pattern "^mailto:" .
+
+shapes:GroupShape-mbox_sha1sum a sh:PropertyShape ;
+    sh:path foxxi-xapi:mbox_sha1sum ;
+    sh:name "mbox_sha1sum" ;
+    sh:description "hex SHA-1 (§5.2.2.1)"@en ;
+    sh:message "Group conformance — mbox_sha1sum: at most 1 value, of type xsd:string, matching ^[0-9a-fA-F]{40}$ — hex SHA-1 (§5.2.2.1)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9a-fA-F]{40}$" .
+
+shapes:IdentifiedGroupShape a sh:NodeShape ;
+    rdfs:label "Identified Group"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.1 (Actor as Identified Group): exactly one Inverse Functional Identifier. Referred to by the Group shape; it selects nothing itself."@en ;
+    sh:xone (
+        [ sh:path foxxi-xapi:mbox ; sh:minCount 1 ]
+        [ sh:path foxxi-xapi:mbox_sha1sum ; sh:minCount 1 ]
+        [ sh:path foxxi-xapi:openid ; sh:minCount 1 ]
+        [ sh:path foxxi-xapi:account ; sh:minCount 1 ]
+    ) ;
+    sh:message "Identified Group: exactly one IFI (§5.2.2.1)"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:AnonymousGroupShape a sh:NodeShape ;
+    rdfs:label "Anonymous Group"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.1 (Actor as Anonymous Group): a member list, and no Inverse Functional Identifier. Referred to by the Group shape; it selects nothing itself."@en ;
+    sh:property shapes:AnonymousGroupShape-member ,
+        shapes:AnonymousGroupShape-mbox ,
+        shapes:AnonymousGroupShape-mbox_sha1sum ,
+        shapes:AnonymousGroupShape-openid ,
+        shapes:AnonymousGroupShape-account ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:AnonymousGroupShape-member a sh:PropertyShape ;
+    sh:path foxxi-xapi:member ;
+    sh:name "member" ;
+    sh:description "the Agents in the Group (§5.2.2.1)"@en ;
+    sh:message "Anonymous Group — member: at least 1 value — the Agents in the Group (§5.2.2.1)"@en ;
+    sh:minCount 1 .
+
+shapes:AnonymousGroupShape-mbox a sh:PropertyShape ;
+    sh:path foxxi-xapi:mbox ;
+    sh:name "mbox" ;
+    sh:message "Anonymous Group — mbox: at most 0 values"@en ;
+    sh:maxCount 0 .
+
+shapes:AnonymousGroupShape-mbox_sha1sum a sh:PropertyShape ;
+    sh:path foxxi-xapi:mbox_sha1sum ;
+    sh:name "mbox_sha1sum" ;
+    sh:message "Anonymous Group — mbox_sha1sum: at most 0 values"@en ;
+    sh:maxCount 0 .
+
+shapes:AnonymousGroupShape-openid a sh:PropertyShape ;
+    sh:path foxxi-xapi:openid ;
+    sh:name "openid" ;
+    sh:message "Anonymous Group — openid: at most 0 values"@en ;
+    sh:maxCount 0 .
+
+shapes:AnonymousGroupShape-account a sh:PropertyShape ;
+    sh:path foxxi-xapi:account ;
+    sh:name "account" ;
+    sh:message "Anonymous Group — account: at most 0 values"@en ;
+    sh:maxCount 0 .
+
+shapes:AccountShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Account ;
+    sh:targetObjectsOf foxxi-xapi:account ;
+    rdfs:label "Account conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.1: an Account has exactly one homePage (an IRL) and exactly one name."@en ;
+    sh:property shapes:AccountShape-homePage , shapes:AccountShape-name ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:AccountShape-homePage a sh:PropertyShape ;
+    sh:path foxxi-xapi:homePage ;
+    sh:name "homePage" ;
+    sh:description "the system home page (§5.2.2.1)"@en ;
+    sh:message "Account conformance — homePage: exactly 1 value, of type xsd:anyURI — the system home page (§5.2.2.1)"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:AccountShape-name a sh:PropertyShape ;
+    sh:path foxxi-xapi:name ;
+    sh:name "name" ;
+    sh:description "the account name (§5.2.2.1)"@en ;
+    sh:message "Account conformance — name: exactly 1 value, of type xsd:string — the account name (§5.2.2.1)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:VerbShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Verb ;
+    sh:targetObjectsOf foxxi-xapi:verb ;
+    rdfs:label "Verb conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.2: a Verb is identified by an IRI; its display is a language map."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "Verb conformance: the node must be identified by an IRI — the Verb IRI (§5.2.2.2)"@en ;
+    sh:property shapes:VerbShape-display ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:VerbShape-display a sh:PropertyShape ;
+    sh:path foxxi-xapi:display ;
+    sh:name "display" ;
+    sh:description "a language map (§5.2.2.2)"@en ;
+    sh:message "Verb conformance — display: of type rdf:langString — a language map (§5.2.2.2)"@en ;
+    sh:datatype rdf:langString .
+
+shapes:ObjectShape a sh:NodeShape ;
+    sh:targetObjectsOf foxxi-xapi:object ;
+    rdfs:label "Object conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.3: the Object of a Statement is an Agent, a Group, a Statement Reference or a Sub-Statement — each of which says so (objectType) — or else an Activity."@en ;
+    sh:or (
+        [ sh:class foxxi-xapi:Agent ]
+        [ sh:class foxxi-xapi:Group ]
+        [ sh:class foxxi-xapi:StatementRef ]
+        [ sh:class foxxi-xapi:SubStatement ]
+        [ sh:node shapes:ActivityShape ]
+    ) ;
+    sh:message "Object conformance: an Agent, a Group, a Statement Reference or a Sub-Statement, or else an Activity (§5.2.2.3)"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:ActivityShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Activity ;
+    sh:targetObjectsOf foxxi-xapi:parent , foxxi-xapi:grouping , foxxi-xapi:category , foxxi-xapi:other ;
+    rdfs:label "Activity conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.3: an Activity is identified by an IRI and has at most one definition."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): objectType (maxCount 1, in {Activity}) — Activity, when present (§5.2.2.3); read as rdf:type"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "Activity conformance: the node must be identified by an IRI — the Activity IRI (§5.2.2.3)"@en ;
+    sh:property shapes:ActivityShape-definition ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:ActivityShape-definition a sh:PropertyShape ;
+    sh:path foxxi-xapi:definition ;
+    sh:name "definition" ;
+    sh:description "at most one Activity Definition (§5.2.2.3)"@en ;
+    sh:message "Activity conformance — definition: at most 1 value — at most one Activity Definition (§5.2.2.3)"@en ;
+    sh:maxCount 1 .
+
+shapes:InteractionDefinitionShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:ActivityDefinition ;
+    sh:targetObjectsOf foxxi-xapi:definition ;
+    rdfs:label "Activity Definition conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.3: interactionType is one of the interaction types; type is an IRI."@en ;
+    sh:property shapes:InteractionDefinitionShape-interactionType ,
+        shapes:InteractionDefinitionShape-type ,
+        shapes:InteractionDefinitionShape-moreInfo ,
+        shapes:InteractionDefinitionShape-name ,
+        shapes:InteractionDefinitionShape-description ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:InteractionDefinitionShape-interactionType a sh:PropertyShape ;
+    sh:path foxxi-xapi:interactionType ;
+    sh:name "interactionType" ;
+    sh:description "interaction type vocabulary (§5.2.2.3)"@en ;
+    sh:message "Activity Definition conformance — interactionType: at most 1 value, one of \"true-false\", \"choice\", \"fill-in\", \"long-fill-in\", \"matching\", \"performance\", \"sequencing\", \"likert\", \"numeric\", \"other\" — interaction type vocabulary (§5.2.2.3)"@en ;
+    sh:maxCount 1 ;
+    sh:in (
+        "true-false"
+        "choice"
+        "fill-in"
+        "long-fill-in"
+        "matching"
+        "performance"
+        "sequencing"
+        "likert"
+        "numeric"
+        "other"
+    ) .
+
+shapes:InteractionDefinitionShape-type a sh:PropertyShape ;
+    sh:path foxxi-xapi:type ;
+    sh:name "type" ;
+    sh:description "the Activity type IRI (§5.2.2.3)"@en ;
+    sh:message "Activity Definition conformance — type: at most 1 value, an IRI — the Activity type IRI (§5.2.2.3)"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:maxCount 1 .
+
+shapes:InteractionDefinitionShape-moreInfo a sh:PropertyShape ;
+    sh:path foxxi-xapi:moreInfo ;
+    sh:name "moreInfo" ;
+    sh:description "an IRL (§5.2.2.3)"@en ;
+    sh:message "Activity Definition conformance — moreInfo: at most 1 value, of type xsd:anyURI — an IRL (§5.2.2.3)"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 .
+
+shapes:InteractionDefinitionShape-name a sh:PropertyShape ;
+    sh:path foxxi-xapi:name ;
+    sh:name "name" ;
+    sh:description "a language map (§5.2.2.3)"@en ;
+    sh:message "Activity Definition conformance — name: of type rdf:langString — a language map (§5.2.2.3)"@en ;
+    sh:datatype rdf:langString .
+
+shapes:InteractionDefinitionShape-description a sh:PropertyShape ;
+    sh:path foxxi-xapi:description ;
+    sh:name "description" ;
+    sh:description "a language map (§5.2.2.3)"@en ;
+    sh:message "Activity Definition conformance — description: of type rdf:langString — a language map (§5.2.2.3)"@en ;
+    sh:datatype rdf:langString .
+
+shapes:InteractionComponentShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:InteractionComponent ;
+    sh:targetObjectsOf foxxi-xapi:choices , foxxi-xapi:scale , foxxi-xapi:source , foxxi-xapi:target , foxxi-xapi:steps ;
+    rdfs:label "Interaction component conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Components): a component has one id, unique within its list, and a description that is a language map."@en ;
+    sh:property shapes:InteractionComponentShape-componentId , shapes:InteractionComponentShape-description ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:InteractionComponentShape-componentId a sh:PropertyShape ;
+    sh:path foxxi-xapi:componentId ;
+    sh:name "componentId" ;
+    sh:description "the component id (§5.2.2.3)"@en ;
+    sh:message "Interaction component conformance — componentId: exactly 1 value, of type xsd:string — the component id (§5.2.2.3)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:InteractionComponentShape-description a sh:PropertyShape ;
+    sh:path foxxi-xapi:description ;
+    sh:name "description" ;
+    sh:description "a language map (§5.2.2.3)"@en ;
+    sh:message "Interaction component conformance — description: of type rdf:langString — a language map (§5.2.2.3)"@en ;
+    sh:datatype rdf:langString .
+
+shapes:ResultShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Result ;
+    sh:targetObjectsOf foxxi-xapi:result ;
+    rdfs:label "Result conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.4: success and completion are booleans; duration is an ISO 8601 duration."@en ;
+    sh:property shapes:ResultShape-success ,
+        shapes:ResultShape-completion ,
+        shapes:ResultShape-response ,
+        shapes:ResultShape-duration ,
+        shapes:ResultShape-score ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:ResultShape-success a sh:PropertyShape ;
+    sh:path foxxi-xapi:success ;
+    sh:name "success" ;
+    sh:message "Result conformance — success: at most 1 value, of type xsd:boolean"@en ;
+    sh:datatype xsd:boolean ;
+    sh:maxCount 1 .
+
+shapes:ResultShape-completion a sh:PropertyShape ;
+    sh:path foxxi-xapi:completion ;
+    sh:name "completion" ;
+    sh:message "Result conformance — completion: at most 1 value, of type xsd:boolean"@en ;
+    sh:datatype xsd:boolean ;
+    sh:maxCount 1 .
+
+shapes:ResultShape-response a sh:PropertyShape ;
+    sh:path foxxi-xapi:response ;
+    sh:name "response" ;
+    sh:message "Result conformance — response: at most 1 value, of type xsd:string"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:ResultShape-duration a sh:PropertyShape ;
+    sh:path foxxi-xapi:duration ;
+    sh:name "duration" ;
+    sh:description "ISO 8601:2004 §4.4.3.2 duration (§5.2.7)"@en ;
+    sh:message "Result conformance — duration: at most 1 value, of type xsd:string, matching ^P([0-9]+(\\.[0-9]+)?W|([0-9]+(\\.[0-9]+)?Y|[0-9]+Y[0-9]+(\\.[0-9]+)?M|[0-9]+Y[0-9]+M[0-9]+(\\.[0-9]+)?D|[0-9]+Y[0-9]+(\\.[0-9]+)?D|[0-9]+(\\.[0-9]+)?M|[0-9]+M[0-9]+(\\.[0-9]+)?D|[0-9]+(\\.[0-9]+)?D)|([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)T([0-9]+(\\.[0-9]+)?H|[0-9]+H[0-9]+(\\.[0-9]+)?M|[0-9]+H[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+H[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?M|[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?S)|T([0-9]+(\\.[0-9]+)?H|[0-9]+H[0-9]+(\\.[0-9]+)?M|[0-9]+H[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+H[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?M|[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?S))$ — ISO 8601:2004 §4.4.3.2 duration (§5.2.7)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^P([0-9]+(\\.[0-9]+)?W|([0-9]+(\\.[0-9]+)?Y|[0-9]+Y[0-9]+(\\.[0-9]+)?M|[0-9]+Y[0-9]+M[0-9]+(\\.[0-9]+)?D|[0-9]+Y[0-9]+(\\.[0-9]+)?D|[0-9]+(\\.[0-9]+)?M|[0-9]+M[0-9]+(\\.[0-9]+)?D|[0-9]+(\\.[0-9]+)?D)|([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)T([0-9]+(\\.[0-9]+)?H|[0-9]+H[0-9]+(\\.[0-9]+)?M|[0-9]+H[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+H[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?M|[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?S)|T([0-9]+(\\.[0-9]+)?H|[0-9]+H[0-9]+(\\.[0-9]+)?M|[0-9]+H[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+H[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?M|[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?S))$" .
+
+shapes:ResultShape-score a sh:PropertyShape ;
+    sh:path foxxi-xapi:score ;
+    sh:name "score" ;
+    sh:description "at most one Score (§5.2.2.4)"@en ;
+    sh:message "Result conformance — score: at most 1 value — at most one Score (§5.2.2.4)"@en ;
+    sh:maxCount 1 .
+
+shapes:ScoreShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Score ;
+    sh:targetObjectsOf foxxi-xapi:score ;
+    rdfs:label "Score conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.4: scaled is a number in [-1, 1]; raw, min and max are numbers, min less than max, and raw between them."@en ;
+    sh:property shapes:ScoreShape-scaled , shapes:ScoreShape-raw , shapes:ScoreShape-min , shapes:ScoreShape-max ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:ScoreShape-scaled a sh:PropertyShape ;
+    sh:path foxxi-xapi:scaled ;
+    sh:name "scaled" ;
+    sh:description "scaled ∈ [-1, 1] (§5.2.2.4)"@en ;
+    sh:message "Score conformance — scaled: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between -1 and 1 — scaled ∈ [-1, 1] (§5.2.2.4)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive -1 ;
+    sh:maxInclusive 1 .
+
+shapes:ScoreShape-raw a sh:PropertyShape ;
+    sh:path foxxi-xapi:raw ;
+    sh:name "raw" ;
+    sh:description "a number, at most max (§5.2.2.4)"@en ;
+    sh:message "Score conformance — raw: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, at most its max — a number, at most max (§5.2.2.4)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:lessThanOrEquals foxxi-xapi:max .
+
+shapes:ScoreShape-min a sh:PropertyShape ;
+    sh:path foxxi-xapi:min ;
+    sh:name "min" ;
+    sh:description "a number, less than max and at most raw (§5.2.2.4)"@en ;
+    sh:message "Score conformance — min: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, less than its max, at most its raw — a number, less than max and at most raw (§5.2.2.4)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:lessThan foxxi-xapi:max ;
+    sh:lessThanOrEquals foxxi-xapi:raw .
+
+shapes:ScoreShape-max a sh:PropertyShape ;
+    sh:path foxxi-xapi:max ;
+    sh:name "max" ;
+    sh:description "a number (§5.2.2.4)"@en ;
+    sh:message "Score conformance — max: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double — a number (§5.2.2.4)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 .
+
+shapes:StatementRefShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:StatementRef ;
+    rdfs:label "Statement Reference conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.3: a Statement Reference has objectType StatementRef and the UUID of a Statement."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): objectType (minCount 1, maxCount 1, in {StatementRef}) — StatementRef (§5.2.2.3); read as rdf:type"@en ;
+    sh:property shapes:StatementRefShape-id ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:StatementRefShape-id a sh:PropertyShape ;
+    sh:path foxxi-xapi:id ;
+    sh:name "id" ;
+    sh:description "a UUID (§5.2.2.3)"@en ;
+    sh:message "Statement Reference conformance — id: exactly 1 value, of type xsd:string, matching ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ — a UUID (§5.2.2.3)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" .
+
+shapes:SubStatementShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:SubStatement ;
+    rdfs:label "Sub-Statement conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.3: a Sub-Statement has objectType SubStatement and exactly one actor, verb and object; it has no id, stored, version or authority, and its object is not a Sub-Statement."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): objectType (minCount 1, maxCount 1, in {SubStatement}) — SubStatement (§5.2.2.3); read as rdf:type"@en ;
+    sh:property shapes:SubStatementShape-actor ,
+        shapes:SubStatementShape-verb ,
+        shapes:SubStatementShape-object ,
+        shapes:SubStatementShape-id ,
+        shapes:SubStatementShape-stored ,
+        shapes:SubStatementShape-version ,
+        shapes:SubStatementShape-authority ,
+        shapes:SubStatementShape-object-objectType ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:SubStatementShape-actor a sh:PropertyShape ;
+    sh:path foxxi-xapi:actor ;
+    sh:name "actor" ;
+    sh:message "Sub-Statement conformance — actor: exactly 1 value"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:SubStatementShape-verb a sh:PropertyShape ;
+    sh:path foxxi-xapi:verb ;
+    sh:name "verb" ;
+    sh:message "Sub-Statement conformance — verb: exactly 1 value"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:SubStatementShape-object a sh:PropertyShape ;
+    sh:path foxxi-xapi:object ;
+    sh:name "object" ;
+    sh:message "Sub-Statement conformance — object: exactly 1 value"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:SubStatementShape-id a sh:PropertyShape ;
+    sh:path foxxi-xapi:id ;
+    sh:name "id" ;
+    sh:description "a Sub-Statement has no id (§5.2.2.3)"@en ;
+    sh:message "Sub-Statement conformance — id: at most 0 values — a Sub-Statement has no id (§5.2.2.3)"@en ;
+    sh:maxCount 0 .
+
+shapes:SubStatementShape-stored a sh:PropertyShape ;
+    sh:path foxxi-xapi:stored ;
+    sh:name "stored" ;
+    sh:description "a Sub-Statement has no stored (§5.2.2.3)"@en ;
+    sh:message "Sub-Statement conformance — stored: at most 0 values — a Sub-Statement has no stored (§5.2.2.3)"@en ;
+    sh:maxCount 0 .
+
+shapes:SubStatementShape-version a sh:PropertyShape ;
+    sh:path foxxi-xapi:version ;
+    sh:name "version" ;
+    sh:description "a Sub-Statement has no version (§5.2.2.3)"@en ;
+    sh:message "Sub-Statement conformance — version: at most 0 values — a Sub-Statement has no version (§5.2.2.3)"@en ;
+    sh:maxCount 0 .
+
+shapes:SubStatementShape-authority a sh:PropertyShape ;
+    sh:path foxxi-xapi:authority ;
+    sh:name "authority" ;
+    sh:description "a Sub-Statement has no authority (§5.2.2.3)"@en ;
+    sh:message "Sub-Statement conformance — authority: at most 0 values — a Sub-Statement has no authority (§5.2.2.3)"@en ;
+    sh:maxCount 0 .
+
+shapes:SubStatementShape-object-objectType a sh:PropertyShape ;
+    sh:path ( foxxi-xapi:object rdf:type ) ;
+    sh:name "object.objectType" ;
+    sh:description "a Sub-Statement does not nest another (§5.2.2.3)"@en ;
+    sh:message "Sub-Statement conformance — object.objectType: never SubStatement — a Sub-Statement does not nest another (§5.2.2.3)"@en ;
+    sh:not [ sh:hasValue foxxi-xapi:SubStatement ] .
+
+shapes:ContextShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Context ;
+    sh:targetObjectsOf foxxi-xapi:context ;
+    rdfs:label "Context conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.5: registration is a UUID; language is an RFC 5646 tag; statement is a Statement Reference; team is a Group."@en ;
+    sh:property shapes:ContextShape-registration ,
+        shapes:ContextShape-language ,
+        shapes:ContextShape-statement ,
+        shapes:ContextShape-team ,
+        shapes:ContextShape-instructor ,
+        shapes:ContextShape-contextActivities ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:ContextShape-registration a sh:PropertyShape ;
+    sh:path foxxi-xapi:registration ;
+    sh:name "registration" ;
+    sh:description "a UUID (§5.2.2.5)"@en ;
+    sh:message "Context conformance — registration: at most 1 value, of type xsd:string, matching ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ — a UUID (§5.2.2.5)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" .
+
+shapes:ContextShape-language a sh:PropertyShape ;
+    sh:path foxxi-xapi:language ;
+    sh:name "language" ;
+    sh:description "an RFC 5646 language tag (§5.2.2.5)"@en ;
+    sh:message "Context conformance — language: at most 1 value, of type xsd:language — an RFC 5646 language tag (§5.2.2.5)"@en ;
+    sh:datatype xsd:language ;
+    sh:maxCount 1 .
+
+shapes:ContextShape-statement a sh:PropertyShape ;
+    sh:path foxxi-xapi:statement ;
+    sh:name "statement" ;
+    sh:description "one Statement Reference (§5.2.2.5)"@en ;
+    sh:message "Context conformance — statement: at most 1 value, an instance of StatementRef — one Statement Reference (§5.2.2.5)"@en ;
+    sh:class foxxi-xapi:StatementRef ;
+    sh:maxCount 1 .
+
+shapes:ContextShape-team a sh:PropertyShape ;
+    sh:path foxxi-xapi:team ;
+    sh:name "team" ;
+    sh:description "one Group (§5.2.2.5)"@en ;
+    sh:message "Context conformance — team: at most 1 value, an instance of Group — one Group (§5.2.2.5)"@en ;
+    sh:class foxxi-xapi:Group ;
+    sh:maxCount 1 .
+
+shapes:ContextShape-instructor a sh:PropertyShape ;
+    sh:path foxxi-xapi:instructor ;
+    sh:name "instructor" ;
+    sh:description "one Agent or Group (§5.2.2.5)"@en ;
+    sh:message "Context conformance — instructor: at most 1 value — one Agent or Group (§5.2.2.5)"@en ;
+    sh:maxCount 1 .
+
+shapes:ContextShape-contextActivities a sh:PropertyShape ;
+    sh:path foxxi-xapi:contextActivities ;
+    sh:name "contextActivities" ;
+    sh:message "Context conformance — contextActivities: at most 1 value"@en ;
+    sh:maxCount 1 .
+
+shapes:ContextAgentShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:ContextAgent ;
+    sh:targetObjectsOf foxxi-xapi:contextAgents ;
+    rdfs:label "Context agent conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.5: a context agent has objectType contextAgent, exactly one Agent, and relevant types that are IRIs."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): objectType (minCount 1, maxCount 1, in {contextAgent}) — contextAgent (§5.2.2.5); read as rdf:type"@en ;
+    sh:class foxxi-xapi:ContextAgent ;
+    sh:message "Context agent conformance: the node must be an instance of ContextAgent"@en ;
+    sh:property shapes:ContextAgentShape-agent , shapes:ContextAgentShape-relevantTypes ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:ContextAgentShape-agent a sh:PropertyShape ;
+    sh:path foxxi-xapi:agent ;
+    sh:name "agent" ;
+    sh:message "Context agent conformance — agent: exactly 1 value"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ContextAgentShape-relevantTypes a sh:PropertyShape ;
+    sh:path foxxi-xapi:relevantTypes ;
+    sh:name "relevantTypes" ;
+    sh:description "type IRIs (§5.2.2.5)"@en ;
+    sh:message "Context agent conformance — relevantTypes: an IRI — type IRIs (§5.2.2.5)"@en ;
+    sh:nodeKind sh:IRI .
+
+shapes:ContextGroupShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:ContextGroup ;
+    sh:targetObjectsOf foxxi-xapi:contextGroups ;
+    rdfs:label "Context group conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.5: a context group has objectType contextGroup, exactly one Group, and relevant types that are IRIs."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): objectType (minCount 1, maxCount 1, in {contextGroup}) — contextGroup (§5.2.2.5); read as rdf:type"@en ;
+    sh:class foxxi-xapi:ContextGroup ;
+    sh:message "Context group conformance: the node must be an instance of ContextGroup"@en ;
+    sh:property shapes:ContextGroupShape-group , shapes:ContextGroupShape-relevantTypes ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:ContextGroupShape-group a sh:PropertyShape ;
+    sh:path foxxi-xapi:group ;
+    sh:name "group" ;
+    sh:message "Context group conformance — group: exactly 1 value, an instance of Group"@en ;
+    sh:class foxxi-xapi:Group ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ContextGroupShape-relevantTypes a sh:PropertyShape ;
+    sh:path foxxi-xapi:relevantTypes ;
+    sh:name "relevantTypes" ;
+    sh:description "type IRIs (§5.2.2.5)"@en ;
+    sh:message "Context group conformance — relevantTypes: an IRI — type IRIs (§5.2.2.5)"@en ;
+    sh:nodeKind sh:IRI .
+
+shapes:AttachmentShape a sh:NodeShape ;
+    sh:targetClass foxxi-xapi:Attachment ;
+    sh:targetObjectsOf foxxi-xapi:attachments ;
+    rdfs:label "Attachment conformance"@en ;
+    rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.6: usageType (an IRI), display (a language map), contentType, length and sha2 are required."@en ;
+    sh:property shapes:AttachmentShape-usageType ,
+        shapes:AttachmentShape-display ,
+        shapes:AttachmentShape-description ,
+        shapes:AttachmentShape-contentType ,
+        shapes:AttachmentShape-length ,
+        shapes:AttachmentShape-sha2 ,
+        shapes:AttachmentShape-fileUrl ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
+
+shapes:AttachmentShape-usageType a sh:PropertyShape ;
+    sh:path foxxi-xapi:usageType ;
+    sh:name "usageType" ;
+    sh:message "Attachment conformance — usageType: exactly 1 value, an IRI"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:AttachmentShape-display a sh:PropertyShape ;
+    sh:path foxxi-xapi:display ;
+    sh:name "display" ;
+    sh:description "a language map, required in xAPI 2.0 (§5.2.2.6)"@en ;
+    sh:message "Attachment conformance — display: at least 1 value, of type rdf:langString — a language map, required in xAPI 2.0 (§5.2.2.6)"@en ;
+    sh:datatype rdf:langString ;
+    sh:minCount 1 .
+
+shapes:AttachmentShape-description a sh:PropertyShape ;
+    sh:path foxxi-xapi:description ;
+    sh:name "description" ;
+    sh:description "a language map (§5.2.2.6)"@en ;
+    sh:message "Attachment conformance — description: of type rdf:langString — a language map (§5.2.2.6)"@en ;
+    sh:datatype rdf:langString .
+
+shapes:AttachmentShape-contentType a sh:PropertyShape ;
+    sh:path foxxi-xapi:contentType ;
+    sh:name "contentType" ;
+    sh:message "Attachment conformance — contentType: exactly 1 value, of type xsd:string, matching ^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*(\\s*;.*)?$"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*(\\s*;.*)?$" .
+
+shapes:AttachmentShape-length a sh:PropertyShape ;
+    sh:path foxxi-xapi:length ;
+    sh:name "length" ;
+    sh:description "octets (§5.2.2.6)"@en ;
+    sh:message "Attachment conformance — length: exactly 1 value, of type xsd:integer, at least 0 — octets (§5.2.2.6)"@en ;
+    sh:datatype xsd:integer ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 .
+
+shapes:AttachmentShape-sha2 a sh:PropertyShape ;
+    sh:path foxxi-xapi:sha2 ;
+    sh:name "sha2" ;
+    sh:message "Attachment conformance — sha2: exactly 1 value, of type xsd:string"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:AttachmentShape-fileUrl a sh:PropertyShape ;
+    sh:path foxxi-xapi:fileUrl ;
+    sh:name "fileUrl" ;
+    sh:message "Attachment conformance — fileUrl: at most 1 value, of type xsd:anyURI"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 .

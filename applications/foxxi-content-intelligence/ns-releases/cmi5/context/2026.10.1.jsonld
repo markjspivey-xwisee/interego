@@ -72,8 +72,8 @@
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#objective",
       "@type": "@id"
     },
-    "objectiveReference": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#objectiveReference",
+    "objectives": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#objectives",
       "@type": "@id"
     },
     "title": {
@@ -105,10 +105,10 @@
     "masteryScore": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#masteryScore"
     },
-    "auActivityType": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#auActivityType",
+    "activityType": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#activityType",
       "@type": "@id",
-      "@context": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.0"
+      "@context": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.1"
     },
     "launchParameters": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#launchParameters"
@@ -138,12 +138,12 @@
     "learner": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#learner",
       "@type": "@id",
-      "@context": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.0"
+      "@context": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.1"
     },
     "contextTemplate": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#contextTemplate",
       "@type": "@id",
-      "@context": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.0"
+      "@context": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.1"
     },
     "returnURL": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#returnURL",
@@ -164,15 +164,6 @@
     },
     "audioPreference": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#audioPreference"
-    },
-    "objectives": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#objectiveReference",
-      "@type": "@id"
-    },
-    "activityType": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#auActivityType",
-      "@type": "@id",
-      "@context": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.0"
     },
     "courseStructure": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#courseStructureKey"

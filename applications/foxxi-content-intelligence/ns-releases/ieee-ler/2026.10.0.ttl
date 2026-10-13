@@ -19,13 +19,12 @@
 @prefix clr: <https://purl.imsglobal.org/spec/vc/clr/vocab.html#> .
 @prefix foxxi-ieee-ler: <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#> .
 @prefix foxxi-adl-tla: <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#> .
-@prefix foxxi: <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> a owl:Ontology ;
     dct:title "IEEE Learning and Employment Records (LER) — Foxxi composable ontology"@en ;
-    dct:description "An OWL 2 DL vocabulary for the IEEE learning-and-employment-record family — the IEEE P2997 Enterprise Learner Record (active PAR), IEEE 1484.20.3-2022 Shareable Competency Definitions, IEEE 1484.2-2024 LER Ecosystems and the earlier IEEE 1484.20.1-2007 Reusable Competency Definitions (now inactive-reserved) — modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate's attestation, event-record, resource-descriptor and aggregation primitives, not new classes. Each term records how it is built (foxxi:construction, an annotation of the Foxxi vocabulary) and from which substrate primitives (iep:constructedFrom, the Interego substrate's own relation)."@en ;
+    dct:description "An OWL 2 DL vocabulary for the IEEE learning-and-employment-record family — the IEEE P2997 Enterprise Learner Record (active PAR), IEEE 1484.20.3-2022 Shareable Competency Definitions, IEEE 1484.2-2024 LER Ecosystems and the earlier IEEE 1484.20.1-2007 Reusable Competency Definitions (now inactive-reserved) — modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate's attestation, event-record, resource-descriptor and aggregation primitives, not new classes. Each term records how it is built (foxxi-ieee-ler:construction) and from which substrate primitives (iep:constructedFrom)."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by IEEE, ADL or 1EdTech. Where this document and the published standard differ, the standard governs."@en ,
-        "Cross-standard alignments to the ADL TLA ontology and to CaSS, CTDL-ASN, Open Badges and CLR are SKOS mapping relations (closeMatch and narrowMatch), never owl:equivalentClass: they record that two standards name closely related notions, or that one names a kind of the other, not that their instances are interchangeable. They are also published as an SSSOM mapping set at https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/mappings."@en ,
+        "Cross-standard alignments to the ADL TLA ontology and to CaSS, CTDL-ASN, Open Badges and CLR are SKOS mapping relations (closeMatch / exactMatch), never owl:equivalentClass: they record that two standards name closely related notions, not that their instances are interchangeable. They are also published as an SSSOM mapping set at https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/mappings."@en ,
         "Interego substrate terms (iep:, amta:, hela:) are referenced, not imported: the substrate ontologies are declared here term by term so this document is self-contained OWL 2 DL and loads without network access to them."@en ,
         "A Foxxi Enterprise Learner Record is JSON-LD read through the W3C VC 2.0 context and the record context published at https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/context/2026.10.0, which maps its fields to this vocabulary; the shapes at https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes constrain that RDF reading."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.0> ;
@@ -48,32 +47,23 @@
         <https://standards.ieee.org/ieee/1484.20.3/10749/> ,
         <https://standards.ieee.org/ieee/1484.2/11164/> ,
         <https://standards.ieee.org/ieee/1484.20.1/4012/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/ler-tla-vocab.ts> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/ler-tla-vocab.ts> ;
     rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ,
-        <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes/2026.10.0> ,
-        <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/mappings/2026.10.0> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/mappings> ,
         iep: .
 
-foxxi:construction a owl:AnnotationProperty ;
+foxxi-ieee-ler:construction a owl:AnnotationProperty ;
     rdfs:label "construction"@en ;
     rdfs:comment "How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value)."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> .
-
-foxxi-ieee-ler:construction a owl:AnnotationProperty ;
-    rdfs:label "obsolete construction"@en ;
-    rdfs:comment "How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value). Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it."@en ;
-    skos:definition "How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value). Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it."@en ;
-    owl:deprecated true ;
-    dct:isReplacedBy foxxi:construction ;
-    skos:changeNote "2026.10.0: deprecated in favour of the Foxxi vocabulary's construction."@en ;
+    rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:CompetencyDefinition a owl:Class ;
     rdfs:label "Competency Definition"@en ;
     rdfs:comment "A formal, context-neutral representation of one competency — a skill, knowledge, ability, attitude, habit of practice, or learning outcome — with a stable identity, a human-readable description, and optional structured statements."@en ;
-    skos:definition "A formal, context-neutral representation of one competency — a skill, knowledge, ability, attitude, habit of practice, or learning outcome — with a stable identity, a human-readable description, and optional structured statements."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions); IEEE 1484.20.1-2007 (Reusable Competency Definitions, now inactive-reserved)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:subClassOf skos:Concept ;
     skos:closeMatch foxxi-adl-tla:Competency ,
         <https://schema.cassproject.org/0.4/Competency> ,
@@ -83,17 +73,15 @@ foxxi-ieee-ler:CompetencyDefinition a owl:Class ;
 foxxi-ieee-ler:CompetencyStatement a owl:Class ;
     rdfs:label "Competency Statement"@en ;
     rdfs:comment "A single structured assertion within a competency definition — statement text, an optional controlled-vocabulary token, and an identifier. RCD's decomposition of a competency into its constituent claims."@en ;
-    skos:definition "A single structured assertion within a competency definition — statement text, an optional controlled-vocabulary token, and an identifier. RCD's decomposition of a competency into its constituent claims."@en ;
     dct:source "IEEE 1484.20.1-2007 (Reusable Competency Definitions), definition statements" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:CompetencyFramework a owl:Class ;
     rdfs:label "Competency Framework"@en ;
     rdfs:comment "A structured collection of competency definitions and the typed relationships between them — a blueprint of excellent performance."@en ;
-    skos:definition "A structured collection of competency definitions and the typed relationships between them — a blueprint of excellent performance."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:subClassOf skos:ConceptScheme ;
     skos:closeMatch foxxi-adl-tla:CompetencyFramework ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -101,43 +89,38 @@ foxxi-ieee-ler:CompetencyFramework a owl:Class ;
 foxxi-ieee-ler:CompetencyRelationship a owl:Class ;
     rdfs:label "Competency Relationship"@en ;
     rdfs:comment "A typed, directed edge between two competency definitions — for example narrows, broadens, requires, is-enabled-by, is-equivalent-to — reified so that the edge itself can carry a type and provenance."@en ;
-    skos:definition "A typed, directed edge between two competency definitions — for example narrows, broadens, requires, is-enabled-by, is-equivalent-to — reified so that the edge itself can carry a type and provenance."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     skos:closeMatch foxxi-adl-tla:Relation ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:ProficiencyLevel a owl:Class ;
     rdfs:label "Proficiency Level"@en ;
     rdfs:comment "An ordinal level of mastery a learner may attain on a competency — the scale an assertion is measured against."@en ;
-    skos:definition "An ordinal level of mastery a learner may attain on a competency — the scale an assertion is measured against."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions); CaSS schema 0.4 (Level)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     skos:closeMatch foxxi-adl-tla:Level ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:Rubric a owl:Class ;
     rdfs:label "Rubric"@en ;
     rdfs:comment "A structured set of evaluation criteria for assessing attainment of a competency."@en ;
-    skos:definition "A structured set of evaluation criteria for assessing attainment of a competency."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:RubricCriterion a owl:Class ;
     rdfs:label "Rubric Criterion"@en ;
     rdfs:comment "A single dimension being assessed within a rubric."@en ;
-    skos:definition "A single dimension being assessed within a rubric."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:EnterpriseLearnerRecord a owl:Class ;
     rdfs:label "Enterprise Learner Record"@en ;
     rdfs:comment "The aggregate, enterprise-level record of one learner. The P2997 project describes it as a ledger or registry: it holds indications of where subordinate data lives, not the raw data. It therefore emerges as the union of its record entries, scoped to one learner and carrying provenance — not a monolithic class."@en ;
-    skos:definition "The aggregate, enterprise-level record of one learner. The P2997 project describes it as a ledger or registry: it holds indications of where subordinate data lives, not the raw data. It therefore emerges as the union of its record entries, scoped to one learner and carrying provenance — not a monolithic class."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record) — an active standards project; this term follows its published scope, not a ratified text" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf iep:ComposedDescriptor , prov:Collection ;
     skos:closeMatch foxxi-adl-tla:LearnerProfile ;
     iep:constructedFrom foxxi-ieee-ler:RecordEntry , iep:ProvenanceFacet , iep:AgentFacet ;
@@ -146,9 +129,8 @@ foxxi-ieee-ler:EnterpriseLearnerRecord a owl:Class ;
 foxxi-ieee-ler:RecordEntry a owl:Class ;
     rdfs:label "Learner Record Entry"@en ;
     rdfs:comment "A single record generated by one system about one learner with respect to one activity, linked to its performance evidence and aligned competency or credential. It IS an attestation — an agent asserting a claim about a learner — so it composes the substrate's attestation primitive rather than minting a new shape."@en ;
-    skos:definition "A single record generated by one system about one learner with respect to one activity, linked to its performance evidence and aligned competency or credential. It IS an attestation — an agent asserting a claim about a learner — so it composes the substrate's attestation primitive rather than minting a new shape."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); ADL ELRR conceptual data model" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf amta:Attestation ;
     iep:constructedFrom amta:Attestation , iep:ProvenanceFacet ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -156,9 +138,8 @@ foxxi-ieee-ler:RecordEntry a owl:Class ;
 foxxi-ieee-ler:LearnerProfile a owl:Class ;
     rdfs:label "Learner Profile"@en ;
     rdfs:comment "A per-learner container assembling demographics, competency and credential history, aptitudes, preferences, goals and career trajectory. A view-bearing aggregation keyed by a resolved learner identity."@en ;
-    skos:definition "A per-learner container assembling demographics, competency and credential history, aptitudes, preferences, goals and career trajectory. A view-bearing aggregation keyed by a resolved learner identity."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); ADL TLA Learner Profile pillar" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf iep:ComposedDescriptor ;
     skos:closeMatch foxxi-adl-tla:LearnerProfile ;
     iep:constructedFrom foxxi-ieee-ler:EnterpriseLearnerRecord , iep:AgentFacet ;
@@ -167,9 +148,8 @@ foxxi-ieee-ler:LearnerProfile a owl:Class ;
 foxxi-ieee-ler:Transcript a owl:Class ;
     rdfs:label "Transcript"@en ;
     rdfs:comment "The learner's permanent academic record — courses, dates, grades, degrees. A projection (query view) over the verified record entries of an Enterprise Learner Record, optionally re-packaged as a Comprehensive Learner Record credential."@en ;
-    skos:definition "The learner's permanent academic record — courses, dates, grades, degrees. A projection (query view) over the verified record entries of an Enterprise Learner Record, optionally re-packaged as a Comprehensive Learner Record credential."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); 1EdTech Comprehensive Learner Record 2.0" ;
-    foxxi:construction "view" ;
+    foxxi-ieee-ler:construction "view" ;
     skos:closeMatch clr:ClrCredential ;
     iep:constructedFrom foxxi-ieee-ler:EnterpriseLearnerRecord , iep:CompositionOperator ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -177,9 +157,8 @@ foxxi-ieee-ler:Transcript a owl:Class ;
 foxxi-ieee-ler:CompetencyAssertion a owl:Class ;
     rdfs:label "Competency Assertion"@en ;
     rdfs:comment "A claim, made by one party, that a learner can perform a competency at a stated proficiency level, with some confidence, backed by evidence. The same shape as a CaSS Assertion and a MOM `asserted` statement — one attestation primitive, three trust tiers."@en ;
-    skos:definition "A claim, made by one party, that a learner can perform a competency at a stated proficiency level, with some confidence, backed by evidence. The same shape as a CaSS Assertion and a MOM `asserted` statement — one attestation primitive, three trust tiers."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); ADL ELRR (Assertion)" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf amta:Attestation ;
     skos:closeMatch foxxi-adl-tla:Assertion , <https://schema.cassproject.org/0.4/Assertion> ;
     iep:constructedFrom amta:Attestation , iep:assertingAgent , iep:modalStatus ;
@@ -188,9 +167,8 @@ foxxi-ieee-ler:CompetencyAssertion a owl:Class ;
 foxxi-ieee-ler:Evidence a owl:Class ;
     rdfs:label "Evidence"@en ;
     rdfs:comment "Anything presented in support of an assertion of competency. Reuses the substrate's provenance entity — evidence is a prov:Entity that an assertion was derived from."@en ;
-    skos:definition "Anything presented in support of an assertion of competency. Reuses the substrate's provenance entity — evidence is a prov:Entity that an assertion was derived from."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); ADL ELRR (Evidence)" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf prov:Entity ;
     iep:constructedFrom prov:Entity , iep:provenanceChain ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -198,9 +176,8 @@ foxxi-ieee-ler:Evidence a owl:Class ;
 foxxi-ieee-ler:PerformanceRecord a owl:Class ;
     rdfs:label "Performance Record"@en ;
     rdfs:comment "The record of a learner's performance that underpins a record entry: in practice an xAPI Statement held in an LRS, or a pointer to one. The RECORD is evidence (a prov:Entity); the performance it records is the activity the substrate models as a hela:Statement, so this class is built from that primitive rather than being one."@en ;
-    skos:definition "The record of a learner's performance that underpins a record entry: in practice an xAPI Statement held in an LRS, or a pointer to one. The RECORD is evidence (a prov:Entity); the performance it records is the activity the substrate models as a hela:Statement, so this class is built from that primitive rather than being one."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record), referencing IEEE 9274.1.1-2023 (xAPI 2.0)" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf foxxi-ieee-ler:Evidence ;
     iep:constructedFrom hela:Statement , hela:Trace ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -208,21 +185,18 @@ foxxi-ieee-ler:PerformanceRecord a owl:Class ;
 foxxi-ieee-ler:Credential a owl:Class ;
     rdfs:label "Credential"@en ;
     rdfs:comment "An attestation of qualification, competence or authority issued by an authority, expressed as a W3C Verifiable Credential whose subject carries one or more claims. Open Badges 3.0 and CLR 2.0 credentials are kinds of it."@en ;
-    skos:definition "An attestation of qualification, competence or authority issued by an authority, expressed as a W3C Verifiable Credential whose subject carries one or more claims. Open Badges 3.0 and CLR 2.0 credentials are kinds of it."@en ;
     dct:source "IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); W3C Verifiable Credentials Data Model 2.0" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf vc:VerifiableCredential , amta:Attestation ;
-    skos:narrowMatch ob:OpenBadgeCredential , clr:ClrCredential ;
-    skos:changeNote "2026.10.0: Open Badges and CLR credentials are narrower matches (kinds of a Credential), where the Open Badges one had been a close match."@en ;
+    skos:closeMatch ob:OpenBadgeCredential ;
     iep:constructedFrom vc:VerifiableCredential , iep:verifiableCredential ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:Endorsement a owl:Class ;
     rdfs:label "Endorsement"@en ;
     rdfs:comment "An attestation whose subject is itself another attestation, credential, or issuer — a party vouching for a claim or for a claimant. The attestation primitive applied reflexively."@en ;
-    skos:definition "An attestation whose subject is itself another attestation, credential, or issuer — a party vouching for a claim or for a claimant. The attestation primitive applied reflexively."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); 1EdTech Open Badges 3.0 (EndorsementCredential)" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf amta:Attestation ;
     iep:constructedFrom amta:Attestation ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -230,9 +204,8 @@ foxxi-ieee-ler:Endorsement a owl:Class ;
 foxxi-ieee-ler:Accreditation a owl:Class ;
     rdfs:label "Accreditation"@en ;
     rdfs:comment "Official certification that a learning activity or learning source is acceptable for a specific purpose. An attestation about a course or a source."@en ;
-    skos:definition "Official certification that a learning activity or learning source is acceptable for a specific purpose. An attestation about a course or a source."@en ;
     dct:source "ADL ELRR (Accreditation)" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     rdfs:subClassOf amta:Attestation ;
     iep:constructedFrom amta:Attestation ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -240,26 +213,23 @@ foxxi-ieee-ler:Accreditation a owl:Class ;
 foxxi-ieee-ler:LearnerIdentityBinding a owl:Class ;
     rdfs:label "Learner Identity Binding"@en ;
     rdfs:comment "The resolution of a learner's many local account names and UUIDs across systems to one enterprise identity. Not a content class — a set of identity-equivalence assertions with provenance."@en ;
-    skos:definition "The resolution of a learner's many local account names and UUIDs across systems to one enterprise identity. Not a content class — a set of identity-equivalence assertions with provenance."@en ;
     dct:source "ADL ELRR (federated identity management)" ;
-    foxxi:construction "composed" ;
+    foxxi-ieee-ler:construction "composed" ;
     iep:constructedFrom iep:AgentFacet , iep:provenanceChain ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:RawDataLocation a owl:Class ;
     rdfs:label "Raw Data Location"@en ;
     rdfs:comment "An indication of where one class of the raw data behind an Enterprise Learner Record is kept — the subject's own pod, an LRS, a credential descriptor — so a reader can go to the source instead of trusting the summary."@en ;
-    skos:definition "An indication of where one class of the raw data behind an Enterprise Learner Record is kept — the subject's own pod, an LRS, a credential descriptor — so a reader can go to the source instead of trusting the summary."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: raw data location)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:Learner a owl:Class ;
     rdfs:label "Learner"@en ;
     rdfs:comment "The natural person who is the subject of a learner record and, in the LER ecosystem, curates and controls access to it. A role a prov:Agent plays — the same person is an Issuer in another record."@en ;
-    skos:definition "The natural person who is the subject of a learner record and, in the LER ecosystem, curates and controls access to it. A role a prov:Agent plays — the same person is an Issuer in another record."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)" ;
-    foxxi:construction "role" ;
+    foxxi-ieee-ler:construction "role" ;
     rdfs:subClassOf prov:Agent ;
     iep:constructedFrom prov:Agent , iep:agentRole ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -267,9 +237,8 @@ foxxi-ieee-ler:Learner a owl:Class ;
 foxxi-ieee-ler:Issuer a owl:Class ;
     rdfs:label "Issuer"@en ;
     rdfs:comment "The authority — an education, training, work-based provider or evaluator — that confers a credential or makes an assertion about a learner. A role of a prov:Agent."@en ;
-    skos:definition "The authority — an education, training, work-based provider or evaluator — that confers a credential or makes an assertion about a learner. A role of a prov:Agent."@en ;
     dct:source "IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); W3C Verifiable Credentials Data Model 2.0 (issuer)" ;
-    foxxi:construction "role" ;
+    foxxi-ieee-ler:construction "role" ;
     rdfs:subClassOf prov:Agent ;
     iep:constructedFrom prov:Agent , iep:agentRole ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -277,9 +246,8 @@ foxxi-ieee-ler:Issuer a owl:Class ;
 foxxi-ieee-ler:Endorser a owl:Class ;
     rdfs:label "Endorser"@en ;
     rdfs:comment "A party that vouches for an issuer or for a credential. A role of a prov:Agent."@en ;
-    skos:definition "A party that vouches for an issuer or for a credential. A role of a prov:Agent."@en ;
     dct:source "IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); 1EdTech Open Badges 3.0 (endorsement)" ;
-    foxxi:construction "role" ;
+    foxxi-ieee-ler:construction "role" ;
     rdfs:subClassOf prov:Agent ;
     iep:constructedFrom prov:Agent , iep:agentRole ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -287,9 +255,8 @@ foxxi-ieee-ler:Endorser a owl:Class ;
 foxxi-ieee-ler:Verifier a owl:Class ;
     rdfs:label "Verifier"@en ;
     rdfs:comment "A party — typically an employer — to whom a learner presents records for review. A role of a prov:Agent."@en ;
-    skos:definition "A party — typically an employer — to whom a learner presents records for review. A role of a prov:Agent."@en ;
     dct:source "IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); W3C Verifiable Credentials Data Model 2.0 (verifier)" ;
-    foxxi:construction "role" ;
+    foxxi-ieee-ler:construction "role" ;
     rdfs:subClassOf prov:Agent ;
     iep:constructedFrom prov:Agent , iep:agentRole ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -297,9 +264,8 @@ foxxi-ieee-ler:Verifier a owl:Class ;
 foxxi-ieee-ler:LearningSource a owl:Class ;
     rdfs:label "Learning Source"@en ;
     rdfs:comment "Any source that provides a learning activity and supplies evidence and assertions about it. A role of a prov:Agent / organization."@en ;
-    skos:definition "Any source that provides a learning activity and supplies evidence and assertions about it. A role of a prov:Agent / organization."@en ;
     dct:source "ADL ELRR (Learning Source)" ;
-    foxxi:construction "role" ;
+    foxxi-ieee-ler:construction "role" ;
     rdfs:subClassOf prov:Agent ;
     iep:constructedFrom prov:Agent , iep:agentRole ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -307,22 +273,20 @@ foxxi-ieee-ler:LearningSource a owl:Class ;
 foxxi-ieee-ler:recordEntry a owl:ObjectProperty ;
     rdfs:label "record entry"@en ;
     rdfs:comment "Relates an Enterprise Learner Record to one of the entries it aggregates."@en ;
-    skos:definition "Relates an Enterprise Learner Record to one of the entries it aggregates."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:subPropertyOf prov:hadMember ;
     rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
     rdfs:range foxxi-ieee-ler:RecordEntry ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
-foxxi-ieee-ler:holder a owl:ObjectProperty ;
+foxxi-ieee-ler:holder a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "obsolete holder"@en ;
-    rdfs:comment "Relates an Enterprise Learner Record or a credential to the Learner it is about. Deprecated: the name reads as a Verifiable Credential's holder, a different relation (who presents a credential, not whom it is about); about learner replaces it."@en ;
-    skos:definition "Relates an Enterprise Learner Record or a credential to the Learner it is about. Deprecated: the name reads as a Verifiable Credential's holder, a different relation (who presents a credential, not whom it is about); about learner replaces it."@en ;
+    rdfs:comment "Relates an Enterprise Learner Record or a credential to the one Learner it is about. Deprecated: the name reads as a Verifiable Credential's holder, a different relation (who presents a credential, not whom it is about); about learner replaces it."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-ieee-ler:EnterpriseLearnerRecord foxxi-ieee-ler:Credential ) ] ;
     rdfs:range foxxi-ieee-ler:Learner ;
-    skos:changeNote "2026.10.0: deprecated in favour of about learner; kept with the axioms it was published with."@en ;
     owl:deprecated true ;
     dct:isReplacedBy foxxi-ieee-ler:aboutLearner ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -330,9 +294,8 @@ foxxi-ieee-ler:holder a owl:ObjectProperty ;
 foxxi-ieee-ler:aboutLearner a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "about learner"@en ;
     rdfs:comment "Relates an Enterprise Learner Record or a credential to the one Learner it is about — its subject, not whoever holds or presents it."@en ;
-    skos:definition "Relates an Enterprise Learner Record or a credential to the one Learner it is about — its subject, not whoever holds or presents it."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-ieee-ler:EnterpriseLearnerRecord foxxi-ieee-ler:Credential ) ] ;
     rdfs:range foxxi-ieee-ler:Learner ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -340,9 +303,8 @@ foxxi-ieee-ler:aboutLearner a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:aboutCompetency a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "about competency"@en ;
     rdfs:comment "Relates a competency assertion to the one competency definition it claims mastery of."@en ;
-    skos:definition "Relates a competency assertion to the one competency definition it claims mastery of."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); ADL ELRR (Assertion)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
     rdfs:range foxxi-ieee-ler:CompetencyDefinition ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -350,9 +312,8 @@ foxxi-ieee-ler:aboutCompetency a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:atProficiency a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "at proficiency"@en ;
     rdfs:comment "Relates a competency assertion to the one proficiency level it claims."@en ;
-    skos:definition "Relates a competency assertion to the one proficiency level it claims."@en ;
     dct:source "ADL ELRR (Proficiency)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
     rdfs:range foxxi-ieee-ler:ProficiencyLevel ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -360,9 +321,8 @@ foxxi-ieee-ler:atProficiency a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:supportedByEvidence a owl:ObjectProperty ;
     rdfs:label "supported by evidence"@en ;
     rdfs:comment "Relates an assertion or record entry to the evidence presented in support of it."@en ;
-    skos:definition "Relates an assertion or record entry to the evidence presented in support of it."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); ADL ELRR (Evidence)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:subPropertyOf prov:wasDerivedFrom ;
     rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-ieee-ler:CompetencyAssertion foxxi-ieee-ler:RecordEntry ) ] ;
     rdfs:range foxxi-ieee-ler:Evidence ;
@@ -371,9 +331,8 @@ foxxi-ieee-ler:supportedByEvidence a owl:ObjectProperty ;
 foxxi-ieee-ler:issuedBy a owl:ObjectProperty ;
     rdfs:label "issued by"@en ;
     rdfs:comment "Relates a credential or assertion to the Issuer that conferred it."@en ;
-    skos:definition "Relates a credential or assertion to the Issuer that conferred it."@en ;
     dct:source "IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); W3C Verifiable Credentials Data Model 2.0 (issuer)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:subPropertyOf prov:wasAttributedTo ;
     rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-ieee-ler:Credential foxxi-ieee-ler:CompetencyAssertion ) ] ;
     rdfs:range foxxi-ieee-ler:Issuer ;
@@ -382,9 +341,8 @@ foxxi-ieee-ler:issuedBy a owl:ObjectProperty ;
 foxxi-ieee-ler:frameworkMember a owl:ObjectProperty ;
     rdfs:label "framework member"@en ;
     rdfs:comment "Relates a competency framework to a competency definition it contains."@en ;
-    skos:definition "Relates a competency framework to a competency definition it contains."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyFramework ;
     rdfs:range foxxi-ieee-ler:CompetencyDefinition ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -392,9 +350,8 @@ foxxi-ieee-ler:frameworkMember a owl:ObjectProperty ;
 foxxi-ieee-ler:hasStatement a owl:ObjectProperty ;
     rdfs:label "has statement"@en ;
     rdfs:comment "Relates a competency definition to one of the structured statements it is decomposed into."@en ;
-    skos:definition "Relates a competency definition to one of the structured statements it is decomposed into."@en ;
     dct:source "IEEE 1484.20.1-2007 (Reusable Competency Definitions), definition statements" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyDefinition ;
     rdfs:range foxxi-ieee-ler:CompetencyStatement ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -402,9 +359,8 @@ foxxi-ieee-ler:hasStatement a owl:ObjectProperty ;
 foxxi-ieee-ler:fromCompetency a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "from competency"@en ;
     rdfs:comment "Relates a competency relationship to the competency definition at which the directed edge starts."@en ;
-    skos:definition "Relates a competency relationship to the competency definition at which the directed edge starts."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyRelationship ;
     rdfs:range foxxi-ieee-ler:CompetencyDefinition ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -412,9 +368,8 @@ foxxi-ieee-ler:fromCompetency a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:toCompetency a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "to competency"@en ;
     rdfs:comment "Relates a competency relationship to the competency definition at which the directed edge ends."@en ;
-    skos:definition "Relates a competency relationship to the competency definition at which the directed edge ends."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyRelationship ;
     rdfs:range foxxi-ieee-ler:CompetencyDefinition ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -422,9 +377,8 @@ foxxi-ieee-ler:toCompetency a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:hasCriterion a owl:ObjectProperty ;
     rdfs:label "has criterion"@en ;
     rdfs:comment "Relates a rubric to one of the criteria it assesses."@en ;
-    skos:definition "Relates a rubric to one of the criteria it assesses."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:Rubric ;
     rdfs:range foxxi-ieee-ler:RubricCriterion ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -432,9 +386,8 @@ foxxi-ieee-ler:hasCriterion a owl:ObjectProperty ;
 foxxi-ieee-ler:criterionFor a owl:ObjectProperty ;
     rdfs:label "criterion for"@en ;
     rdfs:comment "Relates a rubric criterion to the competency definition whose attainment it assesses."@en ;
-    skos:definition "Relates a rubric criterion to the competency definition whose attainment it assesses."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:RubricCriterion ;
     rdfs:range foxxi-ieee-ler:CompetencyDefinition ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -442,9 +395,8 @@ foxxi-ieee-ler:criterionFor a owl:ObjectProperty ;
 foxxi-ieee-ler:criterionLevel a owl:ObjectProperty ;
     rdfs:label "criterion level"@en ;
     rdfs:comment "Relates a rubric criterion to a proficiency level it distinguishes."@en ;
-    skos:definition "Relates a rubric criterion to a proficiency level it distinguishes."@en ;
     dct:source "IEEE 1484.20.3-2022 (Shareable Competency Definitions)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:RubricCriterion ;
     rdfs:range foxxi-ieee-ler:ProficiencyLevel ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -452,9 +404,8 @@ foxxi-ieee-ler:criterionLevel a owl:ObjectProperty ;
 foxxi-ieee-ler:bindsLearner a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "binds learner"@en ;
     rdfs:comment "Relates a learner identity binding to the one learner whose local identities it resolves."@en ;
-    skos:definition "Relates a learner identity binding to the one learner whose local identities it resolves."@en ;
     dct:source "ADL ELRR (federated identity management)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:LearnerIdentityBinding ;
     rdfs:range foxxi-ieee-ler:Learner ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -462,9 +413,8 @@ foxxi-ieee-ler:bindsLearner a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:transcriptOf a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "transcript of"@en ;
     rdfs:comment "Relates a transcript to the one Enterprise Learner Record it is a projection of."@en ;
-    skos:definition "Relates a transcript to the one Enterprise Learner Record it is a projection of."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:Transcript ;
     rdfs:range foxxi-ieee-ler:EnterpriseLearnerRecord ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -472,9 +422,8 @@ foxxi-ieee-ler:transcriptOf a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:accredits a owl:ObjectProperty ;
     rdfs:label "accredits"@en ;
     rdfs:comment "Relates an accreditation to what it certifies as acceptable: a learning source, or a learning activity (identified by its metadata descriptor)."@en ;
-    skos:definition "Relates an accreditation to what it certifies as acceptable: a learning source, or a learning activity (identified by its metadata descriptor)."@en ;
     dct:source "ADL ELRR (Accreditation)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:Accreditation ;
     rdfs:range [
         a owl:Class ;
@@ -485,9 +434,8 @@ foxxi-ieee-ler:accredits a owl:ObjectProperty ;
 foxxi-ieee-ler:endorses a owl:ObjectProperty ;
     rdfs:label "endorses"@en ;
     rdfs:comment "Relates an endorsement to what it vouches for: another attestation (a credential or an assertion) or an issuer."@en ;
-    skos:definition "Relates an endorsement to what it vouches for: another attestation (a credential or an assertion) or an issuer."@en ;
     dct:source "1EdTech Open Badges 3.0 (EndorsementCredential)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:Endorsement ;
     rdfs:range [ a owl:Class ; owl:unionOf ( amta:Attestation foxxi-ieee-ler:Issuer ) ] ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -495,9 +443,8 @@ foxxi-ieee-ler:endorses a owl:ObjectProperty ;
 foxxi-ieee-ler:endorser a owl:ObjectProperty ;
     rdfs:label "endorsed by"@en ;
     rdfs:comment "Relates an endorsement to the party that makes it."@en ;
-    skos:definition "Relates an endorsement to the party that makes it."@en ;
     dct:source "1EdTech Open Badges 3.0 (EndorsementCredential)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:subPropertyOf prov:wasAttributedTo ;
     rdfs:domain foxxi-ieee-ler:Endorsement ;
     rdfs:range foxxi-ieee-ler:Endorser ;
@@ -506,9 +453,8 @@ foxxi-ieee-ler:endorser a owl:ObjectProperty ;
 foxxi-ieee-ler:recordStatus a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "record status"@en ;
     rdfs:comment "The status of a learner record entry within the ledger — exactly one of success, partial, failure."@en ;
-    skos:definition "The status of a learner record entry within the ledger — exactly one of success, partial, failure."@en ;
     dct:source "ADL ELRR (Status)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:RecordEntry ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "success" "partial" "failure" ) ] ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -516,9 +462,8 @@ foxxi-ieee-ler:recordStatus a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:subjectKind a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "subject kind"@en ;
     rdfs:comment "Whether the subject of an Enterprise Learner Record is a human learner or performer, or an AI agent. The record has the same shape either way."@en ;
-    skos:definition "Whether the subject of an Enterprise Learner Record is a human learner or performer, or an AI agent. The record has the same shape either way."@en ;
     dct:source "Foxxi extension to IEEE P2997 (whose records describe people)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "human" "agent" ) ] ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -526,9 +471,8 @@ foxxi-ieee-ler:subjectKind a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:organizationPath a owl:ObjectProperty ;
     rdfs:label "organization path"@en ;
     rdfs:comment "Relates an Enterprise Learner Record to a step on its organisation path: an organisation or system — one that issued a credential in it, holds an LRS it draws on, or is the tenant it was assembled for — in the role it plays for this record, at its place on the path."@en ;
-    skos:definition "Relates an Enterprise Learner Record to a step on its organisation path: an organisation or system — one that issued a credential in it, holds an LRS it draws on, or is the tenant it was assembled for — in the role it plays for this record, at its place on the path."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: organisation path)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
     rdfs:range foxxi-ieee-ler:OrganizationPathStep ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -536,17 +480,15 @@ foxxi-ieee-ler:organizationPath a owl:ObjectProperty ;
 foxxi-ieee-ler:OrganizationPathStep a owl:Class ;
     rdfs:label "Organization Path Step"@en ;
     rdfs:comment "One step of an Enterprise Learner Record's organisation path: which organisation or system, the role it plays for this record, and its place on the path. A node of its own, because the role belongs to the step, not to the organisation: the tenant of one record is the issuer in another."@en ;
-    skos:definition "One step of an Enterprise Learner Record's organisation path: which organisation or system, the role it plays for this record, and its place on the path. A node of its own, because the role belongs to the step, not to the organisation: the tenant of one record is the issuer in another."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: organisation path); W3C Defining N-ary Relations on the Semantic Web (pattern 1)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:pathOrganization a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "path organization"@en ;
     rdfs:comment "The organisation or system at a step of an organisation path, identified by its DID or URL."@en ;
-    skos:definition "The organisation or system at a step of an organisation path, identified by its DID or URL."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: organisation path)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:OrganizationPathStep ;
     rdfs:range prov:Agent ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -554,9 +496,8 @@ foxxi-ieee-ler:pathOrganization a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:pathRole a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "path role"@en ;
     rdfs:comment "The role the organisation or system at a step of an organisation path plays for the record: the tenant it was assembled for, the authority of an LRS it draws on, the issuer of a credential in it."@en ;
-    skos:definition "The role the organisation or system at a step of an organisation path plays for the record: the tenant it was assembled for, the authority of an LRS it draws on, the issuer of a credential in it."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: organisation path)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:OrganizationPathStep ;
     rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -564,9 +505,8 @@ foxxi-ieee-ler:pathRole a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:pathPosition a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "path position"@en ;
     rdfs:comment "The place of a step on its organisation path, counting from 1: the order the path is listed in, which RDF keeps no other way."@en ;
-    skos:definition "The place of a step on its organisation path, counting from 1: the order the path is listed in, which RDF keeps no other way."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: organisation path)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:OrganizationPathStep ;
     rdfs:range xsd:positiveInteger ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -574,9 +514,8 @@ foxxi-ieee-ler:pathPosition a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:rawDataLocation a owl:ObjectProperty ;
     rdfs:label "raw data location"@en ;
     rdfs:comment "Relates an Enterprise Learner Record to an indication of where one class of its raw data is kept."@en ;
-    skos:definition "Relates an Enterprise Learner Record to an indication of where one class of its raw data is kept."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: raw data location)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
     rdfs:range foxxi-ieee-ler:RawDataLocation ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -584,9 +523,8 @@ foxxi-ieee-ler:rawDataLocation a owl:ObjectProperty ;
 foxxi-ieee-ler:rawDataKind a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "raw data kind"@en ;
     rdfs:comment "Which class of raw data a location holds: the subject's own pod, an LRS, or a credential descriptor."@en ;
-    skos:definition "Which class of raw data a location holds: the subject's own pod, an LRS, or a credential descriptor."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: raw data location)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:RawDataLocation ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "subject-pod" "lrs" "credential-descriptor" ) ] ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -594,9 +532,8 @@ foxxi-ieee-ler:rawDataKind a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:dataLocation a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "data location"@en ;
     rdfs:comment "The URL where a class of raw data, or the raw record behind an entry, is kept."@en ;
-    skos:definition "The URL where a class of raw data, or the raw record behind an entry, is kept."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: raw data location)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-ieee-ler:RawDataLocation foxxi-ieee-ler:RecordEntry ) ] ;
     rdfs:range xsd:anyURI ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -604,9 +541,8 @@ foxxi-ieee-ler:dataLocation a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:hasAssertion a owl:ObjectProperty ;
     rdfs:label "has assertion"@en ;
     rdfs:comment "Relates an Enterprise Learner Record to a competency assertion it carries about its subject."@en ;
-    skos:definition "Relates an Enterprise Learner Record to a competency assertion it carries about its subject."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record: competencies)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
     rdfs:range foxxi-ieee-ler:CompetencyAssertion ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -614,9 +550,8 @@ foxxi-ieee-ler:hasAssertion a owl:ObjectProperty ;
 foxxi-ieee-ler:assertionSubject a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "assertion subject"@en ;
     rdfs:comment "Relates a competency assertion to the one person or agent it is about — who need not be the agent making it."@en ;
-    skos:definition "Relates a competency assertion to the one person or agent it is about — who need not be the agent making it."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); ADL ELRR (Assertion)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
     rdfs:range prov:Agent ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -624,9 +559,8 @@ foxxi-ieee-ler:assertionSubject a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:successConfidence a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "success confidence"@en ;
     rdfs:comment "How confident the asserting party is that the subject succeeds at the competency: a number from 0 to 1, in Foxxi the Wilson lower bound on the observed success rate. A decimal, or a double, which is what JSON-LD makes of a JSON number."@en ;
-    skos:definition "How confident the asserting party is that the subject succeeds at the competency: a number from 0 to 1, in Foxxi the Wilson lower bound on the observed success rate. A decimal, or a double, which is what JSON-LD makes of a JSON number."@en ;
     dct:source "ADL ELRR (Assertion: confidence); CaSS schema 0.4 (Assertion: confidence)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
     rdfs:range [ a rdfs:Datatype ; owl:unionOf ( xsd:decimal xsd:double ) ] ;
     skos:closeMatch foxxi-adl-tla:confidence ;
@@ -635,9 +569,8 @@ foxxi-ieee-ler:successConfidence a owl:DatatypeProperty , owl:FunctionalProperty
 foxxi-ieee-ler:rolledUpBy a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "rolled up by"@en ;
     rdfs:comment "Relates a competency assertion to the published roll-up rule whose evaluation produced its proficiency level and confidence."@en ;
-    skos:definition "Relates a competency assertion to the published roll-up rule whose evaluation produced its proficiency level and confidence."@en ;
     dct:source "CaSS schema 0.4 (RollupRule); ADL TLA (competency roll-up)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
     rdfs:range foxxi-adl-tla:RollupRule ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -645,9 +578,8 @@ foxxi-ieee-ler:rolledUpBy a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:evidenceBasis a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "evidence basis"@en ;
     rdfs:comment "The strongest class of evidence a competency assertion rests on: observed performance, a held credential, or inference from learning experiences."@en ;
-    skos:definition "The strongest class of evidence a competency assertion rests on: observed performance, a held credential, or inference from learning experiences."@en ;
     dct:source "Foxxi (the three evidence classes an Enterprise Learner Record ranks)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "performance" "credential" "inferred" ) ] ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -655,36 +587,32 @@ foxxi-ieee-ler:evidenceBasis a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:aboutActivity a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "about activity"@en ;
     rdfs:comment "Relates a record entry to the learning or work activity it is about — the object of the statement it was projected from — identified by an IRI."@en ;
-    skos:definition "Relates a record entry to the learning or work activity it is about — the object of the statement it was projected from — identified by an IRI."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.3" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:RecordEntry ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:activityType a owl:ObjectProperty ;
     rdfs:label "activity type"@en ;
     rdfs:comment "Relates a record entry to the type of the activity it is about (the activity's xAPI activity type)."@en ;
-    skos:definition "Relates a record entry to the type of the activity it is about (the activity's xAPI activity type)."@en ;
     dct:source "IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.3 (Activity Definition: type)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:RecordEntry ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:entryVerb a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "entry verb"@en ;
     rdfs:comment "Relates a record entry to the xAPI verb of the statement it was projected from, identified by the verb's IRI."@en ;
-    skos:definition "Relates a record entry to the xAPI verb of the statement it was projected from, identified by the verb's IRI."@en ;
     dct:source "IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.2" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:RecordEntry ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 foxxi-ieee-ler:occurredAt a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "occurred at"@en ;
     rdfs:comment "When what a record entry records happened: the timestamp of the statement it was projected from."@en ;
-    skos:definition "When what a record entry records happened: the timestamp of the statement it was projected from."@en ;
     dct:source "IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.7 (Timestamps)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:RecordEntry ;
     rdfs:range xsd:dateTime ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
@@ -692,300 +620,10 @@ foxxi-ieee-ler:occurredAt a owl:DatatypeProperty , owl:FunctionalProperty ;
 foxxi-ieee-ler:succeeded a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "succeeded"@en ;
     rdfs:comment "Whether the performance a record entry records succeeded: the result.success of the statement it was projected from."@en ;
-    skos:definition "Whether the performance a record entry records succeeded: the result.success of the statement it was projected from."@en ;
     dct:source "IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.4 (Result: success)" ;
-    foxxi:construction "minted" ;
+    foxxi-ieee-ler:construction "minted" ;
     rdfs:domain foxxi-ieee-ler:RecordEntry ;
     rdfs:range xsd:boolean ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:conformsToLabel a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "conforms-to label"@en ;
-    rdfs:comment "The title of the standard an Enterprise Learner Record conforms to (its dct:conformsTo), given for a reader that does not dereference that IRI."@en ;
-    skos:definition "The title of the standard an Enterprise Learner Record conforms to (its dct:conformsTo), given for a reader that does not dereference that IRI."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range xsd:string ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:hasCredential a owl:ObjectProperty ;
-    rdfs:label "has credential"@en ;
-    rdfs:comment "Relates an Enterprise Learner Record to a credential conferred on its learner that the record lists. The credential itself is where its raw data location says."@en ;
-    skos:definition "Relates an Enterprise Learner Record to a credential conferred on its learner that the record lists. The credential itself is where its raw data location says."@en ;
-    dct:source "IEEE P2997 (Enterprise Learner Record: credentials held, by indication of where they are stored)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range foxxi-ieee-ler:Credential ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:achievementName a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "achievement name"@en ;
-    rdfs:comment "The name of the achievement a credential confers, as the credential gives it."@en ;
-    skos:definition "The name of the achievement a credential confers, as the credential gives it."@en ;
-    dct:source "1EdTech Open Badges 3.0 (Achievement: name), as a record lists the credential" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:Credential ;
-    rdfs:range xsd:string ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:proofVerified a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "proof verified"@en ;
-    rdfs:comment "Whether the proof of a credential a record lists verified when the record was assembled."@en ;
-    skos:definition "Whether the proof of a credential a record lists verified when the record was assembled."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:Credential ;
-    rdfs:range xsd:boolean ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:verbDisplay a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "verb display"@en ;
-    rdfs:comment "How the statement a record entry was projected from displays its verb, in one language."@en ;
-    skos:definition "How the statement a record entry was projected from displays its verb, in one language."@en ;
-    dct:source "IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.2 (Verb: display), as a record entry carries it" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:RecordEntry ;
-    rdfs:range xsd:string ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:activityName a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "activity name"@en ;
-    rdfs:comment "The name of the activity or task a record entry is about, as its statement names it."@en ;
-    skos:definition "The name of the activity or task a record entry is about, as its statement names it."@en ;
-    dct:source "IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.3 (Activity Definition: name), as a record entry carries it" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:RecordEntry ;
-    rdfs:range xsd:string ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:outcomeQuality a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "outcome quality"@en ;
-    rdfs:comment "The quality of the outcome of the work a record entry records: the scaled score of its statement, from -1 to 1. A decimal, or a double, which is what JSON-LD makes of a JSON number."@en ;
-    skos:definition "The quality of the outcome of the work a record entry records: the scaled score of its statement, from -1 to 1. A decimal, or a double, which is what JSON-LD makes of a JSON number."@en ;
-    dct:source "IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.4 (Score: scaled), as a record entry carries it" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:RecordEntry ;
-    rdfs:range [ a rdfs:Datatype ; owl:unionOf ( xsd:decimal xsd:double ) ] ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:duration a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "duration"@en ;
-    rdfs:comment "How long the work a record entry records took: an ISO 8601 duration, as its statement's result gives it."@en ;
-    skos:definition "How long the work a record entry records took: an ISO 8601 duration, as its statement's result gives it."@en ;
-    dct:source "IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.4 (Result: duration), as a record entry carries it" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:RecordEntry ;
-    rdfs:range xsd:string ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:costUSD a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "cost in US dollars"@en ;
-    rdfs:comment "What the work a record entry records cost, in US dollars, as its statement reports it. A decimal, or a double."@en ;
-    skos:definition "What the work a record entry records cost, in US dollars, as its statement reports it. A decimal, or a double."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:RecordEntry ;
-    rdfs:range [ a rdfs:Datatype ; owl:unionOf ( xsd:decimal xsd:double ) ] ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:competencyLabel a owl:DatatypeProperty ;
-    rdfs:label "competency label"@en ;
-    rdfs:comment "The name of the competency a competency assertion is about (ler:aboutCompetency), given for a reader that does not dereference it."@en ;
-    skos:definition "The name of the competency a competency assertion is about (ler:aboutCompetency), given for a reader that does not dereference it."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
-    rdfs:range xsd:string ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:frameworkName a owl:DatatypeProperty ;
-    rdfs:label "framework name"@en ;
-    rdfs:comment "The name of the competency framework the competency of an assertion belongs to, as the credential that aligns it names it."@en ;
-    skos:definition "The name of the competency framework the competency of an assertion belongs to, as the credential that aligns it names it."@en ;
-    dct:source "1EdTech Open Badges 3.0 (Alignment: targetFramework), as an assertion carries it" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
-    rdfs:range xsd:string ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:proficiencyLabel a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "proficiency label"@en ;
-    rdfs:comment "The name of the proficiency level a competency assertion places its subject at (ler:atProficiency), given for a reader that does not dereference it."@en ;
-    skos:definition "The name of the proficiency level a competency assertion places its subject at (ler:atProficiency), given for a reader that does not dereference it."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
-    rdfs:range xsd:string ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:proficiencyRank a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "proficiency rank"@en ;
-    rdfs:comment "The rank of that proficiency level on its scale: 1 for the lowest."@en ;
-    skos:definition "The rank of that proficiency level on its scale: 1 for the lowest."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
-    rdfs:range xsd:positiveInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:trainingCompletionCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "training completion count"@en ;
-    rdfs:comment "How many training completions a competency assertion rests on."@en ;
-    skos:definition "How many training completions a competency assertion rests on."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:performanceExecutionCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "performance execution count"@en ;
-    rdfs:comment "How many distinct tasks performed a competency assertion rests on."@en ;
-    skos:definition "How many distinct tasks performed a competency assertion rests on."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:performanceSuccessRate a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "performance success rate"@en ;
-    rdfs:comment "The share of performances that asserted an outcome and succeeded, from 0 to 1: of all a record lists, or of those a competency assertion rests on. A decimal, or a double."@en ;
-    skos:definition "The share of performances that asserted an outcome and succeeded, from 0 to 1: of all a record lists, or of those a competency assertion rests on. A decimal, or a double."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain [
-        a owl:Class ;
-        owl:unionOf ( foxxi-ieee-ler:EnterpriseLearnerRecord foxxi-ieee-ler:CompetencyAssertion )
-    ] ;
-    rdfs:range [ a rdfs:Datatype ; owl:unionOf ( xsd:decimal xsd:double ) ] ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:performanceMeanQuality a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "performance mean quality"@en ;
-    rdfs:comment "The mean quality of the outcomes of the performances a competency assertion rests on, where they were scored. A decimal, or a double."@en ;
-    skos:definition "The mean quality of the outcomes of the performances a competency assertion rests on, where they were scored. A decimal, or a double."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
-    rdfs:range [ a rdfs:Datatype ; owl:unionOf ( xsd:decimal xsd:double ) ] ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:supersessionNote a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "supersession note"@en ;
-    rdfs:comment "Why a competency assertion replaces a weaker one made before it about the same competency, in words: performance evidence superseding an inference from training, say."@en ;
-    skos:definition "Why a competency assertion replaces a weaker one made before it about the same competency, in words: performance evidence superseding an inference from training, say."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:CompetencyAssertion ;
-    rdfs:range xsd:string ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:experienceCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "experience count"@en ;
-    rdfs:comment "How many learning experiences an Enterprise Learner Record lists."@en ;
-    skos:definition "How many learning experiences an Enterprise Learner Record lists."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:performanceCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "performance count"@en ;
-    rdfs:comment "How many performance records an Enterprise Learner Record lists."@en ;
-    skos:definition "How many performance records an Enterprise Learner Record lists."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:credentialCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "credential count"@en ;
-    rdfs:comment "How many credentials an Enterprise Learner Record lists."@en ;
-    skos:definition "How many credentials an Enterprise Learner Record lists."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:verifiedCredentialCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "verified credential count"@en ;
-    rdfs:comment "How many of the credentials an Enterprise Learner Record lists had a proof that verified when it was assembled."@en ;
-    skos:definition "How many of the credentials an Enterprise Learner Record lists had a proof that verified when it was assembled."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:competencyCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "competency count"@en ;
-    rdfs:comment "How many competency assertions an Enterprise Learner Record makes."@en ;
-    skos:definition "How many competency assertions an Enterprise Learner Record makes."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:assertedCompetencyCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "asserted competency count"@en ;
-    rdfs:comment "How many of a record's competency assertions are asserted (iep:Asserted)."@en ;
-    skos:definition "How many of a record's competency assertions are asserted (iep:Asserted)."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:inferredCompetencyCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "inferred competency count"@en ;
-    rdfs:comment "How many of a record's competency assertions are hypothetical, inferred from learning experiences (iep:Hypothetical)."@en ;
-    skos:definition "How many of a record's competency assertions are hypothetical, inferred from learning experiences (iep:Hypothetical)."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
-
-foxxi-ieee-ler:performanceVerifiedCompetencyCount a owl:DatatypeProperty , owl:FunctionalProperty ;
-    rdfs:label "performance-verified competency count"@en ;
-    rdfs:comment "How many of a record's competency assertions rest on observed performance (their evidence basis is performance)."@en ;
-    skos:definition "How many of a record's competency assertions rest on observed performance (their evidence basis is performance)."@en ;
-    dct:source "Foxxi (the Enterprise Learner Record it assembles)" ;
-    foxxi:construction "minted" ;
-    rdfs:domain foxxi-ieee-ler:EnterpriseLearnerRecord ;
-    rdfs:range xsd:nonNegativeInteger ;
-    skos:changeNote "2026.10.0: new, for a field of the record that had no term."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
 [
@@ -1107,15 +745,9 @@ vann:preferredNamespaceUri a owl:AnnotationProperty .
 
 dct:source a owl:AnnotationProperty .
 
-skos:definition a owl:AnnotationProperty .
-
-dct:isReplacedBy a owl:AnnotationProperty .
-
-skos:changeNote a owl:AnnotationProperty .
-
 skos:closeMatch a owl:AnnotationProperty .
 
-skos:narrowMatch a owl:AnnotationProperty .
+dct:isReplacedBy a owl:AnnotationProperty .
 
 foxxi-adl-tla:LearningActivityMetadata a owl:Class ;
     rdfs:label "Learning Activity Metadata"@en ;

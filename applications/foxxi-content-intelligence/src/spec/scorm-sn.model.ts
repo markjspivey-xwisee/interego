@@ -14,15 +14,11 @@
  * element as a second imsss:objectives container, which it is not (AdlObjective, AdlObjectiveMapping).
  *
  * ★ ATTACHED WHERE THE PACKAGE ATTACHES IT. This ontology imports the content-packaging one: an
- * item or organization has its sequencing, and a manifest its sequencing collection. An organization
- * carries objectivesGlobalToSystem and an item its adlnav:presentation, as their comments say; the
- * two properties have no domain, so that data written when this model put presentation on the
- * sequencing definition, or objectivesGlobalToSystem on the item, stays consistent.
- *
- * ★ A NEW IRI FOR A NEW RELATION. adlObjectives was published with the range Objectives, the imsss
- * container; the 4th Edition's adlseq:objectives holds adlseq:objective elements, a different thing.
- * Its IRI keeps what it was published with, deprecated, and adlObjective relates a sequencing
- * definition to each adlseq:objective. The JSON key is unchanged.
+ * item or organization has its sequencing, a manifest its sequencing collection, an organization
+ * objectivesGlobalToSystem, and an item its adlnav:presentation (which this model used to hang on
+ * the sequencing definition; it is a child of the item). These, and adlObjectives' range, were set
+ * in 2026.10.0, the first versioned release, and each says in its change note what the unversioned
+ * publication before it had.
  *
  * ★ OWL 2 DL, AND THE SAME LITERALS AS THE SCHEMA. xs:duration is outside the OWL 2 datatype map,
  * so the duration limits are a named datatype restricting xsd:string by the xs:duration form.
@@ -60,7 +56,8 @@ export const SCORM_SN_MODEL: OntologyModel = {
   title: 'SCORM 2004 4th Edition — Sequencing and Navigation (IMS Simple Sequencing and ADL extensions)',
   description:
     'An OWL 2 DL ontology and SHACL shapes for the sequencing definitions of SCORM 2004 4th Edition: IMS Simple Sequencing 1.0 as SCORM applies it — sequencing definitions and collections, control modes, pre-, exit- and post-condition rules with their conditions and actions, limit conditions, rollup rules, objectives with their global-objective maps, randomization and delivery controls, auxiliary resources — and ADL\'s extensions: rollup and constrained-choice considerations, objectivesGlobalToSystem, the 4th Edition\'s extended objective maps (raw, minimum and maximum score, completion status, progress measure), and the navigation presentation that hides LMS controls. It imports the content-packaging ontology, whose items and organizations carry the sequencing.',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   spec: 'https://adlnet.gov/past-projects/scorm',
   standards: [
     { title: 'SCORM 2004 4th Edition (ADL, 2009): Sequencing and Navigation', url: 'https://adlnet.gov/past-projects/scorm' },
@@ -71,7 +68,7 @@ export const SCORM_SN_MODEL: OntologyModel = {
   imports: [`scorm-cam/${SCORM_CAM_MODEL.version}`],
   derivedFrom: 'imsss_v1p0.xsd and the schemas it includes (IMS Simple Sequencing 1.0), adlseq_v1p3.xsd and adlnav_v1p3.xsd, as distributed with SCORM 2004 4th Edition',
   notes: [
-    'Since 2026.10.0: adlObjective relates a sequencing definition to the 4th Edition\'s adlseq:objective, in place of adlObjectives, which pointed at the imsss Objectives class and is deprecated; presentation is the item\'s, not the sequencing definition\'s, and objectivesGlobalToSystem the organization\'s — both without a domain, so that data written with the earlier reading stays consistent.',
+    'Since 2026.10.0: adlObjectives points at AdlObjective, the 4th Edition\'s adlseq:objective, instead of the imsss Objectives class; presentation belongs to the item rather than the sequencing definition; and objectivesGlobalToSystem belongs to the organization.',
   ],
   classes: [
     { name: 'Sequencing', label: 'Sequencing', notation: 'imsss:sequencing', comment: 'A sequencing definition: how the activity of an item or organization, and its children, are sequenced — control mode, sequencing rules, limit conditions, rollup rules, objectives, randomization and delivery controls, auxiliary resources, and ADL\'s extensions. A definition in the manifest\'s sequencing collection has an ID that others reuse by IDRef.', source: `${SS}: sequencingType` },
@@ -113,8 +110,8 @@ export const SCORM_SN_MODEL: OntologyModel = {
     // ── Where sequencing attaches (IMS SS on IMS CP) ──
     { name: 'sequencing', kind: 'object', label: 'sequencing', notation: 'imsss:sequencing', comment: 'The sequencing definition of an item or organization, or one of the definitions in a sequencing collection.', domain: ['foxxi-scorm-cam:Item', 'foxxi-scorm-cam:Organization', 'SequencingCollection'], range: 'Sequencing', source: `${SS}: sequencing` },
     { name: 'sequencingCollection', kind: 'object', label: 'sequencing collection', notation: 'imsss:sequencingCollection', comment: 'The sequencing definitions a manifest shares.', domain: 'foxxi-scorm-cam:Manifest', range: 'SequencingCollection', functional: true, source: `${SS}: sequencingCollection` },
-    { name: 'objectivesGlobalToSystem', kind: 'datatype', label: 'objectives global to system', notation: 'adlseq:objectivesGlobalToSystem', comment: 'Whether the global objectives an organization\'s activities map to are global to the LMS, shared with other packages for the same learner (true, the default), or belong to this package (false). An attribute of the organization.', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: objectivesGlobalToSystem`, changeNote: '2026.10.0: its comment names the organization, on which adlseq_v1p3.xsd declares the attribute; it had named the item. It has no domain, as it was published, so that data that followed the earlier comment stays consistent.' },
-    { name: 'presentation', kind: 'object', label: 'presentation', notation: 'adlnav:presentation', comment: 'How an item is presented: which LMS navigation controls are hidden while it is delivered. A child of the item, not of its sequencing.', range: 'Presentation', functional: true, source: `${ADLNAV}: presentation`, changeNote: '2026.10.0: its domain, the sequencing definition, is removed: adlnav:presentation is a child of the item, and the domain made an item\'s presentation a sequencing definition\'s. It is not replaced by the item, so that data written with the earlier domain stays consistent.' },
+    { name: 'objectivesGlobalToSystem', kind: 'datatype', label: 'objectives global to system', notation: 'adlseq:objectivesGlobalToSystem', comment: 'Whether the global objectives an organization\'s activities map to are global to the LMS, shared with other packages for the same learner (true, the default), or belong to this package (false).', domain: 'foxxi-scorm-cam:Organization', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: objectivesGlobalToSystem`, changeNote: '2026.10.0: its domain is the organization, on which adlseq_v1p3.xsd declares the attribute; before it, the unversioned publication gave it no domain and its comment named the item.' },
+    { name: 'presentation', kind: 'object', label: 'presentation', notation: 'adlnav:presentation', comment: 'How an item is presented: which LMS navigation controls are hidden while it is delivered. A child of the item, not of its sequencing.', domain: 'foxxi-scorm-cam:Item', range: 'Presentation', functional: true, source: `${ADLNAV}: presentation`, changeNote: '2026.10.0: its domain is the item, of which adlnav:presentation is a child; before it, the unversioned publication gave it the sequencing definition, which made an item\'s presentation a sequencing definition\'s.' },
     // ── Sequencing ──
     { name: 'seqID', kind: 'datatype', label: 'sequencing ID', notation: 'ID', comment: 'The ID of a sequencing definition in the manifest\'s sequencing collection (an XML ID).', domain: 'Sequencing', range: 'xsd:string', functional: true, source: `${SS}: sequencingType/@ID` },
     { name: 'seqIDRef', kind: 'datatype', label: 'sequencing ID reference', notation: 'IDRef', comment: 'The ID of the definition in the sequencing collection that this definition reuses and extends (an XML IDREF).', domain: 'Sequencing', range: 'xsd:string', functional: true, source: `${SS}: sequencingType/@IDRef` },
@@ -128,8 +125,7 @@ export const SCORM_SN_MODEL: OntologyModel = {
     { name: 'deliveryControls', kind: 'object', label: 'delivery controls', notation: 'imsss:deliveryControls', comment: 'The delivery controls of a sequencing definition.', domain: 'Sequencing', range: 'DeliveryControls', functional: true, source: `${SS}: sequencingType` },
     { name: 'rollupConsiderations', kind: 'object', label: 'rollup considerations', notation: 'adlseq:rollupConsiderations', comment: 'The rollup considerations of a sequencing definition.', domain: 'Sequencing', range: 'RollupConsiderations', functional: true, source: `${ADLSEQ}: rollupConsiderations` },
     { name: 'constrainedChoiceConsiderations', kind: 'object', label: 'constrained choice considerations', notation: 'adlseq:constrainedChoiceConsiderations', comment: 'The constrained choice considerations of a sequencing definition.', domain: 'Sequencing', range: 'ConstrainedChoiceConsiderations', functional: true, source: `${ADLSEQ}: constrainedChoiceConsiderations` },
-    { name: 'adlObjective', kind: 'object', label: 'adlseq objective', notation: 'adlseq:objective', comment: 'An adlseq:objective of a sequencing definition: further global-objective maps for one of its objectives (4th Edition). (In a sequencing definition\'s JSON, an entry of its "adlObjectives".)', domain: 'Sequencing', range: 'AdlObjective', source: `${ADLSEQ}: objectivesType`, changeNote: '2026.10.0: new, in place of adlObjectives, whose range was the imsss Objectives class, a different element.' },
-    { name: 'adlObjectives', kind: 'object', label: 'ADL objectives', comment: 'Formerly the adlseq:objectives of a sequencing definition, read as an imsss Objectives container, which it is not. Use adlObjective, which relates a sequencing definition to each adlseq:objective.', domain: 'Sequencing', range: 'Objectives', deprecated: true, replacedBy: 'adlObjective', changeNote: '2026.10.0: deprecated in favour of adlObjective; kept as it was published, with the range Objectives.' },
+    { name: 'adlObjectives', kind: 'object', label: 'ADL objectives', notation: 'adlseq:objectives', comment: 'An adlseq:objective of a sequencing definition: further global-objective maps for one of its objectives (4th Edition). Until 2026.10.0 this pointed at the imsss Objectives class, which is a different element.', domain: 'Sequencing', range: 'AdlObjective', source: `${ADLSEQ}: objectivesType`, changeNote: '2026.10.0: its range is AdlObjective, the 4th Edition\'s adlseq:objective; before it, the unversioned publication gave it the imsss Objectives class, a different element.' },
     // ── Control mode ──
     { name: 'choice', kind: 'datatype', label: 'choice', comment: 'Whether the learner may choose any of the activity\'s children. Default true.', domain: 'ControlMode', range: 'xsd:boolean', functional: true, source: `${SS}: controlModeType/@choice` },
     { name: 'choiceExit', kind: 'datatype', label: 'choice exit', notation: 'choiceExit', comment: 'Whether a choice of an activity outside the activity may end it while it is active. Default true.', domain: 'ControlMode', range: 'xsd:boolean', functional: true, source: `${SS}: controlModeType/@choiceExit` },
@@ -368,7 +364,6 @@ export const SCORM_SN_MODEL: OntologyModel = {
         { path: 'deliveryControls', maxCount: 1 },
         { path: 'rollupConsiderations', maxCount: 1 },
         { path: 'constrainedChoiceConsiderations', maxCount: 1 },
-        { path: 'adlObjectives', rdfPath: 'adlObjective', class: 'AdlObjective', comment: 'each adlseq:objective (adlseq_v1p3.xsd: objectivesType)' },
       ],
     },
     {

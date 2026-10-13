@@ -1,0 +1,122 @@
+# Comprehensive Learner Record 2.0 — credential SHACL profile — SHACL shapes — version 2026.10.1
+# https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes/2026.10.1)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix schema: <https://schema.org/> .
+@prefix vc: <https://www.w3.org/2018/credentials#> .
+@prefix clr: <https://purl.imsglobal.org/spec/vc/clr/vocab.html#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes> a owl:Ontology ;
+    dct:title "Comprehensive Learner Record 2.0 — credential SHACL profile — SHACL shapes"@en ;
+    dct:description "SHACL shapes for Comprehensive Learner Record 2.0 — credential SHACL profile: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/clr/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by 1EdTech or W3C. Where this document and the published standard differ, the standard governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes/2026.10.1> ;
+    owl:versionInfo "2026.10.1" ;
+    owl:priorVersion <https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes/2026.10.0> ;
+    owl:backwardCompatibleWith <https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes/2026.10.0> ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-13"^^xsd:date ;
+    dct:issued "2026-10-13"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). Comprehensive Learner Record 2.0 — credential SHACL profile — SHACL shapes (Version 2026.10.1) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes/2026.10.1" ;
+    dct:source <https://www.imsglobal.org/spec/clr/v2p0/> , <https://www.w3.org/TR/vc-data-model-2.0/> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/clr/2026.10.1> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/clr/2026.10.1> .
+
+shapes:ClrCredentialShape a sh:NodeShape ;
+    sh:targetClass clr:ClrCredential ;
+    rdfs:label "CLR credential shape"@en ;
+    rdfs:comment "A CLR 2.0 credential (CLR 2.0 B.1.1, ClrCredential): its @context begins with the W3C VC 2.0, CLR 2.0 and OB 3.0 contexts; it is identified by an IRI; it is a VerifiableCredential; it has a name, one issuer identified by an IRI, one validFrom date-time with its time zone, and one subject, a ClrSubject. A proof is optional: a credential secured by an enveloping proof (VC-JOSE-COSE, VC-JWT) carries none, and an embedded proof is a graph of its own, which Data Integrity verification checks rather than these shapes."@en ,
+        "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): @context (minCount 3, beginning \"^https://www\\\\.w3\\\\.org/ns/credentials/v2$\", \"^https://purl\\\\.imsglobal\\\\.org/spec/clr/v2p0/context(-2\\\\.[0-9]+\\\\.[0-9]+)?\\\\.json$\", \"^https://purl\\\\.imsglobal\\\\.org/spec/ob/v3p0/context(-3\\\\.[0-9]+\\\\.[0-9]+)?\\\\.json$\") — the W3C VC 2.0, CLR 2.0 and OB 3.0 contexts, in that order (CLR 2.0: @context [3..*])"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "CLR credential shape: the node must be identified by an IRI — an unambiguous reference to the credential (CLR 2.0: id [1])"@en ;
+    sh:property shapes:ClrCredentialShape-type ,
+        shapes:ClrCredentialShape-issuer ,
+        shapes:ClrCredentialShape-validFrom ,
+        shapes:ClrCredentialShape-credentialSubject ,
+        shapes:ClrCredentialShape-name ,
+        shapes:ClrCredentialShape-credentialSubject-type ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes> .
+
+shapes:ClrCredentialShape-type a sh:PropertyShape ;
+    sh:path rdf:type ;
+    sh:name "type" ;
+    sh:description "a VerifiableCredential (VC 2.0 §4.5)"@en ;
+    sh:message "CLR credential shape — type: including vc:VerifiableCredential — a VerifiableCredential (VC 2.0 §4.5)"@en ;
+    sh:hasValue vc:VerifiableCredential .
+
+shapes:ClrCredentialShape-issuer a sh:PropertyShape ;
+    sh:path vc:issuer ;
+    sh:name "issuer" ;
+    sh:description "one issuer: an IRI, or a Profile identified by one (CLR 2.0: issuer [1] ProfileRef)"@en ;
+    sh:message "CLR credential shape — issuer: exactly 1 value, an IRI — one issuer: an IRI, or a Profile identified by one (CLR 2.0: issuer [1] ProfileRef)"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ClrCredentialShape-validFrom a sh:PropertyShape ;
+    sh:path vc:validFrom ;
+    sh:name "validFrom" ;
+    sh:description "when the credential becomes valid, with its time zone (CLR 2.0: validFrom [1] DateTimeZ)"@en ;
+    sh:message "CLR credential shape — validFrom: exactly 1 value, of type xsd:dateTime, matching ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$ — when the credential becomes valid, with its time zone (CLR 2.0: validFrom [1] DateTimeZ)"@en ;
+    sh:datatype xsd:dateTime ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$" .
+
+shapes:ClrCredentialShape-credentialSubject a sh:PropertyShape ;
+    sh:path vc:credentialSubject ;
+    sh:name "credentialSubject" ;
+    sh:description "one subject (CLR 2.0: credentialSubject [1])"@en ;
+    sh:message "CLR credential shape — credentialSubject: exactly 1 value — one subject (CLR 2.0: credentialSubject [1])"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:ClrCredentialShape-name a sh:PropertyShape ;
+    sh:path schema:name ;
+    sh:name "name" ;
+    sh:description "the name of the CLR (name [1]; several values are one name in several languages)"@en ;
+    sh:message "CLR credential shape — name: at least 1 value — the name of the CLR (name [1]; several values are one name in several languages)"@en ;
+    sh:minCount 1 .
+
+shapes:ClrCredentialShape-credentialSubject-type a sh:PropertyShape ;
+    sh:path ( vc:credentialSubject rdf:type ) ;
+    sh:name "credentialSubject.type" ;
+    sh:description "the subject is a ClrSubject (CLR 2.0: credentialSubject ClrSubject)"@en ;
+    sh:message "CLR credential shape — credentialSubject.type: including clr-vocab:ClrSubject — the subject is a ClrSubject (CLR 2.0: credentialSubject ClrSubject)"@en ;
+    sh:hasValue clr:ClrSubject .
+
+shapes:ClrSubjectShape a sh:NodeShape ;
+    sh:targetClass clr:ClrSubject ;
+    rdfs:label "CLR subject shape"@en ;
+    rdfs:comment "The learner a CLR 2.0 credential is about (CLR 2.0 B.1.2, ClrSubject): identified by its id or by at least one identifier, with the credentials the learner has been awarded."@en ;
+    sh:property shapes:ClrSubjectShape-verifiableCredential ;
+    sh:or ( [ sh:nodeKind sh:IRI ] [ sh:path clr:identifier-1 ; sh:minCount 1 ] ) ;
+    sh:message "CLR subject shape: the subject is identified by its id, or by at least one identifier"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes> .
+
+shapes:ClrSubjectShape-verifiableCredential a sh:PropertyShape ;
+    sh:path clr:verifiableCredential ;
+    sh:name "verifiableCredential" ;
+    sh:description "the credentials the learner has been awarded (verifiableCredential [1..*])"@en ;
+    sh:message "CLR subject shape — verifiableCredential: at least 1 value — the credentials the learner has been awarded (verifiableCredential [1..*])"@en ;
+    sh:minCount 1 .

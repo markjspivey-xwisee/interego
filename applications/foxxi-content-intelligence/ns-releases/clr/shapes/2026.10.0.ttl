@@ -35,9 +35,9 @@
     bibo:status <http://purl.org/ontology/bibo/status/published> ;
     dct:bibliographicCitation "Spivey, M. (2026). Comprehensive Learner Record 2.0 — credential SHACL profile — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes/2026.10.0" ;
     dct:source <https://www.imsglobal.org/spec/clr/v2p0/> , <https://www.w3.org/TR/vc-data-model-2.0/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/clr/2026.10.0> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/clr> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/clr/2026.10.0> .
 
 shapes:ClrCredentialShape a sh:NodeShape ;

@@ -117,19 +117,21 @@ describe('the archive', () => {
   });
 
   it('imports Foxxi documents by version IRIs that resolve', () => {
-    let imports = 0;
+    const imports = new Map<string, number>();
     for (const f of archivedFiles.filter(isDocument)) {
       const q = turtleQuads(readFileSync(join(RELEASES_DIR, ...f.file.split('/')), 'utf8'));
       for (const imp of q.filter(x => x.predicate.value === `${OWL}imports`).map(x => x.object.value)) {
-        imports++;
+        imports.set(f.version, (imports.get(f.version) ?? 0) + 1);
         expect(imp.startsWith(NS_BASE), `${f.file} imports ${imp}`).toBe(true);
         const m = /^(.+)\/(\d{4}\.\d{1,2}\.\d+)$/.exec(imp);
         expect(m, `${f.file} imports ${imp}, which is not a version IRI`).not.toBeNull();
         expect(readRelease(m![1]!, 'ontology', m![2]!), `${f.file} imports ${imp}, which was never released`).not.toBeNull();
       }
     }
-    // Every shapes graph imports its ontology; cmi5, ai-elearning and scorm-sn import another.
-    expect(imports).toBe(12 + 3);
+    // In each release, every shapes graph imports its ontology, and cmi5, ai-elearning and scorm-sn
+    // import another. ★ REVISED: counted by release, now that there are two.
+    expect([...imports.values()]).toEqual([...imports.keys()].map(() => 12 + 3));
+    expect(imports.size).toBe(new Set(archivedFiles.map(f => f.version)).size);
   });
 });
 

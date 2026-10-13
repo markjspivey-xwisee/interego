@@ -251,6 +251,11 @@ export interface OntologyModel {
   priorVersion?: string;
   /** Whether this version keeps the meaning of the prior one (see DocMeta.priorCompatibility). */
   priorCompatibility?: 'backward' | 'incompatible';
+  /** Whether this version's shapes graph keeps the prior one's meaning, where it differs from the
+   *  ontology's: an ontology that only adds terms keeps its prior version's meaning, while shapes
+   *  that check more than they did refuse data the prior version accepted. Defaults to
+   *  priorCompatibility. */
+  shapesPriorCompatibility?: 'backward' | 'incompatible';
   /** For a shapes-only model whose vocabulary is another document at its ontology IRI (ieee-ler):
    *  that document's version, which its shapes graph imports. Otherwise the shapes graph imports
    *  this model's own ontology at this model's version. */
@@ -410,7 +415,7 @@ function labelOf(raw: string, kind: 'class' | 'property' | 'concept', name: stri
 }
 
 // ── Publication metadata ─────────────────────────────────────────────────────────
-const DEFAULT_DATES = { created: '2026-06-19', modified: '2026-10-12', issued: '2026-10-12' };
+const DEFAULT_DATES = { created: '2026-06-19', modified: '2026-10-13', issued: '2026-10-13' };
 
 /** The model file each module is written in — the document's generator provenance. */
 const MODEL_FILE: Readonly<Record<string, string>> = {
@@ -460,6 +465,7 @@ export function shapesDocMeta(m: OntologyModel): DocMeta {
   const o = docMeta(m);
   return {
     ...o, iri: shapesIri(m), ns: undefined, prefix: undefined,
+    ...(o.priorVersion && m.shapesPriorCompatibility ? { priorCompatibility: m.shapesPriorCompatibility } : {}),
     title: `${m.title} — SHACL shapes`,
     description: `SHACL shapes for ${m.title}: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST ${ontologyIri(m)}/validate). Each validation result cites the shape it came from.${m.generatedContext ? ` An instance written as JSON is read into RDF through the JSON-LD context at ${contextIri(m)}/${m.version}.` : ''}`,
     // The ontology at the version these shapes were written for: a released shapes graph keeps
@@ -791,9 +797,8 @@ export function conceptClassesOf(m: OntologyModel): Set<string> {
 const classAndSubclasses = (m: OntologyModel, cls: string): Set<string> =>
   new Set([expandAbs(m, cls), ...subclassesOf(m, cls).map(c => expandAbs(m, c))]);
 /** The JSON keys the document's context reads into a property: a current property's (jsonKeysOf), and a
- *  deprecated property's name where no current property, class or keyword alias has taken it — as
- *  src/ns/model-context.ts gives SOC 2's actor its term, and reads SCORM's `schema` into
- *  metadataSchema. */
+ *  deprecated property's name where no current property, class or keyword alias has taken it, as
+ *  src/ns/model-context.ts gives a deprecated property its term only where its name is free. */
 function keysReadInto(m: OntologyModel, p: OntProperty): string[] {
   if (!p.deprecated) return jsonKeysOf(m, p.name);
   const taken = new Set([...m.properties.filter(q => !q.deprecated).flatMap(q => jsonKeysOf(m, q.name)), ...m.classes.map(c => c.name), 'id', 'type']);
@@ -832,8 +837,8 @@ export function ambiguousKeys(m: OntologyModel): Set<string> {
 /** The properties of this document whose subjects a shape selects by domain (selectByDomainAndRange):
  *  each one whose single domain is the shape's class or a subclass of it, except one read from a key
  *  that is read into another property too (ambiguousKeys). By RDFS (rdfs2), a subject of such a
- *  property is an instance of the class. A deprecated property is one of them, as for rangeTargets: a
- *  SOC 2 event recorded with `actor`, before actingAgent replaced it, is still an event. */
+ *  property is an instance of the class. A deprecated property is one of them, as for rangeTargets: data
+ *  written with it before it was replaced is still checked. */
 export function domainTargets(m: OntologyModel, s: OntShape): string[] {
   if (!m.selectByDomainAndRange || !s.targetClass) return [];
   const classes = classAndSubclasses(m, s.targetClass);

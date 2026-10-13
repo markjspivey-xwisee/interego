@@ -279,7 +279,7 @@ interface SemLayerStatus {
 const OWL_ONTOLOGY = 'http://www.w3.org/2002/07/owl#Ontology';
 const RDFS_IS_DEFINED_BY = 'http://www.w3.org/2000/01/rdf-schema#isDefinedBy';
 // How a term is built from the substrate's primitives: the Foxxi vocabulary's annotation, which the
-// LER and TLA terms carry (it was foxxi-ieee-ler:construction before 2026.10.0).
+// LER and TLA terms carry (it was foxxi-ieee-ler:construction until 2026.10.1).
 const CONSTRUCTION = FOXXI_CONSTRUCTION;
 
 async function dereferenceSemLayer(selfBaseUrl: string): Promise<SemLayerStatus> {

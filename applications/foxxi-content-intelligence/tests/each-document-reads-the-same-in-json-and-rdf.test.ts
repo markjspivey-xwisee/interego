@@ -128,6 +128,29 @@ for (const [module, cases] of Object.entries(READING_CASES)) {
   });
 }
 
+describe('a deprecated property still says what its subject is', () => {
+  // owl:deprecated retracts no axiom: by its domain (rdfs2), a deprecated property's subject is still
+  // an instance of the class, so the shapes select it (sh:targetSubjectsOf) and so does the validator.
+  // A session written with only a deprecated key is checked as a session, not as the course
+  // structure the validator falls back to for a root that says nothing of what it is.
+  const cmi5 = MODELS.cmi5!;
+  const m: OntologyModel = {
+    ...cmi5,
+    properties: [...cmi5.properties, { name: 'legacySessionKey', kind: 'datatype', label: 'legacy session key', comment: 'A deprecated property, for this test.', domain: 'Session', range: 'xsd:string', deprecated: true }],
+  };
+  it('selects its subject in both readings', async () => {
+    const instance = { legacySessionKey: 'k-1' };
+    const want = { violates: ['SessionShape-registration', 'SessionShape-sessionId'], warns: [] };
+    expect(verdict(validateInstanceWith(m, instance).results)).toEqual(want);
+    const r = await reading(m, instance);
+    expect('nq' in r, JSON.stringify(r)).toBe(true);
+    expect(verdict(shacl((r as { nq: string }).nq, renderShacl(m)).results)).toEqual(want);
+    const targets = new Parser({ format: 'text/turtle' }).parse(renderShacl(m))
+      .filter(q => q.predicate.value === `${SH}targetSubjectsOf`).map(q => q.object.value);
+    expect(targets).toContain(`${modelContextUrl(m).split('/context/')[0]}#legacySessionKey`);
+  });
+});
+
 describe('the eight documents together', () => {
   it('have 78 node shapes, and the cases cover every document whose context is generated', () => {
     const generated = Object.values(MODELS).filter(m => m.generatedContext).map(m => m.module).sort();
@@ -159,7 +182,7 @@ describe('where the two readings part, as the header says', () => {
     expect(cmi5.rdf).toEqual({ violates: [], warns: [] });
   });
   it('a key the document does not define: safe mode refuses the reading; the validator ignores the key', async () => {
-    const { json, rdf } = await verdicts('soc2', { type: 'DeployEvent', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:ci.example.org', signer: '0x1', mood: 'calm' });
+    const { json, rdf } = await verdicts('soc2', { type: 'DeployEvent', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:ci.example.org', signer: '0x1', mood: 'calm' });
     expect(json).toEqual({ violates: [], warns: [] });
     expect(rdf).toEqual({ refused: 'invalid property' });
   });

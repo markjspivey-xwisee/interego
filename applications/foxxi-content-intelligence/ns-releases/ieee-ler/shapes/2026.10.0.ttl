@@ -34,9 +34,9 @@
     bibo:status <http://purl.org/ontology/bibo/status/published> ;
     dct:bibliographicCitation "Spivey, M. (2026). IEEE LER — Enterprise Learner Record and competency assertion shapes — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes/2026.10.0" ;
     dct:source <https://standards.ieee.org/ieee/2997/10632/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.0> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.0> .
 
 shapes:EnterpriseLearnerRecordShape a sh:NodeShape ;
@@ -234,9 +234,8 @@ shapes:OrganizationPathStepShape-position a sh:PropertyShape ;
 
 shapes:EvidenceShape a sh:NodeShape ;
     sh:targetClass foxxi-ieee-ler:Evidence ;
-    sh:targetObjectsOf foxxi-ieee-ler:supportedByEvidence ;
     rdfs:label "Evidence shape"@en ;
-    rdfs:comment "Evidence — anything an assertion or record entry cites in its support (ler:supportedByEvidence), or that is typed ler:Evidence — is identified by an IRI locating the raw record."@en ;
+    rdfs:comment "An evidence node is identified by an IRI locating the raw record."@en ;
     sh:nodeKind sh:IRI ;
     sh:message "Evidence shape: the node must be identified by an IRI — the evidence location"@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes> .

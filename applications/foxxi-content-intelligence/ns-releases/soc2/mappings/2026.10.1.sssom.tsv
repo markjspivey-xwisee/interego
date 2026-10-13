@@ -1,0 +1,34 @@
+#curie_map:
+#  foxxi_ns: "https://foxxi-bridge.interego.xwisee.com/ns/"
+#  foxxi_soc2: "https://foxxi-bridge.interego.xwisee.com/ns/soc2#"
+#  interego_ns: "https://markjspivey-xwisee.github.io/interego/ns/"
+#  soc2: "https://markjspivey-xwisee.github.io/interego/ns/soc2#"
+#mapping_set_id: "https://foxxi-bridge.interego.xwisee.com/ns/soc2/mappings"
+#mapping_set_version: "2026.10.1"
+#mapping_set_title: "AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria) — mappings"
+#mapping_set_description: "Mappings from the terms of AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria) (https://foxxi-bridge.interego.xwisee.com/ns/soc2) to other vocabularies: one row for each SKOS mapping the ontology makes, generated from it."
+#creator_label:
+#  - "Mark Spivey"
+#license: "https://opensource.org/licenses/MIT"
+#subject_source: "foxxi_ns:soc2"
+#subject_source_version: "https://foxxi-bridge.interego.xwisee.com/ns/soc2/2026.10.1"
+#mapping_provider: "https://foxxi-bridge.interego.xwisee.com/ns/soc2"
+#publication_date: 2026-10-13
+#comment: "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by the AICPA. Where this document and the published standard differ, the standard governs."
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	object_source_version	comment
+foxxi_soc2:AccessChangeEvent	Access Change Event	skos:exactMatch	soc2:AccessChangeEvent	Access change event	semapv:ManualMappingCuration	owl class	owl class	interego_ns:soc2		
+foxxi_soc2:CommonCriterion-CC6.1	CC6.1 logical access security	skos:exactMatch	soc2:CC6.1	CC6.1 — logical + physical access controls (security software, infrastructure, architectures)	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:soc2		
+foxxi_soc2:CommonCriterion-CC6.2	CC6.2 user registration and authorization	skos:exactMatch	soc2:CC6.2	CC6.2 — registers + authorizes new internal/external users	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:soc2		
+foxxi_soc2:CommonCriterion-CC6.3	CC6.3 role-based access changes	skos:exactMatch	soc2:CC6.3	CC6.3 — modifies + revokes user access in alignment with role/responsibilities	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:soc2		
+foxxi_soc2:CommonCriterion-CC6.7	CC6.7 protection of information in transit	skos:exactMatch	soc2:CC6.7	CC6.7 — restricts transmission, movement, removal of information	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:soc2		
+foxxi_soc2:CommonCriterion-CC6.8	CC6.8 malicious software prevention	skos:exactMatch	soc2:CC6.8	CC6.8 — implements controls to prevent + detect unauthorized + malicious software	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:soc2		
+foxxi_soc2:CommonCriterion-CC7.3	CC7.3 security event evaluation	skos:exactMatch	soc2:CC7.3	CC7.3 — evaluates security events to determine response	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:soc2		
+foxxi_soc2:CommonCriterion-CC7.4	CC7.4 security incident response	skos:exactMatch	soc2:CC7.4	CC7.4 — responds to identified security incidents	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:soc2		
+foxxi_soc2:CommonCriterion-CC7.5	CC7.5 security incident recovery	skos:exactMatch	soc2:CC7.5	CC7.5 — recovers from identified security incidents	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:soc2		
+foxxi_soc2:CommonCriterion-CC8.1	CC8.1 change management	skos:exactMatch	soc2:CC8.1	CC8.1 — authorizes, designs, develops, configures, documents, tests, approves changes	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:soc2		
+foxxi_soc2:DeployEvent	Deploy Event	skos:exactMatch	soc2:DeployEvent	Production deploy event	semapv:ManualMappingCuration	owl class	owl class	interego_ns:soc2		
+foxxi_soc2:IncidentEvent	Incident Event	skos:exactMatch	soc2:IncidentEvent	Security or operational incident event	semapv:ManualMappingCuration	owl class	owl class	interego_ns:soc2		
+foxxi_soc2:KeyRotationEvent	Key Rotation Event	skos:exactMatch	soc2:KeyRotationEvent	Cryptographic key rotation event	semapv:ManualMappingCuration	owl class	owl class	interego_ns:soc2		
+foxxi_soc2:OperationalEvidenceEvent	Operational Evidence Event	skos:closeMatch	soc2:ControlEvidence	Control evidence record	semapv:ManualMappingCuration	owl class	owl class	interego_ns:soc2		
+foxxi_soc2:QuarterlyReviewEvent	Quarterly Review Event	skos:exactMatch	soc2:QuarterlyReviewEvent	Quarterly review event	semapv:ManualMappingCuration	owl class	owl class	interego_ns:soc2		
+foxxi_soc2:evidences	evidences	skos:closeMatch	soc2:satisfiesControl	satisfies control	semapv:ManualMappingCuration	owl object property	owl object property	interego_ns:soc2		

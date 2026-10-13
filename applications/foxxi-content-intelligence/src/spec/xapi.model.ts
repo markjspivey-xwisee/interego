@@ -61,7 +61,7 @@ import { ADL_XAPI_ONTOLOGY, ADL_XAPI_NS, ADL_XAPI_MODIFIED } from './adl-xapi-on
 import { sourceAt } from '../ns/catalog.js';
 
 /** This document's version (YYYY.MM.PATCH; see ns/catalog.ts). */
-const XAPI_VERSION = '2026.10.0';
+const XAPI_VERSION = '2026.10.1';
 /** The JSON-LD context a statement is read through (xapi-context.ts), at the version of this
  *  ontology it reads a statement into. Data cites a context by URL, and what it means must not
  *  change under it, so each version has its own context, which never changes; /ns/xapi/context
@@ -105,6 +105,7 @@ export const XAPI_MODEL: OntologyModel = {
   title: 'xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model',
   description: 'An OWL 2 DL ontology and SHACL shapes for the Statement data model of xAPI 2.0, IEEE 9274.1.1-2023 (Content part, §5.2): Statement, Actor (Agent, Group, Account), Verb, Object (Activity, StatementRef, SubStatement), Result and Score, Context with its context activities, context agents and context groups, and Attachments, with the data types of §5.2.7. Each term is aligned to ADL\'s xAPI ontology by a SKOS mapping. A statement is read into the ontology through the JSON-LD 1.1 context published with it (/ns/xapi/context), and the shapes check that reading.',
   version: XAPI_VERSION,
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   created: '2026-06-19',
   spec: 'https://standards.ieee.org/ieee/9274.1.1/7321/',
   standards: [
@@ -206,13 +207,7 @@ export const XAPI_MODEL: OntologyModel = {
     // Activity / Activity Definition
     { name: 'definition', kind: 'object', label: 'definition', comment: 'The metadata of an Activity.', domain: 'Activity', range: 'ActivityDefinition', functional: true, source: `${S} §5.2.2.3 (Object as Activity)` },
     { name: 'description', kind: 'datatype', label: 'description', comment: 'A description, as a language map, of an Activity, an interaction component or an Attachment.', domain: ['ActivityDefinition', 'InteractionComponent', 'Attachment'], range: 'rdf:langString', source: `${S} §5.2.2.3; §5.2.2.6`, exactMatch: ['adl-xapi:description'] },
-    // ★ NEW IRIS FOR A NEW KIND. type and usageType were published as datatype properties with an
-    // xsd:anyURI range; an activity type and a usage type are IRIs naming concepts, so they are object
-    // properties now — under new IRIs, because data written with a datatype property and an ontology
-    // that declares the same IRI an object property are not OWL 2 DL together. A statement's JSON keys
-    // are unchanged: its context reads "type" and "usageType" into the new properties.
-    { name: 'activityType', kind: 'object', label: 'activity type', notation: 'type', comment: 'The type of the Activity, an IRI. (In a statement, the "type" of the Activity Definition.)', domain: 'ActivityDefinition', range: 'ActivityType', functional: true, source: `${S} §5.2.2.3 (Activity Definition)`, exactMatch: ['adl-xapi:type'], changeNote: '2026.10.0: new, in place of the datatype property type: an activity type is an IRI naming a concept, so it is the value of an object property.' },
-    { name: 'type', kind: 'datatype', label: 'type', comment: 'Formerly the type of an Activity, as an xsd:anyURI literal. Use activityType, whose value is the activity type itself.', domain: 'ActivityDefinition', range: 'xsd:anyURI', deprecated: true, replacedBy: 'activityType', changeNote: '2026.10.0: deprecated in favour of activityType; kept as the datatype property it was published as.' },
+    { name: 'type', kind: 'object', label: 'type', comment: 'The type of the Activity, an IRI.', domain: 'ActivityDefinition', range: 'ActivityType', functional: true, source: `${S} §5.2.2.3 (Activity Definition)`, exactMatch: ['adl-xapi:type'], changeNote: '2026.10.0: an object property, whose value is the activity type itself; before it, the unversioned publication made it a datatype property whose value was the type\'s IRI, an xsd:anyURI literal.' },
     { name: 'moreInfo', kind: 'datatype', label: 'more info', comment: 'An IRL resolving to a document with human-readable information about the Activity, which may include a way to launch it.', domain: 'ActivityDefinition', range: 'xsd:anyURI', functional: true, source: `${S} §5.2.2.3 (Activity Definition)`, closeMatch: ['adl-xapi:moreInfo'],
       mappingNotes: { 'adl-xapi:moreInfo': 'Not an exact match because of kind: ADL declares xapi:moreInfo an owl:ObjectProperty with the datatype range xsd:anyURI, which OWL 2 DL does not allow; the value is an IRL, a literal, so here it is a datatype property.' } },
     { name: 'interactionType', kind: 'datatype', label: 'interaction type', comment: 'The type of interaction, from the controlled vocabulary of interaction types.', domain: 'ActivityDefinition', oneOf: [...XAPI_INTERACTION_TYPES], functional: true, source: `${S} §5.2.2.3 (Interaction Activities)`, exactMatch: ['adl-xapi:interactionType'] },
@@ -253,10 +248,9 @@ export const XAPI_MODEL: OntologyModel = {
     { name: 'group', kind: 'object', label: 'group', comment: 'The one Group a context group relationship is defined for.', domain: 'ContextGroup', range: 'Group', functional: true, source: `${S} §5.2.2.5 (Context Groups)` },
     { name: 'relevantTypes', kind: 'object', label: 'relevant types', comment: 'A type IRI characterizing the relationship between the Statement and the Agent or Group. Without any, only a generic relationship is intended (not recommended).', domain: ['ContextAgent', 'ContextGroup'], range: 'skos:Concept', source: `${S} §5.2.2.5 (Context Agents; Context Groups)` },
     // Attachment
-    { name: 'attachmentUsageType', kind: 'object', label: 'usage type', notation: 'usageType', comment: 'The usage of the Attachment, an IRI coined for that use. (In a statement, the Attachment\'s "usageType".)', domain: 'Attachment', range: 'AttachmentUsageType', functional: true, source: `${S} §5.2.2.6`, closeMatch: ['adl-xapi:usageType'],
+    { name: 'usageType', kind: 'object', label: 'usage type', comment: 'The usage of the Attachment, an IRI coined for that use.', domain: 'Attachment', range: 'AttachmentUsageType', functional: true, source: `${S} §5.2.2.6`, closeMatch: ['adl-xapi:usageType'],
       mappingNotes: { 'adl-xapi:usageType': 'Not an exact match because of kind: ADL declares xapi:usageType an owl:DatatypeProperty with the class range xapi:AttachmentUsageType, which OWL 2 DL does not allow; a usage type is an IRI naming a concept, so here it is an object property.' },
-      changeNote: '2026.10.0: new, in place of the datatype property usageType: a usage type is an IRI naming a concept, so it is the value of an object property.' },
-    { name: 'usageType', kind: 'datatype', label: 'usage type', comment: 'Formerly the usage of an Attachment, as an xsd:anyURI literal. Use attachmentUsageType, whose value is the usage type itself.', domain: 'Attachment', range: 'xsd:anyURI', deprecated: true, replacedBy: 'attachmentUsageType', changeNote: '2026.10.0: deprecated in favour of attachmentUsageType; kept as the datatype property it was published as.' },
+      changeNote: '2026.10.0: an object property, whose value is the usage type itself; before it, the unversioned publication made it a datatype property whose value was the usage type\'s IRI, an xsd:anyURI literal.' },
     { name: 'contentType', kind: 'datatype', label: 'content type', comment: 'The Internet Media Type of the Attachment.', domain: 'Attachment', range: 'MediaType', functional: true, source: `${S} §5.2.2.6`, exactMatch: ['adl-xapi:contentType'] },
     { name: 'length', kind: 'datatype', label: 'length', comment: 'The length of the Attachment data, in octets.', domain: 'Attachment', range: 'xsd:nonNegativeInteger', functional: true, source: `${S} §5.2.2.6`, exactMatch: ['adl-xapi:length'] },
     { name: 'sha2', kind: 'datatype', label: 'SHA-2', comment: 'The SHA-2 hash of the Attachment data; required even when fileUrl is given.', domain: 'Attachment', range: 'xsd:string', functional: true, source: `${S} §5.2.2.6`, exactMatch: ['adl-xapi:sha2'] },
@@ -404,7 +398,7 @@ export const XAPI_MODEL: OntologyModel = {
       comment: `${S} §5.2.2.3: interactionType is one of the interaction types; type is an IRI.`,
       constraints: [
         { path: 'interactionType', maxCount: 1, in: [...XAPI_INTERACTION_TYPES], comment: 'interaction type vocabulary (§5.2.2.3)' },
-        { path: 'type', rdfPath: 'activityType', maxCount: 1, nodeKind: 'IRI', comment: 'the Activity type IRI (§5.2.2.3)' },
+        { path: 'type', maxCount: 1, nodeKind: 'IRI', comment: 'the Activity type IRI (§5.2.2.3)' },
         { path: 'moreInfo', maxCount: 1, datatype: 'xsd:anyURI', comment: 'an IRL (§5.2.2.3)' },
         { path: 'name', datatype: 'rdf:langString', comment: 'a language map (§5.2.2.3)' },
         { path: 'description', datatype: 'rdf:langString', comment: 'a language map (§5.2.2.3)' },
@@ -498,7 +492,7 @@ export const XAPI_MODEL: OntologyModel = {
       name: 'AttachmentShape', targetClass: 'Attachment', targetObjectsOf: ['attachments'], label: 'Attachment conformance',
       comment: `${S} §5.2.2.6: usageType (an IRI), display (a language map), contentType, length and sha2 are required.`,
       constraints: [
-        { path: 'usageType', rdfPath: 'attachmentUsageType', minCount: 1, maxCount: 1, nodeKind: 'IRI' },
+        { path: 'usageType', minCount: 1, maxCount: 1, nodeKind: 'IRI' },
         { path: 'display', minCount: 1, datatype: 'rdf:langString', comment: 'a language map, required in xAPI 2.0 (§5.2.2.6)' },
         { path: 'description', datatype: 'rdf:langString', comment: 'a language map (§5.2.2.6)' },
         { path: 'contentType', minCount: 1, maxCount: 1, datatype: 'xsd:string', pattern: MEDIA_TYPE },

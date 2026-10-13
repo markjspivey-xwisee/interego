@@ -106,9 +106,7 @@ describe('the xAPI alignment is checked against what ADL\'s ontology declares', 
 
   it('the four constructs ADL gives another kind are closeMatches (what holds as OWL is the-alignment-to-adl-holds-when-read-as-owl)', () => {
     const across = toAdl.filter(([s, , o]) => kindOf(q, s) !== adlXapiTerm(o)!.kind).map(([s, p]) => `${s.slice(s.indexOf('#') + 1)} ${p.slice(SKOS.length)}`);
-    // ★ REVISED: the usage type is attachmentUsageType here, an object property; the datatype
-    // property usageType it replaced is kept, deprecated, and maps to nothing.
-    expect(across.sort()).toEqual(['attachmentUsageType closeMatch', 'member closeMatch', 'moreInfo closeMatch', 'version closeMatch']);
+    expect(across.sort()).toEqual(['member closeMatch', 'moreInfo closeMatch', 'usageType closeMatch', 'version closeMatch']);
   });
 
   it('the record of ADL\'s ontology is its full term list (73 terms), not just the targets', () => {

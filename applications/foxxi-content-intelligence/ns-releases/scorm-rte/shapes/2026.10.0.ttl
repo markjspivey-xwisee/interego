@@ -16,7 +16,7 @@
 
 <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> a owl:Ontology ;
     dct:title "SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data) — SHACL shapes"@en ;
-    dct:description "SHACL shapes for SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data): the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/validate). Each validation result cites the shape it came from. An instance written as JSON is read into RDF through the JSON-LD context at https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/context/2026.10.0."@en ;
+    dct:description "SHACL shapes for SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data): the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/validate). Each validation result cites the shape it came from."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL or IEEE. Where this document and the published standard differ, the standard governs."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -35,62 +35,15 @@
     dct:source <https://adlnet.gov/past-projects/scorm> ,
         <https://standards.ieee.org/ieee/1484.11.1/10324/> ,
         <https://standards.ieee.org/ieee/1484.11.2/7698/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/scorm-rte.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/scorm-rte.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0> .
 
 shapes:DataModelShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:DataModel ;
-    sh:targetSubjectsOf foxxi-scorm-rte:version ,
-        foxxi-scorm-rte:completionStatus ,
-        foxxi-scorm-rte:completionThreshold ,
-        foxxi-scorm-rte:credit ,
-        foxxi-scorm-rte:entry ,
-        foxxi-scorm-rte:exit ,
-        foxxi-scorm-rte:launchData ,
-        foxxi-scorm-rte:learnerId ,
-        foxxi-scorm-rte:learnerName ,
-        foxxi-scorm-rte:learnerPreference ,
-        foxxi-scorm-rte:location ,
-        foxxi-scorm-rte:maxTimeAllowed ,
-        foxxi-scorm-rte:mode ,
-        foxxi-scorm-rte:progressMeasure ,
-        foxxi-scorm-rte:scaledPassingScore ,
-        foxxi-scorm-rte:score ,
-        foxxi-scorm-rte:sessionTime ,
-        foxxi-scorm-rte:successStatus ,
-        foxxi-scorm-rte:suspendData ,
-        foxxi-scorm-rte:timeLimitAction ,
-        foxxi-scorm-rte:totalTime ,
-        foxxi-scorm-rte:commentsFromLearner ,
-        foxxi-scorm-rte:commentsFromLMS ,
-        foxxi-scorm-rte:interactions ,
-        foxxi-scorm-rte:objectives ,
-        foxxi-scorm-rte:navRequest ,
-        foxxi-scorm-rte:navRequestValidContinue ,
-        foxxi-scorm-rte:navRequestValidPrevious ,
-        foxxi-scorm-rte:navRequestValidChoice ,
-        foxxi-scorm-rte:navRequestValidJump ,
-        foxxi-scorm-rte:sharedData ;
     rdfs:label "Run-time data conformance"@en ;
     rdfs:comment "Every element has at most one value; the statuses, credit, entry, exit, mode and time limit action are from their vocabularies; measures and scores are in range; the times are timeintervals; suspend data beyond its SPM is reported as a warning; the navigation request is a navigation request (SCORM 2004 4th Edition Run-Time Environment)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:Comment ]
-            [ sh:class foxxi-scorm-rte:CommentFromLearner ]
-            [ sh:class foxxi-scorm-rte:CommentFromLMS ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Run-time data conformance: a DataModel is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:DataModelShape-completionStatus ,
         shapes:DataModelShape-successStatus ,
         shapes:DataModelShape-credit ,
@@ -105,17 +58,9 @@ shapes:DataModelShape a sh:NodeShape ;
         shapes:DataModelShape-totalTime ,
         shapes:DataModelShape-maxTimeAllowed ,
         shapes:DataModelShape-suspendData ,
-        shapes:DataModelShape-suspendData-SPM ,
         shapes:DataModelShape-navRequest ,
         shapes:DataModelShape-navRequestValidContinue ,
-        shapes:DataModelShape-navRequestValidPrevious ,
-        shapes:DataModelShape-version ,
-        shapes:DataModelShape-launchData ,
-        shapes:DataModelShape-learnerId ,
-        shapes:DataModelShape-learnerName ,
-        shapes:DataModelShape-location ,
-        shapes:DataModelShape-score ,
-        shapes:DataModelShape-learnerPreference ;
+        shapes:DataModelShape-navRequestValidPrevious ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
 
 shapes:DataModelShape-completionStatus a sh:PropertyShape ;
@@ -241,17 +186,11 @@ shapes:DataModelShape-maxTimeAllowed a sh:PropertyShape ;
 shapes:DataModelShape-suspendData a sh:PropertyShape ;
     sh:path foxxi-scorm-rte:suspendData ;
     sh:name "suspendData" ;
-    sh:description "cmi.suspend_data"@en ;
-    sh:message "Run-time data conformance — suspendData: at most 1 value, of type xsd:string — cmi.suspend_data"@en ;
-    sh:datatype xsd:string ;
-    sh:maxCount 1 .
-
-shapes:DataModelShape-suspendData-SPM a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:suspendData ;
-    sh:name "suspendData" ;
     sh:description "cmi.suspend_data, within its SPM of 64000 characters to be portable"@en ;
-    sh:message "Run-time data conformance — suspendData: matching ^[\\s\\S]{0,64000}$ — cmi.suspend_data, within its SPM of 64000 characters to be portable"@en ;
+    sh:message "Run-time data conformance — suspendData: at most 1 value, of type xsd:string, matching ^[\\s\\S]{0,64000}$ — cmi.suspend_data, within its SPM of 64000 characters to be portable"@en ;
     sh:severity sh:Warning ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
     sh:pattern "^[\\s\\S]{0,64000}$" .
 
 shapes:DataModelShape-navRequest a sh:PropertyShape ;
@@ -281,84 +220,10 @@ shapes:DataModelShape-navRequestValidPrevious a sh:PropertyShape ;
     sh:maxCount 1 ;
     sh:in ( "true" "false" "unknown" ) .
 
-shapes:DataModelShape-version a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:version ;
-    sh:name "version" ;
-    sh:description "cmi._version"@en ;
-    sh:message "Run-time data conformance — version: at most 1 value, of type xsd:string — cmi._version"@en ;
-    sh:datatype xsd:string ;
-    sh:maxCount 1 .
-
-shapes:DataModelShape-launchData a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:launchData ;
-    sh:name "launchData" ;
-    sh:description "cmi.launch_data"@en ;
-    sh:message "Run-time data conformance — launchData: at most 1 value, of type xsd:string — cmi.launch_data"@en ;
-    sh:datatype xsd:string ;
-    sh:maxCount 1 .
-
-shapes:DataModelShape-learnerId a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:learnerId ;
-    sh:name "learnerId" ;
-    sh:description "cmi.learner_id"@en ;
-    sh:message "Run-time data conformance — learnerId: at most 1 value, of type xsd:string — cmi.learner_id"@en ;
-    sh:datatype xsd:string ;
-    sh:maxCount 1 .
-
-shapes:DataModelShape-learnerName a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:learnerName ;
-    sh:name "learnerName" ;
-    sh:description "cmi.learner_name, localized_string_type"@en ;
-    sh:message "Run-time data conformance — learnerName: at most 1 value — cmi.learner_name, localized_string_type"@en ;
-    sh:maxCount 1 .
-
-shapes:DataModelShape-location a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:location ;
-    sh:name "location" ;
-    sh:description "cmi.location"@en ;
-    sh:message "Run-time data conformance — location: at most 1 value, of type xsd:string — cmi.location"@en ;
-    sh:datatype xsd:string ;
-    sh:maxCount 1 .
-
-shapes:DataModelShape-score a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:score ;
-    sh:name "score" ;
-    sh:description "cmi.score"@en ;
-    sh:message "Run-time data conformance — score: at most 1 value — cmi.score"@en ;
-    sh:maxCount 1 .
-
-shapes:DataModelShape-learnerPreference a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:learnerPreference ;
-    sh:name "learnerPreference" ;
-    sh:description "cmi.learner_preference"@en ;
-    sh:message "Run-time data conformance — learnerPreference: at most 1 value — cmi.learner_preference"@en ;
-    sh:maxCount 1 .
-
 shapes:ScoreShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:Score ;
-    sh:targetObjectsOf foxxi-scorm-rte:score , foxxi-scorm-rte:objectiveScore ;
-    sh:targetSubjectsOf foxxi-scorm-rte:scoreScaled ,
-        foxxi-scorm-rte:scoreRaw ,
-        foxxi-scorm-rte:scoreMin ,
-        foxxi-scorm-rte:scoreMax ;
     rdfs:label "Score conformance"@en ;
     rdfs:comment "A scaled score is from -1 to 1; raw, minimum and maximum are real numbers (SCORM 2004 4th Edition Run-Time Environment: cmi.score)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:Comment ]
-            [ sh:class foxxi-scorm-rte:CommentFromLearner ]
-            [ sh:class foxxi-scorm-rte:CommentFromLMS ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Score conformance: a Score is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ScoreShape-scoreScaled ,
         shapes:ScoreShape-scoreRaw ,
         shapes:ScoreShape-scoreMin ,
@@ -401,43 +266,15 @@ shapes:ScoreShape-scoreMax a sh:PropertyShape ;
 
 shapes:InteractionShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:Interaction ;
-    sh:targetObjectsOf foxxi-scorm-rte:interactions ;
-    sh:targetSubjectsOf foxxi-scorm-rte:interactionId ,
-        foxxi-scorm-rte:interactionType ,
-        foxxi-scorm-rte:interactionObjectives ,
-        foxxi-scorm-rte:interactionTimestamp ,
-        foxxi-scorm-rte:correctResponses ,
-        foxxi-scorm-rte:weighting ,
-        foxxi-scorm-rte:learnerResponse ,
-        foxxi-scorm-rte:result ,
-        foxxi-scorm-rte:latency ,
-        foxxi-scorm-rte:interactionDescription ;
     rdfs:label "Interaction conformance"@en ;
     rdfs:comment "An interaction has an ID and a type from the vocabulary; its weighting is a real number, its result a judgement or a number, its latency a timeinterval and its timestamp a SCORM time (SCORM 2004 4th Edition Run-Time Environment: cmi.interactions)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:Comment ]
-            [ sh:class foxxi-scorm-rte:CommentFromLearner ]
-            [ sh:class foxxi-scorm-rte:CommentFromLMS ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Interaction conformance: an Interaction is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:InteractionShape-interactionId ,
         shapes:InteractionShape-interactionType ,
         shapes:InteractionShape-weighting ,
         shapes:InteractionShape-result ,
         shapes:InteractionShape-latency ,
         shapes:InteractionShape-interactionTimestamp ,
-        shapes:InteractionShape-interactionDescription ,
-        shapes:InteractionShape-learnerResponse ;
+        shapes:InteractionShape-interactionDescription ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
 
 shapes:InteractionShape-interactionId a sh:PropertyShape ;
@@ -513,47 +350,14 @@ shapes:InteractionShape-interactionDescription a sh:PropertyShape ;
     sh:datatype rdf:langString ;
     sh:maxCount 1 .
 
-shapes:InteractionShape-learnerResponse a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:learnerResponse ;
-    sh:name "learnerResponse" ;
-    sh:description "cmi.interactions.n.learner_response"@en ;
-    sh:message "Interaction conformance — learnerResponse: at most 1 value, of type xsd:string — cmi.interactions.n.learner_response"@en ;
-    sh:datatype xsd:string ;
-    sh:maxCount 1 .
-
 shapes:ObjectiveShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:Objective ;
-    sh:targetObjectsOf foxxi-scorm-rte:objectives ;
-    sh:targetSubjectsOf foxxi-scorm-rte:objectiveId ,
-        foxxi-scorm-rte:objectiveScore ,
-        foxxi-scorm-rte:objectiveSuccessStatus ,
-        foxxi-scorm-rte:objectiveCompletionStatus ,
-        foxxi-scorm-rte:objectiveProgressMeasure ,
-        foxxi-scorm-rte:objectiveDescription ;
     rdfs:label "Objective conformance"@en ;
     rdfs:comment "An objective has an ID; its statuses are from their vocabularies; its progress measure is from 0 to 1 (SCORM 2004 4th Edition Run-Time Environment: cmi.objectives)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:Comment ]
-            [ sh:class foxxi-scorm-rte:CommentFromLearner ]
-            [ sh:class foxxi-scorm-rte:CommentFromLMS ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Objective conformance: an Objective is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ObjectiveShape-objectiveId ,
         shapes:ObjectiveShape-objectiveSuccessStatus ,
         shapes:ObjectiveShape-objectiveCompletionStatus ,
-        shapes:ObjectiveShape-objectiveProgressMeasure ,
-        shapes:ObjectiveShape-objectiveScore ,
-        shapes:ObjectiveShape-objectiveDescription ;
+        shapes:ObjectiveShape-objectiveProgressMeasure ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
 
 shapes:ObjectiveShape-objectiveId a sh:PropertyShape ;
@@ -593,51 +397,14 @@ shapes:ObjectiveShape-objectiveProgressMeasure a sh:PropertyShape ;
     sh:minInclusive 0 ;
     sh:maxInclusive 1 .
 
-shapes:ObjectiveShape-objectiveScore a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:objectiveScore ;
-    sh:name "objectiveScore" ;
-    sh:description "cmi.objectives.n.score"@en ;
-    sh:message "Objective conformance — objectiveScore: at most 1 value — cmi.objectives.n.score"@en ;
-    sh:maxCount 1 .
-
-shapes:ObjectiveShape-objectiveDescription a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:objectiveDescription ;
-    sh:name "objectiveDescription" ;
-    sh:description "cmi.objectives.n.description, localized_string_type"@en ;
-    sh:message "Objective conformance — objectiveDescription: at most 1 value, of type rdf:langString — cmi.objectives.n.description, localized_string_type"@en ;
-    sh:datatype rdf:langString ;
-    sh:maxCount 1 .
-
 shapes:LearnerPreferenceShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:LearnerPreference ;
-    sh:targetObjectsOf foxxi-scorm-rte:learnerPreference ;
-    sh:targetSubjectsOf foxxi-scorm-rte:audioLevel ,
-        foxxi-scorm-rte:preferenceLanguage ,
-        foxxi-scorm-rte:deliverySpeed ,
-        foxxi-scorm-rte:audioCaptioning ;
     rdfs:label "Learner preference conformance"@en ;
     rdfs:comment "The audio level and delivery speed are 0 or more; audio captioning is -1, 0 or 1; a language beyond its SPM is reported as a warning (SCORM 2004 4th Edition Run-Time Environment: cmi.learner_preference)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:Comment ]
-            [ sh:class foxxi-scorm-rte:CommentFromLearner ]
-            [ sh:class foxxi-scorm-rte:CommentFromLMS ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Learner preference conformance: a LearnerPreference is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:LearnerPreferenceShape-audioLevel ,
         shapes:LearnerPreferenceShape-deliverySpeed ,
         shapes:LearnerPreferenceShape-audioCaptioning ,
-        shapes:LearnerPreferenceShape-preferenceLanguage ,
-        shapes:LearnerPreferenceShape-preferenceLanguage-SPM ;
+        shapes:LearnerPreferenceShape-preferenceLanguage ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
 
 shapes:LearnerPreferenceShape-audioLevel a sh:PropertyShape ;
@@ -671,38 +438,17 @@ shapes:LearnerPreferenceShape-audioCaptioning a sh:PropertyShape ;
 shapes:LearnerPreferenceShape-preferenceLanguage a sh:PropertyShape ;
     sh:path foxxi-scorm-rte:preferenceLanguage ;
     sh:name "preferenceLanguage" ;
-    sh:description "cmi.learner_preference.language"@en ;
-    sh:message "Learner preference conformance — preferenceLanguage: at most 1 value, of type xsd:string — cmi.learner_preference.language"@en ;
-    sh:datatype xsd:string ;
-    sh:maxCount 1 .
-
-shapes:LearnerPreferenceShape-preferenceLanguage-SPM a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:preferenceLanguage ;
-    sh:name "preferenceLanguage" ;
     sh:description "language, within its SPM of 250 characters to be portable"@en ;
-    sh:message "Learner preference conformance — preferenceLanguage: matching ^[\\s\\S]{0,250}$ — language, within its SPM of 250 characters to be portable"@en ;
+    sh:message "Learner preference conformance — preferenceLanguage: at most 1 value, of type xsd:string, matching ^[\\s\\S]{0,250}$ — language, within its SPM of 250 characters to be portable"@en ;
     sh:severity sh:Warning ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
     sh:pattern "^[\\s\\S]{0,250}$" .
 
 shapes:CommentFromLearnerShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:CommentFromLearner ;
-    sh:targetObjectsOf foxxi-scorm-rte:commentsFromLearner ;
     rdfs:label "Comment from learner conformance"@en ;
     rdfs:comment "A learner's comment has its text, and at most one location and one SCORM time (SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_learner)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Comment from learner conformance: a CommentFromLearner is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:CommentFromLearnerShape-comment ,
         shapes:CommentFromLearnerShape-commentLocation ,
         shapes:CommentFromLearnerShape-commentTimestamp ;
@@ -736,23 +482,8 @@ shapes:CommentFromLearnerShape-commentTimestamp a sh:PropertyShape ;
 
 shapes:CommentFromLMSShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:CommentFromLMS ;
-    sh:targetObjectsOf foxxi-scorm-rte:commentsFromLMS ;
     rdfs:label "Comment from LMS conformance"@en ;
     rdfs:comment "An LMS comment has its text, and at most one location and one SCORM time (SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_lms)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Comment from LMS conformance: a CommentFromLMS is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:CommentFromLMSShape-comment ,
         shapes:CommentFromLMSShape-commentLocation ,
         shapes:CommentFromLMSShape-commentTimestamp ;
@@ -786,26 +517,8 @@ shapes:CommentFromLMSShape-commentTimestamp a sh:PropertyShape ;
 
 shapes:InteractionObjectiveShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:InteractionObjective ;
-    sh:targetObjectsOf foxxi-scorm-rte:interactionObjectives ;
-    sh:targetSubjectsOf foxxi-scorm-rte:interactionObjectiveId ;
     rdfs:label "Interaction objective conformance"@en ;
     rdfs:comment "An interaction's objective has an ID (SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.objectives)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:Comment ]
-            [ sh:class foxxi-scorm-rte:CommentFromLearner ]
-            [ sh:class foxxi-scorm-rte:CommentFromLMS ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Interaction objective conformance: an InteractionObjective is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:InteractionObjectiveShape-interactionObjectiveId ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
 
@@ -820,26 +533,8 @@ shapes:InteractionObjectiveShape-interactionObjectiveId a sh:PropertyShape ;
 
 shapes:CorrectResponseShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:CorrectResponse ;
-    sh:targetObjectsOf foxxi-scorm-rte:correctResponses ;
-    sh:targetSubjectsOf foxxi-scorm-rte:correctResponsePattern ;
     rdfs:label "Correct response conformance"@en ;
     rdfs:comment "A correct response has a pattern (SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.correct_responses)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:Comment ]
-            [ sh:class foxxi-scorm-rte:CommentFromLearner ]
-            [ sh:class foxxi-scorm-rte:CommentFromLMS ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Correct response conformance: a CorrectResponse is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:CorrectResponseShape-correctResponsePattern ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
 
@@ -854,26 +549,8 @@ shapes:CorrectResponseShape-correctResponsePattern a sh:PropertyShape ;
 
 shapes:TargetedRequestValidityShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:TargetedRequestValidity ;
-    sh:targetObjectsOf foxxi-scorm-rte:navRequestValidChoice , foxxi-scorm-rte:navRequestValidJump ;
-    sh:targetSubjectsOf foxxi-scorm-rte:requestTarget , foxxi-scorm-rte:requestValidity ;
     rdfs:label "Targeted request validity conformance"@en ;
     rdfs:comment "A targeted request validity names its target and is true, false or unknown (SCORM 2004 4th Edition Run-Time Environment: adl.nav.request_valid)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:Comment ]
-            [ sh:class foxxi-scorm-rte:CommentFromLearner ]
-            [ sh:class foxxi-scorm-rte:CommentFromLMS ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:SharedData ]
-        )
-    ] ;
-    sh:message "Targeted request validity conformance: a TargetedRequestValidity is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:TargetedRequestValidityShape-requestTarget ,
         shapes:TargetedRequestValidityShape-requestValidity ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
@@ -899,29 +576,9 @@ shapes:TargetedRequestValidityShape-requestValidity a sh:PropertyShape ;
 
 shapes:SharedDataShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-rte:SharedData ;
-    sh:targetObjectsOf foxxi-scorm-rte:sharedData ;
-    sh:targetSubjectsOf foxxi-scorm-rte:sharedDataId , foxxi-scorm-rte:sharedDataStore ;
     rdfs:label "Shared data conformance"@en ;
     rdfs:comment "A shared data store has an ID; content beyond its SPM is reported as a warning (SCORM 2004 4th Edition Run-Time Environment: adl.data)."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-scorm-rte:DataModel ]
-            [ sh:class foxxi-scorm-rte:Comment ]
-            [ sh:class foxxi-scorm-rte:CommentFromLearner ]
-            [ sh:class foxxi-scorm-rte:CommentFromLMS ]
-            [ sh:class foxxi-scorm-rte:LearnerPreference ]
-            [ sh:class foxxi-scorm-rte:Interaction ]
-            [ sh:class foxxi-scorm-rte:InteractionObjective ]
-            [ sh:class foxxi-scorm-rte:CorrectResponse ]
-            [ sh:class foxxi-scorm-rte:Objective ]
-            [ sh:class foxxi-scorm-rte:Score ]
-            [ sh:class foxxi-scorm-rte:TargetedRequestValidity ]
-        )
-    ] ;
-    sh:message "Shared data conformance: a SharedData is not also of a kind this document declares disjoint with it"@en ;
-    sh:property shapes:SharedDataShape-sharedDataId ,
-        shapes:SharedDataShape-sharedDataStore ,
-        shapes:SharedDataShape-sharedDataStore-SPM ;
+    sh:property shapes:SharedDataShape-sharedDataId , shapes:SharedDataShape-sharedDataStore ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
 
 shapes:SharedDataShape-sharedDataId a sh:PropertyShape ;
@@ -936,15 +593,9 @@ shapes:SharedDataShape-sharedDataId a sh:PropertyShape ;
 shapes:SharedDataShape-sharedDataStore a sh:PropertyShape ;
     sh:path foxxi-scorm-rte:sharedDataStore ;
     sh:name "sharedDataStore" ;
-    sh:description "adl.data.n.store"@en ;
-    sh:message "Shared data conformance — sharedDataStore: at most 1 value, of type xsd:string — adl.data.n.store"@en ;
-    sh:datatype xsd:string ;
-    sh:maxCount 1 .
-
-shapes:SharedDataShape-sharedDataStore-SPM a sh:PropertyShape ;
-    sh:path foxxi-scorm-rte:sharedDataStore ;
-    sh:name "sharedDataStore" ;
     sh:description "adl.data.n.store, within its SPM of 64000 characters to be portable"@en ;
-    sh:message "Shared data conformance — sharedDataStore: matching ^[\\s\\S]{0,64000}$ — adl.data.n.store, within its SPM of 64000 characters to be portable"@en ;
+    sh:message "Shared data conformance — sharedDataStore: at most 1 value, of type xsd:string, matching ^[\\s\\S]{0,64000}$ — adl.data.n.store, within its SPM of 64000 characters to be portable"@en ;
     sh:severity sh:Warning ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
     sh:pattern "^[\\s\\S]{0,64000}$" .

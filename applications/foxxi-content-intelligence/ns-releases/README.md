@@ -26,20 +26,29 @@ side of it (`latest-version`, `predecessor-version`, `successor-version`; RFC 58
   released before it. The test fails while an artifact differs from its archived current version.
 - **Each version names the one before it, and says whether it keeps its meaning.** A document's
   header says `owl:priorVersion` once it has had a release, and `owl:backwardCompatibleWith` or
-  `owl:incompatibleWith` that version; the release tool refuses a new version that does not.
-- **A version is released once.** The commit that brings a version to `master` is tagged
-  `foxxi-ns-<version>` (`.github/workflows/foxxi-ns-release-tags.yml`), and the version's documents
-  cite the source files they were generated from at that tag (`prov:wasDerivedFrom`), which never
-  moves. The release tool refuses to archive anything more under a version whose tag exists.
+  `owl:incompatibleWith` that version; the release tool refuses a new version that does not. An
+  ontology and its shapes graph can differ here: 2026.10.1's ontologies only add to 2026.10.0's, while
+  most of its shapes graphs check more, so data that met 2026.10.0's shapes may not meet them.
+- **A version is released once: when it reaches `master`.** The commit that brings it there is
+  tagged `foxxi-ns-<version>` (`.github/workflows/foxxi-ns-release-tags.yml`, which finds that commit
+  even when it runs later: 2026.10.0 reached `master` before the workflow did), and from 2026.10.1
+  on, a version's documents cite the source files they were generated from at that tag
+  (`prov:wasDerivedFrom`), which never moves. The release tool refuses to archive anything more under
+  a version whose tag exists.
 - **Imports are by version IRI.** A Foxxi document imports another at a version, so the import
   closure of a released version never changes either.
-- **A term's IRI keeps its meaning.** A term whose kind changes (a datatype property that becomes an
-  object property), or that comes to relate different things, takes a new IRI; the old one stays, as
-  it was published, with `owl:deprecated`, `dct:isReplacedBy` and a `skos:changeNote`, so data
-  written with it still reads as it did. A wrong domain or range is removed rather than replaced. A
-  change that only narrows what a term admits to what its standard allows stays on its IRI, and one
-  that replaces a term's datatype says so in its `skos:changeNote`. 2026.10.0 held what was published
-  before versioning to this rule.
+- **A released term keeps its meaning.** From one release to the next, a term whose kind would
+  change (a datatype property that becomes an object property), or that would come to relate
+  different things, takes a new IRI instead; the old one stays as it was released, with
+  `owl:deprecated`, `dct:isReplacedBy` and a `skos:changeNote`, so data written with it still reads
+  as it did. A wrong domain or range is removed rather than replaced. A change that only narrows
+  what a term admits to what its standard allows stays on its IRI, says so in a `skos:changeNote`
+  where it replaces a datatype, and makes the version `owl:incompatibleWith` the one before.
+- **The rule starts at 2026.10.0, the first release.** The publication before it had no versions,
+  and 2026.10.0 changed some of its terms in place — ten properties' kinds and five properties'
+  domains or ranges among them. 2026.10.0 is released, so later versions keep those terms as it has
+  them rather than change them again; each term whose kind, domain, range or datatype it replaced
+  says in its `skos:changeNote` what the unversioned publication had.
 
 ## Releasing
 

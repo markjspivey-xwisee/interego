@@ -19,10 +19,10 @@
  * ★ TIED BACK TO THE SUBSTRATE'S OWN TERMS. Each Foxxi term that names the same thing as a term of
  * the substrate vocabulary it re-homes carries a SKOS mapping to it (prefixes soc2:, eu-ai-act:,
  * nist-rmf: in the published documents), so an Evidence Pack citing either IRI can be joined to the
- * other. The acting DID of a SOC 2 evidence event is an agent with an identity, so it is stated with
- * an object property, `actingAgent`; its shape always demanded an IRI, which a datatype property
- * cannot hold. `actor`, published as a datatype property, keeps that kind, deprecated: changing a
- * published property's kind in place would make data written with it unreadable in OWL 2 DL.
+ * other. The acting DID of a SOC 2 evidence event is an agent with an identity, so `actor` is an
+ * object property; its shape always demanded an IRI, which a datatype property cannot hold. It
+ * became one in 2026.10.0, the first versioned release (before it, the unversioned publication made
+ * it a datatype property), and a later version keeps the kind 2026.10.0 released.
  *
  * ★ A CLASS, A LIST AND A CODE NAME THE SAME THINGS, SO THEY ARE ONE. Each framework is formalized
  * three ways: a class (an obligation, a core function, a criterion), a SKOS list of the same things,
@@ -79,7 +79,7 @@ function withCodes(m: OntologyModel, list: string, property: string): OntologyMo
 const SUBSTRATE_NS = 'https://markjspivey-xwisee.github.io/interego/ns/';
 
 // ── AICPA SOC 2 — Trust Services Criteria (Common Criteria) ──
-const SOC2_VERSION = '2026.10.0';
+const SOC2_VERSION = '2026.10.1';
 export const SOC2_MODEL: OntologyModel = {
   selectByDomainAndRange: true,
   generatedContext: true,
@@ -87,6 +87,7 @@ export const SOC2_MODEL: OntologyModel = {
   title: 'AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria)',
   description: `OWL + SHACL projection of the Interego substrate's SOC 2 mapping (${SUBSTRATE_NS}soc2): the Common Criteria for logical and physical access (CC6.1–CC6.8), for responding to security incidents (CC7.3–CC7.5) and for change management (CC8.1), and the operational evidence events Interego records, each an operation an auditor can sample as evidence for a criterion: an access change for CC6.2 and CC6.3, a deploy for CC8.1. Composed into PGSL and projected here so a cited control IRI dereferences.`,
   version: SOC2_VERSION,
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   spec: 'https://www.aicpa.org/resources/landing/system-and-organization-controls-soc-suite-of-services',
   standards: [
     { title: 'AICPA 2017 Trust Services Criteria for Security, Availability, Processing Integrity, Confidentiality, and Privacy (with revised points of focus, 2022)', url: 'https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022' },
@@ -95,7 +96,7 @@ export const SOC2_MODEL: OntologyModel = {
   seeAlso: [`${SUBSTRATE_NS}soc2`],
   prefixes: { iep: `${SUBSTRATE_NS}iep#`, 'ie-soc2': `${SUBSTRATE_NS}soc2#` },
   notes: [
-    `Mapped to the Interego substrate's SOC 2 vocabulary (prefix soc2:, ${SUBSTRATE_NS}soc2) by SKOS mappings.`,
+    `Mapped to the Interego substrate's SOC 2 vocabulary (prefix soc2:, ${SUBSTRATE_NS}soc2) by SKOS mappings. Since 2026.10.0, actor is an object property.`,
     `Each criterion is paraphrased and cited by its code; the AICPA's text governs. How Interego produces evidence for one is documented with the substrate (${sourceAt(SOC2_VERSION, 'spec/SOC2-PREPARATION.md')}), not here: whether the evidence suffices is the auditor's judgment.`,
     'The criteria are the concepts of one list (CommonCriterion), each a TrustServicesCriterion: the class and the list name the same criteria, so an event that cites a concept (evidences) cites a criterion.',
   ],
@@ -111,8 +112,7 @@ export const SOC2_MODEL: OntologyModel = {
   properties: [
     { name: 'evidences', kind: 'object', label: 'evidences', comment: 'Links an OperationalEvidenceEvent to the TrustServicesCriterion whose operating effectiveness it evidences.', domain: 'OperationalEvidenceEvent', range: 'TrustServicesCriterion', closeMatch: ['ie-soc2:satisfiesControl'] },
     { name: 'occurredAt', kind: 'datatype', label: 'occurredAt', comment: 'The instant the evidenced operation occurred (xsd:dateTime), inside the audit period.', domain: 'OperationalEvidenceEvent', range: 'xsd:dateTime', functional: true },
-    { name: 'actingAgent', kind: 'object', label: 'acting agent', comment: 'The agent or principal, identified by its DID, whose action the event records — recovered from the request signature, not asserted by the application.', domain: 'OperationalEvidenceEvent', range: 'prov:Agent', functional: true, changeNote: '2026.10.0: new, in place of actor, which held the DID as a string.' },
-    { name: 'actor', kind: 'datatype', label: 'actor', comment: 'The DID of the agent or principal whose action the event records, as a string. An agent with an identity is a node, not a string: use actingAgent, whose value is the DID itself.', domain: 'OperationalEvidenceEvent', range: 'xsd:anyURI', deprecated: true, replacedBy: 'actingAgent', changeNote: '2026.10.0: deprecated in favour of actingAgent; kept as the datatype property it was published as, so data that used it keeps its meaning.' },
+    { name: 'actor', kind: 'object', label: 'actor', comment: 'The agent or principal, identified by its DID, whose action the event records — recovered from the request signature, not asserted by the application.', domain: 'OperationalEvidenceEvent', range: 'prov:Agent', functional: true, changeNote: '2026.10.0: an object property, whose value is the agent itself; before it, the unversioned publication made it a datatype property whose value was the DID, an xsd:anyURI literal.' },
     { name: 'signer', kind: 'datatype', label: 'signer', comment: 'The recovered signing address proving who produced the evidence (ECDSA signature recovery).', domain: 'OperationalEvidenceEvent', range: 'xsd:string', functional: true },
   ],
   vocabularies: [
@@ -145,7 +145,7 @@ export const SOC2_MODEL: OntologyModel = {
       constraints: [
         { path: 'evidences', minCount: 1, comment: 'cite at least one Trust Services Criterion' },
         { path: 'occurredAt', minCount: 1, maxCount: 1, datatype: 'xsd:dateTime', comment: 'one occurrence instant in the audit period' },
-        { path: 'actingAgent', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'the acting agent, by its DID' },
+        { path: 'actor', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'the acting DID' },
         { path: 'signer', minCount: 1, maxCount: 1, datatype: 'xsd:string', comment: 'the recovered signer address' },
       ],
     },
@@ -159,7 +159,8 @@ export const EU_AI_ACT_MODEL: OntologyModel = withCodes({
   module: 'eu-ai-act',
   title: 'EU AI Act (Regulation (EU) 2024/1689) — obligation mapping',
   description: `OWL + SHACL projection of the Interego substrate's EU AI Act mapping (${SUBSTRATE_NS}eu-ai-act): the obligations most relevant to AI agents and tutors — for high-risk systems, risk management (Art. 9), data governance (Art. 10), record-keeping (Art. 12), transparency to deployers (Art. 13), human oversight (Art. 14) and accuracy and robustness (Art. 15); and, for any system that interacts with people, transparency to them (Art. 50). Composed into PGSL and projected here so a cited Article IRI dereferences, and an action record can name the obligation it is evidence for.`,
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   spec: 'https://eur-lex.europa.eu/eli/reg/2024/1689/oj',
   standards: [
     { title: 'Regulation (EU) 2024/1689 of the European Parliament and of the Council (Artificial Intelligence Act)', url: 'https://eur-lex.europa.eu/eli/reg/2024/1689/oj' },
@@ -173,18 +174,18 @@ export const EU_AI_ACT_MODEL: OntologyModel = withCodes({
     'The Articles are concepts of one list (Article), and each stands for the obligation its Article imposes: it is an Obligation, typed with the kind of obligation it is (RecordKeeping, HumanOversight, …), and carries its Article number. So the class, the list and the number name the same obligations, and a record that names an Article concept meets the obligation shapes.',
   ],
   classes: [
-    { name: 'Obligation', label: 'AI Act Obligation', comment: 'An obligation the EU AI Act places on the providers or deployers of AI systems: for high-risk systems (Articles 9 to 15) and, whatever a system\'s risk, for systems that interact with people (Article 50). Its instances are this document\'s Article concepts, each the obligation its Article imposes.', changeNote: '2026.10.0: defined as the obligations of Articles 9 to 15 and 50, not of high-risk systems alone, and typed onto the Article concepts that name them.' },
+    { name: 'Obligation', label: 'AI Act Obligation', comment: 'An obligation the EU AI Act places on the providers or deployers of AI systems: for high-risk systems (Articles 9 to 15) and, whatever a system\'s risk, for systems that interact with people (Article 50). Its instances are this document\'s Article concepts, each the obligation its Article imposes.', changeNote: '2026.10.1: defined as the obligations of Articles 9 to 15 and 50, not of high-risk systems alone, and typed onto the Article concepts that name them.' },
     { name: 'RecordKeeping', label: 'Record-Keeping (Art.12)', comment: 'Art.12: high-risk AI systems shall technically allow for the automatic recording of events (logs) over their lifetime, ensuring traceability of functioning.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:LoggedAction'] },
     { name: 'HumanOversight', label: 'Human Oversight (Art.14)', comment: 'Art.14: high-risk AI systems shall be designed so they can be effectively overseen by natural persons, including the ability to intervene or interrupt.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:HumanOversightCheckpoint'] },
     { name: 'Transparency', label: 'Transparency to Deployers (Art.13)', comment: 'Art.13: high-risk AI systems shall be sufficiently transparent to enable deployers to interpret output and use it appropriately, accompanied by instructions for use.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:TransparencyDisclosure'] },
     { name: 'RiskManagement', label: 'Risk Management (Art.9)', comment: 'Art.9: a risk-management system shall be established, implemented, documented and maintained across the lifecycle of the high-risk AI system.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:RiskManagementRecord'] },
     { name: 'DataGovernance', label: 'Data & Data Governance (Art.10)', comment: 'Art.10: training, validation and testing data sets shall be subject to appropriate data-governance and management practices.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:DataGovernanceAttestation'] },
     { name: 'InteractionTransparency', label: 'Transparency to Persons (Art.50)', comment: 'Art.50: providers shall ensure that AI systems intended to interact directly with natural persons are designed so that those persons are informed that they are interacting with an AI system, unless that is obvious; and providers and deployers shall mark or disclose AI-generated or manipulated content as the Article sets out. Applies to such systems whether or not they are high-risk.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:Article50Disclosure'] },
-    { name: 'TechnicalDocumentation', label: 'Technical Documentation (Art.11)', comment: 'Art.11: the technical documentation of a high-risk AI system is drawn up before the system is placed on the market or put into service, kept up to date, and written to show that the system meets the requirements for high-risk systems, in a form the authorities can assess.', subClassOf: ['Obligation'], changeNote: '2026.10.0: new, so that the list holds Articles 9 to 15 as it says.' },
+    { name: 'TechnicalDocumentation', label: 'Technical Documentation (Art.11)', comment: 'Art.11: the technical documentation of a high-risk AI system is drawn up before the system is placed on the market or put into service, kept up to date, and written to show that the system meets the requirements for high-risk systems, in a form the authorities can assess.', subClassOf: ['Obligation'], changeNote: '2026.10.1: new, so that the list holds Articles 9 to 15 as it says.' },
     { name: 'AccuracyRobustness', label: 'Accuracy, Robustness, Cybersecurity (Art.15)', comment: 'Art.15: high-risk AI systems shall achieve appropriate levels of accuracy, robustness and cybersecurity, consistent throughout their lifecycle.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:AccuracyAttestation'] },
   ],
   properties: [
-    { name: 'conformsToArticle', kind: 'object', label: 'conformsToArticle', comment: 'Names the EU AI Act obligation (one of this document\'s Article concepts) that the subject, a record of an action or a system, is offered as evidence of meeting. The claim is the subject\'s; whether the evidence suffices is for the provider, the deployer and the authorities to judge.', range: 'Obligation', changeNote: '2026.10.0: a claim of evidence, not a judgment that the obligation is met.' },
+    { name: 'conformsToArticle', kind: 'object', label: 'conformsToArticle', comment: 'Names the EU AI Act obligation (one of this document\'s Article concepts) that the subject, a record of an action or a system, is offered as evidence of meeting. The claim is the subject\'s; whether the evidence suffices is for the provider, the deployer and the authorities to judge.', range: 'Obligation', changeNote: '2026.10.1: a claim of evidence, not a judgment that the obligation is met.' },
     { name: 'article', kind: 'datatype', label: 'article', comment: 'The number of the Article that imposes an obligation, as the Regulation numbers it (e.g. "12").', domain: 'Obligation', range: 'xsd:string', functional: true },
   ],
   vocabularies: [
@@ -194,7 +195,7 @@ export const EU_AI_ACT_MODEL: OntologyModel = withCodes({
       members: [
         { name: 'Article9', label: 'Article 9 — Risk management system', comment: 'Establish/maintain a risk-management system across the lifecycle.', exactMatch: ['ie-eu-ai-act:Article9'], types: ['Obligation', 'RiskManagement'], values: { article: '9' } },
         { name: 'Article10', label: 'Article 10 — Data and data governance', comment: 'Data-governance practices for training/validation/testing data.', exactMatch: ['ie-eu-ai-act:Article10'], types: ['Obligation', 'DataGovernance'], values: { article: '10' } },
-        { name: 'Article11', label: 'Article 11 — Technical documentation', comment: 'Technical documentation drawn up before release, kept up to date, and showing compliance.', types: ['Obligation', 'TechnicalDocumentation'], values: { article: '11' }, changeNote: '2026.10.0: new.' },
+        { name: 'Article11', label: 'Article 11 — Technical documentation', comment: 'Technical documentation drawn up before release, kept up to date, and showing compliance.', types: ['Obligation', 'TechnicalDocumentation'], values: { article: '11' }, changeNote: '2026.10.1: new.' },
         { name: 'Article12', label: 'Article 12 — Record-keeping', comment: 'Automatic, lifetime logging ensuring traceability of functioning.', exactMatch: ['ie-eu-ai-act:Article12'], types: ['Obligation', 'RecordKeeping'], values: { article: '12' } },
         { name: 'Article13', label: 'Article 13 — Transparency and provision of information to deployers', comment: 'Transparent operation + instructions for use.', types: ['Obligation', 'Transparency'], values: { article: '13' } },
         { name: 'Article14', label: 'Article 14 — Human oversight', comment: 'Effective human oversight, intervention and interruption.', exactMatch: ['ie-eu-ai-act:Article14'], types: ['Obligation', 'HumanOversight'], values: { article: '14' } },
@@ -229,7 +230,8 @@ export const NIST_RMF_MODEL: OntologyModel = withCodes({
   module: 'nist-rmf',
   title: 'NIST AI Risk Management Framework 1.0 — function mapping',
   description: `OWL + SHACL projection of the Interego substrate's NIST AI RMF mapping (${SUBSTRATE_NS}nist-rmf): the four core functions (Govern / Map / Measure / Manage), so that a record of an action can name the function it contributes to. Composed into PGSL and projected here so a cited function IRI dereferences.`,
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   spec: 'https://www.nist.gov/itl/ai-risk-management-framework',
   standards: [
     { title: 'NIST AI 100-1 — Artificial Intelligence Risk Management Framework (AI RMF 1.0), January 2023', url: 'https://doi.org/10.6028/NIST.AI.100-1' },
@@ -243,7 +245,7 @@ export const NIST_RMF_MODEL: OntologyModel = withCodes({
     'The four functions are the concepts of one list (CoreFunction). Each is a Function, typed with its own class (Govern, Map, Measure, Manage), and carries its id: the class, the list and the id name the same four functions, and a record that names a CoreFunction concept meets the function shape.',
   ],
   classes: [
-    { name: 'Function', label: 'AI RMF Core Function', comment: 'One of the four functions of the NIST AI RMF 1.0 core. Its instances are the four concepts of this document\'s CoreFunction list. A record of an action that addresses a function (addressesFunction) is evidence toward it.', changeNote: '2026.10.0: typed onto the CoreFunction concepts that name the functions.' },
+    { name: 'Function', label: 'AI RMF Core Function', comment: 'One of the four functions of the NIST AI RMF 1.0 core. Its instances are the four concepts of this document\'s CoreFunction list. A record of an action that addresses a function (addressesFunction) is evidence toward it.', changeNote: '2026.10.1: typed onto the CoreFunction concepts that name the functions.' },
     { name: 'Govern', label: 'Govern', comment: 'Cultivate a culture of risk management; policies, accountability, and oversight structures are in place and applied. Its one instance is the concept GOVERN; the class is kept to match the substrate\'s nist-rmf:Govern.', subClassOf: ['Function'], closeMatch: ['ie-nist-rmf:Govern'] },
     { name: 'Map', label: 'Map', comment: 'Establish the context to frame risks; categorize the AI system and its capabilities, intended uses, and impacts. Its one instance is the concept MAP; the class is kept to match the substrate\'s nist-rmf:Map.', subClassOf: ['Function'], closeMatch: ['ie-nist-rmf:Map'] },
     { name: 'Measure', label: 'Measure', comment: 'Employ quantitative, qualitative, or mixed methods to analyze, assess, benchmark, and monitor AI risk. Its one instance is the concept MEASURE; the class is kept to match the substrate\'s nist-rmf:Measure.', subClassOf: ['Function'], closeMatch: ['ie-nist-rmf:Measure'] },

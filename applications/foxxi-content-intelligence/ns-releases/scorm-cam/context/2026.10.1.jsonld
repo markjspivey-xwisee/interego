@@ -113,14 +113,14 @@
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#dependency",
       "@type": "@id"
     },
-    "titleText": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#titleText"
+    "title": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#title"
     },
-    "metadataSchema": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#metadataSchema"
+    "schema": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#schema"
     },
-    "metadataSchemaVersion": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#metadataSchemaVersion"
+    "schemaversion": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#schemaversion"
     },
     "scormType": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#scormType"
@@ -163,15 +163,6 @@
     },
     "sharedDataGlobalToSystem": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#sharedDataGlobalToSystem"
-    },
-    "schema": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#metadataSchema"
-    },
-    "schemaversion": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#metadataSchemaVersion"
-    },
-    "title": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#titleText"
     }
   }
 }

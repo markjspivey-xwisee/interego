@@ -49,7 +49,8 @@ export const CMI5_MODEL: OntologyModel = {
   module: 'cmi5',
   title: 'cmi5 (Quartz) — xAPI profile and course structure',
   description: 'An OWL 2 DL ontology and SHACL shapes for cmi5, the xAPI profile for content launched by a learning management system (Quartz edition): the course structure of §13 (Course, Block, Objective, Assignable Unit), the launch session, the LMS.LaunchData state document (§10) and the learner-preferences document (§11), and the profile\'s xAPI surface — its 9 verbs, category activities, context and result extensions and activity types — as SKOS concepts mapped to the IRIs cmi5 defines. Builds on, and imports, the Foxxi xAPI 2.0 ontology.',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   created: '2026-06-19',
   spec: 'https://github.com/AICC/CMI-5_Spec_Current',
   standards: [
@@ -80,7 +81,7 @@ export const CMI5_MODEL: OntologyModel = {
     { name: 'EntitlementKey', label: 'Entitlement Key', comment: 'The entitlement data in the launch data: the key from the course structure, and optionally an alternate key agreed between the LMS and the content provider.', source: `${Q} §10.2.7` },
     { name: 'LearnerPreferences', label: 'Learner Preferences', comment: 'The cmi5LearnerPreferences agent-profile document: the learner\'s ordered language preferences and audio preference.', source: `${Q} §11` },
     // Deprecated in 2026.10.0. Kept so data that used it still resolves.
-    { name: 'Objectives', label: 'Objectives', comment: 'Formerly a container of the objectives a Block or Assignable Unit references. A Block or Assignable Unit now references each Objective directly, with the property objectiveReference.', deprecated: true, replacedBy: 'objectiveReference' },
+    { name: 'Objectives', label: 'Objectives', comment: 'Formerly a container of the objectives a Block or Assignable Unit references. A Block or Assignable Unit now references each Objective directly, with the property objectives.', deprecated: true, replacedBy: 'objectives', changeNote: '2026.10.0: deprecated; a Block or Assignable Unit references each objective with objectives.' },
   ],
   datatypes: [
     { name: 'MasteryScore', label: 'Mastery score', comment: 'A scaled decimal between 0 and 1 inclusive (with up to 4 decimal places). Admits xsd:double as well, for the JSON launch data.', base: 'xsd:decimal', alsoBases: ['xsd:double'], minInclusive: 0, maxInclusive: 1, source: `${Q} §13.1.4; §10.2.4` },
@@ -94,15 +95,8 @@ export const CMI5_MODEL: OntologyModel = {
     { name: 'au', kind: 'object', label: 'assignable unit', comment: 'An Assignable Unit contained in a course structure or in a Block.', domain: ['CourseStructure', 'Block'], range: 'AssignableUnit', source: `${Q} §13.1.4`, notation: 'au' },
     // Document order is cmi5's sequence (§13.1), and RDF keeps no order of its own, so a reading states it.
     { name: 'position', kind: 'datatype', label: 'position', comment: 'The position of a Block or Assignable Unit among the members of its course structure or parent Block, counting from 1 in document order: the sequence cmi5 implies (§13.1). An RDF reading of a course structure states it, since RDF keeps no order of its own.', domain: ['Block', 'AssignableUnit'], range: 'xsd:positiveInteger', functional: true, source: `${Q} §13.1` },
-    // ★ NO DOMAIN, AS PUBLISHED. objective was published with the domain Objectives, a container this
-    // ontology no longer has; a course structure declares its objectives with it now. Its domain is not
-    // replaced by CourseStructure, so that data written with the container stays consistent.
-    { name: 'objective', kind: 'object', label: 'objective', comment: 'An objective a course structure declares, for its Blocks and Assignable Units to reference. (Before 2026.10.0, a member of the deprecated Objectives container.)', range: 'Objective', source: `${Q} §13.1.3; §14 (CourseStructure.xsd)`, changeNote: '2026.10.0: its domain, the Objectives container, is removed: a course structure declares its objectives with it. Not replaced by the course structure, so that data written with the container stays consistent.' },
-    // ★ A NEW IRI FOR A NEW RELATION. objectives was published to relate a Block or AU to an Objectives
-    // container; a Block or AU now references each objective itself, which is a different relation.
-    // The JSON key is unchanged: the context reads "objectives" into objectiveReference.
-    { name: 'objectiveReference', kind: 'object', label: 'objective reference', notation: 'objectiveReference', comment: 'An objective a Block or an Assignable Unit references, by the objective\'s idref. (In a course structure\'s JSON, an entry of its "objectives".)', domain: ['Block', 'AssignableUnit'], range: 'Objective', source: `${Q} §13.1.2; §13.1.4`, changeNote: '2026.10.0: new, in place of objectives, which related a Block or AU to an Objectives container.' },
-    { name: 'objectives', kind: 'object', label: 'objectives', comment: 'Formerly the Objectives container a Block or AU references. A Block or AU now references each objective with objectiveReference.', range: 'Objectives', deprecated: true, replacedBy: 'objectiveReference', changeNote: '2026.10.0: deprecated in favour of objectiveReference; kept as it was published, with the range Objectives.' },
+    { name: 'objective', kind: 'object', label: 'objective', comment: 'An objective the course structure declares, for its Blocks and Assignable Units to reference.', domain: 'CourseStructure', range: 'Objective', source: `${Q} §13.1.3; §14 (CourseStructure.xsd)`, changeNote: '2026.10.0: its domain is the course structure, which declares its objectives; before it, the unversioned publication gave it the domain Objectives, a container now deprecated.' },
+    { name: 'objectives', kind: 'object', label: 'objectives', comment: 'An objective a Block or an Assignable Unit references (an objectiveReference: the objective\'s idref).', domain: ['Block', 'AssignableUnit'], range: 'Objective', source: `${Q} §13.1.2; §13.1.4`, changeNote: '2026.10.0: its range is Objective, each objective referenced; before it, the unversioned publication gave it the range Objectives, a container now deprecated.' },
     { name: 'title', kind: 'datatype', label: 'title', comment: 'The descriptive title of a Course, Block, Objective or Assignable Unit, as language strings.', domain: ['Course', 'Block', 'Objective', 'AssignableUnit'], range: 'rdf:langString', source: `${Q} §13.1.1–§13.1.4` },
     { name: 'description', kind: 'datatype', label: 'description', comment: 'The detailed description of a Course, Block, Objective or Assignable Unit, as language strings.', domain: ['Course', 'Block', 'Objective', 'AssignableUnit'], range: 'rdf:langString', source: `${Q} §13.1.1–§13.1.4` },
     // ── Assignable Unit metadata ──
@@ -110,10 +104,7 @@ export const CMI5_MODEL: OntologyModel = {
     { name: 'launchMethod', kind: 'datatype', label: 'launch method', comment: 'Whether the Assignable Unit requires its own window (OwnWindow) or accepts any window context (AnyWindow, the default).', domain: 'AssignableUnit', oneOf: LAUNCH_METHOD, functional: true, source: `${Q} §13.1.4`, notation: 'launchMethod' },
     { name: 'moveOn', kind: 'datatype', label: 'move on', comment: 'What satisfies the Assignable Unit: Passed, Completed, CompletedAndPassed, CompletedOrPassed, or NotApplicable (the default, under which the LMS considers it satisfied). In the launch data, the value the LMS applies.', domain: ['AssignableUnit', 'LaunchData'], oneOf: MOVE_ON, functional: true, source: `${Q} §13.1.4; §10.2.5`, notation: 'moveOn' },
     { name: 'masteryScore', kind: 'datatype', label: 'mastery score', comment: 'The scaled score at or above which a judged attempt passes; passed and failed statements are based on it when it is given.', domain: ['AssignableUnit', 'LaunchData'], range: 'MasteryScore', functional: true, source: `${Q} §13.1.4; §10.2.4`, notation: 'masteryScore' },
-    // ★ A NEW IRI FOR A NEW KIND, as for the xAPI ontology's activityType: published as a datatype
-    // property with an xsd:anyURI range, the activity type is the value of an object property now.
-    { name: 'auActivityType', kind: 'object', label: 'activity type', comment: 'The activity type the LMS can show for the Assignable Unit before it is first started. (In a course structure\'s JSON, the AU\'s "activityType".)', domain: 'AssignableUnit', range: 'foxxi-xapi:ActivityType', functional: true, source: `${Q} §13.1.4`, notation: 'activityType', changeNote: '2026.10.0: new, in place of the datatype property activityType: an activity type is an IRI naming a concept, so it is the value of an object property.' },
-    { name: 'activityType', kind: 'datatype', label: 'activity type', comment: 'Formerly the activity type of an Assignable Unit, as an xsd:anyURI literal. Use auActivityType, whose value is the activity type itself.', domain: 'AssignableUnit', range: 'xsd:anyURI', deprecated: true, replacedBy: 'auActivityType', changeNote: '2026.10.0: deprecated in favour of auActivityType; kept as the datatype property it was published as.' },
+    { name: 'activityType', kind: 'object', label: 'activity type', comment: 'The activity type the LMS can show for the Assignable Unit before it is first started.', domain: 'AssignableUnit', range: 'foxxi-xapi:ActivityType', functional: true, source: `${Q} §13.1.4`, notation: 'activityType', changeNote: '2026.10.0: an object property, whose value is the activity type itself; before it, the unversioned publication made it a datatype property whose value was the type\'s IRI, an xsd:anyURI literal.' },
     { name: 'launchParameters', kind: 'datatype', label: 'launch parameters', comment: 'Static launch parameters the course designer defines; in the launch data, the value the LMS passes (which may differ).', domain: ['AssignableUnit', 'LaunchData'], range: 'xsd:string', functional: true, source: `${Q} §13.1.4; §10.2.3`, notation: 'launchParameters' },
     { name: 'entitlementKey', kind: 'datatype', label: 'entitlement key', comment: 'Data the Assignable Unit uses to decide whether the launching LMS is entitled to use it, defined by the content provider.', domain: 'AssignableUnit', range: 'xsd:string', functional: true, source: `${Q} §13.1.4`, notation: 'entitlementKey' },
     // ── Session ──
@@ -132,7 +123,7 @@ export const CMI5_MODEL: OntologyModel = {
     { name: 'languagePreference', kind: 'datatype', label: 'language preference', comment: 'The learner\'s languages, most preferred first.', domain: 'LearnerPreferences', range: 'LanguagePreferenceList', functional: true, source: `${Q} §11.1`, notation: 'languagePreference' },
     { name: 'audioPreference', kind: 'datatype', label: 'audio preference', comment: 'Whether audio should be on or off at start-up.', domain: 'LearnerPreferences', oneOf: ['on', 'off'], functional: true, source: `${Q} §11.2`, notation: 'audioPreference' },
     // Deprecated in 2026.10.0. Kept so data that used it still resolves.
-    { name: 'id', kind: 'datatype', label: 'id', comment: 'Formerly the IRI of a Course, Block, Assignable Unit or Objective, as a literal. In RDF that IRI identifies the node itself, so no property carries it and nothing replaces this one.', range: 'xsd:anyURI', deprecated: true, changeNote: '2026.10.0: deprecated; kept with the axioms it was published with.' },
+    { name: 'id', kind: 'datatype', label: 'id', comment: 'Formerly the IRI of a Course, Block, Assignable Unit or Objective, as a literal. In RDF that IRI identifies the node itself, so no property carries it and nothing replaces this one.', domain: ['Course', 'Block', 'AssignableUnit', 'Objective'], range: 'xsd:anyURI', deprecated: true, changeNote: '2026.10.0: deprecated.' },
   ],
   vocabularies: [
     {
@@ -244,7 +235,6 @@ export const CMI5_MODEL: OntologyModel = {
         { path: 'title', minCount: 1, comment: 'title (§13.1.2)' },
         { path: 'description', minCount: 1, comment: 'description (§13.1.2)' },
         { path: 'position', maxCount: 1, datatype: 'xsd:positiveInteger', minInclusive: 1, comment: 'its place in the sequence (§13.1)' },
-        { path: 'objectives', rdfPath: 'objectiveReference', class: 'Objective', comment: 'each objective it references (§13.1.2)' },
       ],
     },
     {
@@ -259,8 +249,7 @@ export const CMI5_MODEL: OntologyModel = {
         { path: 'moveOn', maxCount: 1, in: MOVE_ON, comment: 'moveOn vocabulary; NotApplicable when absent (§13.1.4)' },
         { path: 'launchMethod', maxCount: 1, in: LAUNCH_METHOD, comment: 'launchMethod vocabulary; AnyWindow when absent (§13.1.4)' },
         { path: 'masteryScore', maxCount: 1, datatype: NUMBER, minInclusive: 0, maxInclusive: 1, comment: 'masteryScore ∈ [0, 1] (§13.1.4)' },
-        { path: 'activityType', rdfPath: 'auActivityType', maxCount: 1, nodeKind: 'IRI', comment: 'activity type IRI (§13.1.4)' },
-        { path: 'objectives', rdfPath: 'objectiveReference', class: 'Objective', comment: 'each objective it references (§13.1.4)' },
+        { path: 'activityType', maxCount: 1, nodeKind: 'IRI', comment: 'activity type IRI (§13.1.4)' },
         { path: 'launchParameters', maxCount: 1, datatype: 'xsd:string', comment: 'static launch parameters (§13.1.4)' },
         { path: 'entitlementKey', maxCount: 1, datatype: 'xsd:string', comment: 'entitlement key (§13.1.4)' },
       ],

@@ -60,7 +60,8 @@ export const SCORM_RTE_MODEL: OntologyModel = {
   title: 'SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data)',
   description:
     'An OWL 2 DL ontology and SHACL shapes for the run-time data model of SCORM 2004 4th Edition: the cmi data model a SCO reads and writes through API_1484_11 — status, score, time, location, suspend data, learner preferences, comments, interactions and objectives — with each element\'s data type, access and vocabulary, and ADL\'s navigation (adl.nav, including the 4th Edition\'s jump request) and shared data (adl.data) data models. The shapes check the vocabularies, the ranges of scores and measures, SCORM\'s time formats and the suspend data limit; a CMI snapshot is checked against them at /ns/scorm-rte/validate.',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   spec: 'https://adlnet.gov/past-projects/scorm',
   standards: [
     { title: 'SCORM 2004 4th Edition (ADL, 2009): Run-Time Environment', url: 'https://adlnet.gov/past-projects/scorm' },
@@ -207,7 +208,7 @@ export const SCORM_RTE_MODEL: OntologyModel = {
       members: [
         { name: 'time-out', label: 'time out', notation: 'time-out', comment: 'The SCO ended because the maximum time allowed was exceeded.' },
         { name: 'suspend', label: 'suspend', comment: 'The learner suspended the attempt, to resume it later.' },
-        { name: 'logout', label: 'logout', comment: 'A value ADL has deprecated for a SCO to set: a SCO should not use it. An LMS that receives it processes an Exit All navigation request when the SCO is taken away.', changeNote: '2026.10.0: no longer marked owl:deprecated. ADL deprecated the token for a SCO to set, but an LMS must still process it, so the value is not obsolete; its comment says how it is deprecated.' },
+        { name: 'logout', label: 'logout', comment: 'A value ADL has deprecated for a SCO to set: a SCO should not use it. An LMS that receives it processes an Exit All navigation request when the SCO is taken away.', changeNote: '2026.10.1: no longer marked owl:deprecated. ADL deprecated the token for a SCO to set, but an LMS must still process it, so the value is not obsolete; its comment says how it is deprecated.' },
         { name: 'normal', label: 'normal', comment: 'The SCO ended normally.' },
         { name: '', label: '(empty)', comment: 'No exit condition was set: the default.' },
       ],

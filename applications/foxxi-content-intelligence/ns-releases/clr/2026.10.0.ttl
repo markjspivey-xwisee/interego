@@ -22,8 +22,7 @@
     dct:title "Comprehensive Learner Record 2.0 — credential SHACL profile"@en ;
     dct:description "SHACL shapes for a 1EdTech Comprehensive Learner Record 2.0 — a W3C Verifiable Credential (VC Data Model 2.0) whose subject bundles achievement credentials. A profile of CLR 2.0: the shapes target 1EdTech's ClrCredential and ClrSubject classes and constrain the predicates the CLR 2.0, OB 3.0 and VC 2.0 JSON-LD contexts map a credential to, and each requirement is CLR 2.0's (its data model, Appendix B). The credentials a CLR bundles are Open Badges 3.0 credentials, which the Open Badges 3.0 profile checks. Registered as data — a second credential format needs no new engine."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by 1EdTech or W3C. Where this document and the published standard differ, the standard governs."@en ,
-        "Since 2026.10.0 the shapes target 1EdTech's ClrCredential and ClrSubject classes and the VC 2.0 predicates; the class and properties this document had minted for them are deprecated."@en ,
-        "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/clr#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
+        "Since 2026.10.0 the shapes target 1EdTech's ClrCredential and ClrSubject classes and the VC 2.0 predicates; the class and properties this document had minted for them are deprecated."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/clr/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
     skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
@@ -41,15 +40,14 @@
     vann:preferredNamespacePrefix "foxxi-clr" ;
     vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/clr#" ;
     dct:source <https://www.imsglobal.org/spec/clr/v2p0/> , <https://www.w3.org/TR/vc-data-model-2.0/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes/2026.10.0> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/clr/shapes> ;
     prof:isProfileOf <https://www.imsglobal.org/spec/clr/v2p0/> .
 
 foxxi-clr:ClrCredential a owl:Class ;
     rdfs:label "obsolete CLR Credential"@en ;
     rdfs:comment "Formerly this document's own name for a CLR 2.0 credential; 1EdTech's class, which a credential's JSON-LD context maps it to, replaces it."@en ;
-    skos:definition "Formerly this document's own name for a CLR 2.0 credential; 1EdTech's class, which a credential's JSON-LD context maps it to, replaces it."@en ;
     owl:deprecated true ;
     dct:isReplacedBy clr:ClrCredential ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/clr> .
@@ -58,7 +56,6 @@ foxxi-clr:credentialSubject a owl:ObjectProperty ;
     rdfs:label "obsolete credential subject"@en ;
     skos:notation "credentialSubject" ;
     rdfs:comment "Formerly this document's own name for a credential's subject; the VC 2.0 credentialSubject replaces it."@en ;
-    skos:definition "Formerly this document's own name for a credential's subject; the VC 2.0 credentialSubject replaces it."@en ;
     owl:deprecated true ;
     dct:isReplacedBy vc:credentialSubject ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/clr> .
@@ -66,7 +63,6 @@ foxxi-clr:credentialSubject a owl:ObjectProperty ;
 foxxi-clr:proof a owl:ObjectProperty ;
     rdfs:label "obsolete proof"@en ;
     rdfs:comment "Formerly this document's own name for a credential's proof; the Data Integrity proof (sec:proof) replaces it."@en ;
-    skos:definition "Formerly this document's own name for a credential's proof; the Data Integrity proof (sec:proof) replaces it."@en ;
     owl:deprecated true ;
     dct:isReplacedBy sec:proof ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/clr> .
@@ -170,8 +166,6 @@ vann:preferredNamespacePrefix a owl:AnnotationProperty .
 vann:preferredNamespaceUri a owl:AnnotationProperty .
 
 dct:source a owl:AnnotationProperty .
-
-skos:definition a owl:AnnotationProperty .
 
 dct:isReplacedBy a owl:AnnotationProperty .
 

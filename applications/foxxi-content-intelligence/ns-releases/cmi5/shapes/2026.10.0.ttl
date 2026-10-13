@@ -11,13 +11,12 @@
 @prefix dct: <http://purl.org/dc/terms/> .
 @prefix prov: <http://www.w3.org/ns/prov#> .
 @prefix bibo: <http://purl.org/ontology/bibo/> .
-@prefix foxxi-xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
 @prefix foxxi-cmi5: <https://foxxi-bridge.interego.xwisee.com/ns/cmi5#> .
 @prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes#> .
 
 <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> a owl:Ontology ;
     dct:title "cmi5 (Quartz) — xAPI profile and course structure — SHACL shapes"@en ;
-    dct:description "SHACL shapes for cmi5 (Quartz) — xAPI profile and course structure: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/cmi5/validate). Each validation result cites the shape it came from. An instance written as JSON is read into RDF through the JSON-LD context at https://foxxi-bridge.interego.xwisee.com/ns/cmi5/context/2026.10.0."@en ;
+    dct:description "SHACL shapes for cmi5 (Quartz) — xAPI profile and course structure: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/cmi5/validate). Each validation result cites the shape it came from."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL, the AICC or IEEE. Where this document and the published standard differ, the standard governs."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -34,29 +33,15 @@
     bibo:status <http://purl.org/ontology/bibo/status/published> ;
     dct:bibliographicCitation "Spivey, M. (2026). cmi5 (Quartz) — xAPI profile and course structure — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.0" ;
     dct:source <https://github.com/AICC/CMI-5_Spec_Current> , <https://standards.ieee.org/ieee/9274.3.1/11183/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/cmi5.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.0> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/cmi5.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.0> .
 
 shapes:CourseStructureShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:CourseStructure ;
-    sh:targetSubjectsOf foxxi-cmi5:course , foxxi-cmi5:structure ;
     rdfs:label "cmi5 course structure conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1: a course structure contains exactly one Course and at least one top-level Block or Assignable Unit."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-cmi5:Course ]
-            [ sh:class foxxi-cmi5:Block ]
-            [ sh:class foxxi-cmi5:Objective ]
-            [ sh:class foxxi-cmi5:AssignableUnit ]
-            [ sh:class foxxi-cmi5:Session ]
-            [ sh:class foxxi-cmi5:LaunchData ]
-            [ sh:class foxxi-cmi5:EntitlementKey ]
-            [ sh:class foxxi-cmi5:LearnerPreferences ]
-        )
-    ] ;
-    sh:message "cmi5 course structure conformance: a CourseStructure is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:CourseStructureShape-course , shapes:CourseStructureShape-structure ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
 
@@ -65,7 +50,7 @@ shapes:CourseStructureShape-course a sh:PropertyShape ;
     sh:name "course" ;
     sh:description "exactly one Course (§13.1)"@en ;
     sh:message "cmi5 course structure conformance — course: exactly 1 value, an instance of Course — exactly one Course (§13.1)"@en ;
-    sh:nodeKind sh:BlankNodeOrIRI ;
+    sh:class foxxi-cmi5:Course ;
     sh:minCount 1 ;
     sh:maxCount 1 .
 
@@ -78,24 +63,10 @@ shapes:CourseStructureShape-structure a sh:PropertyShape ;
 
 shapes:CourseShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:Course ;
-    sh:targetObjectsOf foxxi-cmi5:course ;
     rdfs:label "cmi5 Course conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1.1: a Course is identified by an IRI and has a title and a description."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-cmi5:CourseStructure ]
-            [ sh:class foxxi-cmi5:Block ]
-            [ sh:class foxxi-cmi5:Objective ]
-            [ sh:class foxxi-cmi5:AssignableUnit ]
-            [ sh:class foxxi-cmi5:Session ]
-            [ sh:class foxxi-cmi5:LaunchData ]
-            [ sh:class foxxi-cmi5:EntitlementKey ]
-            [ sh:class foxxi-cmi5:LearnerPreferences ]
-        )
-    ] ;
-    sh:message "cmi5 Course conformance: a Course is not also of a kind this document declares disjoint with it"@en ,
-        "cmi5 Course conformance: the node must be identified by an IRI — a globally unique IRI (§13.1.1)"@en ;
     sh:nodeKind sh:IRI ;
+    sh:message "cmi5 Course conformance: the node must be identified by an IRI — a globally unique IRI (§13.1.1)"@en ;
     sh:property shapes:CourseShape-title , shapes:CourseShape-description ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
 
@@ -115,28 +86,11 @@ shapes:CourseShape-description a sh:PropertyShape ;
 
 shapes:BlockShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:Block ;
-    sh:targetObjectsOf foxxi-cmi5:block ;
     rdfs:label "cmi5 Block conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1.2: a Block is identified by an IRI and has a title and a description."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-cmi5:CourseStructure ]
-            [ sh:class foxxi-cmi5:Course ]
-            [ sh:class foxxi-cmi5:Objective ]
-            [ sh:class foxxi-cmi5:AssignableUnit ]
-            [ sh:class foxxi-cmi5:Session ]
-            [ sh:class foxxi-cmi5:LaunchData ]
-            [ sh:class foxxi-cmi5:EntitlementKey ]
-            [ sh:class foxxi-cmi5:LearnerPreferences ]
-        )
-    ] ;
-    sh:message "cmi5 Block conformance: a Block is not also of a kind this document declares disjoint with it"@en ,
-        "cmi5 Block conformance: the node must be identified by an IRI — an IRI unique within the course structure (§13.1.2)"@en ;
     sh:nodeKind sh:IRI ;
-    sh:property shapes:BlockShape-title ,
-        shapes:BlockShape-description ,
-        shapes:BlockShape-position ,
-        shapes:BlockShape-objectives ;
+    sh:message "cmi5 Block conformance: the node must be identified by an IRI — an IRI unique within the course structure (§13.1.2)"@en ;
+    sh:property shapes:BlockShape-title , shapes:BlockShape-description , shapes:BlockShape-position ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
 
 shapes:BlockShape-title a sh:PropertyShape ;
@@ -162,34 +116,12 @@ shapes:BlockShape-position a sh:PropertyShape ;
     sh:maxCount 1 ;
     sh:minInclusive 1 .
 
-shapes:BlockShape-objectives a sh:PropertyShape ;
-    sh:path foxxi-cmi5:objectiveReference ;
-    sh:name "objectives" ;
-    sh:description "each objective it references (§13.1.2)"@en ;
-    sh:message "cmi5 Block conformance — objectives: an instance of Objective — each objective it references (§13.1.2)"@en ;
-    sh:nodeKind sh:BlankNodeOrIRI .
-
 shapes:AssignableUnitShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:AssignableUnit ;
-    sh:targetObjectsOf foxxi-cmi5:au , foxxi-cmi5:launchedAU ;
-    sh:targetSubjectsOf foxxi-cmi5:url , foxxi-cmi5:launchMethod , foxxi-cmi5:auActivityType , foxxi-cmi5:activityType ;
     rdfs:label "cmi5 Assignable Unit conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1.4: an AU is identified by an IRI and has a title, a description and a launch URL. moveOn (default NotApplicable) and launchMethod (default AnyWindow) take their vocabularies; masteryScore is a decimal in [0, 1]."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-cmi5:CourseStructure ]
-            [ sh:class foxxi-cmi5:Course ]
-            [ sh:class foxxi-cmi5:Block ]
-            [ sh:class foxxi-cmi5:Objective ]
-            [ sh:class foxxi-cmi5:Session ]
-            [ sh:class foxxi-cmi5:LaunchData ]
-            [ sh:class foxxi-cmi5:EntitlementKey ]
-            [ sh:class foxxi-cmi5:LearnerPreferences ]
-        )
-    ] ;
-    sh:message "cmi5 Assignable Unit conformance: an AssignableUnit is not also of a kind this document declares disjoint with it"@en ,
-        "cmi5 Assignable Unit conformance: the node must be identified by an IRI — an IRI unique within the course structure (§13.1.4)"@en ;
     sh:nodeKind sh:IRI ;
+    sh:message "cmi5 Assignable Unit conformance: the node must be identified by an IRI — an IRI unique within the course structure (§13.1.4)"@en ;
     sh:property shapes:AssignableUnitShape-title ,
         shapes:AssignableUnitShape-description ,
         shapes:AssignableUnitShape-position ,
@@ -198,7 +130,6 @@ shapes:AssignableUnitShape a sh:NodeShape ;
         shapes:AssignableUnitShape-launchMethod ,
         shapes:AssignableUnitShape-masteryScore ,
         shapes:AssignableUnitShape-activityType ,
-        shapes:AssignableUnitShape-objectives ,
         shapes:AssignableUnitShape-launchParameters ,
         shapes:AssignableUnitShape-entitlementKey ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
@@ -262,19 +193,12 @@ shapes:AssignableUnitShape-masteryScore a sh:PropertyShape ;
     sh:maxInclusive 1 .
 
 shapes:AssignableUnitShape-activityType a sh:PropertyShape ;
-    sh:path foxxi-cmi5:auActivityType ;
+    sh:path foxxi-cmi5:activityType ;
     sh:name "activityType" ;
     sh:description "activity type IRI (§13.1.4)"@en ;
     sh:message "cmi5 Assignable Unit conformance — activityType: at most 1 value, an IRI — activity type IRI (§13.1.4)"@en ;
     sh:nodeKind sh:IRI ;
     sh:maxCount 1 .
-
-shapes:AssignableUnitShape-objectives a sh:PropertyShape ;
-    sh:path foxxi-cmi5:objectiveReference ;
-    sh:name "objectives" ;
-    sh:description "each objective it references (§13.1.4)"@en ;
-    sh:message "cmi5 Assignable Unit conformance — objectives: an instance of Objective — each objective it references (§13.1.4)"@en ;
-    sh:nodeKind sh:BlankNodeOrIRI .
 
 shapes:AssignableUnitShape-launchParameters a sh:PropertyShape ;
     sh:path foxxi-cmi5:launchParameters ;
@@ -294,24 +218,10 @@ shapes:AssignableUnitShape-entitlementKey a sh:PropertyShape ;
 
 shapes:ObjectiveShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:Objective ;
-    sh:targetObjectsOf foxxi-cmi5:objective , foxxi-cmi5:objectiveReference ;
     rdfs:label "cmi5 Objective conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1.3: an Objective is identified by an IRI and has a title and a description."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-cmi5:CourseStructure ]
-            [ sh:class foxxi-cmi5:Course ]
-            [ sh:class foxxi-cmi5:Block ]
-            [ sh:class foxxi-cmi5:AssignableUnit ]
-            [ sh:class foxxi-cmi5:Session ]
-            [ sh:class foxxi-cmi5:LaunchData ]
-            [ sh:class foxxi-cmi5:EntitlementKey ]
-            [ sh:class foxxi-cmi5:LearnerPreferences ]
-        )
-    ] ;
-    sh:message "cmi5 Objective conformance: an Objective is not also of a kind this document declares disjoint with it"@en ,
-        "cmi5 Objective conformance: the node must be identified by an IRI — an IRI unique within the course structure (§13.1.3)"@en ;
     sh:nodeKind sh:IRI ;
+    sh:message "cmi5 Objective conformance: the node must be identified by an IRI — an IRI unique within the course structure (§13.1.3)"@en ;
     sh:property shapes:ObjectiveShape-title , shapes:ObjectiveShape-description ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
 
@@ -331,27 +241,9 @@ shapes:ObjectiveShape-description a sh:PropertyShape ;
 
 shapes:SessionShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:Session ;
-    sh:targetSubjectsOf foxxi-cmi5:sessionId , foxxi-cmi5:registration , foxxi-cmi5:launchedAU , foxxi-cmi5:learner ;
     rdfs:label "cmi5 session conformance"@en ;
     rdfs:comment "cmi5 Quartz §9.6.1, §9.6.3.1, §10.2.2: a session carries a registration UUID and a session ID; launchMode takes its vocabulary."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-cmi5:CourseStructure ]
-            [ sh:class foxxi-cmi5:Course ]
-            [ sh:class foxxi-cmi5:Block ]
-            [ sh:class foxxi-cmi5:Objective ]
-            [ sh:class foxxi-cmi5:AssignableUnit ]
-            [ sh:class foxxi-cmi5:LaunchData ]
-            [ sh:class foxxi-cmi5:EntitlementKey ]
-            [ sh:class foxxi-cmi5:LearnerPreferences ]
-        )
-    ] ;
-    sh:message "cmi5 session conformance: a Session is not also of a kind this document declares disjoint with it"@en ;
-    sh:property shapes:SessionShape-registration ,
-        shapes:SessionShape-sessionId ,
-        shapes:SessionShape-launchMode ,
-        shapes:SessionShape-launchedAU ,
-        shapes:SessionShape-learner ;
+    sh:property shapes:SessionShape-registration , shapes:SessionShape-sessionId , shapes:SessionShape-launchMode ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
 
 shapes:SessionShape-registration a sh:PropertyShape ;
@@ -380,48 +272,17 @@ shapes:SessionShape-launchMode a sh:PropertyShape ;
     sh:maxCount 1 ;
     sh:in ( "Normal" "Browse" "Review" ) .
 
-shapes:SessionShape-launchedAU a sh:PropertyShape ;
-    sh:path foxxi-cmi5:launchedAU ;
-    sh:name "launchedAU" ;
-    sh:description "the one AU it is a launch of"@en ;
-    sh:message "cmi5 session conformance — launchedAU: at most 1 value — the one AU it is a launch of"@en ;
-    sh:maxCount 1 .
-
-shapes:SessionShape-learner a sh:PropertyShape ;
-    sh:path foxxi-cmi5:learner ;
-    sh:name "learner" ;
-    sh:description "the one learner it is for: an Agent with an account (§9.2)"@en ;
-    sh:message "cmi5 session conformance — learner: at most 1 value, conforming to LearnerShape — the one learner it is for: an Agent with an account (§9.2)"@en ;
-    sh:node shapes:LearnerShape ;
-    sh:maxCount 1 .
-
 shapes:LaunchDataShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:LaunchData ;
-    sh:targetSubjectsOf foxxi-cmi5:contextTemplate , foxxi-cmi5:returnURL ;
     rdfs:label "cmi5 LMS.LaunchData conformance"@en ;
     rdfs:comment "cmi5 Quartz §10.2: the launch data has a context template, a launch mode and a moveOn; a mastery score is a decimal in [0, 1]."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-cmi5:CourseStructure ]
-            [ sh:class foxxi-cmi5:Course ]
-            [ sh:class foxxi-cmi5:Block ]
-            [ sh:class foxxi-cmi5:Objective ]
-            [ sh:class foxxi-cmi5:AssignableUnit ]
-            [ sh:class foxxi-cmi5:Session ]
-            [ sh:class foxxi-cmi5:EntitlementKey ]
-            [ sh:class foxxi-cmi5:LearnerPreferences ]
-        )
-    ] ;
-    sh:message "cmi5 LMS.LaunchData conformance: a LaunchData is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:LaunchDataShape-contextTemplate ,
         shapes:LaunchDataShape-launchMode ,
         shapes:LaunchDataShape-moveOn ,
         shapes:LaunchDataShape-masteryScore ,
         shapes:LaunchDataShape-launchParameters ,
         shapes:LaunchDataShape-returnURL ,
-        shapes:LaunchDataShape-entitlementKey ,
-        shapes:LaunchDataShape-contextTemplate-sessionid ,
-        shapes:LaunchDataShape-contextTemplate-publisher ;
+        shapes:LaunchDataShape-entitlementKey ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
 
 shapes:LaunchDataShape-contextTemplate a sh:PropertyShape ;
@@ -483,102 +344,10 @@ shapes:LaunchDataShape-entitlementKey a sh:PropertyShape ;
     sh:message "cmi5 LMS.LaunchData conformance — entitlementKey: at most 1 value — entitlement key object (§10.2.7)"@en ;
     sh:maxCount 1 .
 
-shapes:LaunchDataShape-contextTemplate-sessionid a sh:PropertyShape ;
-    sh:path (
-        foxxi-cmi5:contextTemplate
-        foxxi-xapi:extensions
-        <https://w3id.org/xapi/cmi5/context/extensions/sessionid>
-    ) ;
-    sh:name "contextTemplate.extensions.sessionid" ;
-    sh:description "the session ID, in the context template's extensions (§10.2.1, §9.6.3.1)"@en ;
-    sh:message "cmi5 LMS.LaunchData conformance — contextTemplate.extensions.sessionid: exactly 1 value — the session ID, in the context template's extensions (§10.2.1, §9.6.3.1)"@en ;
-    sh:minCount 1 ;
-    sh:maxCount 1 .
-
-shapes:LaunchDataShape-contextTemplate-publisher a sh:PropertyShape ;
-    sh:path ( foxxi-cmi5:contextTemplate foxxi-xapi:contextActivities foxxi-xapi:grouping ) ;
-    sh:name "contextTemplate.contextActivities.grouping" ;
-    sh:description "the publisher ID activity, in the context template's grouping list (§10.2.1, §9.6.2.3)"@en ;
-    sh:message "cmi5 LMS.LaunchData conformance — contextTemplate.contextActivities.grouping: at least 1 value — the publisher ID activity, in the context template's grouping list (§10.2.1, §9.6.2.3)"@en ;
-    sh:minCount 1 .
-
-shapes:EntitlementKeyShape a sh:NodeShape ;
-    sh:targetClass foxxi-cmi5:EntitlementKey ;
-    sh:targetObjectsOf foxxi-cmi5:launchEntitlementKey ;
-    sh:targetSubjectsOf foxxi-cmi5:courseStructureKey , foxxi-cmi5:alternateKey ;
-    rdfs:label "cmi5 entitlement key conformance"@en ;
-    rdfs:comment "cmi5 Quartz §10.2.7: the entitlement key in the launch data carries the key from the course structure, which the LMS must provide, and may carry an alternate key; each is a string. The document names them \"courseStructure\" and \"alternate\"."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-cmi5:CourseStructure ]
-            [ sh:class foxxi-cmi5:Course ]
-            [ sh:class foxxi-cmi5:Block ]
-            [ sh:class foxxi-cmi5:Objective ]
-            [ sh:class foxxi-cmi5:AssignableUnit ]
-            [ sh:class foxxi-cmi5:Session ]
-            [ sh:class foxxi-cmi5:LaunchData ]
-            [ sh:class foxxi-cmi5:LearnerPreferences ]
-        )
-    ] ;
-    sh:message "cmi5 entitlement key conformance: an EntitlementKey is not also of a kind this document declares disjoint with it"@en ;
-    sh:property shapes:EntitlementKeyShape-courseStructure , shapes:EntitlementKeyShape-alternate ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
-
-shapes:EntitlementKeyShape-courseStructure a sh:PropertyShape ;
-    sh:path foxxi-cmi5:courseStructureKey ;
-    sh:name "courseStructure" ;
-    sh:description "the key from the course structure (§10.2.7.1)"@en ;
-    sh:message "cmi5 entitlement key conformance — courseStructure: exactly 1 value, of type xsd:string — the key from the course structure (§10.2.7.1)"@en ;
-    sh:datatype xsd:string ;
-    sh:minCount 1 ;
-    sh:maxCount 1 .
-
-shapes:EntitlementKeyShape-alternate a sh:PropertyShape ;
-    sh:path foxxi-cmi5:alternateKey ;
-    sh:name "alternate" ;
-    sh:description "an alternate key (§10.2.7.2)"@en ;
-    sh:message "cmi5 entitlement key conformance — alternate: at most 1 value, of type xsd:string — an alternate key (§10.2.7.2)"@en ;
-    sh:datatype xsd:string ;
-    sh:maxCount 1 .
-
-shapes:LearnerShape a sh:NodeShape ;
-    rdfs:label "cmi5 learner"@en ;
-    rdfs:comment "cmi5 Quartz §9.2: the actor of a cmi5 session is an Agent, not a Group, identified by an account; an xAPI Agent written as xAPI writes one, read through /ns/xapi/context."@en ;
-    sh:property shapes:LearnerShape-account , shapes:LearnerShape-objectType ;
-    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
-
-shapes:LearnerShape-account a sh:PropertyShape ;
-    sh:path foxxi-xapi:account ;
-    sh:name "account" ;
-    sh:description "identified by an account (§9.2)"@en ;
-    sh:message "cmi5 learner — account: at least 1 value — identified by an account (§9.2)"@en ;
-    sh:minCount 1 .
-
-shapes:LearnerShape-objectType a sh:PropertyShape ;
-    sh:path rdf:type ;
-    sh:name "objectType" ;
-    sh:description "an Agent, not a Group (§9.2)"@en ;
-    sh:message "cmi5 learner — objectType: never foxxi-xapi:Group — an Agent, not a Group (§9.2)"@en ;
-    sh:not [ sh:hasValue foxxi-xapi:Group ] .
-
 shapes:LearnerPreferencesShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:LearnerPreferences ;
-    sh:targetSubjectsOf foxxi-cmi5:languagePreference , foxxi-cmi5:audioPreference ;
     rdfs:label "cmi5 learner preferences conformance"@en ;
     rdfs:comment "cmi5 Quartz §11: languagePreference is a comma-separated list of RFC 5646 tags; audioPreference is \"on\" or \"off\"."@en ;
-    sh:not [
-        sh:or (
-            [ sh:class foxxi-cmi5:CourseStructure ]
-            [ sh:class foxxi-cmi5:Course ]
-            [ sh:class foxxi-cmi5:Block ]
-            [ sh:class foxxi-cmi5:Objective ]
-            [ sh:class foxxi-cmi5:AssignableUnit ]
-            [ sh:class foxxi-cmi5:Session ]
-            [ sh:class foxxi-cmi5:LaunchData ]
-            [ sh:class foxxi-cmi5:EntitlementKey ]
-        )
-    ] ;
-    sh:message "cmi5 learner preferences conformance: a LearnerPreferences is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:LearnerPreferencesShape-languagePreference , shapes:LearnerPreferencesShape-audioPreference ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
 

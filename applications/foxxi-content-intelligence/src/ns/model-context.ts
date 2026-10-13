@@ -14,10 +14,10 @@
  * ★ GENERATED FROM THE MODEL, SO IT NAMES WHAT THE SHAPES CONSTRAIN:
  *  - a class by its name: the value of `@type`, or of `type` where the module has no property by
  *    that name (SCORM's resource `type` is a property, so a resource is typed with `@type`);
- *  - a property by its name, or by the JSON key a shape reads it from where the two differ (SCORM's
- *    `<title>` is read into titleText). Where one key names different properties on different
- *    kinds of node (cmi5's entitlementKey, of an AU and of launch data), the kind's own term carries
- *    a type-scoped context;
+ *  - a property by its name, or by the JSON key a shape reads it from where the two differ (cmi5's
+ *    `courseStructure` is read into courseStructureKey). Where one key names different properties on
+ *    different kinds of node (cmi5's entitlementKey, of an AU and of launch data), the kind's own
+ *    term carries a type-scoped context;
  *  - an object property's value as a node: an IRI, or — where its range is a class whose instances
  *    are the concepts of one of the document's code lists — the concept a token names (the SOC 2
  *    criterion "CC6.2", the NIST function "GOVERN"), through a scoped @vocab; or, where its range is
@@ -29,10 +29,10 @@
  *  - a language-tagged string as the module's JSON writes one: a language map, or a list of
  *    {lang, text} objects (cmi5's course structure, after its XML).
  *
- * A deprecated property keeps its term where no current one is read from its name (SOC 2's actor), so
- * data written before it was replaced still has a reading. A key the model does not name has no term,
- * so a JSON-LD processor in safe mode refuses an instance that carries one, as the shapes would not
- * know what it means.
+ * A deprecated property keeps its term where no current one is read from its name, so data written
+ * before it was replaced still has a reading. A key the model does not name has no term, so a JSON-LD
+ * processor in safe mode refuses an instance that carries one, as the shapes would not know what it
+ * means.
  */
 import {
   type OntologyModel, type OntProperty, type OntShape, contextIri, ns, expandAbs, jsonKeysOf, jsonStepsOf, conceptListOf,

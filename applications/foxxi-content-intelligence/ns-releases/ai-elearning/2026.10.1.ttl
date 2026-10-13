@@ -1,0 +1,453 @@
+# AI in eLearning — verifiable interaction profile — version 2026.10.1
+# https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning  (this version: https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/2026.10.1)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+@prefix prof: <http://www.w3.org/ns/dx/prof/> .
+@prefix foxxi-xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+@prefix foxxi-ai-elearning: <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> a owl:Ontology , prof:Profile ;
+    dct:title "AI in eLearning — verifiable interaction profile"@en ;
+    dct:description "An OWL 2 DL ontology and SHACL shapes for recording learner ↔ AI-tutor interactions as VERIFIABLE xAPI, reimagining the self-asserted vendor pattern. Three interaction verbs (interacted-with-ai, answered-ai-question, gave-ai-feedback) over three declared activity types (ai-interaction, ai-question, ai-feedback). The accountability fields are upgraded from self-asserted values to enforced provenance: a signed envelope + recovered signer on every recorded interaction, content-addressed sources, signed model/provider attestation, and an optional confidence range proof recorded beside the verbatim (unverified) self-reported confidence. Composed into PGSL and projected here; a statement is checked against the shapes at /ns/ai-elearning/validate."@en ;
+    rdfs:comment "An original profile of xAPI 2.0 by Mark Spivey (Foxxi Mediums Inc.), not a formalization of a published standard. Not affiliated with or endorsed by ADL or IEEE. Its statements are xAPI 2.0 statements, and where this profile and xAPI 2.0 (IEEE 9274.1.1-2023) differ, xAPI 2.0 governs."@en ,
+        "Since 2026.10.0, signer, modelClaimSigner and sourceAtom are object properties: their values were always required to be IRIs (a DID, a urn:pgsl:atom), which a datatype property cannot have."@en ,
+        "An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/context/2026.10.1, which is generated from this document. The shapes at https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes/2026.10.1 constrain that reading, and the Foxxi validator (POST https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/validate) checks the JSON against the same shapes."@en ,
+        "The shapes select a node by its class (sh:targetClass) and, as the RDFS domain and range rules make a node an instance of a class, by a property it has (sh:targetSubjectsOf) or by the property that reaches it (sh:targetObjectsOf): a node is checked whether or not it declares its type. The Foxxi validator selects the same nodes of the JSON, and every result cites its shape."@en ,
+        "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/ai-elearning#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/2026.10.1> ;
+    owl:versionInfo "2026.10.1" ;
+    owl:priorVersion <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/2026.10.0> ;
+    owl:backwardCompatibleWith <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/2026.10.0> ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-13"^^xsd:date ;
+    dct:issued "2026-10-13"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). AI in eLearning — verifiable interaction profile (Version 2026.10.1) [Ontology]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/2026.10.1" ;
+    vann:preferredNamespacePrefix "foxxi-ai-elearning" ;
+    vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#" ;
+    dct:source <https://standards.ieee.org/ieee/9274.1.1/7321/> , <https://github.com/adlnet/xapi-profiles> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec/ai-elearning.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes/2026.10.1> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/context/2026.10.1> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1> ;
+    prof:isProfileOf <https://standards.ieee.org/ieee/9274.1.1/7321/> .
+
+foxxi-ai-elearning:UnitInterval a rdfs:Datatype ;
+    rdfs:label "Unit interval"@en ;
+    rdfs:comment "A number from 0 to 1 inclusive: a decimal, or a double, which is what JSON-LD 1.1 (§8.6) makes of a JSON number with a fraction."@en ;
+    skos:definition "A number from 0 to 1 inclusive: a decimal, or a double, which is what JSON-LD 1.1 (§8.6) makes of a JSON number with a fraction."@en ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:unionOf (
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:decimal ;
+                owl:withRestrictions ( [ xsd:minInclusive 0 ] [ xsd:maxInclusive 1 ] )
+            ]
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:double ;
+                owl:withRestrictions ( [ xsd:minInclusive "0.0E0"^^xsd:double ] [ xsd:maxInclusive "1.0E0"^^xsd:double ] )
+            ]
+        )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:AiInteraction a owl:Class ;
+    rdfs:label "AI interaction"@en ;
+    rdfs:comment "A recorded interaction between a learner and an AI tutor or assistant — the activity type the interacted-with-ai template references. DECLARED here so statements using it validate (the common vendor pattern references it from a template but omits the concept)."@en ;
+    skos:definition "A recorded interaction between a learner and an AI tutor or assistant — the activity type the interacted-with-ai template references. DECLARED here so statements using it validate (the common vendor pattern references it from a template but omits the concept)."@en ;
+    rdfs:subClassOf foxxi-xapi:Activity ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:AiQuestion a owl:Class ;
+    rdfs:label "AI-generated question"@en ;
+    rdfs:comment "A question dynamically generated by an AI system, the object of an answered-ai-question statement."@en ;
+    skos:definition "A question dynamically generated by an AI system, the object of an answered-ai-question statement."@en ;
+    rdfs:subClassOf foxxi-ai-elearning:AiInteraction ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:AiFeedback a owl:Class ;
+    rdfs:label "AI feedback"@en ;
+    rdfs:comment "Feedback an AI tutor produced after evaluating a learner response — the activity type the gave-ai-feedback template references. DECLARED here for the same reason as AiInteraction."@en ;
+    skos:definition "Feedback an AI tutor produced after evaluating a learner response — the activity type the gave-ai-feedback template references. DECLARED here for the same reason as AiInteraction."@en ;
+    rdfs:subClassOf foxxi-ai-elearning:AiInteraction ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:SignedInteractionRecord a owl:Class ;
+    rdfs:label "Signed interaction record"@en ;
+    rdfs:comment "An xAPI statement about an AI interaction carried in a rev-196 signed envelope. Altering the statement breaks the signature; the signer is recovered, not asserted by the application — this is what turns an \"audit trail\" of claims into tamper-evident evidence."@en ;
+    skos:definition "An xAPI statement about an AI interaction carried in a rev-196 signed envelope. Altering the statement breaks the signature; the signer is recovered, not asserted by the application — this is what turns an \"audit trail\" of claims into tamper-evident evidence."@en ;
+    rdfs:subClassOf foxxi-xapi:Statement ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:AttestedModelClaim a owl:Class ;
+    rdfs:label "Attested model claim"@en ;
+    rdfs:comment "A signed assertion by the serving party (gateway) of which model/provider it called, attributable to its DID. Replaces a free-text model name the spec would simply trust."@en ;
+    skos:definition "A signed assertion by the serving party (gateway) of which model/provider it called, attributable to its DID. Replaces a free-text model name the spec would simply trust."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:ContentAddressedSource a owl:Class ;
+    rdfs:label "Content-addressed source"@en ;
+    rdfs:comment "A source the AI tutor cited, minted to a urn:pgsl:atom so it resolves to exactly the bytes captured at use. Replaces a bare source string. (Does not prove the cited work exists in the world.)"@en ;
+    skos:definition "A source the AI tutor cited, minted to a urn:pgsl:atom so it resolves to exactly the bytes captured at use. Replaces a bare source string. (Does not prove the cited work exists in the world.)"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:ConfidenceRangeProof a owl:Class ;
+    rdfs:label "Confidence range proof"@en ;
+    rdfs:comment "A proof that the AI's confidence was ≥ a stated threshold, committed and checkable without revealing the exact value — recorded BESIDE the verbatim self-reported number. Not a calibration against ground truth."@en ;
+    skos:definition "A proof that the AI's confidence was ≥ a stated threshold, committed and checkable without revealing the exact value — recorded BESIDE the verbatim self-reported number. Not a calibration against ground truth."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:signedEnvelope a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "signed envelope"@en ;
+    skos:notation "signedEnvelope" ;
+    rdfs:comment "The rev-196 signed envelope ({_signature,_signed_payload}, message = sha256:<hex(payload)>) carrying the statement. Tamper-evident."@en ;
+    skos:definition "The rev-196 signed envelope ({_signature,_signed_payload}, message = sha256:<hex(payload)>) carrying the statement. Tamper-evident."@en ;
+    rdfs:domain foxxi-ai-elearning:SignedInteractionRecord ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:signer a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "recovered signer"@en ;
+    skos:notation "signer" ;
+    rdfs:comment "The agent, identified by a DID, recovered from the statement signature (secp256k1 recovery) — proves WHO recorded it, not asserted by the application."@en ;
+    skos:definition "The agent, identified by a DID, recovered from the statement signature (secp256k1 recovery) — proves WHO recorded it, not asserted by the application."@en ;
+    skos:changeNote "2026.10.0: an object property, whose value is the thing itself; before it, the unversioned publication made it a datatype property whose value was the DID, an xsd:anyURI literal."@en ;
+    rdfs:domain foxxi-ai-elearning:SignedInteractionRecord ;
+    rdfs:range prov:Agent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:recordedAt a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "recorded at"@en ;
+    skos:notation "recordedAt" ;
+    rdfs:comment "The instant the interaction was signed (xsd:dateTime); backdating is detectable against the LRS stored time."@en ;
+    skos:definition "The instant the interaction was signed (xsd:dateTime); backdating is detectable against the LRS stored time."@en ;
+    rdfs:domain foxxi-ai-elearning:SignedInteractionRecord ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:attestedModel a owl:ObjectProperty ;
+    rdfs:label "attested model"@en ;
+    skos:notation "attestedModel" ;
+    rdfs:comment "Links a record to the signed model/provider attestation for the call."@en ;
+    skos:definition "Links a record to the signed model/provider attestation for the call."@en ;
+    rdfs:domain foxxi-ai-elearning:SignedInteractionRecord ;
+    rdfs:range foxxi-ai-elearning:AttestedModelClaim ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:citedSource a owl:ObjectProperty ;
+    rdfs:label "cited source"@en ;
+    skos:notation "citedSource" ;
+    rdfs:comment "A source the AI cited in the interaction, as a content-addressed source."@en ;
+    skos:definition "A source the AI cited in the interaction, as a content-addressed source."@en ;
+    rdfs:domain foxxi-ai-elearning:SignedInteractionRecord ;
+    rdfs:range foxxi-ai-elearning:ContentAddressedSource ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:confidenceProof a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "confidence proof"@en ;
+    skos:notation "confidenceProof" ;
+    rdfs:comment "The range proof of the AI's confidence in the interaction."@en ;
+    skos:definition "The range proof of the AI's confidence in the interaction."@en ;
+    rdfs:domain foxxi-ai-elearning:SignedInteractionRecord ;
+    rdfs:range foxxi-ai-elearning:ConfidenceRangeProof ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:modelClaimSigner a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "model-claim signer"@en ;
+    skos:notation "modelClaimSigner" ;
+    rdfs:comment "The gateway, identified by a DID, that signed the model/provider claim."@en ;
+    skos:definition "The gateway, identified by a DID, that signed the model/provider claim."@en ;
+    skos:changeNote "2026.10.0: an object property, whose value is the thing itself; before it, the unversioned publication made it a datatype property whose value was the DID, an xsd:anyURI literal."@en ;
+    rdfs:domain foxxi-ai-elearning:AttestedModelClaim ;
+    rdfs:range prov:Agent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:model a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "model"@en ;
+    rdfs:comment "The model the gateway attests it called (e.g. claude-opus-4-8) — bound to modelClaimSigner, not free-floating text."@en ;
+    skos:definition "The model the gateway attests it called (e.g. claude-opus-4-8) — bound to modelClaimSigner, not free-floating text."@en ;
+    rdfs:domain foxxi-ai-elearning:AttestedModelClaim ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:provider a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "provider"@en ;
+    rdfs:comment "The provider the gateway attests (e.g. Anthropic)."@en ;
+    skos:definition "The provider the gateway attests (e.g. Anthropic)."@en ;
+    rdfs:domain foxxi-ai-elearning:AttestedModelClaim ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:sourceAtom a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "source atom"@en ;
+    skos:notation "sourceAtom" ;
+    rdfs:comment "The PGSL atom content-addressing a cited source — it resolves to exactly the captured bytes."@en ;
+    skos:definition "The PGSL atom content-addressing a cited source — it resolves to exactly the captured bytes."@en ;
+    skos:changeNote "2026.10.0: an object property, whose value is the thing itself; before it, the unversioned publication made it a datatype property whose value was the atom's IRI, an xsd:anyURI literal."@en ;
+    rdfs:domain foxxi-ai-elearning:ContentAddressedSource ;
+    rdfs:range pgsl:Atom ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:assertedConfidence a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "asserted confidence"@en ;
+    skos:notation "assertedConfidence" ;
+    rdfs:comment "The AI's self-reported confidence (0..1), recorded VERBATIM and UNVERIFIED — kept for transparency, not trusted as truth."@en ;
+    skos:definition "The AI's self-reported confidence (0..1), recorded VERBATIM and UNVERIFIED — kept for transparency, not trusted as truth."@en ;
+    rdfs:domain foxxi-ai-elearning:ConfidenceRangeProof ;
+    rdfs:range foxxi-ai-elearning:UnitInterval ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:confidenceThreshold a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "confidence threshold"@en ;
+    skos:notation "confidenceThreshold" ;
+    rdfs:comment "The threshold (0..1) the range proof clears — the proof shows confidence ≥ this without revealing the exact value."@en ;
+    skos:definition "The threshold (0..1) the range proof clears — the proof shows confidence ≥ this without revealing the exact value."@en ;
+    rdfs:domain foxxi-ai-elearning:ConfidenceRangeProof ;
+    rdfs:range foxxi-ai-elearning:UnitInterval ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:proofVerified a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "proof verified"@en ;
+    skos:notation "proofVerified" ;
+    rdfs:comment "Whether the range proof verified against its hash chain. The proof is checkable by anyone; this is not a claim about answer correctness."@en ;
+    skos:definition "Whether the range proof verified against its hash chain. The proof is checkable by anyone; this is not a claim about answer correctness."@en ;
+    rdfs:domain foxxi-ai-elearning:ConfidenceRangeProof ;
+    rdfs:range xsd:boolean ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:interventionEfficacy a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "intervention efficacy"@en ;
+    skos:notation "interventionEfficacy" ;
+    rdfs:comment "A SEPARATE, independently-signed efficacy rate (closed/samples) aggregated across distinct keys on the Foxxi vertical — recorded beside the confidence, NOT reconciled with it and NOT a calibration of the number."@en ;
+    skos:definition "A SEPARATE, independently-signed efficacy rate (closed/samples) aggregated across distinct keys on the Foxxi vertical — recorded beside the confidence, NOT reconciled with it and NOT a calibration of the number."@en ;
+    rdfs:domain foxxi-ai-elearning:SignedInteractionRecord ;
+    rdfs:range foxxi-ai-elearning:UnitInterval ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:Verb a skos:ConceptScheme ;
+    rdfs:label "AI-interaction verbs"@en ;
+    skos:prefLabel "AI-interaction verbs"@en ;
+    skos:definition "The three interaction verbs. Reused intent from the prevailing pattern; what differs is the enforced provenance on the statements that carry them."@en ;
+    rdfs:comment "The three interaction verbs. Reused intent from the prevailing pattern; what differs is the enforced provenance on the statements that carry them."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> ;
+    skos:hasTopConcept foxxi-ai-elearning:Verb-interacted-with-ai ,
+        foxxi-ai-elearning:Verb-answered-ai-question ,
+        foxxi-ai-elearning:Verb-gave-ai-feedback .
+
+foxxi-ai-elearning:Verb-interacted-with-ai a skos:Concept ;
+    skos:inScheme foxxi-ai-elearning:Verb ;
+    skos:topConceptOf foxxi-ai-elearning:Verb ;
+    skos:prefLabel "interacted with AI"@en ;
+    rdfs:label "interacted with AI (AI-interaction verbs)"@en ;
+    skos:notation "interacted-with-ai" ;
+    skos:definition "The learner interacted with an AI tutor or assistant."@en ;
+    rdfs:comment "The learner interacted with an AI tutor or assistant."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:Verb-answered-ai-question a skos:Concept ;
+    skos:inScheme foxxi-ai-elearning:Verb ;
+    skos:topConceptOf foxxi-ai-elearning:Verb ;
+    skos:prefLabel "answered AI question"@en ;
+    rdfs:label "answered AI question (AI-interaction verbs)"@en ;
+    skos:notation "answered-ai-question" ;
+    skos:definition "The learner answered a question generated by an AI system."@en ;
+    rdfs:comment "The learner answered a question generated by an AI system."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:Verb-gave-ai-feedback a skos:Concept ;
+    skos:inScheme foxxi-ai-elearning:Verb ;
+    skos:topConceptOf foxxi-ai-elearning:Verb ;
+    skos:prefLabel "gave AI feedback"@en ;
+    rdfs:label "gave AI feedback (AI-interaction verbs)"@en ;
+    skos:notation "gave-ai-feedback" ;
+    skos:definition "The AI produced feedback after evaluating the learner's response."@en ;
+    rdfs:comment "The AI produced feedback after evaluating the learner's response."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:ActivityType a skos:ConceptScheme ;
+    rdfs:label "AI-interaction activity types"@en ;
+    skos:prefLabel "AI-interaction activity types"@en ;
+    skos:definition "All three activity types the templates reference are DECLARED here — including ai-interaction and ai-feedback — so a statement using them validates against this profile."@en ;
+    rdfs:comment "All three activity types the templates reference are DECLARED here — including ai-interaction and ai-feedback — so a statement using them validates against this profile."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> ;
+    skos:hasTopConcept foxxi-ai-elearning:ActivityType-ai-interaction ,
+        foxxi-ai-elearning:ActivityType-ai-question ,
+        foxxi-ai-elearning:ActivityType-ai-feedback .
+
+foxxi-ai-elearning:ActivityType-ai-interaction a skos:Concept ;
+    skos:inScheme foxxi-ai-elearning:ActivityType ;
+    skos:topConceptOf foxxi-ai-elearning:ActivityType ;
+    skos:prefLabel "AI interaction"@en ;
+    rdfs:label "AI interaction (AI-interaction activity types)"@en ;
+    skos:notation "ai-interaction" ;
+    skos:definition "Object type for interacted-with-ai."@en ;
+    rdfs:comment "Object type for interacted-with-ai."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:ActivityType-ai-question a skos:Concept ;
+    skos:inScheme foxxi-ai-elearning:ActivityType ;
+    skos:topConceptOf foxxi-ai-elearning:ActivityType ;
+    skos:prefLabel "AI-generated question"@en ;
+    rdfs:label "AI-generated question (AI-interaction activity types)"@en ;
+    skos:notation "ai-question" ;
+    skos:definition "Object type for answered-ai-question."@en ;
+    rdfs:comment "Object type for answered-ai-question."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+foxxi-ai-elearning:ActivityType-ai-feedback a skos:Concept ;
+    skos:inScheme foxxi-ai-elearning:ActivityType ;
+    skos:topConceptOf foxxi-ai-elearning:ActivityType ;
+    skos:prefLabel "AI feedback"@en ;
+    rdfs:label "AI feedback (AI-interaction activity types)"@en ;
+    skos:notation "ai-feedback" ;
+    skos:definition "Object type for gave-ai-feedback."@en ;
+    rdfs:comment "Object type for gave-ai-feedback."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members (
+        foxxi-ai-elearning:SignedInteractionRecord
+        foxxi-ai-elearning:AttestedModelClaim
+        foxxi-ai-elearning:ContentAddressedSource
+        foxxi-ai-elearning:ConfidenceRangeProof
+        foxxi-ai-elearning:AiInteraction
+    )
+] .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+    rdfs:label "was derived from"@en ;
+    rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Entity .
+
+prof:Profile a owl:Class ;
+    rdfs:label "Profile"@en ;
+    rdfs:comment "A specification that constrains, extends, combines, or provides guidance or explanation about the usage of other specifications. (PROF)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/dx/prof> ;
+    rdfs:subClassOf dct:Standard .
+
+prof:isProfileOf a owl:ObjectProperty ;
+    rdfs:label "is profile of"@en ;
+    rdfs:comment "The specification for which this profile is defined. (PROF)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/dx/prof> ;
+    rdfs:domain prof:Profile ;
+    rdfs:range dct:Standard .
+
+prov:Agent a owl:Class ;
+    rdfs:label "Agent"@en ;
+    rdfs:comment "Something that bears some form of responsibility for an activity taking place, for the existence of an entity, or for another agent's activity. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+pgsl:Atom a owl:Class ;
+    rdfs:label "Atom"@en ;
+    rdfs:comment "A leaf node of the PGSL lattice holding one primitive value, identified by its content. (Interego PGSL)"@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl> .
+
+skos:ConceptScheme a owl:Class ;
+    rdfs:label "Concept Scheme"@en ;
+    rdfs:comment "A set of concepts, optionally including statements about semantic relationships between those concepts. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    owl:disjointWith skos:Concept .
+
+skos:hasTopConcept a owl:ObjectProperty ;
+    rdfs:label "has top concept"@en ;
+    rdfs:comment "Relates, by convention, a concept scheme to a concept which is topmost in the broader/narrower concept hierarchies for that scheme. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range skos:Concept .
+
+skos:Concept a owl:Class ;
+    rdfs:label "Concept"@en ;
+    rdfs:comment "An idea or notion; a unit of thought. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> .
+
+skos:inScheme a owl:ObjectProperty ;
+    rdfs:label "is in scheme"@en ;
+    rdfs:comment "Relates a resource (for example a concept) to a concept scheme in which it is included. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:range skos:ConceptScheme .
+
+skos:topConceptOf a owl:ObjectProperty ;
+    rdfs:label "is top concept in scheme"@en ;
+    rdfs:comment "Relates a concept to the concept scheme that it is a top level concept of. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:subPropertyOf skos:inScheme ;
+    owl:inverseOf skos:hasTopConcept .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A physical, digital, conceptual, or other kind of thing with some fixed aspects. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+dct:Standard a owl:Class ;
+    rdfs:label "Standard"@en ;
+    rdfs:comment "A reference point against which other things can be evaluated or compared. (DCMI Metadata Terms)"@en ;
+    rdfs:isDefinedBy dct: .
+
+dct:title a owl:AnnotationProperty .
+
+dct:description a owl:AnnotationProperty .
+
+skos:historyNote a owl:AnnotationProperty .
+
+dct:creator a owl:AnnotationProperty .
+
+dct:contributor a owl:AnnotationProperty .
+
+dct:publisher a owl:AnnotationProperty .
+
+dct:license a owl:AnnotationProperty .
+
+dct:rights a owl:AnnotationProperty .
+
+dct:created a owl:AnnotationProperty .
+
+dct:modified a owl:AnnotationProperty .
+
+dct:issued a owl:AnnotationProperty .
+
+dct:language a owl:AnnotationProperty .
+
+bibo:status a owl:AnnotationProperty .
+
+dct:bibliographicCitation a owl:AnnotationProperty .
+
+vann:preferredNamespacePrefix a owl:AnnotationProperty .
+
+vann:preferredNamespaceUri a owl:AnnotationProperty .
+
+dct:source a owl:AnnotationProperty .
+
+skos:definition a owl:AnnotationProperty .
+
+foxxi-xapi:Activity a owl:Class .
+
+foxxi-xapi:Statement a owl:Class .
+
+skos:notation a owl:AnnotationProperty .
+
+skos:changeNote a owl:AnnotationProperty .
+
+skos:prefLabel a owl:AnnotationProperty .

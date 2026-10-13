@@ -75,7 +75,7 @@ describe('a record that names a concept meets the shapes', () => {
     const S = ns(SOC2_MODEL);
     const r = verdict(`<${EX}ev> a <${S}AccessChangeEvent> ; <${S}evidences> <${S}CommonCriterion-CC6.2> ;
       <${S}occurredAt> "2026-10-01T12:00:00Z"^^<http://www.w3.org/2001/XMLSchema#dateTime> ;
-      <${S}actingAgent> <did:web:admin.example> ; <${S}signer> "0xabc" .`, SOC2_MODEL);
+      <${S}actor> <did:web:admin.example> ; <${S}signer> "0xabc" .`, SOC2_MODEL);
     expect(r.conforms, JSON.stringify(r.results)).toBe(true);
   });
   it('but an obligation the document does not define, named the same way, is refused: it is not one of its Articles, and has no Article', () => {

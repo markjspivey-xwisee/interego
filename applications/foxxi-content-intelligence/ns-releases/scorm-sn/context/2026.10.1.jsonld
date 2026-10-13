@@ -154,8 +154,8 @@
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#constrainedChoiceConsiderations",
       "@type": "@id"
     },
-    "adlObjective": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#adlObjective",
+    "adlObjectives": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#adlObjectives",
       "@type": "@id"
     },
     "choice": {
@@ -419,10 +419,6 @@
     },
     "hideLMSUI": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#hideLMSUI"
-    },
-    "adlObjectives": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#adlObjective",
-      "@type": "@id"
     }
   }
 }

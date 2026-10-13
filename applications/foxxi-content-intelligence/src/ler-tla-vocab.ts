@@ -84,10 +84,10 @@ export const TLA_DOC = TLA_NS.replace(/#$/, '');
 export const P2997 = 'https://standards.ieee.org/ieee/2997/10632/';
 
 /** Each document's version (YYYY.MM.PATCH; see ns/catalog.ts). */
-const LER_VERSION = '2026.10.0';
-const TLA_VERSION = '2026.10.0';
+const LER_VERSION = '2026.10.1';
+const TLA_VERSION = '2026.10.1';
 /** The version of the IEEE LER shapes graph (spec/ler.model.ts), which the two documents cite at its version. */
-export const LER_SHAPES_VERSION = '2026.10.0';
+export const LER_SHAPES_VERSION = '2026.10.1';
 
 /** Interego substrate prefixes the two ontologies compose over. */
 const PREFIXES: Record<string, string> = {
@@ -285,7 +285,7 @@ const LER_TERMS: readonly SemTerm[] = [
     // merely close (closeMatch, which said less than the definition). Targets are the canonical,
     // dereferenceable 1EdTech vocab IRIs the OB 3.0 and CLR 2.0 JSON-LD contexts resolve to.
     narrowMatch: ['https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential', 'https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential'],
-    changeNote: '2026.10.0: Open Badges and CLR credentials are narrower matches (kinds of a Credential), where the Open Badges one had been a close match.',
+    changeNote: '2026.10.1: Open Badges and CLR credentials are narrower matches (kinds of a Credential), where the Open Badges one had been a close match.',
   },
   {
     family: 'ler', name: 'Endorsement', kind: 'Class', construction: 'composed',
@@ -373,13 +373,12 @@ const LER_TERMS: readonly SemTerm[] = [
   {
     family: 'ler', name: 'holder', kind: 'ObjectProperty', construction: 'minted',
     label: 'holder',
-    definition: 'Relates an Enterprise Learner Record or a credential to the Learner it is about. Deprecated: the name reads as a Verifiable Credential\'s holder, a different relation (who presents a credential, not whom it is about); about learner replaces it.',
+    definition: 'Relates an Enterprise Learner Record or a credential to the one Learner it is about. Deprecated: the name reads as a Verifiable Credential\'s holder, a different relation (who presents a credential, not whom it is about); about learner replaces it.',
     deprecated: true, replacedBy: 'ler:aboutLearner',
-    // Kept with the axioms it was published with (its range alone), so data written with it means
-    // what it meant; about learner carries the domain and the functional characteristic.
-    changeNote: '2026.10.0: deprecated in favour of about learner; kept with the axioms it was published with.',
+    changeNote: '2026.10.0: deprecated in favour of about learner.',
     source: 'IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)',
-    range: 'ler:Learner',
+    domain: ['ler:EnterpriseLearnerRecord', 'ler:Credential'], range: 'ler:Learner',
+    functional: true,
   },
   {
     family: 'ler', name: 'aboutLearner', kind: 'ObjectProperty', construction: 'minted',
@@ -684,7 +683,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:string',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'hasCredential', kind: 'ObjectProperty', construction: 'minted',
@@ -692,7 +691,7 @@ const LER_TERMS: readonly SemTerm[] = [
     definition: 'Relates an Enterprise Learner Record to a credential conferred on its learner that the record lists. The credential itself is where its raw data location says.',
     source: 'IEEE P2997 (Enterprise Learner Record: credentials held, by indication of where they are stored)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'ler:Credential',
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'achievementName', kind: 'DatatypeProperty', construction: 'minted',
@@ -701,7 +700,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: '1EdTech Open Badges 3.0 (Achievement: name), as a record lists the credential',
     domain: 'ler:Credential', range: 'xsd:string',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'proofVerified', kind: 'DatatypeProperty', construction: 'minted',
@@ -710,7 +709,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:Credential', range: 'xsd:boolean',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'verbDisplay', kind: 'DatatypeProperty', construction: 'minted',
@@ -719,7 +718,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.2 (Verb: display), as a record entry carries it',
     domain: 'ler:RecordEntry', range: 'xsd:string',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'activityName', kind: 'DatatypeProperty', construction: 'minted',
@@ -728,7 +727,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.3 (Activity Definition: name), as a record entry carries it',
     domain: 'ler:RecordEntry', range: 'xsd:string',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'outcomeQuality', kind: 'DatatypeProperty', construction: 'minted',
@@ -737,7 +736,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.4 (Score: scaled), as a record entry carries it',
     domain: 'ler:RecordEntry', range: ['xsd:decimal', 'xsd:double'],
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'duration', kind: 'DatatypeProperty', construction: 'minted',
@@ -746,7 +745,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.4 (Result: duration), as a record entry carries it',
     domain: 'ler:RecordEntry', range: 'xsd:string',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'costUSD', kind: 'DatatypeProperty', construction: 'minted',
@@ -755,7 +754,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:RecordEntry', range: ['xsd:decimal', 'xsd:double'],
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'competencyLabel', kind: 'DatatypeProperty', construction: 'minted',
@@ -763,7 +762,7 @@ const LER_TERMS: readonly SemTerm[] = [
     definition: 'The name of the competency a competency assertion is about (ler:aboutCompetency), given for a reader that does not dereference it.',
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:CompetencyAssertion', range: 'xsd:string',
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'frameworkName', kind: 'DatatypeProperty', construction: 'minted',
@@ -771,7 +770,7 @@ const LER_TERMS: readonly SemTerm[] = [
     definition: 'The name of the competency framework the competency of an assertion belongs to, as the credential that aligns it names it.',
     source: '1EdTech Open Badges 3.0 (Alignment: targetFramework), as an assertion carries it',
     domain: 'ler:CompetencyAssertion', range: 'xsd:string',
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'proficiencyLabel', kind: 'DatatypeProperty', construction: 'minted',
@@ -780,7 +779,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:CompetencyAssertion', range: 'xsd:string',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'proficiencyRank', kind: 'DatatypeProperty', construction: 'minted',
@@ -789,7 +788,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:CompetencyAssertion', range: 'xsd:positiveInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'trainingCompletionCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -798,7 +797,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:CompetencyAssertion', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'performanceExecutionCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -807,7 +806,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:CompetencyAssertion', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'performanceSuccessRate', kind: 'DatatypeProperty', construction: 'minted',
@@ -816,7 +815,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: ['ler:EnterpriseLearnerRecord', 'ler:CompetencyAssertion'], range: ['xsd:decimal', 'xsd:double'],
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'performanceMeanQuality', kind: 'DatatypeProperty', construction: 'minted',
@@ -825,7 +824,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:CompetencyAssertion', range: ['xsd:decimal', 'xsd:double'],
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'supersessionNote', kind: 'DatatypeProperty', construction: 'minted',
@@ -834,7 +833,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:CompetencyAssertion', range: 'xsd:string',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'experienceCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -843,7 +842,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'performanceCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -852,7 +851,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'credentialCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -861,7 +860,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'verifiedCredentialCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -870,7 +869,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'competencyCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -879,7 +878,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'assertedCompetencyCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -888,7 +887,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'inferredCompetencyCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -897,7 +896,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
   {
     family: 'ler', name: 'performanceVerifiedCompetencyCount', kind: 'DatatypeProperty', construction: 'minted',
@@ -906,7 +905,7 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'Foxxi (the Enterprise Learner Record it assembles)',
     domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
     functional: true,
-    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+    changeNote: '2026.10.1: new, for a field of the record that had no term.',
   },
 ];
 
@@ -1832,7 +1831,8 @@ export function semDocMeta(family: 'ler' | 'tla'): DocMeta {
         iri: LER_DOC, ns: LER_NS, prefix: foxxiPrefix('ieee-ler'),
         title: 'IEEE Learning and Employment Records (LER) — Foxxi composable ontology',
         description: 'An OWL 2 DL vocabulary for the IEEE learning-and-employment-record family — the IEEE P2997 Enterprise Learner Record (active PAR), IEEE 1484.20.3-2022 Shareable Competency Definitions, IEEE 1484.2-2024 LER Ecosystems and the earlier IEEE 1484.20.1-2007 Reusable Competency Definitions (now inactive-reserved) — modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate\'s attestation, event-record, resource-descriptor and aggregation primitives, not new classes. Each term records how it is built (foxxi:construction, an annotation of the Foxxi vocabulary) and from which substrate primitives (iep:constructedFrom, the Interego substrate\'s own relation).',
-        version: LER_VERSION, created: '2026-05-20', modified: '2026-10-12', issued: '2026-10-12',
+        version: LER_VERSION, created: '2026-05-20', modified: '2026-10-13', issued: '2026-10-13',
+        priorVersion: '2026.10.0', priorCompatibility: 'backward',
         standards: [
           { title: 'IEEE P2997 — Standard for Enterprise Learner Record (active PAR)', url: P2997 },
           { title: 'IEEE 1484.20.3-2022 — Data Model for Shareable Competency Definitions', url: 'https://standards.ieee.org/ieee/1484.20.3/10749/' },
@@ -1854,7 +1854,8 @@ export function semDocMeta(family: 'ler' | 'tla'): DocMeta {
         iri: TLA_DOC, ns: TLA_NS, prefix: foxxiPrefix('adl-tla'),
         title: 'ADL Total Learning Architecture (TLA) — Foxxi composable ontology',
         description: 'An OWL 2 DL vocabulary for the ADL Total Learning Architecture: the four data pillars (competency, learning-activity metadata, learning performance, learner profile), the Master Object Model (MOM) xAPI vocabulary, the CaSS competency model, the federated LRS tiers and the learner-state machines — modelled as compositions over the Interego substrate. The three LRS tiers and the learner-state machines are views over the statement stream, not stores. Also publishes the Foxxi production-performance proficiency framework (Dreyfus) and the roll-up rule, whose bands are data the evaluator reads.',
-        version: TLA_VERSION, created: '2026-05-20', modified: '2026-10-12', issued: '2026-10-12',
+        version: TLA_VERSION, created: '2026-05-20', modified: '2026-10-13', issued: '2026-10-13',
+        priorVersion: '2026.10.0', priorCompatibility: 'backward',
         standards: [
           { title: 'ADL Total Learning Architecture (TLA) — reference implementation and service definitions', url: 'https://adlnet.gov/projects/tla/' },
           { title: 'IEEE 2881-2025 — Standard for Learning Metadata Terms', url: 'https://standards.ieee.org/ieee/2881/11719/' },
@@ -2072,10 +2073,11 @@ function addConstructionProperty(g: Graph, O: NamedNode, family: 'ler' | 'tla'):
     .add(L, iri(RDFS + 'label'), en('obsolete construction'))
     .add(L, iri(RDFS + 'comment'), en(`${CONSTRUCTION_DEFINITION} Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it.`))
     .add(L, iri(SKOS + 'definition'), en(`${CONSTRUCTION_DEFINITION} Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it.`))
-    // Kept with the axioms it was published with: none.
+    // Kept with the axiom 2026.10.0 released it with, its range.
+    .add(L, iri(RDFS + 'range'), iri(XSD + 'string'))
     .add(L, iri(OWL + 'deprecated'), typed('true', XSD + 'boolean'))
     .add(L, iri(DCT + 'isReplacedBy'), C)
-    .add(L, iri(SKOS + 'changeNote'), en('2026.10.0: deprecated in favour of the Foxxi vocabulary\'s construction.'))
+    .add(L, iri(SKOS + 'changeNote'), en('2026.10.1: deprecated in favour of the Foxxi vocabulary\'s construction.'))
     .add(L, iri(RDFS + 'isDefinedBy'), O);
 }
 
