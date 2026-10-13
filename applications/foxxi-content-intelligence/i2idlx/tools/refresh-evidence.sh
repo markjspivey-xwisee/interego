@@ -10,15 +10,20 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 E="$ROOT/evidence"
 if [ "${1:-}" = "--foxxi" ]; then
   D="${2:?usage: refresh-evidence.sh --foxxi <dir>}"
-  mkdir -p "$D"
+  # Only into an empty or new directory: an archive that already holds releases (the vertical's ns-releases/ above all)
+  # is never rewritten. The files are fetched and checked in a temporary directory and copied in only once all pass.
+  if [ -e "$D" ] && [ -n "$(ls -A "$D")" ]; then echo "$D is not empty: give an empty or new directory" >&2; exit 1; fi
+  F="$(mktemp -d)"
+  trap 'rm -rf "$F"' EXIT
   read -r V BASE MODULES < <(python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1]))["foxxiNs"]; print(c["version"], c["base"], " ".join(c["modules"]))' "$ROOT/config.json")
   # The SHA-256 of each module comes from config.json, which pins the release, never from the bytes just fetched.
-  python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1]))["foxxiNs"]; v=c["version"]; print("".join(h + "  " + m + "/" + v + ".ttl\n" for m, h in c["sha256"].items()), end="")' "$ROOT/config.json" > "$D/SHA256SUMS"
+  python3 -I -c 'import json,sys; c=json.load(open(sys.argv[1]))["foxxiNs"]; v=c["version"]; print("".join(h + "  " + m + "/" + v + ".ttl\n" for m, h in c["sha256"].items()), end="")' "$ROOT/config.json" > "$F/SHA256SUMS"
   for m in $MODULES; do
-    mkdir -p "$D/$m"
-    curl -sSfL -H 'Accept: text/turtle' -o "$D/$m/$V.ttl" "$BASE/$m/$V"
+    mkdir -p "$F/$m"
+    curl -sSfL -H 'Accept: text/turtle' -o "$F/$m/$V.ttl" "$BASE/$m/$V"
   done
-  (cd "$D" && sha256sum -c --quiet SHA256SUMS) || { echo "a fetched module is not the release config.json pins" >&2; exit 1; }
+  (cd "$F" && sha256sum -c --quiet SHA256SUMS) || { echo "a fetched module is not the release config.json pins; $D left as it was" >&2; exit 1; }
+  mkdir -p "$D" && cp -R "$F"/. "$D"/
   echo "Foxxi $V fetched into $D and checked against config.json; build with FOXXI_NS_ARCHIVE=$D"
   exit 0
 fi
