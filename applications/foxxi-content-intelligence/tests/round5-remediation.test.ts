@@ -7,6 +7,7 @@ import { validateInstanceWith } from '../src/spec/index.js';
 import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
 import { verifyDataIntegrityProof } from '../../_shared/vc-jwt/data-integrity-jcs.js';
+import { turtleQuads } from './support/ns-graph.js';
 
 const ADL = 'http://adlnet.gov/expapi/verbs';
 const ACT = 'http://adlnet.gov/expapi/activities';
@@ -82,15 +83,40 @@ describe('round-5 — sh:class is node-ness only (authority/case safe)', () => {
 });
 
 // ── MAJOR: `type` renders as a plain predicate (published == validator, satisfiable) ──
-describe('round-5 — published SHACL treats `type` as a plain predicate, not rdf:type', () => {
-  it('OB3 type constraints do NOT attach literals to rdf:type', () => {
-    const sh = renderShacl(OB3_MODEL);
-    expect(sh).not.toContain('sh:path rdf:type');
-    expect(sh).toContain('sh:path ob3:type'); // hasValue "VerifiableCredential" is on ob3:type
+// ★ REVISED: the round-5 defect was a constraint no RDF graph could satisfy — a string literal
+// required on rdf:type. Its fix then made `type` a predicate of this document's own (ob3:type),
+// which no real Open Badges credential uses: 1EdTech's context maps `type` to @type, so a
+// credential's types ARE rdf:type values, and they are IRIs. The shapes now say exactly that.
+// The intent kept is that nothing published is unsatisfiable: rdf:type paths carry only IRI
+// values and never a datatype. (Satisfiability against a real expanded credential is checked
+// with a SHACL engine outside this suite; here the structure is pinned.)
+describe('round-5 — published SHACL never puts a literal on rdf:type', () => {
+  const SH = 'http://www.w3.org/ns/shacl#';
+  const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+  const typeShapes = (ttl: string) => {
+    const q = turtleQuads(ttl);
+    const shapes = q.filter(t => t.predicate.value === `${SH}path` && t.object.value === RDF_TYPE).map(t => t.subject.value);
+    return { q, shapes };
+  };
+  it('OB3 type constraints are IRI values on rdf:type, and the credential type is the shape\'s target', () => {
+    // ★ REVISED: an sh:hasValue ob:OpenBadgeCredential on rdf:type, in a shape that targets
+    // ob:OpenBadgeCredential, could never fail — a vacuous check. The credential type is the target;
+    // VerifiableCredential, which the target does not imply, is the value required.
+    const { q, shapes } = typeShapes(renderShacl(OB3_MODEL));
+    expect(shapes.length).toBeGreaterThan(0);
+    const hasValues = q.filter(t => shapes.includes(t.subject.value) && t.predicate.value === `${SH}hasValue`).map(t => t.object);
+    expect(hasValues.every(o => o.termType === 'NamedNode')).toBe(true);
+    expect(hasValues.map(o => o.value)).toEqual(['https://www.w3.org/2018/credentials#VerifiableCredential']);
+    expect(q.some(t => t.subject.value.endsWith('/ob3/shapes#OpenBadgeCredentialShape') && t.predicate.value === `${SH}targetClass`
+      && t.object.value === 'https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential')).toBe(true);
+    // No sh:datatype or literal sh:in on rdf:type.
+    expect(q.filter(t => shapes.includes(t.subject.value) && t.predicate.value === `${SH}datatype`)).toEqual([]);
+    // And no invented ob3: predicate stands in for it.
+    expect(q.some(t => t.object.value.includes('/ns/ob3#type'))).toBe(false);
   });
   it('SCORM-CAM resource `type` (a string) is not mapped to rdf:type', () => {
-    const sh = renderShacl(SCORM_CAM_MODEL);
-    expect(sh).not.toContain('sh:path rdf:type ; sh:datatype xsd:string');
+    const { q, shapes } = typeShapes(renderShacl(SCORM_CAM_MODEL));
+    expect(q.filter(t => shapes.includes(t.subject.value) && t.predicate.value === `${SH}datatype`)).toEqual([]);
   });
 });
 

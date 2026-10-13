@@ -80,11 +80,6 @@ const OB3_CONTEXTS: readonly string[] = [
   'https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json',
 ];
 
-const CLR_CONTEXTS: readonly string[] = [
-  'https://www.w3.org/ns/credentials/v2',
-  'https://purl.imsglobal.org/spec/clr/v2p0/context-2.0.1.json',
-];
-
 // ── Issuer keypair (deterministic) ────────────────────────────
 
 /**
@@ -170,7 +165,8 @@ export function buildCourseCompletionVc(args: IssueCompletionArgs, issuerDid: st
       id: achievementId,
       type: ['Achievement'],
       name: args.subject.courseTitle,
-      ...(args.subject.courseDescription ? { description: args.subject.courseDescription } : {}),
+      // OB 3.0 requires an achievement's description (Achievement.description [1]).
+      description: args.subject.courseDescription ?? `Awarded for completing ${args.subject.courseTitle}.`,
       criteria: {
         narrative: args.subject.criterionNarrative
           ?? `Completed the ${args.subject.courseTitle} module within the tenant's Foxxi-tracked content.`,
@@ -190,18 +186,21 @@ export function buildCourseCompletionVc(args: IssueCompletionArgs, issuerDid: st
     ...(args.subject.learnerName ? { name: args.subject.learnerName } : {}),
   };
 
-  // Evidence — explicit caller-supplied entries plus one
-  // fxa:LearningExperience per derived-from xAPI experience, so the
-  // earned-by-this-evidence chain is visible inside the VC itself.
+  // Evidence — explicit caller-supplied entries plus one learning experience per derived-from xAPI
+  // experience, so the earned-by-this-evidence chain is visible inside the VC itself.
+  //
+  // ★ ON THE CREDENTIAL, AS OB 3.0 PUTS IT, AND READABLE AS OB 3.0. Evidence is a property of the
+  // AchievementCredential (OB 3.0 B.1.2, evidence [0..*] Evidence), not of its subject: on the
+  // subject, where it used to be written, OB 3.0's context gives `evidence` no meaning, so a
+  // verifier reading the credential as JSON-LD dropped it — and in safe mode refused the credential.
+  // Each entry is an Evidence (its type MUST include it), and what kind of evidence it is — the
+  // `fxa:` CURIE callers name, whose prefix no context of the credential declares — is its genre.
   const evidenceEntries: Array<Record<string, unknown>> = [];
   for (const e of args.subject.evidence ?? []) {
-    evidenceEntries.push({ id: e.id, type: [e.type], ...(e.narrative ? { narrative: e.narrative } : {}) });
+    evidenceEntries.push({ id: e.id, type: ['Evidence'], genre: evidenceGenre(e.type), ...(e.narrative ? { narrative: e.narrative } : {}) });
   }
   for (const x of args.subject.derivedFromExperiences ?? []) {
-    evidenceEntries.push({ id: x, type: ['fxa:LearningExperience'], narrative: 'Raw xAPI experience this completion was derived from.' });
-  }
-  if (evidenceEntries.length > 0) {
-    (subject as Record<string, unknown>).evidence = evidenceEntries;
+    evidenceEntries.push({ id: x, type: ['Evidence'], genre: evidenceGenre('fxa:LearningExperience'), narrative: 'Raw xAPI experience this completion was derived from.' });
   }
 
   return {
@@ -212,7 +211,19 @@ export function buildCourseCompletionVc(args: IssueCompletionArgs, issuerDid: st
     validFrom,
     ...(args.subject.validUntil ? { validUntil: args.subject.validUntil } : {}),
     credentialSubject: subject,
+    ...(evidenceEntries.length > 0 ? { evidence: evidenceEntries } : {}),
   };
+}
+
+/** The kind of a piece of evidence, for OB 3.0's Evidence.genre, which describes it as text: each kind
+ *  Foxxi knows in words, and any other as its caller gave it. */
+const EVIDENCE_GENRES: Readonly<Record<string, string>> = {
+  'fxa:LearningExperience': 'Learning experience',
+  'fxa:CitedSlide': 'Cited slide',
+  'fxa:Assessment': 'Assessment',
+};
+export function evidenceGenre(kind: string): string {
+  return EVIDENCE_GENRES[kind] ?? kind;
 }
 
 /**

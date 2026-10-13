@@ -42,7 +42,7 @@ The same learning record for a person and an AI agent side by side. It covers xA
 
 ### Part three: the standards the rest of the learning world speaks
 
-Two more pieces of the ADL Total Learning Architecture, for both learners. cmi5 (IEEE 9274.2.1) is how an LMS launches an activity and trusts what it reports. LTI 1.3 is how an LMS launches a tool and gets the grade back. Both land in the same learner records.
+Two more pieces of the ADL Total Learning Architecture, for both learners. cmi5 (being standardized as IEEE P9274.3.1) is how an LMS launches an activity and trusts what it reports. LTI 1.3 is how an LMS launches a tool and gets the grade back. Both land in the same learner records.
 
 13. **An activity launched the cmi5 way.** The bridge publishes a cmi5 course of its own. Each of you launches your next activity in it, signed as yourselves (`foxxi.cmi5_launch_signed`): the LMS stages `LMS.LaunchData` and returns a conformant launch URL.
     - **Your activity** runs in a window. It trades its one-time fetch URL for an auth-token and reports to the LRS.

@@ -1,0 +1,56 @@
+# NIST AI Risk Management Framework 1.0 — function mapping — SHACL shapes — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-nist-rmf: <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes> a owl:Ontology ;
+    dct:title "NIST AI Risk Management Framework 1.0 — function mapping — SHACL shapes"@en ;
+    dct:description "SHACL shapes for NIST AI Risk Management Framework 1.0 — function mapping: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by NIST. Where this document and the published standard differ, the standard governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). NIST AI Risk Management Framework 1.0 — function mapping — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes/2026.10.0" ;
+    dct:source <https://doi.org/10.6028/NIST.AI.100-1> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/2026.10.0> .
+
+shapes:FunctionEvidenceShape a sh:NodeShape ;
+    sh:targetClass foxxi-nist-rmf:Function ;
+    rdfs:label "AI RMF function-evidence conformance"@en ;
+    rdfs:comment "A function-evidence assertion MUST name the function id it addresses."@en ;
+    sh:property shapes:FunctionEvidenceShape-functionId ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf/shapes> .
+
+shapes:FunctionEvidenceShape-functionId a sh:PropertyShape ;
+    sh:path foxxi-nist-rmf:functionId ;
+    sh:name "functionId" ;
+    sh:description "the core function id"@en ;
+    sh:message "AI RMF function-evidence conformance — functionId: exactly 1 value, of type xsd:string, one of \"GOVERN\", \"MAP\", \"MEASURE\", \"MANAGE\" — the core function id"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( "GOVERN" "MAP" "MEASURE" "MANAGE" ) .

@@ -1,0 +1,369 @@
+# cmi5 (Quartz) — xAPI profile and course structure — SHACL shapes — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-cmi5: <https://foxxi-bridge.interego.xwisee.com/ns/cmi5#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> a owl:Ontology ;
+    dct:title "cmi5 (Quartz) — xAPI profile and course structure — SHACL shapes"@en ;
+    dct:description "SHACL shapes for cmi5 (Quartz) — xAPI profile and course structure: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/cmi5/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL, the AICC or IEEE. Where this document and the published standard differ, the standard governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). cmi5 (Quartz) — xAPI profile and course structure — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.0" ;
+    dct:source <https://github.com/AICC/CMI-5_Spec_Current> , <https://standards.ieee.org/ieee/9274.3.1/11183/> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/cmi5.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.0> .
+
+shapes:CourseStructureShape a sh:NodeShape ;
+    sh:targetClass foxxi-cmi5:CourseStructure ;
+    rdfs:label "cmi5 course structure conformance"@en ;
+    rdfs:comment "cmi5 Quartz §13.1: a course structure contains exactly one Course and at least one top-level Block or Assignable Unit."@en ;
+    sh:property shapes:CourseStructureShape-course , shapes:CourseStructureShape-structure ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
+
+shapes:CourseStructureShape-course a sh:PropertyShape ;
+    sh:path foxxi-cmi5:course ;
+    sh:name "course" ;
+    sh:description "exactly one Course (§13.1)"@en ;
+    sh:message "cmi5 course structure conformance — course: exactly 1 value, an instance of Course — exactly one Course (§13.1)"@en ;
+    sh:class foxxi-cmi5:Course ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:CourseStructureShape-structure a sh:PropertyShape ;
+    sh:path foxxi-cmi5:structure ;
+    sh:name "structure" ;
+    sh:description "at least one top-level Block or AU (§13.1)"@en ;
+    sh:message "cmi5 course structure conformance — structure: at least 1 value — at least one top-level Block or AU (§13.1)"@en ;
+    sh:minCount 1 .
+
+shapes:CourseShape a sh:NodeShape ;
+    sh:targetClass foxxi-cmi5:Course ;
+    rdfs:label "cmi5 Course conformance"@en ;
+    rdfs:comment "cmi5 Quartz §13.1.1: a Course is identified by an IRI and has a title and a description."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "cmi5 Course conformance: the node must be identified by an IRI — a globally unique IRI (§13.1.1)"@en ;
+    sh:property shapes:CourseShape-title , shapes:CourseShape-description ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
+
+shapes:CourseShape-title a sh:PropertyShape ;
+    sh:path foxxi-cmi5:title ;
+    sh:name "title" ;
+    sh:description "title (§13.1.1)"@en ;
+    sh:message "cmi5 Course conformance — title: at least 1 value — title (§13.1.1)"@en ;
+    sh:minCount 1 .
+
+shapes:CourseShape-description a sh:PropertyShape ;
+    sh:path foxxi-cmi5:description ;
+    sh:name "description" ;
+    sh:description "description (§13.1.1)"@en ;
+    sh:message "cmi5 Course conformance — description: at least 1 value — description (§13.1.1)"@en ;
+    sh:minCount 1 .
+
+shapes:BlockShape a sh:NodeShape ;
+    sh:targetClass foxxi-cmi5:Block ;
+    rdfs:label "cmi5 Block conformance"@en ;
+    rdfs:comment "cmi5 Quartz §13.1.2: a Block is identified by an IRI and has a title and a description."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "cmi5 Block conformance: the node must be identified by an IRI — an IRI unique within the course structure (§13.1.2)"@en ;
+    sh:property shapes:BlockShape-title , shapes:BlockShape-description , shapes:BlockShape-position ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
+
+shapes:BlockShape-title a sh:PropertyShape ;
+    sh:path foxxi-cmi5:title ;
+    sh:name "title" ;
+    sh:description "title (§13.1.2)"@en ;
+    sh:message "cmi5 Block conformance — title: at least 1 value — title (§13.1.2)"@en ;
+    sh:minCount 1 .
+
+shapes:BlockShape-description a sh:PropertyShape ;
+    sh:path foxxi-cmi5:description ;
+    sh:name "description" ;
+    sh:description "description (§13.1.2)"@en ;
+    sh:message "cmi5 Block conformance — description: at least 1 value — description (§13.1.2)"@en ;
+    sh:minCount 1 .
+
+shapes:BlockShape-position a sh:PropertyShape ;
+    sh:path foxxi-cmi5:position ;
+    sh:name "position" ;
+    sh:description "its place in the sequence (§13.1)"@en ;
+    sh:message "cmi5 Block conformance — position: at most 1 value, of type xsd:positiveInteger, at least 1 — its place in the sequence (§13.1)"@en ;
+    sh:datatype xsd:positiveInteger ;
+    sh:maxCount 1 ;
+    sh:minInclusive 1 .
+
+shapes:AssignableUnitShape a sh:NodeShape ;
+    sh:targetClass foxxi-cmi5:AssignableUnit ;
+    rdfs:label "cmi5 Assignable Unit conformance"@en ;
+    rdfs:comment "cmi5 Quartz §13.1.4: an AU is identified by an IRI and has a title, a description and a launch URL. moveOn (default NotApplicable) and launchMethod (default AnyWindow) take their vocabularies; masteryScore is a decimal in [0, 1]."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "cmi5 Assignable Unit conformance: the node must be identified by an IRI — an IRI unique within the course structure (§13.1.4)"@en ;
+    sh:property shapes:AssignableUnitShape-title ,
+        shapes:AssignableUnitShape-description ,
+        shapes:AssignableUnitShape-position ,
+        shapes:AssignableUnitShape-url ,
+        shapes:AssignableUnitShape-moveOn ,
+        shapes:AssignableUnitShape-launchMethod ,
+        shapes:AssignableUnitShape-masteryScore ,
+        shapes:AssignableUnitShape-activityType ,
+        shapes:AssignableUnitShape-launchParameters ,
+        shapes:AssignableUnitShape-entitlementKey ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
+
+shapes:AssignableUnitShape-title a sh:PropertyShape ;
+    sh:path foxxi-cmi5:title ;
+    sh:name "title" ;
+    sh:description "title (§13.1.4)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — title: at least 1 value — title (§13.1.4)"@en ;
+    sh:minCount 1 .
+
+shapes:AssignableUnitShape-description a sh:PropertyShape ;
+    sh:path foxxi-cmi5:description ;
+    sh:name "description" ;
+    sh:description "description (§13.1.4)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — description: at least 1 value — description (§13.1.4)"@en ;
+    sh:minCount 1 .
+
+shapes:AssignableUnitShape-position a sh:PropertyShape ;
+    sh:path foxxi-cmi5:position ;
+    sh:name "position" ;
+    sh:description "its place in the sequence (§13.1)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — position: at most 1 value, of type xsd:positiveInteger, at least 1 — its place in the sequence (§13.1)"@en ;
+    sh:datatype xsd:positiveInteger ;
+    sh:maxCount 1 ;
+    sh:minInclusive 1 .
+
+shapes:AssignableUnitShape-url a sh:PropertyShape ;
+    sh:path foxxi-cmi5:url ;
+    sh:name "url" ;
+    sh:description "launch URL (§13.1.4)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — url: exactly 1 value, of type xsd:anyURI — launch URL (§13.1.4)"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:AssignableUnitShape-moveOn a sh:PropertyShape ;
+    sh:path foxxi-cmi5:moveOn ;
+    sh:name "moveOn" ;
+    sh:description "moveOn vocabulary; NotApplicable when absent (§13.1.4)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — moveOn: at most 1 value, one of \"Passed\", \"Completed\", \"CompletedAndPassed\", \"CompletedOrPassed\", \"NotApplicable\" — moveOn vocabulary; NotApplicable when absent (§13.1.4)"@en ;
+    sh:maxCount 1 ;
+    sh:in ( "Passed" "Completed" "CompletedAndPassed" "CompletedOrPassed" "NotApplicable" ) .
+
+shapes:AssignableUnitShape-launchMethod a sh:PropertyShape ;
+    sh:path foxxi-cmi5:launchMethod ;
+    sh:name "launchMethod" ;
+    sh:description "launchMethod vocabulary; AnyWindow when absent (§13.1.4)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — launchMethod: at most 1 value, one of \"OwnWindow\", \"AnyWindow\" — launchMethod vocabulary; AnyWindow when absent (§13.1.4)"@en ;
+    sh:maxCount 1 ;
+    sh:in ( "OwnWindow" "AnyWindow" ) .
+
+shapes:AssignableUnitShape-masteryScore a sh:PropertyShape ;
+    sh:path foxxi-cmi5:masteryScore ;
+    sh:name "masteryScore" ;
+    sh:description "masteryScore ∈ [0, 1] (§13.1.4)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — masteryScore: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — masteryScore ∈ [0, 1] (§13.1.4)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:AssignableUnitShape-activityType a sh:PropertyShape ;
+    sh:path foxxi-cmi5:activityType ;
+    sh:name "activityType" ;
+    sh:description "activity type IRI (§13.1.4)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — activityType: at most 1 value, an IRI — activity type IRI (§13.1.4)"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:maxCount 1 .
+
+shapes:AssignableUnitShape-launchParameters a sh:PropertyShape ;
+    sh:path foxxi-cmi5:launchParameters ;
+    sh:name "launchParameters" ;
+    sh:description "static launch parameters (§13.1.4)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — launchParameters: at most 1 value, of type xsd:string — static launch parameters (§13.1.4)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:AssignableUnitShape-entitlementKey a sh:PropertyShape ;
+    sh:path foxxi-cmi5:entitlementKey ;
+    sh:name "entitlementKey" ;
+    sh:description "entitlement key (§13.1.4)"@en ;
+    sh:message "cmi5 Assignable Unit conformance — entitlementKey: at most 1 value, of type xsd:string — entitlement key (§13.1.4)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:ObjectiveShape a sh:NodeShape ;
+    sh:targetClass foxxi-cmi5:Objective ;
+    rdfs:label "cmi5 Objective conformance"@en ;
+    rdfs:comment "cmi5 Quartz §13.1.3: an Objective is identified by an IRI and has a title and a description."@en ;
+    sh:nodeKind sh:IRI ;
+    sh:message "cmi5 Objective conformance: the node must be identified by an IRI — an IRI unique within the course structure (§13.1.3)"@en ;
+    sh:property shapes:ObjectiveShape-title , shapes:ObjectiveShape-description ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
+
+shapes:ObjectiveShape-title a sh:PropertyShape ;
+    sh:path foxxi-cmi5:title ;
+    sh:name "title" ;
+    sh:description "title (§13.1.3)"@en ;
+    sh:message "cmi5 Objective conformance — title: at least 1 value — title (§13.1.3)"@en ;
+    sh:minCount 1 .
+
+shapes:ObjectiveShape-description a sh:PropertyShape ;
+    sh:path foxxi-cmi5:description ;
+    sh:name "description" ;
+    sh:description "description (§13.1.3)"@en ;
+    sh:message "cmi5 Objective conformance — description: at least 1 value — description (§13.1.3)"@en ;
+    sh:minCount 1 .
+
+shapes:SessionShape a sh:NodeShape ;
+    sh:targetClass foxxi-cmi5:Session ;
+    rdfs:label "cmi5 session conformance"@en ;
+    rdfs:comment "cmi5 Quartz §9.6.1, §9.6.3.1, §10.2.2: a session carries a registration UUID and a session ID; launchMode takes its vocabulary."@en ;
+    sh:property shapes:SessionShape-registration , shapes:SessionShape-sessionId , shapes:SessionShape-launchMode ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
+
+shapes:SessionShape-registration a sh:PropertyShape ;
+    sh:path foxxi-cmi5:registration ;
+    sh:name "registration" ;
+    sh:description "registration UUID (§9.6.1)"@en ;
+    sh:message "cmi5 session conformance — registration: exactly 1 value, matching ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ — registration UUID (§9.6.1)"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$" .
+
+shapes:SessionShape-sessionId a sh:PropertyShape ;
+    sh:path foxxi-cmi5:sessionId ;
+    sh:name "sessionId" ;
+    sh:description "session ID (§9.6.3.1)"@en ;
+    sh:message "cmi5 session conformance — sessionId: exactly 1 value, of type xsd:string — session ID (§9.6.3.1)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:SessionShape-launchMode a sh:PropertyShape ;
+    sh:path foxxi-cmi5:launchMode ;
+    sh:name "launchMode" ;
+    sh:description "launchMode vocabulary (§10.2.2)"@en ;
+    sh:message "cmi5 session conformance — launchMode: at most 1 value, one of \"Normal\", \"Browse\", \"Review\" — launchMode vocabulary (§10.2.2)"@en ;
+    sh:maxCount 1 ;
+    sh:in ( "Normal" "Browse" "Review" ) .
+
+shapes:LaunchDataShape a sh:NodeShape ;
+    sh:targetClass foxxi-cmi5:LaunchData ;
+    rdfs:label "cmi5 LMS.LaunchData conformance"@en ;
+    rdfs:comment "cmi5 Quartz §10.2: the launch data has a context template, a launch mode and a moveOn; a mastery score is a decimal in [0, 1]."@en ;
+    sh:property shapes:LaunchDataShape-contextTemplate ,
+        shapes:LaunchDataShape-launchMode ,
+        shapes:LaunchDataShape-moveOn ,
+        shapes:LaunchDataShape-masteryScore ,
+        shapes:LaunchDataShape-launchParameters ,
+        shapes:LaunchDataShape-returnURL ,
+        shapes:LaunchDataShape-entitlementKey ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
+
+shapes:LaunchDataShape-contextTemplate a sh:PropertyShape ;
+    sh:path foxxi-cmi5:contextTemplate ;
+    sh:name "contextTemplate" ;
+    sh:description "context template (§10.2.1)"@en ;
+    sh:message "cmi5 LMS.LaunchData conformance — contextTemplate: exactly 1 value — context template (§10.2.1)"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:LaunchDataShape-launchMode a sh:PropertyShape ;
+    sh:path foxxi-cmi5:launchMode ;
+    sh:name "launchMode" ;
+    sh:description "launch mode (§10.2.2)"@en ;
+    sh:message "cmi5 LMS.LaunchData conformance — launchMode: exactly 1 value, one of \"Normal\", \"Browse\", \"Review\" — launch mode (§10.2.2)"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( "Normal" "Browse" "Review" ) .
+
+shapes:LaunchDataShape-moveOn a sh:PropertyShape ;
+    sh:path foxxi-cmi5:moveOn ;
+    sh:name "moveOn" ;
+    sh:description "moveOn (§10.2.5)"@en ;
+    sh:message "cmi5 LMS.LaunchData conformance — moveOn: exactly 1 value, one of \"Passed\", \"Completed\", \"CompletedAndPassed\", \"CompletedOrPassed\", \"NotApplicable\" — moveOn (§10.2.5)"@en ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:in ( "Passed" "Completed" "CompletedAndPassed" "CompletedOrPassed" "NotApplicable" ) .
+
+shapes:LaunchDataShape-masteryScore a sh:PropertyShape ;
+    sh:path foxxi-cmi5:masteryScore ;
+    sh:name "masteryScore" ;
+    sh:description "masteryScore ∈ [0, 1] (§10.2.4)"@en ;
+    sh:message "cmi5 LMS.LaunchData conformance — masteryScore: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — masteryScore ∈ [0, 1] (§10.2.4)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:LaunchDataShape-launchParameters a sh:PropertyShape ;
+    sh:path foxxi-cmi5:launchParameters ;
+    sh:name "launchParameters" ;
+    sh:description "launch parameters (§10.2.3)"@en ;
+    sh:message "cmi5 LMS.LaunchData conformance — launchParameters: at most 1 value, of type xsd:string — launch parameters (§10.2.3)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:LaunchDataShape-returnURL a sh:PropertyShape ;
+    sh:path foxxi-cmi5:returnURL ;
+    sh:name "returnURL" ;
+    sh:description "return URL (§10.2.6)"@en ;
+    sh:message "cmi5 LMS.LaunchData conformance — returnURL: at most 1 value, of type xsd:anyURI — return URL (§10.2.6)"@en ;
+    sh:datatype xsd:anyURI ;
+    sh:maxCount 1 .
+
+shapes:LaunchDataShape-entitlementKey a sh:PropertyShape ;
+    sh:path foxxi-cmi5:launchEntitlementKey ;
+    sh:name "entitlementKey" ;
+    sh:description "entitlement key object (§10.2.7)"@en ;
+    sh:message "cmi5 LMS.LaunchData conformance — entitlementKey: at most 1 value — entitlement key object (§10.2.7)"@en ;
+    sh:maxCount 1 .
+
+shapes:LearnerPreferencesShape a sh:NodeShape ;
+    sh:targetClass foxxi-cmi5:LearnerPreferences ;
+    rdfs:label "cmi5 learner preferences conformance"@en ;
+    rdfs:comment "cmi5 Quartz §11: languagePreference is a comma-separated list of RFC 5646 tags; audioPreference is \"on\" or \"off\"."@en ;
+    sh:property shapes:LearnerPreferencesShape-languagePreference , shapes:LearnerPreferencesShape-audioPreference ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
+
+shapes:LearnerPreferencesShape-languagePreference a sh:PropertyShape ;
+    sh:path foxxi-cmi5:languagePreference ;
+    sh:name "languagePreference" ;
+    sh:description "RFC 5646 tags, most preferred first (§11.1)"@en ;
+    sh:message "cmi5 learner preferences conformance — languagePreference: at most 1 value, of type xsd:string, matching ^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*(,[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*)*$ — RFC 5646 tags, most preferred first (§11.1)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+    sh:pattern "^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*(,[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*)*$" .
+
+shapes:LearnerPreferencesShape-audioPreference a sh:PropertyShape ;
+    sh:path foxxi-cmi5:audioPreference ;
+    sh:name "audioPreference" ;
+    sh:description "\"on\" or \"off\" (§11.2)"@en ;
+    sh:message "cmi5 learner preferences conformance — audioPreference: at most 1 value, one of \"on\", \"off\" — \"on\" or \"off\" (§11.2)"@en ;
+    sh:maxCount 1 ;
+    sh:in ( "on" "off" ) .

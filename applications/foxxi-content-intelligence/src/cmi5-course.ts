@@ -1,5 +1,5 @@
 /**
- * cmi5 course-structure model + parser (cmi5 / IEEE 9274.2.1 §13).
+ * cmi5 course-structure model + parser (cmi5 §13; being standardized as IEEE P9274.3.1).
  *
  * A cmi5 course ships a `cmi5.xml` — a `<courseStructure>` holding one
  * `<course>` and a tree of `<block>` and `<au>` elements. Foxxi already

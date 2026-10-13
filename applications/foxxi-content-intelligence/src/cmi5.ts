@@ -1,6 +1,6 @@
 import { FOXXI_NS } from './foxxi-vocab.js';
 /**
- * Foxxi cmi5 statement emitter — full IEEE 9274.2.1 / cmi5 Profile
+ * Foxxi cmi5 statement emitter — full cmi5 Profile (being standardized as IEEE P9274.3.1)
  * Specification statement suite.
  *
  * The cmi5 profile defines 9 specific xAPI statement types an

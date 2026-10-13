@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildFoxxiProfileDoc } from '../src/xapi-profile.js';
-import { renderSemOntologyTurtle, renderSemOntologyJsonLd } from '../src/ler-tla-vocab.js';
-import { renderJsonLd } from '../src/spec-ontology.js';
+import { renderSemOntologyTurtle, renderSemOntologyJsonLd, LER_NS } from '../src/ler-tla-vocab.js';
+import { renderJsonLd, ontologyIri } from '../src/spec-ontology.js';
+import { jsonLdQuads, turtleQuads, iriObjectsOf, RDFS, SKOS } from './support/ns-graph.js';
 import { XAPI_MODEL } from '../src/spec/xapi.model.js';
 
 // ── MAJOR: published profile satisfies Profile spec §5 (type + inScheme everywhere) ──────
@@ -36,28 +37,29 @@ describe('round-10 — profile Concepts/Templates/Patterns carry type + inScheme
 // ── MINOR: IEEE-LER exactMatch→closeMatch to the IMS credential types (no false identity) ─
 describe('round-10 — IEEE-LER uses closeMatch (not exactMatch) to IMS credential types', () => {
   it('the Transcript/Credential alignments to OB3/CLR are skos:closeMatch', () => {
-    const ttl = renderSemOntologyTurtle('ler');
+    // ★ REVISED: read as triples. 1EdTech's vocabularies now have prefixes (ob:, clr:), so the
+    // Turtle prints these IRIs compactly and the old text match saw nothing.
+    const q = turtleQuads(renderSemOntologyTurtle('ler'));
     // Round-11 corrected the targets to the CANONICAL, dereferenceable vocab.html class IRIs
     // (the /spec/{ob/v3p0,clr/v2p0}/… paths 404). closeMatch (not exactMatch) still holds.
-    expect(ttl).toMatch(/skos:closeMatch <https:\/\/purl\.imsglobal\.org\/spec\/vc\/clr\/vocab\.html#ClrCredential>/);
-    expect(ttl).toMatch(/skos:closeMatch <https:\/\/purl\.imsglobal\.org\/spec\/vc\/ob\/vocab\.html#OpenBadgeCredential>/);
+    const closeTargets = q.filter(t => t.predicate.value === `${SKOS}closeMatch`).map(t => t.object.value);
+    expect(closeTargets).toContain('https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential');
+    expect(closeTargets).toContain('https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential');
     // No exactMatch (strict identity) to the IMS credential types.
-    expect(ttl).not.toMatch(/skos:exactMatch <https:\/\/purl\.imsglobal\.org\/spec\/(vc\/)?(ob|clr)/);
+    const exactTargets = q.filter(t => t.predicate.value === `${SKOS}exactMatch`).map(t => t.object.value);
+    expect(exactTargets.filter(o => /^https:\/\/purl\.imsglobal\.org\/spec\/(vc\/)?(ob|clr)/.test(o))).toEqual([]);
   });
 });
 
 // ── MAJOR: ler/tla JSON-LD is faithful to the Turtle (domain/range/closeMatch carried) ───
 describe('round-10 — ler/tla JSON-LD carries domain/range/closeMatch (faithful to Turtle)', () => {
-  it('ieee-ler @graph has property nodes with rdfs:domain/range', () => {
-    const j = renderSemOntologyJsonLd('ler') as { '@graph': Array<Record<string, unknown>> };
-    const withDomain = j['@graph'].filter(n => 'domain' in n);
-    expect(withDomain.length).toBeGreaterThan(0);
-    const withRange = j['@graph'].filter(n => 'range' in n);
-    expect(withRange.length).toBeGreaterThan(0);
+  it('ieee-ler @graph has property nodes with rdfs:domain/range', async () => {
+    const q = await jsonLdQuads(renderSemOntologyJsonLd('ler'));
+    expect(q.some(x => x.predicate.value === `${RDFS}domain`)).toBe(true);
+    expect(q.some(x => x.predicate.value === `${RDFS}range`)).toBe(true);
     // The Credential class carries a closeMatch to OB3 (not exactMatch).
-    const cred = j['@graph'].find(n => String(n['@id']).endsWith('#Credential'));
-    expect(cred && (cred as any).closeMatch).toBeTruthy();
-    expect(cred && (cred as any).exactMatch).toBeFalsy();
+    expect(iriObjectsOf(q, `${LER_NS}Credential`, `${SKOS}closeMatch`)).toContain('https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential');
+    expect(iriObjectsOf(q, `${LER_NS}Credential`, `${SKOS}exactMatch`)).toEqual([]);
   });
   it('the JSON-LD @context maps domain/range/closeMatch/inScheme to @id', () => {
     const j = renderSemOntologyJsonLd('tla') as { '@context': Record<string, any> };
@@ -69,10 +71,15 @@ describe('round-10 — ler/tla JSON-LD carries domain/range/closeMatch (faithful
 
 // ── MINOR: spec-ontology JSON-LD carries rdfs:isDefinedBy on every node ──────────────────
 describe('round-10 — spec-ontology JSON-LD carries rdfs:isDefinedBy (faithful)', () => {
-  it('every @graph node has rdfs:isDefinedBy pointing at the ontology', () => {
-    const j = renderJsonLd(XAPI_MODEL) as { '@graph': Array<Record<string, unknown>> };
-    for (const n of j['@graph']) {
-      expect(n['rdfs:isDefinedBy']).toBeTruthy();
-    }
+  // ★ REVISED SCOPE. "Every @graph node" now includes the ontology header node, the blank nodes
+  // of union class expressions, and the declarations of EXTERNAL terms the document uses (MIREOT)
+  // — none of which this ontology defines, so none may claim rdfs:isDefinedBy it. The intent is
+  // that every term the ontology MINTS points back at it; that is checked on the triples.
+  it('every @graph node has rdfs:isDefinedBy pointing at the ontology', async () => {
+    const q = await jsonLdQuads(renderJsonLd(XAPI_MODEL));
+    const onto = ontologyIri(XAPI_MODEL);
+    const own = [...new Set(q.filter(x => x.subject.termType === 'NamedNode' && x.subject.value.startsWith(`${onto}#`)).map(x => x.subject.value))];
+    expect(own.length).toBeGreaterThan(20);
+    for (const s of own) expect(iriObjectsOf(q, s, `${RDFS}isDefinedBy`), s).toEqual([onto]);
   });
 });

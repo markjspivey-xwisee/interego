@@ -43,7 +43,19 @@ export function validateXapiStatement(stmt: Record<string, unknown>): Validation
     if (ot === 'Activity' || (!ot && typeof obj.id === 'string')) {
       out.push(...validateAgainstShape(m, 'ActivityShape', obj).results);
       if (obj.definition && typeof obj.definition === 'object') out.push(...validateAgainstShape(m, 'InteractionDefinitionShape', obj.definition as Record<string, unknown>).results);
+    } else if (ot === 'StatementRef') {
+      out.push(...validateAgainstShape(m, 'StatementRefShape', obj).results);
+    } else if (ot === 'SubStatement') {
+      out.push(...validateAgainstShape(m, 'SubStatementShape', obj).results);
     }
+  }
+  // Context (§5.2.2.5) and the xAPI 2.0 context agents / groups each have a published shape.
+  const asObj = (x: unknown): Record<string, unknown> | null => (x && typeof x === 'object' && !Array.isArray(x)) ? x as Record<string, unknown> : null;
+  const ctx = asObj(stmt.context);
+  if (ctx) {
+    out.push(...validateAgainstShape(m, 'ContextShape', ctx).results);
+    for (const ca of (Array.isArray(ctx.contextAgents) ? ctx.contextAgents : [])) { const o = asObj(ca); if (o) out.push(...validateAgainstShape(m, 'ContextAgentShape', o).results); }
+    for (const cg of (Array.isArray(ctx.contextGroups) ? ctx.contextGroups : [])) { const o = asObj(cg); if (o) out.push(...validateAgainstShape(m, 'ContextGroupShape', o).results); }
   }
   if (stmt.result && typeof stmt.result === 'object') {
     const result = stmt.result as Record<string, unknown>;
@@ -52,16 +64,16 @@ export function validateXapiStatement(stmt: Record<string, unknown>): Validation
   }
   if (stmt.actor && typeof stmt.actor === 'object') {
     const actor = stmt.actor as Record<string, unknown>;
-    const shapeUri = `${shapesIri(m)}#GroupShape`;
     if (actor.objectType === 'Group') {
+      // Identified (exactly one IFI; members optional) or anonymous (members, no IFI) — the shape
+      // says it (IdentifiedGroupShape | AnonymousGroupShape). It used to be coded here, and refused
+      // an Identified Group that lists its members, which xAPI 2.0 allows (§5.2.2.1).
       out.push(...validateAgainstShape(m, 'GroupShape', actor).results);
-      const ifis = ['mbox', 'mbox_sha1sum', 'openid', 'account'].filter(k => actor[k] != null);
-      const hasMembers = Array.isArray(actor.member) && actor.member.length > 0;
-      if (!hasMembers && ifis.length !== 1) out.push({ path: 'member|ifi', message: 'a Group must be anonymous (a member list) or identified by exactly one IFI (§4.1.2.2)', sourceShape: shapeUri, severity: 'Violation' });
-      if (hasMembers && ifis.length > 0) out.push({ path: 'ifi', message: 'an anonymous Group (with members) must not carry an IFI (§4.1.2.2)', sourceShape: shapeUri, severity: 'Violation' });
     } else {
       out.push(...validateAgainstShape(m, 'AgentShape', actor).results); // enforces exactly-one IFI via sh:xone
     }
+    const account = asObj(actor.account);
+    if (account) out.push(...validateAgainstShape(m, 'AccountShape', account).results);
   }
   for (const att of (Array.isArray(stmt.attachments) ? stmt.attachments : []) as Array<Record<string, unknown>>) {
     out.push(...validateAgainstShape(m, 'AttachmentShape', att).results);
@@ -95,8 +107,11 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
   // array like ['VerifiableCredential','OpenBadgeCredential']). Map each to its local
   // name so credential validation routes to the right shape instead of stringifying
   // the array to one unmatchable token.
-  const rawType = instance['@type'] ?? instance.assertionType ?? instance.objectType ?? instance.type ?? '';
-  const rawTypes = (Array.isArray(rawType) ? rawType : [rawType]).map(String).filter(Boolean);
+  const typesOf = (node: Record<string, unknown>): string[] => {
+    const raw = node['@type'] ?? node.assertionType ?? node.objectType ?? node.type ?? '';
+    return (Array.isArray(raw) ? raw : [raw]).filter(t => typeof t === 'string' && t !== '') as string[];
+  };
+  const rawTypes = typesOf(instance);
   const isAbs = (t: string): boolean => /^https?:\/\//.test(t);
   // Colon-aware local name so a CURIE (tla:Assertion) yields 'Assertion'; an absolute IRI's
   // fragment still wins because the delimiters after the scheme colon are `/` and `#`.
@@ -111,14 +126,20 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
     if (cur) { const base = prefixes[cur[1]!]; return base ? base + cur[2] : token; }
     return ns(m) + token;
   };
-  // Subclass- AND equivalence-aware local routing: a shape applies to a declared LOCAL name
-  // if its targetClass is an ANCESTOR (subClassOf) OR an owl:equivalentClass of it. Equivalence
-  // is symmetric (both a class's own targets AND any class naming it). Used for bare/CURIE
-  // @types where the authority is unavailable.
+  // Subclass- AND alignment-aware local routing: a shape applies to a declared LOCAL name if its
+  // targetClass is an ANCESTOR (subClassOf) of it, or a class the model ALIGNS with it —
+  // owl:equivalentClass, or a skos:exactMatch / skos:closeMatch mapping. The mappings are
+  // editorial alignments, not logical identity, and they are used here for exactly what they
+  // claim: that instances typed with the aligned class are what this shape is written for (a
+  // tla:Assertion is checked as an IEEE-LER competency assertion). Symmetric (a class's own
+  // alignments AND any class naming it). Used for bare/CURIE @types where the authority is
+  // unavailable.
+  const aliasesOf = (c: { equivalentClass?: readonly string[]; exactMatch?: readonly string[]; closeMatch?: readonly string[] } | undefined): readonly string[] =>
+    c ? [...(c.equivalentClass ?? []), ...(c.exactMatch ?? []), ...(c.closeMatch ?? [])] : [];
   const equivalentsOf = (name: string): string[] => {
     const out: string[] = [];
-    for (const e of (m.classes.find(c => c.name === name)?.equivalentClass ?? [])) out.push(localName(e));
-    for (const c of m.classes) if ((c.equivalentClass ?? []).some(e => localName(e) === name)) out.push(c.name);
+    for (const e of aliasesOf(m.classes.find(c => c.name === name))) out.push(localName(e));
+    for (const c of m.classes) if (aliasesOf(c).some(e => localName(e) === name)) out.push(c.name);
     return out;
   };
   const ancestorsOf = (cls: string): Set<string> => {
@@ -135,34 +156,62 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
     }
     return seen;
   };
-  // The absolute IRIs a shape answers to: its targetClass IRI + each owl:equivalentClass IRI
+  // The absolute IRIs a shape answers to: its targetClass IRI + each class aligned with it
   // (both directions). An absolute @type routes to a shape ONLY on an exact IRI match, so a
   // foreign-namespace type sharing a local name (https://evil.example/x#Assertion) never
   // collides onto a Foxxi/TLA shape — everything-is-a-URL: the authority is load-bearing.
   const shapeAbsIdentities = (targetClass: string): Set<string> => {
     const ids = new Set<string>([absOf(targetClass)]);
-    for (const e of (m.classes.find(c => c.name === targetClass)?.equivalentClass ?? [])) ids.add(absOf(e));
-    for (const c of m.classes) if ((c.equivalentClass ?? []).some(e => localName(e) === targetClass)) ids.add(absOf(c.name));
+    for (const e of aliasesOf(m.classes.find(c => c.name === targetClass))) ids.add(absOf(e));
+    for (const c of m.classes) if (aliasesOf(c).some(e => localName(e) === targetClass)) ids.add(absOf(c.name));
     return ids;
   };
-  const declaredLocal = rawTypes.filter(t => !isAbs(t)).map(localName);
-  // Canonicalize a legacy-Azure-host IRI to the live host: NS_ROOT_LEGACY is declared
-  // owl:sameAs NS_ROOT and ids minted under it live in signed content we must not rewrite,
-  // so a @type carrying the legacy host is the SAME term and must route identically.
+  // The shapes written for a node's declared types: by local name (with subclasses and
+  // alignments) for a bare type, by exact IRI for an absolute one.
   const canonHost = (iri: string): string => iri.startsWith(NS_ROOT_LEGACY) ? NS_ROOT + iri.slice(NS_ROOT_LEGACY.length) : iri;
-  const declaredAbs = rawTypes.filter(isAbs).map(canonHost);
-  const declaredNames = rawTypes.map(localName); // for the no-vacuous-pass decision below
-  const applicableLocal = new Set<string>();
-  for (const d of declaredLocal) for (const a of ancestorsOf(d)) applicableLocal.add(a);
-  const matched = rawTypes.length ? m.shapes.filter(s =>
-    applicableLocal.has(s.targetClass) || declaredAbs.some(rt => shapeAbsIdentities(s.targetClass).has(rt)),
-  ) : [];
+  const shapesFor = (types: readonly string[]): OntologyModel['shapes'] => {
+    // Canonicalize a legacy-Azure-host IRI to the live host: ids minted under it live in signed
+    // content we must not rewrite, so a @type carrying the legacy host is the SAME term and must
+    // route identically.
+    const declaredAbs = types.filter(isAbs).map(canonHost);
+    const applicableLocal = new Set<string>();
+    for (const d of types.filter(t => !isAbs(t)).map(localName)) for (const a of ancestorsOf(d)) applicableLocal.add(a);
+    // A shape's targetClass may be another vocabulary's class (ob:OpenBadgeCredential): its local
+    // name routes a bare type, its absolute IRI an absolute one.
+    const bare = new Set(types.filter(t => !isAbs(t)));
+    return types.length ? m.shapes.filter(s => (s.targetClass !== undefined
+      && (applicableLocal.has(localName(s.targetClass)) || declaredAbs.some(rt => shapeAbsIdentities(s.targetClass!).has(rt))))
+      || (s.jsonTypes ?? []).some(t => bare.has(t)),
+    ) : [];
+  };
+  const matched = shapesFor(rawTypes);
   // No vacuous pass: an instance that declares a type matching no shape is checked
   // against ALL the model's shapes (so a bogus/absent type cannot skip validation);
   // an untyped instance falls back to the model's primary shape.
-  const shapes = matched.length ? matched : (declaredNames.length ? m.shapes : m.shapes.slice(0, 1));
+  const targeted = m.shapes.filter(s => s.targetClass !== undefined);
+  const shapes = matched.length ? matched : (rawTypes.length ? targeted : targeted.slice(0, 1));
   const out: ValidationResult['results'] = [];
   for (const s of shapes) out.push(...validateAgainstShape(m, s.name, instance).results);
+  // A SHACL processor checks every node of a shape's class, not only the document's root: a
+  // nested object that declares a type a shape is written for is checked against that shape too,
+  // as it is in the document's RDF reading — and so is a nested object reached by a key whose
+  // values a shape selects (sh:targetObjectsOf; the shape names the key, jsonKeys). A nested object
+  // no shape is written for is left alone — the no-vacuous-pass rule is about the document, not
+  // every node in it — and so are the @context and a credential's proof, which its RDF reading
+  // puts in a graph of its own.
+  const visit = (value: unknown, at: string, key?: string): void => {
+    if (Array.isArray(value)) { for (const v of value) visit(v, at, key); return; }
+    if (!value || typeof value !== 'object') return;
+    const node = value as Record<string, unknown>;
+    if (at) {
+      const byKey = key === undefined ? [] : m.shapes.filter(s => s.jsonKeys?.includes(key));
+      for (const s of new Set([...shapesFor(typesOf(node)), ...byKey])) {
+        out.push(...validateAgainstShape(m, s.name, node).results.map(r => ({ ...r, path: `${at}.${r.path}` })));
+      }
+    }
+    for (const [k, v] of Object.entries(node)) if (k !== '@context' && k !== 'proof') visit(v, at ? `${at}.${k}` : k, k);
+  };
+  visit(instance, '');
   return { conforms: out.length === 0, results: out, shapesIri: shapesIri(m) };
 }
 

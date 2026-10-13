@@ -1,0 +1,301 @@
+# AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria) — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/soc2  (this version: https://foxxi-bridge.interego.xwisee.com/ns/soc2/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix soc2: <https://markjspivey-xwisee.github.io/interego/ns/soc2#> .
+@prefix foxxi-soc2: <https://foxxi-bridge.interego.xwisee.com/ns/soc2#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/soc2> a owl:Ontology ;
+    dct:title "AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria)"@en ;
+    dct:description "OWL + SHACL projection of the substrate L3 SOC 2 mapping (docs/ns/soc2.ttl): the Common Criteria for logical and physical access (CC6.1–CC6.8), and the operational evidence events Interego records (@interego/ops), each an operation an auditor can sample as evidence for a criterion — an access change for CC6.2 and CC6.3, a deploy for CC8.1. Composed into PGSL and projected here so a cited control IRI dereferences."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by the AICPA. Where this document and the published standard differ, the standard governs."@en ,
+        "Mapped to the Interego substrate's SOC 2 vocabulary (prefix soc2:, docs/ns/soc2.ttl) by SKOS mappings. Since 2026.10.0, actor is an object property."@en ,
+        "Each criterion is paraphrased and cited by its code; the AICPA's text governs. How Interego produces evidence for one is documented with the substrate (spec/SOC2-PREPARATION.md), not here: whether the evidence suffices is the auditor's judgment."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/soc2/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria) (Version 2026.10.0) [Ontology]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/soc2/2026.10.0" ;
+    vann:preferredNamespacePrefix "foxxi-soc2" ;
+    vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/soc2#" ;
+    dct:source <https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/soc2/mappings> ,
+        <https://markjspivey-xwisee.github.io/interego/ns/soc2> .
+
+foxxi-soc2:TrustServicesCriterion a owl:Class ;
+    rdfs:label "Trust Services Criterion"@en ;
+    rdfs:comment "A SOC 2 control objective from the AICPA Trust Services Criteria (2017, rev. 2022). The Common Criteria (CC) apply to the Security category that every SOC 2 report covers."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:OperationalEvidenceEvent a owl:Class ;
+    rdfs:label "Operational Evidence Event"@en ;
+    rdfs:comment "A signed, anchored substrate event that serves as operating-effectiveness evidence for one or more Trust Services Criteria over the audit period. Emitted by @interego/ops as a iep:ContextDescriptor."@en ;
+    skos:closeMatch soc2:ControlEvidence ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:AccessChangeEvent a owl:Class ;
+    rdfs:label "Access Change Event"@en ;
+    rdfs:comment "An OperationalEvidenceEvent recording a grant, revoke, or modification of logical access (e.g. an agent registration or revocation). Direct operating evidence for CC6.2 (registration/authorization) and CC6.3 (modification/removal)."@en ;
+    rdfs:subClassOf foxxi-soc2:OperationalEvidenceEvent ;
+    skos:exactMatch soc2:AccessChangeEvent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:DeployEvent a owl:Class ;
+    rdfs:label "Deploy Event"@en ;
+    rdfs:comment "An OperationalEvidenceEvent recording a change deployed to production. Evidence for CC8.1 (change management)."@en ;
+    rdfs:subClassOf foxxi-soc2:OperationalEvidenceEvent ;
+    skos:exactMatch soc2:DeployEvent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:KeyRotationEvent a owl:Class ;
+    rdfs:label "Key Rotation Event"@en ;
+    rdfs:comment "An OperationalEvidenceEvent recording rotation of a cryptographic key / credential. Evidence for CC6.1 (logical access security measures)."@en ;
+    rdfs:subClassOf foxxi-soc2:OperationalEvidenceEvent ;
+    skos:exactMatch soc2:KeyRotationEvent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:IncidentEvent a owl:Class ;
+    rdfs:label "Incident Event"@en ;
+    rdfs:comment "An OperationalEvidenceEvent recording detection and response to a security incident. Evidence for CC7.x (system operations / incident response)."@en ;
+    rdfs:subClassOf foxxi-soc2:OperationalEvidenceEvent ;
+    skos:exactMatch soc2:IncidentEvent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:evidences a owl:ObjectProperty ;
+    rdfs:label "evidences"@en ;
+    rdfs:comment "Links an OperationalEvidenceEvent to the TrustServicesCriterion whose operating effectiveness it evidences."@en ;
+    rdfs:domain foxxi-soc2:OperationalEvidenceEvent ;
+    rdfs:range foxxi-soc2:TrustServicesCriterion ;
+    skos:closeMatch soc2:satisfiesControl ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:occurredAt a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "occurred at"@en ;
+    skos:notation "occurredAt" ;
+    rdfs:comment "The instant the evidenced operation occurred (xsd:dateTime), inside the audit period."@en ;
+    rdfs:domain foxxi-soc2:OperationalEvidenceEvent ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:actor a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "actor"@en ;
+    rdfs:comment "The agent or principal, identified by its DID, whose action the event records — recovered from the request signature, not asserted by the application."@en ;
+    rdfs:domain foxxi-soc2:OperationalEvidenceEvent ;
+    rdfs:range prov:Agent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:signer a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "signer"@en ;
+    rdfs:comment "The recovered signing address proving who produced the evidence (ECDSA signature recovery)."@en ;
+    rdfs:domain foxxi-soc2:OperationalEvidenceEvent ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:CommonCriterion a skos:ConceptScheme ;
+    rdfs:label "SOC 2 Common Criteria — Logical and Physical Access Controls (CC6)"@en ;
+    skos:prefLabel "SOC 2 Common Criteria — Logical and Physical Access Controls (CC6)"@en ;
+    rdfs:comment "The eight CC6 Common Criteria, on logical and physical access controls. Each is paraphrased here and cited by its code: the criteria's own text is the AICPA's (2017 Trust Services Criteria, with revised points of focus, 2022), and it governs."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> ;
+    skos:hasTopConcept foxxi-soc2:CommonCriterion-CC6.1 ,
+        foxxi-soc2:CommonCriterion-CC6.2 ,
+        foxxi-soc2:CommonCriterion-CC6.3 ,
+        foxxi-soc2:CommonCriterion-CC6.4 ,
+        foxxi-soc2:CommonCriterion-CC6.5 ,
+        foxxi-soc2:CommonCriterion-CC6.6 ,
+        foxxi-soc2:CommonCriterion-CC6.7 ,
+        foxxi-soc2:CommonCriterion-CC6.8 .
+
+foxxi-soc2:CommonCriterion-CC6.1 a skos:Concept ;
+    skos:inScheme foxxi-soc2:CommonCriterion ;
+    skos:topConceptOf foxxi-soc2:CommonCriterion ;
+    skos:prefLabel "CC6.1 logical access security"@en ;
+    rdfs:label "CC6.1 logical access security (SOC 2 Common Criteria — Logical and Physical Access Controls (CC6))"@en ;
+    skos:notation "CC6.1" ;
+    skos:definition "Software, infrastructure and system architecture restrict logical access to the information assets the entity protects, guarding them against security events."@en ;
+    skos:exactMatch soc2:CC6.1 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:CommonCriterion-CC6.2 a skos:Concept ;
+    skos:inScheme foxxi-soc2:CommonCriterion ;
+    skos:topConceptOf foxxi-soc2:CommonCriterion ;
+    skos:prefLabel "CC6.2 user registration and authorization"@en ;
+    rdfs:label "CC6.2 user registration and authorization (SOC 2 Common Criteria — Logical and Physical Access Controls (CC6))"@en ;
+    skos:notation "CC6.2" ;
+    skos:definition "New internal and external users are registered and authorized before they are given credentials or access to the system."@en ;
+    skos:exactMatch soc2:CC6.2 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:CommonCriterion-CC6.3 a skos:Concept ;
+    skos:inScheme foxxi-soc2:CommonCriterion ;
+    skos:topConceptOf foxxi-soc2:CommonCriterion ;
+    skos:prefLabel "CC6.3 role-based access changes"@en ;
+    rdfs:label "CC6.3 role-based access changes (SOC 2 Common Criteria — Logical and Physical Access Controls (CC6))"@en ;
+    skos:notation "CC6.3" ;
+    skos:definition "Access to data, software and functions is granted, changed or removed according to roles and responsibilities, or to the system's design and its changes."@en ;
+    skos:exactMatch soc2:CC6.3 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:CommonCriterion-CC6.4 a skos:Concept ;
+    skos:inScheme foxxi-soc2:CommonCriterion ;
+    skos:topConceptOf foxxi-soc2:CommonCriterion ;
+    skos:prefLabel "CC6.4 physical access restriction"@en ;
+    rdfs:label "CC6.4 physical access restriction (SOC 2 Common Criteria — Logical and Physical Access Controls (CC6))"@en ;
+    skos:notation "CC6.4" ;
+    skos:definition "Physical access to facilities and protected assets — data centres, backup media and other sensitive locations — is limited to authorized people."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:CommonCriterion-CC6.5 a skos:Concept ;
+    skos:inScheme foxxi-soc2:CommonCriterion ;
+    skos:topConceptOf foxxi-soc2:CommonCriterion ;
+    skos:prefLabel "CC6.5 disposal of physical assets"@en ;
+    rdfs:label "CC6.5 disposal of physical assets (SOC 2 Common Criteria — Logical and Physical Access Controls (CC6))"@en ;
+    skos:notation "CC6.5" ;
+    skos:definition "Protections over a physical asset are withdrawn only once the data and software on it can no longer be read or recovered, and are no longer needed."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:CommonCriterion-CC6.6 a skos:Concept ;
+    skos:inScheme foxxi-soc2:CommonCriterion ;
+    skos:topConceptOf foxxi-soc2:CommonCriterion ;
+    skos:prefLabel "CC6.6 protection against external threats"@en ;
+    rdfs:label "CC6.6 protection against external threats (SOC 2 Common Criteria — Logical and Physical Access Controls (CC6))"@en ;
+    skos:notation "CC6.6" ;
+    skos:definition "Logical access measures protect the system against threats from sources outside its boundaries."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:CommonCriterion-CC6.7 a skos:Concept ;
+    skos:inScheme foxxi-soc2:CommonCriterion ;
+    skos:topConceptOf foxxi-soc2:CommonCriterion ;
+    skos:prefLabel "CC6.7 protection of information in transit"@en ;
+    rdfs:label "CC6.7 protection of information in transit (SOC 2 Common Criteria — Logical and Physical Access Controls (CC6))"@en ;
+    skos:notation "CC6.7" ;
+    skos:definition "Transmitting, moving and removing information is limited to authorized users and processes, and the information is protected while it moves."@en ;
+    skos:exactMatch soc2:CC6.7 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+foxxi-soc2:CommonCriterion-CC6.8 a skos:Concept ;
+    skos:inScheme foxxi-soc2:CommonCriterion ;
+    skos:topConceptOf foxxi-soc2:CommonCriterion ;
+    skos:prefLabel "CC6.8 malicious software prevention"@en ;
+    rdfs:label "CC6.8 malicious software prevention (SOC 2 Common Criteria — Logical and Physical Access Controls (CC6))"@en ;
+    skos:notation "CC6.8" ;
+    skos:definition "Controls prevent, or detect and act on, the introduction of unauthorized or malicious software."@en ;
+    skos:exactMatch soc2:CC6.8 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2> .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members ( foxxi-soc2:TrustServicesCriterion foxxi-soc2:OperationalEvidenceEvent )
+] .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+    rdfs:label "was derived from"@en ;
+    rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Entity .
+
+prov:Agent a owl:Class ;
+    rdfs:label "Agent"@en ;
+    rdfs:comment "Something that bears some form of responsibility for an activity taking place, for the existence of an entity, or for another agent's activity. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+skos:ConceptScheme a owl:Class ;
+    rdfs:label "Concept Scheme"@en ;
+    rdfs:comment "A set of concepts, optionally including statements about semantic relationships between those concepts. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    owl:disjointWith skos:Concept .
+
+skos:hasTopConcept a owl:ObjectProperty ;
+    rdfs:label "has top concept"@en ;
+    rdfs:comment "Relates, by convention, a concept scheme to a concept which is topmost in the broader/narrower concept hierarchies for that scheme. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range skos:Concept .
+
+skos:Concept a owl:Class ;
+    rdfs:label "Concept"@en ;
+    rdfs:comment "An idea or notion; a unit of thought. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> .
+
+skos:inScheme a owl:ObjectProperty ;
+    rdfs:label "is in scheme"@en ;
+    rdfs:comment "Relates a resource (for example a concept) to a concept scheme in which it is included. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:range skos:ConceptScheme .
+
+skos:topConceptOf a owl:ObjectProperty ;
+    rdfs:label "is top concept in scheme"@en ;
+    rdfs:comment "Relates a concept to the concept scheme that it is a top level concept of. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:subPropertyOf skos:inScheme ;
+    owl:inverseOf skos:hasTopConcept .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A physical, digital, conceptual, or other kind of thing with some fixed aspects. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+dct:title a owl:AnnotationProperty .
+
+dct:description a owl:AnnotationProperty .
+
+skos:historyNote a owl:AnnotationProperty .
+
+dct:creator a owl:AnnotationProperty .
+
+dct:contributor a owl:AnnotationProperty .
+
+dct:publisher a owl:AnnotationProperty .
+
+dct:license a owl:AnnotationProperty .
+
+dct:rights a owl:AnnotationProperty .
+
+dct:created a owl:AnnotationProperty .
+
+dct:modified a owl:AnnotationProperty .
+
+dct:issued a owl:AnnotationProperty .
+
+dct:language a owl:AnnotationProperty .
+
+bibo:status a owl:AnnotationProperty .
+
+dct:bibliographicCitation a owl:AnnotationProperty .
+
+vann:preferredNamespacePrefix a owl:AnnotationProperty .
+
+vann:preferredNamespaceUri a owl:AnnotationProperty .
+
+dct:source a owl:AnnotationProperty .
+
+skos:closeMatch a owl:AnnotationProperty .
+
+skos:exactMatch a owl:AnnotationProperty .
+
+skos:notation a owl:AnnotationProperty .
+
+skos:prefLabel a owl:AnnotationProperty .
+
+skos:definition a owl:AnnotationProperty .

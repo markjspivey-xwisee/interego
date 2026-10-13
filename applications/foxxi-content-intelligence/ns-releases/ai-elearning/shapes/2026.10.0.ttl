@@ -1,0 +1,186 @@
+# AI in eLearning — verifiable interaction profile — SHACL shapes — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes  (this version: https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples and JSON-LD.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-ai-elearning: <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#> .
+@prefix shapes: <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes> a owl:Ontology ;
+    dct:title "AI in eLearning — verifiable interaction profile — SHACL shapes"@en ;
+    dct:description "SHACL shapes for AI in eLearning — verifiable interaction profile: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/validate). Each validation result cites the shape it came from."@en ;
+    rdfs:comment "An original profile of xAPI 2.0 by Mark Spivey (Foxxi Mediums Inc.), not a formalization of a published standard. Not affiliated with or endorsed by ADL or IEEE. Its statements are xAPI 2.0 statements, and where this profile and xAPI 2.0 (IEEE 9274.1.1-2023) differ, xAPI 2.0 governs."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). AI in eLearning — verifiable interaction profile — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes/2026.10.0" ;
+    dct:source <https://standards.ieee.org/ieee/9274.1.1/7321/> , <https://github.com/adlnet/xapi-profiles> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/ai-elearning.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/2026.10.0> .
+
+shapes:SignedInteractionRecordShape a sh:NodeShape ;
+    sh:targetClass foxxi-ai-elearning:SignedInteractionRecord ;
+    rdfs:label "Verifiable AI-interaction record conformance"@en ;
+    rdfs:comment "A recorded AI interaction MUST carry a signature and a recovered signer and a record time — so the \"audit trail\" is tamper-evident evidence, not self-asserted text. This is the constraint the self-asserted vendor pattern lacks."@en ;
+    sh:property shapes:SignedInteractionRecordShape-signedEnvelope ,
+        shapes:SignedInteractionRecordShape-signer ,
+        shapes:SignedInteractionRecordShape-recordedAt ,
+        shapes:SignedInteractionRecordShape-interventionEfficacy ,
+        shapes:SignedInteractionRecordShape-confidenceProof ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes> .
+
+shapes:SignedInteractionRecordShape-signedEnvelope a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:signedEnvelope ;
+    sh:name "signedEnvelope" ;
+    sh:description "the rev-196 signed envelope carrying the statement"@en ;
+    sh:message "Verifiable AI-interaction record conformance — signedEnvelope: exactly 1 value, of type xsd:string — the rev-196 signed envelope carrying the statement"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:SignedInteractionRecordShape-signer a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:signer ;
+    sh:name "signer" ;
+    sh:description "the recovered signer DID — proves who recorded it"@en ;
+    sh:message "Verifiable AI-interaction record conformance — signer: exactly 1 value, an IRI, matching ^did:(ethr|key|web|pkh):.+ — the recovered signer DID — proves who recorded it"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^did:(ethr|key|web|pkh):.+" .
+
+shapes:SignedInteractionRecordShape-recordedAt a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:recordedAt ;
+    sh:name "recordedAt" ;
+    sh:description "the signing instant (backdating detectable)"@en ;
+    sh:message "Verifiable AI-interaction record conformance — recordedAt: exactly 1 value, of type xsd:dateTime — the signing instant (backdating detectable)"@en ;
+    sh:datatype xsd:dateTime ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:SignedInteractionRecordShape-interventionEfficacy a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:interventionEfficacy ;
+    sh:name "interventionEfficacy" ;
+    sh:description "optional separate efficacy rate (not a calibration)"@en ;
+    sh:message "Verifiable AI-interaction record conformance — interventionEfficacy: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — optional separate efficacy rate (not a calibration)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:SignedInteractionRecordShape-confidenceProof a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:confidenceProof ;
+    sh:name "confidenceProof" ;
+    sh:description "at most one confidence range proof"@en ;
+    sh:message "Verifiable AI-interaction record conformance — confidenceProof: at most 1 value — at most one confidence range proof"@en ;
+    sh:maxCount 1 .
+
+shapes:AttestedModelClaimShape a sh:NodeShape ;
+    sh:targetClass foxxi-ai-elearning:AttestedModelClaim ;
+    rdfs:label "Attested model/provider conformance"@en ;
+    rdfs:comment "A model/provider claim MUST be signed — attributable to the gateway that made the call — rather than free text the spec trusts."@en ;
+    sh:property shapes:AttestedModelClaimShape-modelClaimSigner ,
+        shapes:AttestedModelClaimShape-model ,
+        shapes:AttestedModelClaimShape-provider ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes> .
+
+shapes:AttestedModelClaimShape-modelClaimSigner a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:modelClaimSigner ;
+    sh:name "modelClaimSigner" ;
+    sh:description "the gateway DID that signed the claim"@en ;
+    sh:message "Attested model/provider conformance — modelClaimSigner: exactly 1 value, an IRI, matching ^did:(ethr|key|web|pkh):.+ — the gateway DID that signed the claim"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^did:(ethr|key|web|pkh):.+" .
+
+shapes:AttestedModelClaimShape-model a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:model ;
+    sh:name "model" ;
+    sh:description "the attested model"@en ;
+    sh:message "Attested model/provider conformance — model: exactly 1 value, of type xsd:string — the attested model"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:AttestedModelClaimShape-provider a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:provider ;
+    sh:name "provider" ;
+    sh:description "the attested provider"@en ;
+    sh:message "Attested model/provider conformance — provider: at most 1 value, of type xsd:string — the attested provider"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
+shapes:ContentAddressedSourceShape a sh:NodeShape ;
+    sh:targetClass foxxi-ai-elearning:ContentAddressedSource ;
+    rdfs:label "Content-addressed source conformance"@en ;
+    rdfs:comment "A cited source MUST be content-addressed to a urn:pgsl:atom so it resolves to exactly the bytes used — replacing a bare source string."@en ;
+    sh:property shapes:ContentAddressedSourceShape-sourceAtom ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes> .
+
+shapes:ContentAddressedSourceShape-sourceAtom a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:sourceAtom ;
+    sh:name "sourceAtom" ;
+    sh:description "a urn:pgsl:atom content-address"@en ;
+    sh:message "Content-addressed source conformance — sourceAtom: exactly 1 value, an IRI, matching ^(urn:pgsl:atom:|https?://[^/]+/ns/pgsl/atom/).+ — a urn:pgsl:atom content-address"@en ;
+    sh:nodeKind sh:IRI ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:pattern "^(urn:pgsl:atom:|https?://[^/]+/ns/pgsl/atom/).+" .
+
+shapes:ConfidenceRangeProofShape a sh:NodeShape ;
+    sh:targetClass foxxi-ai-elearning:ConfidenceRangeProof ;
+    rdfs:label "Confidence range-proof conformance"@en ;
+    rdfs:comment "Confidence is recorded as a committed range proof (≥ threshold) beside the verbatim self-reported number. The threshold is required; the asserted value is optional and explicitly unverified."@en ;
+    sh:property shapes:ConfidenceRangeProofShape-confidenceThreshold ,
+        shapes:ConfidenceRangeProofShape-assertedConfidence ,
+        shapes:ConfidenceRangeProofShape-proofVerified ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes> .
+
+shapes:ConfidenceRangeProofShape-confidenceThreshold a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:confidenceThreshold ;
+    sh:name "confidenceThreshold" ;
+    sh:description "the proven lower bound (0..1)"@en ;
+    sh:message "Confidence range-proof conformance — confidenceThreshold: exactly 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — the proven lower bound (0..1)"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:ConfidenceRangeProofShape-assertedConfidence a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:assertedConfidence ;
+    sh:name "assertedConfidence" ;
+    sh:description "verbatim self-report (0..1), unverified"@en ;
+    sh:message "Confidence range-proof conformance — assertedConfidence: at most 1 value, of type xsd:integer or xsd:decimal or xsd:double, between 0 and 1 — verbatim self-report (0..1), unverified"@en ;
+    sh:or ( [ sh:datatype xsd:integer ] [ sh:datatype xsd:decimal ] [ sh:datatype xsd:double ] ) ;
+    sh:maxCount 1 ;
+    sh:minInclusive 0 ;
+    sh:maxInclusive 1 .
+
+shapes:ConfidenceRangeProofShape-proofVerified a sh:PropertyShape ;
+    sh:path foxxi-ai-elearning:proofVerified ;
+    sh:name "proofVerified" ;
+    sh:description "whether the proof checked out"@en ;
+    sh:message "Confidence range-proof conformance — proofVerified: at most 1 value, of type xsd:boolean — whether the proof checked out"@en ;
+    sh:datatype xsd:boolean ;
+    sh:maxCount 1 .

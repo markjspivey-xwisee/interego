@@ -4,7 +4,8 @@ import { deriveTenantIssuer } from '../src/credentials.js';
 import { validateStatement } from '../src/xapi-validate.js';
 import { buildFoxxiProfileDoc, validateAgainstProfileTemplates, FOXXI_NS } from '../src/xapi-profile.js';
 import { renderTermJsonLd } from '../src/foxxi-vocab.js';
-import { renderSemTermJsonLd, renderSemOntologyTurtle, renderSemOntologyJsonLd } from '../src/ler-tla-vocab.js';
+import { renderSemTermJsonLd, renderSemOntologyTurtle, renderSemOntologyJsonLd, TLA_NS } from '../src/ler-tla-vocab.js';
+import { jsonLdQuads, turtleQuads, iriObjectsOf, objectsOf, subjectsOfType, SKOS } from './support/ns-graph.js';
 import { issueBbsCompletionCredential } from '../src/bbs-credentials.js';
 
 const ADL = 'http://adlnet.gov/expapi/verbs';
@@ -63,11 +64,18 @@ describe('round-9 — no Statement Template serves objectActivityType as an arra
   });
 });
 
-// ── MAJOR: MOM closeMatch only to REGISTERED verb IRIs (no fabricated adlnet.gov) ────────
-describe('round-9 — MOM verbs closeMatch only registered counterparts', () => {
-  it('a real ADL verb has an adlnet.gov closeMatch; a coined MOM verb has none', () => {
+// ── MAJOR: MOM verbs map only to REGISTERED verb IRIs (no fabricated adlnet.gov) ────────
+// ★ REVISED: an exact match now, where this held it to skos:closeMatch. A MOM verb that is a
+// registered xAPI verb is that verb — a statement carries its IRI — and the cmi5 ontology maps the
+// same verbs by exact match; two Foxxi documents mapping one verb two ways was a review finding. A
+// coined verb now says it was coined (skos:editorialNote).
+describe('round-9 — MOM verbs map only registered counterparts', () => {
+  it('a real ADL verb is an exact match of its adlnet.gov IRI; a coined MOM verb maps to nothing, and says so', async () => {
     const ttl = renderSemOntologyTurtle('tla');
-    expect(ttl).toMatch(/tla:completed[\s\S]*?skos:closeMatch <http:\/\/adlnet\.gov\/expapi\/verbs\/completed>/);
+    const q = turtleQuads(ttl);
+    expect(iriObjectsOf(q, `${TLA_NS}completed`, `${SKOS}exactMatch`)).toEqual(['http://adlnet.gov/expapi/verbs/completed']);
+    expect(iriObjectsOf(q, `${TLA_NS}completed`, `${SKOS}closeMatch`)).toEqual([]);
+    expect(objectsOf(q, `${TLA_NS}asserted`, `${SKOS}editorialNote`)).toEqual(['Coined by this vocabulary: no registered xAPI verb has this meaning.']);
     // 'asserted' is a coined MOM verb — no fabricated adlnet.gov closeMatch.
     expect(ttl).not.toMatch(/adlnet\.gov\/expapi\/verbs\/asserted/);
     expect(ttl).not.toMatch(/adlnet\.gov\/expapi\/verbs\/inferred/);
@@ -87,13 +95,12 @@ describe('round-9 — hand-rolled term renderers 404 the unknown', () => {
 
 // ── MAJOR: adl-tla JSON-LD is faithful to the Turtle (scheme + closeMatch present) ───────
 describe('round-9 — adl-tla JSON-LD carries the MOM scheme + verb alignments', () => {
-  it('@graph includes MOMVerbScheme and the completed→adlnet closeMatch', () => {
-    const j = renderSemOntologyJsonLd('tla') as { '@graph': Array<Record<string, unknown>> };
-    const ids = j['@graph'].map(n => String(n['@id']));
-    expect(ids.some(id => id.endsWith('#MOMVerbScheme'))).toBe(true);
-    const completed = j['@graph'].find(n => String(n['@id']).endsWith('#completed'));
-    expect(completed).toBeTruthy();
-    expect((completed as any)['skos:closeMatch']['@id']).toBe('http://adlnet.gov/expapi/verbs/completed');
+  // Read with a JSON-LD processor: the claim is about the triples the document states, not about
+  // which key one serializer chose (`skos:exactMatch` vs an alias are one triple).
+  it('@graph includes MOMVerbScheme and the completed→adlnet exact match', async () => {
+    const q = await jsonLdQuads(renderSemOntologyJsonLd('tla'));
+    expect(subjectsOfType(q, `${SKOS}ConceptScheme`)).toContain(`${TLA_NS}MOMVerbScheme`);
+    expect(iriObjectsOf(q, `${TLA_NS}completed`, `${SKOS}exactMatch`)).toEqual(['http://adlnet.gov/expapi/verbs/completed']);
   });
 });
 

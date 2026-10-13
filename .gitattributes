@@ -61,6 +61,9 @@
 *.xml    text eol=lf diff
 *.svg    text eol=lf diff
 *.txt    text eol=lf diff
+# SSSOM/TSV mapping sets (applications/foxxi-content-intelligence/ns-releases): tab-separated text,
+# archived byte for byte and checked against SHA256SUMS.
+*.tsv    text eol=lf diff
 Dockerfile*    text eol=lf diff
 *.dockerfile   text eol=lf diff
 

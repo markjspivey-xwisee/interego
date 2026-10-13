@@ -1,0 +1,220 @@
+# Open Badges 3.0 — credential SHACL profile — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/ob3  (this version: https://foxxi-bridge.interego.xwisee.com/ns/ob3/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix schema: <https://schema.org/> .
+@prefix vc: <https://www.w3.org/2018/credentials#> .
+@prefix ob: <https://purl.imsglobal.org/spec/vc/ob/vocab.html#> .
+@prefix sec: <https://w3id.org/security#> .
+@prefix prof: <http://www.w3.org/ns/dx/prof/> .
+@prefix foxxi-ob3: <https://foxxi-bridge.interego.xwisee.com/ns/ob3#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/ob3> a owl:Ontology , prof:Profile ;
+    dct:title "Open Badges 3.0 — credential SHACL profile"@en ;
+    dct:description "SHACL shapes for a 1EdTech Open Badges 3.0 credential — a W3C Verifiable Credential (VC Data Model 2.0) whose subject carries an achievement — the checks Foxxi applies to the credentials it issues and accepts. A profile of Open Badges 3.0: the shapes target 1EdTech's own classes and constrain the predicates the OB 3.0 and VC 2.0 JSON-LD contexts map a credential to, and each requirement is OB 3.0's (its data model, Appendix B)."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by 1EdTech or W3C. Where this document and the published standard differ, the standard governs."@en ,
+        "Since 2026.10.0 the shapes target 1EdTech's classes and the VC 2.0 predicates; the classes and properties this document had minted for them are deprecated."@en ,
+        "A credential typed AchievementCredential is an OpenBadgeCredential here: OB 3.0's context maps both names to ob:OpenBadgeCredential."@en ,
+        "Achievement criteria are read with ob:Criteria, the IRI OB 3.0's context maps the criteria property to (the vocabulary's Criteria class has the same IRI)."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/ob3/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). Open Badges 3.0 — credential SHACL profile (Version 2026.10.0) [Ontology]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/ob3/2026.10.0" ;
+    vann:preferredNamespacePrefix "foxxi-ob3" ;
+    vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/ob3#" ;
+    dct:source <https://www.imsglobal.org/spec/ob/v3p0/> , <https://www.w3.org/TR/vc-data-model-2.0/> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/ler.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/ob3/shapes> ;
+    prof:isProfileOf <https://www.imsglobal.org/spec/ob/v3p0/> .
+
+foxxi-ob3:OpenBadgeCredential a owl:Class ;
+    rdfs:label "obsolete Open Badge Credential"@en ;
+    rdfs:comment "Formerly this document's own name for an Open Badges 3.0 credential; 1EdTech's class, which a credential's JSON-LD context maps it to, replaces it."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy ob:OpenBadgeCredential ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3> .
+
+foxxi-ob3:Achievement a owl:Class ;
+    rdfs:label "obsolete Achievement"@en ;
+    rdfs:comment "Formerly this document's own name for an Open Badges 3.0 achievement; 1EdTech's class replaces it."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy ob:Achievement ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3> .
+
+foxxi-ob3:issuer a owl:ObjectProperty ;
+    rdfs:label "obsolete issuer"@en ;
+    rdfs:comment "Formerly this document's own name for a credential's issuer; the VC 2.0 issuer replaces it."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy vc:issuer ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3> .
+
+foxxi-ob3:credentialSubject a owl:ObjectProperty ;
+    rdfs:label "obsolete credential subject"@en ;
+    skos:notation "credentialSubject" ;
+    rdfs:comment "Formerly this document's own name for a credential's subject; the VC 2.0 credentialSubject replaces it."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy vc:credentialSubject ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3> .
+
+foxxi-ob3:proof a owl:ObjectProperty ;
+    rdfs:label "obsolete proof"@en ;
+    rdfs:comment "Formerly this document's own name for a credential's proof; the Data Integrity proof (sec:proof) replaces it."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy sec:proof ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ob3> .
+
+ob:OpenBadgeCredential a owl:Class ;
+    rdfs:label "Open Badge credential"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:AchievementSubject a owl:Class ;
+    rdfs:label "Achievement subject"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:Achievement a owl:Class ;
+    rdfs:label "Achievement"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:IdentityObject a owl:Class ;
+    rdfs:label "Identity object"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:Profile a owl:Class ;
+    rdfs:label "Open Badges profile"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:achievement a owl:ObjectProperty ;
+    rdfs:label "achievement"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:identifier a owl:ObjectProperty ;
+    rdfs:label "identifier"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:Criteria a owl:ObjectProperty ;
+    rdfs:label "criteria"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:hashed a owl:DatatypeProperty ;
+    rdfs:label "hashed"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:identityHash a owl:DatatypeProperty ;
+    rdfs:label "identity hash"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+ob:identityType a owl:DatatypeProperty ;
+    rdfs:label "identity type"@en ;
+    rdfs:isDefinedBy <https://purl.imsglobal.org/spec/vc/ob/vocab.html> .
+
+vc:VerifiableCredential a owl:Class ;
+    rdfs:label "Verifiable credential"@en ;
+    rdfs:isDefinedBy vc: .
+
+vc:credentialSubject a owl:ObjectProperty ;
+    rdfs:label "credential subject"@en ;
+    rdfs:isDefinedBy vc: .
+
+vc:issuer a owl:ObjectProperty ;
+    rdfs:label "issuer"@en ;
+    rdfs:isDefinedBy vc: .
+
+vc:validFrom a owl:DatatypeProperty ;
+    rdfs:label "valid from"@en ;
+    rdfs:isDefinedBy vc: .
+
+schema:name a owl:DatatypeProperty ;
+    rdfs:label "name"@en ;
+    rdfs:isDefinedBy schema: .
+
+schema:description a owl:DatatypeProperty ;
+    rdfs:label "description"@en ;
+    rdfs:isDefinedBy schema: .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+    rdfs:label "was derived from"@en ;
+    rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Entity .
+
+prof:Profile a owl:Class ;
+    rdfs:label "Profile"@en ;
+    rdfs:comment "A specification that constrains, extends, combines, or provides guidance or explanation about the usage of other specifications. (PROF)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/dx/prof> ;
+    rdfs:subClassOf dct:Standard .
+
+prof:isProfileOf a owl:ObjectProperty ;
+    rdfs:label "is profile of"@en ;
+    rdfs:comment "The specification for which this profile is defined. (PROF)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/dx/prof> ;
+    rdfs:domain prof:Profile ;
+    rdfs:range dct:Standard .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A physical, digital, conceptual, or other kind of thing with some fixed aspects. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+dct:Standard a owl:Class ;
+    rdfs:label "Standard"@en ;
+    rdfs:comment "A reference point against which other things can be evaluated or compared. (DCMI Metadata Terms)"@en ;
+    rdfs:isDefinedBy dct: .
+
+dct:title a owl:AnnotationProperty .
+
+dct:description a owl:AnnotationProperty .
+
+skos:historyNote a owl:AnnotationProperty .
+
+dct:creator a owl:AnnotationProperty .
+
+dct:contributor a owl:AnnotationProperty .
+
+dct:publisher a owl:AnnotationProperty .
+
+dct:license a owl:AnnotationProperty .
+
+dct:rights a owl:AnnotationProperty .
+
+dct:created a owl:AnnotationProperty .
+
+dct:modified a owl:AnnotationProperty .
+
+dct:issued a owl:AnnotationProperty .
+
+dct:language a owl:AnnotationProperty .
+
+bibo:status a owl:AnnotationProperty .
+
+dct:bibliographicCitation a owl:AnnotationProperty .
+
+vann:preferredNamespacePrefix a owl:AnnotationProperty .
+
+vann:preferredNamespaceUri a owl:AnnotationProperty .
+
+dct:source a owl:AnnotationProperty .
+
+dct:isReplacedBy a owl:AnnotationProperty .
+
+skos:notation a owl:AnnotationProperty .

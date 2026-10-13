@@ -36,7 +36,7 @@ external Mocha battery) is a separate, heavier run against the same
 -u <u> -p <p>`); it is **not vendored in this repo**, so the in-repo,
 always-runnable evidence above is what the microsite proves.
 
-## 2. cmi5 / IEEE 9274.2.1 — the LMS launch standard
+## 2. cmi5 (IEEE P9274.3.1, in progress) — the LMS launch standard
 
 | Capability | Status | Evidence |
 |---|---|---|

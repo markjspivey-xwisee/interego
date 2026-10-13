@@ -17,9 +17,17 @@
  * Layer: L3 vertical. No protocol-ontology change; a vertical vocabulary.
  */
 
-// The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts — its header names the
-// scattered-subsets drift that this import ends.
-import { escapeTurtleLiteral } from '@interego/core';
+// Every representation is a serialization of ONE graph (ns/rdf.ts), with the shared document
+// header (ns/catalog.ts). This module stays light on purpose: thirty modules import it for
+// FOXXI_NS alone, so it must not pull in the lattice or the spec-ontology engine.
+import {
+  Graph, iri, en, str, bool, RDF, RDFS, OWL, SKOS, DCT, toTurtle, toJsonLd, toNTriples, toRdfXml,
+  type NamedNode, type BlankNode, type Term, type JsonLdTerm,
+} from './ns/rdf.js';
+import { ALL_PREFIXES, CREATOR, PUBLISHER, addHeader, declareExternalTerms, foxxiPrefix, versionIri, alternates, type DocMeta } from './ns/catalog.js';
+import { renderOntologyHtml } from './ns/html.js';
+import { mappingSetIri } from './ns/sssom.js';
+import { naturalLabel } from './ns/labels.js';
 
 /**
  * The one Foxxi namespace base. Every foxxi term is `${FOXXI_NS}<name>`.
@@ -58,7 +66,7 @@ export const FOXXI_VOCAB_DOC = FOXXI_NS.replace(/#$/, '');
 // and the JSON-LD projections so all three carry an IDENTICAL comment (the
 // JSON-LD projection previously served a different string → content-negotiation
 // unfaithfulness).
-export const FOXXI_VOCAB_COMMENT = 'Consolidated dereferenceable vocabulary for the Foxxi vertical. Composes the standards spec ontologies it emerges from (see rdfs:seeAlso).';
+export const FOXXI_VOCAB_COMMENT = 'The vocabulary the Foxxi vertical emits: the xAPI verbs, activity types and context extensions its statements carry — typed with ADL\'s xAPI ontology classes, as the Foxxi xAPI Profile declares them — and the classes of the records it publishes to learner and tenant pods. It composes the standards ontologies it emerges from (rdfs:seeAlso).';
 
 export type FoxxiTermKind = 'Verb' | 'ActivityType' | 'Type' | 'Extension';
 
@@ -66,8 +74,17 @@ export interface FoxxiTerm {
   /** Fragment after the `#` — may contain `/` (e.g. `verbs/asked`). */
   name: string;
   kind: FoxxiTermKind;
+  /** The token as emitted (a verb's display, an extension key). Published as skos:notation for
+   *  concepts; the rdfs:label is its words. */
   label: string;
   definition: string;
+  /** skos:closeMatch alignments to other vocabularies' terms (absolute IRIs). */
+  closeMatch?: readonly string[];
+  /** Deprecated in favour of this term (its name): published with owl:deprecated and
+   *  dct:isReplacedBy, and still dereferenceable. */
+  replacedBy?: string;
+  /** For a Type: its superclasses — a Foxxi term name, or an absolute IRI. */
+  subClassOf?: readonly string[];
 }
 
 /** The consolidated Foxxi vocabulary — every term the vertical emits. */
@@ -108,17 +125,19 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   // (e.g. ttt:Move, code:PullRequest, med:Diagnosis) passed through verbatim;
   // Foxxi never enumerates an application's types.
   { name: 'AssertedContext', kind: 'ActivityType', label: 'Asserted Context', definition: 'A context-descriptor assertion whose payload type the publisher did not declare — the domain-agnostic fallback object type for a projected performance statement.' },
-  { name: 'conceptGraphNode', kind: 'ActivityType', label: 'concept graph node', definition: 'Activity type for a concept-graph node referenced from an xAPI statement.' },
+  // A second IRI for the same activity type as `activities/concept-graph-node` — the one every
+  // emitter uses. Nothing emits this one; it stays resolvable for statements already recorded.
+  { name: 'conceptGraphNode', kind: 'ActivityType', label: 'concept graph node', definition: 'Activity type for a concept-graph node referenced from an xAPI statement. Superseded by activities/concept-graph-node, which names the same thing and is the one Foxxi emits.', replacedBy: 'activities/concept-graph-node' },
   { name: 'ProductionTask', kind: 'ActivityType', label: 'Production Task', definition: 'A unit of on-the-job production work — the object of a `performed` statement.' },
   { name: 'TrajectoryStep', kind: 'Type', label: 'Trajectory Step', definition: 'One step of an agentic-native trajectory — a modal, poly-granular Context Descriptor.' },
-  { name: 'CourseCompletionCredential', kind: 'Type', label: 'Course Completion Credential', definition: 'A descriptor wrapping a W3C VC / Open Badges 3.0 course-completion credential in a learner pod wallet.' },
-  { name: 'CompetencyAssertion', kind: 'Type', label: 'Competency Assertion', definition: 'A descriptor asserting a learner holds a competency.' },
-  { name: 'WalletEnvelope', kind: 'Type', label: 'Wallet Envelope', definition: 'A CLR 2.0 wallet envelope aggregating verified credentials.' },
+  { name: 'CourseCompletionCredential', kind: 'Type', label: 'Course Completion Credential', definition: 'A descriptor wrapping a W3C VC / Open Badges 3.0 course-completion credential in a learner pod wallet.', closeMatch: ['https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential'] },
+  { name: 'CompetencyAssertion', kind: 'Type', label: 'Competency Assertion', definition: 'A descriptor asserting a learner holds a competency.', closeMatch: ['https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#CompetencyAssertion'] },
+  { name: 'WalletEnvelope', kind: 'Type', label: 'Wallet Envelope', definition: 'A CLR 2.0 wallet envelope aggregating verified credentials.', closeMatch: ['https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential'] },
   { name: 'CASEAlignment', kind: 'Type', label: 'CASE Alignment', definition: 'A 1EdTech CASE 1.0 cross-framework alignment association descriptor.' },
   { name: 'TenantMetadata', kind: 'Type', label: 'Tenant Metadata', definition: 'A descriptor carrying a Foxxi tenant\'s metadata.' },
   { name: 'AdaptiveSequencingPolicy', kind: 'Type', label: 'Adaptive Sequencing Policy', definition: 'A descriptor declaring an adaptive content-sequencing policy.' },
   { name: 'PackageUpload', kind: 'Type', label: 'Package Upload', definition: 'A descriptor recording that a SCORM / cmi5 package was uploaded. Hypothetical by construction: it records that bytes arrived, not what they contain.' },
-  { name: 'ParsedPackage', kind: 'Type', label: 'Parsed Package', definition: 'A descriptor carrying what a SCORM / cmi5 package actually IS — manifest identifier, course title, standard, authoring-tool fingerprint, SCO list and activity structure — read out of the uploaded zip in-process. Asserted, and it supersedes (iep:supersedes) the fxs:PackageUpload receipt for the same graph.' },
+  { name: 'ParsedPackage', kind: 'Type', label: 'Parsed Package', definition: 'A descriptor carrying what a SCORM / cmi5 package actually IS — manifest identifier, course title, standard, authoring-tool fingerprint, SCO list and activity structure — read out of the uploaded zip in-process. Asserted, and it supersedes (iep:supersedes) the PackageUpload receipt for the same graph.' },
   // Declared because foxxi.register_tutor_agent EMITS this type. Emitting an absolute
   // URL is only half a fix: without this entry GET /ns/foxxi/term/TutorAgentProfile
   // 404s (every projection — Turtle, JSON-LD, HTML table, term resource — is rendered
@@ -135,14 +154,14 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'CalibrationProfile', kind: 'Type', label: 'Calibration Profile', definition: 'The system’s recorded track record of its own Knowable-regime recommendations: per (regime × cause × intervention) cell, how often that recommendation actually closed the gap. A cell is Hypothetical until it has the samples to Assert a rate; profiles compose across organizations by union.' },
   { name: 'CapabilityTransfer', kind: 'Type', label: 'Capability Transfer', definition: 'The performance reading of one agent teaching another. The unit taught is an ac:TeachingPackage (agent-collective); Foxxi frames a learner agent’s acquisition of it as an A2A instruction intervention, verifies the transfer by reading the learner’s own trajectories before and after, and emits an amta:Attestation that feeds ac:’s modal discipline and the reflexive calibration loop. Foxxi composes the teaching foundation; it does not redefine it.' },
   { name: 'GroundingFragment', kind: 'Type', label: 'Grounding Fragment', definition: 'A content-addressed atomic content unit (a PGSL atom) — the leaf of an emergent course; carries modality, cognitive level, provenance and disposition-suitability.' },
-  { name: 'Lesson', kind: 'Type', label: 'Lesson', definition: 'A syntagm of grounding fragments toward one competency-point; each position holds a paradigm of interchangeable alternatives.' },
-  { name: 'Module', kind: 'Type', label: 'Module', definition: 'A syntagm of lessons.' },
-  { name: 'Course', kind: 'Type', label: 'Course', definition: 'A syntagm of modules. Not a stored artifact — a composition recipe that personalises (restriction + override) into a different resolved course per performer.' },
+  { name: 'Lesson', kind: 'Type', label: 'Lesson', definition: 'A syntagm of grounding fragments toward one competency-point; each position holds a paradigm of interchangeable alternatives.', subClassOf: ['Composition'] },
+  { name: 'Module', kind: 'Type', label: 'Module', definition: 'A syntagm of lessons.', subClassOf: ['Composition'] },
+  { name: 'Course', kind: 'Type', label: 'Course', definition: 'A syntagm of modules. Not a stored artifact — a composition recipe that personalises (restriction + override) into a different resolved course per performer.', subClassOf: ['Composition'] },
   { name: 'Composition', kind: 'Type', label: 'Composition', definition: 'One type for lesson, module, course and curriculum: a path of positions, each naming a competency and the fragments or compositions that can fill it, by reference. Its IRI is the hash of its content, and each learner gets it resolved from their own record.' },
   { name: 'ContentAdmission', kind: 'Type', label: 'Content Admission', definition: 'What a learner keeps on their own pod about which forms of content suit them at a competency: the fragment kinds admitted and why, the plan or situation it came from and the regime that plan read, and when. The latest record for a competency stands, a withdrawal included; resolution reads it whenever a request names no admission of its own. The learner keeps it; the bridge only reads it.' },
   { name: 'AppliedVoid', kind: 'Type', label: 'Applied Void', definition: 'That a statement in the record of a learner was voided, kept with that record by the bridge once the voiding took effect: the id of the voided statement and of the voiding one. The store of a lens is a view that eviction and restarts empty, while the copies of the voided statement in the lattice and on the pod of the learner outlive it; this record keeps them voided. Only a void that took effect is kept, never one a voiding statement merely names.' },
   { name: 'ContentBundle', kind: 'Type', label: 'Content Bundle', definition: 'What an author made in one act, kept together on their pod: a root composition and every fragment and composition it holds, each still named by the hash of its own content and checked against it when read back. A folded course is kept as one bundle, so the pod takes one write rather than one per item.' },
-  { name: 'Curriculum', kind: 'Type', label: 'Curriculum', definition: 'A syntagm of courses toward a set of target competencies.' },
+  { name: 'Curriculum', kind: 'Type', label: 'Curriculum', definition: 'A syntagm of courses toward a set of target competencies.', subClassOf: ['Composition'] },
   { name: 'InFlowPerformanceSupport', kind: 'Type', label: 'In-Flow Performance Support', definition: 'A job-aid fragment delivered by an affordance attached to the work context — surfaced when a performer enters the triggering task, not on a training schedule.' },
   { name: 'DeliveredContent', kind: 'Type', label: 'Delivered Content', definition: 'A descriptor wrapping a unit of generated content delivered through a channel and published to the pod — so the delivery is itself a discoverable, federatable Context Descriptor, not a fire-and-forget send.' },
 
@@ -150,7 +169,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'WorkRegime', kind: 'Type', label: 'Work Regime', definition: 'How knowable the relationship between act and outcome is for a piece of work — Evident, Knowable, Emergent, or Turbulent. The regime decides which consulting and knowledge method is valid.' },
   { name: 'ContentRevision', kind: 'Type', label: 'Content Revision', definition: 'A revision of a judged content claim: the claim as it stood and the grade it had, the words now and the evidence cited from outside the passage, who revised it and whether as a person or an agent, and — once the revised claim is judged — the new judgment and the grade before and after. The original judgment stands; the revision names it.' },
   { name: 'AutonomyPolicy', kind: 'Type', label: 'Autonomy Policy', definition: 'The constitutional policy that says when a judge may assert on a kind of question without a person: per kind, the registry rating on its axis the judge must reach, over how many outcomes the latest attestation must rest, and how many of those a person must have confirmed. Amended through propose, vote and ratify; each policy supersedes the last; a judgment cites the decision it was published under.' },
-  { name: 'ContentJudgmentAttestation', kind: 'Type', label: 'Content Judgment Attestation', definition: 'An attestation about the content-judging agent, in the AMTA axes (accuracy, competence, honesty, recency): the agent about itself, grounded in the calibration its confirmed outcomes give, or a learning engineer as a peer. The registry aggregates every one on the pod into the reputation foxxi.content_judgment_reputation serves.' },
+  { name: 'ContentJudgmentAttestation', kind: 'Type', label: 'Content Judgment Attestation', definition: 'An attestation about the content-judging agent, in the AMTA axes (accuracy, competence, honesty, recency): the agent about itself, grounded in the calibration its confirmed outcomes give, or a learning engineer as a peer. The registry aggregates every one on the pod into the reputation foxxi.content_judgment_reputation serves.', subClassOf: ['https://markjspivey-xwisee.github.io/interego/ns/amta#Attestation'] },
   { name: 'ContentJudgmentOutcome', kind: 'Type', label: 'Content Judgment Outcome', definition: 'What a person held to be true about a content claim after a ContentJudgment: the confirmed answer, whether the model had it, and the Brier score of its probabilities. Asserted; it supersedes the judgment it scores, and the content judgment calibration is computed over these.' },
   { name: 'ContentJudgment', kind: 'Type', label: 'Content Judgment', definition: 'A System One model judgment about a unit of course content — how well a claim is supported by its context and evidence (evidence-level), or which work regime the work it describes falls in (work-regime) — carried as typed probabilities with the model confidence. Hypothetical until a person confirms or refutes it; the descriptor controls say how.' },
   { name: 'CompetenceDecomposition', kind: 'Type', label: 'Competence Decomposition', definition: 'A competency broken into knowledge components (recorded / trained / judged / lived / innate) by codifiability — how much of it can honestly become content.' },
@@ -208,49 +227,129 @@ export function declaredVerbIris(): string[] {
   return FOXXI_TERMS.filter(t => t.kind === 'Verb').map(t => `${FOXXI_NS}${t.name}`);
 }
 
-// ── Rendering — JSON-LD + Turtle ────────────────────────────────────
+// ── The vocabulary as an OWL 2 DL graph ──────────────────────────────
 
-const JSONLD_CONTEXT = {
-  rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
-  foxxi: FOXXI_NS,
-  label: 'rdfs:label',
-  comment: 'rdfs:comment',
-  isDefinedBy: { '@id': 'rdfs:isDefinedBy', '@type': '@id' },
+/**
+ * What each kind of term IS, in RDF.
+ *
+ * ★ VERBS, ACTIVITY TYPES AND EXTENSIONS ARE xAPI CONCEPTS, TYPED WITH ADL'S OWN CLASSES. Their IRIs
+ * appear as `verb.id`, `object.definition.type` and `context.extensions` keys in statements, and the
+ * Foxxi xAPI Profile (/xapi/profile) declares the same IRIs as profile Concepts — which the xAPI
+ * Profiles JSON-LD context types as `https://w3id.org/xapi/ontology#Verb` etc. Typing them the same
+ * way here makes the vocabulary and the profile agree about the same subjects, and lets any tool that
+ * reads ADL's xAPI ontology recognise them. (They used to be typed `foxxi:Verb` & co., classes this
+ * document never declared — OOPS! P34, and invisible to xAPI tooling.) Every Foxxi extension is
+ * carried in `context.extensions`, hence ContextExtension.
+ *
+ * ★ A "Type" IS A CLASS. Those IRIs are the `rdf:type` of the entities the bridge publishes to pods
+ * (outcome-descriptor-publisher writes `<entity> a <type>`) and the `dct:conformsTo` of their
+ * descriptors, so they are declared `owl:Class`, not individuals of an undeclared `foxxi:Type`.
+ */
+const XAPI_ONT = 'https://w3id.org/xapi/ontology#';
+const KIND: Record<FoxxiTermKind, { xapiClass?: string; scheme?: { name: string; label: string; comment: string } }> = {
+  Verb: { xapiClass: `${XAPI_ONT}Verb`, scheme: { name: 'VerbScheme', label: 'Foxxi xAPI verbs', comment: 'The xAPI verbs Foxxi statements use that no other authority defines. Each is also a Concept of the Foxxi xAPI Profile.' } },
+  ActivityType: { xapiClass: `${XAPI_ONT}ActivityType`, scheme: { name: 'ActivityTypeScheme', label: 'Foxxi xAPI activity types', comment: 'The xAPI activity types Foxxi statements carry as object.definition.type.' } },
+  Extension: { xapiClass: `${XAPI_ONT}ContextExtension`, scheme: { name: 'ExtensionScheme', label: 'Foxxi xAPI context extensions', comment: 'The keys Foxxi statements carry in context.extensions.' } },
+  Type: {},
 };
 
-/** The whole vocabulary as a JSON-LD document. */
-export function renderVocabJsonLd(): Record<string, unknown> {
-  // A flat @graph of the vocabulary node + every term node, so JSON-LD 1.1 expansion yields
-  // real triples. The previous shape put term nodes under a bare `terms` key that is NOT in
-  // @context (and there is no @vocab), so expansion silently DROPPED the entire vocabulary —
-  // a machine content-negotiating application/ld+json got an empty graph. (label/comment/
-  // isDefinedBy ARE context aliases, so the nodes expand once they live in @graph.)
+/** The label a term is published with: words, never a token (the token is its skos:notation),
+ *  qualified by its kind where a bare word would collide with a class (`activities/composition`
+ *  beside the `Composition` class). */
+function termLabel(t: FoxxiTerm): string {
+  const base = t.kind === 'Verb' ? t.label.replace(/-/g, ' ')
+    : t.kind === 'ActivityType' ? `${t.label.replace(/-/g, ' ')} activity type`
+      : t.kind === 'Extension' ? `${naturalLabel(t.label, 'property')} extension`
+        : t.label;
+  // A deprecated term's label begins "obsolete " (the OBO Foundry convention; it also keeps the
+  // label unique beside the term that replaces it, which often has its name).
+  return t.replacedBy ? `obsolete ${base}` : base;
+}
+
+/** The token a concept is matched by in statements: the last segment of its IRI. */
+const notationOf = (t: FoxxiTerm): string => t.name.split('/').pop()!;
+
+/** Self-description of the vocabulary document. */
+export function foxxiDocMeta(): DocMeta {
   return {
-    '@context': JSONLD_CONTEXT,
-    '@graph': [
-      {
-        '@id': FOXXI_VOCAB_DOC, '@type': 'foxxi:Vocabulary',
-        label: 'Foxxi Content Intelligence — vocabulary',
-        // Identical comment string to the Turtle/triples projections (faithfulness).
-        comment: FOXXI_VOCAB_COMMENT,
-        'rdfs:seeAlso': COMPOSED_SPEC_ONTOLOGIES.map(o => ({ '@id': o })),
-        isDefinedBy: FOXXI_VOCAB_DOC,
-      },
-      ...FOXXI_TERMS.map(t => ({
-        '@id': `${FOXXI_NS}${t.name}`,
-        '@type': `foxxi:${t.kind}`,
-        label: t.label,
-        comment: t.definition,
-        isDefinedBy: FOXXI_VOCAB_DOC,
-      })),
+    iri: FOXXI_VOCAB_DOC, ns: FOXXI_NS, prefix: foxxiPrefix('foxxi'),
+    title: 'Foxxi Content Intelligence vocabulary',
+    description: FOXXI_VOCAB_COMMENT,
+    version: '2026.10.0', created: '2026-05-20', modified: '2026-10-12', issued: '2026-10-12',
+    standards: [],
+    bodies: ['ADL'],
+    notice: `An original vocabulary of the Foxxi vertical, by ${CREATOR} (${PUBLISHER}). It formalizes no standard; its xAPI concepts are typed with classes of ADL's xAPI ontology (https://w3id.org/xapi/ontology), which is not affiliated with or endorsing this vocabulary.`,
+    seeAlso: [...COMPOSED_SPEC_ONTOLOGIES, `${FOXXI_VOCAB_DOC.replace('/ns/foxxi', '/xapi/profile')}`, mappingSetIri(FOXXI_VOCAB_DOC)],
+    sourceCode: ['applications/foxxi-content-intelligence/src/foxxi-vocab.ts'],
+    notes: [
+      'Path-structured term names (verbs/…, activities/…) are part of the IRI: <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/asked> is one term. The Turtle writes such IRIs in full, which every reader takes; as a prefixed name the slash would have to be escaped (foxxi:verbs\\/asked).',
     ],
-    _links: {
-      self: { href: FOXXI_VOCAB_DOC },
-      xapiProfile: { href: FOXXI_VOCAB_DOC.replace('/ns/foxxi', '/xapi/profile') },
-      composesSpecOntologies: COMPOSED_SPEC_ONTOLOGIES.map(o => ({ href: o })),
-    },
   };
 }
+
+let _graph: Graph | undefined;
+
+/** The whole vocabulary as one OWL 2 DL graph. Built once per process; treat it as read-only. */
+export function vocabGraph(): Graph {
+  if (_graph) return _graph;
+  const g = new Graph();
+  const meta = foxxiDocMeta();
+  const O = addHeader(g, meta);
+  const A = iri(RDF + 'type');
+  const schemes = new Map<FoxxiTermKind, NamedNode>();
+  for (const [kind, k] of Object.entries(KIND) as Array<[FoxxiTermKind, (typeof KIND)[FoxxiTermKind]]>) {
+    if (!k.scheme) continue;
+    const S = iri(FOXXI_NS + k.scheme.name);
+    schemes.set(kind, S);
+    g.add(S, A, iri(SKOS + 'ConceptScheme'))
+      .add(S, iri(RDFS + 'label'), en(k.scheme.label)).add(S, iri(SKOS + 'prefLabel'), en(k.scheme.label))
+      .add(S, iri(RDFS + 'comment'), en(k.scheme.comment))
+      .add(S, iri(RDFS + 'isDefinedBy'), O);
+  }
+  for (const t of FOXXI_TERMS) {
+    const T = iri(FOXXI_NS + t.name);
+    const label = termLabel(t);
+    const k = KIND[t.kind];
+    if (k.xapiClass) {
+      const S = schemes.get(t.kind)!;
+      g.add(T, A, iri(SKOS + 'Concept')).add(T, A, iri(k.xapiClass))
+        .add(T, iri(SKOS + 'prefLabel'), en(label)).add(T, iri(RDFS + 'label'), en(label))
+        .add(T, iri(SKOS + 'notation'), str(notationOf(t)))
+        .add(T, iri(SKOS + 'definition'), en(t.definition))
+        .add(T, iri(SKOS + 'inScheme'), S).add(T, iri(SKOS + 'topConceptOf'), S).add(S, iri(SKOS + 'hasTopConcept'), T);
+    } else {
+      g.add(T, A, iri(OWL + 'Class'))
+        .add(T, iri(RDFS + 'label'), en(label))
+        .add(T, iri(RDFS + 'comment'), en(t.definition));
+      for (const sup of t.subClassOf ?? []) g.add(T, iri(RDFS + 'subClassOf'), iri(/^https?:\/\//.test(sup) ? sup : FOXXI_NS + sup));
+    }
+    for (const m of t.closeMatch ?? []) g.add(T, iri(SKOS + 'closeMatch'), iri(m));
+    if (t.replacedBy) {
+      // Kept dereferenceable — statements already recorded may carry it — but marked so no new
+      // statement does, with the term to use instead.
+      g.add(T, iri(OWL + 'deprecated'), bool(true)).add(T, iri(DCT + 'isReplacedBy'), iri(FOXXI_NS + t.replacedBy));
+    }
+    g.add(T, iri(RDFS + 'isDefinedBy'), O);
+  }
+  declareExternalTerms(g, [FOXXI_NS]);
+  _graph = g;
+  return g;
+}
+
+/** The whole vocabulary as a JSON-LD document — the same graph as the Turtle. */
+export function renderVocabJsonLd(): Record<string, unknown> {
+  // No HAL `_links` beside the @graph: JSON-LD drops them, so a processor in safe mode refused the
+  // document. The header triples carry the same links (owl:versionIRI; rdfs:seeAlso the xAPI
+  // profile and the standards ontologies it composes), and the response's Link header the version.
+  return toJsonLd(vocabGraph(), ALL_PREFIXES, { terms: JSONLD_TERMS, first: [FOXXI_VOCAB_DOC] });
+}
+
+/** Short keys the JSON-LD has always used (kept for JS consumers); each is an exact alias. */
+const JSONLD_TERMS: Record<string, JsonLdTerm> = {
+  label: { '@id': RDFS + 'label', '@language': 'en' },
+  comment: { '@id': RDFS + 'comment', '@language': 'en' },
+  isDefinedBy: { '@id': RDFS + 'isDefinedBy', '@type': '@id' },
+};
 
 /**
  * The vocabulary as TRIPLES, grouped by subject — the same graph renderVocabTurtle
@@ -258,75 +357,62 @@ export function renderVocabJsonLd(): Record<string, unknown> {
  *
  * Identifiers are ABSOLUTE URLS, never CURIEs: `rdfs:label` is a Turtle
  * serialization artifact, and atomizing it would atomize the serialization rather
- * than the thing it abbreviates.
+ * than the thing it abbreviates. A literal contributes its lexical form. Blank nodes
+ * (none today) would be skolemized under the vocabulary IRI so two documents' `_:b0`
+ * never become one atom.
  *
  * Grouped by subject (graph -> subject -> triple) so each ingest stays narrow —
  * PGSL's ingest is ~O(n^2) in sequence length, so composing one holon from every
  * triple at once is quadratic, not "more holonic".
  */
 export function vocabTriplesBySubject(): Array<Array<readonly [string, string, string]>> {
-  const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
-  const DOC = FOXXI_VOCAB_DOC;
-  const groups: Array<Array<readonly [string, string, string]>> = [];
-  groups.push([
-    [DOC, RDF + 'type', `${FOXXI_NS}Vocabulary`],
-    [DOC, RDFS + 'label', 'Foxxi Content Intelligence — vocabulary'],
-    [DOC, RDFS + 'comment', FOXXI_VOCAB_COMMENT],
-    ...COMPOSED_SPEC_ONTOLOGIES.map(o => [DOC, RDFS + 'seeAlso', o] as const),
-    [DOC, RDFS + 'isDefinedBy', DOC],
-  ]);
-  for (const t of FOXXI_TERMS) {
-    const s = `${FOXXI_NS}${t.name}`;
-    groups.push([
-      [s, RDF + 'type', `${FOXXI_NS}${t.kind}`],
-      [s, RDFS + 'label', t.label],
-      [s, RDFS + 'comment', t.definition],
-      [s, RDFS + 'isDefinedBy', DOC],
-    ]);
+  const genid = `${FOXXI_VOCAB_DOC}/.well-known/genid/`;
+  const term = (t: Term): string => t.termType === 'BlankNode' ? genid + t.value : t.value;
+  const groups = new Map<string, Array<readonly [string, string, string]>>();
+  for (const t of vocabGraph().triples) {
+    const s = term(t.s);
+    const row = groups.get(s) ?? [];
+    row.push([s, t.p.value, term(t.o)] as const);
+    groups.set(s, row);
   }
-  return groups;
+  return [...groups.values()];
 }
 
 /** The whole vocabulary as Turtle. */
 export function renderVocabTurtle(): string {
-  const head = `@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix owl:   <http://www.w3.org/2002/07/owl#> .
-@prefix foxxi: <${FOXXI_NS}> .
+  const m = foxxiDocMeta();
+  return toTurtle(vocabGraph(), ALL_PREFIXES, {
+    header: [`${m.title} — version ${m.version}`, `${m.iri}  (this version: ${versionIri(m)})`,
+      'Served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML; each is a serialization of one graph.'],
+  });
+}
+export function renderVocabNTriples(): string { return toNTriples(vocabGraph()); }
+export function renderVocabRdfXml(): string { return toRdfXml(vocabGraph(), ALL_PREFIXES); }
 
-<${FOXXI_VOCAB_DOC}> a foxxi:Vocabulary ;
-    rdfs:label "Foxxi Content Intelligence — vocabulary" ;
-    rdfs:comment "${esc(FOXXI_VOCAB_COMMENT)}" ;
-${COMPOSED_SPEC_ONTOLOGIES.map(o => `    rdfs:seeAlso <${o}> ;`).join('\n')}
-    rdfs:isDefinedBy <${FOXXI_VOCAB_DOC}> .
-`;
-  // A Foxxi term's local name is PATH-STRUCTURED (verbs/scene-completed, activities/scene) —
-  // the '/' is a valid IRI char but ILLEGAL in a Turtle prefixed name, so `foxxi:verbs/x` made
-  // the whole document unparseable. Emit such terms as a FULL angle-bracket IRI, which preserves
-  // the term's real identity (the verb IRI IS <ns>verbs/scene-completed and must dereference to
-  // itself) while being valid Turtle. Simple names still use the compact CURIE.
-  const termRef = (name: string): string =>
-    /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(name) ? `foxxi:${name}` : `<${FOXXI_NS}${name}>`;
-  const body = FOXXI_TERMS.map(t =>
-    `${termRef(t.name)} a foxxi:${t.kind} ;
-    rdfs:label "${esc(t.label)}" ;
-    rdfs:comment "${esc(t.definition)}" ;
-    rdfs:isDefinedBy <${FOXXI_VOCAB_DOC}> .`,
-  ).join('\n\n');
-  return `${head}\n${body}\n`;
+/** Human-readable documentation (content negotiation: Accept: text/html). */
+export function renderVocabHtml(): string {
+  const meta = foxxiDocMeta();
+  return renderOntologyHtml({
+    graph: vocabGraph(), meta, prefixes: ALL_PREFIXES,
+    links: [...alternates(meta.iri), { label: 'Foxxi xAPI Profile', href: FOXXI_VOCAB_DOC.replace('/ns/foxxi', '/xapi/profile') }, { label: `this version (${meta.version})`, href: versionIri(meta) }],
+  });
 }
 
-/** A minimal human-readable HTML view (content negotiation: Accept: text/html). */
-export function renderVocabHtml(): string {
-  const esch = (s: string): string => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const rows = FOXXI_TERMS.map(t =>
-    `<tr><td><a href="${FOXXI_VOCAB_DOC}/term/${esch(t.name)}"><code>${esch(t.name)}</code></a></td><td>${esch(t.kind)}</td><td>${esch(t.label)}</td><td>${esch(t.definition)}</td></tr>`).join('');
-  return `<!doctype html><meta charset="utf-8"><title>Foxxi vocabulary</title>`
-    + `<body style="font-family:system-ui;max-width:60rem;margin:2rem auto;line-height:1.5">`
-    + `<h1>Foxxi Content Intelligence — vocabulary</h1>`
-    + `<p>Dereferenceable vocabulary (${FOXXI_TERMS.length} terms). Also available as `
-    + `<a href="${FOXXI_VOCAB_DOC}" type="text/turtle">Turtle</a> and JSON-LD (Accept: application/ld+json).</p>`
-    + `<table border="1" cellpadding="6" style="border-collapse:collapse"><thead><tr><th>term</th><th>kind</th><th>label</th><th>definition</th></tr></thead><tbody>${rows}</tbody></table>`
-    + `</body>`;
+/** One term's triples (and any blank nodes they reach), or null when the graph has no such subject. */
+export function vocabTermGraph(name: string): Graph | null {
+  const full = FOXXI_NS + name;
+  const g = vocabGraph();
+  if (!g.triples.some(t => t.s.termType === 'NamedNode' && t.s.value === full)) return null;
+  const out = new Graph();
+  const visit = (s: NamedNode | BlankNode, seen: Set<string>): void => {
+    for (const t of g.triples) {
+      if (t.s.termType !== s.termType || t.s.value !== s.value) continue;
+      out.add(t.s, t.p, t.o);
+      if (t.o.termType === 'BlankNode' && !seen.has(t.o.value)) { seen.add(t.o.value); visit(t.o, seen); }
+    }
+  };
+  visit(iri(full), new Set());
+  return out;
 }
 
 /** A single term as a JSON-LD resource, with HATEOAS `_links`. Returns null for an UNKNOWN
@@ -334,22 +420,12 @@ export function renderVocabHtml(): string {
  *  for IRIs that resolve to nothing and injected false triples (an unknown term is not a real
  *  vocabulary member; owning the namespace is not a licence to invent members on demand). */
 export function renderTermJsonLd(name: string): Record<string, unknown> | null {
-  const t = lookupTerm(name);
+  const tg = vocabTermGraph(name);
+  if (!tg) return null;
   const id = `${FOXXI_NS}${name}`;
-  if (!t) return null;
-  return {
-    '@context': JSONLD_CONTEXT,
-    '@id': id,
-    '@type': `foxxi:${t.kind}`,
-    label: t.label,
-    comment: t.definition,
-    isDefinedBy: FOXXI_VOCAB_DOC,
-    _links: { self: { href: `${FOXXI_VOCAB_DOC}/term/${name}` }, vocabulary: { href: FOXXI_VOCAB_DOC } },
-  };
-}
-
-function esc(s: string): string {
-  // Delegates to @interego/core: raw newlines / carriage returns / tabs are forbidden inside a
-  // single-quoted Turtle literal, and this subset left all three in. Measured — unparseable.
-  return escapeTurtleLiteral(s);
+  const j = toJsonLd(tg, ALL_PREFIXES, { terms: JSONLD_TERMS, first: [id] });
+  const [node, ...rest] = j['@graph'] as Array<Record<string, unknown>>;
+  // The route links the term to its document in the Link header (a body `_links` is dropped by
+  // JSON-LD processing, and refused in safe mode).
+  return { '@context': j['@context'], ...node!, '@id': id, ...(rest.length ? { '@included': rest } : {}) };
 }

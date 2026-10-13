@@ -471,8 +471,18 @@ import {
   type ContextEnrollment, type DiscoveredDescriptor, type CallerVerification,
 } from '../src/context-chat.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
-import { renderVocabJsonLd, renderVocabTurtle, renderVocabHtml, renderTermJsonLd, vocabTriplesBySubject, FOXXI_VOCAB_DOC } from '../src/foxxi-vocab.js';
-import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri, modelFromHolon as specModelFromHolon, type OntologyModel as SpecOntologyModel } from '../src/spec-ontology.js';
+import { renderVocabJsonLd, renderVocabTurtle, renderVocabHtml, renderVocabNTriples, renderVocabRdfXml, renderTermJsonLd, vocabTriplesBySubject, foxxiDocMeta, FOXXI_VOCAB_DOC } from '../src/foxxi-vocab.js';
+import {
+  renderOwl as renderSpecOwl, renderOwlNTriples as renderSpecOwlNTriples, renderOwlRdfXml as renderSpecOwlRdfXml,
+  renderShacl as renderSpecShacl, renderShaclNTriples as renderSpecShaclNTriples, renderShaclRdfXml as renderSpecShaclRdfXml, renderShaclJsonLd as renderSpecShaclJsonLd,
+  renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd,
+  ontologyIri as specOntologyIri, shapesIri as specShapesIri, modelFromHolon as specModelFromHolon, type OntologyModel as SpecOntologyModel,
+} from '../src/spec-ontology.js';
+import { sendNegotiated, ontologyRepresentations, shapesRepresentations, isVersionSegment, linkTo } from '../src/ns/conneg.js';
+import { sendMappingSet } from '../src/ns/mapping-sets.js';
+import { mappingSetIri } from '../src/ns/sssom.js';
+import { releasedVersion, releasedVersions, versionLinks } from '../src/ns/releases.js';
+import type { PublishedKind } from '../src/ns/published.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
 import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
@@ -483,7 +493,8 @@ import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_
 const CREDENTIAL_MODELS: Record<string, SpecOntologyModel> = { ob3: OB3_MODEL as SpecOntologyModel, clr: CLR_MODEL as SpecOntologyModel };
 import { COMPLIANCE_MODELS } from '../src/spec/compliance.model.js';
 import { composeSpecOntology as composeComplianceOntology } from '../src/spec-ontology.js';
-import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemOntologyHtml, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
+import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemOntologyHtml, renderSemOntologyNTriples, renderSemOntologyRdfXml, renderSemTermJsonLd, semDocMeta, renderElrContext } from '../src/ler-tla-vocab.js';
+import { renderXapiContext } from '../src/spec/xapi-context.js';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js';
@@ -5995,7 +6006,7 @@ const app = createVerticalBridge({
       onVoidApplied: (target, voidingStatementId) => { void keepAppliedVoid(target.statement, voidingStatementId); },
     });
 
-    // cmi5 LMS launch contract (IEEE 9274.2.1 §7–§8) — Foxxi-as-LMS can
+    // cmi5 LMS launch contract (cmi5 §7–§8; IEEE P9274.3.1) — Foxxi-as-LMS can
     // LAUNCH content: it hands an Assignable Unit a conformant launch URL
     // + stages LaunchData, and mints the one-time fetch token the AU
     // exchanges for LRS auth (GET /cmi5/launch, POST /cmi5/fetch/:token).
@@ -6214,6 +6225,29 @@ const app = createVerticalBridge({
     // /openapi.json + Swagger UI at /docs.
     attachOpenApiRoutes(a, { selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080', affordances: activeAffordances });
 
+    // ── Version IRIs: a released version answers for good (src/ns/releases.ts) ──
+    // `<artifact>/<version>` is answered from the archive of released versions (ns-releases/), so it
+    // keeps resolving, unchanged, after the artifact takes a new version. The current version answers
+    // from the live document until its release is archived; a version never released is a 404 that
+    // lists the ones that were.
+    const answerVersion = (o: {
+      iri: string; kind: PublishedKind; current: () => string; what: string;
+      live: (req: import('express').Request, res: import('express').Response) => void;
+    }) => (req: import('express').Request, res: import('express').Response, next: () => void): void => {
+      const v = String(req.params.version);
+      if (!isVersionSegment(v)) { next(); return; }
+      const current = o.current();
+      const released = releasedVersion(o.iri, o.kind, v, current);
+      if (released) { sendNegotiated(req, res, `${o.iri}/${v}`, released.representations, released.links); return; }
+      if (v === current) { o.live(req, res); return; }
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.status(404).json({ error: `version ${v} of this ${o.what} was never released`, current: `${o.iri}/${current}`, released: releasedVersions(o.iri, o.kind).map(r => `${o.iri}/${r}`) });
+    };
+    /** The version links of an artifact's unversioned IRI: its current version, and the release before it. */
+    const currentVersionLinks = (iri: string, kind: PublishedKind, current: string): string[] => versionLinks(iri, kind, current, current);
+    /** A term resource's links: the document that defines it (RFC 8288 `up`), and its section of the HTML documentation. */
+    const termLinks = (docIri: string, name: string): string[] => [linkTo(docIri, 'up'), linkTo(`${docIri}#${name}`, 'alternate', 'text/html')];
+
     // ── Foxxi vocabulary — dereferenceable RESTful linked data ───────
     // Every foxxi term IRI (`<bridge>/ns/foxxi#<name>`) resolves here.
     // A hash IRI dereferences to the whole document; each term is also
@@ -6226,20 +6260,24 @@ const app = createVerticalBridge({
     // the in-code render until composed) — the same holon-projection serving the
     // spec vocabs (xapi/scorm/cmi5) already use.
     let foxxiVocabHolon: { label: string; holonUri: string } | null = null;
-    a.get('/ns/foxxi', (req, res) => {
-      res.setHeader('Access-Control-Allow-Origin', '*');
+    // Content-negotiated (RFC 9110): JSON-LD by default, Turtle, RDF/XML, N-Triples, HTML — every
+    // one a serialization of the same graph; 406 for anything else; Vary: Accept. Its version IRIs
+    // (/ns/foxxi/<version>) answer from the archive of released versions (answerVersion, above).
+    const sendFoxxiVocab = (req: import('express').Request, res: import('express').Response): void => {
       const projected = foxxiVocabHolon
         ? (readArtifact(foxxiVocabHolon.label, foxxiVocabHolon.holonUri)?.content as { turtle?: string } | undefined)?.turtle
         : undefined;
-      const acc = req.headers.accept ?? '';
-      if (acc.includes('text/turtle')) {
-        res.type('text/turtle').send(projected ?? renderVocabTurtle());
-      } else if (acc.includes('text/html')) {
-        res.type('text/html').send(renderVocabHtml());
-      } else {
-        res.type('application/ld+json').send(JSON.stringify(renderVocabJsonLd(), null, 2));
-      }
-    });
+      sendNegotiated(req, res, FOXXI_VOCAB_DOC, ontologyRepresentations({
+        jsonld: renderVocabJsonLd, turtle: () => projected ?? renderVocabTurtle(), rdfxml: renderVocabRdfXml,
+        ntriples: renderVocabNTriples, html: renderVocabHtml,
+      }), currentVersionLinks(FOXXI_VOCAB_DOC, 'ontology', foxxiDocMeta().version));
+    };
+    a.get('/ns/foxxi', sendFoxxiVocab);
+    // The vocabulary's mappings to other vocabularies, as an SSSOM mapping set (src/ns/sssom.ts).
+    const sendFoxxiMappings = (req: import('express').Request, res: import('express').Response): void => sendMappingSet(req, res, 'foxxi');
+    a.get('/ns/foxxi/mappings', sendFoxxiMappings);
+    a.get('/ns/foxxi/mappings/:version', answerVersion({ iri: mappingSetIri(FOXXI_VOCAB_DOC), kind: 'mappings', current: () => foxxiDocMeta().version, live: sendFoxxiMappings, what: 'mapping set' }));
+    a.get('/ns/foxxi/:version', answerVersion({ iri: FOXXI_VOCAB_DOC, kind: 'ontology', current: () => foxxiDocMeta().version, live: sendFoxxiVocab, what: 'vocabulary' }));
     // Term names carry at most one `/` (e.g. `verbs/affordance-invoked`),
     // so two plain routes cover every term — no wildcard, no optional
     // param (path-to-regexp version-portable).
@@ -6247,6 +6285,8 @@ const app = createVerticalBridge({
       res.setHeader('Access-Control-Allow-Origin', '*');
       const term = renderTermJsonLd(name);
       if (!term) { res.status(404).type('application/ld+json').json({ '@id': `${FOXXI_NS}${name}`, error: 'no such term in the Foxxi vocabulary', vocabulary: FOXXI_VOCAB_DOC }); return; }
+      res.setHeader('Access-Control-Expose-Headers', 'Link');
+      res.setHeader('Link', termLinks(FOXXI_VOCAB_DOC, name).join(', '));
       res.type('application/ld+json').send(JSON.stringify(term, null, 2));
     };
     a.get('/ns/foxxi/term/:a/:b', (req, res) => sendTerm(`${req.params.a}/${req.params.b}`, res));
@@ -6367,21 +6407,25 @@ const app = createVerticalBridge({
     // IRI resolves; composed/view/role terms carry iep:constructedFrom
     // triples naming the substrate primitives they emerge from.
     for (const [path, fam] of [['/ns/ieee-ler', 'ler'], ['/ns/adl-tla', 'tla']] as const) {
-      a.get(path, (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        const acc = req.headers.accept ?? '';
-        if (acc.includes('text/turtle')) {
-          res.type('text/turtle').send(renderSemOntologyTurtle(fam));
-        } else if (acc.includes('text/html')) {
-          res.type('text/html').send(renderSemOntologyHtml(fam));
-        } else {
-          res.type('application/ld+json').send(JSON.stringify(renderSemOntologyJsonLd(fam), null, 2));
-        }
-      });
+      const docIri = semDocMeta(fam).iri;
+      const current = (): string => semDocMeta(fam).version;
+      const sendSemOntology = (req: import('express').Request, res: import('express').Response): void => {
+        sendNegotiated(req, res, docIri, ontologyRepresentations({
+          jsonld: () => renderSemOntologyJsonLd(fam), turtle: () => renderSemOntologyTurtle(fam),
+          rdfxml: () => renderSemOntologyRdfXml(fam), ntriples: () => renderSemOntologyNTriples(fam), html: () => renderSemOntologyHtml(fam),
+        }), currentVersionLinks(docIri, 'ontology', current()));
+      };
+      const sendSemMappings = (req: import('express').Request, res: import('express').Response): void => sendMappingSet(req, res, path.slice('/ns/'.length));
+      a.get(path, sendSemOntology);
+      a.get(`${path}/mappings`, sendSemMappings);
+      a.get(`${path}/mappings/:version`, answerVersion({ iri: mappingSetIri(docIri), kind: 'mappings', current, live: sendSemMappings, what: 'mapping set' }));
+      a.get(`${path}/:version`, answerVersion({ iri: docIri, kind: 'ontology', current, live: sendSemOntology, what: 'ontology' }));
       const sendSemTerm = (name: string, res: import('express').Response): void => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         const term = renderSemTermJsonLd(fam, name);
         if (!term) { res.status(404).type('application/ld+json').json({ '@id': `${bridgeBaseUrl}/ns/${fam === 'ler' ? 'ieee-ler' : 'adl-tla'}#${name}`, error: 'no such term in this ontology' }); return; }
+        res.setHeader('Access-Control-Expose-Headers', 'Link');
+        res.setHeader('Link', termLinks(docIri, name).join(', '));
         res.type('application/ld+json').send(JSON.stringify(term, null, 2));
       };
       a.get(`${path}/term/:a/:b`, (req, res) => sendSemTerm(`${req.params.a}/${req.params.b}`, res));
@@ -6398,13 +6442,30 @@ const app = createVerticalBridge({
       const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
       return (body.instance && typeof body.instance === 'object') ? body.instance as Record<string, unknown> : body;
     };
-    a.get('/ns/ieee-ler/shapes', (_req, res) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.type('text/turtle').send(renderSpecShacl(LER_MODEL)); });
+    const sendLerShapes = (req: import('express').Request, res: import('express').Response): void => {
+      sendNegotiated(req, res, specShapesIri(LER_MODEL), shapesRepresentations({
+        turtle: () => renderSpecShacl(LER_MODEL), jsonld: () => renderSpecShaclJsonLd(LER_MODEL),
+        rdfxml: () => renderSpecShaclRdfXml(LER_MODEL), ntriples: () => renderSpecShaclNTriples(LER_MODEL),
+      }), currentVersionLinks(specShapesIri(LER_MODEL), 'shapes', LER_MODEL.version));
+    };
+    // The JSON-LD context an Enterprise Learner Record is read through (after the W3C VC 2.0 one):
+    // it gives every record its RDF reading, which the shapes above constrain. A record cites the
+    // context of one version (ELR_CONTEXT_URL), answered from the archive like any version IRI.
+    const elrContextIri = `${semDocMeta('ler').iri}/context`;
+    const sendElrContext = (req: import('express').Request, res: import('express').Response): void => {
+      sendNegotiated(req, res, elrContextIri, [{ type: 'application/ld+json', body: renderElrContext }],
+        [...currentVersionLinks(elrContextIri, 'context', semDocMeta('ler').version), linkTo(semDocMeta('ler').iri, 'describedby', 'text/turtle')]);
+    };
+    a.get('/ns/ieee-ler/context', sendElrContext);
+    a.get('/ns/ieee-ler/context/:version', answerVersion({ iri: elrContextIri, kind: 'context', current: () => semDocMeta('ler').version, live: sendElrContext, what: 'context' }));
+    a.get('/ns/ieee-ler/shapes', sendLerShapes);
+    a.get('/ns/ieee-ler/shapes/:version', answerVersion({ iri: specShapesIri(LER_MODEL), kind: 'shapes', current: () => LER_MODEL.version, live: sendLerShapes, what: 'shapes graph' }));
     a.post('/ns/ieee-ler/validate', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       const r = validateLerInstance(readInstance(req));
       res.json({ ok: true, module: 'ieee-ler', ontology: `${bridgeBaseUrl}/ns/ieee-ler`, conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
     });
-    // ADL-TLA competency assertions share the SAME shape (tla:Assertion ≡ ler:CompetencyAssertion),
+    // ADL-TLA competency assertions share the SAME shape (tla:Assertion closely matches ler:CompetencyAssertion),
     // so /ns/adl-tla/shapes is not a distinct document — it 302-redirects to the CANONICAL
     // /ns/ieee-ler/shapes (whose subjects self-describe under that URL) rather than serving a copy
     // whose own dereferenced URL never appears in its graph.
@@ -6464,19 +6525,41 @@ const app = createVerticalBridge({
     // Credential formats (OB3, CLR) — data-driven, validated via validateInstanceWith
     // (type-dispatch, now array-aware) exactly like the compliance models.
     for (const [k, v] of Object.entries(CREDENTIAL_MODELS)) NS_MODELS[k] = { model: v, compliance: true };
+    // The JSON-LD context an xAPI statement is read through: it gives a statement its RDF reading in
+    // the xAPI ontology, which the shapes at /ns/xapi/shapes check (src/spec/xapi-context.ts). Data
+    // cites the context of one version (XAPI_CONTEXT_URL), answered from the archive like any
+    // version IRI. Registered before the module's routes, so /ns/xapi/:version never sees it.
+    const xapiContextIri = `${specOntologyIri(SPEC_MODELS.xapi)}/context`;
+    const sendXapiContext = (req: import('express').Request, res: import('express').Response): void => {
+      sendNegotiated(req, res, xapiContextIri, [{ type: 'application/ld+json', body: renderXapiContext }],
+        [...currentVersionLinks(xapiContextIri, 'context', liveModel('xapi', SPEC_MODELS.xapi).version), linkTo(specOntologyIri(SPEC_MODELS.xapi), 'describedby', 'text/turtle')]);
+    };
+    a.get('/ns/xapi/context', sendXapiContext);
+    a.get('/ns/xapi/context/:version', answerVersion({ iri: xapiContextIri, kind: 'context', current: () => liveModel('xapi', SPEC_MODELS.xapi).version, live: sendXapiContext, what: 'context' }));
     for (const [moduleName, { model, compliance }] of Object.entries(NS_MODELS)) {
-      a.get(`/ns/${moduleName}`, (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
+      // Content-negotiated, every representation a serialization of one graph (see src/ns/conneg.ts).
+      const sendOntology = (req: import('express').Request, res: import('express').Response): void => {
         const m = liveModel(moduleName, model);
-        const acc = req.headers.accept ?? '';
-        if (acc.includes('text/turtle') || acc.includes('application/x-turtle')) res.type('text/turtle').send(renderSpecOwl(m));
-        else if (acc.includes('text/html')) res.type('text/html').send(renderSpecHtml(m));
-        else res.type('application/ld+json').send(JSON.stringify(renderSpecJsonLd(m), null, 2));
-      });
-      a.get(`/ns/${moduleName}/shapes`, (req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.type('text/turtle').send(renderSpecShacl(liveModel(moduleName, model)));
-      });
+        sendNegotiated(req, res, specOntologyIri(m), ontologyRepresentations({
+          jsonld: () => renderSpecJsonLd(m), turtle: () => renderSpecOwl(m), rdfxml: () => renderSpecOwlRdfXml(m),
+          ntriples: () => renderSpecOwlNTriples(m), html: () => renderSpecHtml(m),
+        }), [...currentVersionLinks(specOntologyIri(m), 'ontology', m.version), linkTo(specShapesIri(m), 'describedby', 'text/turtle')]);
+      };
+      const sendShapes = (req: import('express').Request, res: import('express').Response): void => {
+        const m = liveModel(moduleName, model);
+        sendNegotiated(req, res, specShapesIri(m), shapesRepresentations({
+          turtle: () => renderSpecShacl(m), jsonld: () => renderSpecShaclJsonLd(m),
+          rdfxml: () => renderSpecShaclRdfXml(m), ntriples: () => renderSpecShaclNTriples(m),
+        }), currentVersionLinks(specShapesIri(m), 'shapes', m.version));
+      };
+      const sendMappings = (req: import('express').Request, res: import('express').Response): void => sendMappingSet(req, res, moduleName, liveModel(moduleName, model));
+      const current = (): string => liveModel(moduleName, model).version;
+      a.get(`/ns/${moduleName}`, sendOntology);
+      a.get(`/ns/${moduleName}/shapes`, sendShapes);
+      // Its SKOS mappings as an SSSOM mapping set; 404 for a module that maps no terms.
+      a.get(`/ns/${moduleName}/mappings`, sendMappings);
+      a.get(`/ns/${moduleName}/mappings/:version`, answerVersion({ iri: mappingSetIri(specOntologyIri(model)), kind: 'mappings', current, live: sendMappings, what: 'mapping set' }));
+      a.get(`/ns/${moduleName}/shapes/:version`, answerVersion({ iri: specShapesIri(model), kind: 'shapes', current, live: sendShapes, what: 'shapes graph' }));
       a.post(`/ns/${moduleName}/validate`, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
@@ -6547,8 +6630,11 @@ const app = createVerticalBridge({
         const term = renderSpecTermJsonLd(liveModel(moduleName, model), req.params.name);
         // 404 an unknown term rather than fabricate a 200 for an IRI that resolves to nothing.
         if (!term) { res.status(404).type('application/ld+json').json({ '@id': `${specOntologyIri(model)}#${req.params.name}`, error: 'no such term in this ontology', ontology: specOntologyIri(model) }); return; }
+        res.setHeader('Access-Control-Expose-Headers', 'Link');
+        res.setHeader('Link', [...termLinks(specOntologyIri(model), req.params.name), linkTo(specShapesIri(model), 'describedby', 'text/turtle')].join(', '));
         res.type('application/ld+json').send(JSON.stringify(term, null, 2));
       });
+      a.get(`/ns/${moduleName}/:version`, answerVersion({ iri: specOntologyIri(model), kind: 'ontology', current, live: sendOntology, what: 'ontology' }));
     }
 
     // ── /ns/pod/* → the SUBSTRATE dereference surface (higher-order composition).
@@ -9115,7 +9201,7 @@ app.post('/agent/calibration/merge', async (req, res) => {
 app.get('/compliance/suites', (_req, res) => {
   res.json({ ok: true, suites: [
     { id: 'xapi-2.0', title: 'xAPI 2.0 LRS Conformance', standard: 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017', run: '/compliance/xapi/run' },
-    { id: 'cmi5', title: 'cmi5 Conformance', standard: 'IEEE 9274.2.1 / cmi5 v1.0', run: '/compliance/cmi5/run' },
+    { id: 'cmi5', title: 'cmi5 Conformance', standard: 'cmi5 (Quartz; being standardized as IEEE P9274.3.1)', run: '/compliance/cmi5/run' },
     { id: 'scorm-2004-sn', title: 'SCORM 2004 Sequencing & Navigation', standard: 'ADL SCORM 2004 4th Ed — IMS Simple Sequencing', run: '/compliance/scorm/run' },
     { id: 'scorm-2004-cam', title: 'SCORM 2004 Content Aggregation Model', standard: 'ADL SCORM 2004 4th Ed — CAM (manifest)', run: '/compliance/cam/run' },
   ] });

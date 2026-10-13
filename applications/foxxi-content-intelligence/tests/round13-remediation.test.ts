@@ -3,7 +3,8 @@ import {
   issueBbsCompletionCredential, deriveCompletionPresentation, verifyCompletionPresentation,
 } from '../src/bbs-credentials.js';
 import { isPrivateHostname, safePublicUrlOrUndefined, assertSafeFetchTarget } from '../src/ssrf-guard.js';
-import { renderSemOntologyJsonLd } from '../src/ler-tla-vocab.js';
+import { renderSemOntologyJsonLd, TLA_NS, PERF_FRAMEWORK_IRI, PERF_ROLLUP_RULE_IRI } from '../src/ler-tla-vocab.js';
+import { jsonLdQuads, iriObjectsOf, subjectsOfType, SKOS } from './support/ns-graph.js';
 
 // ── B1 (BLOCKER): BBS+ verifier derives disclosed values from the SIGNED message bytes,
 //     not the holder-controlled displayValue — a tampered displayValue cannot flip a claim. ──
@@ -103,19 +104,23 @@ describe('round-13 — ssrf-guard blocks private/loopback/link-local, allows pub
 
 // ── M4 (major): adl-tla JSON-LD Level/RollupRule skos:inScheme is an IRI reference, not a literal. ──
 describe('round-13 — adl-tla proficiency JSON-LD skos:inScheme is {@id} (triple-faithful to Turtle)', () => {
-  const j = renderSemOntologyJsonLd('tla') as { '@graph': Array<Record<string, unknown>> };
-  it('every tla:Level node carries skos:inScheme as an @id object (not a bare string literal)', () => {
-    const levels = j['@graph'].filter(n => Array.isArray(n['@type']) && (n['@type'] as string[]).includes('tla:Level'));
+  // Expanded by a JSON-LD processor, so "an IRI, not a literal" is checked on the triple itself.
+  it('every tla:Level node carries skos:inScheme as an @id object (not a bare string literal)', async () => {
+    const q = await jsonLdQuads(renderSemOntologyJsonLd('tla'));
+    const levels = subjectsOfType(q, `${TLA_NS}Level`);
     expect(levels.length).toBeGreaterThan(0);
-    for (const l of levels) {
-      const inScheme = l['skos:inScheme'] as unknown;
-      expect(inScheme, String(l['@id'])).toBeTypeOf('object');
-      expect((inScheme as Record<string, unknown>)['@id']).toBeTruthy();
-    }
+    for (const l of levels) expect(iriObjectsOf(q, l, `${SKOS}inScheme`), l).toEqual([PERF_FRAMEWORK_IRI]);
   });
-  it('the RollupRule node carries skos:inScheme (was absent from the JSON-LD)', () => {
-    const rule = j['@graph'].find(n => n['@type'] === 'tla:RollupRule') as Record<string, unknown>;
-    expect(rule).toBeTruthy();
-    expect((rule['skos:inScheme'] as Record<string, unknown>)?.['@id']).toBeTruthy();
+  // ★ REVISED. This held the rule to skos:inScheme the framework. A roll-up rule is not one of a
+  // scheme's concepts; it names the scale whose levels it assigns with tla:onScale, an IRI — and
+  // the scale is a tla:ProficiencyScale, which holds levels, not competencies.
+  it('the RollupRule node names its scale (tla:onScale) as an @id object, and is in no scheme', async () => {
+    const q = await jsonLdQuads(renderSemOntologyJsonLd('tla'));
+    expect(subjectsOfType(q, `${TLA_NS}RollupRule`)).toEqual([PERF_ROLLUP_RULE_IRI]);
+    expect(iriObjectsOf(q, PERF_ROLLUP_RULE_IRI, `${TLA_NS}onScale`)).toEqual([PERF_FRAMEWORK_IRI]);
+    expect(iriObjectsOf(q, PERF_ROLLUP_RULE_IRI, `${SKOS}inScheme`)).toEqual([]);
+    expect(subjectsOfType(q, `${TLA_NS}ProficiencyScale`)).toEqual([PERF_FRAMEWORK_IRI]);
+    expect(subjectsOfType(q, `${TLA_NS}CompetencyFramework`)).not.toContain(PERF_FRAMEWORK_IRI);
   });
 });
+

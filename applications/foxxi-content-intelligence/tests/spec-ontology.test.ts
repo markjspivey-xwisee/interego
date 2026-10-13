@@ -4,47 +4,65 @@
  * citing the dereferenceable sh:NodeShape IRIs (the LRS's ontology-driven path).
  */
 import { describe, it, expect } from 'vitest';
-import { renderOwl, renderShacl, renderJsonLd, ontologyIri, shapesIri } from '../src/spec-ontology.js';
+import { renderOwl, renderShacl, renderJsonLd, ontologyIri, shapesIri, ns } from '../src/spec-ontology.js';
 import { XAPI_MODEL } from '../src/spec/xapi.model.js';
 import { validateXapiStatement } from '../src/spec/index.js';
+import { turtleQuads, iriObjectsOf, objectsOf, subjectsOfType, RDFS, OWL, SKOS } from './support/ns-graph.js';
+
+// ★ REVISED: read as triples. These checks matched Turtle text (`xapi:Statement a owl:Class`), which
+// stopped meaning anything when the document's own prefix became `foxxi-xapi:` and `xapi:` began to
+// mean ADL's ontology. What the document SAYS is the same; how it is spelled is not the test.
+const SH = 'http://www.w3.org/ns/shacl#';
+const X = ns(XAPI_MODEL);
 
 describe('xAPI ontology OWL projection', () => {
-  const ttl = renderOwl(XAPI_MODEL);
+  const q = turtleQuads(renderOwl(XAPI_MODEL));
   it('declares the ontology + core classes + properties', () => {
-    expect(ttl).toContain(`<${ontologyIri(XAPI_MODEL)}> a owl:Ontology`);
-    expect(ttl).toContain('xapi:Statement a owl:Class');
-    expect(ttl).toContain('xapi:Verb a owl:Class');
-    expect(ttl).toContain('xapi:actor a owl:ObjectProperty');
-    expect(ttl).toContain('xapi:scaled a owl:DatatypeProperty');
-    expect(ttl).toContain('rdfs:domain xapi:Score');
+    expect(subjectsOfType(q, `${OWL}Ontology`)).toContain(ontologyIri(XAPI_MODEL));
+    expect(subjectsOfType(q, `${OWL}Class`)).toEqual(expect.arrayContaining([`${X}Statement`, `${X}Verb`]));
+    expect(subjectsOfType(q, `${OWL}ObjectProperty`)).toContain(`${X}actor`);
+    expect(subjectsOfType(q, `${OWL}DatatypeProperty`)).toContain(`${X}scaled`);
+    expect(iriObjectsOf(q, `${X}scaled`, `${RDFS}domain`)).toEqual([`${X}Score`]);
   });
   it('emits the interactionType SKOS vocabulary', () => {
-    expect(ttl).toContain('xapi:InteractionType a skos:ConceptScheme');
+    expect(subjectsOfType(q, `${SKOS}ConceptScheme`)).toContain(`${X}InteractionType`);
     // Member IRIs are scheme-scoped (InteractionType-choice) so members from different
     // schemes with the same enum value do not collide onto one IRI.
-    expect(ttl).toContain('xapi:InteractionType-choice a skos:Concept');
+    expect(subjectsOfType(q, `${SKOS}Concept`)).toContain(`${X}InteractionType-choice`);
   });
 });
 
 describe('xAPI ontology SHACL projection', () => {
-  const sh = renderShacl(XAPI_MODEL);
+  const q = turtleQuads(renderShacl(XAPI_MODEL));
+  const statementShape = `${shapesIri(XAPI_MODEL)}#StatementShape`;
+  /** The property shapes (blank nodes) of a node shape. */
+  const props = (shape: string): string[] => q.filter(t => t.subject.value === shape && t.predicate.value === `${SH}property`).map(t => t.object.value);
   it('emits node shapes targeting the classes with constraints', () => {
-    expect(sh).toContain('a sh:NodeShape');
-    expect(sh).toContain('sh:targetClass xapi:Statement');
-    expect(sh).toContain('sh:path xapi:actor');
-    expect(sh).toContain('sh:minCount 1');
-    expect(sh).toContain('sh:minInclusive -1'); // Score.scaled bound
+    expect(subjectsOfType(q, `${SH}NodeShape`)).toContain(statementShape);
+    expect(iriObjectsOf(q, statementShape, `${SH}targetClass`)).toEqual([`${X}Statement`]);
+    const actor = props(statementShape).find(p => iriObjectsOf(q, p, `${SH}path`).includes(`${X}actor`));
+    expect(actor).toBeDefined();
+    expect(objectsOf(q, actor!, `${SH}minCount`)).toEqual(['1']);
+    // Score.scaled is bounded below by -1.
+    const scaled = props(`${shapesIri(XAPI_MODEL)}#ScoreShape`).find(p => iriObjectsOf(q, p, `${SH}path`).includes(`${X}scaled`));
+    expect(objectsOf(q, scaled!, `${SH}minInclusive`)).toEqual(['-1']);
   });
 });
 
 describe('renderJsonLd', () => {
-  it('carries HATEOAS _links incl shapes + validate', () => {
+  // ★ REVISED. This held the document to HAL `_links` beside its @graph (shapes, validate). JSON-LD
+  // processing drops such members, and a processor in safe mode — the bar this vertical sets for its
+  // own records — refused every ontology for them. The links are in the graph now (rdfs:seeAlso the
+  // shapes, whose description names the validator) and in the response's Link header.
+  it('is JSON-LD alone: a flat @graph, and the shapes and the validator reached through the graph', () => {
     const j = renderJsonLd(XAPI_MODEL) as any;
     // Nodes live in a flat @graph (so JSON-LD expansion yields real class/property triples).
     expect(j['@graph'][0]['@id']).toBe(ontologyIri(XAPI_MODEL));
     expect(j['@graph'].some((n: any) => n['@type'] === 'owl:Class')).toBe(true);
-    expect(j._links.shapes.href).toBe(shapesIri(XAPI_MODEL));
-    expect(j._links.validate.method).toBe('POST');
+    expect(Object.keys(j).sort()).toEqual(['@context', '@graph']);
+    expect(iriObjectsOf(turtleQuads(renderOwl(XAPI_MODEL)), ontologyIri(XAPI_MODEL), `${RDFS}seeAlso`)).toContain(shapesIri(XAPI_MODEL));
+    expect(turtleQuads(renderShacl(XAPI_MODEL)).find(t => t.subject.value === shapesIri(XAPI_MODEL) && t.predicate.value === 'http://purl.org/dc/terms/description')?.object.value)
+      .toContain(`POST ${ontologyIri(XAPI_MODEL)}/validate`);
   });
 });
 
@@ -93,11 +111,18 @@ describe('validateXapiStatement (ontology-driven)', () => {
     expect(twoIfi.results.some(r => /exactly one of/.test(r.message))).toBe(true);
   });
 
-  it('allows an anonymous Group (members, no IFI) but rejects members + IFI (§4.1.2.2)', () => {
+  // ★ REVISED: this asserted that a Group with members AND an IFI is rejected. xAPI says otherwise —
+  // an Identified Group may list its members (2.0 §5.2.2.1, Actor as Identified Group:
+  // member Optional; 1.0.3 §4.1.2.2 the same) — and the LRS's own validator always accepted one, so
+  // the public oracle refused statements the LRS stored. GroupShape now states the rule: an
+  // Identified Group (exactly one IFI, members optional) or an Anonymous Group (members, no IFI).
+  it('allows an anonymous Group and an Identified Group that lists its members; rejects a Group with neither (§5.2.2.1)', () => {
     const base = { verb: { id: 'http://adlnet.gov/expapi/verbs/x' }, object: { id: 'http://x/1', objectType: 'Activity' } };
     const anon = validateXapiStatement({ ...base, actor: { objectType: 'Group', member: [{ objectType: 'Agent', mbox: 'mailto:a@x.org' }] } });
-    expect(anon.results.some(r => /Group/.test(r.message))).toBe(false);
-    const bad = validateXapiStatement({ ...base, actor: { objectType: 'Group', mbox: 'mailto:g@x.org', member: [{ mbox: 'mailto:a@x.org' }] } });
-    expect(bad.results.some(r => /anonymous Group/.test(r.message))).toBe(true);
+    expect(anon.results.some(r => /Group/.test(r.message) || /GroupShape/.test(r.sourceShape))).toBe(false);
+    const identified = validateXapiStatement({ ...base, actor: { objectType: 'Group', mbox: 'mailto:g@x.org', member: [{ mbox: 'mailto:a@x.org' }] } });
+    expect(identified.results.some(r => /GroupShape/.test(r.sourceShape))).toBe(false);
+    const neither = validateXapiStatement({ ...base, actor: { objectType: 'Group', name: 'Nobody' } });
+    expect(neither.results.some(r => r.sourceShape.endsWith('#GroupShape') && /IdentifiedGroupShape, AnonymousGroupShape/.test(r.message))).toBe(true);
   });
 });

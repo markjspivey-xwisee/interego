@@ -1,485 +1,579 @@
 /**
- * SCORM 2004 3rd Edition — Sequencing & Navigation (SN) data model — the single source.
+ * SCORM 2004 4th Edition — Sequencing and Navigation: the sequencing definition model — the single source.
  *
- * Transcribed from the normative IMS Simple Sequencing v1.0 XSD binding (the IMSSS
- * schema SCORM 2004 adopts: imsss_v1p0*.xsd) plus the ADL sequencing and navigation
- * extension schemas (adlseq_v1p3.xsd, adlnav_v1p3.xsd). The <imsss:sequencing>
- * element is attached to CP <item>/<organization> nodes and drives the activity
- * tree's sequencing behaviour (control modes, sequencing rules, limit/rollup rules,
- * objectives, randomization, delivery controls) and the navigation request model.
+ * Transcribes the IMS Simple Sequencing 1.0 binding SCORM 2004 adopts (imsss_v1p0*.xsd) and ADL's
+ * sequencing and navigation extensions (adlseq_v1p3.xsd, adlnav_v1p3.xsd). An <imsss:sequencing>
+ * element on an item or organization drives how its activity tree is sequenced: control modes,
+ * sequencing rules, limit conditions, rollup rules, objectives and their global-objective maps,
+ * randomization and delivery controls. Composed into the PGSL lattice (composeSpecOntology) and
+ * projected to OWL/SHACL/JSON-LD at <bridge>/ns/scorm-sn; a parsed manifest's sequencing is checked
+ * against the shapes at POST /ns/scorm-sn/validate, and every result cites its shape.
  *
- * Composed into the PGSL lattice (composeSpecOntology) and projected to OWL/SHACL/
- * JSON-LD on dereference at <bridge>/ns/scorm-sn. The SCORM SN engine validates a
- * parsed manifest's sequencing collection against the SHACL shapes this model
- * publishes (validateAgainstShape) — so a manifest is checked against THIS ontology,
- * and every conformance result cites its shape IRI.
+ * ★ THE 4TH EDITION. Its adlseq:objectives map an objective's raw, minimum and maximum score,
+ * completion status and progress measure to global objectives; this model used to describe that
+ * element as a second imsss:objectives container, which it is not (AdlObjective, AdlObjectiveMapping).
+ *
+ * ★ ATTACHED WHERE THE PACKAGE ATTACHES IT. This ontology imports the content-packaging one: an
+ * item or organization has its sequencing, a manifest its sequencing collection, an organization
+ * objectivesGlobalToSystem, and an item its adlnav:presentation (which this model used to hang on
+ * the sequencing definition; it is a child of the item).
+ *
+ * ★ OWL 2 DL, AND THE SAME LITERALS AS THE SCHEMA. xs:duration is outside the OWL 2 datatype map,
+ * so the duration limits are a named datatype restricting xsd:string by the xs:duration form.
+ * Objective, auxiliary resource and global objective IDs are xs:anyURI values — often relative
+ * references such as "obj_1" — so the shapes check them as xsd:anyURI literals; they used to demand
+ * IRI nodes, which no manifest can produce for a datatype property.
  */
 import type { OntologyModel } from '../spec-ontology.js';
+import { XS_DURATION } from './patterns.js';
+import { SCORM_CAM_MODEL } from './scorm-cam.model.js';
+
+const SS = 'IMS Simple Sequencing 1.0 (imsss_v1p0.xsd)';
+const ADLSEQ = 'ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd)';
+const ADLNAV = 'ADL navigation extensions (adlnav_v1p3.xsd)';
+/** What a JSON number becomes in RDF (JSON-LD 1.1 §8.6): an integer or a double; or a decimal. */
+const NUMBER = ['xsd:integer', 'xsd:decimal', 'xsd:double'];
+
+const RULE_CONDITIONS = ['satisfied', 'objectiveStatusKnown', 'objectiveMeasureKnown', 'objectiveMeasureGreaterThan', 'objectiveMeasureLessThan', 'completed', 'activityProgressKnown', 'attempted', 'attemptLimitExceeded', 'timeLimitExceeded', 'outsideAvailableTimeRange', 'always'];
+const ROLLUP_CONDITIONS = ['satisfied', 'objectiveStatusKnown', 'objectiveMeasureKnown', 'completed', 'activityProgressKnown', 'attempted', 'attemptLimitExceeded', 'timeLimitExceeded', 'outsideAvailableTimeRange'];
+const PRE_ACTIONS = ['skip', 'disabled', 'hiddenFromChoice', 'stopForwardTraversal'];
+const EXIT_ACTIONS = ['exit'];
+const POST_ACTIONS = ['exitParent', 'exitAll', 'retry', 'retryAll', 'continue', 'previous'];
+const ROLLUP_ACTIONS = ['satisfied', 'notSatisfied', 'completed', 'incomplete'];
+const CHILD_ACTIVITY_SETS = ['all', 'any', 'none', 'atLeastCount', 'atLeastPercent'];
+const RANDOM_TIMINGS = ['never', 'once', 'onEachNewAttempt'];
+const ROLLUP_CONSIDERATIONS = ['always', 'ifAttempted', 'ifNotSkipped', 'ifNotSuspended'];
+const HIDE_LMS_UI = ['previous', 'continue', 'exit', 'exitAll', 'abandon', 'abandonAll', 'suspendAll'];
 
 export const SCORM_SN_MODEL: OntologyModel = {
   module: 'scorm-sn',
-  title: 'SCORM 2004 3rd Ed — Sequencing & Navigation (IMSSS + ADL)',
+  title: 'SCORM 2004 4th Edition — Sequencing and Navigation (IMS Simple Sequencing and ADL extensions)',
   description:
-    'OWL + SHACL ontology of the SCORM 2004 3rd Edition Sequencing & Navigation binding: the IMS Simple Sequencing v1.0 schema (Sequencing, ControlMode, SequencingRules with pre/exit/post-condition rules and their RuleConditions, LimitConditions, RollupRules/RollupConditions, Objectives with measure mapping, RandomizationControls, DeliveryControls, AuxiliaryResources) plus the ADL extensions adlseq_v1p3 (rollupConsiderations, constrainedChoiceConsiderations, objectivesGlobalToSystem) and adlnav_v1p3 (presentation / navigationInterface / hideLMSUI). Composed into PGSL and projected here; the SCORM SN runtime validates manifests against the shapes below.',
-  version: '1.3.4',
-  spec: 'https://adlnet.gov/projects/scorm-2004-3rd-edition/',
-  prefixes: {
-    imsss: 'http://www.imsglobal.org/xsd/imsss#',
-    adlseq: 'http://www.adlnet.org/xsd/adlseq_v1p3#',
-    adlnav: 'http://www.adlnet.org/xsd/adlnav_v1p3#',
-  },
+    'An OWL 2 DL ontology and SHACL shapes for the sequencing definitions of SCORM 2004 4th Edition: IMS Simple Sequencing 1.0 as SCORM applies it — sequencing definitions and collections, control modes, pre-, exit- and post-condition rules with their conditions and actions, limit conditions, rollup rules, objectives with their global-objective maps, randomization and delivery controls, auxiliary resources — and ADL\'s extensions: rollup and constrained-choice considerations, objectivesGlobalToSystem, the 4th Edition\'s extended objective maps (raw, minimum and maximum score, completion status, progress measure), and the navigation presentation that hides LMS controls. It imports the content-packaging ontology, whose items and organizations carry the sequencing.',
+  version: '2026.10.0',
+  spec: 'https://adlnet.gov/past-projects/scorm',
+  standards: [
+    { title: 'SCORM 2004 4th Edition (ADL, 2009): Sequencing and Navigation', url: 'https://adlnet.gov/past-projects/scorm' },
+    { title: 'IMS Simple Sequencing 1.0 (1EdTech, formerly IMS Global Learning Consortium)', url: 'https://www.imsglobal.org/simplesequencing/index.html' },
+  ],
+  bodies: ['ADL', '1EdTech'],
+  // By version IRI: a released version keeps the content-packaging ontology it was built on.
+  imports: [`scorm-cam/${SCORM_CAM_MODEL.version}`],
+  derivedFrom: 'imsss_v1p0.xsd and the schemas it includes (IMS Simple Sequencing 1.0), adlseq_v1p3.xsd and adlnav_v1p3.xsd, as distributed with SCORM 2004 4th Edition',
+  notes: [
+    'Since 2026.10.0: adlObjectives points at AdlObjective, the 4th Edition\'s adlseq:objective, instead of the imsss Objectives class; presentation belongs to the item rather than the sequencing definition; and objectivesGlobalToSystem belongs to the organization.',
+    'The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology\'s classes. A parsed instance as JSON is checked against the same shapes at POST /ns/scorm-sn/validate, which routes it by its declared type; every result cites its shape.',
+  ],
   classes: [
-    { name: 'Sequencing', label: 'Sequencing', comment: 'Root sequencing definition (imsss:sequencing / sequencingType) attached to a CP item/organization; aggregates control mode, sequencing rules, limit conditions, rollup rules, objectives, randomization, delivery controls and auxiliary resources. May carry ID and IDRef for the sequencing collection.' },
-    { name: 'ControlMode', label: 'Control Mode', comment: 'Non-exclusive set of acceptable control modes for an activity cluster (imsss:controlMode / controlModeType).' },
-    { name: 'SequencingRules', label: 'Sequencing Rules', comment: 'Container of pre-condition, exit-condition and post-condition sequencing rules (imsss:sequencingRules / sequencingRulesType).' },
-    { name: 'SequencingRule', label: 'Sequencing Rule', comment: 'Abstract base of a sequencing rule: an optional set of rule conditions and a rule action (sequencingRuleType, abstract).' },
-    { name: 'PreConditionRule', label: 'Pre-Condition Rule', comment: 'A sequencing rule evaluated before an activity is delivered; its action is from the pre-condition action vocabulary (imsss:preConditionRule / preConditionRuleType).', subClassOf: ['SequencingRule'] },
-    { name: 'ExitConditionRule', label: 'Exit-Condition Rule', comment: 'A sequencing rule evaluated when an activity terminates; its action is "exit" (imsss:exitConditionRule / exitConditionRuleType).', subClassOf: ['SequencingRule'] },
-    { name: 'PostConditionRule', label: 'Post-Condition Rule', comment: 'A sequencing rule evaluated after an activity terminates; its action is from the post-condition action vocabulary (imsss:postConditionRule / postConditionRuleType).', subClassOf: ['SequencingRule'] },
-    { name: 'RuleConditions', label: 'Rule Conditions', comment: 'The set of rule conditions of a sequencing rule, combined by conditionCombination all/any (anonymous ruleConditions complexType).' },
-    { name: 'RuleCondition', label: 'Rule Condition', comment: 'A single sequencing rule condition: a condition name, optional not/noOp operator, optional referencedObjective and measureThreshold (anonymous ruleCondition complexType).' },
-    { name: 'RuleAction', label: 'Rule Action', comment: 'The action a sequencing rule produces when its conditions evaluate true (anonymous ruleAction complexType, one per rule kind with a constrained action vocabulary).' },
-    { name: 'LimitConditions', label: 'Limit Conditions', comment: 'Attempt and duration limit conditions for an activity (imsss:limitConditions / limitConditionsType).' },
-    { name: 'RollupRules', label: 'Rollup Rules', comment: 'Container of rollup rules plus the objective/progress rollup and measure-weight controls (imsss:rollupRules / rollupRulesType).' },
-    { name: 'RollupRule', label: 'Rollup Rule', comment: 'A single rollup rule: a child-activity set, count/percent bounds, a set of rollup conditions and a rollup action (rollupRuleType).' },
-    { name: 'RollupConditions', label: 'Rollup Conditions', comment: 'The set of rollup conditions of a rollup rule, combined by conditionCombination all/any (anonymous rollupConditions complexType).' },
-    { name: 'RollupCondition', label: 'Rollup Condition', comment: 'A single rollup condition: a condition name with optional not/noOp operator (anonymous rollupCondition complexType).' },
-    { name: 'RollupAction', label: 'Rollup Action', comment: 'The action a rollup rule applies to the parent when its conditions hold (anonymous rollupAction complexType).' },
-    { name: 'Objectives', label: 'Objectives', comment: 'The objectives of an activity: exactly one primaryObjective that contributes to rollup plus zero or more non-rollup objectives (imsss:objectives / objectivesType).' },
-    { name: 'Objective', label: 'Objective', comment: 'A learning objective with optional minimum normalized measure and objective measure mappings (objectiveType; primaryObjective/objective add objectiveID).' },
-    { name: 'ObjectiveMapping', label: 'Objective Mapping', comment: 'Maps a local objective to a global (shared) objective, controlling read/write of satisfied status and normalized measure (imsss:mapInfo / objectiveMappingType).' },
-    { name: 'RandomizationControls', label: 'Randomization Controls', comment: 'Controls for selecting and ordering child activities (imsss:randomizationControls / randomizationType).' },
-    { name: 'DeliveryControls', label: 'Delivery Controls', comment: 'Controls for how an activity is tracked and whether content sets completion/objective status (imsss:deliveryControls / deliveryControlsType).' },
-    { name: 'AuxiliaryResources', label: 'Auxiliary Resources', comment: 'Container of auxiliary resource references available during an activity (imsss:auxiliaryResources / auxiliaryResourcesType).' },
-    { name: 'AuxiliaryResource', label: 'Auxiliary Resource', comment: 'A reference to an auxiliary resource with an identifier and a purpose (auxiliaryResourceType).' },
-    // ADL adlseq extensions
-    { name: 'RollupConsiderations', label: 'Rollup Considerations', comment: 'ADL extension: when an activity is considered for the four rollup actions, and whether measure is included while active (adlseq:rollupConsiderations / rollupConsiderationsType).' },
-    { name: 'ConstrainedChoiceConsiderations', label: 'Constrained Choice Considerations', comment: 'ADL extension: constrains choice/activation navigation relative to the current activity (adlseq:constrainedChoiceConsiderations / constrainChoiceConsiderationsType).' },
-    // ADL adlnav extensions
-    { name: 'Presentation', label: 'Presentation', comment: 'ADL navigation extension: presentation settings for an activity, containing the navigation interface (adlnav:presentation / presentationType).' },
-    { name: 'NavigationInterface', label: 'Navigation Interface', comment: 'ADL navigation extension: which LMS-provided UI navigation controls to hide for an activity (adlnav:navigationInterface / navigationInterfaceType).' },
+    { name: 'Sequencing', label: 'Sequencing', notation: 'imsss:sequencing', comment: 'A sequencing definition: how the activity of an item or organization, and its children, are sequenced — control mode, sequencing rules, limit conditions, rollup rules, objectives, randomization and delivery controls, auxiliary resources, and ADL\'s extensions. A definition in the manifest\'s sequencing collection has an ID that others reuse by IDRef.', source: `${SS}: sequencingType` },
+    { name: 'SequencingCollection', label: 'Sequencing collection', notation: 'imsss:sequencingCollection', comment: 'The sequencing definitions a manifest shares among its items and organizations, each with an ID.', source: `${SS}: sequencingCollection` },
+    { name: 'ControlMode', label: 'Control mode', notation: 'imsss:controlMode', comment: 'The navigation an activity allows among its children: free choice, flow (continue and previous), whether flow is forward only, and whether only current-attempt information is used.', source: `${SS}: controlModeType` },
+    { name: 'SequencingRules', label: 'Sequencing rules', notation: 'imsss:sequencingRules', comment: 'The pre-condition, exit-condition and post-condition rules of an activity.', source: `${SS}: sequencingRulesType` },
+    { name: 'SequencingRule', label: 'Sequencing rule', comment: 'A rule that applies an action when its conditions hold: a pre-condition, exit-condition or post-condition rule, and only one of them.', source: `${SS}: sequencingRuleType`, disjointUnionOf: ['PreConditionRule', 'ExitConditionRule', 'PostConditionRule'] },
+    { name: 'PreConditionRule', label: 'Pre-condition rule', notation: 'imsss:preConditionRule', comment: 'A sequencing rule evaluated before an activity is delivered or traversed: it may skip, disable or hide the activity, or stop forward traversal.', subClassOf: ['SequencingRule'], source: `${SS}: preConditionRuleType` },
+    { name: 'ExitConditionRule', label: 'Exit-condition rule', notation: 'imsss:exitConditionRule', comment: 'A sequencing rule evaluated when an attempt on a descendant of the activity ends: it may exit the activity.', subClassOf: ['SequencingRule'], source: `${SS}: exitConditionRuleType` },
+    { name: 'PostConditionRule', label: 'Post-condition rule', notation: 'imsss:postConditionRule', comment: 'A sequencing rule evaluated when an attempt on the activity ends: it may exit the parent or the whole tree, retry, or continue or go back.', subClassOf: ['SequencingRule'], source: `${SS}: postConditionRuleType` },
+    { name: 'RuleConditions', label: 'Rule conditions', notation: 'imsss:ruleConditions', comment: 'The conditions of a sequencing rule, and whether all of them or any must hold.', source: `${SS}: sequencingRuleType (ruleConditions)` },
+    { name: 'RuleCondition', label: 'Rule condition', notation: 'imsss:ruleCondition', comment: 'One condition of a sequencing rule: what is tested, whether it is negated, and for objective conditions the objective and measure threshold tested against.', source: `${SS}: sequencingRuleType (ruleCondition)` },
+    { name: 'RuleAction', label: 'Rule action', notation: 'imsss:ruleAction', comment: 'The action a sequencing rule takes when its conditions hold; which actions are allowed depends on the kind of rule.', source: `${SS}: preConditionRuleType, exitConditionRuleType, postConditionRuleType (ruleAction)` },
+    { name: 'LimitConditions', label: 'Limit conditions', notation: 'imsss:limitConditions', comment: 'Limits on an activity: how many attempts, how long an attempt or the activity may take, and when it may begin and end.', source: `${SS}: limitConditionsType` },
+    { name: 'RollupRules', label: 'Rollup rules', notation: 'imsss:rollupRules', comment: 'How an activity\'s status is derived from its children: its rollup rules, whether it contributes to its parent\'s satisfaction and completion, and the weight of its measure.', source: `${SS}: rollupRulesType` },
+    { name: 'RollupRule', label: 'Rollup rule', notation: 'imsss:rollupRule', comment: 'A rule that sets an activity\'s status when its conditions hold for a given set of its children.', source: `${SS}: rollupRuleType` },
+    { name: 'RollupConditions', label: 'Rollup conditions', notation: 'imsss:rollupConditions', comment: 'The conditions of a rollup rule, and whether all of them or any must hold for a child.', source: `${SS}: rollupRuleType (rollupConditions)` },
+    { name: 'RollupCondition', label: 'Rollup condition', notation: 'imsss:rollupCondition', comment: 'One condition of a rollup rule, tested on each child: what is tested, and whether it is negated.', source: `${SS}: rollupRuleType (rollupCondition)` },
+    { name: 'RollupAction', label: 'Rollup action', notation: 'imsss:rollupAction', comment: 'The status a rollup rule sets on the activity when it applies.', source: `${SS}: rollupRuleType (rollupAction)` },
+    { name: 'Objectives', label: 'Objectives', notation: 'imsss:objectives', comment: 'The objectives of an activity: exactly one primary objective, which contributes to rollup, and any number of others, which do not.', source: `${SS}: objectivesType` },
+    { name: 'Objective', label: 'Objective', notation: 'imsss:objective', comment: 'A learning objective of an activity: its ID, whether it is satisfied by measure and with what minimum, and its maps to global objectives.', source: `${SS}: objectiveType` },
+    { name: 'ObjectiveMapping', label: 'Objective mapping', notation: 'imsss:mapInfo', comment: 'A map from an objective to a global objective: whether the objective reads and writes the global objective\'s satisfaction status and normalized measure.', source: `${SS}: objectiveMappingType` },
+    { name: 'RandomizationControls', label: 'Randomization controls', notation: 'imsss:randomizationControls', comment: 'Whether, and when, an activity\'s children are selected and reordered at random.', source: `${SS}: randomizationType` },
+    { name: 'DeliveryControls', label: 'Delivery controls', notation: 'imsss:deliveryControls', comment: 'Whether an activity is tracked, and whether its content, rather than the LMS, sets its completion and objective status.', source: `${SS}: deliveryControlsType` },
+    { name: 'AuxiliaryResources', label: 'Auxiliary resources', notation: 'imsss:auxiliaryResources', comment: 'The auxiliary resources available during an activity.', source: `${SS}: auxiliaryResourcesType` },
+    { name: 'AuxiliaryResource', label: 'Auxiliary resource', notation: 'imsss:auxiliaryResource', comment: 'A resource offered alongside an activity, by its ID and purpose.', source: `${SS}: auxiliaryResourceType` },
+    { name: 'RollupConsiderations', label: 'Rollup considerations', notation: 'adlseq:rollupConsiderations', comment: 'When an activity counts in its parent\'s rollup, for each of the four rollup statuses, and whether its measure counts while it is active.', source: `${ADLSEQ}: rollupConsiderationsType` },
+    { name: 'ConstrainedChoiceConsiderations', label: 'Constrained choice considerations', notation: 'adlseq:constrainedChoiceConsiderations', comment: 'Limits on choice navigation relative to an activity: whether choosing into it out of order is prevented, and whether choice is constrained to the activities next to it in flow.', source: `${ADLSEQ}: constrainChoiceConsiderationsType` },
+    { name: 'AdlObjective', label: 'ADL objective', notation: 'adlseq:objective', comment: 'The 4th Edition\'s further global-objective maps for one of an activity\'s objectives, named by its objective ID.', source: `${ADLSEQ}: objectiveType` },
+    { name: 'AdlObjectiveMapping', label: 'ADL objective mapping', notation: 'adlseq:mapInfo', comment: 'A map from an objective to a global objective for the data imsss:mapInfo does not carry: whether the objective reads and writes the global objective\'s raw, minimum and maximum score, completion status and progress measure. Added in the 4th Edition.', source: `${ADLSEQ}: mapInfoType` },
+    { name: 'Presentation', label: 'Presentation', notation: 'adlnav:presentation', comment: 'How an item is presented: the navigation controls the LMS hides while it is delivered.', source: `${ADLNAV}: presentationType` },
+    { name: 'NavigationInterface', label: 'Navigation interface', notation: 'adlnav:navigationInterface', comment: 'The LMS navigation controls to hide while an item is delivered.', source: `${ADLNAV}: navigationInterfaceType` },
+  ],
+  datatypes: [
+    { name: 'Duration', label: 'Duration', comment: 'A duration in the lexical form of XML Schema\'s xs:duration (an optional minus sign, then P, years, months, days, T, hours, minutes, seconds; at least one component), the type of the duration limits. Defined on xsd:string because xsd:duration is outside the OWL 2 datatype map.', base: 'xsd:string', pattern: XS_DURATION, source: `${SS}: limitConditionsType` },
+    { name: 'Measure', label: 'Measure', comment: 'A normalized measure, a number from -1 to 1: a decimal as the schema writes it, or a double, which is what JSON-LD 1.1 (§8.6) makes of a JSON number with a fraction.', base: 'xsd:decimal', alsoBases: ['xsd:double'], minInclusive: -1, maxInclusive: 1, source: `${SS}: measureType` },
   ],
   properties: [
-    // Sequencing root
-    { name: 'seqID', kind: 'datatype', label: 'ID', comment: 'xs:ID of a sequencing definition in the sequencing collection (sequencingType/@ID).', domain: 'Sequencing', range: 'xsd:string' },
-    { name: 'seqIDRef', kind: 'datatype', label: 'IDRef', comment: 'xs:IDREF to a sequencing definition in the sequencing collection (sequencingType/@IDRef).', domain: 'Sequencing', range: 'xsd:string' },
-    { name: 'controlMode', kind: 'object', label: 'controlMode', comment: 'The control mode of the sequencing definition (sequencingType/controlMode).', domain: 'Sequencing', range: 'ControlMode' },
-    { name: 'sequencingRules', kind: 'object', label: 'sequencingRules', comment: 'The sequencing rules (sequencingType/sequencingRules).', domain: 'Sequencing', range: 'SequencingRules' },
-    { name: 'limitConditions', kind: 'object', label: 'limitConditions', comment: 'The limit conditions (sequencingType/limitConditions).', domain: 'Sequencing', range: 'LimitConditions' },
-    { name: 'auxiliaryResources', kind: 'object', label: 'auxiliaryResources', comment: 'The auxiliary resources (sequencingType/auxiliaryResources).', domain: 'Sequencing', range: 'AuxiliaryResources' },
-    { name: 'rollupRules', kind: 'object', label: 'rollupRules', comment: 'The rollup rules (sequencingType/rollupRules).', domain: 'Sequencing', range: 'RollupRules' },
-    { name: 'objectives', kind: 'object', label: 'objectives', comment: 'The objectives (sequencingType/objectives).', domain: 'Sequencing', range: 'Objectives' },
-    { name: 'randomizationControls', kind: 'object', label: 'randomizationControls', comment: 'The randomization controls (sequencingType/randomizationControls).', domain: 'Sequencing', range: 'RandomizationControls' },
-    { name: 'deliveryControls', kind: 'object', label: 'deliveryControls', comment: 'The delivery controls (sequencingType/deliveryControls).', domain: 'Sequencing', range: 'DeliveryControls' },
-    { name: 'rollupConsiderations', kind: 'object', label: 'rollupConsiderations', comment: 'ADL extension: rollup considerations of the sequencing definition (adlseq:rollupConsiderations).', domain: 'Sequencing', range: 'RollupConsiderations' },
-    { name: 'constrainedChoiceConsiderations', kind: 'object', label: 'constrainedChoiceConsiderations', comment: 'ADL extension: constrained choice considerations of the sequencing definition (adlseq:constrainedChoiceConsiderations).', domain: 'Sequencing', range: 'ConstrainedChoiceConsiderations' },
-    { name: 'adlObjectives', kind: 'object', label: 'adlseq objectives', comment: 'ADL extension: additional adlseq objectives container of the sequencing definition (adlseq objectives, mapping local to global objectives with the same objectiveType/mapInfo structure).', domain: 'Sequencing', range: 'Objectives' },
-    { name: 'presentation', kind: 'object', label: 'presentation', comment: 'ADL navigation extension: presentation settings of the sequencing definition (adlnav:presentation).', domain: 'Sequencing', range: 'Presentation' },
-    { name: 'objectivesGlobalToSystem', kind: 'datatype', label: 'objectivesGlobalToSystem', comment: 'ADL extension attribute declared on the CP <item> (adlseq:objectivesGlobalToSystem): whether global objectives are shared system-wide (true) or per-learner-per-course (false). Default true. (No explicit rdfs:domain — the XSD anchors it on the CAM item, which the SN module does not model.)', range: 'xsd:boolean' },
-    // ControlMode (controlModeType)
-    { name: 'choice', kind: 'datatype', label: 'choice', comment: 'Whether the learner may freely choose any child activity. Default true (controlModeType/@choice).', domain: 'ControlMode', range: 'xsd:boolean' },
-    { name: 'choiceExit', kind: 'datatype', label: 'choiceExit', comment: 'Whether a choice navigation request may terminate the activity. Default true (controlModeType/@choiceExit).', domain: 'ControlMode', range: 'xsd:boolean' },
-    { name: 'flow', kind: 'datatype', label: 'flow', comment: 'Whether flow (continue/previous) navigation is permitted through the children. Default false (controlModeType/@flow).', domain: 'ControlMode', range: 'xsd:boolean' },
-    { name: 'forwardOnly', kind: 'datatype', label: 'forwardOnly', comment: 'Whether backward (previous) flow traversal is prohibited. Default false (controlModeType/@forwardOnly).', domain: 'ControlMode', range: 'xsd:boolean' },
-    { name: 'useCurrentAttemptObjectiveInfo', kind: 'datatype', label: 'useCurrentAttemptObjectiveInfo', comment: 'Whether only current-attempt objective info is used in sequencing for the children. Default true (controlModeType/@useCurrentAttemptObjectiveInfo).', domain: 'ControlMode', range: 'xsd:boolean' },
-    { name: 'useCurrentAttemptProgressInfo', kind: 'datatype', label: 'useCurrentAttemptProgressInfo', comment: 'Whether only current-attempt progress info is used in sequencing for the children. Default true (controlModeType/@useCurrentAttemptProgressInfo).', domain: 'ControlMode', range: 'xsd:boolean' },
-    // SequencingRules
-    { name: 'preConditionRule', kind: 'object', label: 'preConditionRule', comment: 'A pre-condition rule (sequencingRulesType/preConditionRule).', domain: 'SequencingRules', range: 'PreConditionRule' },
-    { name: 'exitConditionRule', kind: 'object', label: 'exitConditionRule', comment: 'An exit-condition rule (sequencingRulesType/exitConditionRule).', domain: 'SequencingRules', range: 'ExitConditionRule' },
-    { name: 'postConditionRule', kind: 'object', label: 'postConditionRule', comment: 'A post-condition rule (sequencingRulesType/postConditionRule).', domain: 'SequencingRules', range: 'PostConditionRule' },
-    // SequencingRule -> conditions + action
-    { name: 'ruleConditions', kind: 'object', label: 'ruleConditions', comment: 'The optional set of conditions of a sequencing rule (sequencingRuleType/ruleConditions).', domain: 'SequencingRule', range: 'RuleConditions' },
-    { name: 'ruleAction', kind: 'object', label: 'ruleAction', comment: 'The action of a sequencing rule (sequencingRuleType extension/ruleAction).', domain: 'SequencingRule', range: 'RuleAction' },
-    // RuleConditions / RuleCondition
-    { name: 'ruleConditionCombination', kind: 'datatype', label: 'conditionCombination', comment: 'How the rule conditions are combined: all/any. Default all for sequencing rules (ruleConditions/@conditionCombination).', domain: 'RuleConditions', range: 'xsd:string' },
-    { name: 'ruleCondition', kind: 'object', label: 'ruleCondition', comment: 'A single rule condition (ruleConditions/ruleCondition).', domain: 'RuleConditions', range: 'RuleCondition' },
-    { name: 'referencedObjective', kind: 'datatype', label: 'referencedObjective', comment: 'IRI of the objective the condition refers to (ruleCondition/@referencedObjective).', domain: 'RuleCondition', range: 'xsd:anyURI' },
-    { name: 'measureThreshold', kind: 'datatype', label: 'measureThreshold', comment: 'Normalized measure threshold in [-1,1] used by measure-comparison conditions (ruleCondition/@measureThreshold, measureType).', domain: 'RuleCondition', range: 'xsd:decimal' },
-    { name: 'conditionOperator', kind: 'datatype', label: 'operator', comment: 'Whether the condition is negated: not / noOp. Default noOp (ruleCondition/@operator, conditionOperatorType).', domain: 'RuleCondition', range: 'xsd:string' },
-    { name: 'ruleConditionName', kind: 'datatype', label: 'condition', comment: 'The named sequencing rule condition (ruleCondition/@condition, sequencingRuleConditionType). Required.', domain: 'RuleCondition', range: 'xsd:string' },
-    // RuleAction
-    { name: 'ruleActionValue', kind: 'datatype', label: 'action', comment: 'The action token of a sequencing rule, constrained per rule kind (pre/exit/post). Required (ruleAction/@action).', domain: 'RuleAction', range: 'xsd:string' },
-    // LimitConditions (limitConditionsType)
-    { name: 'attemptLimit', kind: 'datatype', label: 'attemptLimit', comment: 'Maximum number of attempts on the activity (limitConditionsType/@attemptLimit).', domain: 'LimitConditions', range: 'xsd:nonNegativeInteger' },
-    { name: 'attemptAbsoluteDurationLimit', kind: 'datatype', label: 'attemptAbsoluteDurationLimit', comment: 'Maximum absolute (wall-clock) duration of a single attempt (limitConditionsType/@attemptAbsoluteDurationLimit, xs:duration).', domain: 'LimitConditions', range: 'xsd:duration' },
-    { name: 'attemptExperiencedDurationLimit', kind: 'datatype', label: 'attemptExperiencedDurationLimit', comment: 'Maximum experienced (active) duration of a single attempt (limitConditionsType/@attemptExperiencedDurationLimit, xs:duration).', domain: 'LimitConditions', range: 'xsd:duration' },
-    { name: 'activityAbsoluteDurationLimit', kind: 'datatype', label: 'activityAbsoluteDurationLimit', comment: 'Maximum absolute duration accumulated across attempts on the activity (limitConditionsType/@activityAbsoluteDurationLimit, xs:duration).', domain: 'LimitConditions', range: 'xsd:duration' },
-    { name: 'activityExperiencedDurationLimit', kind: 'datatype', label: 'activityExperiencedDurationLimit', comment: 'Maximum experienced duration accumulated across attempts on the activity (limitConditionsType/@activityExperiencedDurationLimit, xs:duration).', domain: 'LimitConditions', range: 'xsd:duration' },
-    { name: 'beginTimeLimit', kind: 'datatype', label: 'beginTimeLimit', comment: 'Earliest time the activity may begin (limitConditionsType/@beginTimeLimit, xs:dateTime).', domain: 'LimitConditions', range: 'xsd:dateTime' },
-    { name: 'endTimeLimit', kind: 'datatype', label: 'endTimeLimit', comment: 'Latest time the activity may be delivered (limitConditionsType/@endTimeLimit, xs:dateTime).', domain: 'LimitConditions', range: 'xsd:dateTime' },
-    // RollupRules (rollupRulesType)
-    { name: 'rollupRule', kind: 'object', label: 'rollupRule', comment: 'A single rollup rule (rollupRulesType/rollupRule).', domain: 'RollupRules', range: 'RollupRule' },
-    { name: 'rollupObjectiveSatisfied', kind: 'datatype', label: 'rollupObjectiveSatisfied', comment: 'Whether the activity contributes to its parent objective satisfaction rollup. Default true (rollupRulesType/@rollupObjectiveSatisfied).', domain: 'RollupRules', range: 'xsd:boolean' },
-    { name: 'rollupProgressCompletion', kind: 'datatype', label: 'rollupProgressCompletion', comment: 'Whether the activity contributes to its parent progress/completion rollup. Default true (rollupRulesType/@rollupProgressCompletion).', domain: 'RollupRules', range: 'xsd:boolean' },
-    { name: 'objectiveMeasureWeight', kind: 'datatype', label: 'objectiveMeasureWeight', comment: 'Weight of this activity measure in the parent rollup measure, in [0,1]. Default 1.0000 (rollupRulesType/@objectiveMeasureWeight, weightType).', domain: 'RollupRules', range: 'xsd:decimal' },
-    // RollupRule (rollupRuleType)
-    { name: 'childActivitySet', kind: 'datatype', label: 'childActivitySet', comment: 'Which children the rollup rule considers: all/any/none/atLeastCount/atLeastPercent. Default all (rollupRuleType/@childActivitySet, childActivityType).', domain: 'RollupRule', range: 'xsd:string' },
-    { name: 'minimumCount', kind: 'datatype', label: 'minimumCount', comment: 'Minimum number of children for the atLeastCount set. Default 0 (rollupRuleType/@minimumCount).', domain: 'RollupRule', range: 'xsd:nonNegativeInteger' },
-    { name: 'minimumPercent', kind: 'datatype', label: 'minimumPercent', comment: 'Minimum fraction of children for the atLeastPercent set, in [0,1]. Default 0 (rollupRuleType/@minimumPercent, percentType).', domain: 'RollupRule', range: 'xsd:decimal' },
-    { name: 'rollupConditions', kind: 'object', label: 'rollupConditions', comment: 'The rollup conditions of the rule (rollupRuleType/rollupConditions).', domain: 'RollupRule', range: 'RollupConditions' },
-    { name: 'rollupActionEl', kind: 'object', label: 'rollupAction', comment: 'The action of the rollup rule (rollupRuleType/rollupAction).', domain: 'RollupRule', range: 'RollupAction' },
-    // RollupConditions / RollupCondition
-    { name: 'rollupConditionCombination', kind: 'datatype', label: 'conditionCombination', comment: 'How the rollup conditions are combined: all/any. Default any (rollupConditions/@conditionCombination).', domain: 'RollupConditions', range: 'xsd:string' },
-    { name: 'rollupCondition', kind: 'object', label: 'rollupCondition', comment: 'A single rollup condition (rollupConditions/rollupCondition).', domain: 'RollupConditions', range: 'RollupCondition' },
-    { name: 'rollupConditionOperator', kind: 'datatype', label: 'operator', comment: 'Whether the rollup condition is negated: not / noOp. Default noOp (rollupCondition/@operator, conditionOperatorType).', domain: 'RollupCondition', range: 'xsd:string' },
-    { name: 'rollupConditionName', kind: 'datatype', label: 'condition', comment: 'The named rollup condition (rollupCondition/@condition, rollupRuleConditionType). Required.', domain: 'RollupCondition', range: 'xsd:string' },
-    // RollupAction
-    { name: 'rollupActionValue', kind: 'datatype', label: 'action', comment: 'The rollup action applied to the parent: satisfied/notSatisfied/completed/incomplete. Required (rollupAction/@action, rollupActionType).', domain: 'RollupAction', range: 'xsd:string' },
-    // Objectives / Objective / ObjectiveMapping
-    { name: 'primaryObjective', kind: 'object', label: 'primaryObjective', comment: 'The single objective that contributes to activity rollup (objectivesType/primaryObjective). Its objectiveID is optional.', domain: 'Objectives', range: 'Objective' },
-    { name: 'objective', kind: 'object', label: 'objective', comment: 'An objective that does not contribute to activity rollup (objectivesType/objective). Its objectiveID is required.', domain: 'Objectives', range: 'Objective' },
-    { name: 'objectiveID', kind: 'datatype', label: 'objectiveID', comment: 'Identifier (IRI/GUID) of the objective (primaryObjective/objective @objectiveID, xs:anyURI).', domain: 'Objective', range: 'xsd:anyURI' },
-    { name: 'satisfiedByMeasure', kind: 'datatype', label: 'satisfiedByMeasure', comment: 'Whether objective satisfaction is determined by the normalized measure against minNormalizedMeasure. Default false (objectiveType/@satisfiedByMeasure).', domain: 'Objective', range: 'xsd:boolean' },
-    { name: 'minNormalizedMeasure', kind: 'datatype', label: 'minNormalizedMeasure', comment: 'Minimum normalized measure required for satisfaction, in [-1,1]. Default 1.00000 (objectiveType/minNormalizedMeasure, measureType).', domain: 'Objective', range: 'xsd:decimal' },
-    { name: 'mapInfo', kind: 'object', label: 'mapInfo', comment: 'A mapping of this local objective to a global objective (objectiveType/mapInfo).', domain: 'Objective', range: 'ObjectiveMapping' },
-    { name: 'targetObjectiveID', kind: 'datatype', label: 'targetObjectiveID', comment: 'Identifier (IRI/GUID) of the global objective mapped to. Required (objectiveMappingType/@targetObjectiveID, xs:anyURI).', domain: 'ObjectiveMapping', range: 'xsd:anyURI' },
-    { name: 'readSatisfiedStatus', kind: 'datatype', label: 'readSatisfiedStatus', comment: 'Whether the local objective reads satisfied status from the global objective. Default true (objectiveMappingType/@readSatisfiedStatus).', domain: 'ObjectiveMapping', range: 'xsd:boolean' },
-    { name: 'readNormalizedMeasure', kind: 'datatype', label: 'readNormalizedMeasure', comment: 'Whether the local objective reads normalized measure from the global objective. Default true (objectiveMappingType/@readNormalizedMeasure).', domain: 'ObjectiveMapping', range: 'xsd:boolean' },
-    { name: 'writeSatisfiedStatus', kind: 'datatype', label: 'writeSatisfiedStatus', comment: 'Whether the local objective writes satisfied status to the global objective. Default false (objectiveMappingType/@writeSatisfiedStatus).', domain: 'ObjectiveMapping', range: 'xsd:boolean' },
-    { name: 'writeNormalizedMeasure', kind: 'datatype', label: 'writeNormalizedMeasure', comment: 'Whether the local objective writes normalized measure to the global objective. Default false (objectiveMappingType/@writeNormalizedMeasure).', domain: 'ObjectiveMapping', range: 'xsd:boolean' },
-    // RandomizationControls (randomizationType)
-    { name: 'randomizationTiming', kind: 'datatype', label: 'randomizationTiming', comment: 'When children are reordered: never/once/onEachNewAttempt. Default never (randomizationType/@randomizationTiming, randomTimingType).', domain: 'RandomizationControls', range: 'xsd:string' },
-    { name: 'selectCount', kind: 'datatype', label: 'selectCount', comment: 'Number of child activities to select (randomizationType/@selectCount).', domain: 'RandomizationControls', range: 'xsd:nonNegativeInteger' },
-    { name: 'reorderChildren', kind: 'datatype', label: 'reorderChildren', comment: 'Whether children are reordered when randomization is applied. Default false (randomizationType/@reorderChildren).', domain: 'RandomizationControls', range: 'xsd:boolean' },
-    { name: 'selectionTiming', kind: 'datatype', label: 'selectionTiming', comment: 'When the child subset is selected: never/once/onEachNewAttempt. Default never (randomizationType/@selectionTiming, randomTimingType).', domain: 'RandomizationControls', range: 'xsd:string' },
-    // DeliveryControls (deliveryControlsType)
-    { name: 'tracked', kind: 'datatype', label: 'tracked', comment: 'Whether the activity is tracked for sequencing/rollup. Default true (deliveryControlsType/@tracked).', domain: 'DeliveryControls', range: 'xsd:boolean' },
-    { name: 'completionSetByContent', kind: 'datatype', label: 'completionSetByContent', comment: 'Whether completion status is set by the content (SCO) rather than the LMS. Default false (deliveryControlsType/@completionSetByContent).', domain: 'DeliveryControls', range: 'xsd:boolean' },
-    { name: 'objectiveSetByContent', kind: 'datatype', label: 'objectiveSetByContent', comment: 'Whether the primary objective satisfied status is set by the content rather than the LMS. Default false (deliveryControlsType/@objectiveSetByContent).', domain: 'DeliveryControls', range: 'xsd:boolean' },
-    // AuxiliaryResources
-    { name: 'auxiliaryResource', kind: 'object', label: 'auxiliaryResource', comment: 'An auxiliary resource reference (auxiliaryResourcesType/auxiliaryResource).', domain: 'AuxiliaryResources', range: 'AuxiliaryResource' },
-    { name: 'auxiliaryResourceID', kind: 'datatype', label: 'auxiliaryResourceID', comment: 'Identifier (IRI) of the auxiliary resource. Required (auxiliaryResourceType/@auxiliaryResourceID, xs:anyURI).', domain: 'AuxiliaryResource', range: 'xsd:anyURI' },
-    { name: 'purpose', kind: 'datatype', label: 'purpose', comment: 'The purpose of the auxiliary resource. Required (auxiliaryResourceType/@purpose).', domain: 'AuxiliaryResource', range: 'xsd:string' },
-    // ADL adlseq: RollupConsiderations (rollupConsiderationsType)
-    { name: 'requiredForSatisfied', kind: 'datatype', label: 'requiredForSatisfied', comment: 'When the activity must be evaluated before a "satisfied" rollup: always/ifAttempted/ifNotSkipped/ifNotSuspended. Default always (rollupConsiderationsType/@requiredForSatisfied).', domain: 'RollupConsiderations', range: 'xsd:string' },
-    { name: 'requiredForNotSatisfied', kind: 'datatype', label: 'requiredForNotSatisfied', comment: 'When the activity must be evaluated before a "not satisfied" rollup. Default always (rollupConsiderationsType/@requiredForNotSatisfied).', domain: 'RollupConsiderations', range: 'xsd:string' },
-    { name: 'requiredForCompleted', kind: 'datatype', label: 'requiredForCompleted', comment: 'When the activity must be evaluated before a "completed" rollup. Default always (rollupConsiderationsType/@requiredForCompleted).', domain: 'RollupConsiderations', range: 'xsd:string' },
-    { name: 'requiredForIncomplete', kind: 'datatype', label: 'requiredForIncomplete', comment: 'When the activity must be evaluated before an "incomplete" rollup. Default always (rollupConsiderationsType/@requiredForIncomplete).', domain: 'RollupConsiderations', range: 'xsd:string' },
-    { name: 'measureSatisfactionIfActive', kind: 'datatype', label: 'measureSatisfactionIfActive', comment: 'Whether measure-based satisfaction is evaluated while the activity is active. Default true (rollupConsiderationsType/@measureSatisfactionIfActive).', domain: 'RollupConsiderations', range: 'xsd:boolean' },
-    // ADL adlseq: ConstrainedChoiceConsiderations (constrainChoiceConsiderationsType)
-    { name: 'preventActivation', kind: 'datatype', label: 'preventActivation', comment: 'Whether choosing a descendant that would activate this cluster out of flow order is prevented. Default false (constrainChoiceConsiderationsType/@preventActivation).', domain: 'ConstrainedChoiceConsiderations', range: 'xsd:boolean' },
-    { name: 'constrainChoice', kind: 'datatype', label: 'constrainChoice', comment: 'Whether choice navigation is constrained to the flow-adjacent activities. Default false (constrainChoiceConsiderationsType/@constrainChoice).', domain: 'ConstrainedChoiceConsiderations', range: 'xsd:boolean' },
-    // ADL adlnav: Presentation / NavigationInterface
-    { name: 'navigationInterface', kind: 'object', label: 'navigationInterface', comment: 'The navigation interface settings (presentationType/navigationInterface).', domain: 'Presentation', range: 'NavigationInterface' },
-    { name: 'hideLMSUI', kind: 'datatype', label: 'hideLMSUI', comment: 'An LMS-provided navigation control to hide for the activity: previous/continue/exit/exitAll/abandon/abandonAll/suspendAll (navigationInterfaceType/hideLMSUI, hideLMSUIType). Repeatable.', domain: 'NavigationInterface', range: 'xsd:string' },
+    // ── Where sequencing attaches (IMS SS on IMS CP) ──
+    { name: 'sequencing', kind: 'object', label: 'sequencing', notation: 'imsss:sequencing', comment: 'The sequencing definition of an item or organization, or one of the definitions in a sequencing collection.', domain: ['foxxi-scorm-cam:Item', 'foxxi-scorm-cam:Organization', 'SequencingCollection'], range: 'Sequencing', source: `${SS}: sequencing` },
+    { name: 'sequencingCollection', kind: 'object', label: 'sequencing collection', notation: 'imsss:sequencingCollection', comment: 'The sequencing definitions a manifest shares.', domain: 'foxxi-scorm-cam:Manifest', range: 'SequencingCollection', functional: true, source: `${SS}: sequencingCollection` },
+    { name: 'objectivesGlobalToSystem', kind: 'datatype', label: 'objectives global to system', notation: 'adlseq:objectivesGlobalToSystem', comment: 'Whether the global objectives an organization\'s activities map to are global to the LMS, shared with other packages for the same learner (true, the default), or belong to this package (false).', domain: 'foxxi-scorm-cam:Organization', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: objectivesGlobalToSystem` },
+    { name: 'presentation', kind: 'object', label: 'presentation', notation: 'adlnav:presentation', comment: 'How an item is presented: which LMS navigation controls are hidden while it is delivered. A child of the item, not of its sequencing.', domain: 'foxxi-scorm-cam:Item', range: 'Presentation', functional: true, source: `${ADLNAV}: presentation` },
+    // ── Sequencing ──
+    { name: 'seqID', kind: 'datatype', label: 'sequencing ID', notation: 'ID', comment: 'The ID of a sequencing definition in the manifest\'s sequencing collection (an XML ID).', domain: 'Sequencing', range: 'xsd:string', functional: true, source: `${SS}: sequencingType/@ID` },
+    { name: 'seqIDRef', kind: 'datatype', label: 'sequencing ID reference', notation: 'IDRef', comment: 'The ID of the definition in the sequencing collection that this definition reuses and extends (an XML IDREF).', domain: 'Sequencing', range: 'xsd:string', functional: true, source: `${SS}: sequencingType/@IDRef` },
+    { name: 'controlMode', kind: 'object', label: 'control mode', notation: 'imsss:controlMode', comment: 'The control mode of a sequencing definition.', domain: 'Sequencing', range: 'ControlMode', functional: true, source: `${SS}: sequencingType` },
+    { name: 'sequencingRules', kind: 'object', label: 'sequencing rules', notation: 'imsss:sequencingRules', comment: 'The sequencing rules of a sequencing definition.', domain: 'Sequencing', range: 'SequencingRules', functional: true, source: `${SS}: sequencingType` },
+    { name: 'limitConditions', kind: 'object', label: 'limit conditions', notation: 'imsss:limitConditions', comment: 'The limit conditions of a sequencing definition.', domain: 'Sequencing', range: 'LimitConditions', functional: true, source: `${SS}: sequencingType` },
+    { name: 'auxiliaryResources', kind: 'object', label: 'auxiliary resources', notation: 'imsss:auxiliaryResources', comment: 'The auxiliary resources of a sequencing definition.', domain: 'Sequencing', range: 'AuxiliaryResources', functional: true, source: `${SS}: sequencingType` },
+    { name: 'rollupRules', kind: 'object', label: 'rollup rules', notation: 'imsss:rollupRules', comment: 'The rollup rules of a sequencing definition.', domain: 'Sequencing', range: 'RollupRules', functional: true, source: `${SS}: sequencingType` },
+    { name: 'objectives', kind: 'object', label: 'objectives', notation: 'imsss:objectives', comment: 'The objectives of a sequencing definition.', domain: 'Sequencing', range: 'Objectives', functional: true, source: `${SS}: sequencingType` },
+    { name: 'randomizationControls', kind: 'object', label: 'randomization controls', notation: 'imsss:randomizationControls', comment: 'The randomization controls of a sequencing definition.', domain: 'Sequencing', range: 'RandomizationControls', functional: true, source: `${SS}: sequencingType` },
+    { name: 'deliveryControls', kind: 'object', label: 'delivery controls', notation: 'imsss:deliveryControls', comment: 'The delivery controls of a sequencing definition.', domain: 'Sequencing', range: 'DeliveryControls', functional: true, source: `${SS}: sequencingType` },
+    { name: 'rollupConsiderations', kind: 'object', label: 'rollup considerations', notation: 'adlseq:rollupConsiderations', comment: 'The rollup considerations of a sequencing definition.', domain: 'Sequencing', range: 'RollupConsiderations', functional: true, source: `${ADLSEQ}: rollupConsiderations` },
+    { name: 'constrainedChoiceConsiderations', kind: 'object', label: 'constrained choice considerations', notation: 'adlseq:constrainedChoiceConsiderations', comment: 'The constrained choice considerations of a sequencing definition.', domain: 'Sequencing', range: 'ConstrainedChoiceConsiderations', functional: true, source: `${ADLSEQ}: constrainedChoiceConsiderations` },
+    { name: 'adlObjectives', kind: 'object', label: 'ADL objectives', notation: 'adlseq:objectives', comment: 'An adlseq:objective of a sequencing definition: further global-objective maps for one of its objectives (4th Edition). Until 2026.10.0 this pointed at the imsss Objectives class, which is a different element.', domain: 'Sequencing', range: 'AdlObjective', source: `${ADLSEQ}: objectivesType` },
+    // ── Control mode ──
+    { name: 'choice', kind: 'datatype', label: 'choice', comment: 'Whether the learner may choose any of the activity\'s children. Default true.', domain: 'ControlMode', range: 'xsd:boolean', functional: true, source: `${SS}: controlModeType/@choice` },
+    { name: 'choiceExit', kind: 'datatype', label: 'choice exit', notation: 'choiceExit', comment: 'Whether a choice of an activity outside the activity may end it while it is active. Default true.', domain: 'ControlMode', range: 'xsd:boolean', functional: true, source: `${SS}: controlModeType/@choiceExit` },
+    { name: 'flow', kind: 'datatype', label: 'flow', comment: 'Whether the learner may move through the activity\'s children with continue and previous. Default false.', domain: 'ControlMode', range: 'xsd:boolean', functional: true, source: `${SS}: controlModeType/@flow` },
+    { name: 'forwardOnly', kind: 'datatype', label: 'forward only', notation: 'forwardOnly', comment: 'Whether moving backwards through the activity\'s children is prohibited. Default false.', domain: 'ControlMode', range: 'xsd:boolean', functional: true, source: `${SS}: controlModeType/@forwardOnly` },
+    { name: 'useCurrentAttemptObjectiveInfo', kind: 'datatype', label: 'use current attempt objective info', notation: 'useCurrentAttemptObjectiveInfo', comment: 'Whether sequencing uses the objective information of the children\'s current attempts only. Default true.', domain: 'ControlMode', range: 'xsd:boolean', functional: true, source: `${SS}: controlModeType/@useCurrentAttemptObjectiveInfo` },
+    { name: 'useCurrentAttemptProgressInfo', kind: 'datatype', label: 'use current attempt progress info', notation: 'useCurrentAttemptProgressInfo', comment: 'Whether sequencing uses the progress information of the children\'s current attempts only. Default true.', domain: 'ControlMode', range: 'xsd:boolean', functional: true, source: `${SS}: controlModeType/@useCurrentAttemptProgressInfo` },
+    // ── Sequencing rules ──
+    { name: 'preConditionRule', kind: 'object', label: 'pre-condition rule', notation: 'imsss:preConditionRule', comment: 'A pre-condition rule of the activity.', domain: 'SequencingRules', range: 'PreConditionRule', source: `${SS}: sequencingRulesType` },
+    { name: 'exitConditionRule', kind: 'object', label: 'exit-condition rule', notation: 'imsss:exitConditionRule', comment: 'An exit-condition rule of the activity.', domain: 'SequencingRules', range: 'ExitConditionRule', source: `${SS}: sequencingRulesType` },
+    { name: 'postConditionRule', kind: 'object', label: 'post-condition rule', notation: 'imsss:postConditionRule', comment: 'A post-condition rule of the activity.', domain: 'SequencingRules', range: 'PostConditionRule', source: `${SS}: sequencingRulesType` },
+    { name: 'ruleConditions', kind: 'object', label: 'rule conditions', notation: 'imsss:ruleConditions', comment: 'The conditions of a sequencing rule.', domain: 'SequencingRule', range: 'RuleConditions', functional: true, source: `${SS}: sequencingRuleType` },
+    { name: 'ruleAction', kind: 'object', label: 'rule action', notation: 'imsss:ruleAction', comment: 'The action of a sequencing rule.', domain: 'SequencingRule', range: 'RuleAction', functional: true, source: `${SS}: preConditionRuleType, exitConditionRuleType, postConditionRuleType` },
+    { name: 'ruleConditionCombination', kind: 'datatype', label: 'rule condition combination', notation: 'conditionCombination', comment: 'Whether all of a sequencing rule\'s conditions must hold, or any. Default all.', domain: 'RuleConditions', oneOf: ['all', 'any'], functional: true, source: `${SS}: conditionCombinationType` },
+    { name: 'ruleCondition', kind: 'object', label: 'rule condition', notation: 'imsss:ruleCondition', comment: 'A condition of a sequencing rule.', domain: 'RuleConditions', range: 'RuleCondition', source: `${SS}: sequencingRuleType` },
+    { name: 'referencedObjective', kind: 'datatype', label: 'referenced objective', notation: 'referencedObjective', comment: 'The ID of the activity\'s objective that the condition tests; the primary objective when absent.', domain: 'RuleCondition', range: 'xsd:anyURI', functional: true, source: `${SS}: ruleCondition/@referencedObjective` },
+    { name: 'measureThreshold', kind: 'datatype', label: 'measure threshold', notation: 'measureThreshold', comment: 'The normalized measure, from -1 to 1, that the objectiveMeasureGreaterThan and objectiveMeasureLessThan conditions compare with.', domain: 'RuleCondition', range: 'Measure', functional: true, source: `${SS}: ruleCondition/@measureThreshold (measureType)` },
+    { name: 'conditionOperator', kind: 'datatype', label: 'rule condition operator', notation: 'operator', comment: 'Whether a rule condition is negated (not) or taken as it is (noOp, the default).', domain: 'RuleCondition', oneOf: ['not', 'noOp'], functional: true, source: `${SS}: conditionOperatorType` },
+    { name: 'ruleConditionName', kind: 'datatype', label: 'rule condition name', notation: 'condition', comment: 'What a rule condition tests. Required.', domain: 'RuleCondition', oneOf: RULE_CONDITIONS, functional: true, source: `${SS}: sequencingRuleConditionType` },
+    { name: 'ruleActionValue', kind: 'datatype', label: 'rule action value', notation: 'action', comment: 'The action a sequencing rule takes; the kind of rule limits the choice. Required.', domain: 'RuleAction', oneOf: [...PRE_ACTIONS, ...EXIT_ACTIONS, ...POST_ACTIONS], functional: true, source: `${SS}: preConditionRuleActionType, exitConditionRuleActionType, postConditionRuleActionType` },
+    // ── Limit conditions ──
+    { name: 'attemptLimit', kind: 'datatype', label: 'attempt limit', notation: 'attemptLimit', comment: 'The most attempts the learner may make on the activity.', domain: 'LimitConditions', range: 'xsd:nonNegativeInteger', functional: true, source: `${SS}: limitConditionsType/@attemptLimit` },
+    { name: 'attemptAbsoluteDurationLimit', kind: 'datatype', label: 'attempt absolute duration limit', notation: 'attemptAbsoluteDurationLimit', comment: 'The longest an attempt on the activity may last, counting all the time it is open, suspensions included. The content reads it as cmi.max_time_allowed.', domain: 'LimitConditions', range: 'Duration', functional: true, source: `${SS}: limitConditionsType/@attemptAbsoluteDurationLimit` },
+    { name: 'attemptExperiencedDurationLimit', kind: 'datatype', label: 'attempt experienced duration limit', notation: 'attemptExperiencedDurationLimit', comment: 'The longest an attempt on the activity may last counting only the time the learner experiences it.', domain: 'LimitConditions', range: 'Duration', functional: true, source: `${SS}: limitConditionsType/@attemptExperiencedDurationLimit` },
+    { name: 'activityAbsoluteDurationLimit', kind: 'datatype', label: 'activity absolute duration limit', notation: 'activityAbsoluteDurationLimit', comment: 'The longest all attempts on the activity together may last, counting all the time they are open.', domain: 'LimitConditions', range: 'Duration', functional: true, source: `${SS}: limitConditionsType/@activityAbsoluteDurationLimit` },
+    { name: 'activityExperiencedDurationLimit', kind: 'datatype', label: 'activity experienced duration limit', notation: 'activityExperiencedDurationLimit', comment: 'The longest all attempts on the activity together may last, counting only the time the learner experiences them.', domain: 'LimitConditions', range: 'Duration', functional: true, source: `${SS}: limitConditionsType/@activityExperiencedDurationLimit` },
+    { name: 'beginTimeLimit', kind: 'datatype', label: 'begin time limit', notation: 'beginTimeLimit', comment: 'The earliest time the activity may begin.', domain: 'LimitConditions', range: 'xsd:dateTime', functional: true, source: `${SS}: limitConditionsType/@beginTimeLimit` },
+    { name: 'endTimeLimit', kind: 'datatype', label: 'end time limit', notation: 'endTimeLimit', comment: 'The latest time the activity may be delivered.', domain: 'LimitConditions', range: 'xsd:dateTime', functional: true, source: `${SS}: limitConditionsType/@endTimeLimit` },
+    // ── Rollup rules ──
+    { name: 'rollupRule', kind: 'object', label: 'rollup rule', notation: 'imsss:rollupRule', comment: 'A rollup rule of the activity.', domain: 'RollupRules', range: 'RollupRule', source: `${SS}: rollupRulesType` },
+    { name: 'rollupObjectiveSatisfied', kind: 'datatype', label: 'rollup objective satisfied', notation: 'rollupObjectiveSatisfied', comment: 'Whether the activity counts when its parent\'s objective satisfaction is rolled up. Default true.', domain: 'RollupRules', range: 'xsd:boolean', functional: true, source: `${SS}: rollupRulesType/@rollupObjectiveSatisfied` },
+    { name: 'rollupProgressCompletion', kind: 'datatype', label: 'rollup progress completion', notation: 'rollupProgressCompletion', comment: 'Whether the activity counts when its parent\'s completion is rolled up. Default true.', domain: 'RollupRules', range: 'xsd:boolean', functional: true, source: `${SS}: rollupRulesType/@rollupProgressCompletion` },
+    { name: 'objectiveMeasureWeight', kind: 'datatype', label: 'objective measure weight', notation: 'objectiveMeasureWeight', comment: 'The weight, from 0 to 1, of the activity\'s measure in its parent\'s rolled-up measure. Default 1.', domain: 'RollupRules', range: 'foxxi-scorm-cam:UnitInterval', functional: true, source: `${SS}: rollupRulesType/@objectiveMeasureWeight (weightType)` },
+    { name: 'childActivitySet', kind: 'datatype', label: 'child activity set', notation: 'childActivitySet', comment: 'For which of the children a rollup rule\'s conditions must hold. Default all.', domain: 'RollupRule', oneOf: CHILD_ACTIVITY_SETS, functional: true, source: `${SS}: childActivityType` },
+    { name: 'minimumCount', kind: 'datatype', label: 'minimum count', notation: 'minimumCount', comment: 'For the atLeastCount set, how many children the conditions must hold for. Default 0.', domain: 'RollupRule', range: 'xsd:nonNegativeInteger', functional: true, source: `${SS}: rollupRuleType/@minimumCount` },
+    { name: 'minimumPercent', kind: 'datatype', label: 'minimum percent', notation: 'minimumPercent', comment: 'For the atLeastPercent set, the fraction of children, from 0 to 1, the conditions must hold for. Default 0.', domain: 'RollupRule', range: 'foxxi-scorm-cam:UnitInterval', functional: true, source: `${SS}: rollupRuleType/@minimumPercent (percentType)` },
+    { name: 'rollupConditions', kind: 'object', label: 'rollup conditions', notation: 'imsss:rollupConditions', comment: 'The conditions of a rollup rule.', domain: 'RollupRule', range: 'RollupConditions', functional: true, source: `${SS}: rollupRuleType` },
+    { name: 'rollupActionEl', kind: 'object', label: 'rollup action', notation: 'imsss:rollupAction', comment: 'The action of a rollup rule.', domain: 'RollupRule', range: 'RollupAction', functional: true, source: `${SS}: rollupRuleType` },
+    { name: 'rollupConditionCombination', kind: 'datatype', label: 'rollup condition combination', notation: 'conditionCombination', comment: 'Whether all of a rollup rule\'s conditions must hold for a child, or any. Default any.', domain: 'RollupConditions', oneOf: ['all', 'any'], functional: true, source: `${SS}: conditionCombinationType` },
+    { name: 'rollupCondition', kind: 'object', label: 'rollup condition', notation: 'imsss:rollupCondition', comment: 'A condition of a rollup rule.', domain: 'RollupConditions', range: 'RollupCondition', source: `${SS}: rollupRuleType` },
+    { name: 'rollupConditionOperator', kind: 'datatype', label: 'rollup condition operator', notation: 'operator', comment: 'Whether a rollup condition is negated (not) or taken as it is (noOp, the default).', domain: 'RollupCondition', oneOf: ['not', 'noOp'], functional: true, source: `${SS}: conditionOperatorType` },
+    { name: 'rollupConditionName', kind: 'datatype', label: 'rollup condition name', notation: 'condition', comment: 'What a rollup condition tests on a child. Required.', domain: 'RollupCondition', oneOf: ROLLUP_CONDITIONS, functional: true, source: `${SS}: rollupRuleConditionType` },
+    { name: 'rollupActionValue', kind: 'datatype', label: 'rollup action value', notation: 'action', comment: 'The status a rollup rule sets on the activity. Required.', domain: 'RollupAction', oneOf: ROLLUP_ACTIONS, functional: true, source: `${SS}: rollupActionType` },
+    // ── Objectives ──
+    { name: 'primaryObjective', kind: 'object', label: 'primary objective', notation: 'imsss:primaryObjective', comment: 'The objective that contributes to the activity\'s rollup. Its objective ID is optional.', domain: 'Objectives', range: 'Objective', functional: true, source: `${SS}: objectivesType` },
+    { name: 'objective', kind: 'object', label: 'objective', notation: 'imsss:objective', comment: 'An objective that does not contribute to the activity\'s rollup. Its objective ID is required.', domain: 'Objectives', range: 'Objective', source: `${SS}: objectivesType` },
+    { name: 'objectiveID', kind: 'datatype', label: 'objective ID', notation: 'objectiveID', comment: 'The identifier of an objective, unique within the activity: on an adlseq:objective, the objective it extends.', domain: ['Objective', 'AdlObjective'], range: 'xsd:anyURI', functional: true, source: `${SS}: objectivesType/@objectiveID; ${ADLSEQ}: objectiveType/@objectiveID` },
+    { name: 'satisfiedByMeasure', kind: 'datatype', label: 'satisfied by measure', notation: 'satisfiedByMeasure', comment: 'Whether the objective is satisfied by comparing its normalized measure with its minimum normalized measure. Default false.', domain: 'Objective', range: 'xsd:boolean', functional: true, source: `${SS}: objectiveType/@satisfiedByMeasure` },
+    { name: 'minNormalizedMeasure', kind: 'datatype', label: 'minimum normalized measure', notation: 'imsss:minNormalizedMeasure', comment: 'The normalized measure, from -1 to 1, at or above which an objective satisfied by measure is satisfied. Default 1.0.', domain: 'Objective', range: 'Measure', functional: true, source: `${SS}: objectiveType (minNormalizedMeasure, measureType)` },
+    { name: 'mapInfo', kind: 'object', label: 'map info', notation: 'imsss:mapInfo', comment: 'A map from the objective to a global objective.', domain: 'Objective', range: 'ObjectiveMapping', source: `${SS}: objectiveType` },
+    { name: 'targetObjectiveID', kind: 'datatype', label: 'target objective ID', notation: 'targetObjectiveID', comment: 'The identifier of the global objective a map points at. Required.', domain: ['ObjectiveMapping', 'AdlObjectiveMapping'], range: 'xsd:anyURI', functional: true, source: `${SS}: objectiveMappingType/@targetObjectiveID; ${ADLSEQ}: mapInfoType/@targetObjectiveID` },
+    { name: 'readSatisfiedStatus', kind: 'datatype', label: 'read satisfied status', notation: 'readSatisfiedStatus', comment: 'Whether the objective takes its satisfaction status from the global objective. Default true.', domain: 'ObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${SS}: objectiveMappingType` },
+    { name: 'readNormalizedMeasure', kind: 'datatype', label: 'read normalized measure', notation: 'readNormalizedMeasure', comment: 'Whether the objective takes its normalized measure from the global objective. Default true.', domain: 'ObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${SS}: objectiveMappingType` },
+    { name: 'writeSatisfiedStatus', kind: 'datatype', label: 'write satisfied status', notation: 'writeSatisfiedStatus', comment: 'Whether the objective gives its satisfaction status to the global objective. Default false.', domain: 'ObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${SS}: objectiveMappingType` },
+    { name: 'writeNormalizedMeasure', kind: 'datatype', label: 'write normalized measure', notation: 'writeNormalizedMeasure', comment: 'Whether the objective gives its normalized measure to the global objective. Default false.', domain: 'ObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${SS}: objectiveMappingType` },
+    // ── 4th Edition objective maps (adlseq) ──
+    { name: 'adlMapInfo', kind: 'object', label: 'ADL map info', notation: 'adlseq:mapInfo', comment: 'A further map from the objective to a global objective. Added in the 4th Edition.', domain: 'AdlObjective', range: 'AdlObjectiveMapping', source: `${ADLSEQ}: objectiveType` },
+    { name: 'readRawScore', kind: 'datatype', label: 'read raw score', notation: 'readRawScore', comment: 'Whether the objective takes its raw score from the global objective. Default true.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    { name: 'readMinScore', kind: 'datatype', label: 'read minimum score', notation: 'readMinScore', comment: 'Whether the objective takes its minimum score from the global objective. Default true.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    { name: 'readMaxScore', kind: 'datatype', label: 'read maximum score', notation: 'readMaxScore', comment: 'Whether the objective takes its maximum score from the global objective. Default true.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    { name: 'readCompletionStatus', kind: 'datatype', label: 'read completion status', notation: 'readCompletionStatus', comment: 'Whether the objective takes its completion status from the global objective. Default true.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    { name: 'readProgressMeasure', kind: 'datatype', label: 'read progress measure', notation: 'readProgressMeasure', comment: 'Whether the objective takes its progress measure from the global objective. Default true.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    { name: 'writeRawScore', kind: 'datatype', label: 'write raw score', notation: 'writeRawScore', comment: 'Whether the objective gives its raw score to the global objective. Default false.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    { name: 'writeMinScore', kind: 'datatype', label: 'write minimum score', notation: 'writeMinScore', comment: 'Whether the objective gives its minimum score to the global objective. Default false.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    { name: 'writeMaxScore', kind: 'datatype', label: 'write maximum score', notation: 'writeMaxScore', comment: 'Whether the objective gives its maximum score to the global objective. Default false.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    { name: 'writeCompletionStatus', kind: 'datatype', label: 'write completion status', notation: 'writeCompletionStatus', comment: 'Whether the objective gives its completion status to the global objective. Default false.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    { name: 'writeProgressMeasure', kind: 'datatype', label: 'write progress measure', notation: 'writeProgressMeasure', comment: 'Whether the objective gives its progress measure to the global objective. Default false.', domain: 'AdlObjectiveMapping', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: mapInfoType` },
+    // ── Randomization and delivery ──
+    { name: 'randomizationTiming', kind: 'datatype', label: 'randomization timing', notation: 'randomizationTiming', comment: 'When the order of the activity\'s children is randomized. Default never.', domain: 'RandomizationControls', oneOf: RANDOM_TIMINGS, functional: true, source: `${SS}: randomizationType/@randomizationTiming (randomTimingType)` },
+    { name: 'selectCount', kind: 'datatype', label: 'select count', notation: 'selectCount', comment: 'How many of the activity\'s children are selected.', domain: 'RandomizationControls', range: 'xsd:nonNegativeInteger', functional: true, source: `${SS}: randomizationType/@selectCount` },
+    { name: 'reorderChildren', kind: 'datatype', label: 'reorder children', notation: 'reorderChildren', comment: 'Whether the activity\'s children are reordered when randomization takes place. Default false.', domain: 'RandomizationControls', range: 'xsd:boolean', functional: true, source: `${SS}: randomizationType/@reorderChildren` },
+    { name: 'selectionTiming', kind: 'datatype', label: 'selection timing', notation: 'selectionTiming', comment: 'When the subset of children is selected. Default never.', domain: 'RandomizationControls', oneOf: RANDOM_TIMINGS, functional: true, source: `${SS}: randomizationType/@selectionTiming (randomTimingType)` },
+    { name: 'tracked', kind: 'datatype', label: 'tracked', comment: 'Whether the activity\'s attempts are tracked for sequencing and rollup. Default true.', domain: 'DeliveryControls', range: 'xsd:boolean', functional: true, source: `${SS}: deliveryControlsType/@tracked` },
+    { name: 'completionSetByContent', kind: 'datatype', label: 'completion set by content', notation: 'completionSetByContent', comment: 'Whether the content sets the attempt\'s completion status, rather than the LMS. Default false.', domain: 'DeliveryControls', range: 'xsd:boolean', functional: true, source: `${SS}: deliveryControlsType/@completionSetByContent` },
+    { name: 'objectiveSetByContent', kind: 'datatype', label: 'objective set by content', notation: 'objectiveSetByContent', comment: 'Whether the content sets the primary objective\'s satisfaction status, rather than the LMS. Default false.', domain: 'DeliveryControls', range: 'xsd:boolean', functional: true, source: `${SS}: deliveryControlsType/@objectiveSetByContent` },
+    // ── Auxiliary resources ──
+    { name: 'auxiliaryResource', kind: 'object', label: 'auxiliary resource', notation: 'imsss:auxiliaryResource', comment: 'An auxiliary resource of the activity.', domain: 'AuxiliaryResources', range: 'AuxiliaryResource', source: `${SS}: auxiliaryResourcesType` },
+    { name: 'auxiliaryResourceID', kind: 'datatype', label: 'auxiliary resource ID', notation: 'auxiliaryResourceID', comment: 'The identifier of an auxiliary resource. Required.', domain: 'AuxiliaryResource', range: 'xsd:anyURI', functional: true, source: `${SS}: auxiliaryResourceType/@auxiliaryResourceID` },
+    { name: 'purpose', kind: 'datatype', label: 'purpose', comment: 'What an auxiliary resource is for. Required.', domain: 'AuxiliaryResource', range: 'xsd:string', functional: true, source: `${SS}: auxiliaryResourceType/@purpose` },
+    // ── Rollup considerations (adlseq) ──
+    { name: 'requiredForSatisfied', kind: 'datatype', label: 'required for satisfied', notation: 'requiredForSatisfied', comment: 'When the activity counts towards a satisfied rollup of its parent. Default always.', domain: 'RollupConsiderations', oneOf: ROLLUP_CONSIDERATIONS, functional: true, source: `${ADLSEQ}: rollupConsiderationsType` },
+    { name: 'requiredForNotSatisfied', kind: 'datatype', label: 'required for not satisfied', notation: 'requiredForNotSatisfied', comment: 'When the activity counts towards a not-satisfied rollup of its parent. Default always.', domain: 'RollupConsiderations', oneOf: ROLLUP_CONSIDERATIONS, functional: true, source: `${ADLSEQ}: rollupConsiderationsType` },
+    { name: 'requiredForCompleted', kind: 'datatype', label: 'required for completed', notation: 'requiredForCompleted', comment: 'When the activity counts towards a completed rollup of its parent. Default always.', domain: 'RollupConsiderations', oneOf: ROLLUP_CONSIDERATIONS, functional: true, source: `${ADLSEQ}: rollupConsiderationsType` },
+    { name: 'requiredForIncomplete', kind: 'datatype', label: 'required for incomplete', notation: 'requiredForIncomplete', comment: 'When the activity counts towards an incomplete rollup of its parent. Default always.', domain: 'RollupConsiderations', oneOf: ROLLUP_CONSIDERATIONS, functional: true, source: `${ADLSEQ}: rollupConsiderationsType` },
+    { name: 'measureSatisfactionIfActive', kind: 'datatype', label: 'measure satisfaction if active', notation: 'measureSatisfactionIfActive', comment: 'Whether the activity\'s measure counts towards satisfaction while the activity is active. Default true.', domain: 'RollupConsiderations', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: rollupConsiderationsType` },
+    // ── Constrained choice considerations (adlseq) ──
+    { name: 'preventActivation', kind: 'datatype', label: 'prevent activation', notation: 'preventActivation', comment: 'Whether a choice of a descendant may not start an attempt on the activity out of order. Default false.', domain: 'ConstrainedChoiceConsiderations', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: constrainChoiceConsiderationsType` },
+    { name: 'constrainChoice', kind: 'datatype', label: 'constrain choice', notation: 'constrainChoice', comment: 'Whether choice is limited to the activities next to the activity in flow. Default false.', domain: 'ConstrainedChoiceConsiderations', range: 'xsd:boolean', functional: true, source: `${ADLSEQ}: constrainChoiceConsiderationsType` },
+    // ── Presentation (adlnav) ──
+    { name: 'navigationInterface', kind: 'object', label: 'navigation interface', notation: 'adlnav:navigationInterface', comment: 'The navigation controls hidden while the item is delivered.', domain: 'Presentation', range: 'NavigationInterface', functional: true, source: `${ADLNAV}: presentationType` },
+    { name: 'hideLMSUI', kind: 'datatype', label: 'hide LMS UI', notation: 'adlnav:hideLMSUI', comment: 'An LMS navigation control to hide while the item is delivered. Repeatable.', domain: 'NavigationInterface', oneOf: HIDE_LMS_UI, source: `${ADLNAV}: hideLMSUIType` },
   ],
   vocabularies: [
     {
-      name: 'SequencingRuleConditionName', label: 'Sequencing Rule Conditions', comment: 'The condition vocabulary for sequencing (pre/exit/post) rule conditions (sequencingRuleConditionType).',
+      name: 'SequencingRuleConditionName', label: 'Sequencing rule conditions', comment: 'What a sequencing rule condition tests (sequencingRuleConditionType). Objective conditions test the referenced objective, or the primary objective.',
       members: [
-        { name: 'satisfied', label: 'satisfied' },
-        { name: 'objectiveStatusKnown', label: 'objectiveStatusKnown' },
-        { name: 'objectiveMeasureKnown', label: 'objectiveMeasureKnown' },
-        { name: 'objectiveMeasureGreaterThan', label: 'objectiveMeasureGreaterThan' },
-        { name: 'objectiveMeasureLessThan', label: 'objectiveMeasureLessThan' },
-        { name: 'completed', label: 'completed' },
-        { name: 'activityProgressKnown', label: 'activityProgressKnown' },
-        { name: 'attempted', label: 'attempted' },
-        { name: 'attemptLimitExceeded', label: 'attemptLimitExceeded' },
-        { name: 'timeLimitExceeded', label: 'timeLimitExceeded' },
-        { name: 'outsideAvailableTimeRange', label: 'outsideAvailableTimeRange' },
-        { name: 'always', label: 'always' },
+        { name: 'satisfied', label: 'satisfied', comment: 'The objective is satisfied.' },
+        { name: 'objectiveStatusKnown', label: 'objective status known', notation: 'objectiveStatusKnown', comment: 'Whether the objective is satisfied is known.' },
+        { name: 'objectiveMeasureKnown', label: 'objective measure known', notation: 'objectiveMeasureKnown', comment: 'The objective has a normalized measure.' },
+        { name: 'objectiveMeasureGreaterThan', label: 'objective measure greater than', notation: 'objectiveMeasureGreaterThan', comment: 'The objective\'s normalized measure is greater than the measure threshold.' },
+        { name: 'objectiveMeasureLessThan', label: 'objective measure less than', notation: 'objectiveMeasureLessThan', comment: 'The objective\'s normalized measure is less than the measure threshold.' },
+        { name: 'completed', label: 'completed', comment: 'The activity\'s attempt is completed.' },
+        { name: 'activityProgressKnown', label: 'activity progress known', notation: 'activityProgressKnown', comment: 'Whether the activity\'s attempt is completed is known.' },
+        { name: 'attempted', label: 'attempted', comment: 'The activity has been attempted at least once.' },
+        { name: 'attemptLimitExceeded', label: 'attempt limit exceeded', notation: 'attemptLimitExceeded', comment: 'The activity has used up its attempt limit.' },
+        { name: 'timeLimitExceeded', label: 'time limit exceeded', notation: 'timeLimitExceeded', comment: 'A duration limit of the activity has been exceeded.' },
+        { name: 'outsideAvailableTimeRange', label: 'outside available time range', notation: 'outsideAvailableTimeRange', comment: 'The current time is before the activity\'s begin time limit or after its end time limit.' },
+        { name: 'always', label: 'always', comment: 'Always holds.' },
       ],
     },
     {
-      name: 'RollupRuleConditionName', label: 'Rollup Rule Conditions', comment: 'The condition vocabulary for rollup rule conditions (rollupRuleConditionType) — the sequencing-condition set minus the measure-comparison and always conditions.',
+      name: 'RollupRuleConditionName', label: 'Rollup rule conditions', comment: 'What a rollup condition tests on a child (rollupRuleConditionType): the sequencing rule conditions without the measure comparisons and always.',
       members: [
-        { name: 'satisfied', label: 'satisfied' },
-        { name: 'objectiveStatusKnown', label: 'objectiveStatusKnown' },
-        { name: 'objectiveMeasureKnown', label: 'objectiveMeasureKnown' },
-        { name: 'completed', label: 'completed' },
-        { name: 'activityProgressKnown', label: 'activityProgressKnown' },
-        { name: 'attempted', label: 'attempted' },
-        { name: 'attemptLimitExceeded', label: 'attemptLimitExceeded' },
-        { name: 'timeLimitExceeded', label: 'timeLimitExceeded' },
-        { name: 'outsideAvailableTimeRange', label: 'outsideAvailableTimeRange' },
+        { name: 'satisfied', label: 'satisfied', comment: 'The child\'s objective is satisfied.' },
+        { name: 'objectiveStatusKnown', label: 'objective status known', notation: 'objectiveStatusKnown', comment: 'Whether the child\'s objective is satisfied is known.' },
+        { name: 'objectiveMeasureKnown', label: 'objective measure known', notation: 'objectiveMeasureKnown', comment: 'The child\'s objective has a normalized measure.' },
+        { name: 'completed', label: 'completed', comment: 'The child\'s attempt is completed.' },
+        { name: 'activityProgressKnown', label: 'activity progress known', notation: 'activityProgressKnown', comment: 'Whether the child\'s attempt is completed is known.' },
+        { name: 'attempted', label: 'attempted', comment: 'The child has been attempted at least once.' },
+        { name: 'attemptLimitExceeded', label: 'attempt limit exceeded', notation: 'attemptLimitExceeded', comment: 'The child has used up its attempt limit.' },
+        { name: 'timeLimitExceeded', label: 'time limit exceeded', notation: 'timeLimitExceeded', comment: 'A duration limit of the child has been exceeded.' },
+        { name: 'outsideAvailableTimeRange', label: 'outside available time range', notation: 'outsideAvailableTimeRange', comment: 'The current time is outside the child\'s begin and end time limits.' },
       ],
     },
     {
-      name: 'ConditionOperator', label: 'Condition Operator', comment: 'Negation operator on a rule condition (conditionOperatorType).',
+      name: 'ConditionOperator', label: 'Condition operators', comment: 'Whether a condition is negated (conditionOperatorType).',
       members: [
-        { name: 'not', label: 'not' },
-        { name: 'noOp', label: 'noOp' },
+        { name: 'not', label: 'not', comment: 'The condition holds when what it tests does not.' },
+        { name: 'noOp', label: 'no operation', notation: 'noOp', comment: 'The condition holds when what it tests does. The default.' },
       ],
     },
     {
-      name: 'ConditionCombination', label: 'Condition Combination', comment: 'How a rule\'s conditions are combined (conditionCombinationType).',
+      name: 'ConditionCombination', label: 'Condition combinations', comment: 'How a rule\'s conditions combine (conditionCombinationType).',
       members: [
-        { name: 'all', label: 'all' },
-        { name: 'any', label: 'any' },
+        { name: 'all', label: 'all', comment: 'The rule applies when every condition holds.' },
+        { name: 'any', label: 'any', comment: 'The rule applies when at least one condition holds.' },
       ],
     },
     {
-      name: 'PreConditionRuleAction', label: 'Pre-Condition Rule Actions', comment: 'The action vocabulary for pre-condition sequencing rules (preConditionRuleActionType).',
+      name: 'PreConditionRuleAction', label: 'Pre-condition rule actions', comment: 'What a pre-condition rule does when it applies (preConditionRuleActionType).',
       members: [
-        { name: 'skip', label: 'skip' },
-        { name: 'disabled', label: 'disabled' },
-        { name: 'hiddenFromChoice', label: 'hiddenFromChoice' },
-        { name: 'stopForwardTraversal', label: 'stopForwardTraversal' },
+        { name: 'skip', label: 'skip', comment: 'Flow navigation passes over the activity.' },
+        { name: 'disabled', label: 'disabled', comment: 'The activity cannot be delivered, chosen or entered.' },
+        { name: 'hiddenFromChoice', label: 'hidden from choice', notation: 'hiddenFromChoice', comment: 'The activity cannot be chosen, and is not shown as a choice.' },
+        { name: 'stopForwardTraversal', label: 'stop forward traversal', notation: 'stopForwardTraversal', comment: 'Flow navigation does not move forward past the activity.' },
       ],
     },
     {
-      name: 'ExitConditionRuleAction', label: 'Exit-Condition Rule Actions', comment: 'The action vocabulary for exit-condition sequencing rules (exitConditionRuleActionType).',
+      name: 'ExitConditionRuleAction', label: 'Exit-condition rule actions', comment: 'What an exit-condition rule does when it applies (exitConditionRuleActionType).',
       members: [
-        { name: 'exit', label: 'exit' },
+        { name: 'exit', label: 'exit', comment: 'The activity ends.' },
       ],
     },
     {
-      name: 'PostConditionRuleAction', label: 'Post-Condition Rule Actions', comment: 'The action vocabulary for post-condition sequencing rules (postConditionRuleActionType).',
+      name: 'PostConditionRuleAction', label: 'Post-condition rule actions', comment: 'What a post-condition rule does when it applies (postConditionRuleActionType).',
       members: [
-        { name: 'exitParent', label: 'exitParent' },
-        { name: 'exitAll', label: 'exitAll' },
-        { name: 'retry', label: 'retry' },
-        { name: 'retryAll', label: 'retryAll' },
-        { name: 'continue', label: 'continue' },
-        { name: 'previous', label: 'previous' },
+        { name: 'exitParent', label: 'exit parent', notation: 'exitParent', comment: 'The activity\'s parent ends.' },
+        { name: 'exitAll', label: 'exit all', notation: 'exitAll', comment: 'The whole activity tree ends.' },
+        { name: 'retry', label: 'retry', comment: 'A new attempt on the activity begins.' },
+        { name: 'retryAll', label: 'retry all', notation: 'retryAll', comment: 'A new attempt on the whole activity tree begins.' },
+        { name: 'continue', label: 'continue', comment: 'The next activity in flow is delivered.' },
+        { name: 'previous', label: 'previous', comment: 'The previous activity in flow is delivered.' },
       ],
     },
     {
-      // Named RollupActionValues (not RollupAction) so the SKOS ConceptScheme IRI does not
-      // collide with the owl:Class scorm-sn:RollupAction (one IRI cannot be both).
-      name: 'RollupActionValues', label: 'Rollup Actions', comment: 'The action vocabulary applied to a parent by a rollup rule (rollupActionType).',
+      // Named RollupActionValues (not RollupAction) so the scheme's IRI does not collide with the
+      // owl:Class RollupAction: one IRI cannot be both.
+      name: 'RollupActionValues', label: 'Rollup actions', comment: 'The status a rollup rule sets on an activity (rollupActionType).',
       members: [
-        { name: 'satisfied', label: 'satisfied' },
-        { name: 'notSatisfied', label: 'notSatisfied' },
-        { name: 'completed', label: 'completed' },
-        { name: 'incomplete', label: 'incomplete' },
+        { name: 'satisfied', label: 'satisfied', comment: 'The activity\'s objective is satisfied.' },
+        { name: 'notSatisfied', label: 'not satisfied', notation: 'notSatisfied', comment: 'The activity\'s objective is not satisfied.' },
+        { name: 'completed', label: 'completed', comment: 'The activity\'s attempt is completed.' },
+        { name: 'incomplete', label: 'incomplete', comment: 'The activity\'s attempt is incomplete.' },
       ],
     },
     {
-      name: 'ChildActivitySet', label: 'Child Activity Set', comment: 'Which subset of children a rollup rule considers (childActivityType).',
+      name: 'ChildActivitySet', label: 'Child activity sets', comment: 'For which of an activity\'s children a rollup rule\'s conditions must hold (childActivityType). Only children that count in the rollup are considered.',
       members: [
-        { name: 'all', label: 'all' },
-        { name: 'any', label: 'any' },
-        { name: 'none', label: 'none' },
-        { name: 'atLeastCount', label: 'atLeastCount' },
-        { name: 'atLeastPercent', label: 'atLeastPercent' },
+        { name: 'all', label: 'all', comment: 'Every child.' },
+        { name: 'any', label: 'any', comment: 'At least one child.' },
+        { name: 'none', label: 'none', comment: 'No child.' },
+        { name: 'atLeastCount', label: 'at least count', notation: 'atLeastCount', comment: 'At least the minimum count of children.' },
+        { name: 'atLeastPercent', label: 'at least percent', notation: 'atLeastPercent', comment: 'At least the minimum percent of the children.' },
       ],
     },
     {
-      name: 'RandomTiming', label: 'Randomization / Selection Timing', comment: 'When selection or reordering of children occurs (randomTimingType).',
+      name: 'RandomTiming', label: 'Randomization and selection timings', comment: 'When children are selected or reordered (randomTimingType).',
       members: [
-        { name: 'never', label: 'never' },
-        { name: 'once', label: 'once' },
-        { name: 'onEachNewAttempt', label: 'onEachNewAttempt' },
+        { name: 'never', label: 'never', comment: 'Never. The default.' },
+        { name: 'once', label: 'once', comment: 'Once, before the first attempt on the activity.' },
+        { name: 'onEachNewAttempt', label: 'on each new attempt', notation: 'onEachNewAttempt', comment: 'Before each new attempt on the activity.' },
       ],
     },
     {
-      name: 'RollupConsideration', label: 'Rollup Consideration', comment: 'ADL extension: when an activity is included in a rollup action (rollupConsiderationType).',
+      name: 'RollupConsideration', label: 'Rollup consideration values', comment: 'When a child counts in a rollup of its parent (adlseq rollupConsiderationType).',
       members: [
-        { name: 'always', label: 'always' },
-        { name: 'ifAttempted', label: 'ifAttempted' },
-        { name: 'ifNotSkipped', label: 'ifNotSkipped' },
-        { name: 'ifNotSuspended', label: 'ifNotSuspended' },
+        { name: 'always', label: 'always', comment: 'Always. The default.' },
+        { name: 'ifAttempted', label: 'if attempted', notation: 'ifAttempted', comment: 'Only if it has been attempted.' },
+        { name: 'ifNotSkipped', label: 'if not skipped', notation: 'ifNotSkipped', comment: 'Unless it was skipped.' },
+        { name: 'ifNotSuspended', label: 'if not suspended', notation: 'ifNotSuspended', comment: 'Unless its attempt is suspended.' },
       ],
     },
     {
-      name: 'HideLMSUI', label: 'Hide LMS UI Controls', comment: 'ADL navigation extension: LMS-provided navigation controls that may be hidden (hideLMSUIType).',
+      name: 'HideLMSUI', label: 'Hideable LMS controls', comment: 'The LMS navigation controls an item may hide (adlnav hideLMSUIType).',
       members: [
-        { name: 'previous', label: 'previous' },
-        { name: 'continue', label: 'continue' },
-        { name: 'exit', label: 'exit' },
-        { name: 'exitAll', label: 'exitAll' },
-        { name: 'abandon', label: 'abandon' },
-        { name: 'abandonAll', label: 'abandonAll' },
-        { name: 'suspendAll', label: 'suspendAll' },
+        { name: 'previous', label: 'previous', comment: 'The control that goes to the previous activity.' },
+        { name: 'continue', label: 'continue', comment: 'The control that goes to the next activity.' },
+        { name: 'exit', label: 'exit', comment: 'The control that ends the current activity.' },
+        { name: 'exitAll', label: 'exit all', notation: 'exitAll', comment: 'The control that ends the whole activity tree.' },
+        { name: 'abandon', label: 'abandon', comment: 'The control that abandons the current activity.' },
+        { name: 'abandonAll', label: 'abandon all', notation: 'abandonAll', comment: 'The control that abandons the whole activity tree.' },
+        { name: 'suspendAll', label: 'suspend all', notation: 'suspendAll', comment: 'The control that suspends the whole activity tree, to resume later.' },
       ],
     },
   ],
+  disjoint: [
+    // Each is a different element of the binding.
+    ['Sequencing', 'SequencingCollection', 'ControlMode', 'SequencingRules', 'SequencingRule', 'RuleConditions', 'RuleCondition', 'RuleAction', 'LimitConditions', 'RollupRules', 'RollupRule', 'RollupConditions', 'RollupCondition', 'RollupAction', 'Objectives', 'Objective', 'ObjectiveMapping', 'RandomizationControls', 'DeliveryControls', 'AuxiliaryResources', 'AuxiliaryResource', 'RollupConsiderations', 'ConstrainedChoiceConsiderations', 'AdlObjective', 'AdlObjectiveMapping', 'Presentation', 'NavigationInterface'],
+  ],
   shapes: [
     {
-      name: 'ControlModeShape', targetClass: 'ControlMode', label: 'ControlMode conformance',
-      comment: 'controlModeType: each control flag is at most one boolean (defaults choice/choiceExit/useCurrent*=true, flow/forwardOnly=false).',
+      name: 'SequencingShape', targetClass: 'Sequencing', label: 'Sequencing definition conformance',
+      comment: `A sequencing definition has at most one of each of its parts, and at most one ID and one IDRef (${SS}: sequencingType).`,
       constraints: [
-        { path: 'choice', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'choiceExit', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'flow', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'forwardOnly', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'useCurrentAttemptObjectiveInfo', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'useCurrentAttemptProgressInfo', maxCount: 1, datatype: 'xsd:boolean' },
+        { path: 'seqID', maxCount: 1, datatype: 'xsd:string', comment: '@ID' },
+        { path: 'seqIDRef', maxCount: 1, datatype: 'xsd:string', comment: '@IDRef' },
+        { path: 'controlMode', maxCount: 1 },
+        { path: 'sequencingRules', maxCount: 1 },
+        { path: 'limitConditions', maxCount: 1 },
+        { path: 'auxiliaryResources', maxCount: 1 },
+        { path: 'rollupRules', maxCount: 1 },
+        { path: 'objectives', maxCount: 1 },
+        { path: 'randomizationControls', maxCount: 1 },
+        { path: 'deliveryControls', maxCount: 1 },
+        { path: 'rollupConsiderations', maxCount: 1 },
+        { path: 'constrainedChoiceConsiderations', maxCount: 1 },
+      ],
+    },
+    {
+      name: 'SequencingCollectionShape', targetClass: 'SequencingCollection', label: 'Sequencing collection conformance',
+      comment: `A sequencing collection holds at least one sequencing definition (${SS}: sequencingCollection).`,
+      constraints: [
+        { path: 'sequencing', minCount: 1, comment: 'one or more <imsss:sequencing>' },
+      ],
+    },
+    {
+      name: 'ControlModeShape', targetClass: 'ControlMode', label: 'Control mode conformance',
+      comment: `Each control flag is at most one boolean (${SS}: controlModeType).`,
+      constraints: [
+        { path: 'choice', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
+        { path: 'choiceExit', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
+        { path: 'flow', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
+        { path: 'forwardOnly', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
+        { path: 'useCurrentAttemptObjectiveInfo', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
+        { path: 'useCurrentAttemptProgressInfo', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
       ],
     },
     {
       name: 'RuleConditionShape', targetClass: 'RuleCondition', label: 'Sequencing rule condition conformance',
-      comment: 'ruleCondition: condition is required and from sequencingRuleConditionType; operator from conditionOperatorType; measureThreshold ∈ [-1,1]; referencedObjective is an IRI.',
+      comment: `A rule condition names what it tests, from the twelve sequencing rule conditions; its operator is not or noOp; its measure threshold is from -1 to 1; its referenced objective is an objective ID (${SS}: sequencingRuleType).`,
       constraints: [
-        { path: 'ruleConditionName', minCount: 1, maxCount: 1, in: ['satisfied', 'objectiveStatusKnown', 'objectiveMeasureKnown', 'objectiveMeasureGreaterThan', 'objectiveMeasureLessThan', 'completed', 'activityProgressKnown', 'attempted', 'attemptLimitExceeded', 'timeLimitExceeded', 'outsideAvailableTimeRange', 'always'], comment: 'sequencingRuleConditionType (required)' },
-        { path: 'conditionOperator', maxCount: 1, in: ['not', 'noOp'], comment: 'conditionOperatorType (default noOp)' },
-        { path: 'measureThreshold', maxCount: 1, datatype: 'xsd:decimal', minInclusive: -1, maxInclusive: 1, comment: 'measureType ∈ [-1,1]' },
-        { path: 'referencedObjective', maxCount: 1, nodeKind: 'IRI', comment: 'xs:anyURI' },
+        { path: 'ruleConditionName', minCount: 1, maxCount: 1, datatype: 'xsd:string', in: RULE_CONDITIONS, comment: 'sequencingRuleConditionType (required)' },
+        { path: 'conditionOperator', maxCount: 1, datatype: 'xsd:string', in: ['not', 'noOp'], comment: 'conditionOperatorType (default noOp)' },
+        { path: 'measureThreshold', maxCount: 1, datatype: NUMBER, minInclusive: -1, maxInclusive: 1, comment: 'measureType, from -1 to 1' },
+        { path: 'referencedObjective', maxCount: 1, datatype: 'xsd:anyURI', comment: 'an objective ID (xs:anyURI)' },
       ],
     },
     {
       name: 'RuleConditionsShape', targetClass: 'RuleConditions', label: 'Sequencing rule conditions conformance',
-      comment: 'ruleConditions: conditionCombination is all/any (default all); at least one ruleCondition (maxOccurs unbounded).',
+      comment: `A rule's conditions combine by all or any (default all), and there is at least one (${SS}: sequencingRuleType).`,
       constraints: [
-        { path: 'ruleConditionCombination', maxCount: 1, in: ['all', 'any'], comment: 'conditionCombinationType (default all)' },
-        { path: 'ruleCondition', minCount: 1, comment: 'one or more ruleCondition' },
+        { path: 'ruleConditionCombination', maxCount: 1, datatype: 'xsd:string', in: ['all', 'any'], comment: 'conditionCombinationType (default all)' },
+        { path: 'ruleCondition', minCount: 1, comment: 'one or more <imsss:ruleCondition>' },
       ],
     },
     {
-      name: 'PreConditionRuleActionShape', targetClass: 'PreConditionRule', label: 'Pre-condition rule action conformance',
-      comment: 'preConditionRule/ruleAction/@action MUST be one of preConditionRuleActionType.',
+      name: 'PreConditionRuleActionShape', targetClass: 'PreConditionRule', label: 'Pre-condition rule conformance',
+      comment: `A pre-condition rule has exactly one action, one of skip, disabled, hiddenFromChoice, stopForwardTraversal (${SS}: preConditionRuleActionType).`,
       constraints: [
-        { path: 'ruleAction', minCount: 1, maxCount: 1, comment: 'exactly one ruleAction' },
+        { path: 'ruleAction', minCount: 1, maxCount: 1, comment: 'exactly one <imsss:ruleAction>' },
+        { path: 'ruleAction.ruleActionValue', rdfPath: ['ruleAction', 'ruleActionValue'], maxCount: 1, datatype: 'xsd:string', in: PRE_ACTIONS, comment: 'a pre-condition action' },
       ],
     },
     {
-      name: 'PostConditionRuleActionShape', targetClass: 'PostConditionRule', label: 'Post-condition rule action conformance',
-      comment: 'postConditionRule/ruleAction/@action MUST be one of postConditionRuleActionType.',
+      name: 'ExitConditionRuleActionShape', targetClass: 'ExitConditionRule', label: 'Exit-condition rule conformance',
+      comment: `An exit-condition rule has exactly one action, exit (${SS}: exitConditionRuleActionType).`,
       constraints: [
-        { path: 'ruleAction', minCount: 1, maxCount: 1, comment: 'exactly one ruleAction' },
+        { path: 'ruleAction', minCount: 1, maxCount: 1, comment: 'exactly one <imsss:ruleAction>' },
+        { path: 'ruleAction.ruleActionValue', rdfPath: ['ruleAction', 'ruleActionValue'], maxCount: 1, datatype: 'xsd:string', in: EXIT_ACTIONS, comment: 'exit' },
       ],
     },
     {
-      name: 'ExitConditionRuleActionShape', targetClass: 'ExitConditionRule', label: 'Exit-condition rule action conformance',
-      comment: 'exitConditionRule/ruleAction/@action MUST be "exit" (exitConditionRuleActionType).',
+      name: 'PostConditionRuleActionShape', targetClass: 'PostConditionRule', label: 'Post-condition rule conformance',
+      comment: `A post-condition rule has exactly one action, one of exitParent, exitAll, retry, retryAll, continue, previous (${SS}: postConditionRuleActionType).`,
       constraints: [
-        { path: 'ruleAction', minCount: 1, maxCount: 1, comment: 'exactly one ruleAction' },
+        { path: 'ruleAction', minCount: 1, maxCount: 1, comment: 'exactly one <imsss:ruleAction>' },
+        { path: 'ruleAction.ruleActionValue', rdfPath: ['ruleAction', 'ruleActionValue'], maxCount: 1, datatype: 'xsd:string', in: POST_ACTIONS, comment: 'a post-condition action' },
       ],
     },
     {
       name: 'RuleActionShape', targetClass: 'RuleAction', label: 'Rule action conformance',
-      comment: 'ruleAction/@action is required; the union of all permitted sequencing rule action tokens (pre/exit/post) — the rule kind narrows it further via its rule-specific shape.',
+      comment: `A rule action has exactly one action from the sequencing rule actions; the rule's own shape narrows it to its kind (${SS}).`,
       constraints: [
-        { path: 'ruleActionValue', minCount: 1, maxCount: 1, in: ['skip', 'disabled', 'hiddenFromChoice', 'stopForwardTraversal', 'exit', 'exitParent', 'exitAll', 'retry', 'retryAll', 'continue', 'previous'], comment: 'pre/exit/post action vocabularies (required)' },
+        { path: 'ruleActionValue', minCount: 1, maxCount: 1, datatype: 'xsd:string', in: [...PRE_ACTIONS, ...EXIT_ACTIONS, ...POST_ACTIONS], comment: 'required' },
       ],
     },
     {
       name: 'LimitConditionsShape', targetClass: 'LimitConditions', label: 'Limit conditions conformance',
-      comment: 'limitConditionsType: attemptLimit is a non-negative integer; the four duration limits are xs:duration; begin/end time limits are xs:dateTime.',
+      comment: `The attempt limit is a non-negative integer, the four duration limits are xs:duration values, and the begin and end time limits are date-times (${SS}: limitConditionsType).`,
       constraints: [
-        { path: 'attemptLimit', maxCount: 1, datatype: 'xsd:nonNegativeInteger' },
-        { path: 'attemptAbsoluteDurationLimit', maxCount: 1, datatype: 'xsd:duration' },
-        { path: 'attemptExperiencedDurationLimit', maxCount: 1, datatype: 'xsd:duration' },
-        { path: 'activityAbsoluteDurationLimit', maxCount: 1, datatype: 'xsd:duration' },
-        { path: 'activityExperiencedDurationLimit', maxCount: 1, datatype: 'xsd:duration' },
-        { path: 'beginTimeLimit', maxCount: 1, datatype: 'xsd:dateTime' },
-        { path: 'endTimeLimit', maxCount: 1, datatype: 'xsd:dateTime' },
+        { path: 'attemptLimit', maxCount: 1, datatype: ['xsd:nonNegativeInteger', 'xsd:integer'], minInclusive: 0, comment: 'xs:nonNegativeInteger' },
+        { path: 'attemptAbsoluteDurationLimit', maxCount: 1, datatype: 'xsd:string', pattern: XS_DURATION, comment: 'xs:duration' },
+        { path: 'attemptExperiencedDurationLimit', maxCount: 1, datatype: 'xsd:string', pattern: XS_DURATION, comment: 'xs:duration' },
+        { path: 'activityAbsoluteDurationLimit', maxCount: 1, datatype: 'xsd:string', pattern: XS_DURATION, comment: 'xs:duration' },
+        { path: 'activityExperiencedDurationLimit', maxCount: 1, datatype: 'xsd:string', pattern: XS_DURATION, comment: 'xs:duration' },
+        { path: 'beginTimeLimit', maxCount: 1, datatype: 'xsd:dateTime', comment: 'xs:dateTime' },
+        { path: 'endTimeLimit', maxCount: 1, datatype: 'xsd:dateTime', comment: 'xs:dateTime' },
       ],
     },
     {
       name: 'RollupRulesShape', targetClass: 'RollupRules', label: 'Rollup rules conformance',
-      comment: 'rollupRulesType: objectiveMeasureWeight (weightType) ∈ [0,1] default 1.0000; rollup flags are booleans (default true).',
+      comment: `The rollup flags are booleans (default true) and the objective measure weight is from 0 to 1 (default 1) (${SS}: rollupRulesType).`,
       constraints: [
-        { path: 'rollupObjectiveSatisfied', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'rollupProgressCompletion', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'objectiveMeasureWeight', maxCount: 1, datatype: 'xsd:decimal', minInclusive: 0, maxInclusive: 1, comment: 'weightType ∈ [0,1]' },
+        { path: 'rollupObjectiveSatisfied', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
+        { path: 'rollupProgressCompletion', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
+        { path: 'objectiveMeasureWeight', maxCount: 1, datatype: NUMBER, minInclusive: 0, maxInclusive: 1, comment: 'weightType, from 0 to 1' },
       ],
     },
     {
       name: 'RollupRuleShape', targetClass: 'RollupRule', label: 'Rollup rule conformance',
-      comment: 'rollupRuleType: childActivitySet from childActivityType (default all); minimumCount non-negative integer (default 0); minimumPercent ∈ [0,1] (percentType, default 0); exactly one rollupConditions and one rollupAction.',
+      comment: `A rollup rule has a child activity set (default all), a minimum count and percent, exactly one set of conditions and exactly one action (${SS}: rollupRuleType).`,
       constraints: [
-        { path: 'childActivitySet', maxCount: 1, in: ['all', 'any', 'none', 'atLeastCount', 'atLeastPercent'], comment: 'childActivityType (default all)' },
-        { path: 'minimumCount', maxCount: 1, datatype: 'xsd:nonNegativeInteger' },
-        { path: 'minimumPercent', maxCount: 1, datatype: 'xsd:decimal', minInclusive: 0, maxInclusive: 1, comment: 'percentType ∈ [0,1]' },
-        { path: 'rollupConditions', minCount: 1, maxCount: 1, comment: 'exactly one rollupConditions' },
-        { path: 'rollupActionEl', minCount: 1, maxCount: 1, comment: 'exactly one rollupAction' },
+        { path: 'childActivitySet', maxCount: 1, datatype: 'xsd:string', in: CHILD_ACTIVITY_SETS, comment: 'childActivityType (default all)' },
+        { path: 'minimumCount', maxCount: 1, datatype: ['xsd:nonNegativeInteger', 'xsd:integer'], minInclusive: 0, comment: 'default 0' },
+        { path: 'minimumPercent', maxCount: 1, datatype: NUMBER, minInclusive: 0, maxInclusive: 1, comment: 'percentType, from 0 to 1' },
+        { path: 'rollupConditions', minCount: 1, maxCount: 1, comment: 'exactly one <imsss:rollupConditions>' },
+        { path: 'rollupActionEl', minCount: 1, maxCount: 1, comment: 'exactly one <imsss:rollupAction>' },
       ],
     },
     {
       name: 'RollupConditionsShape', targetClass: 'RollupConditions', label: 'Rollup conditions conformance',
-      comment: 'rollupConditions: conditionCombination all/any (default any); at least one rollupCondition (maxOccurs unbounded).',
+      comment: `A rollup rule's conditions combine by all or any (default any), and there is at least one (${SS}: rollupRuleType).`,
       constraints: [
-        { path: 'rollupConditionCombination', maxCount: 1, in: ['all', 'any'], comment: 'conditionCombinationType (default any)' },
-        { path: 'rollupCondition', minCount: 1, comment: 'one or more rollupCondition' },
+        { path: 'rollupConditionCombination', maxCount: 1, datatype: 'xsd:string', in: ['all', 'any'], comment: 'conditionCombinationType (default any)' },
+        { path: 'rollupCondition', minCount: 1, comment: 'one or more <imsss:rollupCondition>' },
       ],
     },
     {
       name: 'RollupConditionShape', targetClass: 'RollupCondition', label: 'Rollup condition conformance',
-      comment: 'rollupCondition: condition required and from rollupRuleConditionType; operator from conditionOperatorType (default noOp).',
+      comment: `A rollup condition names what it tests, from the nine rollup conditions; its operator is not or noOp (${SS}: rollupRuleConditionType).`,
       constraints: [
-        { path: 'rollupConditionName', minCount: 1, maxCount: 1, in: ['satisfied', 'objectiveStatusKnown', 'objectiveMeasureKnown', 'completed', 'activityProgressKnown', 'attempted', 'attemptLimitExceeded', 'timeLimitExceeded', 'outsideAvailableTimeRange'], comment: 'rollupRuleConditionType (required)' },
-        { path: 'rollupConditionOperator', maxCount: 1, in: ['not', 'noOp'], comment: 'conditionOperatorType (default noOp)' },
+        { path: 'rollupConditionName', minCount: 1, maxCount: 1, datatype: 'xsd:string', in: ROLLUP_CONDITIONS, comment: 'rollupRuleConditionType (required)' },
+        { path: 'rollupConditionOperator', maxCount: 1, datatype: 'xsd:string', in: ['not', 'noOp'], comment: 'conditionOperatorType (default noOp)' },
       ],
     },
     {
       name: 'RollupActionShape', targetClass: 'RollupAction', label: 'Rollup action conformance',
-      comment: 'rollupAction/@action MUST be one of rollupActionType (satisfied/notSatisfied/completed/incomplete) and is required.',
+      comment: `A rollup action is exactly one of satisfied, notSatisfied, completed, incomplete (${SS}: rollupActionType).`,
       constraints: [
-        { path: 'rollupActionValue', minCount: 1, maxCount: 1, in: ['satisfied', 'notSatisfied', 'completed', 'incomplete'], comment: 'rollupActionType (required)' },
+        { path: 'rollupActionValue', minCount: 1, maxCount: 1, datatype: 'xsd:string', in: ROLLUP_ACTIONS, comment: 'rollupActionType (required)' },
       ],
     },
     {
       name: 'ObjectivesShape', targetClass: 'Objectives', label: 'Objectives conformance',
-      comment: 'objectivesType: exactly one primaryObjective (contributes to rollup); zero or more objective (do not contribute to rollup).',
+      comment: `Objectives have exactly one primary objective, which contributes to rollup, and any number of others (${SS}: objectivesType).`,
       constraints: [
-        { path: 'primaryObjective', minCount: 1, maxCount: 1, comment: 'exactly one primaryObjective' },
-        { path: 'objective', comment: 'zero or more objective' },
+        { path: 'primaryObjective', minCount: 1, maxCount: 1, comment: 'exactly one <imsss:primaryObjective>' },
       ],
     },
     {
       name: 'ObjectiveShape', targetClass: 'Objective', label: 'Objective conformance',
-      comment: 'objectiveType: objectiveID is an IRI; satisfiedByMeasure boolean (default false); minNormalizedMeasure ∈ [-1,1] (measureType, default 1.00000).',
+      comment: `An objective has at most one ID, which is required on objectives other than the primary one; satisfiedByMeasure is a boolean; the minimum normalized measure is from -1 to 1 (${SS}: objectiveType).`,
       constraints: [
-        { path: 'objectiveID', maxCount: 1, nodeKind: 'IRI', comment: 'xs:anyURI (required on non-primary objective)' },
-        { path: 'satisfiedByMeasure', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'minNormalizedMeasure', maxCount: 1, datatype: 'xsd:decimal', minInclusive: -1, maxInclusive: 1, comment: 'measureType ∈ [-1,1]' },
+        { path: 'objectiveID', maxCount: 1, datatype: 'xsd:anyURI', comment: 'xs:anyURI (required on objectives other than the primary one)' },
+        { path: 'satisfiedByMeasure', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
+        { path: 'minNormalizedMeasure', maxCount: 1, datatype: NUMBER, minInclusive: -1, maxInclusive: 1, comment: 'measureType, from -1 to 1 (default 1.0)' },
       ],
     },
     {
       name: 'ObjectiveMappingShape', targetClass: 'ObjectiveMapping', label: 'Objective mapping conformance',
-      comment: 'objectiveMappingType: targetObjectiveID required IRI; read/write status/measure flags are booleans (read* default true, write* default false).',
+      comment: `A map names its global objective; its read and write flags are booleans (read default true, write default false) (${SS}: objectiveMappingType).`,
       constraints: [
-        { path: 'targetObjectiveID', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'xs:anyURI (required)' },
-        { path: 'readSatisfiedStatus', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'readNormalizedMeasure', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'writeSatisfiedStatus', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'writeNormalizedMeasure', maxCount: 1, datatype: 'xsd:boolean' },
+        { path: 'targetObjectiveID', minCount: 1, maxCount: 1, datatype: 'xsd:anyURI', comment: 'xs:anyURI (required)' },
+        { path: 'readSatisfiedStatus', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
+        { path: 'readNormalizedMeasure', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
+        { path: 'writeSatisfiedStatus', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
+        { path: 'writeNormalizedMeasure', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
+      ],
+    },
+    {
+      name: 'AdlObjectiveShape', targetClass: 'AdlObjective', label: 'ADL objective conformance',
+      comment: `An adlseq:objective names the objective it extends and has at least one map (${ADLSEQ}: objectiveType).`,
+      constraints: [
+        { path: 'objectiveID', minCount: 1, maxCount: 1, datatype: 'xsd:anyURI', comment: 'xs:anyURI (required)' },
+        { path: 'adlMapInfo', minCount: 1, comment: 'one or more <adlseq:mapInfo>' },
+      ],
+    },
+    {
+      name: 'AdlObjectiveMappingShape', targetClass: 'AdlObjectiveMapping', label: 'ADL objective mapping conformance',
+      comment: `An adlseq:mapInfo names its global objective; its read and write flags are booleans (read default true, write default false) (${ADLSEQ}: mapInfoType).`,
+      constraints: [
+        { path: 'targetObjectiveID', minCount: 1, maxCount: 1, datatype: 'xsd:anyURI', comment: 'xs:anyURI (required)' },
+        ...['readRawScore', 'readMinScore', 'readMaxScore', 'readCompletionStatus', 'readProgressMeasure'].map(path => ({ path, maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' })),
+        ...['writeRawScore', 'writeMinScore', 'writeMaxScore', 'writeCompletionStatus', 'writeProgressMeasure'].map(path => ({ path, maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' })),
       ],
     },
     {
       name: 'RandomizationControlsShape', targetClass: 'RandomizationControls', label: 'Randomization controls conformance',
-      comment: 'randomizationType: randomizationTiming/selectionTiming from randomTimingType (default never); selectCount non-negative integer; reorderChildren boolean (default false).',
+      comment: `The timings are never, once or onEachNewAttempt (default never); selectCount is a non-negative integer; reorderChildren is a boolean (default false) (${SS}: randomizationType).`,
       constraints: [
-        { path: 'randomizationTiming', maxCount: 1, in: ['never', 'once', 'onEachNewAttempt'], comment: 'randomTimingType (default never)' },
-        { path: 'selectCount', maxCount: 1, datatype: 'xsd:nonNegativeInteger' },
-        { path: 'reorderChildren', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'selectionTiming', maxCount: 1, in: ['never', 'once', 'onEachNewAttempt'], comment: 'randomTimingType (default never)' },
+        { path: 'randomizationTiming', maxCount: 1, datatype: 'xsd:string', in: RANDOM_TIMINGS, comment: 'randomTimingType (default never)' },
+        { path: 'selectCount', maxCount: 1, datatype: ['xsd:nonNegativeInteger', 'xsd:integer'], minInclusive: 0, comment: 'xs:nonNegativeInteger' },
+        { path: 'reorderChildren', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
+        { path: 'selectionTiming', maxCount: 1, datatype: 'xsd:string', in: RANDOM_TIMINGS, comment: 'randomTimingType (default never)' },
       ],
     },
     {
       name: 'DeliveryControlsShape', targetClass: 'DeliveryControls', label: 'Delivery controls conformance',
-      comment: 'deliveryControlsType: tracked (default true), completionSetByContent (default false), objectiveSetByContent (default false) are booleans.',
+      comment: `tracked (default true), completionSetByContent and objectiveSetByContent (default false) are booleans (${SS}: deliveryControlsType).`,
       constraints: [
-        { path: 'tracked', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'completionSetByContent', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'objectiveSetByContent', maxCount: 1, datatype: 'xsd:boolean' },
+        { path: 'tracked', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
+        { path: 'completionSetByContent', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
+        { path: 'objectiveSetByContent', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
       ],
     },
     {
       name: 'AuxiliaryResourceShape', targetClass: 'AuxiliaryResource', label: 'Auxiliary resource conformance',
-      comment: 'auxiliaryResourceType: auxiliaryResourceID required IRI; purpose required string.',
+      comment: `An auxiliary resource has exactly one ID and one purpose (${SS}: auxiliaryResourceType).`,
       constraints: [
-        { path: 'auxiliaryResourceID', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'xs:anyURI (required)' },
+        { path: 'auxiliaryResourceID', minCount: 1, maxCount: 1, datatype: 'xsd:anyURI', comment: 'xs:anyURI (required)' },
         { path: 'purpose', minCount: 1, maxCount: 1, datatype: 'xsd:string', comment: 'required' },
       ],
     },
     {
-      name: 'RollupConsiderationsShape', targetClass: 'RollupConsiderations', label: 'ADL rollup considerations conformance',
-      comment: 'adlseq rollupConsiderationsType: the four requiredFor* attributes are from rollupConsiderationType (default always); measureSatisfactionIfActive boolean (default true).',
+      name: 'RollupConsiderationsShape', targetClass: 'RollupConsiderations', label: 'Rollup considerations conformance',
+      comment: `The four requiredFor attributes are always, ifAttempted, ifNotSkipped or ifNotSuspended (default always); measureSatisfactionIfActive is a boolean (default true) (${ADLSEQ}: rollupConsiderationsType).`,
       constraints: [
-        { path: 'requiredForSatisfied', maxCount: 1, in: ['always', 'ifAttempted', 'ifNotSkipped', 'ifNotSuspended'], comment: 'rollupConsiderationType (default always)' },
-        { path: 'requiredForNotSatisfied', maxCount: 1, in: ['always', 'ifAttempted', 'ifNotSkipped', 'ifNotSuspended'], comment: 'rollupConsiderationType (default always)' },
-        { path: 'requiredForCompleted', maxCount: 1, in: ['always', 'ifAttempted', 'ifNotSkipped', 'ifNotSuspended'], comment: 'rollupConsiderationType (default always)' },
-        { path: 'requiredForIncomplete', maxCount: 1, in: ['always', 'ifAttempted', 'ifNotSkipped', 'ifNotSuspended'], comment: 'rollupConsiderationType (default always)' },
-        { path: 'measureSatisfactionIfActive', maxCount: 1, datatype: 'xsd:boolean' },
+        ...['requiredForSatisfied', 'requiredForNotSatisfied', 'requiredForCompleted', 'requiredForIncomplete'].map(path => ({ path, maxCount: 1, datatype: 'xsd:string', in: ROLLUP_CONSIDERATIONS, comment: 'rollupConsiderationType (default always)' })),
+        { path: 'measureSatisfactionIfActive', maxCount: 1, datatype: 'xsd:boolean', comment: 'default true' },
       ],
     },
     {
-      name: 'ConstrainedChoiceConsiderationsShape', targetClass: 'ConstrainedChoiceConsiderations', label: 'ADL constrained choice considerations conformance',
-      comment: 'adlseq constrainChoiceConsiderationsType: preventActivation and constrainChoice are booleans (default false).',
+      name: 'ConstrainedChoiceConsiderationsShape', targetClass: 'ConstrainedChoiceConsiderations', label: 'Constrained choice considerations conformance',
+      comment: `preventActivation and constrainChoice are booleans (default false) (${ADLSEQ}: constrainChoiceConsiderationsType).`,
       constraints: [
-        { path: 'preventActivation', maxCount: 1, datatype: 'xsd:boolean' },
-        { path: 'constrainChoice', maxCount: 1, datatype: 'xsd:boolean' },
+        { path: 'preventActivation', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
+        { path: 'constrainChoice', maxCount: 1, datatype: 'xsd:boolean', comment: 'default false' },
       ],
     },
     {
-      name: 'NavigationInterfaceShape', targetClass: 'NavigationInterface', label: 'ADL navigation interface conformance',
-      comment: 'adlnav navigationInterfaceType: each hideLMSUI value MUST be one of hideLMSUIType; repeatable (maxOccurs unbounded).',
+      name: 'NavigationInterfaceShape', targetClass: 'NavigationInterface', label: 'Navigation interface conformance',
+      comment: `Each hideLMSUI value is one of the seven hideable controls (${ADLNAV}: hideLMSUIType).`,
       constraints: [
-        { path: 'hideLMSUI', in: ['previous', 'continue', 'exit', 'exitAll', 'abandon', 'abandonAll', 'suspendAll'], comment: 'hideLMSUIType' },
+        { path: 'hideLMSUI', datatype: 'xsd:string', in: HIDE_LMS_UI, comment: 'hideLMSUIType' },
       ],
     },
   ],

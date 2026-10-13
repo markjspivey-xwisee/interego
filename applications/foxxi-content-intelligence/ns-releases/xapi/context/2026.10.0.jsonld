@@ -1,0 +1,261 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "xapi": "https://foxxi-bridge.interego.xwisee.com/ns/xapi#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "objectType": "@type",
+    "Agent": "xapi:Agent",
+    "Group": "xapi:Group",
+    "Activity": "xapi:Activity",
+    "StatementRef": {
+      "@id": "xapi:StatementRef",
+      "@context": {
+        "id": "xapi:id"
+      }
+    },
+    "SubStatement": {
+      "@id": "xapi:SubStatement",
+      "@context": {
+        "id": "xapi:id"
+      }
+    },
+    "contextAgent": "xapi:ContextAgent",
+    "contextGroup": "xapi:ContextGroup",
+    "id": "xapi:id",
+    "actor": "xapi:actor",
+    "verb": {
+      "@id": "xapi:verb",
+      "@context": {
+        "id": "@id",
+        "display": {
+          "@id": "xapi:display",
+          "@container": "@language"
+        }
+      }
+    },
+    "object": {
+      "@id": "xapi:object",
+      "@context": {
+        "id": "@id"
+      }
+    },
+    "result": "xapi:result",
+    "context": "xapi:context",
+    "timestamp": {
+      "@id": "xapi:timestamp",
+      "@type": "xsd:dateTime"
+    },
+    "stored": {
+      "@id": "xapi:stored",
+      "@type": "xsd:dateTime"
+    },
+    "authority": "xapi:authority",
+    "version": "xapi:version",
+    "attachments": {
+      "@id": "xapi:attachments",
+      "@container": "@set",
+      "@context": {
+        "usageType": {
+          "@id": "xapi:usageType",
+          "@type": "@id"
+        },
+        "display": {
+          "@id": "xapi:display",
+          "@container": "@language"
+        },
+        "description": {
+          "@id": "xapi:description",
+          "@container": "@language"
+        },
+        "fileUrl": {
+          "@id": "xapi:fileUrl",
+          "@type": "xsd:anyURI"
+        }
+      }
+    },
+    "contentType": "xapi:contentType",
+    "length": "xapi:length",
+    "sha2": "xapi:sha2",
+    "name": "xapi:name",
+    "mbox": {
+      "@id": "xapi:mbox",
+      "@type": "xsd:anyURI"
+    },
+    "mbox_sha1sum": "xapi:mbox_sha1sum",
+    "openid": {
+      "@id": "xapi:openid",
+      "@type": "xsd:anyURI"
+    },
+    "account": {
+      "@id": "xapi:account",
+      "@context": {
+        "homePage": {
+          "@id": "xapi:homePage",
+          "@type": "xsd:anyURI"
+        }
+      }
+    },
+    "member": {
+      "@id": "xapi:member",
+      "@container": "@set"
+    },
+    "definition": {
+      "@id": "xapi:definition",
+      "@context": {
+        "name": {
+          "@id": "xapi:name",
+          "@container": "@language"
+        },
+        "description": {
+          "@id": "xapi:description",
+          "@container": "@language"
+        },
+        "type": {
+          "@id": "xapi:type",
+          "@type": "@id"
+        },
+        "moreInfo": {
+          "@id": "xapi:moreInfo",
+          "@type": "xsd:anyURI"
+        },
+        "interactionType": "xapi:interactionType",
+        "correctResponsesPattern": {
+          "@id": "xapi:correctResponsesPattern",
+          "@container": "@set"
+        },
+        "choices": {
+          "@id": "xapi:choices",
+          "@container": "@set",
+          "@context": {
+            "id": "xapi:componentId",
+            "description": {
+              "@id": "xapi:description",
+              "@container": "@language"
+            }
+          }
+        },
+        "scale": {
+          "@id": "xapi:scale",
+          "@container": "@set",
+          "@context": {
+            "id": "xapi:componentId",
+            "description": {
+              "@id": "xapi:description",
+              "@container": "@language"
+            }
+          }
+        },
+        "source": {
+          "@id": "xapi:source",
+          "@container": "@set",
+          "@context": {
+            "id": "xapi:componentId",
+            "description": {
+              "@id": "xapi:description",
+              "@container": "@language"
+            }
+          }
+        },
+        "target": {
+          "@id": "xapi:target",
+          "@container": "@set",
+          "@context": {
+            "id": "xapi:componentId",
+            "description": {
+              "@id": "xapi:description",
+              "@container": "@language"
+            }
+          }
+        },
+        "steps": {
+          "@id": "xapi:steps",
+          "@container": "@set",
+          "@context": {
+            "id": "xapi:componentId",
+            "description": {
+              "@id": "xapi:description",
+              "@container": "@language"
+            }
+          }
+        }
+      }
+    },
+    "score": "xapi:score",
+    "scaled": "xapi:scaled",
+    "raw": "xapi:raw",
+    "min": "xapi:min",
+    "max": "xapi:max",
+    "success": "xapi:success",
+    "completion": "xapi:completion",
+    "response": "xapi:response",
+    "duration": "xapi:duration",
+    "extensions": "xapi:extensions",
+    "registration": "xapi:registration",
+    "instructor": "xapi:instructor",
+    "team": "xapi:team",
+    "contextActivities": {
+      "@id": "xapi:contextActivities",
+      "@context": {
+        "parent": {
+          "@id": "xapi:parent",
+          "@container": "@set",
+          "@context": {
+            "id": "@id"
+          }
+        },
+        "grouping": {
+          "@id": "xapi:grouping",
+          "@container": "@set",
+          "@context": {
+            "id": "@id"
+          }
+        },
+        "category": {
+          "@id": "xapi:category",
+          "@container": "@set",
+          "@context": {
+            "id": "@id"
+          }
+        },
+        "other": {
+          "@id": "xapi:other",
+          "@container": "@set",
+          "@context": {
+            "id": "@id"
+          }
+        }
+      }
+    },
+    "contextAgents": {
+      "@id": "xapi:contextAgents",
+      "@container": "@set",
+      "@context": {
+        "relevantTypes": {
+          "@id": "xapi:relevantTypes",
+          "@type": "@id",
+          "@container": "@set"
+        }
+      }
+    },
+    "contextGroups": {
+      "@id": "xapi:contextGroups",
+      "@container": "@set",
+      "@context": {
+        "relevantTypes": {
+          "@id": "xapi:relevantTypes",
+          "@type": "@id",
+          "@container": "@set"
+        }
+      }
+    },
+    "agent": "xapi:agent",
+    "group": "xapi:group",
+    "revision": "xapi:revision",
+    "platform": "xapi:platform",
+    "language": {
+      "@id": "xapi:language",
+      "@type": "xsd:language"
+    },
+    "statement": "xapi:statement"
+  }
+}

@@ -1,231 +1,285 @@
 /**
- * cmi5 v1.0 (IEEE 9274.2.1) — the single source.
+ * cmi5 (Quartz) — the xAPI profile and course structure for LMS-launched content, as the single
+ * source.
  *
- * cmi5 is an xAPI Profile + a course-structure binding. This model captures both:
- *   · the cmi5 course structure (§13 `cmi5.xml` — courseStructure / course / block / au),
- *     with launchMethod, moveOn, masteryScore, activityType and launchParameters;
- *   · the cmi5 Profile xAPI surface — the 9 defined verbs (§9), the cmi5 + moveOn
- *     category context activities, the cmi5 context extensions (sessionid / masteryscore /
- *     launchmode / launchurl / moveon / launchparameters) and the result extensions
- *     (progress / reason).
+ * cmi5 is an xAPI profile plus a course-structure binding. This model captures:
+ *   · the course structure (§13.1: Course, Block, Objective, Assignable Unit, with launchMethod,
+ *     moveOn, masteryScore, activityType, launchParameters and entitlementKey);
+ *   · the session an LMS launches (§8.1, §9.6.1, §9.6.3.1), the LMS.LaunchData state document
+ *     (§10) and the learner preferences agent-profile document (§11);
+ *   · the profile's xAPI surface — the 9 verbs (§9.3), the cmi5 and moveOn category activities
+ *     (§9.6.2), the context extensions (§9.6.3), the result extensions (§9.5.5) and the block and
+ *     course activity types (§9.4) — as SKOS concepts mapped to the IRIs cmi5 defines.
  *
- * Composed into the PGSL lattice (composeSpecOntology) and projected to OWL/SHACL/JSON-LD
- * on dereference at <bridge>/ns/cmi5. The cmi5 reader (cmi5-course.ts) and statement
- * emitter (cmi5.ts) produce instances the SHACL shapes below validate — the AU required
- * fields, the moveOn / launchMethod vocabularies, and masteryScore ∈ [0,1].
+ * ★ WHAT cmi5 IS. It was developed by the AICC, is maintained by ADL, and its current edition is
+ * "Quartz" (first edition June 2016, with later errata). It is being standardized as IEEE P9274.3.1
+ * ("Packaging, Launch, and Run-time of xAPI in Session-based Learning"), an active project — it is
+ * NOT IEEE 9274.2.1, which this model used to call it (P9274.2.1 is the JSON-LD standard for xAPI
+ * application profiles). Section numbers below are the Quartz specification's own.
  *
- * cmi5 reuses the xAPI 2.0 data model (Statement/Actor/Verb/Object/Result/Context); those
- * terms live in the 'xapi' module and are referenced here via the xapi: prefix.
+ * cmi5 reuses the xAPI 2.0 data model; this ontology imports Foxxi's /ns/xapi and builds on it.
  *
- * Reference: cmi5 v1.0 — https://github.com/AICC/CMI-5_Spec_Current
+ * Reference: https://github.com/AICC/CMI-5_Spec_Current
  */
-import { type OntologyModel, NS_ROOT } from '../spec-ontology.js';
+import type { OntologyModel } from '../spec-ontology.js';
+import { XAPI_MODEL } from './xapi.model.js';
 
-// cmi5 §13.1.4 AU id / §13.1.2 course id — an IRI.
-// masteryScore is a decimal in [0,1] (§13.1.4.4 / §9.5.1).
-const MASTERY_MIN = 0;
-const MASTERY_MAX = 1;
-// cmi5 §3.5 session identifier / §10.1 registration — a UUID.
-const UUID = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+const Q = 'cmi5 Quartz';
+const MOVE_ON = ['Passed', 'Completed', 'CompletedAndPassed', 'CompletedOrPassed', 'NotApplicable'];
+const LAUNCH_METHOD = ['OwnWindow', 'AnyWindow'];
+const LAUNCH_MODE = ['Normal', 'Browse', 'Review'];
+/** A cmi5 session id / registration is a UUID. */
+const UUID = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+/** A comma-separated list of RFC 5646 language tags (§11.1). */
+const LANGUAGE_LIST = '^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*(,[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*)*$';
+/** What a JSON number becomes in RDF; an XML xs:decimal stays xsd:decimal. */
+const NUMBER = ['xsd:integer', 'xsd:decimal', 'xsd:double'] as const;
+
+const CMI5 = 'https://w3id.org/xapi/cmi5/';
 
 export const CMI5_MODEL: OntologyModel = {
   module: 'cmi5',
-  title: 'cmi5 v1.0 (IEEE 9274.2.1) — xAPI Profile + course structure',
-  description: 'OWL + SHACL ontology of cmi5 v1.0 (IEEE 9274.2.1): the §13 course-structure binding (courseStructure / Course / Block / AssignableUnit with launchMethod, moveOn, masteryScore, activityType, launchParameters) and the cmi5 xAPI Profile surface — the 9 §9 defined verbs, the cmi5 + moveOn category context activities, the cmi5 context extensions (sessionid / masteryscore / launchmode / launchurl / moveon / launchparameters) and result extensions (progress / reason). Reuses the xAPI 2.0 data model from the xapi module. Composed into PGSL and projected here. The shapes below validate cmi5 course structures (Course / Block / AU / Session); cmi5 STATEMENT conformance is enforced by the /ns/xapi shapes plus the cmi5 verb / moveOn / launchMethod vocabularies defined here.',
-  version: '1.0.0',
+  title: 'cmi5 (Quartz) — xAPI profile and course structure',
+  description: 'An OWL 2 DL ontology and SHACL shapes for cmi5, the xAPI profile for content launched by a learning management system (Quartz edition): the course structure of §13 (Course, Block, Objective, Assignable Unit), the launch session, the LMS.LaunchData state document (§10) and the learner-preferences document (§11), and the profile\'s xAPI surface — its 9 verbs, category activities, context and result extensions and activity types — as SKOS concepts mapped to the IRIs cmi5 defines. Builds on, and imports, the Foxxi xAPI 2.0 ontology.',
+  version: '2026.10.0',
+  created: '2026-06-19',
   spec: 'https://github.com/AICC/CMI-5_Spec_Current',
+  standards: [
+    { title: 'cmi5 specification, Quartz edition (AICC; maintained by ADL)', url: 'https://github.com/AICC/CMI-5_Spec_Current' },
+    { title: 'IEEE P9274.3.1 — Standard for Packaging, Launch, and Run-time of xAPI in Session-based Learning (active project standardizing cmi5)', url: 'https://standards.ieee.org/ieee/9274.3.1/11183/' },
+  ],
+  bodies: ['ADL', 'the AICC', 'IEEE'],
   prefixes: {
-    // Reference the bridge's OWN composed xAPI ontology (so xapi:Object resolves to the
-    // served /ns/xapi#Object class), not the external w3id base.
-    xapi: `${NS_ROOT}xapi#`,
     adl: 'http://adlnet.gov/expapi/verbs/',
-    adlx: 'https://w3id.org/xapi/adl/verbs/',
-    cmi5ext: 'https://w3id.org/xapi/cmi5/',
+    'adl-w3id': 'https://w3id.org/xapi/adl/verbs/',
   },
-  imports: ['xapi'],
+  // By version IRI: a released version keeps the xAPI ontology it was built on.
+  imports: [`xapi/${XAPI_MODEL.version}`],
+  notes: [
+    'cmi5 terms the specification itself names by IRI (its verbs, categories, extensions and activity types) are not re-minted as classes or properties: each is a SKOS concept here with a skos:exactMatch to the cmi5 IRI, which is the identifier a statement carries.',
+    'The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology\'s classes. A parsed instance as JSON is checked against the same shapes at POST /ns/cmi5/validate, which routes it by its declared type; every result cites its shape.',
+  ],
   classes: [
-    {
-      name: 'CourseStructure', label: 'Course Structure',
-      comment: 'The root <courseStructure> element of a cmi5.xml document: holds exactly one Course plus the top-level tree of Blocks and Assignable Units (§13.1.1).',
-    },
-    {
-      name: 'Course', label: 'Course',
-      comment: 'The cmi5 <course> — an IRI-identified course with a title and description language map (§13.1.2). The course is also an xAPI Activity referenced as contextActivities.grouping.',
-    },
-    {
-      name: 'Block', label: 'Block',
-      comment: 'A cmi5 <block> — groups Assignable Units and nested Blocks for organisation and satisfaction roll-up; an IRI-identified xAPI Activity (§13.1.3).',
-    },
-    {
-      name: 'AssignableUnit', label: 'Assignable Unit (AU)',
-      comment: 'A cmi5 <au> — the smallest launchable unit of instruction tracked by the LMS; an IRI-identified xAPI Activity with a launch url, launchMethod, moveOn rule, optional masteryScore, activityType and launchParameters (§13.1.4).',
-    },
-    {
-      name: 'Objectives', label: 'Objectives',
-      comment: 'The optional <objectives> collection of an AU or Block — a set of referenceable Objective declarations (§13.1.6).',
-    },
-    {
-      name: 'Objective', label: 'Objective',
-      comment: 'A single cmi5 <objective> — an IRI-identified learning objective with a title and description (§13.1.6).',
-    },
-    {
-      name: 'Session', label: 'Session',
-      comment: 'A single launch-to-termination interaction of one learner with one AU, identified by the cmi5 session id and bound to the xAPI registration; the scope across which the 9 cmi5 statements share state (§3.5, §10).',
-    },
+    { name: 'CourseStructure', label: 'Course Structure', comment: 'The root of a cmi5 course structure document (cmi5.xml): the one Course, the objectives it declares, and the tree of Blocks and Assignable Units in sequence.', source: `${Q} §13.1; §14 (CourseStructure.xsd)` },
+    { name: 'Course', label: 'Course', comment: 'The course as its publisher identifies it, by a globally unique IRI (the publisher ID), with a title and a description. In statements it appears through its publisher ID as a grouping activity, and the LMS represents it by a generated activity of type course.', source: `${Q} §13.1.1`, subClassOf: ['foxxi-xapi:Activity'] },
+    { name: 'Block', label: 'Block', comment: 'A grouping of Assignable Units and nested Blocks, identified by an IRI unique within the course structure, with a title, a description and optional objective references. A block is satisfied when all of its members are.', source: `${Q} §13.1.2`, subClassOf: ['foxxi-xapi:Activity'] },
+    { name: 'Objective', label: 'Objective', comment: 'A learning objective, identified by an IRI unique within the course structure, with a title and a description. Blocks and Assignable Units reference objectives.', source: `${Q} §13.1.3` },
+    { name: 'AssignableUnit', label: 'Assignable Unit', comment: 'The smallest launchable unit of content that the LMS tracks: identified by an IRI, with a title, a description and a launch URL, and optionally a launch method, a moveOn criterion, a mastery score, an activity type, launch parameters, an entitlement key and objective references.', source: `${Q} §13.1.4`, subClassOf: ['foxxi-xapi:Activity'] },
+    { name: 'Session', label: 'Session', comment: 'One launch of one Assignable Unit for one learner, from the LMS\'s launched statement to the terminated (or abandoned) statement, identified by the session ID the LMS generates and bound to the course registration.', source: `${Q} §3 (Definitions: session); §9.6.3.1` },
+    { name: 'LaunchData', label: 'Launch Data', comment: 'The LMS.LaunchData state document the LMS writes before launching an Assignable Unit: the context template, launch mode, moveOn, and when defined the mastery score, launch parameters, return URL and entitlement key.', source: `${Q} §10` },
+    { name: 'EntitlementKey', label: 'Entitlement Key', comment: 'The entitlement data in the launch data: the key from the course structure, and optionally an alternate key agreed between the LMS and the content provider.', source: `${Q} §10.2.7` },
+    { name: 'LearnerPreferences', label: 'Learner Preferences', comment: 'The cmi5LearnerPreferences agent-profile document: the learner\'s ordered language preferences and audio preference.', source: `${Q} §11` },
+    // Deprecated in 2026.10.0. Kept so data that used it still resolves.
+    { name: 'Objectives', label: 'Objectives', comment: 'Formerly a container of the objectives a Block or Assignable Unit references. A Block or Assignable Unit now references each Objective directly, with the property objectives.', deprecated: true, replacedBy: 'objectives' },
+  ],
+  datatypes: [
+    { name: 'MasteryScore', label: 'Mastery score', comment: 'A scaled decimal between 0 and 1 inclusive (with up to 4 decimal places). Admits xsd:double as well, for the JSON launch data.', base: 'xsd:decimal', alsoBases: ['xsd:double'], minInclusive: 0, maxInclusive: 1, source: `${Q} §13.1.4; §10.2.4` },
+    { name: 'LanguagePreferenceList', label: 'Language preference list', comment: 'A comma-separated list of RFC 5646 language tags, in order of preference.', base: 'xsd:string', pattern: LANGUAGE_LIST, source: `${Q} §11.1` },
   ],
   properties: [
-    // ── CourseStructure ──
-    { name: 'course', kind: 'object', label: 'course', comment: 'The single Course of the structure (§13.1.1).', domain: 'CourseStructure', range: 'Course' },
-    { name: 'structure', kind: 'object', label: 'structure', comment: 'Top-level Blocks and Assignable Units, in document (sequential) order (§13.1.1).', domain: 'CourseStructure', range: 'xapi:Object' },
-    // ── shared structural identity / metadata ──
-    { name: 'id', kind: 'datatype', label: 'id', comment: 'The IRI identifier of a Course / Block / AU / Objective (the @id attribute) (§13.1.2 / §13.1.3 / §13.1.4 / §13.1.6).', range: 'xsd:anyURI' },
-    { name: 'title', kind: 'datatype', label: 'title', comment: 'Language-map title of a Course / Block / AU / Objective — the cmi5 <title><langstring> collection (§13.1.4.1).', range: 'rdf:langString' },
-    { name: 'description', kind: 'datatype', label: 'description', comment: 'Language-map description of a Course / Block / AU / Objective — the cmi5 <description><langstring> collection (§13.1.4.2).', range: 'rdf:langString' },
-    // ── Block / AU containment ──
-    { name: 'block', kind: 'object', label: 'block', comment: 'A child Block nested within a CourseStructure or Block (§13.1.3).', domain: 'Block', range: 'Block' },
-    { name: 'au', kind: 'object', label: 'au', comment: 'An Assignable Unit child of a CourseStructure or Block (§13.1.4).', domain: 'Block', range: 'AssignableUnit' },
-    { name: 'objectives', kind: 'object', label: 'objectives', comment: 'The Objectives collection referenced by an AU or Block (§13.1.6).', range: 'Objectives' },
-    { name: 'objective', kind: 'object', label: 'objective', comment: 'A member Objective of an Objectives collection (§13.1.6).', domain: 'Objectives', range: 'Objective' },
-    // ── AU launch + tracking attributes ──
-    { name: 'url', kind: 'datatype', label: 'url', comment: 'The AU launch URL — the relative or absolute location the LMS launches; the LMS appends the cmi5 launch query parameters (endpoint, fetch, registration, actor, activityId) (§13.1.4.3 / §8).', domain: 'AssignableUnit', range: 'xsd:anyURI' },
-    { name: 'launchMethod', kind: 'datatype', label: 'launchMethod', comment: 'How the LMS launches the AU: OwnWindow (new window/frame) or AnyWindow (current). Default AnyWindow (§13.1.4.5).', domain: 'AssignableUnit', range: 'xsd:string' },
-    { name: 'moveOn', kind: 'datatype', label: 'moveOn', comment: 'The criterion that, once met for this AU, marks the AU satisfied and lets the learner move on: Passed / Completed / CompletedAndPassed / CompletedOrPassed / NotApplicable (§13.1.4.4 / §10.3).', domain: 'AssignableUnit', range: 'xsd:string' },
-    { name: 'masteryScore', kind: 'datatype', label: 'masteryScore', comment: 'The scaled score threshold in [0,1] the learner must reach for a passed statement; absent means the AU determines mastery itself (§13.1.4.4 / §9.5.1).', domain: 'AssignableUnit', range: 'xsd:decimal' },
-    { name: 'activityType', kind: 'datatype', label: 'activityType', comment: 'The xAPI activity type IRI the LMS uses for the AU object definition.type (§13.1.4.6).', domain: 'AssignableUnit', range: 'xsd:anyURI' },
-    { name: 'launchParameters', kind: 'datatype', label: 'launchParameters', comment: 'Static launch parameters passed to the AU; surfaced to the AU via the cmi5 launchParameters context extension at launch (§13.1.4.7 / §10.6).', domain: 'AssignableUnit', range: 'xsd:string' },
+    // ── Course structure ──
+    { name: 'course', kind: 'object', label: 'course', comment: 'The one Course of a course structure.', domain: 'CourseStructure', range: 'Course', functional: true, source: `${Q} §13.1` },
+    { name: 'structure', kind: 'object', label: 'structure', comment: 'A top-level Block or Assignable Unit of a course structure. Their sequence is the order of their positions.', domain: 'CourseStructure', range: ['Block', 'AssignableUnit'], source: `${Q} §13.1` },
+    { name: 'block', kind: 'object', label: 'block', comment: 'A Block contained in a course structure or in another Block.', domain: ['CourseStructure', 'Block'], range: 'Block', source: `${Q} §13.1.2` },
+    { name: 'au', kind: 'object', label: 'assignable unit', comment: 'An Assignable Unit contained in a course structure or in a Block.', domain: ['CourseStructure', 'Block'], range: 'AssignableUnit', source: `${Q} §13.1.4`, notation: 'au' },
+    // Document order is cmi5's sequence (§13.1), and RDF keeps no order of its own, so a reading states it.
+    { name: 'position', kind: 'datatype', label: 'position', comment: 'The position of a Block or Assignable Unit among the members of its course structure or parent Block, counting from 1 in document order: the sequence cmi5 implies (§13.1). An RDF reading of a course structure states it, since RDF keeps no order of its own.', domain: ['Block', 'AssignableUnit'], range: 'xsd:positiveInteger', functional: true, source: `${Q} §13.1` },
+    { name: 'objective', kind: 'object', label: 'objective', comment: 'An objective the course structure declares, for its Blocks and Assignable Units to reference.', domain: 'CourseStructure', range: 'Objective', source: `${Q} §13.1.3; §14 (CourseStructure.xsd)` },
+    { name: 'objectives', kind: 'object', label: 'objectives', comment: 'An objective a Block or an Assignable Unit references (an objectiveReference: the objective\'s idref).', domain: ['Block', 'AssignableUnit'], range: 'Objective', source: `${Q} §13.1.2; §13.1.4` },
+    { name: 'title', kind: 'datatype', label: 'title', comment: 'The descriptive title of a Course, Block, Objective or Assignable Unit, as language strings.', domain: ['Course', 'Block', 'Objective', 'AssignableUnit'], range: 'rdf:langString', source: `${Q} §13.1.1–§13.1.4` },
+    { name: 'description', kind: 'datatype', label: 'description', comment: 'The detailed description of a Course, Block, Objective or Assignable Unit, as language strings.', domain: ['Course', 'Block', 'Objective', 'AssignableUnit'], range: 'rdf:langString', source: `${Q} §13.1.1–§13.1.4` },
+    // ── Assignable Unit metadata ──
+    { name: 'url', kind: 'datatype', label: 'URL', comment: 'A relative or fully qualified URL referencing the launch point of the Assignable Unit; the LMS merges any query string it carries with the cmi5 launch parameters.', domain: 'AssignableUnit', range: 'xsd:anyURI', functional: true, source: `${Q} §13.1.4; §8.1` },
+    { name: 'launchMethod', kind: 'datatype', label: 'launch method', comment: 'Whether the Assignable Unit requires its own window (OwnWindow) or accepts any window context (AnyWindow, the default).', domain: 'AssignableUnit', oneOf: LAUNCH_METHOD, functional: true, source: `${Q} §13.1.4`, notation: 'launchMethod' },
+    { name: 'moveOn', kind: 'datatype', label: 'move on', comment: 'What satisfies the Assignable Unit: Passed, Completed, CompletedAndPassed, CompletedOrPassed, or NotApplicable (the default, under which the LMS considers it satisfied). In the launch data, the value the LMS applies.', domain: ['AssignableUnit', 'LaunchData'], oneOf: MOVE_ON, functional: true, source: `${Q} §13.1.4; §10.2.5`, notation: 'moveOn' },
+    { name: 'masteryScore', kind: 'datatype', label: 'mastery score', comment: 'The scaled score at or above which a judged attempt passes; passed and failed statements are based on it when it is given.', domain: ['AssignableUnit', 'LaunchData'], range: 'MasteryScore', functional: true, source: `${Q} §13.1.4; §10.2.4`, notation: 'masteryScore' },
+    { name: 'activityType', kind: 'object', label: 'activity type', comment: 'The activity type the LMS can show for the Assignable Unit before it is first started.', domain: 'AssignableUnit', range: 'foxxi-xapi:ActivityType', functional: true, source: `${Q} §13.1.4`, notation: 'activityType' },
+    { name: 'launchParameters', kind: 'datatype', label: 'launch parameters', comment: 'Static launch parameters the course designer defines; in the launch data, the value the LMS passes (which may differ).', domain: ['AssignableUnit', 'LaunchData'], range: 'xsd:string', functional: true, source: `${Q} §13.1.4; §10.2.3`, notation: 'launchParameters' },
+    { name: 'entitlementKey', kind: 'datatype', label: 'entitlement key', comment: 'Data the Assignable Unit uses to decide whether the launching LMS is entitled to use it, defined by the content provider.', domain: 'AssignableUnit', range: 'xsd:string', functional: true, source: `${Q} §13.1.4`, notation: 'entitlementKey' },
     // ── Session ──
-    { name: 'sessionId', kind: 'datatype', label: 'sessionId', comment: 'The cmi5 session identifier carried in the sessionid context extension; unique per AU launch (§3.5 / §10.2).', domain: 'Session', range: 'xsd:string' },
-    { name: 'registration', kind: 'datatype', label: 'registration', comment: 'The xAPI registration UUID the LMS assigns to the launch; the same value appears in every statement of the session (§10.1).', domain: 'Session', range: 'xsd:string' },
-    { name: 'launchMode', kind: 'datatype', label: 'launchMode', comment: 'The launch mode the LMS hands the AU via the launchmode context extension: Normal / Browse / Review (§10.4).', domain: 'Session', range: 'xsd:string' },
+    { name: 'sessionId', kind: 'datatype', label: 'session ID', comment: 'The unique identifier the LMS generates for one launch session, carried in every cmi5 defined and cmi5 allowed statement as the session ID context extension.', domain: 'Session', range: 'xsd:string', functional: true, source: `${Q} §9.6.3.1` },
+    { name: 'registration', kind: 'datatype', label: 'registration', comment: 'The registration UUID of the learner\'s enrolment in the course, which the LMS passes at launch and every statement of the session carries.', domain: 'Session', range: 'foxxi-xapi:UUID', functional: true, source: `${Q} §9.6.1; §8.1.4` },
+    { name: 'launchMode', kind: 'datatype', label: 'launch mode', comment: 'How the Assignable Unit was launched: Normal (satisfaction-related data is recorded), Browse or Review (it is not).', domain: ['Session', 'LaunchData'], oneOf: LAUNCH_MODE, functional: true, source: `${Q} §10.2.2; §9.6.3.3`, notation: 'launchMode' },
+    { name: 'launchedAU', kind: 'object', label: 'launched AU', comment: 'The Assignable Unit a session is a launch of.', domain: 'Session', range: 'AssignableUnit', functional: true, source: `${Q} §8.1.5 (activityId)` },
+    { name: 'learner', kind: 'object', label: 'learner', comment: 'The learner a session is for: the actor the LMS passes at launch.', domain: 'Session', range: 'foxxi-xapi:Agent', functional: true, source: `${Q} §8.1.3 (actor)` },
+    // ── LMS.LaunchData ──
+    { name: 'contextTemplate', kind: 'object', label: 'context template', comment: 'The xAPI context the Assignable Unit must use as the template for the context of every statement it sends; it carries the session ID extension and the publisher ID grouping activity.', domain: 'LaunchData', range: 'foxxi-xapi:Context', functional: true, source: `${Q} §10.2.1` },
+    { name: 'returnURL', kind: 'datatype', label: 'return URL', comment: 'Where the Assignable Unit redirects the learner when it is terminated, if the LMS gives one.', domain: 'LaunchData', range: 'xsd:anyURI', functional: true, source: `${Q} §10.2.6`, notation: 'returnURL' },
+    { name: 'launchEntitlementKey', kind: 'object', label: 'launch entitlement key', comment: 'The entitlement data in the launch data. (In the document, its "entitlementKey" object.)', domain: 'LaunchData', range: 'EntitlementKey', functional: true, source: `${Q} §10.2.7`, notation: 'entitlementKey' },
+    { name: 'courseStructureKey', kind: 'datatype', label: 'course structure key', comment: 'The entitlement key from the course structure. (In the document, "courseStructure".)', domain: 'EntitlementKey', range: 'xsd:string', functional: true, source: `${Q} §10.2.7.1`, notation: 'courseStructure' },
+    { name: 'alternateKey', kind: 'datatype', label: 'alternate key', comment: 'Entitlement data from another source agreed between the LMS and the content provider. (In the document, "alternate".)', domain: 'EntitlementKey', range: 'xsd:string', functional: true, source: `${Q} §10.2.7.2`, notation: 'alternate' },
+    // ── Learner preferences ──
+    { name: 'languagePreference', kind: 'datatype', label: 'language preference', comment: 'The learner\'s languages, most preferred first.', domain: 'LearnerPreferences', range: 'LanguagePreferenceList', functional: true, source: `${Q} §11.1`, notation: 'languagePreference' },
+    { name: 'audioPreference', kind: 'datatype', label: 'audio preference', comment: 'Whether audio should be on or off at start-up.', domain: 'LearnerPreferences', oneOf: ['on', 'off'], functional: true, source: `${Q} §11.2`, notation: 'audioPreference' },
+    // Deprecated in 2026.10.0. Kept so data that used it still resolves.
+    { name: 'id', kind: 'datatype', label: 'id', comment: 'Formerly the IRI of a Course, Block, Assignable Unit or Objective, as a literal. In RDF that IRI identifies the node itself, so no property carries it and nothing replaces this one.', domain: ['Course', 'Block', 'AssignableUnit', 'Objective'], range: 'xsd:anyURI', deprecated: true },
   ],
   vocabularies: [
     {
-      name: 'Cmi5Verb', label: 'cmi5 Defined Verbs',
-      comment: 'The 9 verbs an AU/LMS emits across a cmi5 session, with their ADL verb IRIs (§9).',
+      name: 'Cmi5Verb', label: 'cmi5 defined verbs',
+      comment: 'The verbs cmi5 defines, each mapped to the verb IRI a cmi5 defined statement carries.',
       members: [
-        { name: 'launched', label: 'launched', comment: 'http://adlnet.gov/expapi/verbs/launched — LMS launches the AU; precedes every AU-emitted statement (§9.1).' },
-        { name: 'initialized', label: 'initialized', comment: 'http://adlnet.gov/expapi/verbs/initialized — AU acknowledges launch and has loaded (§9.2).' },
-        { name: 'completed', label: 'completed', comment: 'http://adlnet.gov/expapi/verbs/completed — AU reports the learner met completion criteria (§9.3).' },
-        { name: 'passed', label: 'passed', comment: 'http://adlnet.gov/expapi/verbs/passed — AU reports the learner met mastery criteria (with score) (§9.4).' },
-        { name: 'failed', label: 'failed', comment: 'http://adlnet.gov/expapi/verbs/failed — AU reports the learner did not meet mastery criteria (§9.5).' },
-        { name: 'abandoned', label: 'abandoned', comment: 'https://w3id.org/xapi/adl/verbs/abandoned — session ended abnormally (timeout / navigation away) (§9.6).' },
-        { name: 'waived', label: 'waived', comment: 'https://w3id.org/xapi/adl/verbs/waived — LMS records that the AU requirement was administratively waived (§9.7).' },
-        { name: 'terminated', label: 'terminated', comment: 'http://adlnet.gov/expapi/verbs/terminated — AU acknowledges session end; required after completed/passed/failed (§9.8).' },
-        { name: 'satisfied', label: 'satisfied', comment: 'https://w3id.org/xapi/adl/verbs/satisfied — LMS records that all moveOn criteria for the AU (or Block/Course) were met (§9.9).' },
+        { name: 'launched', label: 'launched', comment: 'The LMS launched the Assignable Unit. Recorded by the LMS before launch, once per session.', exactMatch: ['adl:launched'] },
+        { name: 'initialized', label: 'initialized', comment: 'The Assignable Unit has fully initialized. The first statement of any kind the AU sends in a session.', exactMatch: ['adl:initialized'] },
+        { name: 'completed', label: 'completed', comment: 'The learner viewed or did all the relevant activities of the Assignable Unit (progress 100%). At most once per registration.', exactMatch: ['adl:completed'] },
+        { name: 'passed', label: 'passed', comment: 'The learner attempted and succeeded in a judged activity of the Assignable Unit; a scaled score, if given, is at or above the mastery score. At most once per registration.', exactMatch: ['adl:passed'] },
+        { name: 'failed', label: 'failed', comment: 'The learner attempted and failed a judged activity of the Assignable Unit; a scaled score, if given, is below the mastery score.', exactMatch: ['adl:failed'] },
+        { name: 'abandoned', label: 'abandoned', comment: 'The session was terminated abnormally, by the learner\'s action or a system failure. Recorded by the LMS on the AU\'s behalf.', exactMatch: ['adl-w3id:abandoned'] },
+        { name: 'waived', label: 'waived', comment: 'The LMS determined that the Assignable Unit\'s requirements were met by means other than its moveOn criteria. Carries a reason.', exactMatch: ['adl-w3id:waived'] },
+        { name: 'terminated', label: 'terminated', comment: 'The learner ended the session and the Assignable Unit will send no more statements for it. The last statement the AU sends.', exactMatch: ['adl:terminated'] },
+        { name: 'satisfied', label: 'satisfied', comment: 'The LMS determined that the learner met the moveOn criteria of all the Assignable Units in a Block, or in the course.', exactMatch: ['adl-w3id:satisfied'] },
       ],
     },
     {
-      name: 'LaunchMethod', label: 'cmi5 launchMethod values',
-      comment: 'The AU launchMethod attribute vocabulary (§13.1.4.5).',
+      name: 'LaunchMethod', label: 'cmi5 launch methods',
+      comment: 'The values of an Assignable Unit\'s launchMethod.',
       members: [
-        { name: 'OwnWindow', label: 'OwnWindow', comment: 'Launch the AU in its own new window / frame.' },
-        { name: 'AnyWindow', label: 'AnyWindow', comment: 'Launch the AU in the current window (default).' },
+        { name: 'OwnWindow', label: 'OwnWindow', comment: 'Launch the Assignable Unit in a new browser window, or by redirecting the current one.' },
+        { name: 'AnyWindow', label: 'AnyWindow', comment: 'Any window context is acceptable — a frameset, a new window, a redirect. The default.' },
       ],
     },
     {
-      name: 'MoveOn', label: 'cmi5 moveOn values',
-      comment: 'The AU moveOn attribute vocabulary; determines what satisfies the AU (§13.1.4.4 / §10.3).',
+      name: 'MoveOn', label: 'cmi5 moveOn criteria',
+      comment: 'The values of an Assignable Unit\'s moveOn: what satisfies the AU.',
       members: [
-        { name: 'Passed', label: 'Passed', comment: 'A passed statement satisfies the AU.' },
-        { name: 'Completed', label: 'Completed', comment: 'A completed statement satisfies the AU.' },
+        { name: 'Passed', label: 'Passed', comment: 'A passed statement satisfies the Assignable Unit.' },
+        { name: 'Completed', label: 'Completed', comment: 'A completed statement satisfies the Assignable Unit.' },
         { name: 'CompletedAndPassed', label: 'CompletedAndPassed', comment: 'Both a completed and a passed statement are required.' },
-        { name: 'CompletedOrPassed', label: 'CompletedOrPassed', comment: 'Either a completed or a passed statement satisfies the AU.' },
-        { name: 'NotApplicable', label: 'NotApplicable', comment: 'No criterion; the AU does not gate progress (LMS may emit satisfied immediately).' },
+        { name: 'CompletedOrPassed', label: 'CompletedOrPassed', comment: 'Either a completed or a passed statement satisfies the Assignable Unit.' },
+        { name: 'NotApplicable', label: 'NotApplicable', comment: 'The LMS considers the Assignable Unit satisfied. The default when no moveOn is given.' },
       ],
     },
     {
-      name: 'LaunchMode', label: 'cmi5 launchMode values',
-      comment: 'The launchmode context-extension vocabulary the LMS sets at launch (§10.4).',
+      name: 'LaunchMode', label: 'cmi5 launch modes',
+      comment: 'The values of launchMode in the launch data.',
       members: [
-        { name: 'Normal', label: 'Normal', comment: 'Tracked, satisfaction-affecting launch.' },
-        { name: 'Browse', label: 'Browse', comment: 'Preview launch; does not affect satisfaction.' },
-        { name: 'Review', label: 'Review', comment: 'Re-visit of already-satisfied content; does not affect satisfaction.' },
+        { name: 'Normal', label: 'Normal', comment: 'Satisfaction-related data must be recorded.' },
+        { name: 'Browse', label: 'Browse', comment: 'Satisfaction-related data must not be recorded; the learner looks around without judgement.' },
+        { name: 'Review', label: 'Review', comment: 'Satisfaction-related data must not be recorded; the learner revisits material already completed.' },
       ],
     },
     {
-      name: 'ContextCategory', label: 'cmi5 category context activities',
-      comment: 'The category contextActivities a cmi5 statement carries (§10.5).',
+      name: 'ContextCategory', label: 'cmi5 category activities',
+      comment: 'The activities cmi5 statements carry in contextActivities.category.',
       members: [
-        { name: 'cmi5', label: 'cmi5 category', comment: 'https://w3id.org/xapi/cmi5/context/categories/cmi5 — present on every cmi5 "defined" statement; marks it as conformant to the cmi5 profile.' },
-        { name: 'moveon', label: 'moveOn category', comment: 'https://w3id.org/xapi/cmi5/context/categories/moveon — added to statements that contribute to the moveOn determination (satisfied / waived).' },
+        { name: 'cmi5', label: 'cmi5 category', comment: 'Marks a statement as a cmi5 defined statement.', exactMatch: [`${CMI5}context/categories/cmi5`] },
+        { name: 'moveon', label: 'moveOn category', comment: 'On cmi5 defined statements whose result includes success or completion; on no other statement.', exactMatch: [`${CMI5}context/categories/moveon`] },
       ],
     },
     {
       name: 'ContextExtension', label: 'cmi5 context extensions',
-      comment: 'IRIs of the cmi5 context.extensions keys (§10.2-§10.6).',
+      comment: 'The context extensions cmi5 defines. (§9.6.3.5, publisherId, was withdrawn in favour of the publisher ID grouping activity of §9.6.2.3.)',
       members: [
-        { name: 'sessionid', label: 'sessionid', comment: 'https://w3id.org/xapi/cmi5/context/extensions/sessionid — the cmi5 session identifier (§10.2).' },
-        { name: 'masteryscore', label: 'masteryscore', comment: 'https://w3id.org/xapi/cmi5/context/extensions/masteryscore — the masteryScore in effect for the AU (§10.3).' },
-        { name: 'launchmode', label: 'launchmode', comment: 'https://w3id.org/xapi/cmi5/context/extensions/launchmode — Normal / Browse / Review (§10.4).' },
-        { name: 'launchurl', label: 'launchurl', comment: 'https://w3id.org/xapi/cmi5/context/extensions/launchurl — the fully resolved AU launch URL (§10.5).' },
-        { name: 'moveon', label: 'moveon', comment: 'https://w3id.org/xapi/cmi5/context/extensions/moveon — the moveOn criterion in effect for the AU (§10.6).' },
-        { name: 'launchparameters', label: 'launchparameters', comment: 'https://w3id.org/xapi/cmi5/context/extensions/launchparameters — the AU launchParameters string (§10.7).' },
+        { name: 'sessionid', label: 'session ID', notation: 'sessionid', comment: 'The session ID, on every cmi5 defined and cmi5 allowed statement.', exactMatch: [`${CMI5}context/extensions/sessionid`] },
+        { name: 'masteryscore', label: 'mastery score', notation: 'masteryscore', comment: 'The mastery score from the launch data, on launched statements and on the passed or failed statements based on it.', exactMatch: [`${CMI5}context/extensions/masteryscore`] },
+        { name: 'launchmode', label: 'launch mode', notation: 'launchmode', comment: 'The launch mode the LMS used, on launched statements.', exactMatch: [`${CMI5}context/extensions/launchmode`] },
+        { name: 'launchurl', label: 'launch URL', notation: 'launchurl', comment: 'The fully qualified URL the LMS used to launch the Assignable Unit, without the launch parameters, on launched statements.', exactMatch: [`${CMI5}context/extensions/launchurl`] },
+        { name: 'moveon', label: 'moveOn', notation: 'moveon', comment: 'The moveOn value from the launch data, on launched statements.', exactMatch: [`${CMI5}context/extensions/moveon`] },
+        { name: 'launchparameters', label: 'launch parameters', notation: 'launchparameters', comment: 'The launch parameters from the launch data, on launched statements when present.', exactMatch: [`${CMI5}context/extensions/launchparameters`] },
       ],
     },
     {
       name: 'ResultExtension', label: 'cmi5 result extensions',
-      comment: 'IRIs of the cmi5 result.extensions keys (§9.3 / §9.6).',
+      comment: 'The result extensions cmi5 defines.',
       members: [
-        { name: 'progress', label: 'progress', comment: 'https://w3id.org/xapi/cmi5/result/extensions/progress — integer 0..100 progress percentage (§9.3).' },
-        { name: 'reason', label: 'reason', comment: 'https://w3id.org/xapi/cmi5/result/extensions/reason — human-readable reason, e.g. for an abandoned statement (§9.6).' },
+        { name: 'progress', label: 'progress', comment: 'An integer from 0 to 100 inclusive: the completion of the Assignable Unit as a percentage.', exactMatch: [`${CMI5}result/extensions/progress`] },
+        { name: 'reason', label: 'reason', comment: 'The reason for the statement, required on a waived statement.', exactMatch: [`${CMI5}result/extensions/reason`] },
+      ],
+    },
+    {
+      name: 'ActivityType', label: 'cmi5 activity types',
+      comment: 'The activity types of the objects the LMS generates for a Block and for the course in satisfied statements.',
+      members: [
+        { name: 'block', label: 'block', comment: 'The type of the LMS-generated activity representing a Block.', exactMatch: [`${CMI5}activitytype/block`] },
+        { name: 'course', label: 'course', comment: 'The type of the LMS-generated activity representing the course.', exactMatch: [`${CMI5}activitytype/course`] },
       ],
     },
   ],
+  disjoint: [
+    ['CourseStructure', 'Course', 'Block', 'Objective', 'AssignableUnit', 'Session', 'LaunchData', 'EntitlementKey', 'LearnerPreferences'],
+  ],
   shapes: [
     {
-      name: 'CourseStructureShape', targetClass: 'CourseStructure', label: 'cmi5 course-structure conformance',
-      comment: '§13.1.1: a courseStructure MUST contain exactly one Course and at least one top-level Block or AU.',
+      name: 'CourseStructureShape', targetClass: 'CourseStructure', label: 'cmi5 course structure conformance',
+      comment: `${Q} §13.1: a course structure contains exactly one Course and at least one top-level Block or Assignable Unit.`,
       constraints: [
-        { path: 'course', minCount: 1, maxCount: 1, class: 'Course', comment: 'exactly one Course (§13.1.1)' },
-        { path: 'structure', minCount: 1, comment: 'at least one top-level Block or AU (§13.1.1)' },
+        { path: 'course', minCount: 1, maxCount: 1, class: 'Course', comment: 'exactly one Course (§13.1)' },
+        { path: 'structure', minCount: 1, comment: 'at least one top-level Block or AU (§13.1)' },
       ],
     },
     {
       name: 'CourseShape', targetClass: 'Course', label: 'cmi5 Course conformance',
-      comment: '§13.1.2: a Course MUST have an IRI id and a title language map.',
+      comment: `${Q} §13.1.1: a Course is identified by an IRI and has a title and a description.`,
       constraints: [
-        { path: 'id', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'IRI id (§13.1.2)' },
-        { path: 'title', minCount: 1, comment: 'title language map (§13.1.2)' },
+        { path: 'id', identifies: true, minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'a globally unique IRI (§13.1.1)' },
+        { path: 'title', minCount: 1, comment: 'title (§13.1.1)' },
+        { path: 'description', minCount: 1, comment: 'description (§13.1.1)' },
       ],
     },
     {
       name: 'BlockShape', targetClass: 'Block', label: 'cmi5 Block conformance',
-      comment: '§13.1.3: a Block MUST have an IRI id and a title language map.',
+      comment: `${Q} §13.1.2: a Block is identified by an IRI and has a title and a description.`,
       constraints: [
-        { path: 'id', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'IRI id (§13.1.3)' },
-        { path: 'title', minCount: 1, comment: 'title language map (§13.1.3)' },
+        { path: 'id', identifies: true, minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'an IRI unique within the course structure (§13.1.2)' },
+        { path: 'title', minCount: 1, comment: 'title (§13.1.2)' },
+        { path: 'description', minCount: 1, comment: 'description (§13.1.2)' },
+        { path: 'position', maxCount: 1, datatype: 'xsd:positiveInteger', minInclusive: 1, comment: 'its place in the sequence (§13.1)' },
       ],
     },
     {
-      name: 'AssignableUnitShape', targetClass: 'AssignableUnit', label: 'cmi5 AU conformance',
-      comment: '§13.1.4: an AU MUST have an IRI id, a title language map, a description language map, a launch url and a moveOn rule. launchMethod (if present) is from the LaunchMethod vocabulary; moveOn is from the MoveOn vocabulary; masteryScore (if present) is a decimal in [0,1] (§9.5.1).',
+      name: 'AssignableUnitShape', targetClass: 'AssignableUnit', label: 'cmi5 Assignable Unit conformance',
+      comment: `${Q} §13.1.4: an AU is identified by an IRI and has a title, a description and a launch URL. moveOn (default NotApplicable) and launchMethod (default AnyWindow) take their vocabularies; masteryScore is a decimal in [0, 1].`,
       constraints: [
-        { path: 'id', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'IRI id (§13.1.4)' },
-        { path: 'title', minCount: 1, comment: 'title language map (§13.1.4.1)' },
-        { path: 'description', minCount: 1, comment: 'description language map (§13.1.4.2)' },
-        { path: 'url', minCount: 1, maxCount: 1, datatype: 'xsd:anyURI', comment: 'launch url (§13.1.4.3)' },
-        { path: 'moveOn', minCount: 1, maxCount: 1, in: ['Passed', 'Completed', 'CompletedAndPassed', 'CompletedOrPassed', 'NotApplicable'], comment: 'moveOn vocabulary (§13.1.4.4)' },
-        { path: 'launchMethod', maxCount: 1, in: ['OwnWindow', 'AnyWindow'], comment: 'launchMethod vocabulary, default AnyWindow (§13.1.4.5)' },
-        { path: 'masteryScore', maxCount: 1, datatype: 'xsd:decimal', minInclusive: MASTERY_MIN, maxInclusive: MASTERY_MAX, comment: 'masteryScore ∈ [0,1] (§9.5.1)' },
-        { path: 'activityType', maxCount: 1, datatype: 'xsd:anyURI', comment: 'activity type IRI (§13.1.4.6)' },
-        { path: 'launchParameters', maxCount: 1, datatype: 'xsd:string', comment: 'static launch parameters (§13.1.4.7)' },
+        { path: 'id', identifies: true, minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'an IRI unique within the course structure (§13.1.4)' },
+        { path: 'title', minCount: 1, comment: 'title (§13.1.4)' },
+        { path: 'description', minCount: 1, comment: 'description (§13.1.4)' },
+        { path: 'position', maxCount: 1, datatype: 'xsd:positiveInteger', minInclusive: 1, comment: 'its place in the sequence (§13.1)' },
+        { path: 'url', minCount: 1, maxCount: 1, datatype: 'xsd:anyURI', comment: 'launch URL (§13.1.4)' },
+        { path: 'moveOn', maxCount: 1, in: MOVE_ON, comment: 'moveOn vocabulary; NotApplicable when absent (§13.1.4)' },
+        { path: 'launchMethod', maxCount: 1, in: LAUNCH_METHOD, comment: 'launchMethod vocabulary; AnyWindow when absent (§13.1.4)' },
+        { path: 'masteryScore', maxCount: 1, datatype: NUMBER, minInclusive: 0, maxInclusive: 1, comment: 'masteryScore ∈ [0, 1] (§13.1.4)' },
+        { path: 'activityType', maxCount: 1, nodeKind: 'IRI', comment: 'activity type IRI (§13.1.4)' },
+        { path: 'launchParameters', maxCount: 1, datatype: 'xsd:string', comment: 'static launch parameters (§13.1.4)' },
+        { path: 'entitlementKey', maxCount: 1, datatype: 'xsd:string', comment: 'entitlement key (§13.1.4)' },
       ],
     },
     {
       name: 'ObjectiveShape', targetClass: 'Objective', label: 'cmi5 Objective conformance',
-      comment: '§13.1.6: an Objective MUST have an IRI id and a title language map.',
+      comment: `${Q} §13.1.3: an Objective is identified by an IRI and has a title and a description.`,
       constraints: [
-        { path: 'id', minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'IRI id (§13.1.6)' },
-        { path: 'title', minCount: 1, comment: 'title language map (§13.1.6)' },
+        { path: 'id', identifies: true, minCount: 1, maxCount: 1, nodeKind: 'IRI', comment: 'an IRI unique within the course structure (§13.1.3)' },
+        { path: 'title', minCount: 1, comment: 'title (§13.1.3)' },
+        { path: 'description', minCount: 1, comment: 'description (§13.1.3)' },
       ],
     },
     {
       name: 'SessionShape', targetClass: 'Session', label: 'cmi5 session conformance',
-      comment: '§10: a cmi5 session MUST carry a registration UUID and a sessionId; launchMode (if present) is from the LaunchMode vocabulary.',
+      comment: `${Q} §9.6.1, §9.6.3.1, §10.2.2: a session carries a registration UUID and a session ID; launchMode takes its vocabulary.`,
       constraints: [
-        { path: 'registration', minCount: 1, maxCount: 1, pattern: UUID, comment: 'registration UUID (§10.1)' },
-        { path: 'sessionId', minCount: 1, maxCount: 1, datatype: 'xsd:string', comment: 'cmi5 session id (§10.2)' },
-        { path: 'launchMode', maxCount: 1, in: ['Normal', 'Browse', 'Review'], comment: 'launchMode vocabulary (§10.4)' },
+        { path: 'registration', minCount: 1, maxCount: 1, pattern: UUID, comment: 'registration UUID (§9.6.1)' },
+        { path: 'sessionId', minCount: 1, maxCount: 1, datatype: 'xsd:string', comment: 'session ID (§9.6.3.1)' },
+        { path: 'launchMode', maxCount: 1, in: LAUNCH_MODE, comment: 'launchMode vocabulary (§10.2.2)' },
+      ],
+    },
+    {
+      name: 'LaunchDataShape', targetClass: 'LaunchData', label: 'cmi5 LMS.LaunchData conformance',
+      comment: `${Q} §10.2: the launch data has a context template, a launch mode and a moveOn; a mastery score is a decimal in [0, 1].`,
+      constraints: [
+        { path: 'contextTemplate', minCount: 1, maxCount: 1, comment: 'context template (§10.2.1)' },
+        { path: 'launchMode', minCount: 1, maxCount: 1, in: LAUNCH_MODE, comment: 'launch mode (§10.2.2)' },
+        { path: 'moveOn', minCount: 1, maxCount: 1, in: MOVE_ON, comment: 'moveOn (§10.2.5)' },
+        { path: 'masteryScore', maxCount: 1, datatype: NUMBER, minInclusive: 0, maxInclusive: 1, comment: 'masteryScore ∈ [0, 1] (§10.2.4)' },
+        { path: 'launchParameters', maxCount: 1, datatype: 'xsd:string', comment: 'launch parameters (§10.2.3)' },
+        { path: 'returnURL', maxCount: 1, datatype: 'xsd:anyURI', comment: 'return URL (§10.2.6)' },
+        { path: 'entitlementKey', jsonPath: 'entitlementKey', rdfPath: 'launchEntitlementKey', maxCount: 1, comment: 'entitlement key object (§10.2.7)' },
+      ],
+    },
+    {
+      name: 'LearnerPreferencesShape', targetClass: 'LearnerPreferences', label: 'cmi5 learner preferences conformance',
+      comment: `${Q} §11: languagePreference is a comma-separated list of RFC 5646 tags; audioPreference is "on" or "off".`,
+      constraints: [
+        { path: 'languagePreference', maxCount: 1, datatype: 'xsd:string', pattern: LANGUAGE_LIST, comment: 'RFC 5646 tags, most preferred first (§11.1)' },
+        { path: 'audioPreference', maxCount: 1, in: ['on', 'off'], comment: '"on" or "off" (§11.2)' },
       ],
     },
   ],

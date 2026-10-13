@@ -1,0 +1,1284 @@
+# xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model — version 2026.10.0
+# https://foxxi-bridge.interego.xwisee.com/ns/xapi  (this version: https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.0)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix xapi: <https://w3id.org/xapi/ontology#> .
+@prefix foxxi-xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/xapi> a owl:Ontology ;
+    dct:title "xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model"@en ;
+    dct:description "An OWL 2 DL ontology and SHACL shapes for the Statement data model of xAPI 2.0, IEEE 9274.1.1-2023 (Content part, §5.2): Statement, Actor (Agent, Group, Account), Verb, Object (Activity, StatementRef, SubStatement), Result and Score, Context with its context activities, context agents and context groups, and Attachments, with the data types of §5.2.7. Each term is aligned to ADL's xAPI ontology by a SKOS mapping. A statement is read into the ontology through the JSON-LD 1.1 context published with it (/ns/xapi/context), and the shapes check that reading."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by IEEE or ADL. Where this document and the published standard differ, the standard governs."@en ,
+        "Alignment to ADL's xAPI ontology (prefix xapi:) is by SKOS mappings chosen to hold when a tool reads them as OWL (skos:exactMatch as equivalence, skos:broadMatch as subsumption): skos:exactMatch where both name the same construct of the Statement data model and ADL's axioms for it agree with this ontology's; skos:broadMatch where ADL's class is broader, because its ontology places parts of the construct under it by rdfs:subClassOf (xapi:Statement, xapi:Actor, xapi:Activity, xapi:ActivityDefinition, xapi:Result, xapi:Context, xapi:Attachments); and skos:closeMatch where ADL declares a different kind of OWL entity (member, moreInfo, usageType, version) or gives axioms no use here could satisfy (Object, name, duration, fileURL, extensions). Each broadMatch and closeMatch carries its reason as an annotation on the mapping axiom. ADL's ontology is not imported, and none of its axioms is asserted here."@en ,
+        "The alignment is also published as an SSSOM 1.0 mapping set (/ns/xapi/mappings), which lists the terms with no counterpart in ADL's ontology as mappings to sssom:NoTermFound."@en ,
+        "Language maps (display, name, description) are rdf:langString values: one language-tagged string per entry of the map."@en ,
+        "A statement is read into this ontology through the JSON-LD 1.1 context at https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.0: objectType is read as rdf:type, a Statement's and a Statement Reference's id as the xapi:id UUID, an Activity's and a Verb's id as the node's IRI. The shapes select what that reading produces — by class where xAPI types a node, and by the property that reaches it (sh:targetObjectsOf, sh:targetSubjectsOf) where xAPI leaves it untyped: a Statement, a Verb, a Result, a Context, an Agent whose objectType is left out."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.0> ;
+    owl:versionInfo "2026.10.0" ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-12"^^xsd:date ;
+    dct:issued "2026-10-12"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model (Version 2026.10.0) [Ontology]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.0" ;
+    vann:preferredNamespacePrefix "foxxi-xapi" ;
+    vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/xapi#" ;
+    dct:source <https://standards.ieee.org/ieee/9274.1.1/7321/> ,
+        <https://opensource.ieee.org/xapi/xapi-base-standard-documentation> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/xapi.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/xapi/mappings> ,
+        <https://w3id.org/xapi/ontology> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.0> .
+
+foxxi-xapi:UUID a rdfs:Datatype ;
+    rdfs:label "UUID"@en ;
+    rdfs:comment "A UUID in its standard string form (RFC 4122 / RFC 9562), hexadecimal digits in either case."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.7 (UUIDs)" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:onDatatype xsd:string ;
+        owl:withRestrictions ( [ xsd:pattern "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" ] )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Duration a rdfs:Datatype ;
+    rdfs:label "Duration"@en ;
+    rdfs:comment "An ISO 8601:2004 duration in the format of its §4.4.3.2 (PnYnMnDTnHnMnS, weeks as PnW). The alternative format of §4.4.3.3 is not allowed. Defined on xsd:string because xsd:duration is outside the OWL 2 datatype map."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.7 (Duration)" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:onDatatype xsd:string ;
+        owl:withRestrictions (
+            [
+                xsd:pattern "P([0-9]+(\\.[0-9]+)?W|([0-9]+(\\.[0-9]+)?Y|[0-9]+Y[0-9]+(\\.[0-9]+)?M|[0-9]+Y[0-9]+M[0-9]+(\\.[0-9]+)?D|[0-9]+Y[0-9]+(\\.[0-9]+)?D|[0-9]+(\\.[0-9]+)?M|[0-9]+M[0-9]+(\\.[0-9]+)?D|[0-9]+(\\.[0-9]+)?D)|([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)T([0-9]+(\\.[0-9]+)?H|[0-9]+H[0-9]+(\\.[0-9]+)?M|[0-9]+H[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+H[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?M|[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?S)|T([0-9]+(\\.[0-9]+)?H|[0-9]+H[0-9]+(\\.[0-9]+)?M|[0-9]+H[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+H[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?M|[0-9]+M[0-9]+(\\.[0-9]+)?S|[0-9]+(\\.[0-9]+)?S))"
+            ]
+        )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Version a rdfs:Datatype ;
+    rdfs:label "Version"@en ;
+    rdfs:comment "An xAPI version in Semantic Versioning 1.0.0 form: 1.0.x or 2.0.x."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:onDatatype xsd:string ;
+        owl:withRestrictions ( [ xsd:pattern "(1\\.0(\\.[0-9]+)?|2\\.0(\\.[0-9]+)?)" ] )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:SHA1Hex a rdfs:Datatype ;
+    rdfs:label "SHA-1 hex"@en ;
+    rdfs:comment "A hexadecimal SHA-1 digest (40 hex digits)."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1 (mbox_sha1sum)" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:onDatatype xsd:string ;
+        owl:withRestrictions ( [ xsd:pattern "[0-9a-fA-F]{40}" ] )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:MediaType a rdfs:Datatype ;
+    rdfs:label "Internet media type"@en ;
+    rdfs:comment "An Internet Media Type (RFC 6838), with optional parameters."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.6 (contentType)" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:onDatatype xsd:string ;
+        owl:withRestrictions ( [ xsd:pattern "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*(\\s*;.*)?" ] )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Number a rdfs:Datatype ;
+    rdfs:label "Number"@en ;
+    rdfs:comment "A JSON number as RDF carries it: xsd:integer for an integer, xsd:double otherwise (JSON-LD 1.1 §8.6), or an xsd:decimal."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4 (Score)" ;
+    owl:equivalentClass [ a rdfs:Datatype ; owl:unionOf ( xsd:decimal xsd:double ) ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:ScaledScore a rdfs:Datatype ;
+    rdfs:label "Scaled score"@en ;
+    rdfs:comment "A Number between -1 and 1, inclusive."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4 (Score: scaled)" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:unionOf (
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:decimal ;
+                owl:withRestrictions ( [ xsd:minInclusive -1 ] [ xsd:maxInclusive 1 ] )
+            ]
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:double ;
+                owl:withRestrictions ( [ xsd:minInclusive "-1.0E0"^^xsd:double ] [ xsd:maxInclusive "1.0E0"^^xsd:double ] )
+            ]
+        )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Statement a owl:Class ;
+    rdfs:label "Statement"@en ;
+    rdfs:comment "An immutable record that an Actor did something: the Actor, the Verb, the Object, and optionally a Result, a Context, a timestamp and Attachments."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    skos:broadMatch xapi:Statement ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:Statement ;
+    owl:annotatedProperty skos:broadMatch ;
+    owl:annotatedTarget xapi:Statement ;
+    rdfs:comment "Broader there: ADL's ontology places the parts of a Statement (Actor, Verb, Object, Context, Result, Authority, Attachments) and the Sub-Statement under xapi:Statement by rdfs:subClassOf, so its instances include them; here a Statement is the record alone, and disjoint from its parts."@en
+] .
+
+foxxi-xapi:SubStatement a owl:Class ;
+    rdfs:label "Sub-Statement"@en ;
+    rdfs:comment "A Statement nested as the Object of another Statement: an actor, verb and object (with optional result, context, timestamp and attachments), but no id, stored, version or authority, and never itself containing a Sub-Statement."@en ;
+    rdfs:subClassOf foxxi-xapi:Object ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Object as Sub-Statement)" ;
+    skos:exactMatch xapi:SubStatement ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Actor a owl:Class ;
+    rdfs:label "Actor"@en ;
+    rdfs:comment "Whom a Statement is about: an Agent or a Group, and never both."@en ;
+    owl:disjointUnionOf ( foxxi-xapi:Agent foxxi-xapi:Group ) ;
+    owl:hasKey ( foxxi-xapi:mbox ) , ( foxxi-xapi:mbox_sha1sum ) , ( foxxi-xapi:openid ) , ( foxxi-xapi:account ) ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
+    skos:broadMatch xapi:Actor ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:Actor ;
+    owl:annotatedProperty skos:broadMatch ;
+    owl:annotatedTarget xapi:Actor ;
+    rdfs:comment "Broader there: ADL's ontology places Accounts (xapi:Account) under xapi:Actor by rdfs:subClassOf, so its instances include them; here an Account is not an Actor."@en
+] .
+
+foxxi-xapi:Agent a owl:Class ;
+    rdfs:label "Agent"@en ;
+    rdfs:comment "A single person or system, identified by exactly one Inverse Functional Identifier: mbox, mbox_sha1sum, openid or account."@en ;
+    rdfs:subClassOf foxxi-xapi:Actor ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1 (Actor as Agent)" ;
+    skos:exactMatch xapi:Agent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Group a owl:Class ;
+    rdfs:label "Group"@en ;
+    rdfs:comment "A collection of Agents. An Identified Group carries exactly one Inverse Functional Identifier and may list members; an Anonymous Group carries none and must list its members."@en ;
+    rdfs:subClassOf foxxi-xapi:Actor ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1 (Actor as Anonymous Group; Actor as Identified Group)" ;
+    skos:exactMatch xapi:Group ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Account a owl:Class ;
+    rdfs:label "Account"@en ;
+    rdfs:comment "A user account on an existing system, such as an LMS or an intranet, identified by the system's home page and the account's name together."@en ;
+    owl:hasKey ( foxxi-xapi:homePage foxxi-xapi:name ) ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1 (Account)" ;
+    skos:exactMatch xapi:Account ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Verb a owl:Class ;
+    rdfs:label "Verb"@en ;
+    rdfs:comment "The action of a Statement: an IRI that names the meaning (not the word), with a language map giving its display form."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.2" ;
+    skos:exactMatch xapi:Verb ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Object a owl:Class ;
+    rdfs:label "Object"@en ;
+    rdfs:comment "What the Actor interacted with: an Activity, an Agent or Group, a Statement Reference, or a Sub-Statement — told apart by objectType."@en ;
+    owl:equivalentClass [
+        a owl:Class ;
+        owl:unionOf (
+            foxxi-xapi:Activity
+            foxxi-xapi:Agent
+            foxxi-xapi:Group
+            foxxi-xapi:StatementRef
+            foxxi-xapi:SubStatement
+        )
+    ] ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3" ;
+    skos:closeMatch xapi:Object ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:Object ;
+    owl:annotatedProperty skos:closeMatch ;
+    owl:annotatedTarget xapi:Object ;
+    rdfs:comment "Not an exact match: ADL's ontology makes xapi:Object disjoint from xapi:Actor (owl:AllDisjointClasses), so an Agent or Group is never an Object there, while xAPI 2.0 lets either be the Object of a Statement (§5.2.2.3) and here Object includes them; and it places Activity Definitions and activity types under xapi:Object, through xapi:Activity. Read as an equivalence, every Agent or Group here would be unsatisfiable."@en
+] .
+
+foxxi-xapi:Activity a owl:Class ;
+    rdfs:label "Activity"@en ;
+    rdfs:comment "A unit of instruction, experience or performance that is tracked, identified by an IRI."@en ;
+    rdfs:subClassOf foxxi-xapi:Object ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Object as Activity)" ;
+    skos:broadMatch xapi:Activity ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:Activity ;
+    owl:annotatedProperty skos:broadMatch ;
+    owl:annotatedTarget xapi:Activity ;
+    rdfs:comment "Broader there: ADL's ontology places Activity Definitions and activity types (xapi:ActivityDefinition, and under it xapi:ActivityType) under xapi:Activity by rdfs:subClassOf, so its instances include them; here an Activity's definition and its type are not Activities."@en
+] .
+
+foxxi-xapi:ActivityDefinition a owl:Class ;
+    rdfs:label "Activity Definition"@en ;
+    rdfs:comment "Metadata about an Activity: name, description, type, more information, interaction details and extensions."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Activity Definition)" ;
+    skos:broadMatch xapi:ActivityDefinition ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:ActivityDefinition ;
+    owl:annotatedProperty skos:broadMatch ;
+    owl:annotatedTarget xapi:ActivityDefinition ;
+    rdfs:comment "Broader there: ADL's ontology places activity types (xapi:ActivityType) under xapi:ActivityDefinition by rdfs:subClassOf, so its instances include them; here an activity type is not an Activity Definition. ADL's ontology also labels the class Activity, the label of its Activity class; it is the Activity Definition."@en
+] .
+
+foxxi-xapi:InteractionComponent a owl:Class ;
+    rdfs:label "Interaction Component"@en ;
+    rdfs:comment "One element of an interaction component list (a choice, a point on a scale, a source or target to match, or a step), with an id and an optional description."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Components)" ;
+    skos:exactMatch xapi:InteractionComponent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:StatementRef a owl:Class ;
+    rdfs:label "Statement Reference"@en ;
+    rdfs:comment "A pointer to another Statement, by its UUID."@en ;
+    rdfs:subClassOf foxxi-xapi:Object ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Object as Statement)" ;
+    skos:exactMatch xapi:StatementRef ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Result a owl:Class ;
+    rdfs:label "Result"@en ;
+    rdfs:comment "A measured outcome of the experience a Statement records: score, success, completion, response, duration and extensions."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4" ;
+    skos:broadMatch xapi:Result ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:Result ;
+    owl:annotatedProperty skos:broadMatch ;
+    owl:annotatedTarget xapi:Result ;
+    rdfs:comment "Broader there: ADL's ontology places xapi:Score under xapi:Result — with rdfs:subClassof, a property RDFS does not define, so no tool reads the triple as an axiom; read as intended, a Result there includes its Score, and here a Score is not a Result. Mapped as broader so that the alignment holds when that triple is corrected."@en
+] .
+
+foxxi-xapi:Score a owl:Class ;
+    rdfs:label "Score"@en ;
+    rdfs:comment "The outcome of a graded Activity: a scaled score, and the raw score with its minimum and maximum."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4 (Score)" ;
+    skos:exactMatch xapi:Score ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Context a owl:Class ;
+    rdfs:label "Context"@en ;
+    rdfs:comment "Information that gives a Statement more meaning: its registration, context activities, context agents and groups, revision, platform, language, a related Statement and extensions."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5" ;
+    skos:broadMatch xapi:Context ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:Context ;
+    owl:annotatedProperty skos:broadMatch ;
+    owl:annotatedTarget xapi:Context ;
+    rdfs:comment "Broader there: ADL's ontology places context activities (xapi:ContextActivities) under xapi:Context by rdfs:subClassOf, so its instances include them; here a Context's context activities are not a Context."@en
+] .
+
+foxxi-xapi:ContextActivities a owl:Class ;
+    rdfs:label "Context Activities"@en ;
+    rdfs:comment "The Activities a Statement is related to, by kind of relation: parent, grouping, category and other."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (contextActivities)" ;
+    skos:exactMatch xapi:ContextActivities ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:ContextAgent a owl:Class ;
+    rdfs:label "Context Agent"@en ;
+    rdfs:comment "A relationship, limited to one Statement, between that Statement and one Agent, characterized by zero or more relevant types."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (Context Agents)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:ContextGroup a owl:Class ;
+    rdfs:label "Context Group"@en ;
+    rdfs:comment "A relationship, limited to one Statement, between that Statement and one Group, characterized by zero or more relevant types."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (Context Groups)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:Attachment a owl:Class ;
+    rdfs:label "Attachment"@en ;
+    rdfs:comment "A digital artifact logically part of a Statement — an essay, a video, a certificate image, or the JSON Web Signature of a signed Statement — described by its usage type, display name, content type, length and SHA-2 hash."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.6" ;
+    skos:broadMatch xapi:Attachments ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:Attachment ;
+    owl:annotatedProperty skos:broadMatch ;
+    owl:annotatedTarget xapi:Attachments ;
+    rdfs:comment "Broader there: ADL's ontology places attachment usage types (xapi:AttachmentUsageType) under xapi:Attachments by rdfs:subClassOf, so its instances include them; here an Attachment's usage type is not an Attachment. ADL names the class in the plural, after the Statement's attachments property; its instances are the Attachment objects."@en
+] .
+
+foxxi-xapi:Extensions a owl:Class ;
+    rdfs:label "Extensions"@en ;
+    rdfs:comment "An extensions map: a node whose properties are extension IRIs, each valued with any JSON value. The meaning and structure of a value are defined by whoever controls its IRI."@en ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.7 (Extensions)" ;
+    skos:relatedMatch xapi:Extension ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:Extensions ;
+    owl:annotatedProperty skos:relatedMatch ;
+    owl:annotatedTarget xapi:Extension ;
+    rdfs:comment "Related, not the same: ADL's Extension classifies an extension's IRI (a SKOS concept, as an activity type is); this class is the map that carries extension values, keyed by those IRIs."@en
+] .
+
+foxxi-xapi:ActivityType a owl:Class ;
+    rdfs:label "Activity Type"@en ;
+    rdfs:comment "A kind of Activity, named by an IRI in an Activity Definition's type."@en ;
+    rdfs:subClassOf skos:Concept ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Activity Definition)" ;
+    skos:exactMatch xapi:ActivityType ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:AttachmentUsageType a owl:Class ;
+    rdfs:label "Attachment Usage Type"@en ;
+    rdfs:comment "A kind of use of an Attachment, named by an IRI coined for that use (for example a completion certificate, or a Statement signature)."@en ;
+    rdfs:subClassOf skos:Concept ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.6" ;
+    skos:exactMatch xapi:AttachmentUsageType ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:id a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "id"@en ;
+    rdfs:comment "A UUID: the identifier of a Statement, or of the Statement a Statement Reference points at."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Statement foxxi-xapi:StatementRef ) ] ;
+    rdfs:range foxxi-xapi:UUID ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2; §5.2.2.3 (Object as Statement)" ;
+    skos:exactMatch xapi:id ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:actor a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "actor"@en ;
+    rdfs:comment "Whom the Statement is about, as an Agent or a Group."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Statement foxxi-xapi:SubStatement ) ] ;
+    rdfs:range foxxi-xapi:Actor ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:verb a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "verb"@en ;
+    rdfs:comment "The action taken by the Actor."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Statement foxxi-xapi:SubStatement ) ] ;
+    rdfs:range foxxi-xapi:Verb ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:object a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "object"@en ;
+    rdfs:comment "The Activity, Agent, Group or Statement that is the object of the Statement."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Statement foxxi-xapi:SubStatement ) ] ;
+    rdfs:range foxxi-xapi:Object ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:result a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "result"@en ;
+    rdfs:comment "The measured outcome of the experience."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Statement foxxi-xapi:SubStatement ) ] ;
+    rdfs:range foxxi-xapi:Result ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:context a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "context"@en ;
+    rdfs:comment "The context that gives the Statement more meaning."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Statement foxxi-xapi:SubStatement ) ] ;
+    rdfs:range foxxi-xapi:Context ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:timestamp a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "timestamp"@en ;
+    rdfs:comment "When the events the Statement describes occurred: an RFC 3339 timestamp in UTC, set by the LRS when not provided."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Statement foxxi-xapi:SubStatement ) ] ;
+    rdfs:range xsd:dateTime ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2; §5.2.7 (Timestamps)" ;
+    skos:exactMatch xapi:timeStamp ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:stored a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "stored"@en ;
+    rdfs:comment "When the LRS recorded the Statement. Set by the LRS."@en ;
+    rdfs:domain foxxi-xapi:Statement ;
+    rdfs:range xsd:dateTime ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    skos:exactMatch xapi:stored ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:authority a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "authority"@en ;
+    rdfs:comment "The Agent or Group asserting that the Statement is true, verified by the LRS from authentication."@en ;
+    rdfs:domain foxxi-xapi:Statement ;
+    rdfs:range foxxi-xapi:Actor ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    skos:exactMatch xapi:Authority ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:authority ;
+    owl:annotatedProperty skos:exactMatch ;
+    owl:annotatedTarget xapi:Authority ;
+    rdfs:comment "ADL declares xapi:Authority an owl:ObjectProperty, as this is; its ontology also uses the IRI as a class (a subclass of xapi:Statement, and one of its disjoint classes)."@en
+] .
+
+foxxi-xapi:version a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "version"@en ;
+    rdfs:comment "The xAPI version the Statement is associated with. Not recommended for a Learning Record Provider to set."@en ;
+    rdfs:domain foxxi-xapi:Statement ;
+    rdfs:range foxxi-xapi:Version ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    skos:closeMatch xapi:version ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:version ;
+    owl:annotatedProperty skos:closeMatch ;
+    owl:annotatedTarget xapi:version ;
+    rdfs:comment "Not an exact match because of kind: ADL declares xapi:version an owl:AnnotationProperty, which no class axiom or shape can constrain; here it is a datatype property whose values are xAPI version numbers."@en
+] .
+
+foxxi-xapi:attachments a owl:ObjectProperty ;
+    rdfs:label "attachments"@en ;
+    rdfs:comment "The headers of the Attachments to the Statement."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Statement foxxi-xapi:SubStatement ) ] ;
+    rdfs:range foxxi-xapi:Attachment ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:objectType a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "object type"@en ;
+    skos:notation "objectType" ;
+    rdfs:comment "Which kind of object a node is. Required for a Group, a Statement Reference, a Sub-Statement, a context agent and a context group, and for an Agent used as a Statement's object."@en ;
+    rdfs:domain [
+        a owl:Class ;
+        owl:unionOf (
+            foxxi-xapi:Agent
+            foxxi-xapi:Group
+            foxxi-xapi:Activity
+            foxxi-xapi:StatementRef
+            foxxi-xapi:SubStatement
+            foxxi-xapi:ContextAgent
+            foxxi-xapi:ContextGroup
+        )
+    ] ;
+    rdfs:range [
+        a rdfs:Datatype ;
+        owl:oneOf ( "Agent" "Group" "Activity" "StatementRef" "SubStatement" "contextAgent" "contextGroup" )
+    ] ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1; §5.2.2.3; §5.2.2.5" ;
+    skos:exactMatch xapi:objectType ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:name a owl:DatatypeProperty ;
+    rdfs:label "name"@en ;
+    rdfs:comment "A name: the full name of an Agent or Group, the unique id or login name of an Account, or the human-readable name of an Activity (a language map)."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Actor foxxi-xapi:Account foxxi-xapi:ActivityDefinition ) ] ;
+    rdfs:range [ a rdfs:Datatype ; owl:unionOf ( xsd:string rdf:langString ) ] ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1; §5.2.2.3" ;
+    skos:closeMatch xapi:name ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:name ;
+    owl:annotatedProperty skos:closeMatch ;
+    owl:annotatedTarget xapi:name ;
+    rdfs:comment "Not an exact match: ADL's ontology gives xapi:name two ranges, rdf:langString and xsd:string, whose value spaces are disjoint, so no value is in both; and two domains, one of them xapi:ActivityDefinition, so whatever has a name would be an Activity Definition. Read as an equivalence, every name here — of an Agent, a Group, an Account or an Activity — would be inconsistent."@en
+] .
+
+foxxi-xapi:mbox a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "mbox"@en ;
+    skos:notation "mbox" ;
+    rdfs:comment "A mailto IRI — \"mailto:\" followed by an email address uniquely assigned to the Agent or Group. An Inverse Functional Identifier."@en ;
+    rdfs:domain foxxi-xapi:Actor ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
+    skos:exactMatch xapi:mbox ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:mbox_sha1sum a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "mbox SHA-1 sum"@en ;
+    skos:notation "mbox_sha1sum" ;
+    rdfs:comment "The hex-encoded SHA-1 hash of a mailto IRI (the value of an mbox). An Inverse Functional Identifier."@en ;
+    rdfs:domain foxxi-xapi:Actor ;
+    rdfs:range foxxi-xapi:SHA1Hex ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
+    skos:exactMatch xapi:mbox_sha1sum ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:openid a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "OpenID"@en ;
+    skos:notation "openid" ;
+    rdfs:comment "An OpenID URI that uniquely identifies the Agent or Group. An Inverse Functional Identifier."@en ;
+    rdfs:domain foxxi-xapi:Actor ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
+    skos:exactMatch xapi:openid ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:account a owl:ObjectProperty , owl:FunctionalProperty , owl:InverseFunctionalProperty ;
+    rdfs:label "account"@en ;
+    rdfs:comment "A user account on an existing system. An Inverse Functional Identifier."@en ;
+    rdfs:domain foxxi-xapi:Actor ;
+    rdfs:range foxxi-xapi:Account ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:member a owl:ObjectProperty ;
+    rdfs:label "member"@en ;
+    rdfs:comment "An Agent that is a member of the Group (an unordered list)."@en ;
+    rdfs:domain foxxi-xapi:Group ;
+    rdfs:range foxxi-xapi:Agent ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
+    skos:closeMatch xapi:member ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:member ;
+    owl:annotatedProperty skos:closeMatch ;
+    owl:annotatedTarget xapi:member ;
+    rdfs:comment "Not an exact match because of kind: ADL declares xapi:member an owl:DatatypeProperty, whose values are literals; a Group's members are Agents, individuals, so here it is an object property."@en
+] .
+
+foxxi-xapi:homePage a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "home page"@en ;
+    skos:notation "homePage" ;
+    rdfs:comment "The canonical home page of the system an Account is on (an IRL), after FOAF's accountServiceHomePage."@en ;
+    rdfs:domain foxxi-xapi:Account ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.1 (Account)" ;
+    skos:exactMatch xapi:homePage ;
+    skos:closeMatch foaf:accountServiceHomepage ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:display a owl:DatatypeProperty ;
+    rdfs:label "display"@en ;
+    rdfs:comment "The human-readable representation, in one or more languages, of a Verb (it does not change the Verb's meaning) or the display name of an Attachment."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:Verb foxxi-xapi:Attachment ) ] ;
+    rdfs:range rdf:langString ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.2; §5.2.2.6" ;
+    skos:exactMatch xapi:display ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:definition a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "definition"@en ;
+    rdfs:comment "The metadata of an Activity."@en ;
+    rdfs:domain foxxi-xapi:Activity ;
+    rdfs:range foxxi-xapi:ActivityDefinition ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Object as Activity)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:description a owl:DatatypeProperty ;
+    rdfs:label "description"@en ;
+    rdfs:comment "A description, as a language map, of an Activity, an interaction component or an Attachment."@en ;
+    rdfs:domain [
+        a owl:Class ;
+        owl:unionOf ( foxxi-xapi:ActivityDefinition foxxi-xapi:InteractionComponent foxxi-xapi:Attachment )
+    ] ;
+    rdfs:range rdf:langString ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3; §5.2.2.6" ;
+    skos:exactMatch xapi:description ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:type a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "type"@en ;
+    rdfs:comment "The type of the Activity, an IRI."@en ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range foxxi-xapi:ActivityType ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Activity Definition)" ;
+    skos:exactMatch xapi:type ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:moreInfo a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "more info"@en ;
+    skos:notation "moreInfo" ;
+    rdfs:comment "An IRL resolving to a document with human-readable information about the Activity, which may include a way to launch it."@en ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Activity Definition)" ;
+    skos:closeMatch xapi:moreInfo ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:moreInfo ;
+    owl:annotatedProperty skos:closeMatch ;
+    owl:annotatedTarget xapi:moreInfo ;
+    rdfs:comment "Not an exact match because of kind: ADL declares xapi:moreInfo an owl:ObjectProperty with the datatype range xsd:anyURI, which OWL 2 DL does not allow; the value is an IRL, a literal, so here it is a datatype property."@en
+] .
+
+foxxi-xapi:interactionType a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "interaction type"@en ;
+    skos:notation "interactionType" ;
+    rdfs:comment "The type of interaction, from the controlled vocabulary of interaction types."@en ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range [
+        a rdfs:Datatype ;
+        owl:oneOf (
+            "true-false"
+            "choice"
+            "fill-in"
+            "long-fill-in"
+            "matching"
+            "performance"
+            "sequencing"
+            "likert"
+            "numeric"
+            "other"
+        )
+    ] ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Activities)" ;
+    skos:exactMatch xapi:interactionType ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:correctResponsesPattern a owl:DatatypeProperty ;
+    rdfs:label "correct responses pattern"@en ;
+    skos:notation "correctResponsesPattern" ;
+    rdfs:comment "A pattern a learner's response is correct if it matches; a response is correct if it matches any pattern in the list. The structure depends on the interaction type."@en ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range xsd:string ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Activities)" ;
+    skos:exactMatch xapi:correctResponsesPattern ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:choices a owl:ObjectProperty ;
+    rdfs:label "choices"@en ;
+    rdfs:comment "The options available for selection or ordering in a choice or sequencing interaction."@en ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range foxxi-xapi:InteractionComponent ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Components)" ;
+    skos:exactMatch xapi:choices ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:scale a owl:ObjectProperty ;
+    rdfs:label "scale"@en ;
+    rdfs:comment "The options on the scale of a likert interaction."@en ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range foxxi-xapi:InteractionComponent ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Components)" ;
+    skos:exactMatch xapi:scale ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:source a owl:ObjectProperty ;
+    rdfs:label "source"@en ;
+    rdfs:comment "The sources to be matched in a matching interaction."@en ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range foxxi-xapi:InteractionComponent ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Components)" ;
+    skos:exactMatch xapi:source ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:target a owl:ObjectProperty ;
+    rdfs:label "target"@en ;
+    rdfs:comment "The targets to be matched in a matching interaction."@en ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range foxxi-xapi:InteractionComponent ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Components)" ;
+    skos:exactMatch xapi:target ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:steps a owl:ObjectProperty ;
+    rdfs:label "steps"@en ;
+    rdfs:comment "The elements making up a performance interaction."@en ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range foxxi-xapi:InteractionComponent ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Components)" ;
+    skos:exactMatch xapi:steps ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:componentId a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "component id"@en ;
+    skos:notation "id" ;
+    rdfs:comment "The id of an interaction component, unique within its list. (In JSON, the component's \"id\".)"@en ;
+    rdfs:domain foxxi-xapi:InteractionComponent ;
+    rdfs:range xsd:string ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Interaction Components)" ;
+    skos:exactMatch xapi:interactionId ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:score a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "score"@en ;
+    rdfs:comment "The score of the Agent in relation to the success or quality of the experience."@en ;
+    rdfs:domain foxxi-xapi:Result ;
+    rdfs:range foxxi-xapi:Score ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:success a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "success"@en ;
+    rdfs:comment "Whether the attempt on the Activity was successful."@en ;
+    rdfs:domain foxxi-xapi:Result ;
+    rdfs:range xsd:boolean ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4" ;
+    skos:exactMatch xapi:success ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:completion a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "completion"@en ;
+    rdfs:comment "Whether the Activity was completed."@en ;
+    rdfs:domain foxxi-xapi:Result ;
+    rdfs:range xsd:boolean ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4" ;
+    skos:exactMatch xapi:completion ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:response a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "response"@en ;
+    rdfs:comment "A response, formatted for the given Activity."@en ;
+    rdfs:domain foxxi-xapi:Result ;
+    rdfs:range xsd:string ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4" ;
+    skos:exactMatch xapi:response ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:duration a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "duration"@en ;
+    rdfs:comment "The period of time over which the Statement occurred."@en ;
+    rdfs:domain foxxi-xapi:Result ;
+    rdfs:range foxxi-xapi:Duration ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4; §5.2.7 (Duration)" ;
+    skos:closeMatch xapi:duration ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:duration ;
+    owl:annotatedProperty skos:closeMatch ;
+    owl:annotatedTarget xapi:duration ;
+    rdfs:comment "Not an exact match: ADL's ontology gives xapi:duration the range xsd:duration, which is outside the OWL 2 datatype map, whose values are not strings, and whose lexical space has no weeks (PnW), which xAPI allows; here a duration is the ISO 8601 string the standard prescribes. Read as an equivalence, every duration here would be inconsistent."@en
+] .
+
+foxxi-xapi:scaled a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "scaled"@en ;
+    rdfs:comment "The score as modified by scaling or normalization, between -1 and 1 inclusive."@en ;
+    rdfs:domain foxxi-xapi:Score ;
+    rdfs:range foxxi-xapi:ScaledScore ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4 (Score)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:raw a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "raw"@en ;
+    rdfs:comment "The score achieved, unmodified by scaling or normalization; between min and max (inclusive) when they are present."@en ;
+    rdfs:domain foxxi-xapi:Score ;
+    rdfs:range foxxi-xapi:Number ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4 (Score)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:min a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "min"@en ;
+    rdfs:comment "The lowest possible score for the experience; less than max when it is present."@en ;
+    rdfs:domain foxxi-xapi:Score ;
+    rdfs:range foxxi-xapi:Number ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4 (Score)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:max a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "max"@en ;
+    rdfs:comment "The highest possible score for the experience; greater than min when it is present."@en ;
+    rdfs:domain foxxi-xapi:Score ;
+    rdfs:range foxxi-xapi:Number ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.4 (Score)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:registration a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "registration"@en ;
+    rdfs:comment "The UUID of the registration the Statement is associated with."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range foxxi-xapi:UUID ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5" ;
+    skos:exactMatch xapi:registration ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:instructor a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "instructor"@en ;
+    rdfs:comment "The instructor the Statement relates to, when not its Actor. Not recommended in xAPI 2.0, which supersedes it with contextAgents."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range foxxi-xapi:Actor ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:team a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "team"@en ;
+    rdfs:comment "The team the Statement relates to, when not its Actor. Not recommended in xAPI 2.0, which supersedes it with contextGroups."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range foxxi-xapi:Group ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:contextActivities a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "context activities"@en ;
+    skos:notation "contextActivities" ;
+    rdfs:comment "The Activities the Statement is related to, by kind of relation."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range foxxi-xapi:ContextActivities ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:contextAgents a owl:ObjectProperty ;
+    rdfs:label "context agents"@en ;
+    skos:notation "contextAgents" ;
+    rdfs:comment "Statement-specific relationships between the Statement and Agents."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range foxxi-xapi:ContextAgent ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (Context Agents)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:contextGroups a owl:ObjectProperty ;
+    rdfs:label "context groups"@en ;
+    skos:notation "contextGroups" ;
+    rdfs:comment "Statement-specific relationships between the Statement and Groups."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range foxxi-xapi:ContextGroup ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (Context Groups)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:revision a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "revision"@en ;
+    rdfs:comment "The revision of the learning activity associated with the Statement, in a free format."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range xsd:string ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:platform a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "platform"@en ;
+    rdfs:comment "The platform used in the experience."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range xsd:string ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:language a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "language"@en ;
+    rdfs:comment "The RFC 5646 code of the language the experience mainly occurred in."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range xsd:language ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:statement a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "statement"@en ;
+    rdfs:comment "Another Statement to be considered as context for this one."@en ;
+    rdfs:domain foxxi-xapi:Context ;
+    rdfs:range foxxi-xapi:StatementRef ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:parent a owl:ObjectProperty ;
+    rdfs:label "parent"@en ;
+    rdfs:comment "An Activity that is a direct parent of the Activity of the Statement."@en ;
+    rdfs:domain foxxi-xapi:ContextActivities ;
+    rdfs:range foxxi-xapi:Activity ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (contextActivities)" ;
+    skos:exactMatch xapi:parent ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:grouping a owl:ObjectProperty ;
+    rdfs:label "grouping"@en ;
+    rdfs:comment "An Activity with an indirect relation to the Activity of the Statement."@en ;
+    rdfs:domain foxxi-xapi:ContextActivities ;
+    rdfs:range foxxi-xapi:Activity ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (contextActivities)" ;
+    skos:exactMatch xapi:grouping ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:category a owl:ObjectProperty ;
+    rdfs:label "category"@en ;
+    rdfs:comment "An Activity used to categorize the Statement — for example the xAPI Profile it conforms to."@en ;
+    rdfs:domain foxxi-xapi:ContextActivities ;
+    rdfs:range foxxi-xapi:Activity ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (contextActivities)" ;
+    skos:exactMatch xapi:category ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:other a owl:ObjectProperty ;
+    rdfs:label "other"@en ;
+    rdfs:comment "An Activity related to the Statement in another way."@en ;
+    rdfs:domain foxxi-xapi:ContextActivities ;
+    rdfs:range foxxi-xapi:Activity ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (contextActivities)" ;
+    skos:exactMatch xapi:other ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:agent a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "agent"@en ;
+    rdfs:comment "The one Agent a context agent relationship is defined for."@en ;
+    rdfs:domain foxxi-xapi:ContextAgent ;
+    rdfs:range foxxi-xapi:Agent ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (Context Agents)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:group a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "group"@en ;
+    rdfs:comment "The one Group a context group relationship is defined for."@en ;
+    rdfs:domain foxxi-xapi:ContextGroup ;
+    rdfs:range foxxi-xapi:Group ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (Context Groups)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:relevantTypes a owl:ObjectProperty ;
+    rdfs:label "relevant types"@en ;
+    skos:notation "relevantTypes" ;
+    rdfs:comment "A type IRI characterizing the relationship between the Statement and the Agent or Group. Without any, only a generic relationship is intended (not recommended)."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:ContextAgent foxxi-xapi:ContextGroup ) ] ;
+    rdfs:range skos:Concept ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (Context Agents; Context Groups)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:usageType a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "usage type"@en ;
+    skos:notation "usageType" ;
+    rdfs:comment "The usage of the Attachment, an IRI coined for that use."@en ;
+    rdfs:domain foxxi-xapi:Attachment ;
+    rdfs:range foxxi-xapi:AttachmentUsageType ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.6" ;
+    skos:closeMatch xapi:usageType ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:usageType ;
+    owl:annotatedProperty skos:closeMatch ;
+    owl:annotatedTarget xapi:usageType ;
+    rdfs:comment "Not an exact match because of kind: ADL declares xapi:usageType an owl:DatatypeProperty with the class range xapi:AttachmentUsageType, which OWL 2 DL does not allow; a usage type is an IRI naming a concept, so here it is an object property."@en
+] .
+
+foxxi-xapi:contentType a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "content type"@en ;
+    skos:notation "contentType" ;
+    rdfs:comment "The Internet Media Type of the Attachment."@en ;
+    rdfs:domain foxxi-xapi:Attachment ;
+    rdfs:range foxxi-xapi:MediaType ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.6" ;
+    skos:exactMatch xapi:contentType ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:length a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "length"@en ;
+    rdfs:comment "The length of the Attachment data, in octets."@en ;
+    rdfs:domain foxxi-xapi:Attachment ;
+    rdfs:range xsd:nonNegativeInteger ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.6" ;
+    skos:exactMatch xapi:length ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:sha2 a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "SHA-2"@en ;
+    skos:notation "sha2" ;
+    rdfs:comment "The SHA-2 hash of the Attachment data; required even when fileUrl is given."@en ;
+    rdfs:domain foxxi-xapi:Attachment ;
+    rdfs:range xsd:string ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.6" ;
+    skos:exactMatch xapi:sha2 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:fileUrl a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "file URL"@en ;
+    skos:notation "fileUrl" ;
+    rdfs:comment "An IRL from which the Attachment data can be, or could once be, retrieved."@en ;
+    rdfs:domain foxxi-xapi:Attachment ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.2.6" ;
+    skos:closeMatch xapi:fileURL ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:fileUrl ;
+    owl:annotatedProperty skos:closeMatch ;
+    owl:annotatedTarget xapi:fileURL ;
+    rdfs:comment "Not an exact match: ADL's ontology gives xapi:fileURL the range xsd:string, and here a file URL is an xsd:anyURI (an IRL); OWL 2 keeps the two value spaces apart, so read as an equivalence every file URL here would be inconsistent."@en
+] .
+
+foxxi-xapi:extensions a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "extensions"@en ;
+    rdfs:comment "A map of further properties keyed by IRI, on an Activity Definition, a Result or a Context."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:ActivityDefinition foxxi-xapi:Result foxxi-xapi:Context ) ] ;
+    rdfs:range foxxi-xapi:Extensions ;
+    dct:source "IEEE 9274.1.1-2023 §5.2.7 (Extensions)" ;
+    skos:closeMatch xapi:extensions ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:Axiom ;
+    owl:annotatedSource foxxi-xapi:extensions ;
+    owl:annotatedProperty skos:closeMatch ;
+    owl:annotatedTarget xapi:extensions ;
+    rdfs:comment "Not an exact match: ADL's ontology gives xapi:extensions two domains, xapi:ActivityDefinition and the union of its extension concepts, so whatever has extensions would be an Activity Definition — and so an Activity and an Object, which a Result or a Context cannot be there; and its extensions point at extension concepts, where here they point at the map that carries the values. Read as an equivalence, every Result or Context with extensions would be inconsistent."@en
+] .
+
+foxxi-xapi:InteractionType a skos:ConceptScheme ;
+    rdfs:label "Interaction types"@en ;
+    skos:prefLabel "Interaction types"@en ;
+    rdfs:comment "The controlled vocabulary of interaction types for interaction Activities. Each value fixes the format of the correct responses pattern and the learner's response."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> ;
+    skos:hasTopConcept foxxi-xapi:InteractionType-true-false ,
+        foxxi-xapi:InteractionType-choice ,
+        foxxi-xapi:InteractionType-fill-in ,
+        foxxi-xapi:InteractionType-long-fill-in ,
+        foxxi-xapi:InteractionType-matching ,
+        foxxi-xapi:InteractionType-performance ,
+        foxxi-xapi:InteractionType-sequencing ,
+        foxxi-xapi:InteractionType-likert ,
+        foxxi-xapi:InteractionType-numeric ,
+        foxxi-xapi:InteractionType-other .
+
+foxxi-xapi:InteractionType-true-false a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "true or false"@en ;
+    rdfs:label "true or false (Interaction types)"@en ;
+    skos:notation "true-false" ;
+    skos:definition "An interaction with two possible responses: true or false."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:InteractionType-choice a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "choice"@en ;
+    rdfs:label "choice (Interaction types)"@en ;
+    skos:notation "choice" ;
+    skos:definition "An interaction with a number of possible choices from which the learner selects one or several."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:InteractionType-fill-in a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "fill in"@en ;
+    rdfs:label "fill in (Interaction types)"@en ;
+    skos:notation "fill-in" ;
+    skos:definition "An interaction requiring a short response of one or more strings of characters (normally 250 characters or fewer)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:InteractionType-long-fill-in a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "long fill in"@en ;
+    rdfs:label "long fill in (Interaction types)"@en ;
+    skos:notation "long-fill-in" ;
+    skos:definition "An interaction requiring a long response (normally more than 250 characters)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:InteractionType-matching a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "matching"@en ;
+    rdfs:label "matching (Interaction types)"@en ;
+    skos:notation "matching" ;
+    skos:definition "An interaction in which the learner matches items in a source set to items in a target set."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:InteractionType-performance a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "performance"@en ;
+    rdfs:label "performance (Interaction types)"@en ;
+    skos:notation "performance" ;
+    skos:definition "An interaction requiring the learner to perform a task of several steps."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:InteractionType-sequencing a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "sequencing"@en ;
+    rdfs:label "sequencing (Interaction types)"@en ;
+    skos:notation "sequencing" ;
+    skos:definition "An interaction in which the learner orders items in a set."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:InteractionType-likert a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "Likert"@en ;
+    rdfs:label "Likert (Interaction types)"@en ;
+    skos:notation "likert" ;
+    skos:definition "An interaction in which the learner selects from a discrete set of choices on a scale."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:InteractionType-numeric a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "numeric"@en ;
+    rdfs:label "numeric (Interaction types)"@en ;
+    skos:notation "numeric" ;
+    skos:definition "An interaction requiring a numeric response."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:InteractionType-other a skos:Concept ;
+    skos:inScheme foxxi-xapi:InteractionType ;
+    skos:topConceptOf foxxi-xapi:InteractionType ;
+    skos:prefLabel "other"@en ;
+    rdfs:label "other (Interaction types)"@en ;
+    skos:notation "other" ;
+    skos:definition "An interaction that fits none of the other types."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members (
+        foxxi-xapi:Activity
+        foxxi-xapi:Agent
+        foxxi-xapi:Group
+        foxxi-xapi:StatementRef
+        foxxi-xapi:SubStatement
+    )
+] .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members ( foxxi-xapi:Statement foxxi-xapi:Object )
+] .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members (
+        foxxi-xapi:Statement
+        foxxi-xapi:Verb
+        foxxi-xapi:Result
+        foxxi-xapi:Score
+        foxxi-xapi:Context
+        foxxi-xapi:ContextActivities
+        foxxi-xapi:ContextAgent
+        foxxi-xapi:ContextGroup
+        foxxi-xapi:Attachment
+        foxxi-xapi:Account
+        foxxi-xapi:ActivityDefinition
+        foxxi-xapi:InteractionComponent
+        foxxi-xapi:Extensions
+    )
+] .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+    rdfs:label "was derived from"@en ;
+    rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Entity .
+
+skos:Concept a owl:Class ;
+    rdfs:label "Concept"@en ;
+    rdfs:comment "An idea or notion; a unit of thought. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> .
+
+skos:ConceptScheme a owl:Class ;
+    rdfs:label "Concept Scheme"@en ;
+    rdfs:comment "A set of concepts, optionally including statements about semantic relationships between those concepts. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    owl:disjointWith skos:Concept .
+
+skos:hasTopConcept a owl:ObjectProperty ;
+    rdfs:label "has top concept"@en ;
+    rdfs:comment "Relates, by convention, a concept scheme to a concept which is topmost in the broader/narrower concept hierarchies for that scheme. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range skos:Concept .
+
+skos:inScheme a owl:ObjectProperty ;
+    rdfs:label "is in scheme"@en ;
+    rdfs:comment "Relates a resource (for example a concept) to a concept scheme in which it is included. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:range skos:ConceptScheme .
+
+skos:topConceptOf a owl:ObjectProperty ;
+    rdfs:label "is top concept in scheme"@en ;
+    rdfs:comment "Relates a concept to the concept scheme that it is a top level concept of. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:subPropertyOf skos:inScheme ;
+    owl:inverseOf skos:hasTopConcept .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A physical, digital, conceptual, or other kind of thing with some fixed aspects. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+dct:title a owl:AnnotationProperty .
+
+dct:description a owl:AnnotationProperty .
+
+skos:historyNote a owl:AnnotationProperty .
+
+dct:creator a owl:AnnotationProperty .
+
+dct:contributor a owl:AnnotationProperty .
+
+dct:publisher a owl:AnnotationProperty .
+
+dct:license a owl:AnnotationProperty .
+
+dct:rights a owl:AnnotationProperty .
+
+dct:created a owl:AnnotationProperty .
+
+dct:modified a owl:AnnotationProperty .
+
+dct:issued a owl:AnnotationProperty .
+
+dct:language a owl:AnnotationProperty .
+
+bibo:status a owl:AnnotationProperty .
+
+dct:bibliographicCitation a owl:AnnotationProperty .
+
+vann:preferredNamespacePrefix a owl:AnnotationProperty .
+
+vann:preferredNamespaceUri a owl:AnnotationProperty .
+
+dct:source a owl:AnnotationProperty .
+
+skos:broadMatch a owl:AnnotationProperty .
+
+skos:exactMatch a owl:AnnotationProperty .
+
+skos:closeMatch a owl:AnnotationProperty .
+
+skos:relatedMatch a owl:AnnotationProperty .
+
+skos:notation a owl:AnnotationProperty .
+
+skos:prefLabel a owl:AnnotationProperty .
+
+skos:definition a owl:AnnotationProperty .

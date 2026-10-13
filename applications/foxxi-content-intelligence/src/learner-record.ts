@@ -42,13 +42,25 @@ import { exportClr, type ClrEnvelope } from './clr.js';
 import { competencyIri, competencyIdOf, competencyOfTerm } from './competency-identity.js';
 import type { StoredStatement } from './statement-store.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
-import { evaluateProficiency, LER_NS } from './ler-tla-vocab.js';
+import { evaluateProficiency, LER_NS, ELR_CONTEXT_URL, P2997 } from './ler-tla-vocab.js';
 import { WORK_STEP_LIMITS } from './work-step-limits.js';
 import { isXapiDuration } from './xapi-validate.js';
 
+/**
+ * ★ THE SECOND CONTEXT IS A JSON-LD CONTEXT. It used to be the IEEE P2997 web page, which a JSON-LD
+ * processor fetches, finds to be HTML, and fails on — so no record had an RDF reading, and the
+ * shapes published for records constrained data nothing could produce. The record context maps
+ * the fields below to the IEEE-LER vocabulary (see elrJsonLdContext). For the same reason the
+ * record carries its LER type in `type` only: a second, literal `@type` key beside VC 2.0's `type`
+ * alias is a JSON-LD "colliding keywords" error.
+ */
 const ELR_CONTEXT = [
   'https://www.w3.org/ns/credentials/v2',
-  'https://standards.ieee.org/ieee/2997/', // IEEE P2997 ELR
+  ELR_CONTEXT_URL,
+  // The record's convenience fields (summary counts, display labels, credential digests) have no
+  // vocabulary terms; VC 2.0 §5.2 requires a document that does not define every term to list
+  // this context last, which reads them as issuer-dependent.
+  'https://www.w3.org/ns/credentials/undefined-terms/v2',
 ] as const;
 
 const ADL = 'http://adlnet.gov/expapi/verbs/';
@@ -253,10 +265,14 @@ export type ElrModalStatus = 'Asserted' | 'Hypothetical';
 export type ElrSubjectKind = 'human' | 'agent';
 export type CompetencyBasis = 'performance' | 'credential' | 'inferred';
 
-/** P2997: an organisation in the subject's path. */
+/** P2997: a step of the subject's organisation path — an organisation or system, the role it plays
+ *  for this record, and its place on the path (from 1). In RDF each step is a node of its own
+ *  (ler:OrganizationPathStep): the role belongs to the step, not to the organisation's DID, and the
+ *  position keeps the order RDF would otherwise lose. */
 export interface ElrOrganization {
   id: string;
   role: 'credential-issuer' | 'lrs-authority' | 'tenant';
+  position: number;
 }
 
 /** A learning experience — projected from one training xAPI statement. */
@@ -361,9 +377,9 @@ export interface ElrRawDataLocation {
 
 export interface EnterpriseLearnerRecord {
   '@context': readonly string[];
+  /** VerifiablePresentation and EnterpriseLearnerRecord — the record context maps the second to
+   *  the IEEE-LER class, so a SHACL processor selects the EnterpriseLearnerRecord shape. */
   type: readonly string[];
-  /** RDF type IRIs — so a standard SHACL processor selects the ler:EnterpriseLearnerRecord targetClass. */
-  '@type': readonly string[];
   id: string;
   /** The dereferenceable IEEE P2997 spec IRI (the value the ELR shape asserts via sh:hasValue). */
   conformsTo: string;
@@ -489,7 +505,7 @@ export async function assembleEnterpriseLearnerRecord(
   });
 
   // 5. Organisation path.
-  const orgs = new Map<string, ElrOrganization>();
+  const orgs = new Map<string, Omit<ElrOrganization, 'position'>>();
   orgs.set(config.tenantDid, { id: config.tenantDid, role: 'tenant' });
   for (const c of credentials) {
     if (c.issuer && !orgs.has(c.issuer)) orgs.set(c.issuer, { id: c.issuer, role: 'credential-issuer' });
@@ -519,19 +535,18 @@ export async function assembleEnterpriseLearnerRecord(
   return {
     '@context': ELR_CONTEXT,
     type: ['VerifiablePresentation', 'EnterpriseLearnerRecord'],
-    '@type': [`${LER_NS}EnterpriseLearnerRecord`],
     // Dereferenceable URL id (everything-is-a-URL): the subject's own pod is the
     // authoritative home of the record, so the ELR is a fragment on it.
     id: `${publicPod.replace(/\/+$/, '')}/#enterprise-learner-record`,
     // Dereferenceable spec IRI (everything-is-a-URL) — the same value the published
     // EnterpriseLearnerRecordShape asserts via sh:hasValue, so the assembled record
     // conforms to its own shape. Human label kept alongside.
-    conformsTo: 'https://standards.ieee.org/ieee/2997/',
+    conformsTo: P2997,
     conformsToLabel: 'IEEE P2997 — Enterprise Learner Record (data model, Part 1)',
     subjectKind,
     learner: { did: config.learnerDid, name: config.learnerName },
     assembledAt: new Date().toISOString(),
-    organizationPath: [...orgs.values()],
+    organizationPath: [...orgs.values()].map((o, i) => ({ ...o, position: i + 1 })),
     experiences,
     performanceRecords,
     competencies,
