@@ -47,6 +47,7 @@ import {
 } from './derive-userid.js';
 import { resolveTargetUserId } from './resolve-target-userid.js';
 import { authenticatePasskey, PasskeyPersistenceError } from './passkey-authentication.js';
+import { listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -656,36 +657,37 @@ function podAuthMethodsUrl(userId: string): string {
   return `${CSS_URL}${userId}/auth-methods.jsonld`;
 }
 
+// Reads of auth-methods documents and of the pod listing give up after this long, so one
+// hung read is a failure to retry, not a worker that never returns (which would leave the
+// account index incomplete for good).
+const POD_READ_TIMEOUT_MS = 30_000;
+const podFetch: FetchLike = (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(POD_READ_TIMEOUT_MS) });
+
 async function fetchPodAuthMethods(
   userId: string,
   opts: { createIfMissing?: boolean } = {},
 ): Promise<AuthMethods> {
   const { createIfMissing = true } = opts;
+  // ★ THROWS (PodReadError) WHEN THE POD CANNOT BE READ. It used to answer every failure
+  // with an empty document, and an empty document is a claim: "this account has no
+  // credentials". readAuthMethods cached that claim and rebuildIndexesForUser acted on it,
+  // deleting the user's passkeys, wallets and DIDs from the sign-in indexes after one
+  // timed-out read; the startup rebuild counted such users as skipped and never retried
+  // them. See account-index.ts. Only a 404 means the pod has no auth-methods document.
   const url = podAuthMethodsUrl(userId);
-  try {
-    const r = await fetch(url, { headers: { 'Accept': 'application/ld+json' } });
-    if (r.status === 404) {
-      if (!createIfMissing) {
-        // Caller is doing passive discovery (index rebuild) — don't materialize
-        // an empty file just because the container exists. That would turn every
-        // service-pod / inert pim:Storage shell into a phantom user on every restart.
-        throw new Error('404 (createIfMissing=false)');
-      }
-      // First touch from an active auth flow — write an empty file so the caller
-      // can append to it without racing other writers.
-      const empty = emptyAuthMethods(userId);
-      await putPodAuthMethods(userId, empty);
-      return empty;
-    }
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-    const body = await r.json();
-    return normaliseAuthMethods(body, userId);
-  } catch (err) {
-    log(`WARN: could not read ${url}: ${(err as Error).message}`);
-    // Return an empty doc rather than throwing — identity flows gracefully
-    // degrade to "no credentials on file" which surfaces as "register first".
-    return emptyAuthMethods(userId);
+  const body = await readPodJson(podFetch, url);
+  if (body === null) {
+    // Passive callers (the index rebuild) must not materialize a file just because the
+    // container exists: that would turn every service pod and inert pim:Storage shell into
+    // a phantom user on every restart.
+    if (!createIfMissing) return emptyAuthMethods(userId);
+    // First touch from an active auth flow — write an empty file so the caller
+    // can append to it without racing other writers.
+    const empty = emptyAuthMethods(userId);
+    await putPodAuthMethods(userId, empty);
+    return empty;
   }
+  return normaliseAuthMethods(body, userId);
 }
 
 async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<void> {
@@ -971,16 +973,27 @@ async function readAuthMethods(userId: string, allowStale = false): Promise<Auth
   if (cached && allowStale) {
     // Refresh in background, serialised behind any pending write on
     // this userId so the refresh fetch never races the in-flight PUT.
+    // A refresh that fails keeps what we had: an unreadable pod is not an
+    // account without credentials.
     void withIdentityPodMutex(userId, () => fetchPodAuthMethods(userId)).then(fresh => {
       authMethodsCache.set(userId, { value: fresh, fetchedAt: Date.now() });
       rebuildIndexesForUser(userId, fresh);
-    }).catch(() => {});
+    }).catch(err => log(`WARN: kept cached auth-methods for ${userId}: ${(err as Error).message}`));
     return cached.value;
   }
-  const fresh = await withIdentityPodMutex(userId, () => fetchPodAuthMethods(userId));
-  authMethodsCache.set(userId, { value: fresh, fetchedAt: now });
-  rebuildIndexesForUser(userId, fresh);
-  return fresh;
+  try {
+    const fresh = await withIdentityPodMutex(userId, () => fetchPodAuthMethods(userId));
+    authMethodsCache.set(userId, { value: fresh, fetchedAt: now });
+    rebuildIndexesForUser(userId, fresh);
+    return fresh;
+  } catch (err) {
+    // Never throws: every caller treats the answer as the account's record, and the route
+    // handlers are not wrapped for rejections. Stale beats empty; with nothing cached the
+    // caller gets an empty record, as before, but it is neither cached nor indexed, so the
+    // next read goes back to the pod instead of trusting the failure.
+    log(`WARN: could not read auth-methods for ${userId}: ${(err as Error).message}`);
+    return cached ? cached.value : emptyAuthMethods(userId);
+  }
 }
 
 function rebuildIndexesForUser(userId: string, m: AuthMethods): void {
@@ -993,35 +1006,8 @@ function rebuildIndexesForUser(userId: string, m: AuthMethods): void {
   for (const k of m.didKeys) didIndex.set(k.did, userId);
 }
 
-// Discover pods by listing the CSS root as an LDP BasicContainer. CSS emits
-// `ldp:contains <child/>, <other/> ;` for every direct sub-container, which
-// is exactly the set of user pods (one per user). This makes the pod layer
-// — not a database — the authoritative user registry.
-async function discoverUsersFromCSS(): Promise<string[]> {
-  try {
-    const r = await fetch(CSS_URL, { headers: { 'Accept': 'text/turtle' } });
-    if (!r.ok) return [];
-    const body = await r.text();
-    const out: string[] = [];
-    // Match ldp:contains blocks and extract child IRIs
-    const re = /ldp:contains\s+([\s\S]*?)\s*(?:;|\.)/g;
-    let blockMatch: RegExpExecArray | null;
-    while ((blockMatch = re.exec(body)) !== null) {
-      const refs = blockMatch[1].match(/<([^>]+)>/g) || [];
-      for (const ref of refs) {
-        const path = ref.slice(1, -1);
-        // Child IRIs are relative URIs ending in '/' — pod paths are "<userId>/"
-        if (path.endsWith('/') && !path.startsWith('.')) {
-          out.push(path.replace(/\/$/, ''));
-        }
-      }
-    }
-    return [...new Set(out)];
-  } catch (err) {
-    log(`WARN: could not list CSS root: ${(err as Error).message}`);
-    return [];
-  }
-}
+// The CSS root lists every pod as a direct sub-container, which makes the pod layer —
+// not a database — the authoritative user registry (account-index.ts listPods).
 
 // Hydrate an identity shell from a pod's auth-methods.jsonld when we don't
 // have an in-memory entry yet (common after a container restart). Also
@@ -1086,56 +1072,73 @@ function defaultAgentForRegistration(
   };
 }
 
-// Bounded concurrency runner — preserves Promise.all semantics (resolves
-// once every item has been processed) while capping in-flight work so a
-// cold-start scan over hundreds of pods doesn't exhaust file descriptors
-// or rate-limit CSS.
-async function runWithConcurrency<T>(limit: number, items: readonly T[], fn: (item: T) => Promise<void>): Promise<void> {
-  let i = 0;
-  const workers: Promise<void>[] = [];
-  const worker = async () => {
-    while (i < items.length) {
-      const idx = i++;
-      await fn(items[idx]!);
-    }
-  };
-  for (let k = 0; k < Math.min(limit, items.length); k++) workers.push(worker());
-  await Promise.all(workers);
+// Load one account from its pod into the identities map, the auth-methods cache and the
+// sign-in indexes. Returns false for a pod with no credentials (a service pod, an inert
+// pim:Storage shell, a deleted user); throws PodReadError when the pod cannot be read, so
+// the caller retries it rather than forgetting the account.
+async function loadAccountFromPod(userId: string): Promise<boolean> {
+  const body = await readPodJson(podFetch, podAuthMethodsUrl(userId));
+  if (body === null) return false;
+  const m = normaliseAuthMethods(body, userId);
+  if (!m.walletAddresses.length && !m.webAuthnCredentials.length && !m.didKeys.length) return false;
+  hydrateFromAuthMethods(m);
+  authMethodsCache.set(userId, { value: m, fetchedAt: Date.now() });
+  rebuildIndexesForUser(userId, m);
+  return true;
 }
 
-// Rebuild all indexes from pod scans. Uses LDP discovery on CSS so users
-// registered in a previous container life are recoverable without any
-// in-memory state having survived. Seeded users (markj + default agents)
-// are still rehydrated too in case their pods aren't in CSS yet.
-async function rebuildAllIndexes(): Promise<void> {
+// What the last pass over the pods found, for /health: the accounts loaded, and the pods
+// still unreadable (retried every ACCOUNT_RETRY_MS until none is left).
+const ACCOUNT_RETRY_MS = 60_000;
+let accountIndexState: { complete: boolean; listed: boolean; unreadable: number; loaded: number; lastPass: AccountLoadReport | null } =
+  { complete: false, listed: false, unreadable: 0, loaded: 0, lastPass: null };
+
+// Rebuild all indexes from the pods. Users registered in a previous container life are
+// recovered without any in-memory state having survived. A pod that cannot be read is
+// retried (account-index.ts loadAccounts: three more passes, then once a minute in the
+// background) — never counted as an account without credentials.
+async function rebuildAllIndexes(only?: readonly string[]): Promise<void> {
   const seededUserIds = [...identities.values()].filter(i => i.type === 'user').map(i => i.id);
-  const discoveredUserIds = await discoverUsersFromCSS();
-  const allUserIds = [...new Set([...seededUserIds, ...discoveredUserIds])];
-  log(`Rebuilding credential indexes from ${allUserIds.length} pod(s) (seeded=${seededUserIds.length} discovered=${discoveredUserIds.length})...`);
-  let ok = 0, skipped = 0, fail = 0;
-  await runWithConcurrency(16, allUserIds, async (uid) => {
-    try {
-      // Passive rebuild — read what's there, don't materialize empty
-      // auth-methods files for pods that aren't users. A pod container
-      // existing on CSS does not by itself make its name a user identity;
-      // a credential file must already be present.
-      const m = await fetchPodAuthMethods(uid, { createIfMissing: false });
-      if (!m.walletAddresses.length && !m.webAuthnCredentials.length && !m.didKeys.length) {
-        // No credentials registered yet — skip hydration. Either the pod
-        // belongs to a service (svc-*, the relay's DCR store) or it's an
-        // inert pim:Storage shell left over from a deletion.
-        skipped++;
-        return;
-      }
-      hydrateFromAuthMethods(m);
-      authMethodsCache.set(uid, { value: m, fetchedAt: Date.now() });
-      rebuildIndexesForUser(uid, m);
-      ok++;
-    } catch {
-      fail++;
-    }
+  const report = await loadAccounts({
+    list: async () => [...new Set([...seededUserIds, ...(await listPods(podFetch, CSS_URL))])],
+    load: loadAccountFromPod,
+    ...(only ? { only } : {}),
+    concurrency: 16,
   });
-  log(`Index rebuild: ${ok} pod(s) OK, ${skipped} skipped (no credentials), ${fail} failed. users=${identities.size} wallets=${walletIndex.size} webauthn=${credentialIndex.size} dids=${didIndex.size}`);
+  accountIndexState = {
+    complete: report.listed && report.unreadable.length === 0,
+    listed: report.listed,
+    unreadable: report.listed ? report.unreadable.length : accountIndexState.unreadable,
+    loaded: accountIndexState.loaded + report.loaded,
+    lastPass: report,
+  };
+  log(report.listed
+    ? `Account index: ${report.loaded} loaded, ${report.skipped} without credentials, ${report.unreadable.length} unreadable after ${report.rounds} pass(es) over ${report.attempted} pod(s). users=${[...identities.values()].filter(i => i.type === 'user').length} wallets=${walletIndex.size} webauthn=${credentialIndex.size} dids=${didIndex.size}`
+    : `ERROR: identity_account_index_incomplete: could not list the pods at ${CSS_URL}; retrying in ${ACCOUNT_RETRY_MS / 1000}s`);
+  if (!accountIndexState.complete) {
+    if (report.listed) log(`ERROR: identity_account_index_incomplete: ${report.unreadable.length} pod(s) unreadable (${report.unreadable.slice(0, 5).join(', ')}${report.unreadable.length > 5 ? ', …' : ''}); retrying in ${ACCOUNT_RETRY_MS / 1000}s`);
+    const retry = setTimeout(() => {
+      void rebuildAllIndexes(report.listed ? report.unreadable : undefined)
+        .catch(err => log(`WARN: account index retry failed: ${(err as Error).message}`));
+    }, ACCOUNT_RETRY_MS);
+    retry.unref?.();
+  }
+}
+
+// An account asked for by id but not in memory (its pod was unreadable at startup, or it
+// registered on another replica): load it from its pod now. 'unreadable' means the pod
+// could not be read, so the caller can say "try again" rather than "no such account".
+const ACCOUNT_ID_SHAPE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+async function ensureAccountLoaded(userId: string): Promise<'loaded' | 'absent' | 'unreadable'> {
+  const known = identities.get(userId);
+  if (known) return known.type === 'user' ? 'loaded' : 'absent';
+  if (!ACCOUNT_ID_SHAPE.test(userId)) return 'absent';
+  try {
+    return (await loadAccountFromPod(userId)) ? 'loaded' : 'absent';
+  } catch (err) {
+    log(`WARN: could not load account ${userId} on demand: ${(err as Error).message}`);
+    return 'unreadable';
+  }
 }
 
 /**
@@ -1461,7 +1464,13 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
   // also the hard-fail path that closes the gap left by the
   // partition-tolerant pod-read below.
   if (!identities.has(payload.userId)) {
-    return { valid: false, reason: 'User for token not found' };
+    // The signature is already verified, so only a genuine token gets here: load its account
+    // from the pod (unreadable at startup, say) before calling the user missing. A deleted
+    // user's auth-methods are gone from the pod, so this cannot bring one back.
+    const account = await ensureAccountLoaded(payload.userId);
+    if (account !== 'loaded') {
+      return { valid: false, reason: account === 'unreadable' ? 'Could not read the account for this token; try again' : 'User for token not found' };
+    }
   }
   // Revocation check: token's embedded epoch must be ≥ pod's current
   // sessionEpoch. A sign-out-everywhere bumps the pod's value, making
@@ -1940,6 +1949,14 @@ app.get('/health', (_req, res) => {
     status: 'ok',
     users: [...identities.values()].filter(i => i.type === 'user').length,
     agents: [...identities.values()].filter(i => i.type === 'agent').length,
+    // Whether every pod has been read into the sign-in indexes. `complete: false` with
+    // `unreadable > 0` means some accounts cannot sign in yet; they are retried every minute.
+    accountIndex: {
+      complete: accountIndexState.complete,
+      listed: accountIndexState.listed,
+      unreadable: accountIndexState.unreadable,
+      lastPassAt: accountIndexState.lastPass?.finishedAt ?? null,
+    },
     // Tokens are stateless (HMAC-signed) — there's no server-side count
     // to report. Caller can still trust signature + expiry + sessionEpoch.
     tokenSigningKeyOrigin: process.env['TOKEN_SIGNING_KEY'] ? 'env' : 'ephemeral',
@@ -2024,7 +2041,17 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
   // hygiene).
   if (purpose === 'webauthn-authenticate' && userId) {
     let methods: AuthMethods | undefined;
-    if (identities.has(userId)) {
+    // An account that is not in memory may still be on its pod (it was unreadable when
+    // this container started): load it rather than answering "no passkey".
+    const account = await ensureAccountLoaded(userId);
+    if (account === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try signing in again in a minute.',
+      });
+      return;
+    }
+    if (account === 'loaded') {
       try {
         methods = await readAuthMethods(userId, /* allowStale */ true);
       } catch { /* treat as not-found below */ }
@@ -2539,6 +2566,15 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
   // successfully signs the ceremony.
   const userId = credentialIndex.get(response.id);
   if (!userId) {
+    if (!accountIndexState.complete) {
+      // Some pods have not been read yet, so this passkey may belong to one of them.
+      // Saying "no match" here is what sent people to register a new account.
+      res.status(503).json({
+        error: 'Interego is still loading accounts',
+        detail: 'This passkey may belong to an account that has not been loaded yet. Nothing was changed; try signing in again in a minute rather than creating a new account.',
+      });
+      return;
+    }
     res.status(401).json({ error: 'No WebAuthn credential matches this response' });
     return;
   }

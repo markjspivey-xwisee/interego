@@ -81,6 +81,8 @@ Every `/auth/*` endpoint picks one of three modes based on the request, and **th
 
 These indexes are rebuilt on container startup from pod scans. The authenticate endpoints *only* consult these indexes — they do not accept a userId claim in the body. If the signed credential material doesn't match an indexed entry, authentication fails.
 
+A pod that cannot be read is not a pod without credentials (`account-index.ts`). The startup scan retries the listing and every unreadable pod (three more passes, at 2 s, 5 s and 15 s), then retries what is still unreadable once a minute until none is left; each read times out after 30 s. Until the scan is complete, a passkey that matches no loaded account gets `503 Interego is still loading accounts` rather than `401`, so nobody is told to register again. A targeted sign-in (`/challenges` with a `userId`) and a token whose account is not in memory both load that account from its pod on demand: an unreadable pod there is a `503`, never "No passkey found" or "User for token not found". `GET /health` reports `accountIndex: { complete, listed, unreadable, lastPassAt }`, and the log line `identity_account_index_incomplete` says which pods are still unread. Before this, every failed read counted as "no credentials": a restart while CSS was slow left 437 of 445 accounts unknown, which disconnected their connectors and refused their passkeys.
+
 ## OAuth 2.1 layer
 
 - DCR (RFC 7591) on `/register` — no client pre-registration required.
