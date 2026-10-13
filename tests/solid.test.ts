@@ -17,6 +17,7 @@ import {
   parseManifest,
   publish,
   subscribe,
+  wrapAsTriG,
 } from '@interego/solid';
 
 import type {
@@ -485,6 +486,32 @@ describe('publish', () => {
     expect(quads.filter(q => q.graph.value === 'urn:graph:g1').map(q => q.object.value).sort()).toEqual([
       'http://example.org/abc#o', 'http://example.org/default#d', 'https://foxxi-bridge.interego.xwisee.com/ns/xapi#Statement',
     ]);
+  });
+
+  // The grammar's PN_CHARS_BASE is a list of code-point ranges, not a Unicode category. Matched
+  // as `\p{L}`, a name with a zero-width non-joiner inside (`ab‌c:`, U+200C, which Persian and
+  // Indic words use) or one starting with a superscript (`⁰x:`, U+2070) stayed inside the block
+  // and the stored document failed strict parsing, while `ª:`, which the grammar excludes, was
+  // taken for a name. Every name below is hoisted and the document parses.
+  it('recognises prefix names by the grammar\'s own code-point ranges', () => {
+    const names = ['ab‌c', '⁰x', 'a·b', 'é', '\u{10000}x', 'x‿y', 'ex.ample', 'a_1-b'];
+    const graph = [
+      ...names.map((n, i) => `@prefix ${n}: <http://example.org/n${i}#> .`),
+      `<http://example.org/s> <http://example.org/p> ${names.map(n => `${n}:o`).join(' , ')} .`,
+    ].join('\n');
+    const desc = '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .\n<urn:d> a iep:ContextDescriptor .\n';
+    const doc = wrapAsTriG(desc, graph, 'urn:graph:g');
+    const block = doc.slice(doc.indexOf('<urn:graph:g> {'));
+    expect(block).not.toMatch(/@prefix/);
+    const quads = new N3Parser({ format: 'application/trig' }).parse(doc);
+    expect(quads.filter(q => q.graph.value === 'urn:graph:g').map(q => q.object.value).sort())
+      .toEqual(names.map((_, i) => `http://example.org/n${i}#o`).sort());
+
+    // A name the grammar refuses is not a directive: the line stays where the caller wrote it.
+    for (const bad of ['ª', '_a', '1a', 'a.', '×']) {
+      const kept = wrapAsTriG(desc, `@prefix ${bad}: <http://example.org/x#> .\n<urn:s> <urn:p> <urn:o> .`, 'urn:graph:g');
+      expect(kept.slice(kept.indexOf('<urn:graph:g> {'))).toContain(`@prefix ${bad}:`);
+    }
   });
 
   // Alias-collision path: caller-supplied graphContent re-declares a prefix the descriptor

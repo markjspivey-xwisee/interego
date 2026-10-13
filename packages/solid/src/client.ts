@@ -413,12 +413,41 @@ function flipsLongLiteralState(line: string): boolean {
   return flip;
 }
 
-// A Turtle / SPARQL prefix name (PN_PREFIX, possibly empty): a letter, then letters, digits,
-// `_`, `-`, `.` or the other PN_CHARS, not ending in `.`. It was `\w*`, which stops at the
-// first `-`: a payload binding a name like `my-vocab:` had that one directive left inside
-// the `<graph> { … }` block, where TriG allows no directive, so strict parsers (N3.js)
-// rejected the whole stored document while lenient ones (rdflib) read it.
-const PN_PREFIX = String.raw`(?:\p{L}(?:[\p{L}\p{N}_.\-\u00B7\p{Mn}\u203F\u2040]*[\p{L}\p{N}_\-\u00B7\p{Mn}\u203F\u2040])?)?`;
+// The name in a prefix directive, as the regexes below capture it: everything up to the `:`
+// that is not whitespace. Whether it IS a prefix name is decided by isPnPrefix, which reads
+// the grammar's own code-point ranges. Names were matched as `\w*`, which stops at the first
+// `-`: a payload binding `my-vocab:` had that one directive left inside the `<graph> { … }`
+// block, where TriG allows no directive, so strict parsers (N3.js) rejected the whole stored
+// document while lenient ones (rdflib) read it. Unicode categories (`\p{L}`) came closer and
+// were still wrong both ways: they miss U+200C/U+200D, U+2070–U+218F and the other ranges the
+// grammar lists regardless of category, and admit letters such as `ª` that it excludes.
+const PREFIX_NAME = String.raw`[^\s:]*`;
+
+/** Turtle 1.1 PN_CHARS_BASE, by code point. */
+function isPnCharsBase(cp: number): boolean {
+  return (cp >= 0x41 && cp <= 0x5A) || (cp >= 0x61 && cp <= 0x7A)
+    || (cp >= 0xC0 && cp <= 0xD6) || (cp >= 0xD8 && cp <= 0xF6) || (cp >= 0xF8 && cp <= 0x2FF)
+    || (cp >= 0x370 && cp <= 0x37D) || (cp >= 0x37F && cp <= 0x1FFF) || (cp >= 0x200C && cp <= 0x200D)
+    || (cp >= 0x2070 && cp <= 0x218F) || (cp >= 0x2C00 && cp <= 0x2FEF) || (cp >= 0x3001 && cp <= 0xD7FF)
+    || (cp >= 0xF900 && cp <= 0xFDCF) || (cp >= 0xFDF0 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0xEFFFF);
+}
+
+/** Turtle 1.1 PN_CHARS: PN_CHARS_BASE, `_`, `-`, digits, U+00B7, U+0300–U+036F, U+203F–U+2040. */
+function isPnChars(cp: number): boolean {
+  return isPnCharsBase(cp) || cp === 0x5F || cp === 0x2D || (cp >= 0x30 && cp <= 0x39) || cp === 0xB7
+    || (cp >= 0x300 && cp <= 0x36F) || cp === 0x203F || cp === 0x2040;
+}
+
+/**
+ * Turtle 1.1 PN_PREFIX, or the empty name: PN_CHARS_BASE ((PN_CHARS | '.')* PN_CHARS)?.
+ * https://www.w3.org/TR/turtle/#grammar-production-PN_PREFIX
+ */
+function isPnPrefix(name: string): boolean {
+  const cps = Array.from(name, (ch) => ch.codePointAt(0)!);
+  if (cps.length === 0) return true;
+  if (!isPnCharsBase(cps[0]!)) return false;
+  return cps.slice(1).every((cp, i, rest) => isPnChars(cp) || (cp === 0x2E && i < rest.length - 1));
+}
 
 /**
  * ★ EXPORTED SO A TEST CAN SERVE WHAT A POD SERVES. It was private, and every `get_descriptor`
@@ -446,7 +475,14 @@ export function wrapAsTriG(
   // Recognise the four standard forms: `@prefix`, `@base`, SPARQL
   // `PREFIX`, and SPARQL `BASE`. Matched lines are hoisted; everything
   // else is treated as graph body.
-  const directiveRe = new RegExp(String.raw`^\s*(@prefix\s+${PN_PREFIX}:\s*<[^>]+>\s*\.|@base\s+<[^>]+>\s*\.|PREFIX\s+${PN_PREFIX}:\s*<[^>]+>|BASE\s+<[^>]+>)\s*$`, 'iu');
+  // A line is a prefix directive only when its name is a PN_PREFIX (isPnPrefix); a line with
+  // some other name is not Turtle, and is left where the caller wrote it.
+  const directiveRe = new RegExp(String.raw`^\s*(@prefix\s+(?<at>${PREFIX_NAME}):\s*<[^>]+>\s*\.|@base\s+<[^>]+>\s*\.|PREFIX\s+(?<sparql>${PREFIX_NAME}):\s*<[^>]+>|BASE\s+<[^>]+>)\s*$`, 'iu');
+  const isDirective = (line: string): boolean => {
+    const m = directiveRe.exec(line);
+    const name = m?.groups?.['at'] ?? m?.groups?.['sparql'];
+    return m !== null && (name === undefined || isPnPrefix(name));
+  };
   const graphLines = graphContent.split('\n');
   const graphDirectives: string[] = [];
   // Each body line paired with whether it began inside a triple-quoted literal, because
@@ -460,7 +496,7 @@ export function wrapAsTriG(
   // string "one" under an injected `x:` binding. Track the delimiters so neither happens.
   let insideLongLiteral = false;
   for (const line of graphLines) {
-    if (!insideLongLiteral && directiveRe.test(line)) {
+    if (!insideLongLiteral && isDirective(line)) {
       graphDirectives.push(line.trim());
     } else {
       graphBodyLines.push({ text: line, inLiteral: insideLongLiteral });
@@ -472,7 +508,7 @@ export function wrapAsTriG(
   // SPARQL-style `PREFIX` / `BASE` to Turtle `@prefix` / `@base` form so the document is
   // syntactically uniform. Nothing is dropped and nothing is de-duplicated: which binding
   // is in force is decided by POSITION below, not by arbitration here.
-  const prefixNameRe = new RegExp(String.raw`^\s*(?:@prefix|PREFIX)\s+(${PN_PREFIX}):`, 'iu');
+  const prefixNameRe = new RegExp(String.raw`^\s*(?:@prefix|PREFIX)\s+(${PREFIX_NAME}):`, 'iu');
   const callerPrefixLines: string[] = [];
   for (const directive of graphDirectives) {
     const m = directive.match(prefixNameRe);
@@ -487,7 +523,7 @@ export function wrapAsTriG(
     }
     callerPrefixLines.push(
       /^\s*PREFIX\s/i.test(directive)
-        ? directive.replace(new RegExp(String.raw`^\s*PREFIX\s+(${PN_PREFIX}):\s*(<[^>]+>)\s*$`, 'iu'), '@prefix $1: $2 .')
+        ? directive.replace(new RegExp(String.raw`^\s*PREFIX\s+(${PREFIX_NAME}):\s*(<[^>]+>)\s*$`, 'iu'), '@prefix $1: $2 .')
         : directive,
     );
   }
@@ -502,7 +538,7 @@ export function wrapAsTriG(
   const seenCallerNs = new Map<string, string>();
   let aliasRebound: string | null = null;
   for (const directive of callerPrefixLines) {
-    const m = directive.match(new RegExp(String.raw`^@prefix\s+(${PN_PREFIX}):\s*(<[^>]+>)`, 'u'));
+    const m = directive.match(new RegExp(String.raw`^@prefix\s+(${PREFIX_NAME}):\s*(<[^>]+>)`, 'u'));
     if (!m) continue;
     const prior = seenCallerNs.get(m[1]!);
     if (prior !== undefined && prior !== m[2]!) aliasRebound = m[1]!;

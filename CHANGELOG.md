@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-13 — Publishing: prefix names by the Turtle grammar's own ranges
+
+The hyphen fix ("payload prefix names with hyphens are hoisted too", below) matched prefix names with Unicode categories (`\p{L}`), and Codex's review pointed out that Turtle's `PN_CHARS_BASE` is a list of code-point ranges, not a category. A name with a zero-width non-joiner inside (U+200C, which Persian and Indic words use) or one starting with a superscript such as `⁰x:` still stayed inside the graph block and failed strict parsing, while `ª:`, which the grammar excludes, was taken for a name. `wrapAsTriG` now reads the name loosely and accepts a line as a prefix directive only when the name passes `isPnPrefix`, which checks the grammar's `PN_CHARS_BASE` and `PN_CHARS` ranges by code point. A line whose name the grammar refuses is not Turtle, and stays where the caller wrote it. The new test in `tests/solid.test.ts` publishes eight names, among them ZWNJ, a superscript, a middle dot, a combining mark and an astral character, and parses the stored document with N3.js. It fails on the previous emitter.
+
 ## 2026-10-13 — I2IDL-X 0.4.0 is published
 
 The six graphs 0.4.0 changed (shapes, ontology, rules, mappings, alignments, referents) are republished, signed, to their `/ns` IRIs; the catalog, enactments, release feed and change history were already identical to the build. The ontology, alignments and referents were published once more after the prefix fix below reached the relay, so every stored document now parses as strict TriG; the first copies had kept `foxxi-*` prefix lines inside the graph block. `publications.json` records the new descriptors and moves each replaced one to `superseded`. The pinned rebuild reports all ten graphs identical to what is live and 88 of 88 proposals published. Its one failing check, that the live glossary still reports v0.0.80, failed before too: I2IDL has published a newer release than the one this build is pinned to.
