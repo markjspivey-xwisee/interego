@@ -18,6 +18,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -326,7 +327,14 @@ for cid, target in cw.EXEMPLARS:
 sq_blocks.append("\n# ── Specification documents for standard concepts ──\n")
 for cid, target in cw.SPECS:
     sq_blocks.append(f"<{concept_iri(cid)}> i2x:specification <{target}> .")
-catalog_ttl = render((SRC / "i2idlx-catalog.ttl.tmpl").read_text().replace("{{STORED_QUERIES}}", "\n".join(sq_blocks)))
+# The catalog copies I2IDL's published SPARQL limits; read them from wherever the pinned commit documents them
+# (docs/SPARQL.md since v0.0.86, README.md before) so the copy can be checked against the source.
+limits_doc, limits_text = next(((p, t.split("## SPARQL service limits", 1)[1].split("\n## ", 1)[0])
+                                for p in ("docs/SPARQL.md", "README.md")
+                                for t in [subprocess.run(["git", "show", f"{commit}:{p}"], cwd=clone, capture_output=True, text=True).stdout]
+                                if "## SPARQL service limits" in t), (None, ""))
+catalog_ttl = render((SRC / "i2idlx-catalog.ttl.tmpl").read_text().replace("{{STORED_QUERIES}}", "\n".join(sq_blocks))
+                     .replace("{{LIMITS_DOC}}", limits_doc or "README.md"))
 catalog = Graph().parse(data=catalog_ttl, format="turtle")
 
 # ── 4. Crosswalk graphs ──────────────────────────────────────────────────────────
@@ -450,6 +458,16 @@ assert all(o in row_of and n in row_of and row_of[o][0] == row_of[n][0] and n no
            for o, (n, _) in replaced_by.items()), "a superseded proposal names an open proposal for the same concept"
 replaces = {new: old for old, (new, _) in replaced_by.items()}
 deprecated_foxxi = {str(s) for g in foxxi_graphs.values() for s in g.subjects(OWL.deprecated, Literal(True))}
+# ★ I2IDL'S OWN CROSSWALKS (from v0.0.82). Where I2IDL's record maps a proposal's concept to the same
+# target, the proposal says how (i2x:i2idlPredicate). Where it maps them with the SAME property, I2IDL has
+# asserted what this proposal proposed: the proposal is adopted, leaves the review queue, and keeps its id
+# for the votes cast on it. A different property is left open for reviewers, showing both.
+I2IDL_MATCH = ("exactMatch", "closeMatch", "relatedMatch", "broadMatch", "narrowMatch")
+i2idl_maps: dict[tuple[str, str], set[str]] = {}
+for _p in I2IDL_MATCH:
+    for _s, _o in gl.subject_objects(SKOS[_p]):
+        i2idl_maps.setdefault((str(_s), str(_o)), set()).add(_p)
+adopted, differs = [], []
 for (cid, pred, target, conf, method, why), node in zip(cw.MAPPINGS, mapping_ids):
     assert target in external_terms, f"external target does not resolve in its vocabulary: {target}"
     assert pred in {"exactMatch", "closeMatch", "relatedMatch", "broadMatch", "narrowMatch"}
@@ -460,13 +478,19 @@ for (cid, pred, target, conf, method, why), node in zip(cw.MAPPINGS, mapping_ids
         cites = [c for c in unesco["terms"].get(target, {}).get("citedBy", []) if c["concept"] == cid]
         assert cites, f"{cid} → {target}: I2IDL's evidence does not cite this target"
         cited = f"    i2x:citedIn <{cites[0]['definition']}> ; rdfs:seeAlso <{unesco['terms'][target]['page']}> ;\n"
-    status = "superseded" if node in replaced_by else "proposed"
+    asserted = sorted(i2idl_maps.get((concept_iri(cid), target), ()))
+    status = "superseded" if node in replaced_by else "adopted" if pred in asserted else "proposed"
+    if status == "adopted":
+        adopted.append(node)
+    elif asserted and status == "proposed":
+        differs.append((node, pred, asserted))
+    upstream = f"    i2x:i2idlPredicate {' , '.join('skos:' + a for a in asserted)} ;\n" if asserted else ""
     lineage = (f"    dct:isReplacedBy {replaced_by[node][0]} ; prov:invalidatedAtTime \"{replaced_by[node][1]}\"^^xsd:dateTime ;\n"
                if node in replaced_by else "") + (f"    dct:replaces {replaces[node]} ;\n" if node in replaces else "")
     mp_lines.append(
         f"{node} a i2x:MappingProposal ;\n"
         f"    i2x:proposedSubject {qn(concept_iri(cid))} ; i2x:proposedPredicate skos:{pred} ; i2x:proposedObject <{target}> ;\n"
-        f"    i2x:rationale {lit(why)}@en ;\n" + cited + lineage +
+        f"    i2x:rationale {lit(why)}@en ;\n" + cited + lineage + upstream +
         f"    i2x:confidence \"{conf:.2f}\"^^xsd:decimal ; i2x:reviewStatus i2x:status-{status} ;\n"
         f"    i2x:mappingMethod i2x:method-{method} .\n")
 mappings_ttl = "\n".join(mp_lines) + "\n"
@@ -543,7 +567,7 @@ for version, e in by_version.items():
 releases_ttl = "\n".join(rel_lines)
 releases = Graph().parse(data=releases_ttl, format="turtle")
 
-# ── 4c. Change history (I2IDL README "Next development priorities" 4) ───────────
+# ── 4c. Change history (I2IDL roadmap, "Next development priorities" 4) ───────────
 # Same git history, finer grain: src/history.py turns every fact that differs between
 # successive releases into one event; here they are grouped per release and kind.
 hrels = hist.releases(clone, gpath)
@@ -574,6 +598,8 @@ for r in hrels[1:]:
             key = (k, e["source"])
         elif k in ("evidence-classified", "evidence-reclassified"):
             key = (k, e["source"], e.get("prior") or "", e["new"])
+        elif "target" in e:  # one of I2IDL's own crosswalks or ontology associations: one event per fact
+            key = (k, e["concept"], e["target"])
         else:
             key = (k,)
         g = groups.setdefault((r["version"],) + key, {"release": r["version"], "kind": k, "events": []})
@@ -584,8 +610,9 @@ ch_lines = [HEADER_PREFIXES + f"@prefix ch:    <{CH}> .\n", f"""
 #  blakeplock/i2idl-linked-data, one PROV activity per release and one event
 #  per kind of change, naming what each touched. It reconciles exactly: the
 #  baseline release plus every addition minus every removal equals {release}
-#  for concepts, relationship pairs, memberships, evidence, sources and
-#  collections. Facts about upstream; not editorial judgement.
+#  for concepts, relationship pairs, memberships, evidence, sources,
+#  collections, I2IDL's own crosswalks and its proposed ontology
+#  associations. Facts about upstream; not editorial judgement.
 # ══════════════════════════════════════════════════════════════════════════════
 
 <{IRI['changes']}> a owl:Ontology ;
@@ -596,8 +623,8 @@ ch_lines = [HEADER_PREFIXES + f"@prefix ch:    <{CH}> .\n", f"""
     i2x:baselineRelease <{REL}{hrels[0]['version']}> ;
     prov:wasDerivedFrom <https://github.com/blakeplock/i2idl-linked-data> , <{IRI['releases']}> ;
     prov:generatedAtTime "{now_for('changes')}"^^xsd:dateTime ;
-    rdfs:seeAlso <https://github.com/blakeplock/i2idl-linked-data/blob/{commit}/README.md#4-add-machine-readable-change-history> ;
-    rdfs:comment {lit("Implements, as a derived projection, the change dataset I2IDL's README proposes (priority 4). Change kinds are i2x:ChangeKinds. Set-valued changes name the concepts, collection or source they touched; the exact before and after values live in the two release snapshots (each release records its commit). The baseline " + hrels[0]['version'] + " is the first commit of " + gpath + "; earlier states are not in the public record.")}@en .
+    rdfs:seeAlso <https://github.com/blakeplock/i2idl-linked-data/blob/{commit}/docs/ROADMAP.md#4-add-machine-readable-change-history> ;
+    rdfs:comment {lit("Implements, as a derived projection, the change dataset I2IDL's roadmap proposes (priority 4). Change kinds are i2x:ChangeKinds. Set-valued changes name the concepts, collection or source they touched; the exact before and after values live in the two release snapshots (each release records its commit). The baseline " + hrels[0]['version'] + " is the first commit of " + gpath + "; earlier states are not in the public record.")}@en .
 """]
 for r in hrels[1:]:
     mine = [g for (v, *_), g in groups.items() if v == r["version"]]
@@ -624,7 +651,24 @@ for r in hrels[1:]:
         if "source" in e0 and e0["source"]:
             parts.append(tail(e0["source"]))
             lines.append(f"    i2x:changedSource <{e0['source']}>")
-        if k in ("evidence-classified", "evidence-reclassified"):
+        if "target" in e0:
+            parts += [tail(e0["concept"]), e0["target"].rstrip("/#").replace("#", "/").rsplit("/", 1)[-1]]
+            lines.append(f"    i2x:changedTarget <{e0['target']}>")
+            if k.startswith("external-mapping"):
+                # the mapping property, as I2IDL asserts it before and after (none after: withdrawn)
+                for which in ("prior", "new"):
+                    if e0.get(which):
+                        pred = "i2x:priorValue" if which == "prior" else "i2x:newValue"
+                        lines.append(f"    {pred} " + " , ".join(e0[which].split()))
+                if k == "external-mapping-revised" and not e0.get("new"):
+                    lines.append(f"    rdfs:comment {lit('Withdrawn.')}@en")
+            else:  # an association: its type, and what changed
+                lines.append(f"    {'i2x:priorValue' if k == 'association-removed' else 'i2x:newValue'} {lit(e0.get('new') or e0.get('prior'))}")
+                if e0.get("status"):
+                    lines.append(f"    rdfs:comment {lit('Review status at I2IDL: ' + e0['status'] + '.')}@en")
+                elif e0.get("fields"):
+                    lines.append(f"    rdfs:comment {lit('Changed ' + ', '.join(e0['fields']) + '.')}@en")
+        elif k in ("evidence-classified", "evidence-reclassified"):
             parts += [e0.get("prior") or "", e0["new"]]
             if e0.get("prior"):
                 lines.append(f"    i2x:priorValue {lit(e0['prior'])}")
@@ -707,6 +751,24 @@ viol = text.count("Constraint Violation")
 check(conforms, f"I2IDL {release} conforms to the upstream contract shapes ({viol} violations)")
 if not conforms:
     (DIST / "upstream-violations.txt").write_text(text)
+
+
+def _doc_int(pattern):
+    mm = re.search(pattern, limits_text)
+    return int(mm.group(1).replace(",", "")) if mm else None
+
+
+_lim = next(catalog.subjects(RDF.type, I2X.ServiceLimits))
+_doc = {"maxQueryLength": _doc_int(r"query length: `([\d,]+)` characters"),
+        "maxRequestBytes": (_doc_int(r"POST request body: `(\d+) KB`") or 0) * 1024 or None,
+        "executionTimeout": (lambda n: f"PT{n}S" if n else None)(_doc_int(r"execution guard: `(\d+)` seconds")),
+        "maxResultRows": _doc_int(r"`SELECT` result size: `([\d,]+)` rows"),
+        "maxResultQuads": _doc_int(r"`DESCRIBE` result size: `([\d,]+)` quads"),
+        "rateLimitPerMinute": _doc_int(r"rate limit: `(\d+)` requests per minute")}
+_cat = {k: (str(v) if k == "executionTimeout" else int(v)) for k in _doc for v in [catalog.value(_lim, I2X[k])]}
+check(limits_doc is not None and _doc == _cat,
+      f"the catalog's SPARQL limits are I2IDL's own, as {limits_doc} states them at {commit[:7]}: "
+      + ", ".join(f"{k} {_cat[k]}" + ("" if _doc[k] == _cat[k] else f" (I2IDL says {_doc[k]})") for k in _cat))
 log()
 
 log("## SHACL-AF rules (TripleRule only) over the glossary")
@@ -804,6 +866,23 @@ check(not ok and focus == want,
       "rejects a superseded proposal with no replacement, one replaced by a proposal about another concept (and that proposal), one "
       "without its time, an open proposal that names a replacement, and a claim to replace a proposal that is not there; accepts "
       "both sides of a proper replacement" + ("" if focus == want else f" — flagged {sorted(focus)}"))
+bad = Graph().parse(data=f"""@prefix i2x: <{NS}> . @prefix skos: <http://www.w3.org/2004/02/skos/core#> . @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix c: <https://id.i2idl.org/concepts/> .
+<urn:x:adopted> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-5> ;
+  i2x:rationale "adopted: I2IDL asserts the same mapping" ; i2x:reviewStatus i2x:status-adopted ; {_mp_fields} i2x:i2idlPredicate skos:closeMatch .
+<urn:x:adopted-unsaid> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-6> ;
+  i2x:rationale "adopted, but does not say how I2IDL maps it" ; i2x:reviewStatus i2x:status-adopted ; {_mp_fields} .
+<urn:x:adopted-other> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-7> ;
+  i2x:rationale "adopted, though I2IDL asserts another property" ; i2x:reviewStatus i2x:status-adopted ; {_mp_fields} i2x:i2idlPredicate skos:exactMatch .
+<urn:x:differs> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-8> ;
+  i2x:rationale "open: I2IDL asserts another property" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} i2x:i2idlPredicate skos:exactMatch .
+""", format="turtle")
+ok, rg, _ = shacl_validate(bad, shacl_graph=shapes, ont_graph=onto, inference="rdfs", advanced=True)
+focus = {str(o) for o in rg.objects(None, SH.focusNode)}
+want = {"urn:x:adopted-unsaid", "urn:x:adopted-other"}
+check(not ok and focus == want,
+      "rejects an adopted proposal that does not name I2IDL's mapping property, or names another; accepts an adopted one "
+      "that names its own, and an open one that disagrees with I2IDL" + ("" if focus == want else f" — flagged {sorted(focus)}"))
 bad = Graph().parse(data=f"""@prefix i2x: <{NS}> . @prefix prov: <http://www.w3.org/ns/prov#> . @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 <urn:x:rc> a i2x:ReleaseChange ; prov:used <urn:x:r1> ; prov:generated <urn:x:r2> ; prov:endedAtTime "2026-10-08T00:00:00Z"^^xsd:dateTime ; i2x:changeCount 3 .
 <urn:x:nothing> a i2x:ChangeEvent ; i2x:partOfChange <urn:x:rc> ; i2x:changeKind i2x:change-concept-added ; i2x:changeCount 1 .
@@ -850,7 +929,7 @@ check(sum(int(o) for s in changes.subjects(RDF.type, I2X.ChangeEvent) for o in c
       f"{n_events:,} fact-level changes across {len(hrels) - 1} release changes, grouped into {n_ch} events with no fact lost")
 seen_up = {k for k in ("concept-added", "definition-revised", "source-revised", "relationship-added", "membership-added",
                        "evidence-reclassified", "external-mapping-added") if k in hist.KIND_CODES}
-check(len(seen_up) == 7, "every event type the I2IDL README lists has a change kind (source changed → source-revised, membership changed → membership-added/removed)")
+check(len(seen_up) == 7, "every event type the I2IDL roadmap lists has a change kind (source changed → source-revised, membership changed → membership-added/removed)")
 log()
 
 log(f"## Foxxi ontologies (release {FOXXI_NS['version']})")
@@ -889,6 +968,22 @@ check(len(superseded_rows) == len(replaced_by)
               and mappings.value(_mp(o), I2X.proposedSubject) == mappings.value(_mp(n), I2X.proposedSubject)
               for o, (n, _) in replaced_by.items()),
       f"each of the {len(superseded_rows)} superseded proposals points (dct:isReplacedBy) to an open proposal for the same concept")
+log()
+
+log("## I2IDL's own crosswalks")
+n_up = sum(len(v) for v in i2idl_maps.values())
+log(f"- INFO — {release} asserts {n_up} crosswalks of its own, from {len({c for c, _ in i2idl_maps})} concepts to "
+    f"{len({o for _, o in i2idl_maps})} external terms "
+    f"({sum(1 for _, o in i2idl_maps if o.startswith('http://vocabularies.unesco.org/'))} UNESCO Thesaurus, "
+    f"{sum(1 for _, o in i2idl_maps if o.startswith('https://schema.org/'))} schema.org)")
+check(bool(adopted) and all(mappings.value(_mp(n), I2X.reviewStatus) == I2X["status-adopted"]
+                            and {str(o) for o in mappings.objects(_mp(n), I2X.i2idlPredicate)} == {str(mappings.value(_mp(n), I2X.proposedPredicate))}
+                            for n in adopted),
+      f"{len(adopted)} proposals that I2IDL now asserts itself, with the same property, are adopted: out of the review queue, "
+      f"ids kept ({', '.join(a.split(':', 1)[1] for a in adopted)})")
+for node, pred, asserted in differs:
+    log(f"- INFO — {node.split(':', 1)[1]} proposes skos:{pred}; I2IDL asserts {', '.join('skos:' + a for a in asserted)} "
+        "for the same target. It stays open, showing both, for reviewers")
 log()
 
 log("## Semantic layer: upper ontologies, peer vocabularies, inference")
@@ -1375,11 +1470,18 @@ if LIVE:
                 return None
         opener = urllib.request.build_opener(NoRedirect)
         req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "i2idlx-build/0.1"}, method=method)
-        try:
-            with opener.open(req, timeout=30) as r:
-                return r.status, r.headers.get("Content-Type", ""), r.read(400_000).decode("utf-8", "replace")
-        except urllib.error.HTTPError as e:
-            return e.code, e.headers.get("Content-Type", ""), e.headers.get("Location", "") or ""
+        # A dropped connection (TLS handshake timeout, EOF mid-read) is retried: I2IDL's SPARQL service drops one
+        # now and then, and a live check should report the service, not crash the build. Status 0 after three tries.
+        for attempt in range(3):
+            try:
+                with opener.open(req, timeout=30) as r:
+                    return r.status, r.headers.get("Content-Type", ""), r.read(400_000).decode("utf-8", "replace")
+            except urllib.error.HTTPError as e:
+                return e.code, e.headers.get("Content-Type", ""), e.headers.get("Location", "") or ""
+            except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+                last = e
+                time.sleep(3 * (attempt + 1))
+        return 0, "", f"unreachable: {last}"
 
     actions = sorted({str(o) for o in enact.objects() if str(o).startswith(ACTION_ROOT)})
     statuses = {a: http(a)[0] for a in actions}
@@ -1551,6 +1653,7 @@ context = {
         "changedConcept": {"@id": "i2x:changedConcept", "@type": "@id", "@container": "@set"},
         "changedCollection": {"@id": "i2x:changedCollection", "@type": "@id"},
         "changedSource": {"@id": "i2x:changedSource", "@type": "@id"},
+        "changedTarget": {"@id": "i2x:changedTarget", "@type": "@id"},
         "citedIn": {"@id": "i2x:citedIn", "@type": "@id"},
         "enactedConcept": {"@id": "i2x:enactedConcept", "@type": "@id"},
         "viaAction": {"@id": "i2x:viaAction", "@type": "@id"},
@@ -1560,6 +1663,7 @@ context = {
         "proposedObject": {"@id": "i2x:proposedObject", "@type": "@id"},
         "reviewStatus": {"@id": "i2x:reviewStatus", "@type": "@id"},
         "mappingMethod": {"@id": "i2x:mappingMethod", "@type": "@id"},
+        "i2idlPredicate": {"@id": "i2x:i2idlPredicate", "@type": "@id"},
         "rationale": "i2x:rationale",
         "confidence": {"@id": "i2x:confidence", "@type": "xsd:decimal"},
         "votesOn": {"@id": "i2x:votesOn", "@type": "@id"},
@@ -1608,7 +1712,7 @@ log(f"- Enactments: {len(cw.ENACTMENTS)} reified concept→affordance links over
 _open = cw.active()
 log(f"- Mapping proposals: {len(_open)} open ({sum(1 for m in _open if m[4] == cw.ST)} standards-text, "
     f"{sum(1 for m in _open if m[4] == cw.EC)} evidence-cited, {sum(1 for m in _open if m[4] == cw.AI)} AI-drafted) "
-    f"and {len(cw.MAPPINGS) - len(_open)} superseded; 0 asserted")
+    f"and {len(cw.MAPPINGS) - len(_open)} superseded; {len(adopted)} of the open ones adopted by I2IDL; 0 ratified")
 log(f"- Change history: {len(hrels) - 1} release changes since {hrels[0]['version']}, {n_ch} change events, {n_events:,} fact-level changes")
 log(f"- Semantic layer: {len(SEM.CATEGORIES)} referent categories over {len(assign)} concepts; {len(used_terms)} aligned terms in "
     f"{len(by_vocab)} vocabularies; {n_bridge} crosswalk bridges; {len(ref_rules)} SHACL-AF referent rules")

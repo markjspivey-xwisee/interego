@@ -58,14 +58,14 @@ export function ForI2IDL() {
             </div>
           ))}
         </div>
-        <p className="tiny muted">From <a href={up.readme} target="_blank" rel="noopener">your README at {META.commit.slice(0, 7)}</a>. Every figure on this page is recomputed from {META.release} at build time.</p>
+        <p className="tiny muted">From <a href={up.roadmap} target="_blank" rel="noopener">your {up.roadmapName} at {META.commit.slice(0, 7)}</a>. Every figure on this page is recomputed from {META.release} at build time.</p>
       </section>
 
       <section className="stack" style={{ gap: 14 }}>
         <div className="sec-h"><h2>Your next priorities, running on your data today</h2><span className="meta">Your four “next development priorities”, in your words, each with something you can open</span></div>
 
         <Priority n={1} title={prio(1).title} anchor={prio(1).anchor} o="proposed"
-          lead={<>{unesco.length} crosswalks to the <b>UNESCO Thesaurus</b> drawn from citations your editors already made: each I2IDL concept below cites the UNESCO preferred term as <i>direct</i> evidence, so the target is yours; I2IDL-X only proposes the predicate. Plus {MAPPINGS.length - unesco.length} to xAPI, xAPI Profiles, IEEE LER, ADL TLA, schema.org and W3C VC.</>}>
+          lead={<>You already publish {META.counts.ownCrosswalks} crosswalks of your own, {META.counts.ownUnesco} of them to the UNESCO Thesaurus; each entry shows them as yours, and {META.counts.adopted} match an I2IDL-X proposal exactly, so those proposals are marked <i>adopted</i> and leave the queue. Still open: {unesco.length} to the <b>UNESCO Thesaurus</b> drawn from citations your editors already made (each concept below cites the UNESCO preferred term as <i>direct</i> evidence, so the target is yours; I2IDL-X only proposes the predicate), plus {MAPPINGS.length - unesco.length} to xAPI, xAPI Profiles, IEEE LER, ADL TLA, schema.org and W3C VC.</>}>
           <UnescoTable rows={unesco} />
           <div className="small muted">Predicates: {PRED_ORDER.map((p) => [p, unesco.filter((m) => m.p === p).length]).filter(([, n]) => n).map(([p, n]) => `${n} ${p}`).join(" · ")}. All are proposals: a <code>skos:*Match</code> triple appears only after ratification, internal relations and external mappings stay distinct (the shapes reject any crosswalk that points back into <code>id.i2idl.org</code>), and {META.unesco.groups.filter((g) => g.only).length} concepts that cite only a UNESCO microthesaurus group get a modeling note instead of a mapping.</div>
           <div className="row wrap">
@@ -90,7 +90,7 @@ export function ForI2IDL() {
         <Priority n={4} title={prio(4).title} anchor={prio(4).anchor} o="derived"
           lead={<>Every change since {META.changes.baseline} as PROV: {META.changes.releaseChanges} release changes (each <code>prov:used</code> the previous release and <code>prov:generated</code> the next), {META.changes.events} typed change events, {META.changes.facts.toLocaleString()} fact-level changes. It reconciles exactly with {META.release}.</>}>
           <ChangeLog />
-          <div className="small muted">Every event type your README lists has a kind, refined where the history shows a difference: evidence that received its first relation is <i>classified</i>, not <i>reclassified</i>. Each entry here shows its own history.</div>
+          <div className="small muted">Every event type your {up.roadmapName} lists has a kind, refined where the history shows a difference: evidence that received its first relation is <i>classified</i>, not <i>reclassified</i>. Each entry here shows its own history.</div>
           <div className="row wrap">
             <a className="btn sm" href={META.iri.changes} target="_blank" rel="noopener"><Icon name="external" />The change history graph</a>
             <a className="btn sm" href="#c-learning-record-store-lrs"><Icon name="history" />A term's history</a>
@@ -115,7 +115,7 @@ export function ForI2IDL() {
       <section className="stack" style={{ gap: 12 }}>
         <div className="sec-h"><h2>How I2IDL-X stays out of your way</h2></div>
         <ul className="principles">
-          <li><b>Your IRIs stay canonical.</b> Nothing is minted under <code>id.i2idl.org</code>; the I2IDL-X graphs live on Interego and point at your IRIs. Your README asks that “{lastSentence(up.principle)}” — I2IDL-X depends on exactly that.</li>
+          <li><b>Your IRIs stay canonical.</b> Nothing is minted under <code>id.i2idl.org</code>; the I2IDL-X graphs live on Interego and point at your IRIs. Your <a href={up.principleSource} target="_blank" rel="noopener">{up.principleName}</a> ask that “{lastSentence(up.principle)}” — I2IDL-X depends on exactly that.</li>
           <li><b>Your record is untouched.</b> This page embeds {META.release} as published. The <b>I2IDL only</b> lens in the top bar shows it with every layer hidden, and every addition is labelled with where it comes from.</li>
           <li><b>Claims you haven't made stay Hypothetical.</b> Crosswalks and capability links are proposals until reviewers ratify them, and even then they reach you as a suggestion, never an edit.</li>
           <li><b>Rights travel with the words.</b> Every evidence record keeps its source's terms; exports carry I2IDL's attribution and each source's rights.</li>
@@ -145,7 +145,7 @@ function Priority({ n, title, anchor, o, lead, children }) {
     <article className="prio">
       <div className="prio-h">
         <span className="prio-n">{n}</span>
-        <div className="grow"><h3>{title}</h3><a className="tiny muted" href={META.upstream.readme + "#" + anchor} target="_blank" rel="noopener">your README, next priority {n}</a></div>
+        <div className="grow"><h3>{title}</h3><a className="tiny muted" href={META.upstream.roadmap + "#" + anchor} target="_blank" rel="noopener">your {META.upstream.roadmapName}, next priority {n}</a></div>
         <Origin o={o} quiet />
       </div>
       <p className="prio-lead">{lead}</p>
@@ -161,7 +161,7 @@ function UnescoTable({ rows }) {
       <tbody>{rows.map((m) => (
         <tr key={m.id}>
           <td><ConceptChip id={m.c} /></td>
-          <td><code>skos:{m.p}</code></td>
+          <td><code>skos:{m.p}</code>{m.ip ? <div className="tiny muted">you assert <code>{m.ip.map((x) => "skos:" + x).join(", ")}</code></div> : null}</td>
           <td><a href={m.pg} target="_blank" rel="noopener" title={m.o}>{m.ol}</a>{m.od ? <div className="tiny muted ellipsis" style={{ maxWidth: 360 }} title={m.od}>{m.od}</div> : null}</td>
           <td className="n">{m.cf.toFixed(2)}</td>
         </tr>

@@ -69,6 +69,7 @@ export function Entry({ id, onBack, query }) {
           </section>
           <Relations c={c} />
           <Evidence c={c} />
+          <I2IDLCrosswalks c={c} />
           {x && ((c.md || []).length || (c.mx || []).length) ? <p className="tiny muted hxnote"><Origin o="derived" quiet>links in the text</Origin> Underlined terms are links I2IDL-X found in I2IDL's wording; dashed ones name a concept I2IDL doesn't relate to this one. Switch to <b>I2IDL only</b> for the plain text.</p> : null}
         </div>
         {x ? (
@@ -230,6 +231,25 @@ function Relations({ c }) {
         {rows.length ? rows.map(([lab, list]) => (
           <div className="relrow" key={lab}><div className="lab">{lab}</div><div className="chips">{list.map((x) => <ConceptChip key={x} id={x} />)}</div></div>
         )) : <div className="muted small">No editorial links in this release.</div>}
+      </div>
+    </section>
+  );
+}
+
+/** I2IDL's own crosswalks (from v0.0.82), as its record states them, with what I2IDL-X proposed for the same term. */
+function I2IDLCrosswalks({ c }) {
+  const xm = c.xm || [];
+  if (!xm.length) return null;
+  return (
+    <section aria-label="I2IDL's crosswalks">
+      <div className="subh"><h3>Crosswalks</h3><span className="meta">I2IDL's own · {plural(xm.length, "mapping")}</span></div>
+      <div className="rels">
+        {xm.map(([p, o, ol, a, ap]) => (
+          <div className="relrow xw" key={p + o}><div className="lab"><code>skos:{p}</code></div>
+            <div><a href={o} target="_blank" rel="noopener" title={o}>{ol || o.split(/[#/]/).pop()}</a>
+              {a ? <div className="tiny muted">I2IDL-X proposed the same ({a}); it is adopted.</div>
+                : ap ? <div className="tiny muted">I2IDL-X proposes <code>skos:{ap[1]}</code> ({ap[0]}), open for review.</div> : null}</div></div>
+        ))}
       </div>
     </section>
   );
@@ -399,6 +419,14 @@ function HistoryRow({ ri, rec }) {
   if (rec["e-"]) items.push(<span key="e-">−{plural(rec["e-"], "evidence record")}</span>);
   if (rec["al+"]) items.push(<span key="al+">alternate label {rec["al+"].map((a) => `“${a}”`).join(", ")} added</span>);
   if (rec["al-"]) items.push(<span key="al-">alternate label {rec["al-"].map((a) => `“${a}”`).join(", ")} removed</span>);
+  for (const [k, t, a, b] of rec.x || []) {
+    const term = <a href={t} target="_blank" rel="noopener" title={t}>{t.split(/[#/]/).filter(Boolean).pop()}</a>;
+    items.push(<span key={k + t}>{k === "external-mapping-added" ? <>crosswalk <code>skos:{(b || "").replace("skos:", "")}</code> to {term} asserted</>
+      : k === "external-mapping-revised" ? (b ? <>crosswalk to {term}: <code>{a}</code> → <code>{b}</code></> : <>crosswalk <code>{a}</code> to {term} withdrawn</>)
+      : k === "association-added" ? <>{b} association to {term} proposed</>
+      : k === "association-removed" ? <>{a} association to {term} withdrawn</>
+      : <>association to {term} revised</>}</span>);
+  }
   for (const [k, [a, b]] of Object.entries(rec.s || {})) items.push(<span key={k}><b>{k.replace(/-/g, " ")}</b>{typeof a === "string" && a.length < 90 ? <>: “{a}” → “{b}”</> : null}</span>);
   return (
     <li className={cx("hrow", rec.add && "added")}>
@@ -532,6 +560,7 @@ function Crosswalks({ c }) {
               {m.od ? <div className="why" style={{ fontFamily: "var(--font-serif)", fontSize: 14 }}>{m.on ? <span className="tiny muted" style={{ fontFamily: "var(--font-ui)" }}>{m.v} {m.on}: </span> : null}“{m.od.length > 180 ? m.od.slice(0, 180) + "…" : m.od}”</div> : null}
               {m.oa && m.oa.length ? <div className="tiny muted">Also: {m.oa.slice(0, 5).join(", ")}</div> : null}
               <div className="why">{m.w}</div>
+              {m.ip ? <div className="tiny muted">I2IDL's own record maps this term with <code>{m.ip.map((p) => "skos:" + p).join(", ")}</code>.</div> : null}
               {m.rp ? <div className="tiny muted">Replaces <a href={META.iri.mappings + "#" + m.rp.id} target="_blank" rel="noopener" title={m.rp.o}>{m.rp.id}</a>, the proposal to <code>{m.rp.o.startsWith("https://w3id.org/xapi/ontology#") ? "xapi:" + m.rp.o.split("#").pop() + " (ADL)" : m.rp.o}</code>; votes cast on it stay with it.</div> : null}
               <div className="capm"><span className="row" style={{ gap: 6 }}><Meter v={m.cf} />{m.cf.toFixed(2)}</span><span>{methodById.get(m.m).label}</span></div>
               <VoteBar itemKey={key} compact />

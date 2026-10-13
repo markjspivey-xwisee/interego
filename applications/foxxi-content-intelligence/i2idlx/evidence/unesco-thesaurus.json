@@ -1,6 +1,6 @@
 {
- "fetchedAt": "2026-10-09T18:11:05+00:00",
- "i2idlRelease": "v0.0.80",
+ "fetchedAt": "2026-10-13T20:24:15+00:00",
+ "i2idlRelease": "v0.0.86",
  "scheme": {
   "iri": "http://vocabularies.unesco.org/thesaurus",
   "title": "UNESCO Thesaurus",
@@ -32,7 +32,8 @@
      "citation": "Education · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept2"
     }
-   ]
+   ],
+   "mappedBy": []
   },
   "http://vocabularies.unesco.org/thesaurus/concept4": {
    "label": "Educational sciences",
@@ -59,7 +60,8 @@
      "citation": "Educational sciences · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept4"
     }
-   ]
+   ],
+   "mappedBy": []
   },
   "http://vocabularies.unesco.org/thesaurus/concept9": {
    "label": "Educational policy",
@@ -83,6 +85,37 @@
      "relation": "direct",
      "citation": "Educational policy · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept9"
+    }
+   ],
+   "mappedBy": [
+    {
+     "concept": "unesco-educational-policy",
+     "property": "skos:exactMatch"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept14": {
+   "label": "Educational planning",
+   "alt": [
+    "Educational plans"
+   ],
+   "scopeNote": null,
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 0,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.15",
+     "label": "Educational planning"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept14",
+   "citedBy": [],
+   "mappedBy": [
+    {
+     "concept": "unesco-educational-planning",
+     "property": "skos:exactMatch"
     }
    ]
   },
@@ -108,6 +141,12 @@
      "relation": "direct",
      "citation": "Educational administration · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept21"
+    }
+   ],
+   "mappedBy": [
+    {
+     "concept": "unesco-educational-administration",
+     "property": "skos:exactMatch"
     }
    ]
   },
@@ -138,6 +177,12 @@
      "citation": "Educational management · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept31"
     }
+   ],
+   "mappedBy": [
+    {
+     "concept": "unesco-educational-management",
+     "property": "skos:exactMatch"
+    }
    ]
   },
   "http://vocabularies.unesco.org/thesaurus/concept37": {
@@ -165,7 +210,8 @@
      "citation": "Educational systems · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept37"
     }
-   ]
+   ],
+   "mappedBy": []
   },
   "http://vocabularies.unesco.org/thesaurus/concept44": {
    "label": "Educational institutions",
@@ -190,7 +236,8 @@
      "citation": "Educational institutions · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept44"
     }
-   ]
+   ],
+   "mappedBy": []
   },
   "http://vocabularies.unesco.org/thesaurus/concept49": {
    "label": "Curriculum",
@@ -220,6 +267,12 @@
      "citation": "Curriculum · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept49"
     }
+   ],
+   "mappedBy": [
+    {
+     "concept": "unesco-curriculum",
+     "property": "skos:exactMatch"
+    }
    ]
   },
   "http://vocabularies.unesco.org/thesaurus/concept71": {
@@ -247,7 +300,8 @@
      "citation": "Vocational education · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept71"
     }
-   ]
+   ],
+   "mappedBy": []
   },
   "http://vocabularies.unesco.org/thesaurus/concept83": {
    "label": "Teaching methods",
@@ -278,7 +332,8 @@
      "citation": "Teaching methods · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept83"
     }
-   ]
+   ],
+   "mappedBy": []
   },
   "http://vocabularies.unesco.org/thesaurus/concept84": {
    "label": "Training",
@@ -303,7 +358,8 @@
      "citation": "Training · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept84"
     }
-   ]
+   ],
+   "mappedBy": []
   },
   "http://vocabularies.unesco.org/thesaurus/concept88": {
    "label": "Educational evaluation",
@@ -328,7 +384,8 @@
      "citation": "Educational evaluation · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept88"
     }
-   ]
+   ],
+   "mappedBy": []
   },
   "http://vocabularies.unesco.org/thesaurus/concept95": {
    "label": "Educational facilities",
@@ -355,6 +412,227 @@
      "relation": "direct",
      "citation": "Educational facilities · Preferred term",
      "page": "https://vocabularies.unesco.org/unesco/en/page/concept95"
+    }
+   ],
+   "mappedBy": []
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept97": {
+   "label": "Educational technology",
+   "alt": [],
+   "scopeNote": "Theory and application of educational media in a systematic way.",
+   "definition": null,
+   "broader": [],
+   "narrowerCount": 0,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.70",
+     "label": "Educational facilities"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept97",
+   "citedBy": [],
+   "mappedBy": [
+    {
+     "concept": "education-technology-edtech",
+     "property": "skos:closeMatch"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept1050": {
+   "label": "Student evaluation",
+   "alt": [
+    "Educational assessment",
+    "Educational rating",
+    "Student appraisal",
+    "Talent identification"
+   ],
+   "scopeNote": null,
+   "definition": null,
+   "broader": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/concept88",
+     "label": "Educational evaluation"
+    }
+   ],
+   "narrowerCount": 4,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.65",
+     "label": "Educational evaluation"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept1050",
+   "citedBy": [],
+   "mappedBy": [
+    {
+     "concept": "assessment",
+     "property": "skos:relatedMatch"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept5081": {
+   "label": "Early childhood education",
+   "alt": [
+    "ECCE",
+    "Early childhood care and education",
+    "Preprimary education",
+    "Preschool education"
+   ],
+   "scopeNote": "From birth to the age of 8. It refers to all aspects of a child's development.",
+   "definition": null,
+   "broader": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/concept36",
+     "label": "Educational levels"
+    }
+   ],
+   "narrowerCount": 2,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.30",
+     "label": "Educational systems and levels"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept5081",
+   "citedBy": [],
+   "mappedBy": [
+    {
+     "concept": "early-childhood-education-ece",
+     "property": "skos:closeMatch"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept8237": {
+   "label": "Distance education",
+   "alt": [
+    "Distance study",
+    "Distributed education",
+    "Distributed learning",
+    "Open learning systems"
+   ],
+   "scopeNote": "Education imparted at a distance through the use of information/communication technology: radio, TV, the telephone, correspondence, e-mail, videoconferencing, audioconferencing, cd-roms, or online.",
+   "definition": null,
+   "broader": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/concept81",
+     "label": "Learning methods"
+    }
+   ],
+   "narrowerCount": 2,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.60",
+     "label": "Teaching and training"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept8237",
+   "citedBy": [],
+   "mappedBy": [
+    {
+     "concept": "distributed-learning",
+     "property": "skos:closeMatch"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept9261": {
+   "label": "Educational management information systems",
+   "alt": [
+    "EMIS",
+    "Educational information systems"
+   ],
+   "scopeNote": null,
+   "definition": null,
+   "broader": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/concept493",
+     "label": "Information systems"
+    }
+   ],
+   "narrowerCount": 0,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt5.25",
+     "label": "Documentary information systems"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept9261",
+   "citedBy": [],
+   "mappedBy": [
+    {
+     "concept": "education-management-information-system",
+     "property": "skos:exactMatch"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept16979": {
+   "label": "Electronic learning",
+   "alt": [
+    "E-learning",
+    "M-learning",
+    "Mlearning",
+    "Mobile learning",
+    "Online learning",
+    "Virtual learning"
+   ],
+   "scopeNote": "Online learning via the Internet or an intranet.",
+   "definition": null,
+   "broader": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/concept8237",
+     "label": "Distance education"
+    }
+   ],
+   "narrowerCount": 0,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.60",
+     "label": "Teaching and training"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept16979",
+   "citedBy": [],
+   "mappedBy": [
+    {
+     "concept": "mobile-learning",
+     "property": "skos:closeMatch"
+    }
+   ]
+  },
+  "http://vocabularies.unesco.org/thesaurus/concept17093": {
+   "label": "Open educational resources",
+   "alt": [
+    "OER",
+    "Open courseware",
+    "Open teaching/learning resources"
+   ],
+   "scopeNote": null,
+   "definition": null,
+   "broader": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/concept96",
+     "label": "Educational publications"
+    }
+   ],
+   "narrowerCount": 0,
+   "groups": [
+    {
+     "iri": "http://vocabularies.unesco.org/thesaurus/mt1.70",
+     "label": "Educational facilities"
+    }
+   ],
+   "inScheme": "http://vocabularies.unesco.org/thesaurus",
+   "page": "https://vocabularies.unesco.org/unesco/en/page/concept17093",
+   "citedBy": [],
+   "mappedBy": [
+    {
+     "concept": "open-educational-resources-oer",
+     "property": "skos:exactMatch"
     }
    ]
   }

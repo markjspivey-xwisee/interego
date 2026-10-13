@@ -21,6 +21,7 @@ export function editorialPacket({ status = () => "proposed" } = {}) {
     `Independent work by Mark Spivey (Foxxi Mediums Inc.); not affiliated with or endorsed by I2IDL.`, "",
     `## At a glance`, "",
     `| Item | Count | Mirrors I2IDL's roadmap |`, `|---|---:|---|`,
+    `| I2IDL's own published crosswalks (I2IDL-X proposals they match exactly are marked adopted) | ${META.counts.ownCrosswalks} (${META.counts.adopted} adopted) | 1. Crosswalks |`,
     `| Crosswalk candidates to the UNESCO Thesaurus, drawn from I2IDL's own citations | ${unesco.length} | 1. Crosswalks |`,
     `| Other crosswalk candidates (xAPI, xAPI Profiles, IEEE LER, ADL TLA, schema.org, W3C VC, Interego) | ${others.length} | 1. Crosswalks |`,
     `| Definitions showing "${META.upstream.provenance[0]}" | ${g} | 3. Provenance |`,
@@ -29,11 +30,11 @@ export function editorialPacket({ status = () => "proposed" } = {}) {
     `| Unlinked mentions: an entry names a concept it does not relate to | ${SUGGESTIONS.length} | — |`, "");
 
   p(`## 1. UNESCO Thesaurus crosswalk candidates (evidence-cited)`, "",
-    `Each I2IDL concept below already cites a UNESCO Thesaurus preferred term as **direct** evidence. I2IDL-X turns that citation into a SKOS mapping candidate and proposes a predicate after reading both texts; editors decide the predicate (the README asks to avoid overstated equivalence, and a citation shows provenance, not necessarily equivalence). UNESCO Thesaurus terms © UNESCO, CC BY-SA 3.0 IGO; snapshot fetched ${ago(META.unesco.fetchedAt)}.`, "",
+    `Each I2IDL concept below already cites a UNESCO Thesaurus preferred term as **direct** evidence. I2IDL-X turns that citation into a SKOS mapping candidate and proposes a predicate after reading both texts; editors decide the predicate (the ${META.upstream.roadmapName} asks to avoid overstated equivalence, and a citation shows provenance, not necessarily equivalence). UNESCO Thesaurus terms © UNESCO, CC BY-SA 3.0 IGO; snapshot fetched ${ago(META.unesco.fetchedAt)}.`, "",
     `| I2IDL concept | Proposed | UNESCO term | Confidence | Review here |`, `|---|---|---|---:|---|`);
   for (const m of unesco) {
     const c = byId.get(m.c);
-    p(`| ${link(c)} | \`skos:${m.p}\` | [${md(m.ol)}](${m.pg}) (\`${m.o.replace("http://vocabularies.unesco.org/thesaurus/", "unesco:")}\`) | ${m.cf.toFixed(2)} | ${status("m." + m.id)} |`);
+    p(`| ${link(c)} | \`skos:${m.p}\`${m.ip ? ` (I2IDL asserts ${m.ip.map((x) => "`skos:" + x + "`").join(", ")})` : ""} | [${md(m.ol)}](${m.pg}) (\`${m.o.replace("http://vocabularies.unesco.org/thesaurus/", "unesco:")}\`) | ${m.cf.toFixed(2)} | ${status("m." + m.id)} |`);
   }
   p("");
   for (const m of unesco) {
@@ -53,12 +54,12 @@ export function editorialPacket({ status = () => "proposed" } = {}) {
   for (const m of others) { if (!byVocab.has(m.v)) byVocab.set(m.v, []); byVocab.get(m.v).push(m); }
   for (const [v, list] of byVocab) {
     p(`### ${v}`, "", `| I2IDL concept | Proposed | Target | Method | Confidence | Review here |`, `|---|---|---|---|---:|---|`);
-    for (const m of list) p(`| ${link(byId.get(m.c))} | \`skos:${m.p}\` | [${md(m.ol || m.o.split(/[#/]/).pop())}](${m.o}) | ${m.m} | ${m.cf.toFixed(2)} | ${status("m." + m.id)} |`);
+    for (const m of list) p(`| ${link(byId.get(m.c))} | \`skos:${m.p}\`${m.ip ? ` (I2IDL asserts ${m.ip.map((x) => "`skos:" + x + "`").join(", ")})` : ""} | [${md(m.ol || m.o.split(/[#/]/).pop())}](${m.o}) | ${m.m} | ${m.cf.toFixed(2)} | ${status("m." + m.id)} |`);
     p("");
   }
 
   p(`## 3. Definition provenance, ready for the cards`, "",
-    `Computed from I2IDL's own evidence relations with the wording from I2IDL's README (next priority 3): a definition with at least one **direct** evidence record shows “${META.upstream.provenance[0]}” (${g}); the others show “${META.upstream.provenance[1]}” (${C.length - g}). The same rule is published as SHACL in \`i2idlx-rules\`.`, "",
+    `Computed from I2IDL's own evidence relations with the wording from I2IDL's ${META.upstream.roadmapName} (next priority 3): a definition with at least one **direct** evidence record shows “${META.upstream.provenance[0]}” (${g}); the others show “${META.upstream.provenance[1]}” (${C.length - g}). The same rule is published as SHACL in \`i2idlx-rules\`.`, "",
     `Synthesized definitions: ${H.synth.map((c) => c.l).join(", ")}.`, "");
 
   p(`## 4. Change history`, "",

@@ -19,7 +19,7 @@
       "id": "i2idl",
       "label": "I2IDL",
       "group": "I2IDL",
-      "what": "Labels and alternate labels, definitions, editorial notes, editorial status, the {nTypes} types, {nFields} fields and {nCurated} curated collections, broader / narrower / related links, evidence records and their direct / supporting classification, the {nSources} sources and their rights, the release itself.",
+      "what": "Labels and alternate labels, definitions, editorial notes, editorial status, the {nTypes} types, {nFields} fields and {nCurated} curated collections, broader / narrower / related links, evidence records and their direct / supporting classification, the {nSources} sources and their rights, I2IDL's own crosswalks to external vocabularies (UNESCO Thesaurus, schema.org), the release itself.",
       "where": "id.i2idl.org — I2IDL's JSON-LD graph, SPARQL service and concept pages. This page embeds {release} (commit {commit7}) unchanged.",
       "trust": "Approved by I2IDL's editors. Canonical.",
       "heldIn": [
@@ -62,7 +62,7 @@
       "broader": "x",
       "what": "Capability links (enactments) to live Foxxi and Interego actions, crosswalks to external vocabularies (UNESCO Thesaurus, xAPI, IEEE, schema.org, W3C VC), role capabilities, inherited enactments, and the semantic layer: what each concept classifies and how that lines up with BFO, gist, DUL, gUFO, PROV-O, schema.org and peer learning vocabularies.",
       "where": "i2idlx-enactments, i2idlx-mappings, i2idlx-alignments and i2idlx-referents on Interego, published Hypothetical.",
-      "trust": "Hypothetical until reviewers ratify. A mapping triple exists only after ratification; a ratified crosswalk becomes a prefilled suggestion to I2IDL's editors, never an edit.",
+      "trust": "Hypothetical until reviewers ratify. A mapping triple exists only after ratification; a ratified crosswalk becomes a prefilled suggestion to I2IDL's editors, never an edit. A proposal I2IDL comes to assert itself is marked adopted.",
       "heldIn": [
         "{enactments}",
         "{mappings}",
