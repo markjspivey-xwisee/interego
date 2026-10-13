@@ -413,6 +413,13 @@ function flipsLongLiteralState(line: string): boolean {
   return flip;
 }
 
+// A Turtle / SPARQL prefix name (PN_PREFIX, possibly empty): a letter, then letters, digits,
+// `_`, `-`, `.` or the other PN_CHARS, not ending in `.`. It was `\w*`, which stops at the
+// first `-`: a payload binding a name like `my-vocab:` had that one directive left inside
+// the `<graph> { … }` block, where TriG allows no directive, so strict parsers (N3.js)
+// rejected the whole stored document while lenient ones (rdflib) read it.
+const PN_PREFIX = String.raw`(?:\p{L}(?:[\p{L}\p{N}_.\-\u00B7\p{Mn}\u203F\u2040]*[\p{L}\p{N}_\-\u00B7\p{Mn}\u203F\u2040])?)?`;
+
 /**
  * ★ EXPORTED SO A TEST CAN SERVE WHAT A POD SERVES. It was private, and every `get_descriptor`
  * double in `tests/workspace-membership.test.ts` therefore set `graph.content` to the RAW
@@ -439,7 +446,7 @@ export function wrapAsTriG(
   // Recognise the four standard forms: `@prefix`, `@base`, SPARQL
   // `PREFIX`, and SPARQL `BASE`. Matched lines are hoisted; everything
   // else is treated as graph body.
-  const directiveRe = /^\s*(@prefix\s+\w*:\s*<[^>]+>\s*\.|@base\s+<[^>]+>\s*\.|PREFIX\s+\w*:\s*<[^>]+>|BASE\s+<[^>]+>)\s*$/i;
+  const directiveRe = new RegExp(String.raw`^\s*(@prefix\s+${PN_PREFIX}:\s*<[^>]+>\s*\.|@base\s+<[^>]+>\s*\.|PREFIX\s+${PN_PREFIX}:\s*<[^>]+>|BASE\s+<[^>]+>)\s*$`, 'iu');
   const graphLines = graphContent.split('\n');
   const graphDirectives: string[] = [];
   // Each body line paired with whether it began inside a triple-quoted literal, because
@@ -465,7 +472,7 @@ export function wrapAsTriG(
   // SPARQL-style `PREFIX` / `BASE` to Turtle `@prefix` / `@base` form so the document is
   // syntactically uniform. Nothing is dropped and nothing is de-duplicated: which binding
   // is in force is decided by POSITION below, not by arbitration here.
-  const prefixNameRe = /^\s*(?:@prefix|PREFIX)\s+(\w*):/i;
+  const prefixNameRe = new RegExp(String.raw`^\s*(?:@prefix|PREFIX)\s+(${PN_PREFIX}):`, 'iu');
   const callerPrefixLines: string[] = [];
   for (const directive of graphDirectives) {
     const m = directive.match(prefixNameRe);
@@ -480,7 +487,7 @@ export function wrapAsTriG(
     }
     callerPrefixLines.push(
       /^\s*PREFIX\s/i.test(directive)
-        ? directive.replace(/^\s*PREFIX\s+(\w*):\s*(<[^>]+>)\s*$/i, '@prefix $1: $2 .')
+        ? directive.replace(new RegExp(String.raw`^\s*PREFIX\s+(${PN_PREFIX}):\s*(<[^>]+>)\s*$`, 'iu'), '@prefix $1: $2 .')
         : directive,
     );
   }
@@ -495,7 +502,7 @@ export function wrapAsTriG(
   const seenCallerNs = new Map<string, string>();
   let aliasRebound: string | null = null;
   for (const directive of callerPrefixLines) {
-    const m = directive.match(/^@prefix\s+(\w*):\s*(<[^>]+>)/);
+    const m = directive.match(new RegExp(String.raw`^@prefix\s+(${PN_PREFIX}):\s*(<[^>]+>)`, 'u'));
     if (!m) continue;
     const prior = seenCallerNs.get(m[1]!);
     if (prior !== undefined && prior !== m[2]!) aliasRebound = m[1]!;

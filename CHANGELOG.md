@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-13 — Publishing: payload prefix names with hyphens are hoisted too
+
+`wrapAsTriG` (`packages/solid`) moves the caller's `@prefix` and `PREFIX` lines out of the named-graph block, because TriG allows no directive inside one. It recognised a prefix name only as `\w*`, so a name like `foxxi-xapi:` stayed inside the block. N3.js and other strict TriG parsers then rejected the whole stored document ("Expected entity but got @prefix"), while lenient parsers and the relay's `/ns` view read it. I2IDL-X 0.4.0 hit this on publish: its ontology, alignments and referents graphs all bind `foxxi-*` prefixes. The four patterns now use Turtle's PN_PREFIX, which covers letters, digits, `_`, `-`, `.` inside the name, and the empty prefix. A regression test publishes `foxxi-xapi:`, `a.b-c:` and `:` and parses the stored document with N3.js. Graphs already stored this way still read correctly through `/ns`, and republishing rewrites them.
+
 ## 2026-10-13 — Identity: a pod that cannot be read is no longer an account without credentials
 
 The identity server builds its sign-in indexes from the pods when it starts. Its reader answered every failed read, whether a timeout, a 502 from a slow CSS or a reset connection, with an empty auth-methods document. So the startup scan counted those accounts as having no credentials, never as failures, and never read them again. On 2026-10-13 the deployed server knew 8 users while 445 pods held credentials. For every other account, tokens failed "User for token not found", which disconnects the MCP connector, and its passkey failed "No passkey found" on sign-in. The only way back in that was offered was a new account. A background refresh that failed also wiped the user's entries from the indexes.
