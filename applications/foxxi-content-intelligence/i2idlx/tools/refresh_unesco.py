@@ -1,4 +1,5 @@
-"""Snapshot the UNESCO Thesaurus terms that I2IDL's own evidence cites as preferred terms.
+"""Snapshot the UNESCO Thesaurus terms that I2IDL's own evidence cites as preferred terms, and those its own
+crosswalks (skos:*Match, from v0.0.82) point to.
 
 python3 -I tools/refresh_unesco.py <i2idlx-root>
 
@@ -6,7 +7,8 @@ Reads the pinned I2IDL graph, finds every evidence record whose URL is a UNESCO 
 concept page cited as "Preferred term", fetches each concept from UNESCO's Skosmos REST API
 (retrying: the service drops connections intermittently) and writes evidence/unesco-thesaurus.json
 with label, alternative labels, scope note, broader terms, microthesaurus groups, licence and
-which I2IDL definitions cite it. build.py accepts a UNESCO target only if it is in this file.
+which I2IDL definitions cite it and which I2IDL concepts map to it. build.py accepts a UNESCO target only if it is
+in this file.
 Responses are parsed as data in a fresh temporary directory.
 """
 import datetime as dt
@@ -87,7 +89,18 @@ for n in nodes:
                     "concept": n["@id"].rsplit("/", 1)[-1], "definition": d, "relation": e.get("gs:evidenceRelation"),
                     "citation": e.get("gs:citationDetail"), "page": e.get("schema:url")})
 
-# 2. Scheme metadata (licence, modified) and each cited term.
+# 1b. And which does I2IDL map its concepts to itself?
+MATCH = ("skos:exactMatch", "skos:closeMatch", "skos:broadMatch", "skos:narrowMatch", "skos:relatedMatch")
+mapped: dict[str, list[dict]] = {}
+for n in nodes:
+    if "skos:Concept" not in aslist(n.get("@type")):
+        continue
+    for prop in MATCH:
+        for t in ids(n.get(prop)):
+            if str(t).startswith(SCHEME + "/concept"):
+                mapped.setdefault(str(t), []).append({"concept": n["@id"].rsplit("/", 1)[-1], "property": prop})
+
+# 2. Scheme metadata (licence, modified) and each cited or mapped term.
 sg = fetch(SCHEME)
 scheme = URIRef(SCHEME)
 out = {
@@ -98,7 +111,7 @@ out = {
                "modified": str(sg.value(scheme, DCTERMS.modified) or "")},
     "terms": {},
 }
-for iri in sorted(cited, key=lambda s: int(s.rsplit("concept", 1)[-1])):
+for iri in sorted(set(cited) | set(mapped), key=lambda s: int(s.rsplit("concept", 1)[-1])):
     g = fetch(iri)
     c = URIRef(iri)
     label = en(g, c, SKOS.prefLabel)
@@ -114,9 +127,11 @@ for iri in sorted(cited, key=lambda s: int(s.rsplit("concept", 1)[-1])):
         "groups": [{"iri": str(s), "label": (en(g, s, SKOS.prefLabel) or [None])[0]} for s in sorted(groups)],
         "inScheme": str(g.value(c, SKOS.inScheme) or ""),
         "page": f"https://vocabularies.unesco.org/unesco/en/page/{iri.rsplit('/', 1)[-1]}",
-        "citedBy": cited[iri],
+        "citedBy": cited.get(iri, []),
+        "mappedBy": mapped.get(iri, []),
     }
-    print(f"{iri.rsplit('/', 1)[-1]:<10} {label[0]:<28} broader={len(out['terms'][iri]['broader'])} groups={len(groups)} cited by {', '.join(x['concept'] for x in cited[iri])}")
+    print(f"{iri.rsplit('/', 1)[-1]:<10} {label[0]:<28} broader={len(out['terms'][iri]['broader'])} groups={len(groups)} "
+          f"cited by {', '.join(x['concept'] for x in cited.get(iri, [])) or '-'}; mapped by {', '.join(x['concept'] for x in mapped.get(iri, [])) or '-'}")
 
 (ROOT / "evidence" / "unesco-thesaurus.json").write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n")
 print(f"unesco-thesaurus.json: {len(out['terms'])} terms; licence {out['scheme']['license']}")

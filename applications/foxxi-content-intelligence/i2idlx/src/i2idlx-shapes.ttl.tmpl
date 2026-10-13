@@ -118,7 +118,9 @@ i2xsh:MappingProposalShape a sh:NodeShape ;
                 [ sh:path i2x:confidence ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ;
                   sh:minInclusive 0 ; sh:maxInclusive 1 ] ,
                 [ sh:path i2x:reviewStatus ; sh:minCount 1 ; sh:maxCount 1 ;
-                  sh:in ( i2x:status-proposed i2x:status-ratified i2x:status-rejected i2x:status-superseded ) ] ,
+                  sh:in ( i2x:status-proposed i2x:status-ratified i2x:status-rejected i2x:status-superseded i2x:status-adopted ) ] ,
+                [ sh:path i2x:i2idlPredicate ;
+                  sh:in ( skos:exactMatch skos:closeMatch skos:relatedMatch skos:broadMatch skos:narrowMatch ) ] ,
                 [ sh:path i2x:mappingMethod ; sh:minCount 1 ;
                   sh:in ( i2x:method-editorial i2x:method-ai-drafted i2x:method-standards-text i2x:method-evidence-cited i2x:method-lexical ) ] ,
                 [ sh:path i2x:citedIn ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/definitions/" ] ;
@@ -139,6 +141,13 @@ i2xsh:SupersededProposalShape a sh:NodeShape ;
                           [ sh:path [ sh:inversePath dct:replaces ] ; sh:equals dct:isReplacedBy ] ,
                           [ sh:path prov:invalidatedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ] ) ;
     sh:message "A superseded proposal names one replacement for the same concept (dct:isReplacedBy), which names it back (dct:replaces), and when it was replaced (prov:invalidatedAtTime)." .
+
+i2xsh:AdoptedProposalShape a sh:NodeShape ;
+    sh:targetClass i2x:MappingProposal ;
+    rdfs:comment "An adopted proposal is one I2IDL's own record asserts with the same property: it says so (i2x:i2idlPredicate), and that property is the one proposed."@en ;
+    sh:or ( [ sh:not [ sh:property [ sh:path i2x:reviewStatus ; sh:hasValue i2x:status-adopted ] ] ]
+            [ sh:property [ sh:path i2x:i2idlPredicate ; sh:minCount 1 ; sh:equals i2x:proposedPredicate ] ] ) ;
+    sh:message "An adopted proposal names I2IDL's own mapping property (i2x:i2idlPredicate), the same one it proposed." .
 
 i2xsh:ReplacedProposalShape a sh:NodeShape ;
     sh:targetClass i2x:MappingProposal ;
@@ -233,13 +242,14 @@ i2xsh:ReleaseChangeShape a sh:NodeShape ;
 
 i2xsh:ChangeEventShape a sh:NodeShape ;
     sh:targetClass i2x:ChangeEvent ;
-    rdfs:comment "One kind of change within a release change: a known kind, a positive count, and what it touched (I2IDL concepts, a collection or a source, by IRI)."@en ;
+    rdfs:comment "One kind of change within a release change: a known kind, a positive count, and what it touched (I2IDL concepts, a collection or a source, by IRI; for one of I2IDL's own crosswalks or associations, the external term it points to)."@en ;
     sh:property [ sh:path i2x:partOfChange ; sh:minCount 1 ; sh:maxCount 1 ; sh:class i2x:ReleaseChange ] ,
                 [ sh:path i2x:changeKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( {{CHANGE_KIND_LIST}} ) ] ,
                 [ sh:path i2x:changeCount ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ,
                 [ sh:path i2x:changedConcept ; sh:node i2xsh:I2IDLConceptRef ] ,
                 [ sh:path i2x:changedCollection ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/collections/" ] ,
                 [ sh:path i2x:changedSource ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:pattern "^https://id\\.i2idl\\.org/sources/" ] ,
+                [ sh:path i2x:changedTarget ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:not [ sh:pattern "^https://id\\.i2idl\\.org/" ] ] ,
                 [ sh:path i2x:viaProperty ; sh:maxCount 1 ; sh:in ( skos:related skos:broader ) ] ;
     sh:or ( [ sh:property [ sh:path i2x:changedConcept ; sh:minCount 1 ] ]
             [ sh:property [ sh:path i2x:changedCollection ; sh:minCount 1 ] ]

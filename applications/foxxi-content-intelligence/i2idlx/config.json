@@ -15,7 +15,7 @@
   "referents": "i2idlx-referents"
  },
  "i2idl": {
-  "release": "v0.0.80",
+  "release": "v0.0.86",
   "repo": "https://github.com/blakeplock/i2idl-linked-data",
   "localClone": "../../../../i2idl-linked-data",
   "graphPath": "public/glossary.jsonld"
@@ -35,7 +35,7 @@
    "adl-tla": "f9bf6e2ab5c0e3948f2bb17366c9108e2148b7814c6ed0fe17bcdf26af15cbd9"
   }
  },
- "version": "0.4.0",
+ "version": "0.5.0",
  "interegoCoreSrc": "../../../packages/core/src",
  "tsx": "../../../node_modules/.bin/tsx",
  "appArtifactUrl": "https://claude.ai/artifact/Finrenoq17CtZMBYXo4bNC"

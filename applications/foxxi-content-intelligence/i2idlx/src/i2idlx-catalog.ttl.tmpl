@@ -97,8 +97,8 @@ cat:sparql-limits a i2x:ServiceLimits ;
     i2x:rateLimitPerMinute 30 ;
     i2x:supportedQueryForm "SELECT" , "ASK" , "CONSTRUCT" , "DESCRIBE" ;
     i2x:disallowedFeature "SPARQL Update" , "SERVICE" , "FROM" , "FROM NAMED" ;
-    dct:source <https://github.com/blakeplock/i2idl-linked-data/blob/{{COMMIT}}/README.md> ;
-    rdfs:comment "Copied from the upstream README at {{I2IDL_RELEASE}}; upstream may adjust them. Rate limit applies per client on a warm serverless instance."@en .
+    dct:source <https://github.com/blakeplock/i2idl-linked-data/blob/{{COMMIT}}/{{LIMITS_DOC}}> ;
+    rdfs:comment "Copied from I2IDL's own SPARQL documentation at {{I2IDL_RELEASE}} (the build checks the copy against it); upstream may adjust them. Rate limit applies per client on a warm serverless instance."@en .
 
 
 # ── Policies (ODRL) ───────────────────────────────────────────────────────────

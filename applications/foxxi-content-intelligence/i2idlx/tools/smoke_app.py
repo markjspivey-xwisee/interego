@@ -19,6 +19,8 @@ CACHE = pathlib.Path(sys.argv[2]).resolve()
 SHOTS = pathlib.Path(sys.argv[sys.argv.index("--shots") + 1]).resolve() if "--shots" in sys.argv else None
 PAGE = (ROOT / "site" / "app.html").read_text()
 DATA = json.loads((ROOT / "app" / "build" / "data.json").read_text())
+# open UNESCO Thesaurus proposals (those I2IDL has since asserted itself are adopted and leave the queue)
+N_UNESCO = sum(1 for m in DATA["mappings"] if m["v"] == "UNESCO Thesaurus")
 HTML = "<!doctype html><html><head><meta charset=utf8><meta name=viewport content=\"width=device-width,initial-scale=1\"></head><body>" + PAGE + "</body></html>"
 
 STUBS = r"""
@@ -165,12 +167,23 @@ def run(stubbed: bool, width=1440, height=900, shots=False):
         visit("for-i2idl", ".fi-hero h1", "for-i2idl")
         check(page.locator(".prio").count() == 4, f"[{tag}] For I2IDL shows I2IDL's four next priorities")
         n_unesco = sum(1 for m in DATA["mappings"] if m["v"] == "UNESCO Thesaurus")
-        check(page.locator(".prio").first.locator("tbody tr").count() == n_unesco == 13, f"[{tag}] priority 1 lists the {n_unesco} UNESCO crosswalks")
+        check(page.locator(".prio").first.locator("tbody tr").count() == n_unesco == DATA["meta"]["counts"]["unesco"], f"[{tag}] priority 1 lists the {n_unesco} UNESCO crosswalks")
         n_rel = sum(1 for r in DATA["releases"] if r.get("nch"))
         check(page.locator(".clog li").count() == n_rel + 1, f"[{tag}] the change log lists the {n_rel} releases that changed the graph, plus the baseline")
         check(page.locator(".phase").count() == 7, f"[{tag}] I2IDL's seven phases are credited")
+        n_own = DATA["meta"]["counts"]["ownCrosswalks"]
+        check(f"You already publish {n_own} crosswalks of your own" in page.locator(".prio").first.inner_text(),
+              f"[{tag}] priority 1 starts from I2IDL's own {n_own} crosswalks")
         page.locator(".route button", has_text="Try here").first.click()
         check(page.locator(".route .cchip").count() >= 3, f"[{tag}] /api/concepts?q=competency answers here from the embedded release")
+        # I2IDL's own crosswalks sit in the I2IDL zone of an entry, with the I2IDL-X proposal each adopts or sits beside
+        own = [c for c in DATA["concepts"] if c.get("xm")]
+        xw = "section[aria-label=\"I2IDL's crosswalks\"]"
+        for c, says in ((next(c for c in own if any(x[3] for x in c["xm"])), "it is adopted"),
+                        (next(c for c in own if any(x[4] for x in c["xm"])), "open for review")):
+            visit("c-" + c["id"], xw, "xw-" + c["id"])
+            check(page.locator(xw + " .relrow").count() == len(c["xm"]) and page.locator(xw, has_text=says).count() == 1,
+                  f"[{tag}] {c['l']} shows its {len(c['xm'])} I2IDL crosswalk(s), one marked '{says}'")
         visit("annotate", ".an textarea", "annotate")
         page.locator(".an button", has_text="Try an example").click()
         page.wait_for_selector(".an-hit")
@@ -178,7 +191,7 @@ def run(stubbed: bool, width=1440, height=900, shots=False):
         found = page.locator(".an-list .cchip").all_inner_texts()
         check(hits >= 8 and "Learning Record Store (LRS)" in found, f"[{tag}] Annotate finds {hits} mentions of {len(found)} terms in the example")
         visit("review-method.evidence-cited", ".rcard", "review-unesco")
-        check(page.locator(".rcard").count() == 13 and page.locator(".rcard .cited").count() == 13, f"[{tag}] #review-method.evidence-cited opens the 13 UNESCO proposals, each marked cited by I2IDL")
+        check(page.locator(".rcard").count() == n_unesco and page.locator(".rcard .cited").count() == n_unesco, f"[{tag}] #review-method.evidence-cited opens the {n_unesco} open UNESCO proposals, each marked cited by I2IDL")
         page.locator(".rv select[aria-label=Method]").select_option("all")
         # semantic layer: matrix, a category, the playground (sample, then the clash), the reasoning record, agents
         sem = DATA["semantic"]
@@ -310,8 +323,8 @@ def run(stubbed: bool, width=1440, height=900, shots=False):
             last = page.evaluate("window.__saved[window.__saved.length - 1]")
             md = last["data"] if last else ""
             (pathlib.Path(SHOTS or ROOT / "app" / "build") / "editorial-packet-sample.md").write_text(md)
-            check(last and last["filename"].endswith("-editorial-packet.md") and "## 1. UNESCO Thesaurus crosswalk candidates" in md and md.count("unesco:concept") == 13,
-                  f"[stubbed] the editorial packet saves as Markdown with the 13 UNESCO candidates ({len(md)} chars)")
+            check(last and last["filename"].endswith("-editorial-packet.md") and "## 1. UNESCO Thesaurus crosswalk candidates" in md and md.count("unesco:concept") == N_UNESCO,
+                  f"[stubbed] the editorial packet saves as Markdown with the {N_UNESCO} UNESCO candidates ({len(md)} chars)")
             # ask
             page.evaluate("location.hash = 'ask'")
             page.wait_for_selector(".ask textarea")

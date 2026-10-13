@@ -461,12 +461,19 @@ VOCABS = [("http://vocabularies.unesco.org/thesaurus/", "UNESCO Thesaurus"),
           ("https://markjspivey-xwisee.github.io/interego/ns/", "Interego")]
 map_rows, vocab_counts, method_counts = [], {}, {}
 n_superseded = 0
+proposal_of: dict[tuple, tuple] = {}  # (concept, target) → (proposal id, proposed predicate, status), for I2IDL's own table
 for m in re.finditer(r"^mp:([A-Za-z0-9_.-]+) a i2x:MappingProposal", maps_src, re.M):
     s = MP[m.group(1)]
-    if maps.value(s, I2X.reviewStatus) == I2X["status-superseded"]:
+    subj, pred, obj = (maps.value(s, p) for p in (I2X.proposedSubject, I2X.proposedPredicate, I2X.proposedObject))
+    status = str(maps.value(s, I2X.reviewStatus)).rsplit("-", 1)[-1]
+    if status != "superseded":
+        proposal_of[(str(subj), str(obj))] = (m.group(1), str(pred).rsplit("#", 1)[-1], status)
+    if status == "superseded":
         n_superseded += 1  # replaced by a later proposal; the graph keeps it, the table lists what is open
         continue
-    subj, pred, obj = (maps.value(s, p) for p in (I2X.proposedSubject, I2X.proposedPredicate, I2X.proposedObject))
+    if status == "adopted":
+        continue  # I2IDL asserts it itself: listed with I2IDL's own crosswalks below
+    i2idl_says = sorted(str(o).rsplit("#", 1)[-1] for o in maps.objects(s, I2X.i2idlPredicate))
     vocab = next(v for ns, v in VOCABS if str(obj).startswith(ns))
     vocab_counts[vocab] = vocab_counts.get(vocab, 0) + 1
     method = text_of(onto, maps.value(s, I2X.mappingMethod), SKOS.prefLabel) or ""
@@ -476,9 +483,25 @@ for m in re.finditer(r"^mp:([A-Za-z0-9_.-]+) a i2x:MappingProposal", maps_src, r
     search = f"{concept_label(subj)} {qname(str(obj))} {vocab} {rationale}".lower()
     map_rows.append(
         f'<tr data-vocab="{esc(vocab)}" data-search="{esc(search)}"><td>{concept_link(subj)}</td>'
-        f'<td><code>{esc(str(pred).rsplit("#", 1)[-1])}</code></td><td>{ext(str(obj), esc(qname(str(obj))), "qn")}'
+        f'<td><code>{esc(str(pred).rsplit("#", 1)[-1])}</code>'
+        + (f'<div class="muted small">I2IDL asserts <code>{esc(", ".join(i2idl_says))}</code></div>' if i2idl_says else "")
+        + f'</td><td>{ext(str(obj), esc(qname(str(obj))), "qn")}'
         f'<div class="muted small">{esc(vocab)}</div></td><td>{esc(method)}</td><td class="num">{conf:.2f}</td>'
         f'<td class="small">{esc(rationale)}</td></tr>')
+
+# I2IDL's own crosswalks (from v0.0.82): its record, shown as it is, with what I2IDL-X proposed for the same target.
+I2IDL_MATCH = ("exactMatch", "closeMatch", "relatedMatch", "broadMatch", "narrowMatch")
+own_rows = []
+n_adopted = sum(1 for v in proposal_of.values() if v[2] == "adopted")
+for p_ in I2IDL_MATCH:
+    for c_, t_ in gl.subject_objects(SKOS[p_]):
+        prop = proposal_of.get((str(c_), str(t_)))
+        note = ("" if prop is None else
+                f'adopted: I2IDL-X proposed the same (<code>{esc(prop[0])}</code>)' if prop[2] == "adopted" else
+                f'I2IDL-X proposes <code>{esc(prop[1])}</code> (<code>{esc(prop[0])}</code>), open')
+        own_rows.append((concept_label(c_), f'<tr><td>{concept_link(c_)}</td><td><code>{p_}</code></td>'
+                                            f'<td>{ext(str(t_), esc(qname(str(t_))), "qn")}</td><td class="small">{note}</td></tr>'))
+own_rows = [r for _, r in sorted(own_rows)]
 
 # ── Releases ────────────────────────────────────────────────────────────────────────────────────────
 rel_rows = []
@@ -600,7 +623,7 @@ reason_items = [
 n_assigned = sum(n_in_cat.values())
 n_by_def = sum(1 for _ in refs.subject_objects(I2X.assignmentBasis) if str(_[1]) == "definition")
 
-# ── For I2IDL: its own roadmap, read from its README by the app build ────────────────────────────────
+# ── For I2IDL: its own roadmap, read from its repository by the app build ────────────────────────────────
 app_meta = json.loads((ROOT / "app" / "build" / "data.json").read_text())["meta"]
 upstream = app_meta["upstream"]
 n_unesco = sum(1 for _ in maps.subjects(I2X.citedIn, None))
@@ -1120,10 +1143,10 @@ page = f"""<title>I2IDL-X</title>
   <p class="intro">I2IDL made the glossary linked data: stable IRIs, first-class definitions, classified evidence, sources
   that keep their own rights and a SPARQL service with published limits. That is why everything here works without a copy
   of the glossary or a change to it. Here are I2IDL's own next development priorities, from
-  {ext(upstream["readme"], "its README at " + esc(commit_short))}, and what I2IDL-X runs for each today.</p>
+  {ext(upstream["roadmap"], "its " + esc(upstream["roadmapName"]) + " at " + esc(commit_short))}, and what I2IDL-X runs for each today.</p>
   <div class="table-wrap wide"><table>
     <thead><tr><th>I2IDL's priority</th><th>Running today in I2IDL-X</th></tr></thead>
-    <tbody>{"".join(f'<tr><td><div class="cell-title">{p["n"]}. {esc(p["title"])}</div>{ext(upstream["readme"] + "#" + p["anchor"], "README", "small")}</td><td class="small">{prio_do[p["n"]]}</td></tr>' for p in upstream["priorities"])}</tbody></table></div>
+    <tbody>{"".join(f'<tr><td><div class="cell-title">{p["n"]}. {esc(p["title"])}</div>{ext(upstream["roadmap"] + "#" + p["anchor"], esc(upstream["roadmapName"]), "small")}</td><td class="small">{prio_do[p["n"]]}</td></tr>' for p in upstream["priorities"])}</tbody></table></div>
   <p class="intro" style="margin-top:14px">Beyond the roadmap: every concept says what kind of thing it names, so data that links to
   I2IDL's IRIs is typed in the upper ontologies and peer vocabularies (see <a href="#semantic">Semantic layer</a>).
   {ext(cfg["appArtifactUrl"] + "#for-i2idl", "The workbench's For I2IDL view") + " walks through all of it and exports an editorial packet." if cfg.get("appArtifactUrl") else ""}</p>
@@ -1236,13 +1259,21 @@ page = f"""<title>I2IDL-X</title>
   not triples: a <code>skos:*Match</code> triple appears only after a ratification vote, and the shapes reject internal
   targets and ratified lexical-only candidates. {n_superseded} earlier proposals to ADL's xAPI ontology are replaced
   by proposals to Foxxi's, whose classes are the base standard's data structures; the graph keeps them, with status
-  superseded and <code>dct:isReplacedBy</code>, and they are not listed here.</p>
+  superseded and <code>dct:isReplacedBy</code>, and they are not listed here. Nor are the {n_adopted} that I2IDL has
+  since asserted itself, with the same property: they are adopted, and listed with I2IDL's own crosswalks below. Where
+  I2IDL maps the same target with another property, the row says so.</p>
   <div class="filters"><input type="search" id="map-q" placeholder="Filter by concept, term or rationale" aria-label="Filter mappings">
     <select id="map-vocab" aria-label="Vocabulary"><option value="">All vocabularies</option>{vocab_options}</select>
     <span class="count" id="map-count"></span></div>
   <div class="table-wrap wide"><table id="map-table">
     <thead><tr><th>I2IDL concept</th><th>Relation</th><th>External term</th><th>Method</th><th class="num">Conf.</th><th>Rationale</th></tr></thead>
     <tbody>{"".join(map_rows)}</tbody></table></div>
+  <h3>I2IDL's own crosswalks</h3>
+  <p class="intro" style="margin-top:4px">From {esc(release)}'s record, unchanged: {len(own_rows)} <code>skos:*Match</code> triples
+  I2IDL asserts itself (from v0.0.82), with what I2IDL-X proposed for the same target.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>I2IDL concept</th><th>Relation</th><th>External term</th><th>I2IDL-X</th></tr></thead>
+    <tbody>{"".join(own_rows)}</tbody></table></div>
 </section>
 
 <section id="releases" aria-labelledby="h-releases">
