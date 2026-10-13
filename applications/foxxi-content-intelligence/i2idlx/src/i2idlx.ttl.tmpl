@@ -6,7 +6,7 @@
 @prefix hyprcat:   <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
 @prefix hypragent: <https://markjspivey-xwisee.github.io/interego/ns/hypragent#> .
 @prefix foxxi:     <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#> .
-@prefix xapi:      <https://w3id.org/xapi/ontology#> .
+@prefix foxxi-xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
 @prefix fxa:       <https://relay.interego.xwisee.com/ns/iep/action/foxxi/> .
 @prefix rla:       <https://relay.interego.xwisee.com/ns/iep/action/relay/> .
 @prefix hydra:     <http://www.w3.org/ns/hydra/core#> .
@@ -375,7 +375,7 @@ i2x:status-rejected a skos:Concept ; skos:inScheme i2x:ReviewStatuses ; skos:top
     skos:definition "Reviewed and declined; kept as a road not taken."@en .
 i2x:status-superseded a skos:Concept ; skos:inScheme i2x:ReviewStatuses ; skos:topConceptOf i2x:ReviewStatuses ;
     skos:prefLabel "superseded"@en ;
-    skos:definition "Replaced by a later proposal (follow iep:supersedes on the publishing descriptor)."@en .
+    skos:definition "Replaced by a later proposal, which it names with dct:isReplacedBy (prov:invalidatedAtTime says when). Its record and id stay, so the votes cast on it keep their object."@en .
 
 i2x:MappingMethods a skos:ConceptScheme ;
     skos:prefLabel "Mapping methods"@en ;
@@ -420,13 +420,13 @@ i2x:aboutConcept a owl:ObjectProperty ;
     rdfs:label "about concept"@en ; rdfs:domain i2x:UsageInterpretant ; rdfs:range i2x:GlossaryConcept ;
     rdfs:comment "The I2IDL concept a usage interpretant accrues to."@en .
 i2x:statement a owl:ObjectProperty , owl:FunctionalProperty ;
-    rdfs:label "statement"@en ; rdfs:domain i2x:UsageRecord ; rdfs:range xapi:Statement ;
+    rdfs:label "statement"@en ; rdfs:domain i2x:UsageRecord ; rdfs:range foxxi-xapi:Statement ;
     rdfs:comment "The xAPI statement (by its id IRI, e.g. urn:uuid:...) this record projects."@en .
 i2x:usageVerb a owl:ObjectProperty , owl:FunctionalProperty ;
-    rdfs:label "usage verb"@en ; rdfs:domain i2x:UsageRecord ; rdfs:range xapi:Verb ;
+    rdfs:label "usage verb"@en ; rdfs:domain i2x:UsageRecord ; rdfs:range foxxi-xapi:Verb ;
     rdfs:comment "The statement's verb IRI."@en .
 i2x:usageActivity a owl:ObjectProperty ;
-    rdfs:label "usage activity"@en ; rdfs:domain i2x:UsageRecord ; rdfs:range xapi:Activity ;
+    rdfs:label "usage activity"@en ; rdfs:domain i2x:UsageRecord ; rdfs:range foxxi-xapi:Activity ;
     rdfs:comment "The statement's object activity IRI."@en .
 
 i2x:CourseConceptAlignment a owl:Class ;

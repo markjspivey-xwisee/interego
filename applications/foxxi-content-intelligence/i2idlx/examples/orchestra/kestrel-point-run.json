@@ -2,7 +2,17 @@
  "v": 1,
  "recordedAt": "2026-10-10T03:02:08.343Z",
  "durationMs": 1908805,
- "note": "Recorded in the build session through the workbench's own tools (app/tools/orc_server.js). The Conductor was the recording session's Claude; every other role was a separate Claude subagent that could act only through app/tools/orc_cli.mjs. The recording session approved the staged calls at the gate; on replay, the viewer decides.",
+ "note": "Recorded in the build session through the workbench's own tools (app/tools/orc_server.js). The Conductor was the recording session's Claude; every other role was a separate Claude subagent that could act only through app/tools/orc_cli.mjs. The recording session approved the staged calls at the gate; on replay, the viewer decides. One result was amended after recording, when a referent category it shows changed; amendments says what was recorded and why.",
+ "amendments": [
+  {
+   "result": "c15",
+   "path": "result[3].matches[2].category",
+   "recorded": "Data or record",
+   "now": "Information artifact",
+   "on": "2026-10-13",
+   "why": "I2IDL-X 0.4.0 classes I2IDL's Attachment (a file such as an essay, a video or a certificate) as an information artifact, not as data. This search result is the only place the run shows that category, and no later call or message uses it."
+  }
+ ],
  "events": [
   {
    "k": "step",
@@ -2232,7 +2242,7 @@
       {
        "id": "attachment",
        "label": "Attachment",
-       "category": "Data or record",
+       "category": "Information artifact",
        "definition": "A file or other binary resource logically associated with an xAPI Statement, described by metadata including usage type, display name, content type, length,…"
       }
      ]

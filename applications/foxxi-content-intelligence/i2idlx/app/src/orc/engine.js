@@ -194,6 +194,9 @@ export function useOrchestra(trace) {
   const replay = async (r) => {
     const evs = trace.events;
     const recorded = new Map(evs.filter((e) => e.k === "result").map((e) => [e.id, e]));
+    // results changed after recording, each with what was recorded, when and why (the run file's amendments)
+    const amended = new Map();
+    for (const a of trace.amendments || []) amended.set(a.result, [...(amended.get(a.result) || []), a]);
     for (; r.i < evs.length; r.i++) {
       await checkpoint(r);
       const ev = evs[r.i];
@@ -213,7 +216,7 @@ export function useOrchestra(trace) {
         const out = callTool(world.current, ev.tool, ev.input, ev.agent, step.tools);
         const rec = recorded.get(ev.id);
         const drift = !!rec && JSON.stringify(rec.ok ? rec.result : rec.error) !== JSON.stringify(out.ok ? out.result : out.error);
-        patch(id, () => ({ status: out.ok ? "ok" : "error", summary: out.summary, result: out.result, error: out.error, drift }));
+        patch(id, () => ({ status: out.ok ? "ok" : "error", summary: out.summary, result: out.result, error: out.error, drift, amended: amended.get(ev.id) || null }));
         bump();
         presenter.push(out.ui, ev.agent);
         await presenter.drained();

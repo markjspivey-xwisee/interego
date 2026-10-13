@@ -59,6 +59,10 @@ PREFIXES = sorted({
     "foxxi": "https://foxxi-bridge.interego.xwisee.com/ns/foxxi#",
     "ler": "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#",
     "tla": "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#",
+    "foxxi-xapi": "https://foxxi-bridge.interego.xwisee.com/ns/xapi#",
+    "foxxi-scorm-cam": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#",
+    "foxxi-scorm-rte": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#",
+    "foxxi-cmi5": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#",
     "xapi": "https://w3id.org/xapi/ontology#", "xapi-prof": "https://w3id.org/xapi/profiles/ontology#",
     "fxa": ACTION_ROOT + "foxxi/", "rla": ACTION_ROOT + "relay/", "hydra": str(HYDRA),
     "skos": str(SKOS), "schema": "https://schema.org/", "dct": str(DCT), "prov": str(PROV), "dcat": str(DCAT),
@@ -446,14 +450,22 @@ n_role_caps = sum(len(v) for v in role_caps.values())
 
 # ── Mapping proposals ───────────────────────────────────────────────────────────────────────────────
 VOCABS = [("http://vocabularies.unesco.org/thesaurus/", "UNESCO Thesaurus"),
-          ("https://w3id.org/xapi/profiles/ontology#", "xAPI Profiles"), ("https://w3id.org/xapi/ontology#", "xAPI"),
+          ("https://foxxi-bridge.interego.xwisee.com/ns/xapi#", "xAPI (Foxxi)"),
+          ("https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#", "SCORM CAM (Foxxi)"),
+          ("https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#", "SCORM RTE (Foxxi)"),
+          ("https://foxxi-bridge.interego.xwisee.com/ns/cmi5#", "cmi5 (Foxxi)"),
+          ("https://w3id.org/xapi/profiles/ontology#", "xAPI Profiles"), ("https://w3id.org/xapi/ontology#", "xAPI (ADL)"),
           ("https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#", "IEEE LER"),
           ("https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#", "ADL TLA"), ("https://schema.org/", "schema.org"),
           ("https://www.w3.org/2018/credentials#", "W3C VC"),
           ("https://markjspivey-xwisee.github.io/interego/ns/", "Interego")]
 map_rows, vocab_counts, method_counts = [], {}, {}
+n_superseded = 0
 for m in re.finditer(r"^mp:([A-Za-z0-9_.-]+) a i2x:MappingProposal", maps_src, re.M):
     s = MP[m.group(1)]
+    if maps.value(s, I2X.reviewStatus) == I2X["status-superseded"]:
+        n_superseded += 1  # replaced by a later proposal; the graph keeps it, the table lists what is open
+        continue
     subj, pred, obj = (maps.value(s, p) for p in (I2X.proposedSubject, I2X.proposedPredicate, I2X.proposedObject))
     vocab = next(v for ns, v in VOCABS if str(obj).startswith(ns))
     vocab_counts[vocab] = vocab_counts.get(vocab, 0) + 1
@@ -1220,8 +1232,11 @@ page = f"""<title>I2IDL-X</title>
 <section id="mappings" aria-labelledby="h-mappings">
   <h2 id="h-mappings">Mapping proposals</h2>
   <p class="intro">SKOS crosswalks from I2IDL concepts to external vocabularies ({esc(method_summary)}). Every target
-  was checked to exist. Proposals are records, not triples: a <code>skos:*Match</code> triple appears only after a
-  ratification vote, and the shapes reject internal targets and ratified lexical-only candidates.</p>
+  was checked to exist; a target in Foxxi's ontologies, in the released version the build reads. Proposals are records,
+  not triples: a <code>skos:*Match</code> triple appears only after a ratification vote, and the shapes reject internal
+  targets and ratified lexical-only candidates. {n_superseded} earlier proposals to ADL's xAPI ontology are replaced
+  by proposals to Foxxi's, whose classes are the base standard's data structures; the graph keeps them, with status
+  superseded and <code>dct:isReplacedBy</code>, and they are not listed here.</p>
   <div class="filters"><input type="search" id="map-q" placeholder="Filter by concept, term or rationale" aria-label="Filter mappings">
     <select id="map-vocab" aria-label="Vocabulary"><option value="">All vocabularies</option>{vocab_options}</select>
     <span class="count" id="map-count"></span></div>

@@ -136,6 +136,12 @@ def run(stubbed, width=1600, height=960, tag=""):
         n_rec = sum(1 for e in TRACE["events"] if e["k"] == "call")
         check(n_calls == n_rec, f"[{tag}] all {n_rec} recorded calls replayed ({n_calls})")
         check(page.locator(".orc-call .tag.warn").count() == 0, f"[{tag}] every replayed result matches the recording")
+        n_amended = len({a["result"] for a in TRACE.get("amendments", [])})
+        check(page.locator(".orc-call .tag:has-text('amended')").count() == n_amended, f"[{tag}] the {n_amended} result(s) amended after recording are marked")
+        if n_amended:
+            page.locator(".orc-call:has(.tag:has-text('amended')) .oc-row").first.click()
+            check(page.locator(".orc-call p:has-text('Amended after recording')").count() >= 1, f"[{tag}] an amended call shows what the agent was shown")
+            shot(page, f"{tag}-4b-amended")
         check(page.locator(".orc-call.error").count() == sum(1 for e in TRACE["events"] if e["k"] == "result" and not e["ok"]), f"[{tag}] errors only where the recording had them")
         page.click(".orc-tabs button:has-text('Context graph')")
         page.wait_for_selector(".og-n.rec", timeout=5000)

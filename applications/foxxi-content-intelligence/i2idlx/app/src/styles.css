@@ -865,7 +865,7 @@ pre.packet { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; li
 .oc-tool { font-weight: 600; font-size: 11.5px; }
 .oc-via { padding: 1px 6px; border-radius: 999px; font-family: var(--font-mono); font-size: 10.5px; white-space: nowrap; background: var(--accent-soft); color: var(--accent-ink); }
 .oc-sum { flex: 1; min-width: 0; color: var(--muted); }
-.oc-io { display: grid; gap: 6px; margin-top: 6px; }
+.oc-io { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin-top: 6px; }
 .oc-io pre { max-height: 240px; font-size: 11.5px; }
 .orc-note { padding: 7px 10px; border-radius: 8px; background: var(--surface-3); color: var(--ink-2); font-size: 12.5px; }
 .orc-note.warn { background: color-mix(in srgb, var(--warn) 18%, var(--surface)); color: var(--ink); }

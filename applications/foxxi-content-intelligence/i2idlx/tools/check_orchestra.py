@@ -8,6 +8,7 @@ step must have finished; and the run must end with the staged writes approved. N
 """
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -33,6 +34,19 @@ def check(ok, what):
 
 check(r["calls"] > 0 and r["matched"] == r["calls"], f"{r['matched']} of {r['calls']} recorded tool results reproduced exactly"
       + (f"; differ: {r['mismatches'][:6]}" if r["mismatches"] else ""))
+# A result amended after recording is listed under amendments: the value it changed, what was recorded there, when and
+# why. The recording must hold the amended value, so each entry stays true of the file.
+trace = json.loads(RUN.read_text())
+results = {e["id"]: e for e in trace["events"] if e["k"] == "result"}
+amended = []
+for a in trace.get("amendments", []):
+    node = results.get(a["result"])
+    for name, index in re.findall(r"(\w+)(?:\[(\d+)\])?", a["path"]):
+        node = node.get(name) if isinstance(node, dict) else None
+        if index and isinstance(node, list):
+            node = node[int(index)] if int(index) < len(node) else None
+    amended.append(node == a["now"] and a["recorded"] != a["now"] and bool(a.get("why")) and bool(a.get("on")))
+check(all(amended), f"{len(amended)} amended result(s), each holding its amended value, with what was recorded, when and why")
 check(not r["wrongAgent"], "every call was made by its step's agent")
 check(not r["wrongTool"], "every call used one of its step's tools")
 check(r["errors"] == 0, f"{r['errors']} tool errors in the recorded run")

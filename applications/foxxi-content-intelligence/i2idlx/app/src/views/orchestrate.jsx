@@ -180,10 +180,14 @@ const LogItem = React.memo(function LogItem({ x, settled }) {
           {x.via ? <span className="oc-via" title="Follows this control of the I2IDL-X catalog">{x.via}</span> : null}
           <span className="oc-sum ellipsis">{x.status === "running" ? "…" : x.status === "error" ? x.error : x.summary}</span>
           {x.drift ? <span className="tag warn" title="Re-run here, this call's result differs from the recording">differs</span> : null}
+          {x.amended ? <span className="tag" title="This result was amended after recording; open the call to see what the agent was shown">amended</span> : null}
           <Icon name={open ? "up" : "down"} size={12} />
         </button>
         {open ? (
           <div className="oc-io">
+            {(x.amended || []).map((m) => (
+              <p key={m.path} className="tiny muted">Amended after recording, on {m.on}: at <code>{m.path}</code> the agent was shown {JSON.stringify(m.recorded)}, and the tool now returns {JSON.stringify(m.now)}. {m.why}</p>
+            ))}
             <CodeBlock title="Input" code={pretty(x.input || {})} />
             {x.status !== "running" ? <CodeBlock title={x.status === "error" ? "Error" : "Result"} code={x.status === "error" ? x.error : pretty(x.result)} /> : null}
           </div>

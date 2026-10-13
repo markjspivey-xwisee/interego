@@ -434,14 +434,23 @@ check(len(role_caps) == 26 and all(r["a"] in actions for r in role_caps), "26 ro
 
 # ── Mapping proposals ──────────────────────────────────────────────────────────────────────────────
 VOCABS = [("http://vocabularies.unesco.org/thesaurus/", "UNESCO Thesaurus"),
-          ("https://w3id.org/xapi/profiles/ontology#", "xAPI Profiles"), ("https://w3id.org/xapi/ontology#", "xAPI"),
+          ("https://foxxi-bridge.interego.xwisee.com/ns/xapi#", "xAPI (Foxxi)"),
+          ("https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#", "SCORM CAM (Foxxi)"),
+          ("https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#", "SCORM RTE (Foxxi)"),
+          ("https://foxxi-bridge.interego.xwisee.com/ns/cmi5#", "cmi5 (Foxxi)"),
+          ("https://w3id.org/xapi/profiles/ontology#", "xAPI Profiles"), ("https://w3id.org/xapi/ontology#", "xAPI (ADL)"),
           ("https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#", "IEEE LER"),
           ("https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#", "ADL TLA"), ("https://schema.org/", "schema.org"),
           ("https://www.w3.org/2018/credentials#", "W3C VC"), ("https://markjspivey-xwisee.github.io/interego/ns/", "Interego")]
+DCT_REPLACES = URIRef("http://purl.org/dc/terms/replaces")
 maps_src = (DIST / f"{SLUG['mappings']}.ttl").read_text()
 mappings = []
+n_superseded = 0
 for m in re.finditer(r"^mp:([A-Za-z0-9_.-]+) a i2x:MappingProposal", maps_src, re.M):
     s = MP[m.group(1)]
+    if maps.value(s, I2X.reviewStatus) == I2X["status-superseded"]:
+        n_superseded += 1  # replaced by a later proposal (dct:isReplacedBy): in the graph, not in the review queue
+        continue
     obj = str(maps.value(s, I2X.proposedObject))
     term = ext_terms.get(obj) or {}
     od = term.get("definition")
@@ -460,16 +469,25 @@ for m in re.finditer(r"^mp:([A-Za-z0-9_.-]+) a i2x:MappingProposal", maps_src, r
         rec["oa"] = term.get("alt") or []
         if term.get("noteKind"):
             rec["on"] = term["noteKind"]
+    old = maps.value(s, DCT_REPLACES)
+    if old is not None:  # the proposal this one replaces: its id and the target it proposed
+        rec["rp"] = {"id": str(old).rsplit("#", 1)[-1], "o": str(maps.value(old, I2X.proposedObject))}
     mappings.append(rec)
 n_unesco = sum(1 for m in mappings if m["v"] == "UNESCO Thesaurus")
-check(len(mappings) == 62 and all(m["c"] in cidx for m in mappings), "62 mapping proposals on concepts in the release")
+check(len(mappings) == 73 and all(m["c"] in cidx for m in mappings),
+      f"73 open mapping proposals on concepts in the release; the {n_superseded} superseded stay out of the review queue")
+check(n_superseded == 15 and sum(1 for m in mappings if m.get("rp")) == 15
+      and all(m["rp"]["o"].startswith("https://w3id.org/xapi/ontology#") and m["v"] == "xAPI (Foxxi)" for m in mappings if m.get("rp")),
+      "15 proposals to Foxxi's xAPI ontology each name the proposal to ADL's they replace")
 check(n_unesco == 13 and all(m.get("ci") and m["m"] == "evidence-cited" for m in mappings if m["v"] == "UNESCO Thesaurus"),
       "13 UNESCO Thesaurus proposals, each citing the I2IDL definition whose evidence names its target")
 check(all(any(c["concept"] == m["c"] and c["definition"] == m["ci"] for c in unesco["terms"][m["o"]]["citedBy"])
           for m in mappings if m.get("ci")), "every evidence-cited proposal's definition really cites its target (UNESCO snapshot)")
-check(sum(1 for m in mappings if m["od"] and m["v"] != "UNESCO Thesaurus") >= 47,
-      f"{sum(1 for m in mappings if m['od'] and m['v'] != 'UNESCO Thesaurus')} of 49 other targets carry their own vocabulary's definition; "
-      f"{sum(1 for m in mappings if m['od'] and m['v'] == 'UNESCO Thesaurus')} of 13 UNESCO targets carry a scope note")
+n_other = sum(1 for m in mappings if m["v"] != "UNESCO Thesaurus")
+check(sum(1 for m in mappings if m["od"] and m["v"] != "UNESCO Thesaurus") >= n_other - 2
+      and all(m["od"] for m in mappings if "(Foxxi)" in m["v"]),
+      f"{sum(1 for m in mappings if m['od'] and m['v'] != 'UNESCO Thesaurus')} of {n_other} other targets carry their own vocabulary's definition "
+      f"(every Foxxi target does); {sum(1 for m in mappings if m['od'] and m['v'] == 'UNESCO Thesaurus')} of 13 UNESCO targets carry a scope note")
 
 # ── Releases ───────────────────────────────────────────────────────────────────────────────────────
 releases = []
@@ -1039,6 +1057,7 @@ page = f"""<title>Interpretant Glossary Workbench</title>
 </script>
 """
 site = ROOT / "site" / "app.html"
+site.parent.mkdir(exist_ok=True)
 site.write_text(page)
 size = site.stat().st_size
 check(size < 16_000_000, f"site/app.html is {size / 1e6:.2f} MB (limit 16 MB)")

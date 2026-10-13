@@ -1,5 +1,5 @@
 // Insights: the glossary's shape and health, its release history, I2IDL-X coverage and team activity.
-import { C, META, KINDS, COLLECTIONS, SOURCES, RELEASES, SUGGESTIONS, ITEMS, byId, kindById, fieldById, enactByConcept, mapsByConcept, reuseClass, RIGHTS, degree, kindPhrase } from "../data.js";
+import { C, META, KINDS, COLLECTIONS, SOURCES, RELEASES, SUGGESTIONS, ITEMS, itemByKey, byId, kindById, fieldById, enactByConcept, mapsByConcept, reuseClass, RIGHTS, degree, kindPhrase } from "../data.js";
 import { OriginStrip } from "../origin.jsx";
 import { useCaps, consensus } from "../caps.js";
 import { Icon } from "../icons.jsx";
@@ -51,7 +51,8 @@ export function Insights({ route }) {
     for (const n of allNotes) talk.set(n.c, (talk.get(n.c) || 0) + 1);
     const discussed = [...talk.entries()].map(([id, n]) => ({ id, n })).sort((a, b) => b.n - a.n).slice(0, 10);
     let votes = 0;
-    for (const doc of ballots.values()) votes += Object.keys((doc && doc.v) || {}).length;
+    // Votes on proposals still under review only: a superseded proposal keeps its votes, but they no longer count here.
+    for (const doc of ballots.values()) votes += Object.keys((doc && doc.v) || {}).filter((k) => itemByKey.has(k)).length;
     const decided = ITEMS.filter((i) => ["ratified", "rejected"].includes(consensus(tallies.get(i.key), policy.quorum))).length;
     return { used, discussed, votes, decided, reviewers: ballots.size, notes: allNotes.length };
   }, [usageByConcept, allNotes, ballots, tallies, policy]);
