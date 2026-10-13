@@ -626,9 +626,14 @@ n_by_def = sum(1 for _ in refs.subject_objects(I2X.assignmentBasis) if str(_[1])
 # ── For I2IDL: its own roadmap, read from its repository by the app build ────────────────────────────────
 app_meta = json.loads((ROOT / "app" / "build" / "data.json").read_text())["meta"]
 upstream = app_meta["upstream"]
-n_unesco = sum(1 for _ in maps.subjects(I2X.citedIn, None))
+# The open proposals only: superseded ones are replaced, adopted ones are already I2IDL's own (same set as the mappings table).
+n_unesco = vocab_counts.get("UNESCO Thesaurus", 0)
+assert len(map_rows) == app_meta["counts"]["mappings"] and n_unesco == app_meta["counts"]["unesco"], \
+    f"open proposals {len(map_rows)}/{n_unesco} vs the workbench's {app_meta['counts']['mappings']}/{app_meta['counts']['unesco']}"
 prio_do = {
-    1: f'{len(list(maps.subjects(RDF.type, I2X.MappingProposal)))} crosswalk proposals, {n_unesco} of them to the UNESCO Thesaurus drawn from citations your editors already made; a mapping triple appears only after ratification. <a href="#mappings">Mappings</a>',
+    1: (f'Your own {len(own_rows)} crosswalks, shown as yours; {n_adopted} of them assert what an I2IDL-X proposal proposed, which is marked adopted. '
+        f'{len(map_rows)} open proposals, {n_unesco} of them to the UNESCO Thesaurus drawn from citations your editors already made; '
+        f'a mapping triple from a proposal appears only after ratification. <a href="#mappings">Mappings</a>'),
     2: f'Your three example routes answered as stored queries against your own SPARQL service, inside your published limits, behind a HyprCat catalog of {n_controls} controls. <a href="#queries">Stored queries</a>',
     3: f'Your two provenance wordings, computed for every definition from your own evidence relations, and published as SHACL rules any engine can rerun. <a href="#SourceGroundedDefinition">Rules</a>',
     4: f'Every change since the first public release as PROV: {len(chg_rows)} release changes, {n_change_facts:,} fact-level changes, reconciling exactly with {esc(cfg["i2idl"]["release"])}. <a href="#history">Change history</a>',
