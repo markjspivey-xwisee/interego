@@ -1,58 +1,233 @@
 {
+ "http://vocabularies.unesco.org/thesaurus/concept2": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept21": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept31": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept37": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept4": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept44": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept49": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept71": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept83": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept84": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept88": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept9": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
+ "http://vocabularies.unesco.org/thesaurus/concept95": {
+  "definition": null,
+  "from": null,
+  "label": null
+ },
  "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#AuthoritativeLRS": {
-  "definition": "The tier holding only digitally-signed competency-assertion and career verbs, access-restricted. A restriction view partitioned by verb-set, trust tier and signature.",
-  "from": "ns_adl-tla.ttl",
+  "definition": "The tier holding only digitally-signed competency-assertion and career verbs, access-restricted. A restriction view partitioned by verb set, trust tier and signature.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/2026.10.1",
   "label": "Authoritative LRS"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#Competency": {
   "definition": "A skill, knowledge, ability, trait, or combination required to perform a task or job — the common currency that gives the four TLA data pillars a shared semantics.",
-  "from": "ns_adl-tla.ttl",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/2026.10.1",
   "label": "Competency"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#LearnerProfile": {
-  "definition": "Each learner's aggregate competency level, credentials, aptitudes, preferences, goals and career trajectory. The TLA pillar that the IEEE P2997 study group grew from — equivalent to the IEEE Enterprise Learner Record.",
-  "from": "ns_adl-tla.ttl",
-  "label": "Learner Profile / Enterprise Learner Record"
+  "definition": "Each learner's aggregate competency level, credentials, aptitudes, preferences, goals and career trajectory. The TLA pillar from which the IEEE P2997 Enterprise Learner Record work grew, and the counterpart of that record.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/2026.10.1",
+  "label": "Learner Profile"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#LearningActivityMetadata": {
   "definition": "A typed metadata descriptor of a learning resource — course, section, activity or content object. The substrate's resource-descriptor primitive specialised for learning resources.",
-  "from": "ns_adl-tla.ttl",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/2026.10.1",
   "label": "Learning Activity Metadata"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#NoisyLRS": {
   "definition": "The tier holding every raw xAPI statement, with data ownership retained by the activity owner. A view over the statement set — the unfiltered partition.",
-  "from": "ns_adl-tla.ttl",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/2026.10.1",
   "label": "Noisy LRS"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#TransactionalLRS": {
-  "definition": "The tier holding only the normalised MOM roll-up verbs — the evidence base for competency inference. A restriction view over the statement set, partitioned by verb-set.",
-  "from": "ns_adl-tla.ttl",
+  "definition": "The tier holding only the normalised MOM roll-up verbs — the evidence base for competency inference. A restriction view over the statement set, partitioned by verb set.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla/2026.10.1",
   "label": "Transactional LRS"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#AssignableUnit": {
+  "definition": "The smallest launchable unit of content that the LMS tracks: identified by an IRI, with a title, a description and a launch URL, and optionally a launch method, a moveOn criterion, a mastery score, an activity type, launch parameters, an entitlement key and objective references.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.1",
+  "label": "Assignable Unit"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#CompetencyDefinition": {
   "definition": "A formal, context-neutral representation of one competency — a skill, knowledge, ability, attitude, habit of practice, or learning outcome — with a stable identity, a human-readable description, and optional structured statements.",
-  "from": "ns_ieee-ler.ttl",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.1",
   "label": "Competency Definition"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#CompetencyFramework": {
   "definition": "A structured collection of competency definitions and the typed relationships between them — a blueprint of excellent performance.",
-  "from": "ns_ieee-ler.ttl",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.1",
   "label": "Competency Framework"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#Credential": {
-  "definition": "An attestation of qualification, competence or authority issued by an authority. A signed attestation — i.e. a W3C Verifiable Credential whose subject carries one or more competency claims. Open Badges 3.0 and CLR 2.0 credentials are subtypes.",
-  "from": "ns_ieee-ler.ttl",
+  "definition": "An attestation of qualification, competence or authority issued by an authority, expressed as a W3C Verifiable Credential whose subject carries one or more claims. Open Badges 3.0 and CLR 2.0 credentials are kinds of it.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.1",
   "label": "Credential"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#EnterpriseLearnerRecord": {
-  "definition": "The aggregate, enterprise-level record of one learner. P2997 defines it deliberately as a ledger / registry — it holds indications of where subordinate data lives, not the raw data. It therefore emerges as the union of its record entries, scoped to one learner, carrying provenance — not a monolithic class.",
-  "from": "ns_ieee-ler.ttl",
+  "definition": "The aggregate, enterprise-level record of one learner. The P2997 project describes it as a ledger or registry: it holds indications of where subordinate data lives, not the raw data. It therefore emerges as the union of its record entries, scoped to one learner and carrying provenance — not a monolithic class.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.1",
   "label": "Enterprise Learner Record"
  },
  "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#ProficiencyLevel": {
   "definition": "An ordinal level of mastery a learner may attain on a competency — the scale an assertion is measured against.",
-  "from": "ns_ieee-ler.ttl",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.1",
   "label": "Proficiency Level"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Metadata": {
+  "definition": "A <metadata> element: metadata about the package or one of its parts — the schema it follows, its version, and the location of any metadata record kept outside the manifest.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/2026.10.1",
+  "label": "Metadata"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#DataModel": {
+  "definition": "The run-time data of one learner attempt on a SCO, which the SCO reads and writes through API_1484_11: the cmi data model, and ADL's navigation (adl.nav) and shared data (adl.data) data models.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.1",
+  "label": "Run-time data"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#Interaction": {
+  "definition": "A recognized interaction the learner responded to, such as a question: its ID, type, objectives, timestamp, correct responses, weighting, learner response, result, latency and description.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.1",
+  "label": "Interaction"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Account": {
+  "definition": "A user account on an existing system, such as an LMS or an intranet, identified by the system's home page and the account's name together.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Account"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Activity": {
+  "definition": "A unit of instruction, experience or performance that is tracked, identified by an IRI.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Activity"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#ActivityDefinition": {
+  "definition": "Metadata about an Activity: name, description, type, more information, interaction details and extensions.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Activity Definition"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Actor": {
+  "definition": "Whom a Statement is about: an Agent or a Group, and never both.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Actor"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Agent": {
+  "definition": "A single person or system, identified by exactly one Inverse Functional Identifier: mbox, mbox_sha1sum, openid or account.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Agent"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Attachment": {
+  "definition": "A digital artifact logically part of a Statement — an essay, a video, a certificate image, or the JSON Web Signature of a signed Statement — described by its usage type, display name, content type, length and SHA-2 hash.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Attachment"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Context": {
+  "definition": "Information that gives a Statement more meaning: its registration, context activities, context agents and groups, revision, platform, language, a related Statement and extensions.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Context"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#ContextActivities": {
+  "definition": "The Activities a Statement is related to, by kind of relation: parent, grouping, category and other.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Context Activities"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#ContextAgent": {
+  "definition": "A relationship, limited to one Statement, between that Statement and one Agent, characterized by zero or more relevant types.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Context Agent"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#ContextGroup": {
+  "definition": "A relationship, limited to one Statement, between that Statement and one Group, characterized by zero or more relevant types.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Context Group"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Extensions": {
+  "definition": "An extensions map: a node whose properties are extension IRIs, each valued with any JSON value. The meaning and structure of a value are defined by whoever controls its IRI.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Extensions"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Group": {
+  "definition": "A collection of Agents. An Identified Group carries exactly one Inverse Functional Identifier and may list members; an Anonymous Group carries none and must list its members.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Group"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#InteractionComponent": {
+  "definition": "One element of an interaction component list (a choice, a point on a scale, a source or target to match, or a step), with an id and an optional description.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Interaction Component"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Result": {
+  "definition": "A measured outcome of the experience a Statement records: score, success, completion, response, duration and extensions.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Result"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Statement": {
+  "definition": "An immutable record that an Actor did something: the Actor, the Verb, the Object, and optionally a Result, a Context, a timestamp and Attachments.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Statement"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#StatementRef": {
+  "definition": "A pointer to another Statement, by its UUID.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Statement Reference"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#SubStatement": {
+  "definition": "A Statement nested as the Object of another Statement: an actor, verb and object (with optional result, context, timestamp and attachments), but no id, stored, version or authority, and never itself containing a Sub-Statement.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Sub-Statement"
+ },
+ "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Verb": {
+  "definition": "The action of a Statement: an IRI that names the meaning (not the word), with a language map giving its display form.",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1",
+  "label": "Verb"
  },
  "https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance": {
   "definition": "A capability that a pod or manifest supports. Used for HATEOAS-style agent discovery of what operations are available.",
@@ -210,8 +385,8 @@
   "label": "StatementTemplateRule"
  },
  "https://www.w3.org/2018/credentials#VerifiableCredential": {
-  "definition": null,
-  "from": "w3.org/2018/credentials",
+  "definition": "A tamper-evident credential whose authorship can be cryptographically verified. (W3C VC Data Model 2.0)",
+  "from": "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/2026.10.1",
   "label": "Verifiable credential"
  }
 }

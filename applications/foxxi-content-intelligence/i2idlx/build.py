@@ -161,9 +161,15 @@ known_actions = set(foxxi_by_key) | relay_keys
 external_terms: set[str] = set(cw.VERIFIED_EXTERNAL)
 unesco = json.loads((EVID / "unesco-thesaurus.json").read_text())
 external_terms |= set(unesco["terms"])  # fetched from UNESCO's Skosmos API by tools/refresh_unesco.py
-for f in ["xapi-ontology.ttl", "xapi-profile-ontology.ttl", "ns_ieee-ler.ttl", "ns_adl-tla.ttl", "iep.ttl"]:
+for f in ["xapi-ontology.ttl", "xapi-profile-ontology.ttl", "iep.ttl"]:
     g = Graph().parse(EVID / f, format="turtle")
     external_terms |= {str(s) for s in g.subjects() if isinstance(s, URIRef)}
+# Foxxi's ontologies, at the one released version config.json pins (src/layer.py foxxi_ns): a target must be a term
+# that release defines, not merely one under its namespace.
+FOXXI_NS = layer_mod.foxxi_ns(ROOT)
+foxxi_graphs = {m: Graph().parse(p, format="turtle") for m, p in FOXXI_NS["files"].items()}
+for m, g in foxxi_graphs.items():
+    external_terms |= {str(s) for s in g.subjects() if isinstance(s, URIRef) and str(s).startswith(FOXXI_NS["ns"][m])}
 
 
 def action_iri(key: str) -> str:
@@ -230,7 +236,7 @@ for o in ORIGINS["origins"]:
 GS_TYPE = URIRef("https://glossarystudio.app/ns/typeCollection")
 layer_concepts = {str(gl.value(URIRef(c), DCTERMS.identifier)): {"iri": c, "type": str(gl.value(URIRef(c), GS_TYPE)).rsplit("/", 1)[-1]}
                   for c in concepts}
-LAYER = layer_mod.Layer(ROOT, NS, IRI, layer_concepts, cw.MAPPINGS, release, commit)
+LAYER = layer_mod.Layer(ROOT, NS, IRI, layer_concepts, cw.active(), release, commit)
 onto_ttl = render((SRC / "i2idlx.ttl.tmpl").read_text().replace("{{CHANGE_KINDS}}", change_kinds)
                   .replace("{{REFERENT_CATEGORIES}}", LAYER.ontology_section())
                   .replace("{{ORIGINS}}", "\n".join(origin_blocks))
@@ -413,11 +419,12 @@ enact = Graph().parse(data=enact_ttl, format="turtle")
 mp_lines = [HEADER_PREFIXES, f"""
 # ══════════════════════════════════════════════════════════════════════════════
 #  I2IDL-X mapping proposals — I2IDL concepts → external vocabularies (UNESCO
-#  Thesaurus, xAPI ontology, xAPI Profiles ontology, Foxxi-served IEEE LER and
-#  ADL TLA layers, schema.org, W3C VC, Interego). PROPOSALS, not assertions: no skos:*Match
-#  triple appears here. A mapping triple exists only after ratification
-#  (rules in i2idlx-rules). Every object IRI was checked to exist in its
-#  vocabulary at build time.
+#  Thesaurus, Foxxi's xAPI, SCORM, cmi5, IEEE LER and ADL TLA ontologies, ADL's
+#  xAPI and xAPI Profiles ontologies, schema.org, W3C VC, Interego). PROPOSALS,
+#  not assertions: no skos:*Match triple appears here. A mapping triple exists
+#  only after ratification (rules in i2idlx-rules). Every object IRI was checked
+#  to exist in its vocabulary at build time; Foxxi's at release {FOXXI_NS['version']}.
+#  A proposal a later one replaces stays, with status superseded.
 # ══════════════════════════════════════════════════════════════════════════════
 
 <{IRI['mappings']}> a owl:Ontology ;
@@ -428,25 +435,39 @@ mp_lines = [HEADER_PREFIXES, f"""
     prov:wasAttributedTo {DRAFTER} ;
     prov:generatedAtTime "{now_for('mappings')}"^^xsd:dateTime ;
     dct:references <{unesco['scheme']['iri']}> ;
-    rdfs:comment "Uses SKOS mapping predicates with the meanings in I2IDL's SEMANTIC-RELATIONSHIPS.md. standards-text proposals rest on the same normative text; evidence-cited proposals turn a citation I2IDL already makes (i2x:citedIn names the definition) into a mapping, with the predicate read from both texts; ai-drafted proposals need editorial review before ratification. UNESCO Thesaurus terms are © UNESCO, CC BY-SA 3.0 IGO."@en .
+    dct:references {" , ".join(f"<{FOXXI_NS['iris'][m]}>" for m in FOXXI_NS['modules'])} ;
+    rdfs:comment "Uses SKOS mapping predicates with the meanings in I2IDL's SEMANTIC-RELATIONSHIPS.md. standards-text proposals rest on the same normative text; evidence-cited proposals turn a citation I2IDL already makes (i2x:citedIn names the definition) into a mapping, with the predicate read from both texts; ai-drafted proposals need editorial review before ratification. A proposal that a later one replaces keeps its record and id, with status superseded and dct:isReplacedBy the new one. UNESCO Thesaurus terms are © UNESCO, CC BY-SA 3.0 IGO."@en .
 """]
-counter: dict[str, int] = {}
-for cid, pred, target, conf, method, why in cw.MAPPINGS:
+mapping_ids = [f"mp:{i}" for i in cw.ids()]  # each row's id, in cw.MAPPINGS order: m-<concept>-<n> (src/crosswalk.py)
+assert mapping_ids == [f"mp:m-{local(r[0])}-{n}" for r, n in zip(cw.MAPPINGS, (
+    sum(1 for q in cw.MAPPINGS[:k + 1] if q[0] == r[0]) for k, r in enumerate(cw.MAPPINGS)))], "ids must be positional per concept"
+open_rows = [(r[0], r[1], r[2]) for r in cw.active()]
+assert len(set(open_rows)) == len(open_rows), "two open proposals make the same mapping"
+# A superseded proposal stays published under its id (votes reference it) and points to the one that replaces it.
+row_of = dict(zip(mapping_ids, cw.MAPPINGS))
+replaced_by = {f"mp:{old}": (f"mp:{new}", when) for old, (new, when) in cw.SUPERSEDED.items()}
+assert all(o in row_of and n in row_of and row_of[o][0] == row_of[n][0] and n not in replaced_by
+           for o, (n, _) in replaced_by.items()), "a superseded proposal names an open proposal for the same concept"
+replaces = {new: old for old, (new, _) in replaced_by.items()}
+deprecated_foxxi = {str(s) for g in foxxi_graphs.values() for s in g.subjects(OWL.deprecated, Literal(True))}
+for (cid, pred, target, conf, method, why), node in zip(cw.MAPPINGS, mapping_ids):
     assert target in external_terms, f"external target does not resolve in its vocabulary: {target}"
     assert pred in {"exactMatch", "closeMatch", "relatedMatch", "broadMatch", "narrowMatch"}
     assert method in {cw.ST, cw.AI, cw.EC}, method
-    counter[cid] = counter.get(cid, 0) + 1
-    node = f"mp:m-{local(cid)}-{counter[cid]}"
+    assert target not in deprecated_foxxi, f"{cid} → {target}: the Foxxi release deprecates this term"
     cited = ""
     if method == cw.EC:  # the citation must be I2IDL's own: the target's snapshot lists this concept's definition
         cites = [c for c in unesco["terms"].get(target, {}).get("citedBy", []) if c["concept"] == cid]
         assert cites, f"{cid} → {target}: I2IDL's evidence does not cite this target"
         cited = f"    i2x:citedIn <{cites[0]['definition']}> ; rdfs:seeAlso <{unesco['terms'][target]['page']}> ;\n"
+    status = "superseded" if node in replaced_by else "proposed"
+    lineage = (f"    dct:isReplacedBy {replaced_by[node][0]} ; prov:invalidatedAtTime \"{replaced_by[node][1]}\"^^xsd:dateTime ;\n"
+               if node in replaced_by else "") + (f"    dct:replaces {replaces[node]} ;\n" if node in replaces else "")
     mp_lines.append(
         f"{node} a i2x:MappingProposal ;\n"
         f"    i2x:proposedSubject {qn(concept_iri(cid))} ; i2x:proposedPredicate skos:{pred} ; i2x:proposedObject <{target}> ;\n"
-        f"    i2x:rationale {lit(why)}@en ;\n" + cited +
-        f"    i2x:confidence \"{conf:.2f}\"^^xsd:decimal ; i2x:reviewStatus i2x:status-proposed ;\n"
+        f"    i2x:rationale {lit(why)}@en ;\n" + cited + lineage +
+        f"    i2x:confidence \"{conf:.2f}\"^^xsd:decimal ; i2x:reviewStatus i2x:status-{status} ;\n"
         f"    i2x:mappingMethod i2x:method-{method} .\n")
 mappings_ttl = "\n".join(mp_lines) + "\n"
 mappings = Graph().parse(data=mappings_ttl, format="turtle")
@@ -637,7 +658,7 @@ changes = Graph().parse(data=changes_ttl, format="turtle")
 UPPER_TBOX = layer_mod.tbox(ROOT)
 upper_classes = ({str(s) for s in UPPER_TBOX.subjects(RDF.type, OWL.Class)}
                  | {str(s) for s in UPPER_TBOX.subjects(RDF.type, RDFS.Class)})
-mapping_class_targets = {row[2] for row in cw.MAPPINGS if row[2] in upper_classes}
+mapping_class_targets = {row[2] for row in cw.active() if row[2] in upper_classes}
 alignments_ttl = LAYER.alignments_ttl(now_for("alignments"), mapping_class_targets, IRI["mappings"])
 referents_ttl = LAYER.referents_ttl(now_for("referents"))
 alignments = Graph().parse(data=alignments_ttl, format="turtle")
@@ -749,6 +770,27 @@ ok, rg, _ = shacl_validate(bad, shacl_graph=shapes, ont_graph=onto, inference="r
 focus = {str(o) for o in rg.objects(None, SH.focusNode)}
 check(not ok and {"urn:x:internal", "urn:x:lexical", "urn:x:pred", "urn:x:uncited"} <= focus,
       "rejects internal-target mappings, ratified lexical candidates, non-mapping predicates, out-of-range confidence and evidence-cited proposals without the citing definition")
+_mp_fields = 'i2x:confidence "0.8"^^xsd:decimal ; i2x:mappingMethod i2x:method-ai-drafted ; i2x:proposedPredicate skos:closeMatch ;'
+bad = Graph().parse(data=f"""@prefix i2x: <{NS}> . @prefix skos: <http://www.w3.org/2004/02/skos/core#> . @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct: <http://purl.org/dc/terms/> . @prefix prov: <http://www.w3.org/ns/prov#> . @prefix c: <https://id.i2idl.org/concepts/> .
+<urn:x:new-verb> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-1> ;
+  i2x:rationale "the proposal that replaces others" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:replaces <urn:x:orphan> .
+<urn:x:orphan> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-0> ;
+  i2x:rationale "superseded, but names no replacement" ; i2x:reviewStatus i2x:status-superseded ; {_mp_fields}
+  prov:invalidatedAtTime "2026-10-13T00:00:00Z"^^xsd:dateTime .
+<urn:x:elsewhere> a i2x:MappingProposal ; i2x:proposedSubject c:activity ; i2x:proposedObject <urn:x:target-0> ;
+  i2x:rationale "replaced by a proposal about another concept" ; i2x:reviewStatus i2x:status-superseded ; {_mp_fields}
+  dct:isReplacedBy <urn:x:new-verb> ; prov:invalidatedAtTime "2026-10-13T00:00:00Z"^^xsd:dateTime .
+<urn:x:undated> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-2> ;
+  i2x:rationale "superseded without saying when" ; i2x:reviewStatus i2x:status-superseded ; {_mp_fields} dct:isReplacedBy <urn:x:new-verb> .
+<urn:x:still-open> a i2x:MappingProposal ; i2x:proposedSubject c:verb ; i2x:proposedObject <urn:x:target-3> ;
+  i2x:rationale "names a replacement but is still open" ; i2x:reviewStatus i2x:status-proposed ; {_mp_fields} dct:isReplacedBy <urn:x:new-verb> .
+""", format="turtle")
+ok, rg, _ = shacl_validate(bad, shacl_graph=shapes, ont_graph=onto, inference="rdfs", advanced=True)
+focus = {str(o) for o in rg.objects(None, SH.focusNode)}
+check(not ok and focus == {"urn:x:orphan", "urn:x:elsewhere", "urn:x:undated", "urn:x:still-open"},
+      "rejects a superseded proposal with no replacement, one replaced by a proposal about another concept, one without "
+      "its time, and an open proposal that names a replacement; accepts the replacing proposal")
 bad = Graph().parse(data=f"""@prefix i2x: <{NS}> . @prefix prov: <http://www.w3.org/ns/prov#> . @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 <urn:x:rc> a i2x:ReleaseChange ; prov:used <urn:x:r1> ; prov:generated <urn:x:r2> ; prov:endedAtTime "2026-10-08T00:00:00Z"^^xsd:dateTime ; i2x:changeCount 3 .
 <urn:x:nothing> a i2x:ChangeEvent ; i2x:partOfChange <urn:x:rc> ; i2x:changeKind i2x:change-concept-added ; i2x:changeCount 1 .
@@ -796,6 +838,44 @@ check(sum(int(o) for s in changes.subjects(RDF.type, I2X.ChangeEvent) for o in c
 seen_up = {k for k in ("concept-added", "definition-revised", "source-revised", "relationship-added", "membership-added",
                        "evidence-reclassified", "external-mapping-added") if k in hist.KIND_CODES}
 check(len(seen_up) == 7, "every event type the I2IDL README lists has a change kind (source changed → source-revised, membership changed → membership-added/removed)")
+log()
+
+log(f"## Foxxi ontologies (release {FOXXI_NS['version']})")
+import hashlib
+_sums = {}
+_sums_file = FOXXI_NS["archive"] / "SHA256SUMS"
+if _sums_file.exists():
+    for _line in _sums_file.read_text().splitlines():
+        _h, _p = _line.split(maxsplit=1)
+        _sums[_p.strip()] = _h
+fx_bytes = {m: p.read_bytes() for m, p in FOXXI_NS["files"].items()}
+fx_unpinned = [m for m in FOXXI_NS["modules"] if hashlib.sha256(fx_bytes[m]).hexdigest() != FOXXI_NS["sha256"].get(m)]
+fx_unsummed = [m for m in FOXXI_NS["modules"]
+               if _sums and _sums.get(f"{m}/{FOXXI_NS['version']}.ttl") != hashlib.sha256(fx_bytes[m]).hexdigest()]
+check(not fx_unpinned and not fx_unsummed and set(FOXXI_NS["sha256"]) == set(FOXXI_NS["modules"]),
+      f"the {len(fx_bytes)} Foxxi ontologies read are release {FOXXI_NS['version']} byte for byte "
+      f"({', '.join(FOXXI_NS['modules'])}): the SHA-256 config.json pins"
+      + (f", and the archive's own SHA256SUMS" if _sums else " (no SHA256SUMS beside them)")
+      + (f" — not: {sorted(set(fx_unpinned) | set(fx_unsummed))}" if fx_unpinned or fx_unsummed else ""))
+fx_wrong_version = [m for m, g in foxxi_graphs.items()
+                    if {str(o) for o in g.objects(None, OWL.versionIRI)} != {FOXXI_NS["iris"][m]}]
+check(not fx_wrong_version, f"each declares the version IRI it was read as (<{FOXXI_NS['base']}/<module>/{FOXXI_NS['version']}>)"
+      + (f" — not: {fx_wrong_version}" if fx_wrong_version else ""))
+fx_rows = [r for r in cw.active() if r[2].startswith(cw.FOXXI_NS)]
+fx_declared = {str(s) for g in foxxi_graphs.values() for s in g.subjects(RDF.type, None)}
+check(all(r[2] in fx_declared and r[2] not in deprecated_foxxi for r in fx_rows),
+      f"the {len(fx_rows)} open proposals to Foxxi's ontologies each name a term the release declares and does not deprecate "
+      f"({', '.join(f'{m} {sum(1 for r in fx_rows if r[2].startswith(FOXXI_NS['ns'][m]))}' for m in FOXXI_NS['modules'])})")
+superseded_rows = [r for r in cw.MAPPINGS if cw.is_superseded(r)]
+_mp = lambda curie: MP[curie.split(":", 1)[1]]
+check(len(superseded_rows) == len(replaced_by)
+      and all(mappings.value(_mp(o), I2X.reviewStatus) == I2X["status-superseded"]
+              and mappings.value(_mp(o), DCTERMS.isReplacedBy) == _mp(n)
+              and mappings.value(_mp(n), I2X.reviewStatus) == I2X["status-proposed"]
+              and mappings.value(_mp(n), DCTERMS.replaces) == _mp(o)
+              and mappings.value(_mp(o), I2X.proposedSubject) == mappings.value(_mp(n), I2X.proposedSubject)
+              for o, (n, _) in replaced_by.items()),
+      f"each of the {len(superseded_rows)} superseded proposals points (dct:isReplacedBy) to an open proposal for the same concept")
 log()
 
 log("## Semantic layer: upper ontologies, peer vocabularies, inference")
@@ -849,13 +929,15 @@ for c in SEM.CATEGORIES:
 check(not gaps, f"every classifying category is aligned in at least two upper ontologies ({sum(1 for c in SEM.CATEGORIES if c.get('mode', 'classify') == 'classify')} categories)")
 n_bridge = sum(1 for _ in LAYER.class_bridges(mapping_class_targets))
 log(f"- INFO — {n_bridge} crosswalk proposals made executable as OWL bridges (exactMatch ≡, broadMatch ⊒, narrowMatch ⊑); "
-    f"{sum(1 for r in cw.MAPPINGS if r[2] in mapping_class_targets) - n_bridge} close/related matches stay SKOS")
+    f"{sum(1 for r in cw.active() if r[2] in mapping_class_targets) - n_bridge} close/related matches stay SKOS")
 
-# OWL 2 RL closure over everything: upper TBoxes, I2IDL-X, I2IDL's release, I2IDL-X's records and the sample.
+# OWL 2 RL closure over everything: upper TBoxes, Foxxi's ontologies, I2IDL-X, I2IDL's release, I2IDL-X's records, the
+# sample organization and the Foxxi deployment.
 sample = Graph().parse(EX / "industry-context.ttl", format="turtle")
 clash = Graph().parse(EX / "industry-context-clash.ttl", format="turtle")
+deployment = Graph().parse(EX / "foxxi-deployment.ttl", format="turtle")  # Foxxi's own data, read through the bridges
 reason_in = Graph()
-for part in (UPPER_TBOX, onto, alignments, referents, gl, enact, mappings, releases, changes, sample):
+for part in (UPPER_TBOX, onto, alignments, referents, gl, enact, mappings, releases, changes, sample, deployment):
     for t in part:
         reason_in.add(t)
 import time as _time
@@ -916,7 +998,7 @@ EXPECT = {
     "course-le101": ["obo:IAO_0000104", "cco:ont00000974", "dul:Plan", "prov:Plan", "schema:Course", "ceterms:LearningOpportunity"],
     "badge-le101": ["obo:IAO_0000310", "cco:ont00002002", "schema:EducationalOccupationalCredential", "ler:Credential", "cred:VerifiableCredential"],
     "skill-t1-digital": ["obo:BFO_0000016", "cco:ont00001379", "gist:IntellectualProperty", "dul:Quality", "gufo:IntrinsicMode"],
-    "statement-42": ["obo:IAO_0000027", "cco:ont00000853", "dul:InformationObject", "xapi:Statement"],
+    "statement-42": ["obo:IAO_0000027", "cco:ont00000853", "dul:InformationObject", "foxxi-xapi:Statement"],
     "campus-north": ["obo:BFO_0000040", "cco:ont00000995", "gist:PhysicalIdentifiableItem", "dul:PhysicalArtifact"],
     "ai-use-policy": ["obo:IAO_0000033", "cco:ont00000965", "gist:Requirement", "dul:Norm"],
     "le-team": ["obo:BFO_0000027", "cco:ont00000300", "dul:Collective", "gufo:Collection"],
@@ -935,7 +1017,25 @@ for ind, want in EXPECT.items():
 check(not missing_expect, f"the sample organization's {len(EXPECT)} individuals land in BFO/IAO/CCO, gist, DUL, gUFO, PROV-O, "
       f"schema.org and peer classes as expected" + (f" — missing: {missing_expect[:6]}" if missing_expect else ""))
 check("i2x:DataReferent" in sample_types["statement-43"] and "i2x:ApplicationReferent" in sample_types["lrs-transactional"],
-      "data typed only with peer classes is classified through the crosswalk bridges (xapi:Statement, tla:TransactionalLRS)")
+      "data typed only with peer classes is classified through the crosswalk bridges (foxxi-xapi:Statement, tla:TransactionalLRS)")
+# A Foxxi deployment's own data (examples/foxxi-deployment.ttl): the learner a cmi5 session, a statement and her learner
+# record share is a person and an agent, never a data record; the team and the AI tutor are agents too.
+DEPLOY = "https://example.org/foxxi-deployment/"
+DEPLOY_EXPECT = {
+    "ana": (["dul:Person", "gist:Person", "obo:BFO_0000030", "prov:Agent", "foxxi-xapi:Agent"], ["obo:IAO_0000027", "obo:IAO_0000030"]),
+    "team-7": (["dul:Agent", "dul:Collective", "obo:BFO_0000027", "foxxi-xapi:Group"], ["obo:IAO_0000027", "obo:IAO_0000030"]),
+    "tutor-bot": (["prov:Agent", "dul:Agent", "schema:SoftwareApplication"], ["obo:IAO_0000027"]),
+    "certificate-1": (["obo:IAO_0000030", "schema:CreativeWork", "foxxi-xapi:Attachment"], ["obo:IAO_0000027"]),
+    "au-1": (["schema:LearningResource", "foxxi-cmi5:AssignableUnit"], []),
+    "statement-1": (["obo:IAO_0000027", "foxxi-xapi:Statement"], []),
+}
+deploy_wrong = []
+for ind, (want, never) in DEPLOY_EXPECT.items():
+    have = types_of(URIRef(DEPLOY + ind))
+    deploy_wrong += [f"{ind} ⊄ {w}" for w in want if w not in have] + [f"{ind} ⊆ {w}" for w in never if w in have]
+check(not deploy_wrong, f"a Foxxi deployment's own data reads through the bridges as expected: its learner a person and an agent, its "
+      f"team and AI tutor agents, none of them a data record ({len(DEPLOY_EXPECT)} individuals)"
+      + (f" — wrong: {deploy_wrong[:6]}" if deploy_wrong else ""))
 # The SHACL-AF referent rules (the path for engines without OWL) reach the same referent classes as OWL 2 RL for
 # everything classified explicitly: the sample organization and I2IDL's own services.
 rules_in = Graph()
@@ -966,27 +1066,34 @@ clash_by = sorted({k for k, ns in (("BFO", "obo/BFO_"), ("DUL", "dul/DUL.owl"), 
 check(len(clash_by) == 3, f"a thing classified as both a formative assessment and a classroom teacher is rejected: disjointness in {', '.join(clash_by)}")
 
 # HermiT (OWL 2 DL) per upper ontology: complete consistency checking where OWL 2 RL is sound but incomplete.
-hermit_results = {}
+hermit_results, widening = {}, {}
 if os.environ.get("I2IDLX_HERMIT", "1") == "1":
     groups = {"BFO 2020 · IAO · CCO": ["bfo", "iao", "cco"], "gist": ["gist"], "DUL": ["dul"], "gUFO": ["gufo"],
               "PROV-O · schema.org · peers": ["prov", "schema", "org", "dct", "dcat", "lrmi", "esco", "elm", "asn"]}
     for gname, files in groups.items():
-        for which, extra in (("sample", (gl, enact, mappings, releases, changes, sample)), ("clash", (clash,))):
+        for which, extra in (("sample", (gl, enact, mappings, releases, changes, sample, deployment)), ("clash", (clash,))):
             g_in = Graph()
             for f in files:
                 g_in.parse(EVID / "upper" / f"{f}.ttl", format="turtle")
+            for path in FOXXI_NS["files"].values():  # the bridges' targets: Foxxi's own axioms take part
+                g_in.parse(path, format="turtle")
             for part in (onto, alignments, referents) + extra:
                 for t in part:
                     g_in.add(t)
+            risks, n_widened = layer_mod.widening_risks(g_in)  # what HermiT's input widens must hide nothing
+            widening.setdefault("risks", []).extend(f"{gname} {which}: {r}" for r in risks)
+            widening["properties"] = max(widening.get("properties", 0), n_widened)
             try:
                 ok, secs, detail = layer_mod.hermit(g_in, DIST / ".reasoning" / f"{gname.split()[0].lower()}-{which}")
                 hermit_results.setdefault(gname, {})[which] = {"consistent": ok, "seconds": round(secs, 1), "detail": detail,
                                                                 "triples": len(g_in)}
             except Exception as exc:  # Java missing or HermiT refused the input
                 hermit_results.setdefault(gname, {})[which] = {"error": str(exc)[:300]}
+    check(not widening.get("risks"), f"HermiT's input widens the data ranges of {widening.get('properties', 0)} properties, which hides nothing: "
+          "no class expression uses them, HermiT reads none of their values, and no literal it makes plain is a property's value" + (f" — {widening['risks'][:3]}" if widening.get("risks") else ""))
     for gname, r in hermit_results.items():
         s = r.get("sample", {})
-        check(s.get("consistent") is True, f"HermiT (OWL 2 DL): {gname} + I2IDL's release + I2IDL-X + the sample organization is consistent "
+        check(s.get("consistent") is True, f"HermiT (OWL 2 DL): {gname} + Foxxi's ontologies + I2IDL's release + I2IDL-X + the sample organization and Foxxi deployment is consistent "
               f"({s.get('triples', 0):,} triples, {s.get('seconds', '?')} s)" + (f" — {s.get('error') or s.get('detail')}" if s.get("consistent") is not True else ""))
     clash_dl = sorted(g for g, r in hermit_results.items() if r.get("clash", {}).get("consistent") is False)
     clash_rl = {"BFO 2020 · IAO · CCO": "BFO", "DUL": "DUL", "gUFO": "gUFO"}
@@ -1288,6 +1395,27 @@ if LIVE:
     check(still, f"live glossary still reports {release}")
     live_notes.append(("release-check", q, st, still, body[:300]))
 
+    # Foxxi's released versions never change: each version IRI must still serve the bytes this build read.
+    def fetch_bytes(url: str, accept: str) -> tuple[int, bytes]:
+        req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "i2idlx-build/0.1"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, b""
+    fx_live = {m: fetch_bytes(FOXXI_NS["iris"][m], "text/turtle") for m in FOXXI_NS["modules"]}
+    fx_moved = [f"{m} {st}" for m, (st, b) in fx_live.items() if st != 200 or b != fx_bytes[m]]
+    check(not fx_moved, f"each Foxxi version IRI serves exactly the release this build read ({len(fx_live)} of {len(fx_live)})"
+          + (f" — not: {fx_moved}" if fx_moved else ""))
+    fx_current = {}
+    for m in FOXXI_NS["modules"]:
+        st, b = fetch_bytes(f"{FOXXI_NS['base']}/{m}", "text/turtle")
+        if st == 200:
+            fx_current[m] = sorted(str(o).rsplit("/", 1)[-1] for o in Graph().parse(data=b.decode("utf-8"), format="turtle").objects(None, OWL.versionIRI))
+    newer = sorted({v for vs in fx_current.values() for v in vs} - {FOXXI_NS["version"]})
+    log(f"- INFO — Foxxi's current release: {', '.join(sorted({v for vs in fx_current.values() for v in vs})) or 'unknown'}"
+        + (f"; this build is pinned to {FOXXI_NS['version']} (config.json foxxiNs.version)" if newer else ""))
+
     # Interego's follower contract (packages/core/src/affordance/follow.ts): a control's dcat:mediaType
     # is sent as BOTH Content-Type and Accept, a GET carries no body, and a string payload is sent as-is.
     # Replay every read-only catalog port exactly that way, so a port that only works for hand-written
@@ -1320,7 +1448,12 @@ if LIVE:
         st, ct, body = follow(str(target), method, media, q if method != "GET" else None)
         ok = 200 <= st < 300
         if ok and media == "application/sparql-query":
-            ok = json.loads(body).get("boolean") is True
+            # The port answers when the endpoint runs the query and returns its boolean; whether the glossary is still
+            # at the pinned release is the release check above, which reports drift on its own line.
+            try:
+                ok = isinstance(json.loads(body).get("boolean"), bool)
+            except (ValueError, AttributeError):  # a 2xx that is not a SPARQL boolean result is not an answer
+                ok = False
         (followed if ok else unfollowable).append(f"{name} {st}")
     check(not unfollowable and followed,
           f"read-only catalog ports answer when followed as Interego's follower sends them ({', '.join(followed)})"
@@ -1338,6 +1471,17 @@ if LIVE:
         else:
             state = "not yet published" if st == 404 else f"unexpected status {st}"
         log(f"- INFO — `{BASE}/{slug}`: {state}")
+    # Votes are cast on proposal ids, so a published proposal keeps its id, concept, predicate and target for good: rows
+    # are only appended (src/crosswalk.py), and one a later proposal replaces stays, with status superseded.
+    st, ct, body = http(f"{BASE}/{cfg['slugs']['mappings']}", "text/turtle")
+    if st == 200:
+        live_maps = Graph().parse(data=body, format="turtle")
+        _what = (I2X.proposedSubject, I2X.proposedPredicate, I2X.proposedObject)
+        moved = sorted(str(p).rsplit("#", 1)[-1] for p in live_maps.subjects(RDF.type, I2X.MappingProposal)
+                       if tuple(live_maps.value(p, q) for q in _what) != tuple(mappings.value(p, q) for q in _what))
+        n_live = sum(1 for _ in live_maps.subjects(RDF.type, I2X.MappingProposal))
+        check(not moved, f"every published proposal keeps its id, concept, predicate and target ({n_live} published, "
+              f"{len(cw.MAPPINGS)} in this build)" + (f" — changed: {moved[:6]}" if moved else ""))
     log()
 
 # ── 9b. Worked examples ──────────────────────────────────────────────────────────
@@ -1370,7 +1514,8 @@ for name, g in ex_graphs.items():
     ok, _, text = shacl_validate(g, shacl_graph=shapes, ont_graph=onto, inference="rdfs", advanced=True)
     check(ok, f"example `{name}` conforms to I2IDL-X shapes ({len(g)} triples)")
 voted = {str(o) for g in ex_graphs.values() for o in g.objects(None, I2X.votesOn)}
-check(voted <= {str(s) for s in mappings.subjects(RDF.type, I2X.MappingProposal)}, "the example vote targets a proposal that exists in the mappings graph")
+check(voted <= {str(s) for s in mappings.subjects(I2X.reviewStatus, I2X["status-proposed"])},
+      "the example vote targets an open proposal in the mappings graph")
 log()
 
 # ── 10. Companion artifacts ──────────────────────────────────────────────────────
@@ -1382,6 +1527,7 @@ context = {
         "hypragent": "https://markjspivey-xwisee.github.io/interego/ns/hypragent#",
         "ie": "https://markjspivey-xwisee.github.io/interego/ns/interego#",
         "foxxi": "https://foxxi-bridge.interego.xwisee.com/ns/foxxi#", "xapi": "https://w3id.org/xapi/ontology#",
+        "foxxi-xapi": "https://foxxi-bridge.interego.xwisee.com/ns/xapi#",
         "skos": str(SKOS), "dct": str(DCTERMS), "prov": str(PROV), "hydra": str(HYDRA), "xsd": str(XSD),
         "Enactment": "i2x:Enactment", "MappingProposal": "i2x:MappingProposal", "RatificationVote": "i2x:RatificationVote",
         "UsageRecord": "i2x:UsageRecord", "CourseConceptAlignment": "i2x:CourseConceptAlignment",
@@ -1446,8 +1592,10 @@ for key, modal, conf, shapes_iri in order:
 log("## Summary")
 log(f"- Enactments: {len(cw.ENACTMENTS)} reified concept→affordance links over {len({e[0] for e in cw.ENACTMENTS})} concepts and "
     f"{len({e[2] for e in cw.ENACTMENTS})} distinct actions; {n_role} role capabilities")
-log(f"- Mapping proposals: {len(cw.MAPPINGS)} ({sum(1 for m in cw.MAPPINGS if m[4] == cw.ST)} standards-text, "
-    f"{sum(1 for m in cw.MAPPINGS if m[4] == cw.EC)} evidence-cited, {sum(1 for m in cw.MAPPINGS if m[4] == cw.AI)} AI-drafted); 0 asserted")
+_open = cw.active()
+log(f"- Mapping proposals: {len(_open)} open ({sum(1 for m in _open if m[4] == cw.ST)} standards-text, "
+    f"{sum(1 for m in _open if m[4] == cw.EC)} evidence-cited, {sum(1 for m in _open if m[4] == cw.AI)} AI-drafted) "
+    f"and {len(cw.MAPPINGS) - len(_open)} superseded; 0 asserted")
 log(f"- Change history: {len(hrels) - 1} release changes since {hrels[0]['version']}, {n_ch} change events, {n_events:,} fact-level changes")
 log(f"- Semantic layer: {len(SEM.CATEGORIES)} referent categories over {len(assign)} concepts; {len(used_terms)} aligned terms in "
     f"{len(by_vocab)} vocabularies; {n_bridge} crosswalk bridges; {len(ref_rules)} SHACL-AF referent rules")

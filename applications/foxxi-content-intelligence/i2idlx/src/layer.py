@@ -6,11 +6,14 @@
   referents_ttl()     → graph i2idlx-referents: each I2IDL concept's referent category, with the reason, and
                          I2IDL's own services classified by I2IDL's own concepts
   tbox()              → every snapshot the reasoner needs (evidence/upper, Interego, Foxxi, xAPI)
+  foxxi_ns()          → the released Foxxi ontologies I2IDL-X is built against, pinned to one version
   closure()           → OWL 2 RL closure (owlrl) with the inconsistencies it found
 """
 import importlib.util
 import json
+import os
 import pathlib
+import re
 
 import rdflib
 from rdflib import BNode, Graph, Literal, URIRef
@@ -18,8 +21,23 @@ from rdflib.namespace import OWL, RDF, RDFS
 
 I2IDL = "https://id.i2idl.org/concepts/"
 BFO_BEARER_OF, BFO_ROLE = "obo:BFO_0000196", "obo:BFO_0000023"
-TBOX_FILES = ["xapi-ontology.ttl", "xapi-profile-ontology.ttl", "ns_ieee-ler.ttl", "ns_adl-tla.ttl", "iep.ttl",
+TBOX_FILES = ["xapi-ontology.ttl", "xapi-profile-ontology.ttl", "iep.ttl",
               "interego-interego.ttl", "interego-hypragent.ttl", "interego-hyprcat.ttl", "interego-harness.ttl"]
+
+
+def foxxi_ns(root: pathlib.Path) -> dict:
+    """The Foxxi ontologies I2IDL-X is built against: one released version (config.json foxxiNs), read from Foxxi's
+    archive of released files, which never change. Inside the Interego repository the archive is the vertical's
+    ns-releases/; elsewhere FOXXI_NS_ARCHIVE names a directory laid out the same way (<module>/<version>.ttl and
+    SHA256SUMS), such as one filled from the version IRIs."""
+    cfg = json.loads((root / "config.json").read_text())["foxxiNs"]
+    archive = os.environ.get("FOXXI_NS_ARCHIVE") or cfg["archive"]
+    archive = pathlib.Path(archive) if os.path.isabs(archive) else (root / archive).resolve()
+    v = cfg["version"]
+    return {"version": v, "base": cfg["base"], "archive": archive, "modules": list(cfg["modules"]), "sha256": dict(cfg["sha256"]),
+            "files": {m: archive / m / f"{v}.ttl" for m in cfg["modules"]},
+            "iris": {m: f"{cfg['base']}/{m}/{v}" for m in cfg["modules"]},
+            "ns": {m: f"{cfg['base']}/{m}#" for m in cfg["modules"]}}
 
 
 def load_semantic(root: pathlib.Path):
@@ -53,6 +71,8 @@ class Layer:
         """A Turtle term: CURIEs whose local part Turtle accepts stay CURIEs, everything else becomes <IRI>."""
         if curie_or_iri.startswith("http"):
             return f"<{curie_or_iri}>"
+        if curie_or_iri.split(":", 1)[0] not in self.prefixes:
+            raise KeyError(f"no prefix for {curie_or_iri}")
         pfx, local = curie_or_iri.split(":", 1)
         if all(ch.isalnum() or ch in "_-" for ch in local) and not local[0].isdigit() or pfx == "obo":
             return curie_or_iri
@@ -238,7 +258,8 @@ class Layer:
 
     def _prefixes(self) -> str:
         keep = ["i2x", "i2idl", "obo", "cco", "gist", "dul", "gufo", "prov", "schema", "org", "dct", "dcat", "lrmi", "asn",
-                "esco", "elm", "ceterms", "ceasn", "ob3", "case", "cred", "xapi", "xprof", "ler", "tla", "iep", "ie", "ieh",
+                "esco", "elm", "ceterms", "ceasn", "ob3", "case", "cred", "xapi", "xprof", "ler", "tla",
+                "foxxi-xapi", "foxxi-scorm-cam", "foxxi-scorm-rte", "foxxi-cmi5", "iep", "ie", "ieh",
                 "hyprcat", "hypragent", "skos", "gs"]
         rows = [f"@prefix {p + ':':<11}<{self.prefixes[p]}> ." for p in keep]
         rows += ["@prefix owl:       <http://www.w3.org/2002/07/owl#> .",
@@ -254,6 +275,8 @@ def tbox(root: pathlib.Path) -> Graph:
         g.parse(f, format="turtle")
     for name in TBOX_FILES:
         g.parse(root / "evidence" / name, format="turtle")
+    for path in foxxi_ns(root)["files"].values():
+        g.parse(path, format="turtle")
     return g
 
 
@@ -278,8 +301,22 @@ def closure(data: Graph) -> tuple[Graph, list[str]]:
     closure_obj.expand(g)
     from owlrl.Namespaces import ERRNS
     errors = sorted(str(m) for e in g.subjects(RDF.type, ERRNS.ErrorMessage) for m in g.objects(e, ERRNS.error))
+    # owlrl rejects a zero xsd:double or xsd:float: its _strToDouble requires 1e-330 < |v| < 1e310, while XML Schema's
+    # double and float value spaces include zero (Foxxi's ontologies bound scores with xsd:minInclusive "0.0"^^xsd:double).
+    # An error on a zero that XML Schema accepts is that defect, not the data's; any other lexical error still counts.
+    errors = [e for e in errors if not _owlrl_zero_double(e)]
     errors += [f"{s} is owl:Nothing" for s in g.subjects(RDF.type, OWL.Nothing)]
     return g, errors
+
+
+_LEXICAL_ERROR = re.compile(r"Lexical value of the literal '(.*)' does not match its datatype "
+                            r"\(http://www\.w3\.org/2001/XMLSchema#(?:double|float)\)")
+_XSD_DOUBLE = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+
+
+def _owlrl_zero_double(error: str) -> bool:
+    m = _LEXICAL_ERROR.fullmatch(error)
+    return bool(m and _XSD_DOUBLE.fullmatch(m.group(1)) and float(m.group(1)) == 0.0)
 
 
 OWL2_DATATYPES = {f"http://www.w3.org/2001/XMLSchema#{d}" for d in (
@@ -290,29 +327,181 @@ OWL2_DATATYPES = {f"http://www.w3.org/2001/XMLSchema#{d}" for d in (
     "http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral", "http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral",
     "http://www.w3.org/2000/01/rdf-schema#Literal"}
 DATA_RANGE_PREDICATES = {OWL.allValuesFrom, OWL.someValuesFrom, OWL.onDataRange, RDFS.range, OWL.onDatatype}
+LANG_STRING = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString"
+
+
+def _pattern_restrictions(g: Graph) -> dict:
+    """Datatype restrictions whose only facets are xsd:pattern: restriction node → (its base datatype, every node of
+    its facet list). HermiT reads a pattern as a dk.brics regular expression, not an XML Schema one (there & and #
+    are operators, \\s is not a class), so a valid XSD pattern such as Foxxi's xAPI media type can stop it."""
+    from rdflib.collection import Collection
+    pattern = URIRef("http://www.w3.org/2001/XMLSchema#pattern")
+    out = {}
+    for b in set(g.subjects(OWL.withRestrictions, None)):
+        cells, cell = [], g.value(b, OWL.withRestrictions)
+        while cell is not None and cell != RDF.nil:
+            cells.append(cell)
+            cell = g.value(cell, RDF.rest)
+        facets = list(Collection(g, g.value(b, OWL.withRestrictions)))
+        base = g.value(b, OWL.onDatatype)
+        if base is not None and facets and all(set(g.predicates(f)) == {pattern} for f in facets):
+            out[b] = (base, {b, *cells, *facets})
+    return out
+
+
+# Where a datatype named as the object is used as a data range (owl:onDatatype must name a datatype, so it is not one).
+DATA_RANGE_USES = (DATA_RANGE_PREDICATES - {OWL.onDatatype}) | {RDF.first, OWL.datatypeComplementOf, OWL.equivalentClass}
+XSD_NS = "http://www.w3.org/2001/XMLSchema#"
+ANNOTATION_BUILTINS = {RDFS.label, RDFS.comment, RDFS.seeAlso, RDFS.isDefinedBy, OWL.versionInfo, OWL.deprecated,
+                       OWL.priorVersion, OWL.backwardCompatibleWith, OWL.incompatibleWith}
+# Literals inside a data range (an enumeration member, a facet value): widening_risks judges them with the range.
+STRUCTURE = {RDF.first} | {URIRef(XSD_NS + f) for f in ("length minLength maxLength pattern langRange minInclusive minExclusive "
+                                                         "maxInclusive maxExclusive totalDigits fractionDigits").split()}
+
+
+def _off_map(o) -> bool:
+    """A datatype dl_ready widens to rdfs:Literal: an XML Schema datatype or rdf:langString outside the OWL 2 map."""
+    return isinstance(o, URIRef) and (str(o).startswith(XSD_NS) or str(o) == LANG_STRING) and str(o) not in OWL2_DATATYPES
+
+
+def _rewrites_literal(o) -> bool:
+    """A literal dl_ready makes plain: language-tagged, or typed outside the OWL 2 datatype map."""
+    return isinstance(o, Literal) and (bool(o.language) or (o.datatype is not None and str(o.datatype) not in OWL2_DATATYPES))
+
+
+def _blank_closure(g: Graph, node) -> set:
+    """The blank nodes reachable from node through blank nodes: the structure of an anonymous expression."""
+    seen, todo = set(), [node]
+    while todo:
+        n = todo.pop()
+        if isinstance(n, BNode) and n not in seen:
+            seen.add(n)
+            todo.extend(g.objects(n, None))
+    return seen
+
+
+def _expand_datatype_definitions(g: Graph) -> Graph:
+    """A copy in which each named datatype defined by one data range (owl:equivalentClass) is replaced, wherever it is
+    used as a data range, by its own copy of that range, and the definition is dropped. A datatype definition only
+    names a data range, so the models are the same. HermiT 1.3.8 as bundled with owlready2 (OWL API 3.4) misreads
+    some definitions: given I2IDL-X's ontology and I2IDL's glossary, Foxxi's xAPI Number or SCORM Real (xsd:decimal ⊔
+    xsd:double) defined beside a datatype that is xsd:string here (a pattern-restricted one, see dl_ready) makes it
+    report an inconsistency, which a new name for a data range cannot cause, and HermiT 1.4.5 finds that same input
+    consistent. A datatype that a restriction is built on, or that has more than one definition, keeps them."""
+    defined = {}
+    for dt in set(g.subjects(RDF.type, RDFS.Datatype)):
+        ranges = list(g.objects(dt, OWL.equivalentClass))
+        if isinstance(dt, URIRef) and len(ranges) == 1 and (None, OWL.onDatatype, dt) not in g:
+            defined[dt] = ranges[0]
+    if not defined:
+        return g
+    hidden = set().union(*(_blank_closure(g, r) for r in defined.values()))
+    for ax in set(g.subjects(OWL.annotatedProperty, OWL.equivalentClass)):  # an annotation on a dropped definition
+        if g.value(ax, OWL.annotatedSource) in defined:
+            hidden |= _blank_closure(g, ax) | {ax}
+    out = Graph()
+
+    def use(r, through=()):
+        if r in defined:
+            if r in through:
+                raise ValueError(f"cyclic datatype definition through {r}")
+            return use(defined[r], through + (r,))
+        if not isinstance(r, BNode):
+            return r
+        fresh = {n: BNode() for n in _blank_closure(g, r)}
+        for n, b in fresh.items():
+            for p, o in g.predicate_objects(n):
+                out.add((b, p, fresh[o] if o in fresh else use(o, through) if p in DATA_RANGE_USES else o))
+        return fresh[r]
+
+    for s, p, o in g:
+        if s in hidden or (s in defined and p == OWL.equivalentClass):
+            continue
+        out.add((s, p, use(o) if p in DATA_RANGE_USES and o in defined else o))
+    return out
 
 
 def dl_ready(g: Graph) -> Graph:
-    """A copy a DL reasoner (HermiT) accepts: annotations and data values on named resources are dropped (they do
-    not bear on consistency of the class axioms), and datatypes outside the OWL 2 datatype map are widened to
-    rdfs:Literal. owl:imports are dropped so the reasoner never fetches."""
+    """A copy a DL reasoner (HermiT) accepts. Annotations and data values on named resources are dropped (they do
+    not bear on consistency of the class axioms); values on blank nodes stay. A named datatype's definition takes its
+    place wherever it is used (_expand_datatype_definitions), which keeps the same models. Two rewrites widen instead:
+    datatypes outside the OWL 2 datatype map become rdfs:Literal, and literals typed with one, or tagged with a
+    language, become plain; and a datatype restricted by patterns alone becomes its base datatype, since HermiT's
+    regular expressions are not XML Schema's. widening_risks says where that could hide an inconsistency, and the
+    build requires it to find nothing. owl:imports are dropped so the reasoner never fetches."""
+    g = _expand_datatype_definitions(g)
     out = Graph()
-    xsd = "http://www.w3.org/2001/XMLSchema#"
+    patterned = _pattern_restrictions(g)
+    pattern_nodes = {n for _, nodes in patterned.values() for n in nodes}
     for s, p, o in g:
-        if p == OWL.imports:
+        if p == OWL.imports or s in pattern_nodes:
             continue
+        if o in patterned:
+            o = patterned[o][0]
         if isinstance(o, Literal):
             if not isinstance(s, BNode):
                 continue
-            if o.datatype is not None and str(o.datatype) not in OWL2_DATATYPES:
+            if _rewrites_literal(o):
                 o = Literal(str(o))
-            elif o.language:
-                o = Literal(str(o))
-        elif p in DATA_RANGE_PREDICATES and isinstance(o, URIRef) and (str(o).startswith(xsd) or str(o).endswith("#langString")) \
-                and str(o) not in OWL2_DATATYPES:
+        elif (p in DATA_RANGE_PREDICATES or p == RDF.first) and _off_map(o):
+            # rdf:first: a member of a datatype union (Foxxi's xAPI names are xsd:string ⊔ rdf:langString), widened the
+            # same way, since the OWL API under HermiT reads rdf:langString, which RDF 1.1 added, as an error datatype
             o = RDFS.Literal
         out.add((s, p, o))
     return out
+
+
+def widening_risks(g: Graph) -> tuple[list[str], int]:
+    """Where dl_ready's widenings could hide an inconsistency from HermiT, and how many properties' data ranges they
+    widen. If no class expression uses a property whose data range is widened, nor any of its sub-properties, and
+    HermiT reads no value of them (it reads values on blank nodes only), then dropping those properties' values turns
+    any model of the widened input into a model of the original: nothing requires them to have values, and without
+    values every range holds. So whenever HermiT finds the widened input consistent, so is the original, values on
+    named resources aside (dl_ready drops those). A literal made plain is a risk where it is a value HermiT reads of a
+    property (anything but an annotation property): it can break a range, a restriction or an owl:hasValue, and two
+    such values can merge under a functional property. A named datatype that keeps its definitions has them rewritten
+    too, so a range that names one counts as widened when they do. Keys bind named individuals only, whose values
+    dl_ready drops. An empty list means the widenings hide nothing."""
+    g = _expand_datatype_definitions(g)
+    patterned = _pattern_restrictions(g)
+
+    def widened(r, through=frozenset()) -> bool:
+        if r in patterned or _off_map(r):
+            return True
+        if isinstance(r, URIRef):  # a named datatype that kept its definitions: dl_ready rewrites those too
+            return (r, RDF.type, RDFS.Datatype) in g and r not in through \
+                and any(widened(d, through | {r}) for d in g.objects(r, OWL.equivalentClass))
+        return any(n in patterned or any(((q in DATA_RANGE_PREDICATES or q == RDF.first) and (_off_map(o) or widened(o, through)))
+                                         or _rewrites_literal(o) for q, o in g.predicate_objects(n) if q != RDF.rest)
+                   for n in _blank_closure(g, r))
+
+    def with_subproperties(props: set) -> set:
+        props = set(props)
+        while True:
+            more = {s for s, o in g.subject_objects(RDFS.subPropertyOf) if o in props}
+            more |= {x for s, o in g.subject_objects(OWL.equivalentProperty) if s in props or o in props for x in (s, o)}
+            if more <= props:
+                return props
+            props |= more
+
+    on_property = {r: g.value(r, OWL.onProperty) for r in g.subjects(OWL.onProperty, None)}
+    fillers = (OWL.someValuesFrom, OWL.allValuesFrom, OWL.onDataRange)
+    widened_props = {p for p, r in g.subject_objects(RDFS.range) if widened(r)}
+    widened_props |= {p for r, p in on_property.items() if any(f is not None and widened(f) for f in (g.value(r, q) for q in fillers))}
+    w = with_subproperties(widened_props)
+    # Any property but an annotation property: a literal made plain can break a range or a restriction, and can
+    # merge two values ("x"@en and "x"@fr) under a functional property.
+    annotations = set(g.subjects(RDF.type, OWL.AnnotationProperty)) | ANNOTATION_BUILTINS
+    risks = [f"a class expression uses {p}, whose data range is widened" for p in sorted(w & set(on_property.values()))]
+    if OWL.topDataProperty in on_property.values():
+        risks.append("a class expression restricts owl:topDataProperty, so every data property")
+    for s, p, o in g:
+        if isinstance(s, BNode) and isinstance(o, Literal):
+            if p in w:
+                risks.append(f"HermiT reads a value of {p}, whose data range is widened: {o.n3()}")
+            elif _rewrites_literal(o) and p not in annotations and p not in STRUCTURE:
+                risks.append(f"HermiT reads {o.n3()}, made plain, as {p}")
+    return risks, len(widened_props)
 
 
 def hermit(g: Graph, workdir: pathlib.Path, memory_mb: int = 3000, timeout: int = 600) -> tuple[bool | None, float, str]:

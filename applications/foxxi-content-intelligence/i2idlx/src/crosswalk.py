@@ -10,6 +10,7 @@ Action keys are "<vertical>/<verb>": they become
 https://relay.interego.xwisee.com/ns/iep/action/<vertical>/<verb>, which the relay
 302-redirects to the manifest that defines the affordance.
 """
+import re
 
 # (concept, role, action, confidence, rationale)
 ENACTMENTS = [
@@ -240,10 +241,20 @@ ROLE_TAGS = {
 }
 
 # (concept, predicate, external IRI, confidence, method, rationale)
+#
+# A proposal's id is its concept and its place among that concept's rows (mp:m-<concept>-<n>, ids()), and votes are
+# cast on ids, so rows are only ever appended: a proposal that a better one replaces stays where it is, listed in
+# SUPERSEDED, and is published with i2x:status-superseded and dct:isReplacedBy the new one. build.py --live checks
+# that every published proposal keeps its id, concept, predicate and target.
 XAPI = "https://w3id.org/xapi/ontology#"
 XPROF = "https://w3id.org/xapi/profiles/ontology#"
-LER = "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#"
-TLA = "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#"
+FOXXI_NS = "https://foxxi-bridge.interego.xwisee.com/ns/"
+LER = FOXXI_NS + "ieee-ler#"
+TLA = FOXXI_NS + "adl-tla#"
+FX_XAPI = FOXXI_NS + "xapi#"
+FX_SCORM_CAM = FOXXI_NS + "scorm-cam#"
+FX_SCORM_RTE = FOXXI_NS + "scorm-rte#"
+FX_CMI5 = FOXXI_NS + "cmi5#"
 SDO = "https://schema.org/"
 VC = "https://www.w3.org/2018/credentials#"
 IEP = "https://markjspivey-xwisee.github.io/interego/ns/iep#"
@@ -324,7 +335,75 @@ MAPPINGS = [
     ("unesco-teaching-and-training", "narrowMatch", UNESCO + "concept83", 0.70, EC, "Teaching methods are one part of what I2IDL's Teaching and training covers."),
     ("unesco-teaching-and-training", "narrowMatch", UNESCO + "concept84", 0.70, EC, "Training is one part of what I2IDL's Teaching and training covers."),
     ("unesco-technical-and-vocational-study-subjects", "relatedMatch", UNESCO + "concept71", 0.65, EC, "Fields of study versus a kind of formal education: associated, but neither contains the other."),
+
+    # Foxxi's xAPI ontology (I2IDL-X 0.4.0). It models what the IEEE xAPI base standard defines: the statements and
+    # the structures that describe them, and the actors, agents, groups and activities they are about, each class
+    # citing the section I2IDL's own definition cites. ADL's ontology makes all of them parts of a Statement
+    # (Account ⊑ Actor ⊑ Statement), which these classes do not. The first fifteen replace the proposals above to
+    # ADL's ontology for the same concepts (SUPERSEDED). ADL stays the target where Foxxi has no class: the extension
+    # placements and the document resources. Where I2IDL defines the xAPI representation of an agent or a group and
+    # Foxxi's class is the agent or group represented, the match is close or related, not exact or hierarchical, so
+    # no OWL bridge would make a person a data record.
+    ("xapi-statement", "exactMatch", FX_XAPI + "Statement", 0.85, ST, "Both denote the xAPI Statement (IEEE 9274.1.1-2023 §5.2.2): Actor, Verb and Object, with an optional Result, Context, timestamp and Attachments."),
+    ("verb", "exactMatch", FX_XAPI + "Verb", 0.85, ST, "Both denote the xAPI Verb (§5.2.2.2): an IRI naming the action, with a language map for its display."),
+    ("activity", "exactMatch", FX_XAPI + "Activity", 0.80, ST, "Both denote the xAPI Activity (§5.2.2.3): what an Actor interacts with, identified by an IRI."),
+    ("activity-definition", "exactMatch", FX_XAPI + "ActivityDefinition", 0.85, ST, "Both denote the optional Activity Definition metadata object (§5.2.2.3)."),
+    ("actor", "exactMatch", FX_XAPI + "Actor", 0.85, ST, "Both denote whom a Statement is about (§5.2.2.1): the individual or group performing its action, an Agent or a Group."),
+    ("xapi-agent", "closeMatch", FX_XAPI + "Agent", 0.80, ST, "I2IDL's concept is the xAPI representation of an individual Actor; the class is the person or system it represents, by the same Inverse Functional Identifier (§5.2.2.1)."),
+    ("xapi-group", "closeMatch", FX_XAPI + "Group", 0.80, ST, "I2IDL's concept is the xAPI representation of a collection of Agents; the class is the group it represents, identified or anonymous (§5.2.2.1)."),
+    ("account-object", "exactMatch", FX_XAPI + "Account", 0.80, ST, "Both denote the xAPI Account (§5.2.2.1): a system's home page and the name of the account on it."),
+    ("context-activities", "exactMatch", FX_XAPI + "ContextActivities", 0.80, ST, "Both denote the contextActivities of a Statement's Context (§5.2.2.5): parent, grouping, category and other."),
+    ("result-object", "exactMatch", FX_XAPI + "Result", 0.85, ST, "Both denote the Statement Result (§5.2.2.4): score, success, completion, response, duration and extensions."),
+    ("attachment", "exactMatch", FX_XAPI + "Attachment", 0.85, ST, "Both denote one attachment (§5.2.2.6): an artifact logically part of a Statement, described by usage type, display, content type, length and SHA-2 hash."),
+    ("statement-reference", "exactMatch", FX_XAPI + "StatementRef", 0.85, ST, "Both denote the StatementRef object (§5.2.2.3) that points to another Statement by its id."),
+    ("substatement", "exactMatch", FX_XAPI + "SubStatement", 0.85, ST, "Both denote the SubStatement (§5.2.2.3): a Statement nested as the Object of another."),
+    ("interaction-activity", "relatedMatch", FX_XAPI + "InteractionComponent", 0.50, AI, "Interaction activities are described with interaction components (choices, scale points, sources and targets, steps)."),
+    ("learning-record", "narrowMatch", FX_XAPI + "Statement", 0.65, AI, "An xAPI Statement is one machine-readable form of a learning record."),
+    # Classes ADL's ontology does not have (xAPI 2.0's context agents and groups), or that had no proposal.
+    ("context-object", "exactMatch", FX_XAPI + "Context", 0.85, ST, "Both denote a Statement's optional Context (§5.2.2.5): registration, context activities, context agents and groups, platform, language, a related Statement, extensions."),
+    ("context-agent", "exactMatch", FX_XAPI + "ContextAgent", 0.85, ST, "Both denote xAPI 2.0's Context Agent (§5.2.2.5): a relationship of one Statement to one Agent, with optional relevant types."),
+    ("context-group", "exactMatch", FX_XAPI + "ContextGroup", 0.85, ST, "Both denote xAPI 2.0's Context Group (§5.2.2.5): a relationship of one Statement to one Group, with optional relevant types."),
+    ("identified-group", "relatedMatch", FX_XAPI + "Group", 0.70, ST, "I2IDL's concept is the representation of a Group that carries its own Inverse Functional Identifier; the class is the group itself, of either kind (§5.2.2.1)."),
+    ("anonymous-group", "relatedMatch", FX_XAPI + "Group", 0.70, ST, "I2IDL's concept is the representation of a Group known only by its members; the class is the group itself, of either kind (§5.2.2.1)."),
+    ("interaction-activity", "relatedMatch", FX_XAPI + "ActivityDefinition", 0.65, ST, "I2IDL defines it as an Activity Definition with an interaction type (§5.2.2.3) but files it under Activity; related until that is settled."),
+    ("xapi-extension", "relatedMatch", FX_XAPI + "Extensions", 0.55, AI, "An extension is one IRI-keyed entry of an extensions map; the class is the map, a node whose properties are the extension IRIs."),
+    # Foxxi's SCORM 2004 and cmi5 ontologies. I2IDL v0.0.80 has no SCORM or cmi5 concept of its own (its SCORM-related
+    # concepts are the IEEE 1484.11 and 1484.13 standards), so these are the concepts whose referents the classes model.
+    ("interaction-activity", "relatedMatch", FX_SCORM_RTE + "Interaction", 0.55, AI, "xAPI defines its interaction types after SCORM 2004's run-time interactions (cmi.interactions), whose recorded responses the class models."),
+    ("learning-record", "narrowMatch", FX_SCORM_RTE + "DataModel", 0.60, AI, "SCORM's run-time data for one learner's attempt on a SCO is one machine-readable form of a learning record."),
+    ("learning-metadata", "narrowMatch", FX_SCORM_CAM + "Metadata", 0.55, AI, "A content package's metadata element describes the package or one of its parts: learning metadata in one placement."),
+    ("digital-learning-materials", "narrowMatch", FX_CMI5 + "AssignableUnit", 0.55, AI, "An assignable unit is the launchable unit of content a cmi5 course tracks: one kind of digital learning material."),
 ]
+
+# Proposals replaced by a later one: the replaced proposal's id → (the id of the proposal that replaces it, which has the
+# same concept; when it was replaced). The replaced proposal keeps its record and id; both are published, the old one
+# with i2x:status-superseded, dct:isReplacedBy and prov:invalidatedAtTime. Keyed by id, so a proposal can be replaced by
+# one that changes only its predicate.
+REPLACED_2026_10_13 = "2026-10-13T11:20:00+00:00"  # I2IDL-X 0.4.0: ADL's xAPI ontology → Foxxi's
+SUPERSEDED = {f"m-{cid}-1": (f"m-{cid}-2", REPLACED_2026_10_13) for cid in (
+    "xapi-statement", "verb", "activity", "activity-definition", "actor", "xapi-agent", "xapi-group", "account-object",
+    "context-activities", "result-object", "attachment", "statement-reference", "substatement", "interaction-activity",
+    "learning-record")}
+
+
+def ids(rows: list | None = None) -> list[str]:
+    """Each row's id without the mp: prefix: m-<concept>-<n>, n counting that concept's rows in order."""
+    seen: dict[str, int] = {}
+    out = []
+    for r in (MAPPINGS if rows is None else rows):
+        seen[r[0]] = seen.get(r[0], 0) + 1
+        out.append(f"m-{re.sub(r'[^A-Za-z0-9-]+', '-', r[0])}-{seen[r[0]]}")
+    return out
+
+
+def is_superseded(row: tuple) -> bool:
+    return dict(zip(MAPPINGS, ids())).get(row) in SUPERSEDED
+
+
+def active(rows: list | None = None) -> list:
+    """The proposals under review: every row a later one has not replaced."""
+    return [r for r, i in zip(MAPPINGS, ids()) if i not in SUPERSEDED and (rows is None or r in rows)]
+
 
 # Reflexive exemplars (asserted facts; published in the catalog graph). Value may use {CATALOG} / {ENACT}.
 EXEMPLARS = [

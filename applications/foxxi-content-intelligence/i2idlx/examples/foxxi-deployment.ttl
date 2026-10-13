@@ -1,0 +1,26 @@
+# A fictional Foxxi deployment's data, written with Foxxi's own ontologies and nothing from I2IDL-X but two
+# classifications. One learner is known by the same identity to the LMS (a cmi5 session), the LRS (an xAPI statement)
+# and her enterprise learner record; a team acts as an xAPI Group and is a community of practice; an AI tutor from
+# Foxxi's marketplace is an xAPI Agent. The build reasons over it with the crosswalk bridges and requires it to stay
+# consistent and typed as below, so a bridge that makes a person a data record fails the build.
+# Everything here is invented (example.org).
+@prefix ex:         <https://example.org/foxxi-deployment/> .
+@prefix i2x:        <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx#> .
+@prefix i2idl:      <https://id.i2idl.org/concepts/> .
+@prefix foxxi-xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+@prefix foxxi-cmi5: <https://foxxi-bridge.interego.xwisee.com/ns/cmi5#> .
+@prefix ler:        <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#> .
+@prefix rdfs:       <http://www.w3.org/2000/01/rdf-schema#> .
+
+ex:ana          rdfs:label "Ana, a learner" .
+ex:elr-ana      rdfs:label "Ana's enterprise learner record" ; a ler:EnterpriseLearnerRecord ; ler:aboutLearner ex:ana .
+ex:session-1    rdfs:label "One launch of an assignable unit for Ana" ; a foxxi-cmi5:Session ; foxxi-cmi5:learner ex:ana .
+ex:au-1         rdfs:label "The assignable unit she completed" ; a foxxi-cmi5:AssignableUnit .
+ex:statement-1  rdfs:label "The statement that she completed it" ; a foxxi-xapi:Statement ;
+    foxxi-xapi:actor ex:ana ; foxxi-xapi:verb <http://adlnet.gov/expapi/verbs/completed> ; foxxi-xapi:object ex:au-1 ;
+    foxxi-xapi:attachments ex:certificate-1 .
+ex:certificate-1 rdfs:label "The certificate image attached to the statement" ; a foxxi-xapi:Attachment .
+ex:team-7       rdfs:label "A team that acts as one xAPI Group" ; a foxxi-xapi:Group ; foxxi-xapi:member ex:ana ;
+    i2x:isClassifiedBy i2idl:community-of-practice .
+ex:tutor-bot    rdfs:label "An AI tutor from the tutor marketplace" ; a foxxi-xapi:Agent ;
+    i2x:isClassifiedBy i2idl:pedagogical-agent .

@@ -21,7 +21,21 @@
   "graphPath": "public/glossary.jsonld"
  },
  "foxxiManifest": "https://foxxi-bridge.interego.xwisee.com/affordances",
- "version": "0.3.0",
+ "foxxiNs": {
+  "version": "2026.10.1",
+  "base": "https://foxxi-bridge.interego.xwisee.com/ns",
+  "archive": "../ns-releases",
+  "modules": ["xapi", "scorm-cam", "scorm-rte", "cmi5", "ieee-ler", "adl-tla"],
+  "sha256": {
+   "xapi": "6b70b0e6009860d972734cce76c283c61f0f7f05cdb82718c7c8050499c3593a",
+   "scorm-cam": "702ccef32b54d679de511921775cbe8882a35905dce65c4cdf46e7ab2b6856cf",
+   "scorm-rte": "172529162269157fa45ea829fc84062f9b87a05c91b09ce93558bcb4612546b9",
+   "cmi5": "ba685d7f985dbb426d3db27866b52ad39dec55fe34a00c56004de55e0e2b2d4c",
+   "ieee-ler": "1857dcff9d287276738b816964c12a0872c0abaa92478676e3f2542c8a309459",
+   "adl-tla": "f9bf6e2ab5c0e3948f2bb17366c9108e2148b7814c6ed0fe17bcdf26af15cbd9"
+  }
+ },
+ "version": "0.4.0",
  "interegoCoreSrc": "../../../packages/core/src",
  "tsx": "../../../node_modules/.bin/tsx",
  "appArtifactUrl": "https://claude.ai/artifact/Finrenoq17CtZMBYXo4bNC"

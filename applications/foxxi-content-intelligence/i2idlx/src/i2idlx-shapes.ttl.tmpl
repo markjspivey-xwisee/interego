@@ -130,6 +130,21 @@ i2xsh:MappingProposalShape a sh:NodeShape ;
              ) ] ;
     sh:message "A lexical-candidate proposal cannot be ratified without editorial review (I2IDL policy)." .
 
+i2xsh:SupersededProposalShape a sh:NodeShape ;
+    sh:targetClass i2x:MappingProposal ;
+    rdfs:comment "A superseded proposal names exactly one proposal that replaces it, for the same I2IDL concept, and says when it was replaced; a proposal that names a replacement is superseded."@en ;
+    sh:or ( [ sh:not [ sh:property [ sh:path i2x:reviewStatus ; sh:hasValue i2x:status-superseded ] ] ]
+            [ sh:property [ sh:path dct:isReplacedBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:class i2x:MappingProposal ] ,
+                          [ sh:path ( dct:isReplacedBy i2x:proposedSubject ) ; sh:equals i2x:proposedSubject ] ,
+                          [ sh:path prov:invalidatedAtTime ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ] ) ;
+    sh:message "A superseded proposal names one replacement for the same concept (dct:isReplacedBy) and when it was replaced (prov:invalidatedAtTime)." .
+
+i2xsh:ReplacedProposalShape a sh:NodeShape ;
+    sh:targetClass i2x:MappingProposal ;
+    sh:or ( [ sh:property [ sh:path dct:isReplacedBy ; sh:maxCount 0 ] ]
+            [ sh:property [ sh:path i2x:reviewStatus ; sh:hasValue i2x:status-superseded ] ] ) ;
+    sh:message "Only a superseded proposal names a replacement (dct:isReplacedBy)." .
+
 i2xsh:RatificationVoteShape a sh:NodeShape ;
     sh:targetClass i2x:RatificationVote ;
     sh:property [ sh:path i2x:votesOn ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ,

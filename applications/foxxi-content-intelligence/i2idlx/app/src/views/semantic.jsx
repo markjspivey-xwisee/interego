@@ -227,7 +227,7 @@ function Playground({ tryId }) {
           {tryId && byId.has(tryId) ? <button className="btn sm" onClick={() => setText(snippetFor(tryId))}>{byId.get(tryId).l}</button> : null}
         </div>
         <textarea className="textarea mono play-in" spellCheck={false} value={text} onChange={(e) => setText(e.target.value)} aria-label="Turtle to classify" />
-        <p className="tiny muted">Link each thing to the I2IDL concept it is an instance of with <code>i2x:isClassifiedBy</code>, or type it with a peer class a crosswalk bridges (<code>xapi:Statement</code>, <code>tla:TransactionalLRS</code>…). For aboutness use <code>dct:subject</code>.</p>
+        <p className="tiny muted">Link each thing to the I2IDL concept it is an instance of with <code>i2x:isClassifiedBy</code>, or type it with a class a crosswalk bridges (<code>foxxi-xapi:Statement</code>, <code>tla:TransactionalLRS</code>…). For aboutness use <code>dct:subject</code>.</p>
       </section>
       <section className="stack" style={{ gap: 10 }} aria-live="polite">
         {out.error ? <div className="note warn"><Icon name="warn" /><span><b>Not Turtle yet.</b> {out.error}</span></div> : (

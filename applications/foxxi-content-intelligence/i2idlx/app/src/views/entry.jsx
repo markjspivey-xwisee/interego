@@ -532,6 +532,7 @@ function Crosswalks({ c }) {
               {m.od ? <div className="why" style={{ fontFamily: "var(--font-serif)", fontSize: 14 }}>{m.on ? <span className="tiny muted" style={{ fontFamily: "var(--font-ui)" }}>{m.v} {m.on}: </span> : null}“{m.od.length > 180 ? m.od.slice(0, 180) + "…" : m.od}”</div> : null}
               {m.oa && m.oa.length ? <div className="tiny muted">Also: {m.oa.slice(0, 5).join(", ")}</div> : null}
               <div className="why">{m.w}</div>
+              {m.rp ? <div className="tiny muted">Replaces <a href={META.iri.mappings + "#" + m.rp.id} target="_blank" rel="noopener" title={m.rp.o}>{m.rp.id}</a>, the proposal to <code>{m.rp.o.startsWith("https://w3id.org/xapi/ontology#") ? "xapi:" + m.rp.o.split("#").pop() + " (ADL)" : m.rp.o}</code>; votes cast on it stay with it.</div> : null}
               <div className="capm"><span className="row" style={{ gap: 6 }}><Meter v={m.cf} />{m.cf.toFixed(2)}</span><span>{methodById.get(m.m).label}</span></div>
               <VoteBar itemKey={key} compact />
               <Voters itemKey={key} />

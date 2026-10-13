@@ -10,6 +10,7 @@ Writes, under evidence/:
 Downloads land in a fresh temporary directory and are parsed as data only. build_app.py reads these
 snapshots and never touches the network, so the app build is reproducible.
 """
+import importlib.util
 import json
 import pathlib
 import sys
@@ -61,8 +62,15 @@ maps = Graph().parse(ROOT / "dist" / f"{cfg['slugs']['mappings']}.ttl", format="
 I2X = cfg["relayNsRoot"] + "/" + cfg["owner"] + "/" + cfg["slugs"]["ontology"] + "#"
 targets = sorted({str(o) for o in maps.objects(None, URIRef(I2X + "proposedObject"))})
 vocab_graphs = []
-for f in ["xapi-ontology.ttl", "xapi-profile-ontology.ttl", "ns_ieee-ler.ttl", "ns_adl-tla.ttl", "iep.ttl"]:
+for f in ["xapi-ontology.ttl", "xapi-profile-ontology.ttl", "iep.ttl"]:
     vocab_graphs.append((f, Graph().parse(EV / f, format="turtle")))
+# Foxxi's ontologies, at the released version the build reads (src/layer.py foxxi_ns), named by their version IRIs.
+_lspec = importlib.util.spec_from_file_location("layer", ROOT / "src" / "layer.py")
+_layer = importlib.util.module_from_spec(_lspec)
+_lspec.loader.exec_module(_layer)
+_fx = _layer.foxxi_ns(ROOT)
+for m, path in _fx["files"].items():
+    vocab_graphs.append((_fx["iris"][m], Graph().parse(path, format="turtle")))
 sdo_path = tmp / "schemaorg.jsonld"
 sdo_path.write_bytes(get("https://schema.org/version/latest/schemaorg-current-https.jsonld", "application/ld+json"))
 sdo = json.loads(sdo_path.read_text())
@@ -89,7 +97,10 @@ for t in targets:
         if n:
             rec = {"label": lit(n.get("rdfs:label")), "definition": lit(n.get("rdfs:comment")), "from": "schema.org"}
     else:
-        for name, g in vocab_graphs:
+        # A term is read from the vocabulary that defines it first: Foxxi's ontologies mention each other's terms
+        # (LER's names TLA classes), and a mention may carry a label without the definition.
+        own = [(n, g) for n, g in vocab_graphs if n.startswith("https://") and t.startswith(n.rsplit("/", 1)[0] + "#")]
+        for name, g in own + [vg for vg in vocab_graphs if vg not in own]:
             s = URIRef(t)
             label = g.value(s, RDFS.label) or g.value(s, SKOS.prefLabel)
             comment = g.value(s, SKOS.definition) or g.value(s, RDFS.comment)

@@ -79,7 +79,7 @@ STUBS = r"""
   sample.json = async () => ({});
   window.__saved = [];
   const downloads = { save: async (r) => { window.__saved.push({ filename: r.filename, data: typeof r.data === 'string' ? r.data : '' }); return { status: 'saved' }; } };
-  store.set('ballots/u_otherreviewer0000000000', { v: { 'm.m-xapi-statement-1': { vote: 'for', note: 'Same normative text.', at: Date.now() - 3600e3 } } });
+  store.set('ballots/u_otherreviewer0000000000', { v: { 'm.m-xapi-statement-2': { vote: 'for', note: 'Same normative text.', at: Date.now() - 3600e3 } } });
   store.set('notes/u_otherreviewer0000000000', { n: { abc: { c: 'learning-record-store-lrs', text: 'We teach this with a live LRS demo.', at: Date.now() - 7200e3 } } });
   store.set('usage/u_otherreviewer0000000000', { u: { 'learning-record-store-lrs': { ctx: 'LE 101 · week 3', at: Date.now() } } });
   for (const [k, v] of Object.entries(window.__seed || {})) store.set(k, v);
@@ -266,7 +266,7 @@ def run(stubbed: bool, width=1440, height=900, shots=False):
             store = page.evaluate("JSON.stringify([...window.__db.store.entries()])")
             ballots = dict(json.loads(store))
             mine = ballots.get("ballots/u_testviewer000000000000", {}).get("v", {})
-            check(mine.get("m.m-xapi-statement-1", {}).get("vote") == "for", "[stubbed] a vote is written to ballots/<me>")
+            check(mine.get("m.m-xapi-statement-2", {}).get("vote") == "for", "[stubbed] a vote is written to ballots/<me>")
             check(page.locator(".layers .chip.asserted", has_text="Ratified here").count() >= 1, "[stubbed] two votes for reach the quorum: shown as ratified")
             check(page.locator(".layers a", has_text="Suggest to I2IDL editors").count() >= 1, "[stubbed] a ratified crosswalk offers the upstream issue")
             # note
