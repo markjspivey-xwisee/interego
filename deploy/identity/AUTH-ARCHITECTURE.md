@@ -169,6 +169,13 @@ Two relay env vars control the fallback:
 
 A deployment that always serves a single surface (e.g. a dedicated mobile-only relay) can set `RELAY_DEFAULT_SURFACE_AGENT=claude-mobile` to pin the label.
 
+## Threat model: who reads and writes `auth-methods.jsonld`
+
+The pod's CSS is allow-all behind the css-gate, and the record is plaintext, so the gate is what decides who touches it (`deploy/css-gate/server.mjs`).
+
+- **Reads.** Every other pod document reads anonymously. This one is read like a write: the pod's owner (their bearer) or the operator. Before 2026-10-13 it was public too, and since the root container lists every pod, anyone could collect every account's display name with its wallet addresses, passkey ids, labels, public keys and counters, and DID keys. The identity server is unaffected: it reads the record from CSS over the private network, not through the gate. A user audits their own through `GET /auth-methods/me` (above).
+- **Writes.** A user's bearer writes only into its own pod. The gate decides that on the path it forwards, after `.` and `..` segments are resolved. Before 2026-10-13 it decided on the raw request-target, so `PUT /alice/../bob/auth-methods.jsonld` with alice's bearer passed as a write to alice and reached CSS as a write to bob's sign-in record. A user bearer is also refused on a path with an encoded `/` or `\` in a segment, since whether CSS decodes it would decide the pod.
+
 ## Known-good tradeoffs, documented
 
 **WebAuthn credentials are RP-bound** to the origin they were registered at (spec-mandated; passkeys are cryptographically scoped to an RP ID). If Interego ever moves to a new public URL, users re-enroll their passkey for the new origin. This is *not* a sovereignty loss — the user's DID, wallet, and did-key methods all remain portable across origins, and WebAuthn is explicitly positioned as one of several methods, not the canonical one. Users concerned about origin lock-in should enroll a DID or wallet method in addition to their passkey.
