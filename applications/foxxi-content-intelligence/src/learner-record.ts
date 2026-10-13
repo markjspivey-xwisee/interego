@@ -363,7 +363,10 @@ export interface ElrCompetency {
 export interface ElrCredential {
   id: string;
   achievementName?: string;
-  issuer: string;
+  /** The issuer's IRI: the credential's `issuer`, or its `id` when the issuer is a Profile object.
+   *  Absent when the credential names none — never an empty string, which a record's RDF reading
+   *  would take for a relative IRI. */
+  issuer?: string;
   verified: boolean;
   rawDataLocation: string;
 }
@@ -495,10 +498,13 @@ export async function assembleEnterpriseLearnerRecord(
   // 4. Credentials projection.
   const credentials: ElrCredential[] = (clr?.credentialEntries ?? []).map(e => {
     const subj = e.credential.credentialSubject as { achievement?: { name?: string } };
+    const iss = e.credential.issuer as unknown;
+    const issuer = typeof iss === 'string' && iss ? iss
+      : iss && typeof iss === 'object' && typeof (iss as { id?: unknown }).id === 'string' ? (iss as { id: string }).id : undefined;
     return {
       id: e.credential.id ?? e.sourceDescriptor,
       achievementName: subj.achievement?.name,
-      issuer: typeof e.credential.issuer === 'string' ? e.credential.issuer : '',
+      ...(issuer ? { issuer } : {}),
       verified: e.verified,
       rawDataLocation: e.sourceDescriptor,
     };

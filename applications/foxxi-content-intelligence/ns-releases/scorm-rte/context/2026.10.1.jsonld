@@ -1,0 +1,251 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "id": "@id",
+    "type": "@type",
+    "DataModel": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#DataModel"
+    },
+    "Comment": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#Comment"
+    },
+    "CommentFromLearner": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#CommentFromLearner"
+    },
+    "CommentFromLMS": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#CommentFromLMS"
+    },
+    "LearnerPreference": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#LearnerPreference"
+    },
+    "Interaction": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#Interaction"
+    },
+    "InteractionObjective": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#InteractionObjective"
+    },
+    "CorrectResponse": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#CorrectResponse"
+    },
+    "Objective": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#Objective"
+    },
+    "Score": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#Score"
+    },
+    "TargetedRequestValidity": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#TargetedRequestValidity"
+    },
+    "SharedData": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#SharedData"
+    },
+    "version": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#version"
+    },
+    "completionStatus": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#completionStatus"
+    },
+    "completionThreshold": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#completionThreshold"
+    },
+    "credit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#credit"
+    },
+    "entry": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#entry"
+    },
+    "exit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#exit"
+    },
+    "launchData": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#launchData"
+    },
+    "learnerId": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#learnerId"
+    },
+    "learnerName": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#learnerName"
+    },
+    "learnerPreference": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#learnerPreference",
+      "@type": "@id"
+    },
+    "location": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#location"
+    },
+    "maxTimeAllowed": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#maxTimeAllowed"
+    },
+    "mode": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#mode"
+    },
+    "progressMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#progressMeasure"
+    },
+    "scaledPassingScore": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#scaledPassingScore"
+    },
+    "score": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#score",
+      "@type": "@id"
+    },
+    "sessionTime": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#sessionTime"
+    },
+    "successStatus": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#successStatus"
+    },
+    "suspendData": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#suspendData"
+    },
+    "timeLimitAction": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#timeLimitAction"
+    },
+    "totalTime": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#totalTime"
+    },
+    "commentsFromLearner": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#commentsFromLearner",
+      "@type": "@id"
+    },
+    "commentsFromLMS": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#commentsFromLMS",
+      "@type": "@id"
+    },
+    "interactions": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#interactions",
+      "@type": "@id"
+    },
+    "objectives": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#objectives",
+      "@type": "@id"
+    },
+    "comment": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#comment",
+      "@container": "@language"
+    },
+    "commentLocation": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#commentLocation"
+    },
+    "commentTimestamp": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#commentTimestamp"
+    },
+    "audioLevel": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#audioLevel"
+    },
+    "preferenceLanguage": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#preferenceLanguage"
+    },
+    "deliverySpeed": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#deliverySpeed"
+    },
+    "audioCaptioning": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#audioCaptioning",
+      "@type": "http://www.w3.org/2001/XMLSchema#integer"
+    },
+    "interactionId": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#interactionId"
+    },
+    "interactionType": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#interactionType"
+    },
+    "interactionObjectives": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#interactionObjectives",
+      "@type": "@id"
+    },
+    "interactionTimestamp": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#interactionTimestamp"
+    },
+    "correctResponses": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#correctResponses",
+      "@type": "@id"
+    },
+    "weighting": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#weighting"
+    },
+    "learnerResponse": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#learnerResponse"
+    },
+    "result": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#result"
+    },
+    "latency": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#latency"
+    },
+    "interactionDescription": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#interactionDescription",
+      "@container": "@language"
+    },
+    "interactionObjectiveId": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#interactionObjectiveId"
+    },
+    "correctResponsePattern": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#correctResponsePattern"
+    },
+    "objectiveId": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#objectiveId"
+    },
+    "objectiveScore": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#objectiveScore",
+      "@type": "@id"
+    },
+    "objectiveSuccessStatus": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#objectiveSuccessStatus"
+    },
+    "objectiveCompletionStatus": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#objectiveCompletionStatus"
+    },
+    "objectiveProgressMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#objectiveProgressMeasure"
+    },
+    "objectiveDescription": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#objectiveDescription",
+      "@container": "@language"
+    },
+    "scoreScaled": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#scoreScaled"
+    },
+    "scoreRaw": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#scoreRaw"
+    },
+    "scoreMin": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#scoreMin"
+    },
+    "scoreMax": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#scoreMax"
+    },
+    "navRequest": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#navRequest"
+    },
+    "navRequestValidContinue": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#navRequestValidContinue"
+    },
+    "navRequestValidPrevious": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#navRequestValidPrevious"
+    },
+    "navRequestValidChoice": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#navRequestValidChoice",
+      "@type": "@id"
+    },
+    "navRequestValidJump": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#navRequestValidJump",
+      "@type": "@id"
+    },
+    "requestTarget": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#requestTarget"
+    },
+    "requestValidity": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#requestValidity"
+    },
+    "sharedData": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#sharedData",
+      "@type": "@id"
+    },
+    "sharedDataId": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#sharedDataId"
+    },
+    "sharedDataStore": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#sharedDataStore"
+    }
+  }
+}

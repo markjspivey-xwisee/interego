@@ -52,11 +52,16 @@ const RESULT = '^(correct|incorrect|unanticipated|neutral|-?([0-9]+(\\.[0-9]+)?|
 const NAV_REQUEST = '^(continue|previous|exit|exitAll|abandon|abandonAll|suspendAll|_none_|\\{target=[^}]+\\}(choice|jump))$';
 
 export const SCORM_RTE_MODEL: OntologyModel = {
+  // Read through its generated JSON-LD context (ns/model-context.ts): a node a property reaches is
+  // selected by that property as well as by its class.
+  selectByDomainAndRange: true,
+  generatedContext: true,
   module: 'scorm-rte',
   title: 'SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data)',
   description:
     'An OWL 2 DL ontology and SHACL shapes for the run-time data model of SCORM 2004 4th Edition: the cmi data model a SCO reads and writes through API_1484_11 — status, score, time, location, suspend data, learner preferences, comments, interactions and objectives — with each element\'s data type, access and vocabulary, and ADL\'s navigation (adl.nav, including the 4th Edition\'s jump request) and shared data (adl.data) data models. The shapes check the vocabularies, the ranges of scores and measures, SCORM\'s time formats and the suspend data limit; a CMI snapshot is checked against them at /ns/scorm-rte/validate.',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   spec: 'https://adlnet.gov/past-projects/scorm',
   standards: [
     { title: 'SCORM 2004 4th Edition (ADL, 2009): Run-Time Environment', url: 'https://adlnet.gov/past-projects/scorm' },
@@ -67,7 +72,6 @@ export const SCORM_RTE_MODEL: OntologyModel = {
   notes: [
     'Element names in dotted notation (cmi.completion_status, adl.nav.request) are each property\'s skos:notation; n and m stand for the index of an entry in a collection.',
     'SPM is a smallest permitted maximum: the length every LMS must accept. A longer value is allowed, but only an LMS that supports more keeps it whole, so the shapes report one beyond its SPM as a sh:Warning, not a sh:Violation.',
-    'The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology\'s classes. A parsed instance as JSON is checked against the same shapes at POST /ns/scorm-rte/validate, which routes it by its declared type; every result cites its shape.',
   ],
   classes: [
     { name: 'DataModel', label: 'Run-time data', comment: 'The run-time data of one learner attempt on a SCO, which the SCO reads and writes through API_1484_11: the cmi data model, and ADL\'s navigation (adl.nav) and shared data (adl.data) data models.', source: `${RTE}: cmi; adl.nav; adl.data` },
@@ -104,16 +108,16 @@ export const SCORM_RTE_MODEL: OntologyModel = {
     { name: 'learnerName', kind: 'datatype', label: 'learner name', notation: 'cmi.learner_name', comment: '[RO] The learner\'s name; localized_string_type, SPM 250.', domain: 'DataModel', range: ['xsd:string', 'rdf:langString'], functional: true, source: `${RTE}: cmi.learner_name` },
     { name: 'learnerPreference', kind: 'object', label: 'learner preference', notation: 'cmi.learner_preference', comment: 'The learner\'s preferences for the SCO.', domain: 'DataModel', range: 'LearnerPreference', functional: true, source: `${RTE}: cmi.learner_preference` },
     { name: 'location', kind: 'datatype', label: 'location', notation: 'cmi.location', comment: '[RW] Where in the SCO the learner is, as the SCO records it, for resuming; characterstring, SPM 1000.', domain: 'DataModel', range: 'xsd:string', functional: true, source: `${RTE}: cmi.location` },
-    { name: 'maxTimeAllowed', kind: 'datatype', label: 'maximum time allowed', notation: 'cmi.max_time_allowed', comment: '[RO] How much time the learner has in the attempt — from the activity\'s attempt absolute duration limit; timeinterval (second,10,2).', domain: 'DataModel', range: 'TimeInterval', functional: true, source: `${RTE}: cmi.max_time_allowed` },
+    { name: 'maxTimeAllowed', kind: 'datatype', label: 'maximum time allowed', notation: 'cmi.max_time_allowed', comment: '[RO] How much time the learner has in the attempt — from the activity\'s attempt absolute duration limit; timeinterval (second,10,2).', domain: 'DataModel', range: 'TimeInterval', functional: true, source: `${RTE}: cmi.max_time_allowed`, changeNote: '2026.10.0: its range is TimeInterval, SCORM\'s timeinterval (second,10,2) as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map.' },
     { name: 'mode', kind: 'datatype', label: 'mode', notation: 'cmi.mode', comment: '[RO] How the SCO is presented: browse, normal or review.', domain: 'DataModel', oneOf: MODE, functional: true, source: `${RTE}: cmi.mode` },
     { name: 'progressMeasure', kind: 'datatype', label: 'progress measure', notation: 'cmi.progress_measure', comment: '[RW] How far the learner has got towards completing the SCO, from 0 to 1.', domain: 'DataModel', range: 'UnitInterval', functional: true, source: `${RTE}: cmi.progress_measure` },
     { name: 'scaledPassingScore', kind: 'datatype', label: 'scaled passing score', notation: 'cmi.scaled_passing_score', comment: '[RO] The scaled score, from -1 to 1, the learner must reach to pass the SCO.', domain: 'DataModel', range: 'ScaledReal', functional: true, source: `${RTE}: cmi.scaled_passing_score` },
     { name: 'score', kind: 'object', label: 'score', notation: 'cmi.score', comment: 'The learner\'s score in the SCO.', domain: 'DataModel', range: 'Score', functional: true, source: `${RTE}: cmi.score` },
-    { name: 'sessionTime', kind: 'datatype', label: 'session time', notation: 'cmi.session_time', comment: '[WO] How long the learner spent in the SCO in this session; timeinterval (second,10,2).', domain: 'DataModel', range: 'TimeInterval', functional: true, source: `${RTE}: cmi.session_time` },
+    { name: 'sessionTime', kind: 'datatype', label: 'session time', notation: 'cmi.session_time', comment: '[WO] How long the learner spent in the SCO in this session; timeinterval (second,10,2).', domain: 'DataModel', range: 'TimeInterval', functional: true, source: `${RTE}: cmi.session_time`, changeNote: '2026.10.0: its range is TimeInterval, SCORM\'s timeinterval (second,10,2) as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map.' },
     { name: 'successStatus', kind: 'datatype', label: 'success status', notation: 'cmi.success_status', comment: '[RW] Whether the learner has mastered the SCO: passed, failed or unknown.', domain: 'DataModel', oneOf: SUCCESS_STATUS, functional: true, source: `${RTE}: cmi.success_status` },
     { name: 'suspendData', kind: 'datatype', label: 'suspend data', notation: 'cmi.suspend_data', comment: `[RW] Data the SCO keeps between sessions; characterstring, SPM ${SUSPEND_DATA_SPM} in the 4th Edition.`, domain: 'DataModel', range: 'xsd:string', functional: true, source: `${RTE}: cmi.suspend_data` },
     { name: 'timeLimitAction', kind: 'datatype', label: 'time limit action', notation: 'cmi.time_limit_action', comment: '[RO] What the SCO should do when the maximum time allowed is exceeded — from its item\'s adlcp:timeLimitAction in the content package.', domain: 'DataModel', oneOf: TIME_LIMIT_ACTION, functional: true, source: `${RTE}: cmi.time_limit_action` },
-    { name: 'totalTime', kind: 'datatype', label: 'total time', notation: 'cmi.total_time', comment: '[RO] How long the learner has spent in the SCO in the attempt, over all sessions; timeinterval (second,10,2).', domain: 'DataModel', range: 'TimeInterval', functional: true, source: `${RTE}: cmi.total_time` },
+    { name: 'totalTime', kind: 'datatype', label: 'total time', notation: 'cmi.total_time', comment: '[RO] How long the learner has spent in the SCO in the attempt, over all sessions; timeinterval (second,10,2).', domain: 'DataModel', range: 'TimeInterval', functional: true, source: `${RTE}: cmi.total_time`, changeNote: '2026.10.0: its range is TimeInterval, SCORM\'s timeinterval (second,10,2) as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map.' },
     // ── cmi: collections ──
     { name: 'commentsFromLearner', kind: 'object', label: 'comment from learner', notation: 'cmi.comments_from_learner', comment: '[RW] A comment from the learner; the collection is ordered.', domain: 'DataModel', range: 'CommentFromLearner', source: `${RTE}: cmi.comments_from_learner` },
     { name: 'commentsFromLMS', kind: 'object', label: 'comment from LMS', notation: 'cmi.comments_from_lms', comment: '[RO] A comment from the LMS; the collection is ordered.', domain: 'DataModel', range: 'CommentFromLMS', source: `${RTE}: cmi.comments_from_lms` },
@@ -122,7 +126,7 @@ export const SCORM_RTE_MODEL: OntologyModel = {
     // ── Comment ──
     { name: 'comment', kind: 'datatype', label: 'comment text', notation: 'comment', comment: '[RW from the learner, RO from the LMS] The text of a comment; localized_string_type, SPM 4000.', domain: 'Comment', range: 'rdf:langString', functional: true, source: `${RTE}: cmi.comments_from_learner.n.comment, cmi.comments_from_lms.n.comment` },
     { name: 'commentLocation', kind: 'datatype', label: 'comment location', notation: 'location', comment: '[RW from the learner, RO from the LMS] Where in the SCO a comment applies; characterstring, SPM 250.', domain: 'Comment', range: 'xsd:string', functional: true, source: `${RTE}: cmi.comments_from_learner.n.location, cmi.comments_from_lms.n.location` },
-    { name: 'commentTimestamp', kind: 'datatype', label: 'comment timestamp', notation: 'timestamp', comment: '[RW from the learner, RO from the LMS] When a comment was made; time (second,10,0).', domain: 'Comment', range: 'Time', functional: true, source: `${RTE}: cmi.comments_from_learner.n.timestamp, cmi.comments_from_lms.n.timestamp` },
+    { name: 'commentTimestamp', kind: 'datatype', label: 'comment timestamp', notation: 'timestamp', comment: '[RW from the learner, RO from the LMS] When a comment was made; time (second,10,0).', domain: 'Comment', range: 'Time', functional: true, source: `${RTE}: cmi.comments_from_learner.n.timestamp, cmi.comments_from_lms.n.timestamp`, changeNote: '2026.10.0: its range is Time, SCORM\'s time (second,10,0) as a pattern on xsd:string, which admits the shortened forms SCORM allows and xsd:dateTime does not; it had been xsd:dateTime.' },
     // ── Learner preference ──
     { name: 'audioLevel', kind: 'datatype', label: 'audio level', notation: 'cmi.learner_preference.audio_level', comment: '[RW] How loud the SCO\'s audio should be, as a multiple of its normal level (1); 0 or more.', domain: 'LearnerPreference', range: 'NonNegativeReal', functional: true, source: `${RTE}: cmi.learner_preference.audio_level` },
     { name: 'preferenceLanguage', kind: 'datatype', label: 'preferred language', notation: 'cmi.learner_preference.language', comment: '[RW] The language the learner prefers for the SCO, as a language tag; characterstring, SPM 250.', domain: 'LearnerPreference', range: 'xsd:string', functional: true, source: `${RTE}: cmi.learner_preference.language` },
@@ -132,12 +136,12 @@ export const SCORM_RTE_MODEL: OntologyModel = {
     { name: 'interactionId', kind: 'datatype', label: 'interaction ID', notation: 'cmi.interactions.n.id', comment: '[RW] The interaction\'s identifier; long_identifier_type, SPM 4000.', domain: 'Interaction', range: 'xsd:string', functional: true, source: `${RTE}: cmi.interactions.n.id` },
     { name: 'interactionType', kind: 'datatype', label: 'interaction type', notation: 'cmi.interactions.n.type', comment: '[RW] The kind of interaction: true-false, choice, fill-in, long-fill-in, likert, matching, performance, sequencing, numeric or other.', domain: 'Interaction', oneOf: INTERACTION_TYPE, functional: true, source: `${RTE}: cmi.interactions.n.type` },
     { name: 'interactionObjectives', kind: 'object', label: 'interaction objective', notation: 'cmi.interactions.n.objectives', comment: '[RW] An objective the interaction is associated with.', domain: 'Interaction', range: 'InteractionObjective', source: `${RTE}: cmi.interactions.n.objectives` },
-    { name: 'interactionTimestamp', kind: 'datatype', label: 'interaction timestamp', notation: 'cmi.interactions.n.timestamp', comment: '[RW] When the interaction was first made available to the learner; time (second,10,0).', domain: 'Interaction', range: 'Time', functional: true, source: `${RTE}: cmi.interactions.n.timestamp` },
+    { name: 'interactionTimestamp', kind: 'datatype', label: 'interaction timestamp', notation: 'cmi.interactions.n.timestamp', comment: '[RW] When the interaction was first made available to the learner; time (second,10,0).', domain: 'Interaction', range: 'Time', functional: true, source: `${RTE}: cmi.interactions.n.timestamp`, changeNote: '2026.10.0: its range is Time, SCORM\'s time (second,10,0) as a pattern on xsd:string, which admits the shortened forms SCORM allows and xsd:dateTime does not; it had been xsd:dateTime.' },
     { name: 'correctResponses', kind: 'object', label: 'correct response', notation: 'cmi.interactions.n.correct_responses', comment: '[RW] A correct response to the interaction.', domain: 'Interaction', range: 'CorrectResponse', source: `${RTE}: cmi.interactions.n.correct_responses` },
     { name: 'weighting', kind: 'datatype', label: 'weighting', notation: 'cmi.interactions.n.weighting', comment: '[RW] How much the interaction counts relative to the others; real (10,7).', domain: 'Interaction', range: 'Real', functional: true, source: `${RTE}: cmi.interactions.n.weighting` },
     { name: 'learnerResponse', kind: 'datatype', label: 'learner response', notation: 'cmi.interactions.n.learner_response', comment: '[RW] The learner\'s response, in the form the interaction type prescribes.', domain: 'Interaction', range: 'xsd:string', functional: true, source: `${RTE}: cmi.interactions.n.learner_response` },
     { name: 'result', kind: 'datatype', label: 'result', notation: 'cmi.interactions.n.result', comment: '[RW] How the learner\'s response was judged: correct, incorrect, unanticipated, neutral, or a real number.', domain: 'Interaction', range: 'xsd:string', functional: true, source: `${RTE}: cmi.interactions.n.result` },
-    { name: 'latency', kind: 'datatype', label: 'latency', notation: 'cmi.interactions.n.latency', comment: '[RW] How long the learner took to respond, from when the interaction was made available; timeinterval (second,10,2).', domain: 'Interaction', range: 'TimeInterval', functional: true, source: `${RTE}: cmi.interactions.n.latency` },
+    { name: 'latency', kind: 'datatype', label: 'latency', notation: 'cmi.interactions.n.latency', comment: '[RW] How long the learner took to respond, from when the interaction was made available; timeinterval (second,10,2).', domain: 'Interaction', range: 'TimeInterval', functional: true, source: `${RTE}: cmi.interactions.n.latency`, changeNote: '2026.10.0: its range is TimeInterval, SCORM\'s timeinterval (second,10,2) as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map.' },
     { name: 'interactionDescription', kind: 'datatype', label: 'interaction description', notation: 'cmi.interactions.n.description', comment: '[RW] A description of the interaction; localized_string_type, SPM 250.', domain: 'Interaction', range: 'rdf:langString', functional: true, source: `${RTE}: cmi.interactions.n.description` },
     { name: 'interactionObjectiveId', kind: 'datatype', label: 'interaction objective ID', notation: 'cmi.interactions.n.objectives.m.id', comment: '[RW] The identifier of an objective the interaction is associated with; long_identifier_type, SPM 4000.', domain: 'InteractionObjective', range: 'xsd:string', functional: true, source: `${RTE}: cmi.interactions.n.objectives.m.id` },
     { name: 'correctResponsePattern', kind: 'datatype', label: 'correct response pattern', notation: 'cmi.interactions.n.correct_responses.m.pattern', comment: '[RW] A correct response, in the form the interaction type prescribes.', domain: 'CorrectResponse', range: 'xsd:string', functional: true, source: `${RTE}: cmi.interactions.n.correct_responses.m.pattern` },
@@ -204,7 +208,7 @@ export const SCORM_RTE_MODEL: OntologyModel = {
       members: [
         { name: 'time-out', label: 'time out', notation: 'time-out', comment: 'The SCO ended because the maximum time allowed was exceeded.' },
         { name: 'suspend', label: 'suspend', comment: 'The learner suspended the attempt, to resume it later.' },
-        { name: 'logout', label: 'logout', comment: 'Deprecated by ADL, which says it should not be used. An LMS that receives it processes an Exit All navigation request when the SCO is taken away.', deprecated: true },
+        { name: 'logout', label: 'logout', comment: 'A value ADL has deprecated for a SCO to set: a SCO should not use it. An LMS that receives it processes an Exit All navigation request when the SCO is taken away.', changeNote: '2026.10.1: no longer marked owl:deprecated. ADL deprecated the token for a SCO to set, but an LMS must still process it, so the value is not obsolete; its comment says how it is deprecated.' },
         { name: 'normal', label: 'normal', comment: 'The SCO ended normally.' },
         { name: '', label: '(empty)', comment: 'No exit condition was set: the default.' },
       ],
@@ -303,10 +307,20 @@ export const SCORM_RTE_MODEL: OntologyModel = {
         { path: 'sessionTime', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIMEINTERVAL, comment: 'cmi.session_time, timeinterval (second,10,2)' },
         { path: 'totalTime', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIMEINTERVAL, comment: 'cmi.total_time, timeinterval (second,10,2)' },
         { path: 'maxTimeAllowed', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIMEINTERVAL, comment: 'cmi.max_time_allowed, timeinterval (second,10,2)' },
-        { path: 'suspendData', maxCount: 1, datatype: 'xsd:string', pattern: `^[\\s\\S]{0,${SUSPEND_DATA_SPM}}$`, severity: 'Warning', comment: `cmi.suspend_data, within its SPM of ${SUSPEND_DATA_SPM} characters to be portable` },
+        { path: 'suspendData', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.suspend_data' },
+        { path: 'suspendData', name: 'suspendData-SPM', pattern: `^[\\s\\S]{0,${SUSPEND_DATA_SPM}}$`, severity: 'Warning', comment: `cmi.suspend_data, within its SPM of ${SUSPEND_DATA_SPM} characters to be portable` },
         { path: 'navRequest', maxCount: 1, datatype: 'xsd:string', pattern: NAV_REQUEST, comment: 'adl.nav.request' },
         { path: 'navRequestValidContinue', maxCount: 1, datatype: 'xsd:string', in: VALIDITY, comment: 'adl.nav.request_valid.continue' },
         { path: 'navRequestValidPrevious', maxCount: 1, datatype: 'xsd:string', in: VALIDITY, comment: 'adl.nav.request_valid.previous' },
+        // ★ The elements below are single-valued (owl:FunctionalProperty), and the shape said so in
+        // its description without constraining them.
+        { path: 'version', maxCount: 1, datatype: 'xsd:string', comment: 'cmi._version' },
+        { path: 'launchData', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.launch_data' },
+        { path: 'learnerId', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.learner_id' },
+        { path: 'learnerName', maxCount: 1, comment: 'cmi.learner_name, localized_string_type' },
+        { path: 'location', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.location' },
+        { path: 'score', maxCount: 1, comment: 'cmi.score' },
+        { path: 'learnerPreference', maxCount: 1, comment: 'cmi.learner_preference' },
       ],
     },
     {
@@ -330,6 +344,7 @@ export const SCORM_RTE_MODEL: OntologyModel = {
         { path: 'latency', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIMEINTERVAL, comment: 'cmi.interactions.n.latency, timeinterval (second,10,2)' },
         { path: 'interactionTimestamp', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIME, comment: 'cmi.interactions.n.timestamp, time (second,10,0)' },
         { path: 'interactionDescription', maxCount: 1, datatype: 'rdf:langString', comment: 'cmi.interactions.n.description, localized_string_type' },
+        { path: 'learnerResponse', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.interactions.n.learner_response' },
       ],
     },
     {
@@ -340,6 +355,8 @@ export const SCORM_RTE_MODEL: OntologyModel = {
         { path: 'objectiveSuccessStatus', maxCount: 1, datatype: 'xsd:string', in: SUCCESS_STATUS, comment: 'cmi.objectives.n.success_status' },
         { path: 'objectiveCompletionStatus', maxCount: 1, datatype: 'xsd:string', in: COMPLETION_STATUS, comment: 'cmi.objectives.n.completion_status' },
         { path: 'objectiveProgressMeasure', maxCount: 1, datatype: NUMBER, minInclusive: 0, maxInclusive: 1, comment: 'cmi.objectives.n.progress_measure, from 0 to 1' },
+        { path: 'objectiveScore', maxCount: 1, comment: 'cmi.objectives.n.score' },
+        { path: 'objectiveDescription', maxCount: 1, datatype: 'rdf:langString', comment: 'cmi.objectives.n.description, localized_string_type' },
       ],
     },
     {
@@ -349,7 +366,8 @@ export const SCORM_RTE_MODEL: OntologyModel = {
         { path: 'audioLevel', maxCount: 1, datatype: NUMBER, minInclusive: 0, comment: 'audio_level, 0 or more' },
         { path: 'deliverySpeed', maxCount: 1, datatype: NUMBER, minInclusive: 0, comment: 'delivery_speed, 0 or more' },
         { path: 'audioCaptioning', maxCount: 1, datatype: 'xsd:integer', minInclusive: -1, maxInclusive: 1, comment: 'audio_captioning: -1, 0 or 1' },
-        { path: 'preferenceLanguage', maxCount: 1, datatype: 'xsd:string', pattern: `^[\\s\\S]{0,${SHORT_SPM}}$`, severity: 'Warning', comment: `language, within its SPM of ${SHORT_SPM} characters to be portable` },
+        { path: 'preferenceLanguage', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.learner_preference.language' },
+        { path: 'preferenceLanguage', name: 'preferenceLanguage-SPM', pattern: `^[\\s\\S]{0,${SHORT_SPM}}$`, severity: 'Warning', comment: `language, within its SPM of ${SHORT_SPM} characters to be portable` },
       ],
     },
     {
@@ -397,7 +415,8 @@ export const SCORM_RTE_MODEL: OntologyModel = {
       comment: `A shared data store has an ID; content beyond its SPM is reported as a warning (${RTE}: adl.data).`,
       constraints: [
         { path: 'sharedDataId', minCount: 1, maxCount: 1, datatype: 'xsd:string', comment: 'adl.data.n.id' },
-        { path: 'sharedDataStore', maxCount: 1, datatype: 'xsd:string', pattern: `^[\\s\\S]{0,${SUSPEND_DATA_SPM}}$`, severity: 'Warning', comment: `adl.data.n.store, within its SPM of ${SUSPEND_DATA_SPM} characters to be portable` },
+        { path: 'sharedDataStore', maxCount: 1, datatype: 'xsd:string', comment: 'adl.data.n.store' },
+        { path: 'sharedDataStore', name: 'sharedDataStore-SPM', pattern: `^[\\s\\S]{0,${SUSPEND_DATA_SPM}}$`, severity: 'Warning', comment: `adl.data.n.store, within its SPM of ${SUSPEND_DATA_SPM} characters to be portable` },
       ],
     },
   ],

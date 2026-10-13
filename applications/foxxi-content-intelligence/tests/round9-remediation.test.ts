@@ -75,7 +75,10 @@ describe('round-9 — MOM verbs map only registered counterparts', () => {
     const q = turtleQuads(ttl);
     expect(iriObjectsOf(q, `${TLA_NS}completed`, `${SKOS}exactMatch`)).toEqual(['http://adlnet.gov/expapi/verbs/completed']);
     expect(iriObjectsOf(q, `${TLA_NS}completed`, `${SKOS}closeMatch`)).toEqual([]);
-    expect(objectsOf(q, `${TLA_NS}asserted`, `${SKOS}editorialNote`)).toEqual(['Coined by this vocabulary: no registered xAPI verb has this meaning.']);
+    // ★ REVISED: the note said "no registered xAPI verb has this meaning" — a claim about every
+    // registry, which a second review could not verify and which ADL's TLA profile may contradict
+    // (it registers verbs under w3id.org/xapi/tla). It now says what was checked, and what was not.
+    expect(objectsOf(q, `${TLA_NS}asserted`, `${SKOS}editorialNote`)[0]).toMatch(/^The IRI is this vocabulary's: the verb is one of the MOM's, and no verb of ADL's vocabulary .* has its meaning\. ADL's TLA xAPI profile .* has not been checked here\.$/);
     // 'asserted' is a coined MOM verb — no fabricated adlnet.gov closeMatch.
     expect(ttl).not.toMatch(/adlnet\.gov\/expapi\/verbs\/asserted/);
     expect(ttl).not.toMatch(/adlnet\.gov\/expapi\/verbs\/inferred/);

@@ -33,6 +33,11 @@
  * source's atom are things with identities — a DID, a urn:pgsl:atom — so they are object properties
  * (the shapes always demanded IRIs of them, which a datatype property cannot hold), and a record now
  * links to its cited sources and its confidence proof, which it had no way to name before.
+ *
+ * ★ AS RELEASED. signer, modelClaimSigner and sourceAtom became object properties in 2026.10.0, the
+ * first versioned release; before it they were published, unversioned, as datatype properties. Each
+ * says so in its change note. A later version keeps the kind 2026.10.0 released: changing it back
+ * would change a released term's kind a second time.
  */
 import type { OntologyModel } from '../spec-ontology.js';
 import { XAPI_MODEL } from './xapi.model.js';
@@ -41,13 +46,20 @@ const DID = '^did:(ethr|key|web|pkh):.+';
 const PGSL_ATOM = '^(urn:pgsl:atom:|https?://[^/]+/ns/pgsl/atom/).+';
 /** What a JSON number becomes in RDF (JSON-LD 1.1 §8.6): an integer or a double; or a decimal. */
 const NUMBER = ['xsd:integer', 'xsd:decimal', 'xsd:double'];
+/** The change note of a property 2026.10.0 made an object property, whose value had been `what`, a literal. */
+const AS_OBJECT = (what: string): string => `2026.10.0: an object property, whose value is the thing itself; before it, the unversioned publication made it a datatype property whose value was ${what}, an xsd:anyURI literal.`;
 
 export const AI_ELEARNING_MODEL: OntologyModel = {
+  // Read through its generated JSON-LD context (ns/model-context.ts): a node a property reaches is
+  // selected by that property as well as by its class.
+  selectByDomainAndRange: true,
+  generatedContext: true,
   module: 'ai-elearning',
   title: 'AI in eLearning — verifiable interaction profile',
   description:
     'An OWL 2 DL ontology and SHACL shapes for recording learner ↔ AI-tutor interactions as VERIFIABLE xAPI, reimagining the self-asserted vendor pattern. Three interaction verbs (interacted-with-ai, answered-ai-question, gave-ai-feedback) over three declared activity types (ai-interaction, ai-question, ai-feedback). The accountability fields are upgraded from self-asserted values to enforced provenance: a signed envelope + recovered signer on every recorded interaction, content-addressed sources, signed model/provider attestation, and an optional confidence range proof recorded beside the verbatim (unverified) self-reported confidence. Composed into PGSL and projected here; a statement is checked against the shapes at /ns/ai-elearning/validate.',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   spec: 'https://github.com/adlnet/xapi-profiles',
   standards: [
     { title: 'IEEE 9274.1.1-2023 (xAPI 2.0), whose statements this profile constrains', url: 'https://standards.ieee.org/ieee/9274.1.1/7321/' },
@@ -78,15 +90,15 @@ export const AI_ELEARNING_MODEL: OntologyModel = {
   ],
   properties: [
     { name: 'signedEnvelope', kind: 'datatype', label: 'signed envelope', comment: 'The rev-196 signed envelope ({_signature,_signed_payload}, message = sha256:<hex(payload)>) carrying the statement. Tamper-evident.', domain: 'SignedInteractionRecord', range: 'xsd:string', functional: true },
-    { name: 'signer', kind: 'object', label: 'recovered signer', comment: 'The agent, identified by a DID, recovered from the statement signature (secp256k1 recovery) — proves WHO recorded it, not asserted by the application.', domain: 'SignedInteractionRecord', range: 'prov:Agent', functional: true },
+    { name: 'signer', kind: 'object', label: 'recovered signer', comment: 'The agent, identified by a DID, recovered from the statement signature (secp256k1 recovery) — proves WHO recorded it, not asserted by the application.', domain: 'SignedInteractionRecord', range: 'prov:Agent', functional: true, changeNote: AS_OBJECT('the DID') },
     { name: 'recordedAt', kind: 'datatype', label: 'recorded at', comment: 'The instant the interaction was signed (xsd:dateTime); backdating is detectable against the LRS stored time.', domain: 'SignedInteractionRecord', range: 'xsd:dateTime', functional: true },
     { name: 'attestedModel', kind: 'object', label: 'attested model', comment: 'Links a record to the signed model/provider attestation for the call.', domain: 'SignedInteractionRecord', range: 'AttestedModelClaim' },
     { name: 'citedSource', kind: 'object', label: 'cited source', comment: 'A source the AI cited in the interaction, as a content-addressed source.', domain: 'SignedInteractionRecord', range: 'ContentAddressedSource' },
     { name: 'confidenceProof', kind: 'object', label: 'confidence proof', comment: 'The range proof of the AI\'s confidence in the interaction.', domain: 'SignedInteractionRecord', range: 'ConfidenceRangeProof', functional: true },
-    { name: 'modelClaimSigner', kind: 'object', label: 'model-claim signer', comment: 'The gateway, identified by a DID, that signed the model/provider claim.', domain: 'AttestedModelClaim', range: 'prov:Agent', functional: true },
+    { name: 'modelClaimSigner', kind: 'object', label: 'model-claim signer', comment: 'The gateway, identified by a DID, that signed the model/provider claim.', domain: 'AttestedModelClaim', range: 'prov:Agent', functional: true, changeNote: AS_OBJECT('the DID') },
     { name: 'model', kind: 'datatype', label: 'model', comment: 'The model the gateway attests it called (e.g. claude-opus-4-8) — bound to modelClaimSigner, not free-floating text.', domain: 'AttestedModelClaim', range: 'xsd:string', functional: true },
     { name: 'provider', kind: 'datatype', label: 'provider', comment: 'The provider the gateway attests (e.g. Anthropic).', domain: 'AttestedModelClaim', range: 'xsd:string', functional: true },
-    { name: 'sourceAtom', kind: 'object', label: 'source atom', comment: 'The PGSL atom content-addressing a cited source — it resolves to exactly the captured bytes.', domain: 'ContentAddressedSource', range: 'pgsl:Atom', functional: true },
+    { name: 'sourceAtom', kind: 'object', label: 'source atom', comment: 'The PGSL atom content-addressing a cited source — it resolves to exactly the captured bytes.', domain: 'ContentAddressedSource', range: 'pgsl:Atom', functional: true, changeNote: AS_OBJECT('the atom\'s IRI') },
     { name: 'assertedConfidence', kind: 'datatype', label: 'asserted confidence', comment: 'The AI\'s self-reported confidence (0..1), recorded VERBATIM and UNVERIFIED — kept for transparency, not trusted as truth.', domain: 'ConfidenceRangeProof', range: 'UnitInterval', functional: true },
     { name: 'confidenceThreshold', kind: 'datatype', label: 'confidence threshold', comment: 'The threshold (0..1) the range proof clears — the proof shows confidence ≥ this without revealing the exact value.', domain: 'ConfidenceRangeProof', range: 'UnitInterval', functional: true },
     { name: 'proofVerified', kind: 'datatype', label: 'proof verified', comment: 'Whether the range proof verified against its hash chain. The proof is checkable by anyone; this is not a claim about answer correctness.', domain: 'ConfidenceRangeProof', range: 'xsd:boolean', functional: true },

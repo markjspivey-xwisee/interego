@@ -1,0 +1,424 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "id": "@id",
+    "type": "@type",
+    "Sequencing": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#Sequencing"
+    },
+    "SequencingCollection": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#SequencingCollection"
+    },
+    "ControlMode": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ControlMode"
+    },
+    "SequencingRules": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#SequencingRules"
+    },
+    "SequencingRule": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#SequencingRule"
+    },
+    "PreConditionRule": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#PreConditionRule"
+    },
+    "ExitConditionRule": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ExitConditionRule"
+    },
+    "PostConditionRule": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#PostConditionRule"
+    },
+    "RuleConditions": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RuleConditions"
+    },
+    "RuleCondition": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RuleCondition"
+    },
+    "RuleAction": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RuleAction"
+    },
+    "LimitConditions": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#LimitConditions"
+    },
+    "RollupRules": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RollupRules"
+    },
+    "RollupRule": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RollupRule"
+    },
+    "RollupConditions": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RollupConditions"
+    },
+    "RollupCondition": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RollupCondition"
+    },
+    "RollupAction": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RollupAction"
+    },
+    "Objectives": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#Objectives"
+    },
+    "Objective": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#Objective"
+    },
+    "ObjectiveMapping": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ObjectiveMapping"
+    },
+    "RandomizationControls": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RandomizationControls"
+    },
+    "DeliveryControls": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#DeliveryControls"
+    },
+    "AuxiliaryResources": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#AuxiliaryResources"
+    },
+    "AuxiliaryResource": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#AuxiliaryResource"
+    },
+    "RollupConsiderations": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#RollupConsiderations"
+    },
+    "ConstrainedChoiceConsiderations": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ConstrainedChoiceConsiderations"
+    },
+    "AdlObjective": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#AdlObjective"
+    },
+    "AdlObjectiveMapping": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#AdlObjectiveMapping"
+    },
+    "Presentation": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#Presentation"
+    },
+    "NavigationInterface": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#NavigationInterface"
+    },
+    "sequencing": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#sequencing",
+      "@type": "@id"
+    },
+    "sequencingCollection": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#sequencingCollection",
+      "@type": "@id"
+    },
+    "objectivesGlobalToSystem": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#objectivesGlobalToSystem"
+    },
+    "presentation": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#presentation",
+      "@type": "@id"
+    },
+    "seqID": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#seqID"
+    },
+    "seqIDRef": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#seqIDRef"
+    },
+    "controlMode": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#controlMode",
+      "@type": "@id"
+    },
+    "sequencingRules": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#sequencingRules",
+      "@type": "@id"
+    },
+    "limitConditions": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#limitConditions",
+      "@type": "@id"
+    },
+    "auxiliaryResources": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#auxiliaryResources",
+      "@type": "@id"
+    },
+    "rollupRules": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupRules",
+      "@type": "@id"
+    },
+    "objectives": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#objectives",
+      "@type": "@id"
+    },
+    "randomizationControls": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#randomizationControls",
+      "@type": "@id"
+    },
+    "deliveryControls": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#deliveryControls",
+      "@type": "@id"
+    },
+    "rollupConsiderations": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupConsiderations",
+      "@type": "@id"
+    },
+    "constrainedChoiceConsiderations": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#constrainedChoiceConsiderations",
+      "@type": "@id"
+    },
+    "adlObjectives": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#adlObjectives",
+      "@type": "@id"
+    },
+    "choice": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#choice"
+    },
+    "choiceExit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#choiceExit"
+    },
+    "flow": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#flow"
+    },
+    "forwardOnly": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#forwardOnly"
+    },
+    "useCurrentAttemptObjectiveInfo": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#useCurrentAttemptObjectiveInfo"
+    },
+    "useCurrentAttemptProgressInfo": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#useCurrentAttemptProgressInfo"
+    },
+    "preConditionRule": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#preConditionRule",
+      "@type": "@id"
+    },
+    "exitConditionRule": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#exitConditionRule",
+      "@type": "@id"
+    },
+    "postConditionRule": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#postConditionRule",
+      "@type": "@id"
+    },
+    "ruleConditions": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ruleConditions",
+      "@type": "@id"
+    },
+    "ruleAction": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ruleAction",
+      "@type": "@id"
+    },
+    "ruleConditionCombination": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ruleConditionCombination"
+    },
+    "ruleCondition": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ruleCondition",
+      "@type": "@id"
+    },
+    "referencedObjective": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#referencedObjective",
+      "@type": "http://www.w3.org/2001/XMLSchema#anyURI"
+    },
+    "measureThreshold": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#measureThreshold"
+    },
+    "conditionOperator": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#conditionOperator"
+    },
+    "ruleConditionName": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ruleConditionName"
+    },
+    "ruleActionValue": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#ruleActionValue"
+    },
+    "attemptLimit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#attemptLimit"
+    },
+    "attemptAbsoluteDurationLimit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#attemptAbsoluteDurationLimit"
+    },
+    "attemptExperiencedDurationLimit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#attemptExperiencedDurationLimit"
+    },
+    "activityAbsoluteDurationLimit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#activityAbsoluteDurationLimit"
+    },
+    "activityExperiencedDurationLimit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#activityExperiencedDurationLimit"
+    },
+    "beginTimeLimit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#beginTimeLimit",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+    },
+    "endTimeLimit": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#endTimeLimit",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+    },
+    "rollupRule": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupRule",
+      "@type": "@id"
+    },
+    "rollupObjectiveSatisfied": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupObjectiveSatisfied"
+    },
+    "rollupProgressCompletion": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupProgressCompletion"
+    },
+    "objectiveMeasureWeight": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#objectiveMeasureWeight"
+    },
+    "childActivitySet": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#childActivitySet"
+    },
+    "minimumCount": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#minimumCount"
+    },
+    "minimumPercent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#minimumPercent"
+    },
+    "rollupConditions": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupConditions",
+      "@type": "@id"
+    },
+    "rollupActionEl": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupActionEl",
+      "@type": "@id"
+    },
+    "rollupConditionCombination": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupConditionCombination"
+    },
+    "rollupCondition": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupCondition",
+      "@type": "@id"
+    },
+    "rollupConditionOperator": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupConditionOperator"
+    },
+    "rollupConditionName": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupConditionName"
+    },
+    "rollupActionValue": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#rollupActionValue"
+    },
+    "primaryObjective": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#primaryObjective",
+      "@type": "@id"
+    },
+    "objective": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#objective",
+      "@type": "@id"
+    },
+    "objectiveID": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#objectiveID",
+      "@type": "http://www.w3.org/2001/XMLSchema#anyURI"
+    },
+    "satisfiedByMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#satisfiedByMeasure"
+    },
+    "minNormalizedMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#minNormalizedMeasure"
+    },
+    "mapInfo": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#mapInfo",
+      "@type": "@id"
+    },
+    "targetObjectiveID": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#targetObjectiveID",
+      "@type": "http://www.w3.org/2001/XMLSchema#anyURI"
+    },
+    "readSatisfiedStatus": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#readSatisfiedStatus"
+    },
+    "readNormalizedMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#readNormalizedMeasure"
+    },
+    "writeSatisfiedStatus": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#writeSatisfiedStatus"
+    },
+    "writeNormalizedMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#writeNormalizedMeasure"
+    },
+    "adlMapInfo": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#adlMapInfo",
+      "@type": "@id"
+    },
+    "readRawScore": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#readRawScore"
+    },
+    "readMinScore": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#readMinScore"
+    },
+    "readMaxScore": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#readMaxScore"
+    },
+    "readCompletionStatus": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#readCompletionStatus"
+    },
+    "readProgressMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#readProgressMeasure"
+    },
+    "writeRawScore": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#writeRawScore"
+    },
+    "writeMinScore": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#writeMinScore"
+    },
+    "writeMaxScore": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#writeMaxScore"
+    },
+    "writeCompletionStatus": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#writeCompletionStatus"
+    },
+    "writeProgressMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#writeProgressMeasure"
+    },
+    "randomizationTiming": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#randomizationTiming"
+    },
+    "selectCount": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#selectCount"
+    },
+    "reorderChildren": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#reorderChildren"
+    },
+    "selectionTiming": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#selectionTiming"
+    },
+    "tracked": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#tracked"
+    },
+    "completionSetByContent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#completionSetByContent"
+    },
+    "objectiveSetByContent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#objectiveSetByContent"
+    },
+    "auxiliaryResource": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#auxiliaryResource",
+      "@type": "@id"
+    },
+    "auxiliaryResourceID": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#auxiliaryResourceID",
+      "@type": "http://www.w3.org/2001/XMLSchema#anyURI"
+    },
+    "purpose": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#purpose"
+    },
+    "requiredForSatisfied": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#requiredForSatisfied"
+    },
+    "requiredForNotSatisfied": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#requiredForNotSatisfied"
+    },
+    "requiredForCompleted": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#requiredForCompleted"
+    },
+    "requiredForIncomplete": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#requiredForIncomplete"
+    },
+    "measureSatisfactionIfActive": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#measureSatisfactionIfActive"
+    },
+    "preventActivation": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#preventActivation"
+    },
+    "constrainChoice": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#constrainChoice"
+    },
+    "navigationInterface": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#navigationInterface",
+      "@type": "@id"
+    },
+    "hideLMSUI": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#hideLMSUI"
+    }
+  }
+}

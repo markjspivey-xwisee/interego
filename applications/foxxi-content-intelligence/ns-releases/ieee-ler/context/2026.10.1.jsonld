@@ -1,0 +1,219 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "@protected": true,
+    "ler": "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#",
+    "tla": "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#",
+    "iep": "https://markjspivey-xwisee.github.io/interego/ns/iep#",
+    "prov": "http://www.w3.org/ns/prov#",
+    "dct": "http://purl.org/dc/terms/",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "hydra": "http://www.w3.org/ns/hydra/core#",
+    "EnterpriseLearnerRecord": "ler:EnterpriseLearnerRecord",
+    "CompetencyAssertion": "ler:CompetencyAssertion",
+    "Asserted": "iep:Asserted",
+    "Hypothetical": "iep:Hypothetical",
+    "conformsTo": {
+      "@id": "dct:conformsTo",
+      "@type": "@id"
+    },
+    "conformsToLabel": "ler:conformsToLabel",
+    "assembledAt": {
+      "@id": "prov:generatedAtTime",
+      "@type": "xsd:dateTime"
+    },
+    "subjectKind": "ler:subjectKind",
+    "learner": {
+      "@id": "ler:aboutLearner",
+      "@context": {
+        "did": "@id"
+      }
+    },
+    "organizationPath": {
+      "@id": "ler:organizationPath",
+      "@container": "@set",
+      "@context": {
+        "id": {
+          "@id": "ler:pathOrganization",
+          "@type": "@id"
+        },
+        "role": "ler:pathRole",
+        "position": {
+          "@id": "ler:pathPosition",
+          "@type": "xsd:positiveInteger"
+        }
+      }
+    },
+    "provenance": "@nest",
+    "rawDataLocations": {
+      "@id": "ler:rawDataLocation",
+      "@nest": "provenance",
+      "@container": "@set",
+      "@context": {
+        "kind": "ler:rawDataKind",
+        "location": {
+          "@id": "ler:dataLocation",
+          "@type": "xsd:anyURI"
+        }
+      }
+    },
+    "experiences": {
+      "@id": "ler:recordEntry",
+      "@container": "@set",
+      "@context": {
+        "id": "dct:identifier",
+        "verb": {
+          "@id": "ler:entryVerb",
+          "@type": "@id"
+        },
+        "timestamp": {
+          "@id": "ler:occurredAt",
+          "@type": "xsd:dateTime"
+        },
+        "activityId": {
+          "@id": "ler:aboutActivity",
+          "@type": "@id"
+        },
+        "taskId": {
+          "@id": "ler:aboutActivity",
+          "@type": "@id"
+        },
+        "taskType": {
+          "@id": "ler:activityType",
+          "@type": "@id"
+        },
+        "success": "ler:succeeded",
+        "verbDisplay": "ler:verbDisplay",
+        "activityName": "ler:activityName",
+        "taskName": "ler:activityName",
+        "quality": "ler:outcomeQuality",
+        "durationIso": "ler:duration",
+        "costUsd": "ler:costUSD",
+        "observedBy": {
+          "@id": "prov:wasAttributedTo",
+          "@type": "@id"
+        }
+      }
+    },
+    "performanceRecords": {
+      "@id": "ler:recordEntry",
+      "@container": "@set",
+      "@context": {
+        "id": "dct:identifier",
+        "verb": {
+          "@id": "ler:entryVerb",
+          "@type": "@id"
+        },
+        "timestamp": {
+          "@id": "ler:occurredAt",
+          "@type": "xsd:dateTime"
+        },
+        "activityId": {
+          "@id": "ler:aboutActivity",
+          "@type": "@id"
+        },
+        "taskId": {
+          "@id": "ler:aboutActivity",
+          "@type": "@id"
+        },
+        "taskType": {
+          "@id": "ler:activityType",
+          "@type": "@id"
+        },
+        "success": "ler:succeeded",
+        "verbDisplay": "ler:verbDisplay",
+        "activityName": "ler:activityName",
+        "taskName": "ler:activityName",
+        "quality": "ler:outcomeQuality",
+        "durationIso": "ler:duration",
+        "costUsd": "ler:costUSD",
+        "observedBy": {
+          "@id": "prov:wasAttributedTo",
+          "@type": "@id"
+        }
+      }
+    },
+    "rawDataLocation": {
+      "@id": "ler:dataLocation",
+      "@type": "xsd:anyURI"
+    },
+    "modalStatus": {
+      "@id": "iep:modalStatus",
+      "@type": "@vocab"
+    },
+    "credentials": {
+      "@id": "ler:hasCredential",
+      "@container": "@set",
+      "@context": {
+        "issuer": {
+          "@id": "ler:issuedBy",
+          "@type": "@id"
+        },
+        "achievementName": "ler:achievementName",
+        "verified": "ler:proofVerified"
+      }
+    },
+    "summary": "@nest",
+    "experienceCount": "ler:experienceCount",
+    "performanceCount": "ler:performanceCount",
+    "performanceSuccessRate": "ler:performanceSuccessRate",
+    "credentialCount": "ler:credentialCount",
+    "verifiedCredentialCount": "ler:verifiedCredentialCount",
+    "competencyCount": "ler:competencyCount",
+    "assertedCompetencies": "ler:assertedCompetencyCount",
+    "inferredCompetencies": "ler:inferredCompetencyCount",
+    "performanceVerifiedCompetencies": "ler:performanceVerifiedCompetencyCount",
+    "competencies": {
+      "@id": "ler:hasAssertion",
+      "@container": "@set",
+      "@context": {
+        "assertionId": "@id",
+        "assertionType": {
+          "@id": "http://www.w3.org/1999/02/22-rdf-syntax-ns#type",
+          "@type": "@id"
+        },
+        "id": {
+          "@id": "ler:aboutCompetency",
+          "@type": "@id"
+        },
+        "aboutCompetency": {
+          "@id": "ler:aboutCompetency",
+          "@type": "@id"
+        },
+        "subject": {
+          "@id": "ler:assertionSubject",
+          "@type": "@id"
+        },
+        "proficiencyLevel": {
+          "@id": "ler:atProficiency",
+          "@type": "@id"
+        },
+        "confidence": "ler:successConfidence",
+        "rolledUpBy": {
+          "@id": "ler:rolledUpBy",
+          "@type": "@id"
+        },
+        "assertingAgent": {
+          "@id": "prov:wasAttributedTo",
+          "@type": "@id"
+        },
+        "evidence": {
+          "@id": "ler:supportedByEvidence",
+          "@type": "@id",
+          "@container": "@set"
+        },
+        "basis": "ler:evidenceBasis",
+        "label": "rdfs:label",
+        "framework": "ler:frameworkName",
+        "proficiencyLabel": "ler:proficiencyLabel",
+        "proficiencyRank": "ler:proficiencyRank",
+        "evidenceSummary": "@nest",
+        "trainingCompletions": "ler:trainingCompletionCount",
+        "performanceExecutions": "ler:performanceExecutionCount",
+        "performanceAvgQuality": "ler:performanceMeanQuality",
+        "supersedes": "ler:supersessionNote"
+      }
+    }
+  }
+}

@@ -12,10 +12,16 @@
  *  - the Interego substrate's L3 compliance vocabularies (docs/ns/soc2.ttl, eu-ai-act.ttl,
  *    nist-rmf.ttl), transcribed below — a test reads those files and fails if this drifts.
  *
- * Any other target (an ADL verb, a cmi5 extension, a CaSS class) is reported by identifier only.
+ * Any other target (an ADL verb, a CaSS class) is reported by identifier only.
+ *
+ * And the document each target is defined in (SSSOM's object_source), where that is on record: the
+ * Foxxi document, at its version IRI; ADL's xAPI ontology, at the version Foxxi's alignment is to; the
+ * substrate's ontology (docs/ns declares each as an owl:Ontology); cmi5's specification, for the
+ * identifiers it mints under w3id.org/xapi/cmi5/; or the document a Foxxi document names as the
+ * term's rdfs:isDefinedBy (1EdTech's Open Badges and CLR vocabularies).
  */
-import { STD_PREFIXES, type Graph, type Prefixes } from './rdf.js';
-import { EXTERNAL_PREFIXES, FOXXI_PREFIXES, NS_BASE, type DocMeta } from './catalog.js';
+import { STD_PREFIXES, RDFS, iri, type Graph, type Prefixes } from './rdf.js';
+import { EXTERNAL_PREFIXES, FOXXI_PREFIXES, NS_BASE, versionIri, type DocMeta } from './catalog.js';
 import { entityTypeIn, hasMappings, labelIn, mappingSetIri, renderSssomTsv, SSSOM_MEDIA_TYPE, type MappingTargetInfo, type SssomEntityType } from './sssom.js';
 import { sendNegotiated, type NegotiableRequest, type NegotiableResponse } from './conneg.js';
 import { docMeta, ontologyGraph, type OntologyModel } from '../spec-ontology.js';
@@ -25,6 +31,9 @@ import { OB3_MODEL, CLR_MODEL } from '../spec/ler.model.js';
 import { adlXapiTerm, type AdlXapiKind } from '../spec/adl-xapi-ontology.js';
 import { semDocMeta, semOntologyGraph } from '../ler-tla-vocab.js';
 import { foxxiDocMeta, vocabGraph } from '../foxxi-vocab.js';
+
+/** The root of the Interego substrate's namespaces (not `IE`, which ontology-lint reads as the ie: namespace). */
+const SUBSTRATE_NS = 'https://markjspivey-xwisee.github.io/interego/ns/';
 
 /**
  * Prefixes for every namespace a Foxxi mapping set refers to, one prefix per namespace. They are the
@@ -50,10 +59,12 @@ export const MAPPING_SET_PREFIXES: Prefixes = Object.freeze(Object.fromEntries(O
   'cmi5-result-extension': 'https://w3id.org/xapi/cmi5/result/extensions/',
   cass: 'https://schema.cassproject.org/0.4/',
   ceasn: 'https://purl.org/ctdlasn/terms/',
+  // The documents mapping targets are defined in (object_source) that no prefix above holds: the
+  // substrate's ontologies, 1EdTech's vocabulary documents, and cmi5's specification.
+  'interego-ns': SUBSTRATE_NS,
+  'imsglobal-vc': 'https://purl.imsglobal.org/spec/vc/',
+  github: 'https://github.com/',
 }).map(([prefix, ns]) => [prefix.replace(/-/g, '_'), ns])));
-
-/** The root of the Interego substrate's namespaces (not `IE`, which ontology-lint reads as the ie: namespace). */
-const SUBSTRATE_NS = 'https://markjspivey-xwisee.github.io/interego/ns/';
 /**
  * The Interego substrate's compliance terms Foxxi maps to, with the labels and kinds the substrate's
  * own ontologies give them (docs/ns/soc2.ttl, eu-ai-act.ttl, nist-rmf.ttl). Transcribed rather than
@@ -64,6 +75,7 @@ export const SUBSTRATE_TARGETS: Readonly<Record<string, MappingTargetInfo>> = Ob
   [`${SUBSTRATE_NS}soc2#DeployEvent`]: { label: 'Production deploy event', type: 'owl class' },
   [`${SUBSTRATE_NS}soc2#IncidentEvent`]: { label: 'Security or operational incident event', type: 'owl class' },
   [`${SUBSTRATE_NS}soc2#KeyRotationEvent`]: { label: 'Cryptographic key rotation event', type: 'owl class' },
+  [`${SUBSTRATE_NS}soc2#QuarterlyReviewEvent`]: { label: 'Quarterly review event', type: 'owl class' },
   [`${SUBSTRATE_NS}soc2#ControlEvidence`]: { label: 'Control evidence record', type: 'owl class' },
   [`${SUBSTRATE_NS}soc2#satisfiesControl`]: { label: 'satisfies control', type: 'owl object property' },
   [`${SUBSTRATE_NS}soc2#CC6.1`]: { label: 'CC6.1 — logical + physical access controls (security software, infrastructure, architectures)', type: 'owl named individual' },
@@ -71,6 +83,10 @@ export const SUBSTRATE_TARGETS: Readonly<Record<string, MappingTargetInfo>> = Ob
   [`${SUBSTRATE_NS}soc2#CC6.3`]: { label: 'CC6.3 — modifies + revokes user access in alignment with role/responsibilities', type: 'owl named individual' },
   [`${SUBSTRATE_NS}soc2#CC6.7`]: { label: 'CC6.7 — restricts transmission, movement, removal of information', type: 'owl named individual' },
   [`${SUBSTRATE_NS}soc2#CC6.8`]: { label: 'CC6.8 — implements controls to prevent + detect unauthorized + malicious software', type: 'owl named individual' },
+  [`${SUBSTRATE_NS}soc2#CC7.3`]: { label: 'CC7.3 — evaluates security events to determine response', type: 'owl named individual' },
+  [`${SUBSTRATE_NS}soc2#CC7.4`]: { label: 'CC7.4 — responds to identified security incidents', type: 'owl named individual' },
+  [`${SUBSTRATE_NS}soc2#CC7.5`]: { label: 'CC7.5 — recovers from identified security incidents', type: 'owl named individual' },
+  [`${SUBSTRATE_NS}soc2#CC8.1`]: { label: 'CC8.1 — authorizes, designs, develops, configures, documents, tests, approves changes', type: 'owl named individual' },
   [`${SUBSTRATE_NS}eu-ai-act#Article9`]: { label: 'Article 9 — Risk management system', type: 'owl named individual' },
   [`${SUBSTRATE_NS}eu-ai-act#Article10`]: { label: 'Article 10 — Data governance', type: 'owl named individual' },
   [`${SUBSTRATE_NS}eu-ai-act#Article12`]: { label: 'Article 12 — Record-keeping', type: 'owl named individual' },
@@ -119,21 +135,50 @@ const graphOf = (module: string): Graph => {
   return g;
 };
 
+/** The namespaces whose identifiers a standard Foxxi formalizes mints, and the document that mints
+ *  them: cmi5's categories, extensions and activity types (the cmi5 document's notes say the
+ *  specification names each by IRI; its verbs are ADL's, and are not in this namespace). */
+const IDENTIFIER_SOURCES: Readonly<Record<string, string>> = Object.freeze({
+  'https://w3id.org/xapi/cmi5/': SPEC_MODELS.cmi5!.spec,
+});
+
+/** The document a mapping target is defined in, and its version, where that is on record (see the header). */
+function definedIn(target: string): Pick<MappingTargetInfo, 'source' | 'sourceVersion'> {
+  for (const doc of Object.values(DOCUMENTS)) {
+    const meta = doc.meta();
+    if (meta.ns && target.startsWith(meta.ns)) return { source: meta.iri, sourceVersion: versionIri(meta) };
+  }
+  const adl = SPEC_MODELS.xapi!.counterpart!;
+  if (adlXapiTerm(target)) return { source: adl.iri, ...(adl.version ? { sourceVersion: adl.version } : {}) };
+  // A substrate term's namespace is its ontology's IRI with '#'.
+  if (SUBSTRATE_TARGETS[target]) return { source: target.slice(0, target.indexOf('#')) };
+  for (const [ns, source] of Object.entries(IDENTIFIER_SOURCES)) if (target.startsWith(ns)) return { source };
+  for (const module of Object.keys(DOCUMENTS)) {
+    const by = graphOf(module).objects(iri(target), RDFS + 'isDefinedBy').find(o => o.termType === 'NamedNode');
+    if (by) return { source: by.value };
+  }
+  return {};
+}
+
 /** What is on record about a mapping target: see the header. */
 export function mappingTargetInfo(target: string): MappingTargetInfo | undefined {
-  const adl = adlXapiTerm(target);
-  if (adl) return { label: adl.label, type: ADL_KIND_TYPE[adl.kind] };
-  const substrate = SUBSTRATE_TARGETS[target];
-  if (substrate) return substrate;
-  for (const [module, doc] of Object.entries(DOCUMENTS)) {
-    const ns = doc.meta().ns;
-    if (!ns || !target.startsWith(ns)) continue;
-    const g = graphOf(module);
-    const label = labelIn(g, target);
-    const type = entityTypeIn(g, target);
-    return label || type ? { ...(label ? { label } : {}), ...(type ? { type } : {}) } : undefined;
-  }
-  return undefined;
+  const info = ((): MappingTargetInfo => {
+    const adl = adlXapiTerm(target);
+    if (adl) return { label: adl.label, type: ADL_KIND_TYPE[adl.kind] };
+    const substrate = SUBSTRATE_TARGETS[target];
+    if (substrate) return substrate;
+    for (const [module, doc] of Object.entries(DOCUMENTS)) {
+      const ns = doc.meta().ns;
+      if (!ns || !target.startsWith(ns)) continue;
+      const g = graphOf(module);
+      const label = labelIn(g, target);
+      const type = entityTypeIn(g, target);
+      return { ...(label ? { label } : {}), ...(type ? { type } : {}) };
+    }
+    return {};
+  })();
+  const out = { ...info, ...definedIn(target) };
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** The documents that publish a mapping set: those any of whose terms map to another vocabulary. */

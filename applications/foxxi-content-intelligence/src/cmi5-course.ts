@@ -28,6 +28,9 @@ export interface Cmi5AuNode {
   moveOn: Cmi5MoveOn;
   masteryScore?: number;
   launchMethod?: 'OwnWindow' | 'AnyWindow';
+  /** The AU's entitlement key from the course structure (§13.1.4), which the LMS passes on in its
+   *  launch data (§10.2.7.1). */
+  entitlementKey?: string;
 }
 
 /** A block node — groups AUs and nested blocks. */
@@ -144,6 +147,7 @@ function toCourseNode(n: XmlNode): Cmi5Node | null {
       ...(n.attrs.masteryScore !== undefined ? { masteryScore: Number(n.attrs.masteryScore) } : {}),
       ...(n.attrs.launchMethod === 'OwnWindow' || n.attrs.launchMethod === 'AnyWindow'
         ? { launchMethod: n.attrs.launchMethod } : {}),
+      ...(child(n, 'entitlementKey')?.text.trim() ? { entitlementKey: child(n, 'entitlementKey')!.text.trim() } : {}),
     };
   }
   if (n.tag === 'block') {

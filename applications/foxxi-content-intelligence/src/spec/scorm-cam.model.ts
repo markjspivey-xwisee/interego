@@ -17,6 +17,8 @@
  * ★ XML TEXT IS A VALUE, NOT A NODE. <schema>, <schemaversion> and <title> hold text. They were
  * object properties pointing at classes with no properties, so a package's title could not be
  * recorded at all. They are datatype properties now; the three classes are deprecated, not deleted.
+ * They became datatype properties in 2026.10.0, the first versioned release (each says so in its
+ * change note), and a later version keeps the kind 2026.10.0 released.
  *
  * ★ CITED BY SCHEMA TYPE AND ELEMENT NAME, which a reader can check against the XSDs, not by
  * section numbers of a book the repository does not hold.
@@ -34,10 +36,15 @@ export const SCORM_2004_SCHEMA_VERSIONS = ['2004 4th Edition', '2004 3rd Edition
 const TIME_LIMIT_ACTIONS = ['exit,message', 'exit,no message', 'continue,message', 'continue,no message'];
 
 export const SCORM_CAM_MODEL: OntologyModel = {
+  // Read through its generated JSON-LD context (ns/model-context.ts): a node a property reaches is
+  // selected by that property as well as by its class.
+  selectByDomainAndRange: true,
+  generatedContext: true,
   module: 'scorm-cam',
   title: 'SCORM 2004 4th Edition — Content Aggregation Model (content packaging)',
   description: 'An OWL 2 DL ontology and SHACL shapes for content packaging in the SCORM 2004 4th Edition Content Aggregation Model: the manifest of IMS Content Packaging 1.1.4 (manifest, metadata, organizations, organization, item, resources, resource, file, dependency) and ADL\'s extensions to it — the SCORM type of a resource, launch data, the time limit action, the completion threshold with its 4th Edition attributes, and shared data maps. A SCORM 2004 3rd Edition package conforms, since the 4th Edition additions are optional.',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   spec: 'https://adlnet.gov/past-projects/scorm',
   standards: [
     { title: 'SCORM 2004 4th Edition (ADL, 2009): Content Aggregation Model', url: 'https://adlnet.gov/past-projects/scorm' },
@@ -48,7 +55,6 @@ export const SCORM_CAM_MODEL: OntologyModel = {
   notes: [
     'The sample package in deploy/foxxi-scorm-player/site/course is a SCORM 2004 3rd Edition package and ships the 3rd Edition schemas; it conforms to this ontology.',
     'Since 2026.10.0, schema, schemaversion and title are datatype properties holding the element\'s text, and the classes Schema, SchemaVersion and Title they pointed at are deprecated.',
-    'The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology\'s classes. A parsed instance as JSON is checked against the same shapes at POST /ns/scorm-cam/validate, which routes it by its declared type; every result cites its shape.',
   ],
   classes: [
     { name: 'Manifest', label: 'Manifest', comment: 'The <manifest> of a content package: its identifier, its metadata, the organizations of its content and the resources that content is made of, and any manifests nested in it.', source: `${CP}: manifestType` },
@@ -62,9 +68,9 @@ export const SCORM_CAM_MODEL: OntologyModel = {
     { name: 'Dependency', label: 'Dependency', comment: 'A <dependency>: a resource\'s reference to another resource whose files it also needs.', source: `${CP}: dependencyType` },
     { name: 'SharedDataMap', label: 'Shared data map', notation: 'adlcp:map', comment: 'An <adlcp:map> in an item\'s <adlcp:data>: access, for the content the item launches, to a shared data store named by its target ID — to read it, to write it, or both. The content reaches the store through the adl.data run-time data model. Added in the 4th Edition.', source: `${ADLCP}: mapType` },
     // Deprecated in 2026.10.0. Kept so data that used them still resolves.
-    { name: 'Schema', label: 'Schema', comment: 'Formerly the class of the <schema> element, which holds text; the text is now the value of the datatype property schema.', deprecated: true, replacedBy: 'schema' },
-    { name: 'SchemaVersion', label: 'Schema version', comment: 'Formerly the class of the <schemaversion> element, which holds text; the text is now the value of the datatype property schemaversion.', deprecated: true, replacedBy: 'schemaversion' },
-    { name: 'Title', label: 'Title', comment: 'Formerly the class of the <title> element, which holds text; the text is now the value of the datatype property title.', deprecated: true, replacedBy: 'title' },
+    { name: 'Schema', label: 'Schema', comment: 'Formerly the class of the <schema> element, which holds text; the text is now the value of the datatype property schema.', deprecated: true, replacedBy: 'schema', changeNote: '2026.10.0: deprecated; the element\'s text is the value of the datatype property schema.' },
+    { name: 'SchemaVersion', label: 'Schema version', comment: 'Formerly the class of the <schemaversion> element, which holds text; the text is now the value of the datatype property schemaversion.', deprecated: true, replacedBy: 'schemaversion', changeNote: '2026.10.0: deprecated; the element\'s text is the value of the datatype property schemaversion.' },
+    { name: 'Title', label: 'Title', comment: 'Formerly the class of the <title> element, which holds text; the text is now the value of the datatype property title.', deprecated: true, replacedBy: 'title', changeNote: '2026.10.0: deprecated; the element\'s text is the value of the datatype property title.' },
   ],
   datatypes: [
     { name: 'UnitInterval', label: 'Unit interval', comment: 'A number from 0 to 1 inclusive: a decimal as the schema writes it, or a double, which is what JSON-LD 1.1 (§8.6) makes of a JSON number with a fraction.', base: 'xsd:decimal', alsoBases: ['xsd:double'], minInclusive: 0, maxInclusive: 1, source: `${ADLCP}: minProgressMeasureType, progressWeightType` },
@@ -94,9 +100,9 @@ export const SCORM_CAM_MODEL: OntologyModel = {
     { name: 'resource', kind: 'object', label: 'resource', comment: 'A resource of the package.', domain: 'Resources', range: 'Resource', source: `${CP}: resourcesType` },
     { name: 'file', kind: 'object', label: 'file', comment: 'A file a resource is made of.', domain: 'Resource', range: 'File', source: `${CP}: resourceType` },
     { name: 'dependency', kind: 'object', label: 'dependency', comment: 'A dependency of a resource on another resource.', domain: 'Resource', range: 'Dependency', source: `${CP}: resourceType` },
-    { name: 'title', kind: 'datatype', label: 'title', comment: 'The title of an organization or item, shown to the learner. (Until 2026.10.0 an object property pointing at the deprecated class Title.)', domain: ['Organization', 'Item'], range: 'xsd:string', functional: true, source: `${CP}: titleType` },
-    { name: 'schema', kind: 'datatype', label: 'schema', comment: 'The schema the metadata follows: "ADL SCORM" for a SCORM package. (Until 2026.10.0 an object property pointing at the deprecated class Schema.)', domain: 'Metadata', range: 'xsd:string', functional: true, source: `${CP}: schemaType` },
-    { name: 'schemaversion', kind: 'datatype', label: 'schema version', notation: 'schemaversion', comment: 'The version of that schema: for SCORM 2004, "2004 4th Edition", "2004 3rd Edition", or "CAM 1.3" for the 2nd Edition. (Until 2026.10.0 an object property pointing at the deprecated class SchemaVersion.)', domain: 'Metadata', range: 'xsd:string', functional: true, source: `${CP}: schemaversionType` },
+    { name: 'title', kind: 'datatype', label: 'title', comment: 'The title of an organization or item, shown to the learner. (Until 2026.10.0 an object property pointing at the deprecated class Title.)', domain: ['Organization', 'Item'], range: 'xsd:string', functional: true, source: `${CP}: titleType`, changeNote: '2026.10.0: a datatype property, whose value is the text of <title>; before it, the unversioned publication made it an object property pointing at the class Title, now deprecated.' },
+    { name: 'schema', kind: 'datatype', label: 'schema', comment: 'The schema the metadata follows: "ADL SCORM" for a SCORM package. (Until 2026.10.0 an object property pointing at the deprecated class Schema.)', domain: 'Metadata', range: 'xsd:string', functional: true, source: `${CP}: schemaType`, changeNote: '2026.10.0: a datatype property, whose value is the text of <schema>; before it, the unversioned publication made it an object property pointing at the class Schema, now deprecated.' },
+    { name: 'schemaversion', kind: 'datatype', label: 'schema version', notation: 'schemaversion', comment: 'The version of that schema: for SCORM 2004, "2004 4th Edition", "2004 3rd Edition", or "CAM 1.3" for the 2nd Edition. (Until 2026.10.0 an object property pointing at the deprecated class SchemaVersion.)', domain: 'Metadata', range: 'xsd:string', functional: true, source: `${CP}: schemaversionType`, changeNote: '2026.10.0: a datatype property, whose value is the text of <schemaversion>; before it, the unversioned publication made it an object property pointing at the class SchemaVersion, now deprecated.' },
     // ── ADL extensions ──
     { name: 'scormType', kind: 'datatype', label: 'SCORM type', notation: 'adlcp:scormType', comment: 'Whether a resource is a SCO, which communicates with the LMS at run time, or an asset, which does not. Every SCORM resource has one.', domain: 'Resource', oneOf: ['sco', 'asset'], functional: true, source: `${ADLCP}: scormType` },
     { name: 'location', kind: 'datatype', label: 'location', notation: 'adlcp:location', comment: 'The URL of a metadata record kept outside the manifest.', domain: 'Metadata', range: 'xsd:anyURI', functional: true, source: `${ADLCP}: locationType` },
@@ -182,6 +188,7 @@ export const SCORM_CAM_MODEL: OntologyModel = {
         { path: 'item', minCount: 1, comment: 'at least one <item> (IMS CP 1.1.4)' },
         { path: 'structure', maxCount: 1, datatype: 'xsd:string', in: ['hierarchical'], comment: 'hierarchical, the default' },
         { path: 'sharedDataGlobalToSystem', maxCount: 1, datatype: 'xsd:boolean', comment: 'adlcp:sharedDataGlobalToSystem' },
+        { path: 'metadata', maxCount: 1, comment: 'at most one <metadata>' },
       ],
     },
     {
@@ -200,6 +207,7 @@ export const SCORM_CAM_MODEL: OntologyModel = {
         { path: 'completedByMeasure', maxCount: 1, datatype: 'xsd:boolean', comment: 'adlcp:completionThreshold/@completedByMeasure' },
         { path: 'minProgressMeasure', maxCount: 1, datatype: NUMBER, minInclusive: 0, maxInclusive: 1, comment: 'adlcp:completionThreshold/@minProgressMeasure, from 0 to 1' },
         { path: 'progressWeight', maxCount: 1, datatype: NUMBER, minInclusive: 0, maxInclusive: 1, comment: 'adlcp:completionThreshold/@progressWeight, from 0 to 1' },
+        { path: 'metadata', maxCount: 1, comment: 'at most one <metadata>' },
       ],
     },
     {
@@ -227,6 +235,7 @@ export const SCORM_CAM_MODEL: OntologyModel = {
         { path: 'scormType', minCount: 1, maxCount: 1, datatype: 'xsd:string', in: ['sco', 'asset'], comment: 'adlcp:scormType, required in SCORM' },
         { path: 'href', maxCount: 1, datatype: 'xsd:anyURI', comment: 'the launching file (attr.href)' },
         { path: 'base', maxCount: 1, datatype: 'xsd:anyURI', comment: 'attr.base' },
+        { path: 'metadata', maxCount: 1, comment: 'at most one <metadata>' },
       ],
     },
     {

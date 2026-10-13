@@ -69,6 +69,8 @@ export interface Cmi5Au {
   /** cmi5 launch method. */
   launchMethod?: 'OwnWindow' | 'AnyWindow';
   title?: string;
+  /** The AU's entitlement key from the course structure (§13.1.4), when it has one. */
+  entitlementKey?: string;
 }
 
 export interface Cmi5LaunchRequest {
@@ -347,11 +349,14 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
   const sep = req.au.url.includes('?') ? '&' : '?';
   const launchUrl = `${req.au.url}${sep}${params.toString()}`;
 
-  // The LMS.LaunchData State document (cmi5 §10.1).
+  // The LMS.LaunchData State document (cmi5 §10.1). Its context template carries the session ID and
+  // the publisher ID activity — the AU's id from the course structure, unaltered — in its grouping
+  // list (§10.2.1, §9.6.2.3). An entitlement key is passed on only when the course structure gives
+  // the AU one, as its value there (§10.2.7): this had sent the registration in its place.
   const launchData: Record<string, unknown> = {
     contextTemplate: {
       registration,
-      contextActivities: { category: [{ id: CMI5_CATEGORY }] },
+      contextActivities: { category: [{ id: CMI5_CATEGORY }], grouping: [{ id: req.au.id }] },
       extensions: {
         'https://w3id.org/xapi/cmi5/context/extensions/sessionid': randomUUID(),
       },
@@ -360,7 +365,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
     moveOn: req.au.moveOn ?? 'CompletedOrPassed',
     ...(typeof req.au.masteryScore === 'number' ? { masteryScore: req.au.masteryScore } : {}),
     ...(req.returnUrl ? { returnURL: req.returnUrl } : {}),
-    entitlementKey: { courseStructure: registration },
+    ...(req.au.entitlementKey ? { entitlementKey: { courseStructure: req.au.entitlementKey } } : {}),
   };
 
   return { registration, launchUrl, actor, launchData, fetchToken };
@@ -682,6 +687,7 @@ export function attachCmi5LmsRoutes(app: Express, config: {
         moveOn: (req.query.move_on as Cmi5MoveOn | undefined) ?? auNode?.moveOn,
         masteryScore: req.query.mastery_score !== undefined ? Number(req.query.mastery_score) : auNode?.masteryScore,
         title: (req.query.title as string | undefined) ?? auNode?.title,
+        ...(auNode?.entitlementKey ? { entitlementKey: auNode.entitlementKey } : {}),
       },
       learner: { id: learnerId, name: req.query.learner_name as string | undefined },
       lrsEndpoint,

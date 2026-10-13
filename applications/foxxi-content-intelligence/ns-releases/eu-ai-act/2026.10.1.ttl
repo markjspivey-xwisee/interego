@@ -1,0 +1,351 @@
+# EU AI Act (Regulation (EU) 2024/1689) — obligation mapping — version 2026.10.1
+# https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act  (this version: https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/2026.10.1)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix eu-ai-act: <https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act#> .
+@prefix foxxi-eu-ai-act: <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> a owl:Ontology ;
+    dct:title "EU AI Act (Regulation (EU) 2024/1689) — obligation mapping"@en ;
+    dct:description "OWL + SHACL projection of the Interego substrate's EU AI Act mapping (https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act): the obligations most relevant to AI agents and tutors — for high-risk systems, risk management (Art. 9), data governance (Art. 10), record-keeping (Art. 12), transparency to deployers (Art. 13), human oversight (Art. 14) and accuracy and robustness (Art. 15); and, for any system that interacts with people, transparency to them (Art. 50). Composed into PGSL and projected here so a cited Article IRI dereferences, and an action record can name the obligation it is evidence for."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by the European Union. Where this document and the published standard differ, the standard governs."@en ,
+        "Mapped to the Interego substrate's EU AI Act vocabulary (prefix eu-ai-act:, https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act) by SKOS mappings: its Article individuals by exact match, and the evidence classes that realize an obligation by related match."@en ,
+        "Each obligation is defined in the Regulation's terms. A record names the obligation it is offered as evidence for (conformsToArticle); the claim is the record's, and whether the evidence suffices is for the provider, the deployer and the authorities to judge."@en ,
+        "The Articles are concepts of one list (Article), and each stands for the obligation its Article imposes: it is an Obligation, typed with the kind of obligation it is (RecordKeeping, HumanOversight, …), and carries its Article number. So the class, the list and the number name the same obligations, and a record that names an Article concept meets the obligation shapes."@en ,
+        "An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/context/2026.10.1, which is generated from this document. The shapes at https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes/2026.10.1 constrain that reading, and the Foxxi validator (POST https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/validate) checks the JSON against the same shapes."@en ,
+        "The shapes select a node by its class (sh:targetClass) and, as the RDFS domain and range rules make a node an instance of a class, by a property it has (sh:targetSubjectsOf) or by the property that reaches it (sh:targetObjectsOf): a node is checked whether or not it declares its type. The Foxxi validator selects the same nodes of the JSON, and every result cites its shape."@en ,
+        "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/eu-ai-act#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/2026.10.1> ;
+    owl:versionInfo "2026.10.1" ;
+    owl:priorVersion <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/2026.10.0> ;
+    owl:backwardCompatibleWith <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/2026.10.0> ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-13"^^xsd:date ;
+    dct:issued "2026-10-13"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). EU AI Act (Regulation (EU) 2024/1689) — obligation mapping (Version 2026.10.1) [Ontology]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/2026.10.1" ;
+    vann:preferredNamespacePrefix "foxxi-eu-ai-act" ;
+    vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#" ;
+    dct:source <https://eur-lex.europa.eu/eli/reg/2024/1689/oj> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes/2026.10.1> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/mappings/2026.10.1> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/context/2026.10.1> ,
+        <https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Obligation a owl:Class ;
+    rdfs:label "AI Act Obligation"@en ;
+    rdfs:comment "An obligation the EU AI Act places on the providers or deployers of AI systems: for high-risk systems (Articles 9 to 15) and, whatever a system's risk, for systems that interact with people (Article 50). Its instances are this document's Article concepts, each the obligation its Article imposes."@en ;
+    skos:definition "An obligation the EU AI Act places on the providers or deployers of AI systems: for high-risk systems (Articles 9 to 15) and, whatever a system's risk, for systems that interact with people (Article 50). Its instances are this document's Article concepts, each the obligation its Article imposes."@en ;
+    skos:changeNote "2026.10.1: defined as the obligations of Articles 9 to 15 and 50, not of high-risk systems alone, and typed onto the Article concepts that name them."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:RecordKeeping a owl:Class ;
+    rdfs:label "Record-Keeping (Art.12)"@en ;
+    rdfs:comment "Art.12: high-risk AI systems shall technically allow for the automatic recording of events (logs) over their lifetime, ensuring traceability of functioning."@en ;
+    skos:definition "Art.12: high-risk AI systems shall technically allow for the automatic recording of events (logs) over their lifetime, ensuring traceability of functioning."@en ;
+    rdfs:subClassOf foxxi-eu-ai-act:Obligation ;
+    skos:relatedMatch eu-ai-act:LoggedAction ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:HumanOversight a owl:Class ;
+    rdfs:label "Human Oversight (Art.14)"@en ;
+    rdfs:comment "Art.14: high-risk AI systems shall be designed so they can be effectively overseen by natural persons, including the ability to intervene or interrupt."@en ;
+    skos:definition "Art.14: high-risk AI systems shall be designed so they can be effectively overseen by natural persons, including the ability to intervene or interrupt."@en ;
+    rdfs:subClassOf foxxi-eu-ai-act:Obligation ;
+    skos:relatedMatch eu-ai-act:HumanOversightCheckpoint ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Transparency a owl:Class ;
+    rdfs:label "Transparency to Deployers (Art.13)"@en ;
+    rdfs:comment "Art.13: high-risk AI systems shall be sufficiently transparent to enable deployers to interpret output and use it appropriately, accompanied by instructions for use."@en ;
+    skos:definition "Art.13: high-risk AI systems shall be sufficiently transparent to enable deployers to interpret output and use it appropriately, accompanied by instructions for use."@en ;
+    rdfs:subClassOf foxxi-eu-ai-act:Obligation ;
+    skos:relatedMatch eu-ai-act:TransparencyDisclosure ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:RiskManagement a owl:Class ;
+    rdfs:label "Risk Management (Art.9)"@en ;
+    rdfs:comment "Art.9: a risk-management system shall be established, implemented, documented and maintained across the lifecycle of the high-risk AI system."@en ;
+    skos:definition "Art.9: a risk-management system shall be established, implemented, documented and maintained across the lifecycle of the high-risk AI system."@en ;
+    rdfs:subClassOf foxxi-eu-ai-act:Obligation ;
+    skos:relatedMatch eu-ai-act:RiskManagementRecord ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:DataGovernance a owl:Class ;
+    rdfs:label "Data & Data Governance (Art.10)"@en ;
+    rdfs:comment "Art.10: training, validation and testing data sets shall be subject to appropriate data-governance and management practices."@en ;
+    skos:definition "Art.10: training, validation and testing data sets shall be subject to appropriate data-governance and management practices."@en ;
+    rdfs:subClassOf foxxi-eu-ai-act:Obligation ;
+    skos:relatedMatch eu-ai-act:DataGovernanceAttestation ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:InteractionTransparency a owl:Class ;
+    rdfs:label "Transparency to Persons (Art.50)"@en ;
+    rdfs:comment "Art.50: providers shall ensure that AI systems intended to interact directly with natural persons are designed so that those persons are informed that they are interacting with an AI system, unless that is obvious; and providers and deployers shall mark or disclose AI-generated or manipulated content as the Article sets out. Applies to such systems whether or not they are high-risk."@en ;
+    skos:definition "Art.50: providers shall ensure that AI systems intended to interact directly with natural persons are designed so that those persons are informed that they are interacting with an AI system, unless that is obvious; and providers and deployers shall mark or disclose AI-generated or manipulated content as the Article sets out. Applies to such systems whether or not they are high-risk."@en ;
+    rdfs:subClassOf foxxi-eu-ai-act:Obligation ;
+    skos:relatedMatch eu-ai-act:Article50Disclosure ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:TechnicalDocumentation a owl:Class ;
+    rdfs:label "Technical Documentation (Art.11)"@en ;
+    rdfs:comment "Art.11: the technical documentation of a high-risk AI system is drawn up before the system is placed on the market or put into service, kept up to date, and written to show that the system meets the requirements for high-risk systems, in a form the authorities can assess."@en ;
+    skos:definition "Art.11: the technical documentation of a high-risk AI system is drawn up before the system is placed on the market or put into service, kept up to date, and written to show that the system meets the requirements for high-risk systems, in a form the authorities can assess."@en ;
+    skos:changeNote "2026.10.1: new, so that the list holds Articles 9 to 15 as it says."@en ;
+    rdfs:subClassOf foxxi-eu-ai-act:Obligation ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:AccuracyRobustness a owl:Class ;
+    rdfs:label "Accuracy, Robustness, Cybersecurity (Art.15)"@en ;
+    rdfs:comment "Art.15: high-risk AI systems shall achieve appropriate levels of accuracy, robustness and cybersecurity, consistent throughout their lifecycle."@en ;
+    skos:definition "Art.15: high-risk AI systems shall achieve appropriate levels of accuracy, robustness and cybersecurity, consistent throughout their lifecycle."@en ;
+    rdfs:subClassOf foxxi-eu-ai-act:Obligation ;
+    skos:relatedMatch eu-ai-act:AccuracyAttestation ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:conformsToArticle a owl:ObjectProperty ;
+    rdfs:label "conforms to article"@en ;
+    skos:notation "conformsToArticle" ;
+    rdfs:comment "Names the EU AI Act obligation (one of this document's Article concepts) that the subject, a record of an action or a system, is offered as evidence of meeting. The claim is the subject's; whether the evidence suffices is for the provider, the deployer and the authorities to judge."@en ;
+    skos:definition "Names the EU AI Act obligation (one of this document's Article concepts) that the subject, a record of an action or a system, is offered as evidence of meeting. The claim is the subject's; whether the evidence suffices is for the provider, the deployer and the authorities to judge."@en ;
+    skos:changeNote "2026.10.1: a claim of evidence, not a judgment that the obligation is met."@en ;
+    rdfs:range foxxi-eu-ai-act:Obligation ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:article a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "article"@en ;
+    rdfs:comment "The number of the Article that imposes an obligation, as the Regulation numbers it (e.g. \"12\")."@en ;
+    skos:definition "The number of the Article that imposes an obligation, as the Regulation numbers it (e.g. \"12\")."@en ;
+    rdfs:domain foxxi-eu-ai-act:Obligation ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Article a skos:ConceptScheme ;
+    rdfs:label "EU AI Act Articles"@en ;
+    skos:prefLabel "EU AI Act Articles"@en ;
+    skos:definition "The Articles this mapping covers: Articles 9 to 15 for high-risk AI systems, and Article 50 for systems that interact with people. Each concept stands for the obligation its Article imposes, typed with the kind of obligation it is and carrying its Article number."@en ;
+    rdfs:comment "The Articles this mapping covers: Articles 9 to 15 for high-risk AI systems, and Article 50 for systems that interact with people. Each concept stands for the obligation its Article imposes, typed with the kind of obligation it is and carrying its Article number."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> ;
+    skos:hasTopConcept foxxi-eu-ai-act:Article-Article9 ,
+        foxxi-eu-ai-act:Article-Article10 ,
+        foxxi-eu-ai-act:Article-Article11 ,
+        foxxi-eu-ai-act:Article-Article12 ,
+        foxxi-eu-ai-act:Article-Article13 ,
+        foxxi-eu-ai-act:Article-Article14 ,
+        foxxi-eu-ai-act:Article-Article15 ,
+        foxxi-eu-ai-act:Article-Article50 .
+
+foxxi-eu-ai-act:Article-Article9 a skos:Concept , foxxi-eu-ai-act:Obligation , foxxi-eu-ai-act:RiskManagement ;
+    skos:inScheme foxxi-eu-ai-act:Article ;
+    skos:topConceptOf foxxi-eu-ai-act:Article ;
+    skos:prefLabel "Article 9 — Risk management system"@en ;
+    rdfs:label "Article 9 — Risk management system (EU AI Act Articles)"@en ;
+    skos:notation "Article9" ;
+    skos:definition "Establish/maintain a risk-management system across the lifecycle."@en ;
+    rdfs:comment "Establish/maintain a risk-management system across the lifecycle."@en ;
+    foxxi-eu-ai-act:article "9" ;
+    skos:exactMatch eu-ai-act:Article9 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Article-Article10 a skos:Concept , foxxi-eu-ai-act:Obligation , foxxi-eu-ai-act:DataGovernance ;
+    skos:inScheme foxxi-eu-ai-act:Article ;
+    skos:topConceptOf foxxi-eu-ai-act:Article ;
+    skos:prefLabel "Article 10 — Data and data governance"@en ;
+    rdfs:label "Article 10 — Data and data governance (EU AI Act Articles)"@en ;
+    skos:notation "Article10" ;
+    skos:definition "Data-governance practices for training/validation/testing data."@en ;
+    rdfs:comment "Data-governance practices for training/validation/testing data."@en ;
+    foxxi-eu-ai-act:article "10" ;
+    skos:exactMatch eu-ai-act:Article10 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Article-Article11 a skos:Concept , foxxi-eu-ai-act:Obligation , foxxi-eu-ai-act:TechnicalDocumentation ;
+    skos:inScheme foxxi-eu-ai-act:Article ;
+    skos:topConceptOf foxxi-eu-ai-act:Article ;
+    skos:prefLabel "Article 11 — Technical documentation"@en ;
+    rdfs:label "Article 11 — Technical documentation (EU AI Act Articles)"@en ;
+    skos:notation "Article11" ;
+    skos:definition "Technical documentation drawn up before release, kept up to date, and showing compliance."@en ;
+    rdfs:comment "Technical documentation drawn up before release, kept up to date, and showing compliance."@en ;
+    foxxi-eu-ai-act:article "11" ;
+    skos:changeNote "2026.10.1: new."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Article-Article12 a skos:Concept , foxxi-eu-ai-act:Obligation , foxxi-eu-ai-act:RecordKeeping ;
+    skos:inScheme foxxi-eu-ai-act:Article ;
+    skos:topConceptOf foxxi-eu-ai-act:Article ;
+    skos:prefLabel "Article 12 — Record-keeping"@en ;
+    rdfs:label "Article 12 — Record-keeping (EU AI Act Articles)"@en ;
+    skos:notation "Article12" ;
+    skos:definition "Automatic, lifetime logging ensuring traceability of functioning."@en ;
+    rdfs:comment "Automatic, lifetime logging ensuring traceability of functioning."@en ;
+    foxxi-eu-ai-act:article "12" ;
+    skos:exactMatch eu-ai-act:Article12 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Article-Article13 a skos:Concept , foxxi-eu-ai-act:Obligation , foxxi-eu-ai-act:Transparency ;
+    skos:inScheme foxxi-eu-ai-act:Article ;
+    skos:topConceptOf foxxi-eu-ai-act:Article ;
+    skos:prefLabel "Article 13 — Transparency and provision of information to deployers"@en ;
+    rdfs:label "Article 13 — Transparency and provision of information to deployers (EU AI Act Articles)"@en ;
+    skos:notation "Article13" ;
+    skos:definition "Transparent operation + instructions for use."@en ;
+    rdfs:comment "Transparent operation + instructions for use."@en ;
+    foxxi-eu-ai-act:article "13" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Article-Article14 a skos:Concept , foxxi-eu-ai-act:Obligation , foxxi-eu-ai-act:HumanOversight ;
+    skos:inScheme foxxi-eu-ai-act:Article ;
+    skos:topConceptOf foxxi-eu-ai-act:Article ;
+    skos:prefLabel "Article 14 — Human oversight"@en ;
+    rdfs:label "Article 14 — Human oversight (EU AI Act Articles)"@en ;
+    skos:notation "Article14" ;
+    skos:definition "Effective human oversight, intervention and interruption."@en ;
+    rdfs:comment "Effective human oversight, intervention and interruption."@en ;
+    foxxi-eu-ai-act:article "14" ;
+    skos:exactMatch eu-ai-act:Article14 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Article-Article15 a skos:Concept , foxxi-eu-ai-act:Obligation , foxxi-eu-ai-act:AccuracyRobustness ;
+    skos:inScheme foxxi-eu-ai-act:Article ;
+    skos:topConceptOf foxxi-eu-ai-act:Article ;
+    skos:prefLabel "Article 15 — Accuracy, robustness and cybersecurity"@en ;
+    rdfs:label "Article 15 — Accuracy, robustness and cybersecurity (EU AI Act Articles)"@en ;
+    skos:notation "Article15" ;
+    skos:definition "Appropriate accuracy, robustness and cybersecurity over the lifecycle."@en ;
+    rdfs:comment "Appropriate accuracy, robustness and cybersecurity over the lifecycle."@en ;
+    foxxi-eu-ai-act:article "15" ;
+    skos:exactMatch eu-ai-act:Article15 ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+foxxi-eu-ai-act:Article-Article50 a skos:Concept , foxxi-eu-ai-act:Obligation , foxxi-eu-ai-act:InteractionTransparency ;
+    skos:inScheme foxxi-eu-ai-act:Article ;
+    skos:topConceptOf foxxi-eu-ai-act:Article ;
+    skos:prefLabel "Article 50 — Transparency obligations for providers and deployers of certain AI systems"@en ;
+    rdfs:label "Article 50 — Transparency obligations for providers and deployers of certain AI systems (EU AI Act Articles)"@en ;
+    skos:notation "Article50" ;
+    skos:definition "Informing people that they are interacting with an AI system, and marking or disclosing AI-generated or manipulated content."@en ;
+    rdfs:comment "Informing people that they are interacting with an AI system, and marking or disclosing AI-generated or manipulated content."@en ;
+    foxxi-eu-ai-act:article "50" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members (
+        foxxi-eu-ai-act:RecordKeeping
+        foxxi-eu-ai-act:HumanOversight
+        foxxi-eu-ai-act:Transparency
+        foxxi-eu-ai-act:RiskManagement
+        foxxi-eu-ai-act:DataGovernance
+        foxxi-eu-ai-act:TechnicalDocumentation
+        foxxi-eu-ai-act:AccuracyRobustness
+        foxxi-eu-ai-act:InteractionTransparency
+    )
+] .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+    rdfs:label "was derived from"@en ;
+    rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Entity .
+
+skos:ConceptScheme a owl:Class ;
+    rdfs:label "Concept Scheme"@en ;
+    rdfs:comment "A set of concepts, optionally including statements about semantic relationships between those concepts. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    owl:disjointWith skos:Concept .
+
+skos:hasTopConcept a owl:ObjectProperty ;
+    rdfs:label "has top concept"@en ;
+    rdfs:comment "Relates, by convention, a concept scheme to a concept which is topmost in the broader/narrower concept hierarchies for that scheme. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range skos:Concept .
+
+skos:Concept a owl:Class ;
+    rdfs:label "Concept"@en ;
+    rdfs:comment "An idea or notion; a unit of thought. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> .
+
+skos:inScheme a owl:ObjectProperty ;
+    rdfs:label "is in scheme"@en ;
+    rdfs:comment "Relates a resource (for example a concept) to a concept scheme in which it is included. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:range skos:ConceptScheme .
+
+skos:topConceptOf a owl:ObjectProperty ;
+    rdfs:label "is top concept in scheme"@en ;
+    rdfs:comment "Relates a concept to the concept scheme that it is a top level concept of. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:subPropertyOf skos:inScheme ;
+    owl:inverseOf skos:hasTopConcept .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A physical, digital, conceptual, or other kind of thing with some fixed aspects. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+dct:title a owl:AnnotationProperty .
+
+dct:description a owl:AnnotationProperty .
+
+skos:historyNote a owl:AnnotationProperty .
+
+dct:creator a owl:AnnotationProperty .
+
+dct:contributor a owl:AnnotationProperty .
+
+dct:publisher a owl:AnnotationProperty .
+
+dct:license a owl:AnnotationProperty .
+
+dct:rights a owl:AnnotationProperty .
+
+dct:created a owl:AnnotationProperty .
+
+dct:modified a owl:AnnotationProperty .
+
+dct:issued a owl:AnnotationProperty .
+
+dct:language a owl:AnnotationProperty .
+
+bibo:status a owl:AnnotationProperty .
+
+dct:bibliographicCitation a owl:AnnotationProperty .
+
+vann:preferredNamespacePrefix a owl:AnnotationProperty .
+
+vann:preferredNamespaceUri a owl:AnnotationProperty .
+
+dct:source a owl:AnnotationProperty .
+
+skos:definition a owl:AnnotationProperty .
+
+skos:changeNote a owl:AnnotationProperty .
+
+skos:relatedMatch a owl:AnnotationProperty .
+
+skos:notation a owl:AnnotationProperty .
+
+skos:prefLabel a owl:AnnotationProperty .
+
+skos:exactMatch a owl:AnnotationProperty .

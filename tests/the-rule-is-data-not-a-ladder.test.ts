@@ -127,7 +127,10 @@ describe('★★★ the rule is DATA — the engine reads a graph it does not em
         .toContain(String(b.minReliability));
     }
     expect(text, 'the floor-not-a-scale limitation must be stated').toMatch(/FLOOR, not a scale/);
-    expect(text, 'and the reader must be told where the rule lives').toContain('adl-tla-proficiency.ttl');
+    // ★ REVISED: told where it lives for a reader of the published document — its band individuals,
+    // which /ns/adl-tla carries triple for triple — not a repository path that reader cannot open. The
+    // document's header cites the file it was generated from, at the release tag (prov:wasDerivedFrom).
+    expect(text, 'and the reader must be told where the rule lives').toMatch(/tla:ProficiencyBand individuals of this document \(tla:hasBand\)/);
   });
 
   it('★ and it REFUSES to rank rather than fall back to a hidden ladder', () => {

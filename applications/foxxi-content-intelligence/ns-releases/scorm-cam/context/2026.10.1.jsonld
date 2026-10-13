@@ -1,0 +1,168 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "id": "@id",
+    "Manifest": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Manifest"
+    },
+    "Metadata": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Metadata"
+    },
+    "Organizations": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Organizations"
+    },
+    "Organization": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Organization"
+    },
+    "Item": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Item"
+    },
+    "Resources": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Resources"
+    },
+    "Resource": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Resource"
+    },
+    "File": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#File"
+    },
+    "Dependency": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Dependency"
+    },
+    "SharedDataMap": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#SharedDataMap"
+    },
+    "Schema": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Schema"
+    },
+    "SchemaVersion": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#SchemaVersion"
+    },
+    "Title": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Title"
+    },
+    "identifier": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#identifier"
+    },
+    "identifierref": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#identifierref"
+    },
+    "version": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#version"
+    },
+    "isvisible": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#isvisible"
+    },
+    "parameters": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#parameters"
+    },
+    "structure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#structure"
+    },
+    "href": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#href",
+      "@type": "http://www.w3.org/2001/XMLSchema#anyURI"
+    },
+    "type": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#type"
+    },
+    "base": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#base",
+      "@type": "http://www.w3.org/2001/XMLSchema#anyURI"
+    },
+    "defaultOrganization": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#defaultOrganization"
+    },
+    "metadata": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#metadata",
+      "@type": "@id"
+    },
+    "organizations": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#organizations",
+      "@type": "@id"
+    },
+    "resources": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#resources",
+      "@type": "@id"
+    },
+    "subManifest": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#subManifest",
+      "@type": "@id"
+    },
+    "organization": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#organization",
+      "@type": "@id"
+    },
+    "item": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#item",
+      "@type": "@id"
+    },
+    "position": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#position",
+      "@type": "http://www.w3.org/2001/XMLSchema#positiveInteger"
+    },
+    "resource": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#resource",
+      "@type": "@id"
+    },
+    "file": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#file",
+      "@type": "@id"
+    },
+    "dependency": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#dependency",
+      "@type": "@id"
+    },
+    "title": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#title"
+    },
+    "schema": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#schema"
+    },
+    "schemaversion": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#schemaversion"
+    },
+    "scormType": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#scormType"
+    },
+    "location": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#location",
+      "@type": "http://www.w3.org/2001/XMLSchema#anyURI"
+    },
+    "dataFromLMS": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#dataFromLMS"
+    },
+    "timeLimitAction": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#timeLimitAction"
+    },
+    "completionThreshold": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#completionThreshold"
+    },
+    "completedByMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#completedByMeasure"
+    },
+    "minProgressMeasure": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#minProgressMeasure"
+    },
+    "progressWeight": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#progressWeight"
+    },
+    "dataMap": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#dataMap",
+      "@type": "@id"
+    },
+    "targetID": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#targetID",
+      "@type": "http://www.w3.org/2001/XMLSchema#anyURI"
+    },
+    "readSharedData": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#readSharedData"
+    },
+    "writeSharedData": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#writeSharedData"
+    },
+    "sharedDataGlobalToSystem": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#sharedDataGlobalToSystem"
+    }
+  }
+}

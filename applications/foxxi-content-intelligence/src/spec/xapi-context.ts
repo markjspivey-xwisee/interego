@@ -24,7 +24,15 @@
  * ★ WHAT HAS NO READING. An extension's value is read when it is a string, a number, a boolean, a
  * list of them, or an object keyed by IRIs; a JSON object keyed by plain names has none — xAPI leaves
  * its structure to whoever controls the extension IRI, and no context can name its keys — so a
- * processor in safe mode refuses a statement that carries one, and any other drops it.
+ * processor in safe mode refuses a statement that carries one, and any other drops it. A context
+ * could keep such a value whole as a JSON literal (`"@type": "@json"`), but that literal's datatype,
+ * rdf:JSON, is a reserved IRI outside the OWL 2 datatype map, which no OWL 2 DL ontology may use: a
+ * reading that used it could no longer be checked against this ontology by a DL reasoner. Such a
+ * statement is checked in its JSON form, against the same shapes (POST /ns/xapi/validate).
+ *
+ * ★ ATTACHMENTS ARE A SET. xAPI calls them an ordered array; here they are an unordered set, because
+ * an RDF list would take the reading out of OWL 2 DL, and xAPI matches an attachment to its part of
+ * a request, and a signature to its statement, by SHA-2 hash and usage type rather than by position.
  */
 import { ns } from '../spec-ontology.js';
 import { XAPI_MODEL, XAPI_CONTEXT_URL } from './xapi.model.js';

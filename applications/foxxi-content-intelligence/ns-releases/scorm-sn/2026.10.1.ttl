@@ -1,0 +1,2223 @@
+# SCORM 2004 4th Edition — Sequencing and Navigation (IMS Simple Sequencing and ADL extensions) — version 2026.10.1
+# https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn  (this version: https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/2026.10.1)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-scorm-cam: <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#> .
+@prefix foxxi-scorm-sn: <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> a owl:Ontology ;
+    dct:title "SCORM 2004 4th Edition — Sequencing and Navigation (IMS Simple Sequencing and ADL extensions)"@en ;
+    dct:description "An OWL 2 DL ontology and SHACL shapes for the sequencing definitions of SCORM 2004 4th Edition: IMS Simple Sequencing 1.0 as SCORM applies it — sequencing definitions and collections, control modes, pre-, exit- and post-condition rules with their conditions and actions, limit conditions, rollup rules, objectives with their global-objective maps, randomization and delivery controls, auxiliary resources — and ADL's extensions: rollup and constrained-choice considerations, objectivesGlobalToSystem, the 4th Edition's extended objective maps (raw, minimum and maximum score, completion status, progress measure), and the navigation presentation that hides LMS controls. It imports the content-packaging ontology, whose items and organizations carry the sequencing."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL or 1EdTech. Where this document and the published standard differ, the standard governs."@en ,
+        "Transcribed from the normative schema: imsss_v1p0.xsd and the schemas it includes (IMS Simple Sequencing 1.0), adlseq_v1p3.xsd and adlnav_v1p3.xsd, as distributed with SCORM 2004 4th Edition."@en ,
+        "Since 2026.10.0: adlObjectives points at AdlObjective, the 4th Edition's adlseq:objective, instead of the imsss Objectives class; presentation belongs to the item rather than the sequencing definition; and objectivesGlobalToSystem belongs to the organization."@en ,
+        "An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/context/2026.10.1, which is generated from this document. The shapes at https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes/2026.10.1 constrain that reading, and the Foxxi validator (POST https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/validate) checks the JSON against the same shapes."@en ,
+        "The shapes select a node by its class (sh:targetClass) and, as the RDFS domain and range rules make a node an instance of a class, by a property it has (sh:targetSubjectsOf) or by the property that reaches it (sh:targetObjectsOf): a node is checked whether or not it declares its type. The Foxxi validator selects the same nodes of the JSON, and every result cites its shape."@en ,
+        "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/scorm-sn#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/2026.10.1> ;
+    owl:versionInfo "2026.10.1" ;
+    owl:priorVersion <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/2026.10.0> ;
+    owl:backwardCompatibleWith <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/2026.10.0> ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-13"^^xsd:date ;
+    dct:issued "2026-10-13"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). SCORM 2004 4th Edition — Sequencing and Navigation (IMS Simple Sequencing and ADL extensions) (Version 2026.10.1) [Ontology]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/2026.10.1" ;
+    vann:preferredNamespacePrefix "foxxi-scorm-sn" ;
+    vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn#" ;
+    dct:source <https://adlnet.gov/past-projects/scorm> , <https://www.imsglobal.org/simplesequencing/index.html> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec/scorm-sn.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes/2026.10.1> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/context/2026.10.1> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/2026.10.1> .
+
+foxxi-scorm-sn:Duration a rdfs:Datatype ;
+    rdfs:label "Duration"@en ;
+    rdfs:comment "A duration in the lexical form of XML Schema's xs:duration (an optional minus sign, then P, years, months, days, T, hours, minutes, seconds; at least one component), the type of the duration limits. Defined on xsd:string because xsd:duration is outside the OWL 2 datatype map."@en ;
+    skos:definition "A duration in the lexical form of XML Schema's xs:duration (an optional minus sign, then P, years, months, days, T, hours, minutes, seconds; at least one component), the type of the duration limits. Defined on xsd:string because xsd:duration is outside the OWL 2 datatype map."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:onDatatype xsd:string ;
+        owl:withRestrictions (
+            [
+                xsd:pattern "-?P(([0-9]+Y([0-9]+M)?([0-9]+D)?|[0-9]+M([0-9]+D)?|[0-9]+D)(T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]+)?S)?|[0-9]+M([0-9]+(\\.[0-9]+)?S)?|[0-9]+(\\.[0-9]+)?S))?|T([0-9]+H([0-9]+M)?([0-9]+(\\.[0-9]+)?S)?|[0-9]+M([0-9]+(\\.[0-9]+)?S)?|[0-9]+(\\.[0-9]+)?S))"
+            ]
+        )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:Measure a rdfs:Datatype ;
+    rdfs:label "Measure"@en ;
+    rdfs:comment "A normalized measure, a number from -1 to 1: a decimal as the schema writes it, or a double, which is what JSON-LD 1.1 (§8.6) makes of a JSON number with a fraction."@en ;
+    skos:definition "A normalized measure, a number from -1 to 1: a decimal as the schema writes it, or a double, which is what JSON-LD 1.1 (§8.6) makes of a JSON number with a fraction."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): measureType" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:unionOf (
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:decimal ;
+                owl:withRestrictions ( [ xsd:minInclusive -1 ] [ xsd:maxInclusive 1 ] )
+            ]
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:double ;
+                owl:withRestrictions ( [ xsd:minInclusive "-1.0E0"^^xsd:double ] [ xsd:maxInclusive "1.0E0"^^xsd:double ] )
+            ]
+        )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:Sequencing a owl:Class ;
+    rdfs:label "Sequencing"@en ;
+    skos:notation "imsss:sequencing" ;
+    rdfs:comment "A sequencing definition: how the activity of an item or organization, and its children, are sequenced — control mode, sequencing rules, limit conditions, rollup rules, objectives, randomization and delivery controls, auxiliary resources, and ADL's extensions. A definition in the manifest's sequencing collection has an ID that others reuse by IDRef."@en ;
+    skos:definition "A sequencing definition: how the activity of an item or organization, and its children, are sequenced — control mode, sequencing rules, limit conditions, rollup rules, objectives, randomization and delivery controls, auxiliary resources, and ADL's extensions. A definition in the manifest's sequencing collection has an ID that others reuse by IDRef."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingCollection a owl:Class ;
+    rdfs:label "Sequencing collection"@en ;
+    skos:notation "imsss:sequencingCollection" ;
+    rdfs:comment "The sequencing definitions a manifest shares among its items and organizations, each with an ID."@en ;
+    skos:definition "The sequencing definitions a manifest shares among its items and organizations, each with an ID."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingCollection" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ControlMode a owl:Class ;
+    rdfs:label "Control mode"@en ;
+    skos:notation "imsss:controlMode" ;
+    rdfs:comment "The navigation an activity allows among its children: free choice, flow (continue and previous), whether flow is forward only, and whether only current-attempt information is used."@en ;
+    skos:definition "The navigation an activity allows among its children: free choice, flow (continue and previous), whether flow is forward only, and whether only current-attempt information is used."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): controlModeType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRules a owl:Class ;
+    rdfs:label "Sequencing rules"@en ;
+    skos:notation "imsss:sequencingRules" ;
+    rdfs:comment "The pre-condition, exit-condition and post-condition rules of an activity."@en ;
+    skos:definition "The pre-condition, exit-condition and post-condition rules of an activity."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRulesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRule a owl:Class ;
+    rdfs:label "Sequencing rule"@en ;
+    rdfs:comment "A rule that applies an action when its conditions hold: a pre-condition, exit-condition or post-condition rule, and only one of them."@en ;
+    skos:definition "A rule that applies an action when its conditions hold: a pre-condition, exit-condition or post-condition rule, and only one of them."@en ;
+    owl:disjointUnionOf (
+        foxxi-scorm-sn:PreConditionRule
+        foxxi-scorm-sn:ExitConditionRule
+        foxxi-scorm-sn:PostConditionRule
+    ) ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PreConditionRule a owl:Class ;
+    rdfs:label "Pre-condition rule"@en ;
+    skos:notation "imsss:preConditionRule" ;
+    rdfs:comment "A sequencing rule evaluated before an activity is delivered or traversed: it may skip, disable or hide the activity, or stop forward traversal."@en ;
+    skos:definition "A sequencing rule evaluated before an activity is delivered or traversed: it may skip, disable or hide the activity, or stop forward traversal."@en ;
+    rdfs:subClassOf foxxi-scorm-sn:SequencingRule ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): preConditionRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ExitConditionRule a owl:Class ;
+    rdfs:label "Exit-condition rule"@en ;
+    skos:notation "imsss:exitConditionRule" ;
+    rdfs:comment "A sequencing rule evaluated when an attempt on a descendant of the activity ends: it may exit the activity."@en ;
+    skos:definition "A sequencing rule evaluated when an attempt on a descendant of the activity ends: it may exit the activity."@en ;
+    rdfs:subClassOf foxxi-scorm-sn:SequencingRule ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): exitConditionRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PostConditionRule a owl:Class ;
+    rdfs:label "Post-condition rule"@en ;
+    skos:notation "imsss:postConditionRule" ;
+    rdfs:comment "A sequencing rule evaluated when an attempt on the activity ends: it may exit the parent or the whole tree, retry, or continue or go back."@en ;
+    skos:definition "A sequencing rule evaluated when an attempt on the activity ends: it may exit the parent or the whole tree, retry, or continue or go back."@en ;
+    rdfs:subClassOf foxxi-scorm-sn:SequencingRule ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): postConditionRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RuleConditions a owl:Class ;
+    rdfs:label "Rule conditions"@en ;
+    skos:notation "imsss:ruleConditions" ;
+    rdfs:comment "The conditions of a sequencing rule, and whether all of them or any must hold."@en ;
+    skos:definition "The conditions of a sequencing rule, and whether all of them or any must hold."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRuleType (ruleConditions)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RuleCondition a owl:Class ;
+    rdfs:label "Rule condition"@en ;
+    skos:notation "imsss:ruleCondition" ;
+    rdfs:comment "One condition of a sequencing rule: what is tested, whether it is negated, and for objective conditions the objective and measure threshold tested against."@en ;
+    skos:definition "One condition of a sequencing rule: what is tested, whether it is negated, and for objective conditions the objective and measure threshold tested against."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRuleType (ruleCondition)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RuleAction a owl:Class ;
+    rdfs:label "Rule action"@en ;
+    skos:notation "imsss:ruleAction" ;
+    rdfs:comment "The action a sequencing rule takes when its conditions hold; which actions are allowed depends on the kind of rule."@en ;
+    skos:definition "The action a sequencing rule takes when its conditions hold; which actions are allowed depends on the kind of rule."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): preConditionRuleType, exitConditionRuleType, postConditionRuleType (ruleAction)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:LimitConditions a owl:Class ;
+    rdfs:label "Limit conditions"@en ;
+    skos:notation "imsss:limitConditions" ;
+    rdfs:comment "Limits on an activity: how many attempts, how long an attempt or the activity may take, and when it may begin and end."@en ;
+    skos:definition "Limits on an activity: how many attempts, how long an attempt or the activity may take, and when it may begin and end."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRules a owl:Class ;
+    rdfs:label "Rollup rules"@en ;
+    skos:notation "imsss:rollupRules" ;
+    rdfs:comment "How an activity's status is derived from its children: its rollup rules, whether it contributes to its parent's satisfaction and completion, and the weight of its measure."@en ;
+    skos:definition "How an activity's status is derived from its children: its rollup rules, whether it contributes to its parent's satisfaction and completion, and the weight of its measure."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRulesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRule a owl:Class ;
+    rdfs:label "Rollup rule"@en ;
+    skos:notation "imsss:rollupRule" ;
+    rdfs:comment "A rule that sets an activity's status when its conditions hold for a given set of its children."@en ;
+    skos:definition "A rule that sets an activity's status when its conditions hold for a given set of its children."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupConditions a owl:Class ;
+    rdfs:label "Rollup conditions"@en ;
+    skos:notation "imsss:rollupConditions" ;
+    rdfs:comment "The conditions of a rollup rule, and whether all of them or any must hold for a child."@en ;
+    skos:definition "The conditions of a rollup rule, and whether all of them or any must hold for a child."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType (rollupConditions)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupCondition a owl:Class ;
+    rdfs:label "Rollup condition"@en ;
+    skos:notation "imsss:rollupCondition" ;
+    rdfs:comment "One condition of a rollup rule, tested on each child: what is tested, and whether it is negated."@en ;
+    skos:definition "One condition of a rollup rule, tested on each child: what is tested, and whether it is negated."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType (rollupCondition)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupAction a owl:Class ;
+    rdfs:label "Rollup action"@en ;
+    skos:notation "imsss:rollupAction" ;
+    rdfs:comment "The status a rollup rule sets on the activity when it applies."@en ;
+    skos:definition "The status a rollup rule sets on the activity when it applies."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType (rollupAction)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:Objectives a owl:Class ;
+    rdfs:label "Objectives"@en ;
+    skos:notation "imsss:objectives" ;
+    rdfs:comment "The objectives of an activity: exactly one primary objective, which contributes to rollup, and any number of others, which do not."@en ;
+    skos:definition "The objectives of an activity: exactly one primary objective, which contributes to rollup, and any number of others, which do not."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectivesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:Objective a owl:Class ;
+    rdfs:label "Objective"@en ;
+    skos:notation "imsss:objective" ;
+    rdfs:comment "A learning objective of an activity: its ID, whether it is satisfied by measure and with what minimum, and its maps to global objectives."@en ;
+    skos:definition "A learning objective of an activity: its ID, whether it is satisfied by measure and with what minimum, and its maps to global objectives."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ObjectiveMapping a owl:Class ;
+    rdfs:label "Objective mapping"@en ;
+    skos:notation "imsss:mapInfo" ;
+    rdfs:comment "A map from an objective to a global objective: whether the objective reads and writes the global objective's satisfaction status and normalized measure."@en ;
+    skos:definition "A map from an objective to a global objective: whether the objective reads and writes the global objective's satisfaction status and normalized measure."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveMappingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RandomizationControls a owl:Class ;
+    rdfs:label "Randomization controls"@en ;
+    skos:notation "imsss:randomizationControls" ;
+    rdfs:comment "Whether, and when, an activity's children are selected and reordered at random."@en ;
+    skos:definition "Whether, and when, an activity's children are selected and reordered at random."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): randomizationType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:DeliveryControls a owl:Class ;
+    rdfs:label "Delivery controls"@en ;
+    skos:notation "imsss:deliveryControls" ;
+    rdfs:comment "Whether an activity is tracked, and whether its content, rather than the LMS, sets its completion and objective status."@en ;
+    skos:definition "Whether an activity is tracked, and whether its content, rather than the LMS, sets its completion and objective status."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): deliveryControlsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:AuxiliaryResources a owl:Class ;
+    rdfs:label "Auxiliary resources"@en ;
+    skos:notation "imsss:auxiliaryResources" ;
+    rdfs:comment "The auxiliary resources available during an activity."@en ;
+    skos:definition "The auxiliary resources available during an activity."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): auxiliaryResourcesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:AuxiliaryResource a owl:Class ;
+    rdfs:label "Auxiliary resource"@en ;
+    skos:notation "imsss:auxiliaryResource" ;
+    rdfs:comment "A resource offered alongside an activity, by its ID and purpose."@en ;
+    skos:definition "A resource offered alongside an activity, by its ID and purpose."@en ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): auxiliaryResourceType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupConsiderations a owl:Class ;
+    rdfs:label "Rollup considerations"@en ;
+    skos:notation "adlseq:rollupConsiderations" ;
+    rdfs:comment "When an activity counts in its parent's rollup, for each of the four rollup statuses, and whether its measure counts while it is active."@en ;
+    skos:definition "When an activity counts in its parent's rollup, for each of the four rollup statuses, and whether its measure counts while it is active."@en ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): rollupConsiderationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ConstrainedChoiceConsiderations a owl:Class ;
+    rdfs:label "Constrained choice considerations"@en ;
+    skos:notation "adlseq:constrainedChoiceConsiderations" ;
+    rdfs:comment "Limits on choice navigation relative to an activity: whether choosing into it out of order is prevented, and whether choice is constrained to the activities next to it in flow."@en ;
+    skos:definition "Limits on choice navigation relative to an activity: whether choosing into it out of order is prevented, and whether choice is constrained to the activities next to it in flow."@en ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): constrainChoiceConsiderationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:AdlObjective a owl:Class ;
+    rdfs:label "ADL objective"@en ;
+    skos:notation "adlseq:objective" ;
+    rdfs:comment "The 4th Edition's further global-objective maps for one of an activity's objectives, named by its objective ID."@en ;
+    skos:definition "The 4th Edition's further global-objective maps for one of an activity's objectives, named by its objective ID."@en ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): objectiveType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:AdlObjectiveMapping a owl:Class ;
+    rdfs:label "ADL objective mapping"@en ;
+    skos:notation "adlseq:mapInfo" ;
+    rdfs:comment "A map from an objective to a global objective for the data imsss:mapInfo does not carry: whether the objective reads and writes the global objective's raw, minimum and maximum score, completion status and progress measure. Added in the 4th Edition."@en ;
+    skos:definition "A map from an objective to a global objective for the data imsss:mapInfo does not carry: whether the objective reads and writes the global objective's raw, minimum and maximum score, completion status and progress measure. Added in the 4th Edition."@en ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:Presentation a owl:Class ;
+    rdfs:label "Presentation"@en ;
+    skos:notation "adlnav:presentation" ;
+    rdfs:comment "How an item is presented: the navigation controls the LMS hides while it is delivered."@en ;
+    skos:definition "How an item is presented: the navigation controls the LMS hides while it is delivered."@en ;
+    dct:source "ADL navigation extensions (adlnav_v1p3.xsd): presentationType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:NavigationInterface a owl:Class ;
+    rdfs:label "Navigation interface"@en ;
+    skos:notation "adlnav:navigationInterface" ;
+    rdfs:comment "The LMS navigation controls to hide while an item is delivered."@en ;
+    skos:definition "The LMS navigation controls to hide while an item is delivered."@en ;
+    dct:source "ADL navigation extensions (adlnav_v1p3.xsd): navigationInterfaceType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:sequencing a owl:ObjectProperty ;
+    rdfs:label "sequencing"@en ;
+    skos:notation "imsss:sequencing" ;
+    rdfs:comment "The sequencing definition of an item or organization, or one of the definitions in a sequencing collection."@en ;
+    skos:definition "The sequencing definition of an item or organization, or one of the definitions in a sequencing collection."@en ;
+    rdfs:domain [
+        a owl:Class ;
+        owl:unionOf ( foxxi-scorm-cam:Item foxxi-scorm-cam:Organization foxxi-scorm-sn:SequencingCollection )
+    ] ;
+    rdfs:range foxxi-scorm-sn:Sequencing ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencing" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:sequencingCollection a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "sequencing collection"@en ;
+    skos:notation "imsss:sequencingCollection" ;
+    rdfs:comment "The sequencing definitions a manifest shares."@en ;
+    skos:definition "The sequencing definitions a manifest shares."@en ;
+    rdfs:domain foxxi-scorm-cam:Manifest ;
+    rdfs:range foxxi-scorm-sn:SequencingCollection ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingCollection" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:objectivesGlobalToSystem a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "objectives global to system"@en ;
+    skos:notation "adlseq:objectivesGlobalToSystem" ;
+    rdfs:comment "Whether the global objectives an organization's activities map to are global to the LMS, shared with other packages for the same learner (true, the default), or belong to this package (false)."@en ;
+    skos:definition "Whether the global objectives an organization's activities map to are global to the LMS, shared with other packages for the same learner (true, the default), or belong to this package (false)."@en ;
+    skos:changeNote "2026.10.0: its domain is the organization, on which adlseq_v1p3.xsd declares the attribute; before it, the unversioned publication gave it no domain and its comment named the item."@en ;
+    rdfs:domain foxxi-scorm-cam:Organization ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): objectivesGlobalToSystem" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:presentation a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "presentation"@en ;
+    skos:notation "adlnav:presentation" ;
+    rdfs:comment "How an item is presented: which LMS navigation controls are hidden while it is delivered. A child of the item, not of its sequencing."@en ;
+    skos:definition "How an item is presented: which LMS navigation controls are hidden while it is delivered. A child of the item, not of its sequencing."@en ;
+    skos:changeNote "2026.10.0: its domain is the item, of which adlnav:presentation is a child; before it, the unversioned publication gave it the sequencing definition, which made an item's presentation a sequencing definition's."@en ;
+    rdfs:domain foxxi-scorm-cam:Item ;
+    rdfs:range foxxi-scorm-sn:Presentation ;
+    dct:source "ADL navigation extensions (adlnav_v1p3.xsd): presentation" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:seqID a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "sequencing ID"@en ;
+    skos:notation "ID" ;
+    rdfs:comment "The ID of a sequencing definition in the manifest's sequencing collection (an XML ID)."@en ;
+    skos:definition "The ID of a sequencing definition in the manifest's sequencing collection (an XML ID)."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType/@ID" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:seqIDRef a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "sequencing ID reference"@en ;
+    skos:notation "IDRef" ;
+    rdfs:comment "The ID of the definition in the sequencing collection that this definition reuses and extends (an XML IDREF)."@en ;
+    skos:definition "The ID of the definition in the sequencing collection that this definition reuses and extends (an XML IDREF)."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType/@IDRef" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:controlMode a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "control mode"@en ;
+    skos:notation "imsss:controlMode" ;
+    rdfs:comment "The control mode of a sequencing definition."@en ;
+    skos:definition "The control mode of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:ControlMode ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:sequencingRules a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "sequencing rules"@en ;
+    skos:notation "imsss:sequencingRules" ;
+    rdfs:comment "The sequencing rules of a sequencing definition."@en ;
+    skos:definition "The sequencing rules of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:SequencingRules ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:limitConditions a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "limit conditions"@en ;
+    skos:notation "imsss:limitConditions" ;
+    rdfs:comment "The limit conditions of a sequencing definition."@en ;
+    skos:definition "The limit conditions of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:LimitConditions ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:auxiliaryResources a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "auxiliary resources"@en ;
+    skos:notation "imsss:auxiliaryResources" ;
+    rdfs:comment "The auxiliary resources of a sequencing definition."@en ;
+    skos:definition "The auxiliary resources of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:AuxiliaryResources ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupRules a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup rules"@en ;
+    skos:notation "imsss:rollupRules" ;
+    rdfs:comment "The rollup rules of a sequencing definition."@en ;
+    skos:definition "The rollup rules of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:RollupRules ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:objectives a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "objectives"@en ;
+    skos:notation "imsss:objectives" ;
+    rdfs:comment "The objectives of a sequencing definition."@en ;
+    skos:definition "The objectives of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:Objectives ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:randomizationControls a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "randomization controls"@en ;
+    skos:notation "imsss:randomizationControls" ;
+    rdfs:comment "The randomization controls of a sequencing definition."@en ;
+    skos:definition "The randomization controls of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:RandomizationControls ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:deliveryControls a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "delivery controls"@en ;
+    skos:notation "imsss:deliveryControls" ;
+    rdfs:comment "The delivery controls of a sequencing definition."@en ;
+    skos:definition "The delivery controls of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:DeliveryControls ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupConsiderations a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup considerations"@en ;
+    skos:notation "adlseq:rollupConsiderations" ;
+    rdfs:comment "The rollup considerations of a sequencing definition."@en ;
+    skos:definition "The rollup considerations of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:RollupConsiderations ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): rollupConsiderations" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:constrainedChoiceConsiderations a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "constrained choice considerations"@en ;
+    skos:notation "adlseq:constrainedChoiceConsiderations" ;
+    rdfs:comment "The constrained choice considerations of a sequencing definition."@en ;
+    skos:definition "The constrained choice considerations of a sequencing definition."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:ConstrainedChoiceConsiderations ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): constrainedChoiceConsiderations" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:adlObjectives a owl:ObjectProperty ;
+    rdfs:label "ADL objectives"@en ;
+    skos:notation "adlseq:objectives" ;
+    rdfs:comment "An adlseq:objective of a sequencing definition: further global-objective maps for one of its objectives (4th Edition). Until 2026.10.0 this pointed at the imsss Objectives class, which is a different element."@en ;
+    skos:definition "An adlseq:objective of a sequencing definition: further global-objective maps for one of its objectives (4th Edition). Until 2026.10.0 this pointed at the imsss Objectives class, which is a different element."@en ;
+    skos:changeNote "2026.10.0: its range is AdlObjective, the 4th Edition's adlseq:objective; before it, the unversioned publication gave it the imsss Objectives class, a different element."@en ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:AdlObjective ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): objectivesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:choice a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "choice"@en ;
+    rdfs:comment "Whether the learner may choose any of the activity's children. Default true."@en ;
+    skos:definition "Whether the learner may choose any of the activity's children. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:ControlMode ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): controlModeType/@choice" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:choiceExit a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "choice exit"@en ;
+    skos:notation "choiceExit" ;
+    rdfs:comment "Whether a choice of an activity outside the activity may end it while it is active. Default true."@en ;
+    skos:definition "Whether a choice of an activity outside the activity may end it while it is active. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:ControlMode ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): controlModeType/@choiceExit" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:flow a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "flow"@en ;
+    rdfs:comment "Whether the learner may move through the activity's children with continue and previous. Default false."@en ;
+    skos:definition "Whether the learner may move through the activity's children with continue and previous. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:ControlMode ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): controlModeType/@flow" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:forwardOnly a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "forward only"@en ;
+    skos:notation "forwardOnly" ;
+    rdfs:comment "Whether moving backwards through the activity's children is prohibited. Default false."@en ;
+    skos:definition "Whether moving backwards through the activity's children is prohibited. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:ControlMode ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): controlModeType/@forwardOnly" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:useCurrentAttemptObjectiveInfo a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "use current attempt objective info"@en ;
+    skos:notation "useCurrentAttemptObjectiveInfo" ;
+    rdfs:comment "Whether sequencing uses the objective information of the children's current attempts only. Default true."@en ;
+    skos:definition "Whether sequencing uses the objective information of the children's current attempts only. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:ControlMode ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): controlModeType/@useCurrentAttemptObjectiveInfo" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:useCurrentAttemptProgressInfo a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "use current attempt progress info"@en ;
+    skos:notation "useCurrentAttemptProgressInfo" ;
+    rdfs:comment "Whether sequencing uses the progress information of the children's current attempts only. Default true."@en ;
+    skos:definition "Whether sequencing uses the progress information of the children's current attempts only. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:ControlMode ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): controlModeType/@useCurrentAttemptProgressInfo" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:preConditionRule a owl:ObjectProperty ;
+    rdfs:label "pre-condition rule"@en ;
+    skos:notation "imsss:preConditionRule" ;
+    rdfs:comment "A pre-condition rule of the activity."@en ;
+    skos:definition "A pre-condition rule of the activity."@en ;
+    rdfs:domain foxxi-scorm-sn:SequencingRules ;
+    rdfs:range foxxi-scorm-sn:PreConditionRule ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRulesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:exitConditionRule a owl:ObjectProperty ;
+    rdfs:label "exit-condition rule"@en ;
+    skos:notation "imsss:exitConditionRule" ;
+    rdfs:comment "An exit-condition rule of the activity."@en ;
+    skos:definition "An exit-condition rule of the activity."@en ;
+    rdfs:domain foxxi-scorm-sn:SequencingRules ;
+    rdfs:range foxxi-scorm-sn:ExitConditionRule ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRulesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:postConditionRule a owl:ObjectProperty ;
+    rdfs:label "post-condition rule"@en ;
+    skos:notation "imsss:postConditionRule" ;
+    rdfs:comment "A post-condition rule of the activity."@en ;
+    skos:definition "A post-condition rule of the activity."@en ;
+    rdfs:domain foxxi-scorm-sn:SequencingRules ;
+    rdfs:range foxxi-scorm-sn:PostConditionRule ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRulesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ruleConditions a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "rule conditions"@en ;
+    skos:notation "imsss:ruleConditions" ;
+    rdfs:comment "The conditions of a sequencing rule."@en ;
+    skos:definition "The conditions of a sequencing rule."@en ;
+    rdfs:domain foxxi-scorm-sn:SequencingRule ;
+    rdfs:range foxxi-scorm-sn:RuleConditions ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ruleAction a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "rule action"@en ;
+    skos:notation "imsss:ruleAction" ;
+    rdfs:comment "The action of a sequencing rule."@en ;
+    skos:definition "The action of a sequencing rule."@en ;
+    rdfs:domain foxxi-scorm-sn:SequencingRule ;
+    rdfs:range foxxi-scorm-sn:RuleAction ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): preConditionRuleType, exitConditionRuleType, postConditionRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ruleConditionCombination a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rule condition combination"@en ;
+    skos:notation "conditionCombination" ;
+    rdfs:comment "Whether all of a sequencing rule's conditions must hold, or any. Default all."@en ;
+    skos:definition "Whether all of a sequencing rule's conditions must hold, or any. Default all."@en ;
+    rdfs:domain foxxi-scorm-sn:RuleConditions ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "all" "any" ) ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): conditionCombinationType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ruleCondition a owl:ObjectProperty ;
+    rdfs:label "rule condition"@en ;
+    skos:notation "imsss:ruleCondition" ;
+    rdfs:comment "A condition of a sequencing rule."@en ;
+    skos:definition "A condition of a sequencing rule."@en ;
+    rdfs:domain foxxi-scorm-sn:RuleConditions ;
+    rdfs:range foxxi-scorm-sn:RuleCondition ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:referencedObjective a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "referenced objective"@en ;
+    skos:notation "referencedObjective" ;
+    rdfs:comment "The ID of the activity's objective that the condition tests; the primary objective when absent."@en ;
+    skos:definition "The ID of the activity's objective that the condition tests; the primary objective when absent."@en ;
+    rdfs:domain foxxi-scorm-sn:RuleCondition ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): ruleCondition/@referencedObjective" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:measureThreshold a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "measure threshold"@en ;
+    skos:notation "measureThreshold" ;
+    rdfs:comment "The normalized measure, from -1 to 1, that the objectiveMeasureGreaterThan and objectiveMeasureLessThan conditions compare with."@en ;
+    skos:definition "The normalized measure, from -1 to 1, that the objectiveMeasureGreaterThan and objectiveMeasureLessThan conditions compare with."@en ;
+    rdfs:domain foxxi-scorm-sn:RuleCondition ;
+    rdfs:range foxxi-scorm-sn:Measure ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): ruleCondition/@measureThreshold (measureType)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:conditionOperator a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rule condition operator"@en ;
+    skos:notation "operator" ;
+    rdfs:comment "Whether a rule condition is negated (not) or taken as it is (noOp, the default)."@en ;
+    skos:definition "Whether a rule condition is negated (not) or taken as it is (noOp, the default)."@en ;
+    rdfs:domain foxxi-scorm-sn:RuleCondition ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "not" "noOp" ) ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): conditionOperatorType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ruleConditionName a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rule condition name"@en ;
+    skos:notation "condition" ;
+    rdfs:comment "What a rule condition tests. Required."@en ;
+    skos:definition "What a rule condition tests. Required."@en ;
+    rdfs:domain foxxi-scorm-sn:RuleCondition ;
+    rdfs:range [
+        a rdfs:Datatype ;
+        owl:oneOf (
+            "satisfied"
+            "objectiveStatusKnown"
+            "objectiveMeasureKnown"
+            "objectiveMeasureGreaterThan"
+            "objectiveMeasureLessThan"
+            "completed"
+            "activityProgressKnown"
+            "attempted"
+            "attemptLimitExceeded"
+            "timeLimitExceeded"
+            "outsideAvailableTimeRange"
+            "always"
+        )
+    ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRuleConditionType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ruleActionValue a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rule action value"@en ;
+    skos:notation "action" ;
+    rdfs:comment "The action a sequencing rule takes; the kind of rule limits the choice. Required."@en ;
+    skos:definition "The action a sequencing rule takes; the kind of rule limits the choice. Required."@en ;
+    rdfs:domain foxxi-scorm-sn:RuleAction ;
+    rdfs:range [
+        a rdfs:Datatype ;
+        owl:oneOf (
+            "skip"
+            "disabled"
+            "hiddenFromChoice"
+            "stopForwardTraversal"
+            "exit"
+            "exitParent"
+            "exitAll"
+            "retry"
+            "retryAll"
+            "continue"
+            "previous"
+        )
+    ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): preConditionRuleActionType, exitConditionRuleActionType, postConditionRuleActionType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:attemptLimit a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "attempt limit"@en ;
+    skos:notation "attemptLimit" ;
+    rdfs:comment "The most attempts the learner may make on the activity."@en ;
+    skos:definition "The most attempts the learner may make on the activity."@en ;
+    rdfs:domain foxxi-scorm-sn:LimitConditions ;
+    rdfs:range xsd:nonNegativeInteger ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@attemptLimit" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:attemptAbsoluteDurationLimit a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "attempt absolute duration limit"@en ;
+    skos:notation "attemptAbsoluteDurationLimit" ;
+    rdfs:comment "The longest an attempt on the activity may last, counting all the time it is open, suspensions included. The content reads it as cmi.max_time_allowed."@en ;
+    skos:definition "The longest an attempt on the activity may last, counting all the time it is open, suspensions included. The content reads it as cmi.max_time_allowed."@en ;
+    skos:changeNote "2026.10.0: its range is Duration, xs:duration's form as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map."@en ;
+    rdfs:domain foxxi-scorm-sn:LimitConditions ;
+    rdfs:range foxxi-scorm-sn:Duration ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@attemptAbsoluteDurationLimit" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:attemptExperiencedDurationLimit a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "attempt experienced duration limit"@en ;
+    skos:notation "attemptExperiencedDurationLimit" ;
+    rdfs:comment "The longest an attempt on the activity may last counting only the time the learner experiences it."@en ;
+    skos:definition "The longest an attempt on the activity may last counting only the time the learner experiences it."@en ;
+    skos:changeNote "2026.10.0: its range is Duration, xs:duration's form as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map."@en ;
+    rdfs:domain foxxi-scorm-sn:LimitConditions ;
+    rdfs:range foxxi-scorm-sn:Duration ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@attemptExperiencedDurationLimit" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:activityAbsoluteDurationLimit a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "activity absolute duration limit"@en ;
+    skos:notation "activityAbsoluteDurationLimit" ;
+    rdfs:comment "The longest all attempts on the activity together may last, counting all the time they are open."@en ;
+    skos:definition "The longest all attempts on the activity together may last, counting all the time they are open."@en ;
+    skos:changeNote "2026.10.0: its range is Duration, xs:duration's form as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map."@en ;
+    rdfs:domain foxxi-scorm-sn:LimitConditions ;
+    rdfs:range foxxi-scorm-sn:Duration ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@activityAbsoluteDurationLimit" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:activityExperiencedDurationLimit a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "activity experienced duration limit"@en ;
+    skos:notation "activityExperiencedDurationLimit" ;
+    rdfs:comment "The longest all attempts on the activity together may last, counting only the time the learner experiences them."@en ;
+    skos:definition "The longest all attempts on the activity together may last, counting only the time the learner experiences them."@en ;
+    skos:changeNote "2026.10.0: its range is Duration, xs:duration's form as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map."@en ;
+    rdfs:domain foxxi-scorm-sn:LimitConditions ;
+    rdfs:range foxxi-scorm-sn:Duration ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@activityExperiencedDurationLimit" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:beginTimeLimit a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "begin time limit"@en ;
+    skos:notation "beginTimeLimit" ;
+    rdfs:comment "The earliest time the activity may begin."@en ;
+    skos:definition "The earliest time the activity may begin."@en ;
+    rdfs:domain foxxi-scorm-sn:LimitConditions ;
+    rdfs:range xsd:dateTime ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@beginTimeLimit" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:endTimeLimit a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "end time limit"@en ;
+    skos:notation "endTimeLimit" ;
+    rdfs:comment "The latest time the activity may be delivered."@en ;
+    skos:definition "The latest time the activity may be delivered."@en ;
+    rdfs:domain foxxi-scorm-sn:LimitConditions ;
+    rdfs:range xsd:dateTime ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@endTimeLimit" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupRule a owl:ObjectProperty ;
+    rdfs:label "rollup rule"@en ;
+    skos:notation "imsss:rollupRule" ;
+    rdfs:comment "A rollup rule of the activity."@en ;
+    skos:definition "A rollup rule of the activity."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupRules ;
+    rdfs:range foxxi-scorm-sn:RollupRule ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRulesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupObjectiveSatisfied a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup objective satisfied"@en ;
+    skos:notation "rollupObjectiveSatisfied" ;
+    rdfs:comment "Whether the activity counts when its parent's objective satisfaction is rolled up. Default true."@en ;
+    skos:definition "Whether the activity counts when its parent's objective satisfaction is rolled up. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupRules ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRulesType/@rollupObjectiveSatisfied" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupProgressCompletion a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup progress completion"@en ;
+    skos:notation "rollupProgressCompletion" ;
+    rdfs:comment "Whether the activity counts when its parent's completion is rolled up. Default true."@en ;
+    skos:definition "Whether the activity counts when its parent's completion is rolled up. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupRules ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRulesType/@rollupProgressCompletion" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:objectiveMeasureWeight a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "objective measure weight"@en ;
+    skos:notation "objectiveMeasureWeight" ;
+    rdfs:comment "The weight, from 0 to 1, of the activity's measure in its parent's rolled-up measure. Default 1."@en ;
+    skos:definition "The weight, from 0 to 1, of the activity's measure in its parent's rolled-up measure. Default 1."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupRules ;
+    rdfs:range foxxi-scorm-cam:UnitInterval ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRulesType/@objectiveMeasureWeight (weightType)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:childActivitySet a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "child activity set"@en ;
+    skos:notation "childActivitySet" ;
+    rdfs:comment "For which of the children a rollup rule's conditions must hold. Default all."@en ;
+    skos:definition "For which of the children a rollup rule's conditions must hold. Default all."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupRule ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "all" "any" "none" "atLeastCount" "atLeastPercent" ) ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): childActivityType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:minimumCount a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "minimum count"@en ;
+    skos:notation "minimumCount" ;
+    rdfs:comment "For the atLeastCount set, how many children the conditions must hold for. Default 0."@en ;
+    skos:definition "For the atLeastCount set, how many children the conditions must hold for. Default 0."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupRule ;
+    rdfs:range xsd:nonNegativeInteger ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType/@minimumCount" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:minimumPercent a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "minimum percent"@en ;
+    skos:notation "minimumPercent" ;
+    rdfs:comment "For the atLeastPercent set, the fraction of children, from 0 to 1, the conditions must hold for. Default 0."@en ;
+    skos:definition "For the atLeastPercent set, the fraction of children, from 0 to 1, the conditions must hold for. Default 0."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupRule ;
+    rdfs:range foxxi-scorm-cam:UnitInterval ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType/@minimumPercent (percentType)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupConditions a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup conditions"@en ;
+    skos:notation "imsss:rollupConditions" ;
+    rdfs:comment "The conditions of a rollup rule."@en ;
+    skos:definition "The conditions of a rollup rule."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupRule ;
+    rdfs:range foxxi-scorm-sn:RollupConditions ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupActionEl a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup action"@en ;
+    skos:notation "imsss:rollupAction" ;
+    rdfs:comment "The action of a rollup rule."@en ;
+    skos:definition "The action of a rollup rule."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupRule ;
+    rdfs:range foxxi-scorm-sn:RollupAction ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupConditionCombination a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup condition combination"@en ;
+    skos:notation "conditionCombination" ;
+    rdfs:comment "Whether all of a rollup rule's conditions must hold for a child, or any. Default any."@en ;
+    skos:definition "Whether all of a rollup rule's conditions must hold for a child, or any. Default any."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupConditions ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "all" "any" ) ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): conditionCombinationType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupCondition a owl:ObjectProperty ;
+    rdfs:label "rollup condition"@en ;
+    skos:notation "imsss:rollupCondition" ;
+    rdfs:comment "A condition of a rollup rule."@en ;
+    skos:definition "A condition of a rollup rule."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupConditions ;
+    rdfs:range foxxi-scorm-sn:RollupCondition ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupConditionOperator a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup condition operator"@en ;
+    skos:notation "operator" ;
+    rdfs:comment "Whether a rollup condition is negated (not) or taken as it is (noOp, the default)."@en ;
+    skos:definition "Whether a rollup condition is negated (not) or taken as it is (noOp, the default)."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupCondition ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "not" "noOp" ) ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): conditionOperatorType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupConditionName a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup condition name"@en ;
+    skos:notation "condition" ;
+    rdfs:comment "What a rollup condition tests on a child. Required."@en ;
+    skos:definition "What a rollup condition tests on a child. Required."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupCondition ;
+    rdfs:range [
+        a rdfs:Datatype ;
+        owl:oneOf (
+            "satisfied"
+            "objectiveStatusKnown"
+            "objectiveMeasureKnown"
+            "completed"
+            "activityProgressKnown"
+            "attempted"
+            "attemptLimitExceeded"
+            "timeLimitExceeded"
+            "outsideAvailableTimeRange"
+        )
+    ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleConditionType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:rollupActionValue a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "rollup action value"@en ;
+    skos:notation "action" ;
+    rdfs:comment "The status a rollup rule sets on the activity. Required."@en ;
+    skos:definition "The status a rollup rule sets on the activity. Required."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupAction ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "satisfied" "notSatisfied" "completed" "incomplete" ) ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupActionType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:primaryObjective a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "primary objective"@en ;
+    skos:notation "imsss:primaryObjective" ;
+    rdfs:comment "The objective that contributes to the activity's rollup. Its objective ID is optional."@en ;
+    skos:definition "The objective that contributes to the activity's rollup. Its objective ID is optional."@en ;
+    rdfs:domain foxxi-scorm-sn:Objectives ;
+    rdfs:range foxxi-scorm-sn:Objective ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectivesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:objective a owl:ObjectProperty ;
+    rdfs:label "objective"@en ;
+    skos:notation "imsss:objective" ;
+    rdfs:comment "An objective that does not contribute to the activity's rollup. Its objective ID is required."@en ;
+    skos:definition "An objective that does not contribute to the activity's rollup. Its objective ID is required."@en ;
+    rdfs:domain foxxi-scorm-sn:Objectives ;
+    rdfs:range foxxi-scorm-sn:Objective ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectivesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:objectiveID a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "objective ID"@en ;
+    skos:notation "objectiveID" ;
+    rdfs:comment "The identifier of an objective, unique within the activity: on an adlseq:objective, the objective it extends."@en ;
+    skos:definition "The identifier of an objective, unique within the activity: on an adlseq:objective, the objective it extends."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-scorm-sn:Objective foxxi-scorm-sn:AdlObjective ) ] ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectivesType/@objectiveID; ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): objectiveType/@objectiveID" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:satisfiedByMeasure a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "satisfied by measure"@en ;
+    skos:notation "satisfiedByMeasure" ;
+    rdfs:comment "Whether the objective is satisfied by comparing its normalized measure with its minimum normalized measure. Default false."@en ;
+    skos:definition "Whether the objective is satisfied by comparing its normalized measure with its minimum normalized measure. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:Objective ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveType/@satisfiedByMeasure" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:minNormalizedMeasure a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "minimum normalized measure"@en ;
+    skos:notation "imsss:minNormalizedMeasure" ;
+    rdfs:comment "The normalized measure, from -1 to 1, at or above which an objective satisfied by measure is satisfied. Default 1.0."@en ;
+    skos:definition "The normalized measure, from -1 to 1, at or above which an objective satisfied by measure is satisfied. Default 1.0."@en ;
+    rdfs:domain foxxi-scorm-sn:Objective ;
+    rdfs:range foxxi-scorm-sn:Measure ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveType (minNormalizedMeasure, measureType)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:mapInfo a owl:ObjectProperty ;
+    rdfs:label "map info"@en ;
+    skos:notation "imsss:mapInfo" ;
+    rdfs:comment "A map from the objective to a global objective."@en ;
+    skos:definition "A map from the objective to a global objective."@en ;
+    rdfs:domain foxxi-scorm-sn:Objective ;
+    rdfs:range foxxi-scorm-sn:ObjectiveMapping ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:targetObjectiveID a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "target objective ID"@en ;
+    skos:notation "targetObjectiveID" ;
+    rdfs:comment "The identifier of the global objective a map points at. Required."@en ;
+    skos:definition "The identifier of the global objective a map points at. Required."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-scorm-sn:ObjectiveMapping foxxi-scorm-sn:AdlObjectiveMapping ) ] ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveMappingType/@targetObjectiveID; ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType/@targetObjectiveID" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:readSatisfiedStatus a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "read satisfied status"@en ;
+    skos:notation "readSatisfiedStatus" ;
+    rdfs:comment "Whether the objective takes its satisfaction status from the global objective. Default true."@en ;
+    skos:definition "Whether the objective takes its satisfaction status from the global objective. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:ObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveMappingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:readNormalizedMeasure a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "read normalized measure"@en ;
+    skos:notation "readNormalizedMeasure" ;
+    rdfs:comment "Whether the objective takes its normalized measure from the global objective. Default true."@en ;
+    skos:definition "Whether the objective takes its normalized measure from the global objective. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:ObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveMappingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:writeSatisfiedStatus a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "write satisfied status"@en ;
+    skos:notation "writeSatisfiedStatus" ;
+    rdfs:comment "Whether the objective gives its satisfaction status to the global objective. Default false."@en ;
+    skos:definition "Whether the objective gives its satisfaction status to the global objective. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:ObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveMappingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:writeNormalizedMeasure a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "write normalized measure"@en ;
+    skos:notation "writeNormalizedMeasure" ;
+    rdfs:comment "Whether the objective gives its normalized measure to the global objective. Default false."@en ;
+    skos:definition "Whether the objective gives its normalized measure to the global objective. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:ObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveMappingType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:adlMapInfo a owl:ObjectProperty ;
+    rdfs:label "ADL map info"@en ;
+    skos:notation "adlseq:mapInfo" ;
+    rdfs:comment "A further map from the objective to a global objective. Added in the 4th Edition."@en ;
+    skos:definition "A further map from the objective to a global objective. Added in the 4th Edition."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjective ;
+    rdfs:range foxxi-scorm-sn:AdlObjectiveMapping ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): objectiveType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:readRawScore a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "read raw score"@en ;
+    skos:notation "readRawScore" ;
+    rdfs:comment "Whether the objective takes its raw score from the global objective. Default true."@en ;
+    skos:definition "Whether the objective takes its raw score from the global objective. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:readMinScore a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "read minimum score"@en ;
+    skos:notation "readMinScore" ;
+    rdfs:comment "Whether the objective takes its minimum score from the global objective. Default true."@en ;
+    skos:definition "Whether the objective takes its minimum score from the global objective. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:readMaxScore a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "read maximum score"@en ;
+    skos:notation "readMaxScore" ;
+    rdfs:comment "Whether the objective takes its maximum score from the global objective. Default true."@en ;
+    skos:definition "Whether the objective takes its maximum score from the global objective. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:readCompletionStatus a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "read completion status"@en ;
+    skos:notation "readCompletionStatus" ;
+    rdfs:comment "Whether the objective takes its completion status from the global objective. Default true."@en ;
+    skos:definition "Whether the objective takes its completion status from the global objective. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:readProgressMeasure a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "read progress measure"@en ;
+    skos:notation "readProgressMeasure" ;
+    rdfs:comment "Whether the objective takes its progress measure from the global objective. Default true."@en ;
+    skos:definition "Whether the objective takes its progress measure from the global objective. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:writeRawScore a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "write raw score"@en ;
+    skos:notation "writeRawScore" ;
+    rdfs:comment "Whether the objective gives its raw score to the global objective. Default false."@en ;
+    skos:definition "Whether the objective gives its raw score to the global objective. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:writeMinScore a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "write minimum score"@en ;
+    skos:notation "writeMinScore" ;
+    rdfs:comment "Whether the objective gives its minimum score to the global objective. Default false."@en ;
+    skos:definition "Whether the objective gives its minimum score to the global objective. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:writeMaxScore a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "write maximum score"@en ;
+    skos:notation "writeMaxScore" ;
+    rdfs:comment "Whether the objective gives its maximum score to the global objective. Default false."@en ;
+    skos:definition "Whether the objective gives its maximum score to the global objective. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:writeCompletionStatus a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "write completion status"@en ;
+    skos:notation "writeCompletionStatus" ;
+    rdfs:comment "Whether the objective gives its completion status to the global objective. Default false."@en ;
+    skos:definition "Whether the objective gives its completion status to the global objective. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:writeProgressMeasure a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "write progress measure"@en ;
+    skos:notation "writeProgressMeasure" ;
+    rdfs:comment "Whether the objective gives its progress measure to the global objective. Default false."@en ;
+    skos:definition "Whether the objective gives its progress measure to the global objective. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:AdlObjectiveMapping ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:randomizationTiming a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "randomization timing"@en ;
+    skos:notation "randomizationTiming" ;
+    rdfs:comment "When the order of the activity's children is randomized. Default never."@en ;
+    skos:definition "When the order of the activity's children is randomized. Default never."@en ;
+    rdfs:domain foxxi-scorm-sn:RandomizationControls ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "never" "once" "onEachNewAttempt" ) ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): randomizationType/@randomizationTiming (randomTimingType)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:selectCount a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "select count"@en ;
+    skos:notation "selectCount" ;
+    rdfs:comment "How many of the activity's children are selected."@en ;
+    skos:definition "How many of the activity's children are selected."@en ;
+    rdfs:domain foxxi-scorm-sn:RandomizationControls ;
+    rdfs:range xsd:nonNegativeInteger ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): randomizationType/@selectCount" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:reorderChildren a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "reorder children"@en ;
+    skos:notation "reorderChildren" ;
+    rdfs:comment "Whether the activity's children are reordered when randomization takes place. Default false."@en ;
+    skos:definition "Whether the activity's children are reordered when randomization takes place. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:RandomizationControls ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): randomizationType/@reorderChildren" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:selectionTiming a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "selection timing"@en ;
+    skos:notation "selectionTiming" ;
+    rdfs:comment "When the subset of children is selected. Default never."@en ;
+    skos:definition "When the subset of children is selected. Default never."@en ;
+    rdfs:domain foxxi-scorm-sn:RandomizationControls ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "never" "once" "onEachNewAttempt" ) ] ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): randomizationType/@selectionTiming (randomTimingType)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:tracked a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "tracked"@en ;
+    rdfs:comment "Whether the activity's attempts are tracked for sequencing and rollup. Default true."@en ;
+    skos:definition "Whether the activity's attempts are tracked for sequencing and rollup. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:DeliveryControls ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): deliveryControlsType/@tracked" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:completionSetByContent a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "completion set by content"@en ;
+    skos:notation "completionSetByContent" ;
+    rdfs:comment "Whether the content sets the attempt's completion status, rather than the LMS. Default false."@en ;
+    skos:definition "Whether the content sets the attempt's completion status, rather than the LMS. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:DeliveryControls ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): deliveryControlsType/@completionSetByContent" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:objectiveSetByContent a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "objective set by content"@en ;
+    skos:notation "objectiveSetByContent" ;
+    rdfs:comment "Whether the content sets the primary objective's satisfaction status, rather than the LMS. Default false."@en ;
+    skos:definition "Whether the content sets the primary objective's satisfaction status, rather than the LMS. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:DeliveryControls ;
+    rdfs:range xsd:boolean ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): deliveryControlsType/@objectiveSetByContent" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:auxiliaryResource a owl:ObjectProperty ;
+    rdfs:label "auxiliary resource"@en ;
+    skos:notation "imsss:auxiliaryResource" ;
+    rdfs:comment "An auxiliary resource of the activity."@en ;
+    skos:definition "An auxiliary resource of the activity."@en ;
+    rdfs:domain foxxi-scorm-sn:AuxiliaryResources ;
+    rdfs:range foxxi-scorm-sn:AuxiliaryResource ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): auxiliaryResourcesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:auxiliaryResourceID a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "auxiliary resource ID"@en ;
+    skos:notation "auxiliaryResourceID" ;
+    rdfs:comment "The identifier of an auxiliary resource. Required."@en ;
+    skos:definition "The identifier of an auxiliary resource. Required."@en ;
+    rdfs:domain foxxi-scorm-sn:AuxiliaryResource ;
+    rdfs:range xsd:anyURI ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): auxiliaryResourceType/@auxiliaryResourceID" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:purpose a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "purpose"@en ;
+    rdfs:comment "What an auxiliary resource is for. Required."@en ;
+    skos:definition "What an auxiliary resource is for. Required."@en ;
+    rdfs:domain foxxi-scorm-sn:AuxiliaryResource ;
+    rdfs:range xsd:string ;
+    dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): auxiliaryResourceType/@purpose" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:requiredForSatisfied a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "required for satisfied"@en ;
+    skos:notation "requiredForSatisfied" ;
+    rdfs:comment "When the activity counts towards a satisfied rollup of its parent. Default always."@en ;
+    skos:definition "When the activity counts towards a satisfied rollup of its parent. Default always."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupConsiderations ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "always" "ifAttempted" "ifNotSkipped" "ifNotSuspended" ) ] ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): rollupConsiderationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:requiredForNotSatisfied a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "required for not satisfied"@en ;
+    skos:notation "requiredForNotSatisfied" ;
+    rdfs:comment "When the activity counts towards a not-satisfied rollup of its parent. Default always."@en ;
+    skos:definition "When the activity counts towards a not-satisfied rollup of its parent. Default always."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupConsiderations ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "always" "ifAttempted" "ifNotSkipped" "ifNotSuspended" ) ] ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): rollupConsiderationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:requiredForCompleted a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "required for completed"@en ;
+    skos:notation "requiredForCompleted" ;
+    rdfs:comment "When the activity counts towards a completed rollup of its parent. Default always."@en ;
+    skos:definition "When the activity counts towards a completed rollup of its parent. Default always."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupConsiderations ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "always" "ifAttempted" "ifNotSkipped" "ifNotSuspended" ) ] ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): rollupConsiderationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:requiredForIncomplete a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "required for incomplete"@en ;
+    skos:notation "requiredForIncomplete" ;
+    rdfs:comment "When the activity counts towards an incomplete rollup of its parent. Default always."@en ;
+    skos:definition "When the activity counts towards an incomplete rollup of its parent. Default always."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupConsiderations ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "always" "ifAttempted" "ifNotSkipped" "ifNotSuspended" ) ] ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): rollupConsiderationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:measureSatisfactionIfActive a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "measure satisfaction if active"@en ;
+    skos:notation "measureSatisfactionIfActive" ;
+    rdfs:comment "Whether the activity's measure counts towards satisfaction while the activity is active. Default true."@en ;
+    skos:definition "Whether the activity's measure counts towards satisfaction while the activity is active. Default true."@en ;
+    rdfs:domain foxxi-scorm-sn:RollupConsiderations ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): rollupConsiderationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:preventActivation a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "prevent activation"@en ;
+    skos:notation "preventActivation" ;
+    rdfs:comment "Whether a choice of a descendant may not start an attempt on the activity out of order. Default false."@en ;
+    skos:definition "Whether a choice of a descendant may not start an attempt on the activity out of order. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:ConstrainedChoiceConsiderations ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): constrainChoiceConsiderationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:constrainChoice a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "constrain choice"@en ;
+    skos:notation "constrainChoice" ;
+    rdfs:comment "Whether choice is limited to the activities next to the activity in flow. Default false."@en ;
+    skos:definition "Whether choice is limited to the activities next to the activity in flow. Default false."@en ;
+    rdfs:domain foxxi-scorm-sn:ConstrainedChoiceConsiderations ;
+    rdfs:range xsd:boolean ;
+    dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): constrainChoiceConsiderationsType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:navigationInterface a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "navigation interface"@en ;
+    skos:notation "adlnav:navigationInterface" ;
+    rdfs:comment "The navigation controls hidden while the item is delivered."@en ;
+    skos:definition "The navigation controls hidden while the item is delivered."@en ;
+    rdfs:domain foxxi-scorm-sn:Presentation ;
+    rdfs:range foxxi-scorm-sn:NavigationInterface ;
+    dct:source "ADL navigation extensions (adlnav_v1p3.xsd): presentationType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:hideLMSUI a owl:DatatypeProperty ;
+    rdfs:label "hide LMS UI"@en ;
+    skos:notation "adlnav:hideLMSUI" ;
+    rdfs:comment "An LMS navigation control to hide while the item is delivered. Repeatable."@en ;
+    skos:definition "An LMS navigation control to hide while the item is delivered. Repeatable."@en ;
+    rdfs:domain foxxi-scorm-sn:NavigationInterface ;
+    rdfs:range [
+        a rdfs:Datatype ;
+        owl:oneOf ( "previous" "continue" "exit" "exitAll" "abandon" "abandonAll" "suspendAll" )
+    ] ;
+    dct:source "ADL navigation extensions (adlnav_v1p3.xsd): hideLMSUIType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName a skos:ConceptScheme ;
+    rdfs:label "Sequencing rule conditions"@en ;
+    skos:prefLabel "Sequencing rule conditions"@en ;
+    skos:definition "What a sequencing rule condition tests (sequencingRuleConditionType). Objective conditions test the referenced objective, or the primary objective."@en ;
+    rdfs:comment "What a sequencing rule condition tests (sequencingRuleConditionType). Objective conditions test the referenced objective, or the primary objective."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:SequencingRuleConditionName-satisfied ,
+        foxxi-scorm-sn:SequencingRuleConditionName-objectiveStatusKnown ,
+        foxxi-scorm-sn:SequencingRuleConditionName-objectiveMeasureKnown ,
+        foxxi-scorm-sn:SequencingRuleConditionName-objectiveMeasureGreaterThan ,
+        foxxi-scorm-sn:SequencingRuleConditionName-objectiveMeasureLessThan ,
+        foxxi-scorm-sn:SequencingRuleConditionName-completed ,
+        foxxi-scorm-sn:SequencingRuleConditionName-activityProgressKnown ,
+        foxxi-scorm-sn:SequencingRuleConditionName-attempted ,
+        foxxi-scorm-sn:SequencingRuleConditionName-attemptLimitExceeded ,
+        foxxi-scorm-sn:SequencingRuleConditionName-timeLimitExceeded ,
+        foxxi-scorm-sn:SequencingRuleConditionName-outsideAvailableTimeRange ,
+        foxxi-scorm-sn:SequencingRuleConditionName-always .
+
+foxxi-scorm-sn:SequencingRuleConditionName-satisfied a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "satisfied"@en ;
+    rdfs:label "satisfied (Sequencing rule conditions)"@en ;
+    skos:notation "satisfied" ;
+    skos:definition "The objective is satisfied."@en ;
+    rdfs:comment "The objective is satisfied."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-objectiveStatusKnown a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "objective status known"@en ;
+    rdfs:label "objective status known (Sequencing rule conditions)"@en ;
+    skos:notation "objectiveStatusKnown" ;
+    skos:definition "Whether the objective is satisfied is known."@en ;
+    rdfs:comment "Whether the objective is satisfied is known."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-objectiveMeasureKnown a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "objective measure known"@en ;
+    rdfs:label "objective measure known (Sequencing rule conditions)"@en ;
+    skos:notation "objectiveMeasureKnown" ;
+    skos:definition "The objective has a normalized measure."@en ;
+    rdfs:comment "The objective has a normalized measure."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-objectiveMeasureGreaterThan a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "objective measure greater than"@en ;
+    rdfs:label "objective measure greater than (Sequencing rule conditions)"@en ;
+    skos:notation "objectiveMeasureGreaterThan" ;
+    skos:definition "The objective's normalized measure is greater than the measure threshold."@en ;
+    rdfs:comment "The objective's normalized measure is greater than the measure threshold."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-objectiveMeasureLessThan a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "objective measure less than"@en ;
+    rdfs:label "objective measure less than (Sequencing rule conditions)"@en ;
+    skos:notation "objectiveMeasureLessThan" ;
+    skos:definition "The objective's normalized measure is less than the measure threshold."@en ;
+    rdfs:comment "The objective's normalized measure is less than the measure threshold."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-completed a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "completed"@en ;
+    rdfs:label "completed (Sequencing rule conditions)"@en ;
+    skos:notation "completed" ;
+    skos:definition "The activity's attempt is completed."@en ;
+    rdfs:comment "The activity's attempt is completed."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-activityProgressKnown a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "activity progress known"@en ;
+    rdfs:label "activity progress known (Sequencing rule conditions)"@en ;
+    skos:notation "activityProgressKnown" ;
+    skos:definition "Whether the activity's attempt is completed is known."@en ;
+    rdfs:comment "Whether the activity's attempt is completed is known."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-attempted a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "attempted"@en ;
+    rdfs:label "attempted (Sequencing rule conditions)"@en ;
+    skos:notation "attempted" ;
+    skos:definition "The activity has been attempted at least once."@en ;
+    rdfs:comment "The activity has been attempted at least once."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-attemptLimitExceeded a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "attempt limit exceeded"@en ;
+    rdfs:label "attempt limit exceeded (Sequencing rule conditions)"@en ;
+    skos:notation "attemptLimitExceeded" ;
+    skos:definition "The activity has used up its attempt limit."@en ;
+    rdfs:comment "The activity has used up its attempt limit."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-timeLimitExceeded a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "time limit exceeded"@en ;
+    rdfs:label "time limit exceeded (Sequencing rule conditions)"@en ;
+    skos:notation "timeLimitExceeded" ;
+    skos:definition "A duration limit of the activity has been exceeded."@en ;
+    rdfs:comment "A duration limit of the activity has been exceeded."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-outsideAvailableTimeRange a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "outside available time range"@en ;
+    rdfs:label "outside available time range (Sequencing rule conditions)"@en ;
+    skos:notation "outsideAvailableTimeRange" ;
+    skos:definition "The current time is before the activity's begin time limit or after its end time limit."@en ;
+    rdfs:comment "The current time is before the activity's begin time limit or after its end time limit."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:SequencingRuleConditionName-always a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:SequencingRuleConditionName ;
+    skos:prefLabel "always"@en ;
+    rdfs:label "always (Sequencing rule conditions)"@en ;
+    skos:notation "always" ;
+    skos:definition "Always holds."@en ;
+    rdfs:comment "Always holds."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRuleConditionName a skos:ConceptScheme ;
+    rdfs:label "Rollup rule conditions"@en ;
+    skos:prefLabel "Rollup rule conditions"@en ;
+    skos:definition "What a rollup condition tests on a child (rollupRuleConditionType): the sequencing rule conditions without the measure comparisons and always."@en ;
+    rdfs:comment "What a rollup condition tests on a child (rollupRuleConditionType): the sequencing rule conditions without the measure comparisons and always."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:RollupRuleConditionName-satisfied ,
+        foxxi-scorm-sn:RollupRuleConditionName-objectiveStatusKnown ,
+        foxxi-scorm-sn:RollupRuleConditionName-objectiveMeasureKnown ,
+        foxxi-scorm-sn:RollupRuleConditionName-completed ,
+        foxxi-scorm-sn:RollupRuleConditionName-activityProgressKnown ,
+        foxxi-scorm-sn:RollupRuleConditionName-attempted ,
+        foxxi-scorm-sn:RollupRuleConditionName-attemptLimitExceeded ,
+        foxxi-scorm-sn:RollupRuleConditionName-timeLimitExceeded ,
+        foxxi-scorm-sn:RollupRuleConditionName-outsideAvailableTimeRange .
+
+foxxi-scorm-sn:RollupRuleConditionName-satisfied a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:prefLabel "satisfied"@en ;
+    rdfs:label "satisfied (Rollup rule conditions)"@en ;
+    skos:notation "satisfied" ;
+    skos:definition "The child's objective is satisfied."@en ;
+    rdfs:comment "The child's objective is satisfied."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRuleConditionName-objectiveStatusKnown a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:prefLabel "objective status known"@en ;
+    rdfs:label "objective status known (Rollup rule conditions)"@en ;
+    skos:notation "objectiveStatusKnown" ;
+    skos:definition "Whether the child's objective is satisfied is known."@en ;
+    rdfs:comment "Whether the child's objective is satisfied is known."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRuleConditionName-objectiveMeasureKnown a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:prefLabel "objective measure known"@en ;
+    rdfs:label "objective measure known (Rollup rule conditions)"@en ;
+    skos:notation "objectiveMeasureKnown" ;
+    skos:definition "The child's objective has a normalized measure."@en ;
+    rdfs:comment "The child's objective has a normalized measure."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRuleConditionName-completed a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:prefLabel "completed"@en ;
+    rdfs:label "completed (Rollup rule conditions)"@en ;
+    skos:notation "completed" ;
+    skos:definition "The child's attempt is completed."@en ;
+    rdfs:comment "The child's attempt is completed."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRuleConditionName-activityProgressKnown a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:prefLabel "activity progress known"@en ;
+    rdfs:label "activity progress known (Rollup rule conditions)"@en ;
+    skos:notation "activityProgressKnown" ;
+    skos:definition "Whether the child's attempt is completed is known."@en ;
+    rdfs:comment "Whether the child's attempt is completed is known."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRuleConditionName-attempted a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:prefLabel "attempted"@en ;
+    rdfs:label "attempted (Rollup rule conditions)"@en ;
+    skos:notation "attempted" ;
+    skos:definition "The child has been attempted at least once."@en ;
+    rdfs:comment "The child has been attempted at least once."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRuleConditionName-attemptLimitExceeded a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:prefLabel "attempt limit exceeded"@en ;
+    rdfs:label "attempt limit exceeded (Rollup rule conditions)"@en ;
+    skos:notation "attemptLimitExceeded" ;
+    skos:definition "The child has used up its attempt limit."@en ;
+    rdfs:comment "The child has used up its attempt limit."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRuleConditionName-timeLimitExceeded a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:prefLabel "time limit exceeded"@en ;
+    rdfs:label "time limit exceeded (Rollup rule conditions)"@en ;
+    skos:notation "timeLimitExceeded" ;
+    skos:definition "A duration limit of the child has been exceeded."@en ;
+    rdfs:comment "A duration limit of the child has been exceeded."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupRuleConditionName-outsideAvailableTimeRange a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:topConceptOf foxxi-scorm-sn:RollupRuleConditionName ;
+    skos:prefLabel "outside available time range"@en ;
+    rdfs:label "outside available time range (Rollup rule conditions)"@en ;
+    skos:notation "outsideAvailableTimeRange" ;
+    skos:definition "The current time is outside the child's begin and end time limits."@en ;
+    rdfs:comment "The current time is outside the child's begin and end time limits."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ConditionOperator a skos:ConceptScheme ;
+    rdfs:label "Condition operators"@en ;
+    skos:prefLabel "Condition operators"@en ;
+    skos:definition "Whether a condition is negated (conditionOperatorType)."@en ;
+    rdfs:comment "Whether a condition is negated (conditionOperatorType)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:ConditionOperator-not , foxxi-scorm-sn:ConditionOperator-noOp .
+
+foxxi-scorm-sn:ConditionOperator-not a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ConditionOperator ;
+    skos:topConceptOf foxxi-scorm-sn:ConditionOperator ;
+    skos:prefLabel "not"@en ;
+    rdfs:label "not (Condition operators)"@en ;
+    skos:notation "not" ;
+    skos:definition "The condition holds when what it tests does not."@en ;
+    rdfs:comment "The condition holds when what it tests does not."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ConditionOperator-noOp a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ConditionOperator ;
+    skos:topConceptOf foxxi-scorm-sn:ConditionOperator ;
+    skos:prefLabel "no operation"@en ;
+    rdfs:label "no operation (Condition operators)"@en ;
+    skos:notation "noOp" ;
+    skos:definition "The condition holds when what it tests does. The default."@en ;
+    rdfs:comment "The condition holds when what it tests does. The default."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ConditionCombination a skos:ConceptScheme ;
+    rdfs:label "Condition combinations"@en ;
+    skos:prefLabel "Condition combinations"@en ;
+    skos:definition "How a rule's conditions combine (conditionCombinationType)."@en ;
+    rdfs:comment "How a rule's conditions combine (conditionCombinationType)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:ConditionCombination-all , foxxi-scorm-sn:ConditionCombination-any .
+
+foxxi-scorm-sn:ConditionCombination-all a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ConditionCombination ;
+    skos:topConceptOf foxxi-scorm-sn:ConditionCombination ;
+    skos:prefLabel "all"@en ;
+    rdfs:label "all (Condition combinations)"@en ;
+    skos:notation "all" ;
+    skos:definition "The rule applies when every condition holds."@en ;
+    rdfs:comment "The rule applies when every condition holds."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ConditionCombination-any a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ConditionCombination ;
+    skos:topConceptOf foxxi-scorm-sn:ConditionCombination ;
+    skos:prefLabel "any"@en ;
+    rdfs:label "any (Condition combinations)"@en ;
+    skos:notation "any" ;
+    skos:definition "The rule applies when at least one condition holds."@en ;
+    rdfs:comment "The rule applies when at least one condition holds."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PreConditionRuleAction a skos:ConceptScheme ;
+    rdfs:label "Pre-condition rule actions"@en ;
+    skos:prefLabel "Pre-condition rule actions"@en ;
+    skos:definition "What a pre-condition rule does when it applies (preConditionRuleActionType)."@en ;
+    rdfs:comment "What a pre-condition rule does when it applies (preConditionRuleActionType)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:PreConditionRuleAction-skip ,
+        foxxi-scorm-sn:PreConditionRuleAction-disabled ,
+        foxxi-scorm-sn:PreConditionRuleAction-hiddenFromChoice ,
+        foxxi-scorm-sn:PreConditionRuleAction-stopForwardTraversal .
+
+foxxi-scorm-sn:PreConditionRuleAction-skip a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PreConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PreConditionRuleAction ;
+    skos:prefLabel "skip"@en ;
+    rdfs:label "skip (Pre-condition rule actions)"@en ;
+    skos:notation "skip" ;
+    skos:definition "Flow navigation passes over the activity."@en ;
+    rdfs:comment "Flow navigation passes over the activity."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PreConditionRuleAction-disabled a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PreConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PreConditionRuleAction ;
+    skos:prefLabel "disabled"@en ;
+    rdfs:label "disabled (Pre-condition rule actions)"@en ;
+    skos:notation "disabled" ;
+    skos:definition "The activity cannot be delivered, chosen or entered."@en ;
+    rdfs:comment "The activity cannot be delivered, chosen or entered."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PreConditionRuleAction-hiddenFromChoice a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PreConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PreConditionRuleAction ;
+    skos:prefLabel "hidden from choice"@en ;
+    rdfs:label "hidden from choice (Pre-condition rule actions)"@en ;
+    skos:notation "hiddenFromChoice" ;
+    skos:definition "The activity cannot be chosen, and is not shown as a choice."@en ;
+    rdfs:comment "The activity cannot be chosen, and is not shown as a choice."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PreConditionRuleAction-stopForwardTraversal a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PreConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PreConditionRuleAction ;
+    skos:prefLabel "stop forward traversal"@en ;
+    rdfs:label "stop forward traversal (Pre-condition rule actions)"@en ;
+    skos:notation "stopForwardTraversal" ;
+    skos:definition "Flow navigation does not move forward past the activity."@en ;
+    rdfs:comment "Flow navigation does not move forward past the activity."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ExitConditionRuleAction a skos:ConceptScheme ;
+    rdfs:label "Exit-condition rule actions"@en ;
+    skos:prefLabel "Exit-condition rule actions"@en ;
+    skos:definition "What an exit-condition rule does when it applies (exitConditionRuleActionType)."@en ;
+    rdfs:comment "What an exit-condition rule does when it applies (exitConditionRuleActionType)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:ExitConditionRuleAction-exit .
+
+foxxi-scorm-sn:ExitConditionRuleAction-exit a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ExitConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:ExitConditionRuleAction ;
+    skos:prefLabel "exit"@en ;
+    rdfs:label "exit (Exit-condition rule actions)"@en ;
+    skos:notation "exit" ;
+    skos:definition "The activity ends."@en ;
+    rdfs:comment "The activity ends."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PostConditionRuleAction a skos:ConceptScheme ;
+    rdfs:label "Post-condition rule actions"@en ;
+    skos:prefLabel "Post-condition rule actions"@en ;
+    skos:definition "What a post-condition rule does when it applies (postConditionRuleActionType)."@en ;
+    rdfs:comment "What a post-condition rule does when it applies (postConditionRuleActionType)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:PostConditionRuleAction-exitParent ,
+        foxxi-scorm-sn:PostConditionRuleAction-exitAll ,
+        foxxi-scorm-sn:PostConditionRuleAction-retry ,
+        foxxi-scorm-sn:PostConditionRuleAction-retryAll ,
+        foxxi-scorm-sn:PostConditionRuleAction-continue ,
+        foxxi-scorm-sn:PostConditionRuleAction-previous .
+
+foxxi-scorm-sn:PostConditionRuleAction-exitParent a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:prefLabel "exit parent"@en ;
+    rdfs:label "exit parent (Post-condition rule actions)"@en ;
+    skos:notation "exitParent" ;
+    skos:definition "The activity's parent ends."@en ;
+    rdfs:comment "The activity's parent ends."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PostConditionRuleAction-exitAll a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:prefLabel "exit all"@en ;
+    rdfs:label "exit all (Post-condition rule actions)"@en ;
+    skos:notation "exitAll" ;
+    skos:definition "The whole activity tree ends."@en ;
+    rdfs:comment "The whole activity tree ends."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PostConditionRuleAction-retry a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:prefLabel "retry"@en ;
+    rdfs:label "retry (Post-condition rule actions)"@en ;
+    skos:notation "retry" ;
+    skos:definition "A new attempt on the activity begins."@en ;
+    rdfs:comment "A new attempt on the activity begins."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PostConditionRuleAction-retryAll a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:prefLabel "retry all"@en ;
+    rdfs:label "retry all (Post-condition rule actions)"@en ;
+    skos:notation "retryAll" ;
+    skos:definition "A new attempt on the whole activity tree begins."@en ;
+    rdfs:comment "A new attempt on the whole activity tree begins."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PostConditionRuleAction-continue a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:prefLabel "continue"@en ;
+    rdfs:label "continue (Post-condition rule actions)"@en ;
+    skos:notation "continue" ;
+    skos:definition "The next activity in flow is delivered."@en ;
+    rdfs:comment "The next activity in flow is delivered."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:PostConditionRuleAction-previous a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:topConceptOf foxxi-scorm-sn:PostConditionRuleAction ;
+    skos:prefLabel "previous"@en ;
+    rdfs:label "previous (Post-condition rule actions)"@en ;
+    skos:notation "previous" ;
+    skos:definition "The previous activity in flow is delivered."@en ;
+    rdfs:comment "The previous activity in flow is delivered."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupActionValues a skos:ConceptScheme ;
+    rdfs:label "Rollup actions"@en ;
+    skos:prefLabel "Rollup actions"@en ;
+    skos:definition "The status a rollup rule sets on an activity (rollupActionType)."@en ;
+    rdfs:comment "The status a rollup rule sets on an activity (rollupActionType)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:RollupActionValues-satisfied ,
+        foxxi-scorm-sn:RollupActionValues-notSatisfied ,
+        foxxi-scorm-sn:RollupActionValues-completed ,
+        foxxi-scorm-sn:RollupActionValues-incomplete .
+
+foxxi-scorm-sn:RollupActionValues-satisfied a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupActionValues ;
+    skos:topConceptOf foxxi-scorm-sn:RollupActionValues ;
+    skos:prefLabel "satisfied"@en ;
+    rdfs:label "satisfied (Rollup actions)"@en ;
+    skos:notation "satisfied" ;
+    skos:definition "The activity's objective is satisfied."@en ;
+    rdfs:comment "The activity's objective is satisfied."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupActionValues-notSatisfied a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupActionValues ;
+    skos:topConceptOf foxxi-scorm-sn:RollupActionValues ;
+    skos:prefLabel "not satisfied"@en ;
+    rdfs:label "not satisfied (Rollup actions)"@en ;
+    skos:notation "notSatisfied" ;
+    skos:definition "The activity's objective is not satisfied."@en ;
+    rdfs:comment "The activity's objective is not satisfied."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupActionValues-completed a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupActionValues ;
+    skos:topConceptOf foxxi-scorm-sn:RollupActionValues ;
+    skos:prefLabel "completed"@en ;
+    rdfs:label "completed (Rollup actions)"@en ;
+    skos:notation "completed" ;
+    skos:definition "The activity's attempt is completed."@en ;
+    rdfs:comment "The activity's attempt is completed."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupActionValues-incomplete a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupActionValues ;
+    skos:topConceptOf foxxi-scorm-sn:RollupActionValues ;
+    skos:prefLabel "incomplete"@en ;
+    rdfs:label "incomplete (Rollup actions)"@en ;
+    skos:notation "incomplete" ;
+    skos:definition "The activity's attempt is incomplete."@en ;
+    rdfs:comment "The activity's attempt is incomplete."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ChildActivitySet a skos:ConceptScheme ;
+    rdfs:label "Child activity sets"@en ;
+    skos:prefLabel "Child activity sets"@en ;
+    skos:definition "For which of an activity's children a rollup rule's conditions must hold (childActivityType). Only children that count in the rollup are considered."@en ;
+    rdfs:comment "For which of an activity's children a rollup rule's conditions must hold (childActivityType). Only children that count in the rollup are considered."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:ChildActivitySet-all ,
+        foxxi-scorm-sn:ChildActivitySet-any ,
+        foxxi-scorm-sn:ChildActivitySet-none ,
+        foxxi-scorm-sn:ChildActivitySet-atLeastCount ,
+        foxxi-scorm-sn:ChildActivitySet-atLeastPercent .
+
+foxxi-scorm-sn:ChildActivitySet-all a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ChildActivitySet ;
+    skos:topConceptOf foxxi-scorm-sn:ChildActivitySet ;
+    skos:prefLabel "all"@en ;
+    rdfs:label "all (Child activity sets)"@en ;
+    skos:notation "all" ;
+    skos:definition "Every child."@en ;
+    rdfs:comment "Every child."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ChildActivitySet-any a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ChildActivitySet ;
+    skos:topConceptOf foxxi-scorm-sn:ChildActivitySet ;
+    skos:prefLabel "any"@en ;
+    rdfs:label "any (Child activity sets)"@en ;
+    skos:notation "any" ;
+    skos:definition "At least one child."@en ;
+    rdfs:comment "At least one child."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ChildActivitySet-none a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ChildActivitySet ;
+    skos:topConceptOf foxxi-scorm-sn:ChildActivitySet ;
+    skos:prefLabel "none"@en ;
+    rdfs:label "none (Child activity sets)"@en ;
+    skos:notation "none" ;
+    skos:definition "No child."@en ;
+    rdfs:comment "No child."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ChildActivitySet-atLeastCount a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ChildActivitySet ;
+    skos:topConceptOf foxxi-scorm-sn:ChildActivitySet ;
+    skos:prefLabel "at least count"@en ;
+    rdfs:label "at least count (Child activity sets)"@en ;
+    skos:notation "atLeastCount" ;
+    skos:definition "At least the minimum count of children."@en ;
+    rdfs:comment "At least the minimum count of children."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:ChildActivitySet-atLeastPercent a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:ChildActivitySet ;
+    skos:topConceptOf foxxi-scorm-sn:ChildActivitySet ;
+    skos:prefLabel "at least percent"@en ;
+    rdfs:label "at least percent (Child activity sets)"@en ;
+    skos:notation "atLeastPercent" ;
+    skos:definition "At least the minimum percent of the children."@en ;
+    rdfs:comment "At least the minimum percent of the children."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RandomTiming a skos:ConceptScheme ;
+    rdfs:label "Randomization and selection timings"@en ;
+    skos:prefLabel "Randomization and selection timings"@en ;
+    skos:definition "When children are selected or reordered (randomTimingType)."@en ;
+    rdfs:comment "When children are selected or reordered (randomTimingType)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:RandomTiming-never ,
+        foxxi-scorm-sn:RandomTiming-once ,
+        foxxi-scorm-sn:RandomTiming-onEachNewAttempt .
+
+foxxi-scorm-sn:RandomTiming-never a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RandomTiming ;
+    skos:topConceptOf foxxi-scorm-sn:RandomTiming ;
+    skos:prefLabel "never"@en ;
+    rdfs:label "never (Randomization and selection timings)"@en ;
+    skos:notation "never" ;
+    skos:definition "Never. The default."@en ;
+    rdfs:comment "Never. The default."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RandomTiming-once a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RandomTiming ;
+    skos:topConceptOf foxxi-scorm-sn:RandomTiming ;
+    skos:prefLabel "once"@en ;
+    rdfs:label "once (Randomization and selection timings)"@en ;
+    skos:notation "once" ;
+    skos:definition "Once, before the first attempt on the activity."@en ;
+    rdfs:comment "Once, before the first attempt on the activity."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RandomTiming-onEachNewAttempt a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RandomTiming ;
+    skos:topConceptOf foxxi-scorm-sn:RandomTiming ;
+    skos:prefLabel "on each new attempt"@en ;
+    rdfs:label "on each new attempt (Randomization and selection timings)"@en ;
+    skos:notation "onEachNewAttempt" ;
+    skos:definition "Before each new attempt on the activity."@en ;
+    rdfs:comment "Before each new attempt on the activity."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupConsideration a skos:ConceptScheme ;
+    rdfs:label "Rollup consideration values"@en ;
+    skos:prefLabel "Rollup consideration values"@en ;
+    skos:definition "When a child counts in a rollup of its parent (adlseq rollupConsiderationType)."@en ;
+    rdfs:comment "When a child counts in a rollup of its parent (adlseq rollupConsiderationType)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:RollupConsideration-always ,
+        foxxi-scorm-sn:RollupConsideration-ifAttempted ,
+        foxxi-scorm-sn:RollupConsideration-ifNotSkipped ,
+        foxxi-scorm-sn:RollupConsideration-ifNotSuspended .
+
+foxxi-scorm-sn:RollupConsideration-always a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupConsideration ;
+    skos:topConceptOf foxxi-scorm-sn:RollupConsideration ;
+    skos:prefLabel "always"@en ;
+    rdfs:label "always (Rollup consideration values)"@en ;
+    skos:notation "always" ;
+    skos:definition "Always. The default."@en ;
+    rdfs:comment "Always. The default."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupConsideration-ifAttempted a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupConsideration ;
+    skos:topConceptOf foxxi-scorm-sn:RollupConsideration ;
+    skos:prefLabel "if attempted"@en ;
+    rdfs:label "if attempted (Rollup consideration values)"@en ;
+    skos:notation "ifAttempted" ;
+    skos:definition "Only if it has been attempted."@en ;
+    rdfs:comment "Only if it has been attempted."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupConsideration-ifNotSkipped a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupConsideration ;
+    skos:topConceptOf foxxi-scorm-sn:RollupConsideration ;
+    skos:prefLabel "if not skipped"@en ;
+    rdfs:label "if not skipped (Rollup consideration values)"@en ;
+    skos:notation "ifNotSkipped" ;
+    skos:definition "Unless it was skipped."@en ;
+    rdfs:comment "Unless it was skipped."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:RollupConsideration-ifNotSuspended a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:RollupConsideration ;
+    skos:topConceptOf foxxi-scorm-sn:RollupConsideration ;
+    skos:prefLabel "if not suspended"@en ;
+    rdfs:label "if not suspended (Rollup consideration values)"@en ;
+    skos:notation "ifNotSuspended" ;
+    skos:definition "Unless its attempt is suspended."@en ;
+    rdfs:comment "Unless its attempt is suspended."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:HideLMSUI a skos:ConceptScheme ;
+    rdfs:label "Hideable LMS controls"@en ;
+    skos:prefLabel "Hideable LMS controls"@en ;
+    skos:definition "The LMS navigation controls an item may hide (adlnav hideLMSUIType)."@en ;
+    rdfs:comment "The LMS navigation controls an item may hide (adlnav hideLMSUIType)."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
+    skos:hasTopConcept foxxi-scorm-sn:HideLMSUI-previous ,
+        foxxi-scorm-sn:HideLMSUI-continue ,
+        foxxi-scorm-sn:HideLMSUI-exit ,
+        foxxi-scorm-sn:HideLMSUI-exitAll ,
+        foxxi-scorm-sn:HideLMSUI-abandon ,
+        foxxi-scorm-sn:HideLMSUI-abandonAll ,
+        foxxi-scorm-sn:HideLMSUI-suspendAll .
+
+foxxi-scorm-sn:HideLMSUI-previous a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:HideLMSUI ;
+    skos:topConceptOf foxxi-scorm-sn:HideLMSUI ;
+    skos:prefLabel "previous"@en ;
+    rdfs:label "previous (Hideable LMS controls)"@en ;
+    skos:notation "previous" ;
+    skos:definition "The control that goes to the previous activity."@en ;
+    rdfs:comment "The control that goes to the previous activity."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:HideLMSUI-continue a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:HideLMSUI ;
+    skos:topConceptOf foxxi-scorm-sn:HideLMSUI ;
+    skos:prefLabel "continue"@en ;
+    rdfs:label "continue (Hideable LMS controls)"@en ;
+    skos:notation "continue" ;
+    skos:definition "The control that goes to the next activity."@en ;
+    rdfs:comment "The control that goes to the next activity."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:HideLMSUI-exit a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:HideLMSUI ;
+    skos:topConceptOf foxxi-scorm-sn:HideLMSUI ;
+    skos:prefLabel "exit"@en ;
+    rdfs:label "exit (Hideable LMS controls)"@en ;
+    skos:notation "exit" ;
+    skos:definition "The control that ends the current activity."@en ;
+    rdfs:comment "The control that ends the current activity."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:HideLMSUI-exitAll a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:HideLMSUI ;
+    skos:topConceptOf foxxi-scorm-sn:HideLMSUI ;
+    skos:prefLabel "exit all"@en ;
+    rdfs:label "exit all (Hideable LMS controls)"@en ;
+    skos:notation "exitAll" ;
+    skos:definition "The control that ends the whole activity tree."@en ;
+    rdfs:comment "The control that ends the whole activity tree."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:HideLMSUI-abandon a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:HideLMSUI ;
+    skos:topConceptOf foxxi-scorm-sn:HideLMSUI ;
+    skos:prefLabel "abandon"@en ;
+    rdfs:label "abandon (Hideable LMS controls)"@en ;
+    skos:notation "abandon" ;
+    skos:definition "The control that abandons the current activity."@en ;
+    rdfs:comment "The control that abandons the current activity."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:HideLMSUI-abandonAll a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:HideLMSUI ;
+    skos:topConceptOf foxxi-scorm-sn:HideLMSUI ;
+    skos:prefLabel "abandon all"@en ;
+    rdfs:label "abandon all (Hideable LMS controls)"@en ;
+    skos:notation "abandonAll" ;
+    skos:definition "The control that abandons the whole activity tree."@en ;
+    rdfs:comment "The control that abandons the whole activity tree."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:HideLMSUI-suspendAll a skos:Concept ;
+    skos:inScheme foxxi-scorm-sn:HideLMSUI ;
+    skos:topConceptOf foxxi-scorm-sn:HideLMSUI ;
+    skos:prefLabel "suspend all"@en ;
+    rdfs:label "suspend all (Hideable LMS controls)"@en ;
+    skos:notation "suspendAll" ;
+    skos:definition "The control that suspends the whole activity tree, to resume later."@en ;
+    rdfs:comment "The control that suspends the whole activity tree, to resume later."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members (
+        foxxi-scorm-sn:Sequencing
+        foxxi-scorm-sn:SequencingCollection
+        foxxi-scorm-sn:ControlMode
+        foxxi-scorm-sn:SequencingRules
+        foxxi-scorm-sn:SequencingRule
+        foxxi-scorm-sn:RuleConditions
+        foxxi-scorm-sn:RuleCondition
+        foxxi-scorm-sn:RuleAction
+        foxxi-scorm-sn:LimitConditions
+        foxxi-scorm-sn:RollupRules
+        foxxi-scorm-sn:RollupRule
+        foxxi-scorm-sn:RollupConditions
+        foxxi-scorm-sn:RollupCondition
+        foxxi-scorm-sn:RollupAction
+        foxxi-scorm-sn:Objectives
+        foxxi-scorm-sn:Objective
+        foxxi-scorm-sn:ObjectiveMapping
+        foxxi-scorm-sn:RandomizationControls
+        foxxi-scorm-sn:DeliveryControls
+        foxxi-scorm-sn:AuxiliaryResources
+        foxxi-scorm-sn:AuxiliaryResource
+        foxxi-scorm-sn:RollupConsiderations
+        foxxi-scorm-sn:ConstrainedChoiceConsiderations
+        foxxi-scorm-sn:AdlObjective
+        foxxi-scorm-sn:AdlObjectiveMapping
+        foxxi-scorm-sn:Presentation
+        foxxi-scorm-sn:NavigationInterface
+    )
+] .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members (
+        foxxi-scorm-sn:PreConditionRule
+        foxxi-scorm-sn:ExitConditionRule
+        foxxi-scorm-sn:PostConditionRule
+    )
+] .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+    rdfs:label "was derived from"@en ;
+    rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Entity .
+
+skos:ConceptScheme a owl:Class ;
+    rdfs:label "Concept Scheme"@en ;
+    rdfs:comment "A set of concepts, optionally including statements about semantic relationships between those concepts. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    owl:disjointWith skos:Concept .
+
+skos:hasTopConcept a owl:ObjectProperty ;
+    rdfs:label "has top concept"@en ;
+    rdfs:comment "Relates, by convention, a concept scheme to a concept which is topmost in the broader/narrower concept hierarchies for that scheme. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range skos:Concept .
+
+skos:Concept a owl:Class ;
+    rdfs:label "Concept"@en ;
+    rdfs:comment "An idea or notion; a unit of thought. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> .
+
+skos:inScheme a owl:ObjectProperty ;
+    rdfs:label "is in scheme"@en ;
+    rdfs:comment "Relates a resource (for example a concept) to a concept scheme in which it is included. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:range skos:ConceptScheme .
+
+skos:topConceptOf a owl:ObjectProperty ;
+    rdfs:label "is top concept in scheme"@en ;
+    rdfs:comment "Relates a concept to the concept scheme that it is a top level concept of. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:subPropertyOf skos:inScheme ;
+    owl:inverseOf skos:hasTopConcept .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A physical, digital, conceptual, or other kind of thing with some fixed aspects. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+dct:title a owl:AnnotationProperty .
+
+dct:description a owl:AnnotationProperty .
+
+skos:historyNote a owl:AnnotationProperty .
+
+dct:creator a owl:AnnotationProperty .
+
+dct:contributor a owl:AnnotationProperty .
+
+dct:publisher a owl:AnnotationProperty .
+
+dct:license a owl:AnnotationProperty .
+
+dct:rights a owl:AnnotationProperty .
+
+dct:created a owl:AnnotationProperty .
+
+dct:modified a owl:AnnotationProperty .
+
+dct:issued a owl:AnnotationProperty .
+
+dct:language a owl:AnnotationProperty .
+
+bibo:status a owl:AnnotationProperty .
+
+dct:bibliographicCitation a owl:AnnotationProperty .
+
+vann:preferredNamespacePrefix a owl:AnnotationProperty .
+
+vann:preferredNamespaceUri a owl:AnnotationProperty .
+
+dct:source a owl:AnnotationProperty .
+
+skos:definition a owl:AnnotationProperty .
+
+skos:notation a owl:AnnotationProperty .
+
+foxxi-scorm-cam:Item a owl:Class .
+
+foxxi-scorm-cam:Organization a owl:Class .
+
+foxxi-scorm-cam:Manifest a owl:Class .
+
+skos:changeNote a owl:AnnotationProperty .
+
+foxxi-scorm-cam:UnitInterval a rdfs:Datatype .
+
+skos:prefLabel a owl:AnnotationProperty .

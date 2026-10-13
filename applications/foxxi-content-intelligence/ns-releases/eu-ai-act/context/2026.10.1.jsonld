@@ -1,0 +1,51 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "id": "@id",
+    "type": "@type",
+    "Obligation": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#Obligation"
+    },
+    "RecordKeeping": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#RecordKeeping"
+    },
+    "HumanOversight": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#HumanOversight"
+    },
+    "Transparency": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#Transparency"
+    },
+    "RiskManagement": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#RiskManagement"
+    },
+    "DataGovernance": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#DataGovernance"
+    },
+    "InteractionTransparency": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#InteractionTransparency"
+    },
+    "TechnicalDocumentation": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#TechnicalDocumentation"
+    },
+    "AccuracyRobustness": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#AccuracyRobustness"
+    },
+    "conformsToArticle": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#conformsToArticle",
+      "@type": "@vocab",
+      "@context": [
+        null,
+        {
+          "@vocab": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#Article-",
+          "conformsToArticle": {
+            "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#conformsToArticle",
+            "@type": "@vocab"
+          }
+        }
+      ]
+    },
+    "article": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#article"
+    }
+  }
+}

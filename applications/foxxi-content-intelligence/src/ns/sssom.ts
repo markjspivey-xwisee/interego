@@ -19,7 +19,11 @@
  *
  * ★ ONLY WHAT IS ON RECORD. A target's label and entity type are given when they come from its
  * publisher's own record: Foxxi's documents for Foxxi terms, and the transcribed records of the
- * ontologies Foxxi is checked against. Otherwise the cells are empty rather than guessed.
+ * ontologies Foxxi is checked against. So is the document that defines it (object_source), with that
+ * document's version where it states one (object_source_version): a Foxxi document at its version
+ * IRI, ADL's xAPI ontology, the Interego substrate's ontology, the specification that mints a
+ * namespace's identifiers, or the document a Foxxi document names with rdfs:isDefinedBy. Otherwise
+ * the cells are empty rather than guessed.
  *
  * Conforms to SSSOM 1.0 (sssom-schema 1.0.0): SSSOM/TSV with the metadata block embedded as
  * commented YAML; every entity reference a CURIE whose prefix the curie_map declares (the built-in
@@ -40,8 +44,14 @@ export type SssomEntityType =
   | 'owl class' | 'owl object property' | 'owl data property' | 'owl annotation property'
   | 'owl named individual' | 'skos concept' | 'rdfs datatype';
 
-/** What is on record about a mapping target. */
-export interface MappingTargetInfo { readonly label?: string; readonly type?: SssomEntityType }
+/** What is on record about a mapping target: its label and entity type, and the document that defines
+ *  it (an IRI) with that document's version (a version IRI or version string). */
+export interface MappingTargetInfo {
+  readonly label?: string;
+  readonly type?: SssomEntityType;
+  readonly source?: string;
+  readonly sourceVersion?: string;
+}
 
 /** One row of a mapping set, by SSSOM slot name. */
 export interface SssomRow {
@@ -54,13 +64,14 @@ export interface SssomRow {
   readonly subject_type?: SssomEntityType;
   readonly object_type?: SssomEntityType;
   readonly object_source?: string;
+  readonly object_source_version?: string;
   readonly comment?: string;
 }
 
 /** The columns written, in the order the SSSOM schema lists the slots. */
 export const SSSOM_COLUMNS = [
   'subject_id', 'subject_label', 'predicate_id', 'object_id', 'object_label', 'mapping_justification',
-  'subject_type', 'object_type', 'object_source', 'comment',
+  'subject_type', 'object_type', 'object_source', 'object_source_version', 'comment',
 ] as const satisfies ReadonlyArray<keyof SssomRow>;
 
 export interface MappingSetSource {
@@ -73,7 +84,7 @@ export interface MappingSetSource {
   /** What is on record about a target outside this document. */
   readonly lookup?: (iri: string) => MappingTargetInfo | undefined;
   /** The ontology this document is aligned to term by term (see the header). */
-  readonly counterpart?: { readonly iri: string; readonly namespace: string };
+  readonly counterpart?: { readonly iri: string; readonly namespace: string; readonly version?: string; readonly record?: string };
 }
 
 const MAPPING_RELATIONS = ['exactMatch', 'closeMatch', 'broadMatch', 'narrowMatch', 'relatedMatch'] as const;
@@ -150,16 +161,19 @@ export function mappingRows(src: MappingSetSource): SssomRow[] {
       subject_id: curie(s), subject_label: labelIn(g, s), predicate_id: `skos:${rel}`,
       object_id: curie(o), object_label: target?.label, mapping_justification: MANUAL_CURATION,
       subject_type: entityTypeIn(g, s), object_type: target?.type,
-      object_source: inCounterpart ? curie(src.counterpart!.iri) : undefined,
+      object_source: inCounterpart ? curie(src.counterpart!.iri) : target?.source ? curie(target.source) : undefined,
+      object_source_version: inCounterpart ? src.counterpart!.version : target?.sourceVersion,
       comment: notes.get(`${s} ${t.p.value} ${o}`),
     }));
   }
   if (src.counterpart) {
     // Every term the document declares — classes, properties, datatypes, code-list concepts — that
-    // has no mapping into the counterpart. A concept scheme is a list, not a term to map.
+    // has no mapping into the counterpart. A concept scheme is a list, not a term to map; a
+    // deprecated term is not a term to use, and its replacement is listed or mapped in its place.
     const declared = new Set<string>();
     for (const t of g.triples) {
-      if (t.p.value === RDF + 'type' && t.s.termType === 'NamedNode' && t.s.value.startsWith(ns) && entityTypeIn(g, t.s.value)) declared.add(t.s.value);
+      if (t.p.value === RDF + 'type' && t.s.termType === 'NamedNode' && t.s.value.startsWith(ns) && entityTypeIn(g, t.s.value)
+        && !g.objects(t.s, OWL + 'deprecated').some(o => o.value === 'true')) declared.add(t.s.value);
     }
     for (const s of declared) {
       if (mapped.has(s)) continue;
@@ -167,6 +181,7 @@ export function mappingRows(src: MappingSetSource): SssomRow[] {
         subject_id: curie(s), subject_label: labelIn(g, s), predicate_id: 'skos:exactMatch',
         object_id: NO_TERM_FOUND, mapping_justification: MANUAL_CURATION,
         subject_type: entityTypeIn(g, s), object_source: curie(src.counterpart.iri),
+        object_source_version: src.counterpart.version,
       }));
     }
   }
@@ -215,7 +230,8 @@ export function renderSssomTsv(src: MappingSetSource): string {
   const curieMap = usedPrefixes(rows, [subjectSource], src.prefixes);
   const gaps = rows.filter(r => r.object_id === NO_TERM_FOUND).length;
   const description = `Mappings from the terms of ${meta.title} (${meta.iri}) to other vocabularies: one row for each SKOS mapping the ontology makes, generated from it.`
-    + (src.counterpart ? ` The ontology is aligned term by term to ${src.counterpart.iri}; each of its ${gaps} terms with no counterpart there is listed as mapped to sssom:NoTermFound.` : '');
+    + (src.counterpart ? ` The ontology is aligned term by term to ${src.counterpart.iri}; each of its ${gaps} terms with no counterpart there is listed as mapped to sssom:NoTermFound.` : '')
+    + (src.counterpart?.version ? ` The mappings into it, and the reasons a match is broad or close, are to it as it was at ${src.counterpart.version} (object_source_version)${src.counterpart.record ? `; what it declares there, and its axioms, are recorded at ${src.counterpart.record}` : ''}.` : '');
   const md: string[] = ['curie_map:'];
   for (const [p, ns] of Object.entries(curieMap)) md.push(`  ${p}: ${yamlString(ns)}`);
   md.push(

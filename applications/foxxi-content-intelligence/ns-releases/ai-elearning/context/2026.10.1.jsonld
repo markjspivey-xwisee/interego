@@ -1,0 +1,77 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "id": "@id",
+    "type": "@type",
+    "AiInteraction": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#AiInteraction"
+    },
+    "AiQuestion": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#AiQuestion"
+    },
+    "AiFeedback": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#AiFeedback"
+    },
+    "SignedInteractionRecord": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#SignedInteractionRecord"
+    },
+    "AttestedModelClaim": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#AttestedModelClaim"
+    },
+    "ContentAddressedSource": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#ContentAddressedSource"
+    },
+    "ConfidenceRangeProof": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#ConfidenceRangeProof"
+    },
+    "signedEnvelope": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#signedEnvelope"
+    },
+    "signer": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#signer",
+      "@type": "@id"
+    },
+    "recordedAt": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#recordedAt",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+    },
+    "attestedModel": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#attestedModel",
+      "@type": "@id"
+    },
+    "citedSource": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#citedSource",
+      "@type": "@id"
+    },
+    "confidenceProof": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#confidenceProof",
+      "@type": "@id"
+    },
+    "modelClaimSigner": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#modelClaimSigner",
+      "@type": "@id"
+    },
+    "model": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#model"
+    },
+    "provider": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#provider"
+    },
+    "sourceAtom": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#sourceAtom",
+      "@type": "@id"
+    },
+    "assertedConfidence": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#assertedConfidence"
+    },
+    "confidenceThreshold": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#confidenceThreshold"
+    },
+    "proofVerified": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#proofVerified"
+    },
+    "interventionEfficacy": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning#interventionEfficacy"
+    }
+  }
+}

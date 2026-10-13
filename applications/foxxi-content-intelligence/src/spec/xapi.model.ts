@@ -57,10 +57,11 @@
  */
 import { NS_ROOT, type OntologyModel } from '../spec-ontology.js';
 import { ISO8601_DURATION, RFC3339_UTC_TIMESTAMP } from './patterns.js';
-import { ADL_XAPI_ONTOLOGY, ADL_XAPI_NS } from './adl-xapi-ontology.js';
+import { ADL_XAPI_ONTOLOGY, ADL_XAPI_NS, ADL_XAPI_MODIFIED } from './adl-xapi-ontology.js';
+import { sourceAt } from '../ns/catalog.js';
 
 /** This document's version (YYYY.MM.PATCH; see ns/catalog.ts). */
-const XAPI_VERSION = '2026.10.0';
+const XAPI_VERSION = '2026.10.1';
 /** The JSON-LD context a statement is read through (xapi-context.ts), at the version of this
  *  ontology it reads a statement into. Data cites a context by URL, and what it means must not
  *  change under it, so each version has its own context, which never changes; /ns/xapi/context
@@ -104,6 +105,7 @@ export const XAPI_MODEL: OntologyModel = {
   title: 'xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model',
   description: 'An OWL 2 DL ontology and SHACL shapes for the Statement data model of xAPI 2.0, IEEE 9274.1.1-2023 (Content part, §5.2): Statement, Actor (Agent, Group, Account), Verb, Object (Activity, StatementRef, SubStatement), Result and Score, Context with its context activities, context agents and context groups, and Attachments, with the data types of §5.2.7. Each term is aligned to ADL\'s xAPI ontology by a SKOS mapping. A statement is read into the ontology through the JSON-LD 1.1 context published with it (/ns/xapi/context), and the shapes check that reading.',
   version: XAPI_VERSION,
+  priorVersion: '2026.10.0', priorCompatibility: 'backward', shapesPriorCompatibility: 'incompatible',
   created: '2026-06-19',
   spec: 'https://standards.ieee.org/ieee/9274.1.1/7321/',
   standards: [
@@ -118,7 +120,12 @@ export const XAPI_MODEL: OntologyModel = {
   seeAlso: [ADL_XAPI_ONTOLOGY, XAPI_CONTEXT_URL],
   // Every term here is accounted for against ADL's ontology in the mapping set: mapped, or listed
   // as having no counterpart there.
-  counterpart: { iri: ADL_XAPI_ONTOLOGY, namespace: ADL_XAPI_NS },
+  // ADL's ontology has no version IRI or versionInfo: its dcterms:modified stands for the version the
+  // mappings are to, and what it declares at that version is recorded in adl-xapi-ontology.ts.
+  counterpart: {
+    iri: ADL_XAPI_ONTOLOGY, namespace: ADL_XAPI_NS, version: ADL_XAPI_MODIFIED,
+    record: sourceAt(XAPI_VERSION, 'applications/foxxi-content-intelligence/src/spec/adl-xapi-ontology.ts'),
+  },
   notes: [
     'Alignment to ADL\'s xAPI ontology (prefix xapi:) is by SKOS mappings chosen to hold when a tool reads them as OWL (skos:exactMatch as equivalence, skos:broadMatch as subsumption): skos:exactMatch where both name the same construct of the Statement data model and ADL\'s axioms for it agree with this ontology\'s; skos:broadMatch where ADL\'s class is broader, because its ontology places parts of the construct under it by rdfs:subClassOf (xapi:Statement, xapi:Actor, xapi:Activity, xapi:ActivityDefinition, xapi:Result, xapi:Context, xapi:Attachments); and skos:closeMatch where ADL declares a different kind of OWL entity (member, moreInfo, usageType, version) or gives axioms no use here could satisfy (Object, name, duration, fileURL, extensions). Each broadMatch and closeMatch carries its reason as an annotation on the mapping axiom. ADL\'s ontology is not imported, and none of its axioms is asserted here.',
     'The alignment is also published as an SSSOM 1.0 mapping set (/ns/xapi/mappings), which lists the terms with no counterpart in ADL\'s ontology as mappings to sssom:NoTermFound.',
@@ -181,26 +188,26 @@ export const XAPI_MODEL: OntologyModel = {
       mappingNotes: { 'adl-xapi:Authority': 'ADL declares xapi:Authority an owl:ObjectProperty, as this is; its ontology also uses the IRI as a class (a subclass of xapi:Statement, and one of its disjoint classes).' } },
     { name: 'version', kind: 'datatype', label: 'version', comment: 'The xAPI version the Statement is associated with. Not recommended for a Learning Record Provider to set.', domain: 'Statement', range: 'Version', functional: true, source: `${S} §5.2.2`, closeMatch: ['adl-xapi:version'],
       mappingNotes: { 'adl-xapi:version': 'Not an exact match because of kind: ADL declares xapi:version an owl:AnnotationProperty, which no class axiom or shape can constrain; here it is a datatype property whose values are xAPI version numbers.' } },
-    { name: 'attachments', kind: 'object', label: 'attachments', comment: 'The headers of the Attachments to the Statement.', domain: ['Statement', 'SubStatement'], range: 'Attachment', source: `${S} §5.2.2` },
+    { name: 'attachments', kind: 'object', label: 'attachments', comment: 'The headers of the Attachments to the Statement. xAPI calls the attachments an ordered array; in the JSON-LD reading of a statement they are a set, because an RDF list would take the reading out of OWL 2 DL, and xAPI matches an attachment to its part of a request, and a signature to its statement, by SHA-2 hash and usage type rather than by position. A consumer that needs the order reads it from the JSON.', domain: ['Statement', 'SubStatement'], range: 'Attachment', source: `${S} §5.2.2` },
     // Actor / Agent / Group / Account
-    { name: 'objectType', kind: 'datatype', label: 'object type', comment: 'Which kind of object a node is. Required for a Group, a Statement Reference, a Sub-Statement, a context agent and a context group, and for an Agent used as a Statement\'s object.', domain: ['Agent', 'Group', 'Activity', 'StatementRef', 'SubStatement', 'ContextAgent', 'ContextGroup'], oneOf: ['Agent', 'Group', 'Activity', 'StatementRef', 'SubStatement', 'contextAgent', 'contextGroup'], functional: true, source: `${S} §5.2.2.1; §5.2.2.3; §5.2.2.5`, notation: 'objectType', exactMatch: ['adl-xapi:objectType'] },
+    { name: 'objectType', kind: 'datatype', label: 'object type', comment: 'Which kind of object a node is. Required for a Group, a Statement Reference, a Sub-Statement, a context agent and a context group, and for an Agent used as a Statement\'s object. The JSON-LD reading of a statement (its context) reads objectType as rdf:type, the class this ontology names for the token, so this property does not occur there; it names the member for mappings (ADL\'s xapi:objectType) and for data that keeps the token as a string.', domain: ['Agent', 'Group', 'Activity', 'StatementRef', 'SubStatement', 'ContextAgent', 'ContextGroup'], oneOf: ['Agent', 'Group', 'Activity', 'StatementRef', 'SubStatement', 'contextAgent', 'contextGroup'], functional: true, source: `${S} §5.2.2.1; §5.2.2.3; §5.2.2.5`, notation: 'objectType', exactMatch: ['adl-xapi:objectType'] },
     { name: 'name', kind: 'datatype', label: 'name', comment: 'A name: the full name of an Agent or Group, the unique id or login name of an Account, or the human-readable name of an Activity (a language map).', domain: ['Actor', 'Account', 'ActivityDefinition'], range: ['xsd:string', 'rdf:langString'], source: `${S} §5.2.2.1; §5.2.2.3`, closeMatch: ['adl-xapi:name'],
       mappingNotes: { 'adl-xapi:name': 'Not an exact match: ADL\'s ontology gives xapi:name two ranges, rdf:langString and xsd:string, whose value spaces are disjoint, so no value is in both; and two domains, one of them xapi:ActivityDefinition, so whatever has a name would be an Activity Definition. Read as an equivalence, every name here — of an Agent, a Group, an Account or an Activity — would be inconsistent.' } },
-    { name: 'mbox', kind: 'datatype', label: 'mbox', comment: 'A mailto IRI — "mailto:" followed by an email address uniquely assigned to the Agent or Group. An Inverse Functional Identifier.', domain: 'Actor', range: 'xsd:anyURI', functional: true, source: `${S} §5.2.2.1`, notation: 'mbox', exactMatch: ['adl-xapi:mbox'] },
-    { name: 'mbox_sha1sum', kind: 'datatype', label: 'mbox SHA-1 sum', comment: 'The hex-encoded SHA-1 hash of a mailto IRI (the value of an mbox). An Inverse Functional Identifier.', domain: 'Actor', range: 'SHA1Hex', functional: true, source: `${S} §5.2.2.1`, notation: 'mbox_sha1sum', exactMatch: ['adl-xapi:mbox_sha1sum'] },
-    { name: 'openid', kind: 'datatype', label: 'OpenID', comment: 'An OpenID URI that uniquely identifies the Agent or Group. An Inverse Functional Identifier.', domain: 'Actor', range: 'xsd:anyURI', functional: true, source: `${S} §5.2.2.1`, exactMatch: ['adl-xapi:openid'] },
+    { name: 'mbox', kind: 'datatype', label: 'mbox', comment: 'A mailto IRI — "mailto:" followed by an email address uniquely assigned to the Agent or Group. An Inverse Functional Identifier.', domain: 'Actor', range: 'xsd:anyURI', functional: true, source: `${S} §5.2.2.1`, notation: 'mbox', exactMatch: ['adl-xapi:mbox'], changeNote: '2026.10.0: its range is xsd:anyURI, since an mbox is a mailto IRI, and its domain is Actor, an Agent or a Group, as xAPI has it; they had been xsd:string and Agent.' },
+    { name: 'mbox_sha1sum', kind: 'datatype', label: 'mbox SHA-1 sum', comment: 'The hex-encoded SHA-1 hash of a mailto IRI (the value of an mbox). An Inverse Functional Identifier.', domain: 'Actor', range: 'SHA1Hex', functional: true, source: `${S} §5.2.2.1`, notation: 'mbox_sha1sum', exactMatch: ['adl-xapi:mbox_sha1sum'], changeNote: '2026.10.0: its domain is Actor, an Agent or a Group, as xAPI has it; it had been Agent.' },
+    { name: 'openid', kind: 'datatype', label: 'OpenID', comment: 'An OpenID URI that uniquely identifies the Agent or Group. An Inverse Functional Identifier.', domain: 'Actor', range: 'xsd:anyURI', functional: true, source: `${S} §5.2.2.1`, exactMatch: ['adl-xapi:openid'], changeNote: '2026.10.0: its range is xsd:anyURI, since an OpenID is a URI, and its domain is Actor, an Agent or a Group, as xAPI has it; they had been xsd:string and Agent.' },
     // An Inverse Functional Identifier, and an object property, so OWL 2 DL lets it say so: one
     // account node identifies one Actor, named or not (owl:hasKey, above, binds only named ones).
-    { name: 'account', kind: 'object', label: 'account', comment: 'A user account on an existing system. An Inverse Functional Identifier.', domain: 'Actor', range: 'Account', functional: true, inverseFunctional: true, source: `${S} §5.2.2.1` },
+    { name: 'account', kind: 'object', label: 'account', comment: 'A user account on an existing system. An Inverse Functional Identifier.', domain: 'Actor', range: 'Account', functional: true, inverseFunctional: true, source: `${S} §5.2.2.1`, changeNote: '2026.10.0: its domain is Actor, an Agent or a Group, as xAPI has it; it had been Agent.' },
     { name: 'member', kind: 'object', label: 'member', comment: 'An Agent that is a member of the Group (an unordered list).', domain: 'Group', range: 'Agent', source: `${S} §5.2.2.1`, closeMatch: ['adl-xapi:member'],
       mappingNotes: { 'adl-xapi:member': 'Not an exact match because of kind: ADL declares xapi:member an owl:DatatypeProperty, whose values are literals; a Group\'s members are Agents, individuals, so here it is an object property.' } },
-    { name: 'homePage', kind: 'datatype', label: 'home page', comment: 'The canonical home page of the system an Account is on (an IRL), after FOAF\'s accountServiceHomePage.', domain: 'Account', range: 'xsd:anyURI', functional: true, source: `${S} §5.2.2.1 (Account)`, closeMatch: ['http://xmlns.com/foaf/0.1/accountServiceHomepage'], exactMatch: ['adl-xapi:homePage'] },
+    { name: 'homePage', kind: 'datatype', label: 'home page', comment: 'The canonical home page of the system an Account is on (an IRL), after FOAF\'s accountServiceHomePage.', domain: 'Account', range: 'xsd:anyURI', functional: true, source: `${S} §5.2.2.1 (Account)`, closeMatch: ['http://xmlns.com/foaf/0.1/accountServiceHomepage'], exactMatch: ['adl-xapi:homePage'], changeNote: '2026.10.0: its range is xsd:anyURI, since a home page is an IRL; it had been xsd:string.' },
     // Verb
     { name: 'display', kind: 'datatype', label: 'display', comment: 'The human-readable representation, in one or more languages, of a Verb (it does not change the Verb\'s meaning) or the display name of an Attachment.', domain: ['Verb', 'Attachment'], range: 'rdf:langString', source: `${S} §5.2.2.2; §5.2.2.6`, exactMatch: ['adl-xapi:display'] },
     // Activity / Activity Definition
     { name: 'definition', kind: 'object', label: 'definition', comment: 'The metadata of an Activity.', domain: 'Activity', range: 'ActivityDefinition', functional: true, source: `${S} §5.2.2.3 (Object as Activity)` },
     { name: 'description', kind: 'datatype', label: 'description', comment: 'A description, as a language map, of an Activity, an interaction component or an Attachment.', domain: ['ActivityDefinition', 'InteractionComponent', 'Attachment'], range: 'rdf:langString', source: `${S} §5.2.2.3; §5.2.2.6`, exactMatch: ['adl-xapi:description'] },
-    { name: 'type', kind: 'object', label: 'type', comment: 'The type of the Activity, an IRI.', domain: 'ActivityDefinition', range: 'ActivityType', functional: true, source: `${S} §5.2.2.3 (Activity Definition)`, exactMatch: ['adl-xapi:type'] },
+    { name: 'type', kind: 'object', label: 'type', comment: 'The type of the Activity, an IRI.', domain: 'ActivityDefinition', range: 'ActivityType', functional: true, source: `${S} §5.2.2.3 (Activity Definition)`, exactMatch: ['adl-xapi:type'], changeNote: '2026.10.0: an object property, whose value is the activity type itself; before it, the unversioned publication made it a datatype property whose value was the type\'s IRI, an xsd:anyURI literal.' },
     { name: 'moreInfo', kind: 'datatype', label: 'more info', comment: 'An IRL resolving to a document with human-readable information about the Activity, which may include a way to launch it.', domain: 'ActivityDefinition', range: 'xsd:anyURI', functional: true, source: `${S} §5.2.2.3 (Activity Definition)`, closeMatch: ['adl-xapi:moreInfo'],
       mappingNotes: { 'adl-xapi:moreInfo': 'Not an exact match because of kind: ADL declares xapi:moreInfo an owl:ObjectProperty with the datatype range xsd:anyURI, which OWL 2 DL does not allow; the value is an IRL, a literal, so here it is a datatype property.' } },
     { name: 'interactionType', kind: 'datatype', label: 'interaction type', comment: 'The type of interaction, from the controlled vocabulary of interaction types.', domain: 'ActivityDefinition', oneOf: [...XAPI_INTERACTION_TYPES], functional: true, source: `${S} §5.2.2.3 (Interaction Activities)`, exactMatch: ['adl-xapi:interactionType'] },
@@ -217,7 +224,7 @@ export const XAPI_MODEL: OntologyModel = {
     { name: 'completion', kind: 'datatype', label: 'completion', comment: 'Whether the Activity was completed.', domain: 'Result', range: 'xsd:boolean', functional: true, source: `${S} §5.2.2.4`, exactMatch: ['adl-xapi:completion'] },
     { name: 'response', kind: 'datatype', label: 'response', comment: 'A response, formatted for the given Activity.', domain: 'Result', range: 'xsd:string', functional: true, source: `${S} §5.2.2.4`, exactMatch: ['adl-xapi:response'] },
     { name: 'duration', kind: 'datatype', label: 'duration', comment: 'The period of time over which the Statement occurred.', domain: 'Result', range: 'Duration', functional: true, source: `${S} §5.2.2.4; §5.2.7 (Duration)`, closeMatch: ['adl-xapi:duration'],
-      mappingNotes: { 'adl-xapi:duration': 'Not an exact match: ADL\'s ontology gives xapi:duration the range xsd:duration, which is outside the OWL 2 datatype map, whose values are not strings, and whose lexical space has no weeks (PnW), which xAPI allows; here a duration is the ISO 8601 string the standard prescribes. Read as an equivalence, every duration here would be inconsistent.' } },
+      mappingNotes: { 'adl-xapi:duration': 'Not an exact match: ADL\'s ontology gives xapi:duration the range xsd:duration, which is outside the OWL 2 datatype map, whose values are not strings, and whose lexical space has no weeks (PnW), which xAPI allows; here a duration is the ISO 8601 string the standard prescribes. Read as an equivalence, every duration here would be inconsistent.' }, changeNote: '2026.10.0: its range is Duration, ISO 8601\'s duration format as xAPI restricts it, a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map.' },
     { name: 'scaled', kind: 'datatype', label: 'scaled', comment: 'The score as modified by scaling or normalization, between -1 and 1 inclusive.', domain: 'Score', range: 'ScaledScore', functional: true, source: `${S} §5.2.2.4 (Score)` },
     { name: 'raw', kind: 'datatype', label: 'raw', comment: 'The score achieved, unmodified by scaling or normalization; between min and max (inclusive) when they are present.', domain: 'Score', range: 'Number', functional: true, source: `${S} §5.2.2.4 (Score)` },
     { name: 'min', kind: 'datatype', label: 'min', comment: 'The lowest possible score for the experience; less than max when it is present.', domain: 'Score', range: 'Number', functional: true, source: `${S} §5.2.2.4 (Score)` },
@@ -242,7 +249,8 @@ export const XAPI_MODEL: OntologyModel = {
     { name: 'relevantTypes', kind: 'object', label: 'relevant types', comment: 'A type IRI characterizing the relationship between the Statement and the Agent or Group. Without any, only a generic relationship is intended (not recommended).', domain: ['ContextAgent', 'ContextGroup'], range: 'skos:Concept', source: `${S} §5.2.2.5 (Context Agents; Context Groups)` },
     // Attachment
     { name: 'usageType', kind: 'object', label: 'usage type', comment: 'The usage of the Attachment, an IRI coined for that use.', domain: 'Attachment', range: 'AttachmentUsageType', functional: true, source: `${S} §5.2.2.6`, closeMatch: ['adl-xapi:usageType'],
-      mappingNotes: { 'adl-xapi:usageType': 'Not an exact match because of kind: ADL declares xapi:usageType an owl:DatatypeProperty with the class range xapi:AttachmentUsageType, which OWL 2 DL does not allow; a usage type is an IRI naming a concept, so here it is an object property.' } },
+      mappingNotes: { 'adl-xapi:usageType': 'Not an exact match because of kind: ADL declares xapi:usageType an owl:DatatypeProperty with the class range xapi:AttachmentUsageType, which OWL 2 DL does not allow; a usage type is an IRI naming a concept, so here it is an object property.' },
+      changeNote: '2026.10.0: an object property, whose value is the usage type itself; before it, the unversioned publication made it a datatype property whose value was the usage type\'s IRI, an xsd:anyURI literal.' },
     { name: 'contentType', kind: 'datatype', label: 'content type', comment: 'The Internet Media Type of the Attachment.', domain: 'Attachment', range: 'MediaType', functional: true, source: `${S} §5.2.2.6`, exactMatch: ['adl-xapi:contentType'] },
     { name: 'length', kind: 'datatype', label: 'length', comment: 'The length of the Attachment data, in octets.', domain: 'Attachment', range: 'xsd:nonNegativeInteger', functional: true, source: `${S} §5.2.2.6`, exactMatch: ['adl-xapi:length'] },
     { name: 'sha2', kind: 'datatype', label: 'SHA-2', comment: 'The SHA-2 hash of the Attachment data; required even when fileUrl is given.', domain: 'Attachment', range: 'xsd:string', functional: true, source: `${S} §5.2.2.6`, exactMatch: ['adl-xapi:sha2'] },
@@ -250,22 +258,22 @@ export const XAPI_MODEL: OntologyModel = {
       mappingNotes: { 'adl-xapi:fileURL': 'Not an exact match: ADL\'s ontology gives xapi:fileURL the range xsd:string, and here a file URL is an xsd:anyURI (an IRL); OWL 2 keeps the two value spaces apart, so read as an equivalence every file URL here would be inconsistent.' } },
     // Extensions
     { name: 'extensions', kind: 'object', label: 'extensions', comment: 'A map of further properties keyed by IRI, on an Activity Definition, a Result or a Context.', domain: ['ActivityDefinition', 'Result', 'Context'], range: 'Extensions', functional: true, source: `${S} §5.2.7 (Extensions)`, closeMatch: ['adl-xapi:extensions'],
-      mappingNotes: { 'adl-xapi:extensions': 'Not an exact match: ADL\'s ontology gives xapi:extensions two domains, xapi:ActivityDefinition and the union of its extension concepts, so whatever has extensions would be an Activity Definition — and so an Activity and an Object, which a Result or a Context cannot be there; and its extensions point at extension concepts, where here they point at the map that carries the values. Read as an equivalence, every Result or Context with extensions would be inconsistent.' } },
+      mappingNotes: { 'adl-xapi:extensions': 'Not an exact match: ADL\'s ontology gives xapi:extensions two domains, xapi:ActivityDefinition and the union of its extension concepts, so whatever has extensions would be an Activity Definition — and so an Activity and an Object, which a Result or a Context cannot be there; and its extensions point at extension concepts, where here they point at the map that carries the values. Read as an equivalence, every Result or Context with extensions would be inconsistent.' }, changeNote: '2026.10.0: its range is the class Extensions, a node whose properties are the extension IRIs; it had been rdf:JSON, a datatype, which an object property cannot have in OWL 2 DL.' },
   ],
   vocabularies: [
     {
-      name: 'InteractionType', label: 'Interaction types', comment: 'The controlled vocabulary of interaction types for interaction Activities. Each value fixes the format of the correct responses pattern and the learner\'s response.',
+      name: 'InteractionType', label: 'Interaction types', comment: 'The controlled vocabulary of interaction types for interaction Activities. Each value fixes the format of the correct responses pattern and the learner\'s response. xAPI takes the ten from the SCORM 2004 run-time data model (cmi.interactions.n.type), and each is an exact match of the one there.',
       members: [
-        { name: 'true-false', label: 'true or false', comment: 'An interaction with two possible responses: true or false.' },
-        { name: 'choice', label: 'choice', comment: 'An interaction with a number of possible choices from which the learner selects one or several.' },
-        { name: 'fill-in', label: 'fill in', comment: 'An interaction requiring a short response of one or more strings of characters (normally 250 characters or fewer).' },
-        { name: 'long-fill-in', label: 'long fill in', comment: 'An interaction requiring a long response (normally more than 250 characters).' },
-        { name: 'matching', label: 'matching', comment: 'An interaction in which the learner matches items in a source set to items in a target set.' },
-        { name: 'performance', label: 'performance', comment: 'An interaction requiring the learner to perform a task of several steps.' },
-        { name: 'sequencing', label: 'sequencing', comment: 'An interaction in which the learner orders items in a set.' },
-        { name: 'likert', label: 'Likert', comment: 'An interaction in which the learner selects from a discrete set of choices on a scale.' },
-        { name: 'numeric', label: 'numeric', comment: 'An interaction requiring a numeric response.' },
-        { name: 'other', label: 'other', comment: 'An interaction that fits none of the other types.' },
+        { name: 'true-false', label: 'true or false', comment: 'An interaction with two possible responses: true or false.', exactMatch: ['foxxi-scorm-rte:InteractionType-true-false'] },
+        { name: 'choice', label: 'choice', comment: 'An interaction with a number of possible choices from which the learner selects one or several.', exactMatch: ['foxxi-scorm-rte:InteractionType-choice'] },
+        { name: 'fill-in', label: 'fill in', comment: 'An interaction requiring a short response of one or more strings of characters (normally 250 characters or fewer).', exactMatch: ['foxxi-scorm-rte:InteractionType-fill-in'] },
+        { name: 'long-fill-in', label: 'long fill in', comment: 'An interaction requiring a long response (normally more than 250 characters).', exactMatch: ['foxxi-scorm-rte:InteractionType-long-fill-in'] },
+        { name: 'matching', label: 'matching', comment: 'An interaction in which the learner matches items in a source set to items in a target set.', exactMatch: ['foxxi-scorm-rte:InteractionType-matching'] },
+        { name: 'performance', label: 'performance', comment: 'An interaction requiring the learner to perform a task of several steps.', exactMatch: ['foxxi-scorm-rte:InteractionType-performance'] },
+        { name: 'sequencing', label: 'sequencing', comment: 'An interaction in which the learner orders items in a set.', exactMatch: ['foxxi-scorm-rte:InteractionType-sequencing'] },
+        { name: 'likert', label: 'Likert', comment: 'An interaction in which the learner selects from a discrete set of choices on a scale.', exactMatch: ['foxxi-scorm-rte:InteractionType-likert'] },
+        { name: 'numeric', label: 'numeric', comment: 'An interaction requiring a numeric response.', exactMatch: ['foxxi-scorm-rte:InteractionType-numeric'] },
+        { name: 'other', label: 'other', comment: 'An interaction that fits none of the other types.', exactMatch: ['foxxi-scorm-rte:InteractionType-other'] },
       ],
     },
   ],
@@ -461,7 +469,9 @@ export const XAPI_MODEL: OntologyModel = {
       ],
     },
     {
-      name: 'ContextAgentShape', targetClass: 'ContextAgent', label: 'Context agent conformance',
+      // Selected by class, and as a value of contextAgents whatever its type: a context agent without
+      // its objectType has no type in the reading, and a shape that targeted the class alone passed it.
+      name: 'ContextAgentShape', targetClass: 'ContextAgent', targetObjectsOf: ['contextAgents'], jsonKeys: ['contextAgents'], jsonTypes: ['contextAgent'], nodeClass: 'ContextAgent', label: 'Context agent conformance',
       comment: `${S} §5.2.2.5: a context agent has objectType contextAgent, exactly one Agent, and relevant types that are IRIs.`,
       constraints: [
         { path: 'objectType', rdfPath: null, minCount: 1, maxCount: 1, in: ['contextAgent'], comment: 'contextAgent (§5.2.2.5); read as rdf:type' },
@@ -470,7 +480,7 @@ export const XAPI_MODEL: OntologyModel = {
       ],
     },
     {
-      name: 'ContextGroupShape', targetClass: 'ContextGroup', label: 'Context group conformance',
+      name: 'ContextGroupShape', targetClass: 'ContextGroup', targetObjectsOf: ['contextGroups'], jsonKeys: ['contextGroups'], jsonTypes: ['contextGroup'], nodeClass: 'ContextGroup', label: 'Context group conformance',
       comment: `${S} §5.2.2.5: a context group has objectType contextGroup, exactly one Group, and relevant types that are IRIs.`,
       constraints: [
         { path: 'objectType', rdfPath: null, minCount: 1, maxCount: 1, in: ['contextGroup'], comment: 'contextGroup (§5.2.2.5); read as rdf:type' },

@@ -20,7 +20,7 @@
  */
 import { type OntologyModel, type OntReference, shapesIri, type ValidationResult } from '../spec-ontology.js';
 import { validateInstanceWith } from './index.js';
-import { semDocMeta, P2997 } from '../ler-tla-vocab.js';
+import { semDocMeta, P2997, LER_SHAPES_VERSION } from '../ler-tla-vocab.js';
 
 /** What a JSON number becomes in RDF (JSON-LD 1.1 §8.6): an integer or a double; or a decimal. */
 const NUMBER = ['xsd:integer', 'xsd:decimal', 'xsd:double'];
@@ -39,7 +39,8 @@ export const LER_MODEL: OntologyModel = {
   module: 'ieee-ler',
   title: 'IEEE LER — Enterprise Learner Record and competency assertion shapes',
   description: 'SHACL shapes for the IEEE P2997 Enterprise Learner Record as Foxxi assembles it, its competency assertions and their evidence — the machine-checkable layer over the /ns/ieee-ler vocabulary. A record is read through the W3C VC 2.0 context and the record context published with the vocabulary; the shapes constrain that reading, and the Foxxi validator checks the same requirements on the JSON.',
-  version: '2026.10.0',
+  version: LER_SHAPES_VERSION,
+  priorVersion: '2026.10.0', priorCompatibility: 'incompatible',
   // The vocabulary these shapes constrain is the IEEE LER ontology at /ns/ieee-ler, a document of its
   // own: the shapes graph imports it at its version.
   ontologyVersion: semDocMeta('ler').version,
@@ -107,9 +108,12 @@ export const LER_MODEL: OntologyModel = {
       ],
     },
     {
-      name: 'EvidenceShape', targetClass: 'Evidence',
+      // ★ BY THE PROPERTY THAT REACHES IT. A record cites its evidence by IRI and never types it, so
+      // the class alone selected nothing in a record's reading; ler:supportedByEvidence has the range
+      // ler:Evidence, so by RDFS (rdfs3) what it reaches is evidence, typed or not.
+      name: 'EvidenceShape', targetClass: 'Evidence', targetObjectsOf: ['ler:supportedByEvidence'], jsonKeys: ['evidence'],
       label: 'Evidence shape',
-      comment: 'An evidence node is identified by an IRI locating the raw record.',
+      comment: 'Evidence — anything an assertion or record entry cites in its support (ler:supportedByEvidence), or that is typed ler:Evidence — is identified by an IRI locating the raw record.',
       constraints: [
         { path: 'id', identifies: true, minCount: 1, nodeKind: 'IRI', comment: 'the evidence location' },
       ],
@@ -150,7 +154,8 @@ export const OB3_MODEL: OntologyModel = {
   module: 'ob3',
   title: 'Open Badges 3.0 — credential SHACL profile',
   description: 'SHACL shapes for a 1EdTech Open Badges 3.0 credential — a W3C Verifiable Credential (VC Data Model 2.0) whose subject carries an achievement — the checks Foxxi applies to the credentials it issues and accepts. A profile of Open Badges 3.0: the shapes target 1EdTech\'s own classes and constrain the predicates the OB 3.0 and VC 2.0 JSON-LD contexts map a credential to, and each requirement is OB 3.0\'s (its data model, Appendix B).',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward',
   spec: 'https://www.imsglobal.org/spec/ob/v3p0/',
   standards: [
     { title: '1EdTech Open Badges 3.0 (JSON-LD context 3.0.3)', url: 'https://www.imsglobal.org/spec/ob/v3p0/' },
@@ -209,7 +214,8 @@ export const OB3_MODEL: OntologyModel = {
         // At least one, and no maximum: in RDF the subject is the learner, whom every credential
         // about them names, so a graph holding two of their badges — a CLR — gives one node two
         // achievements. OB 3.0's [1] is one achievement object per credential, as its JSON Schema has it.
-        { path: 'achievement', rdfPath: 'ob:achievement', minCount: 1, comment: 'the achievement being awarded (achievement [1])' },
+        { path: 'achievement', rdfPath: 'ob:achievement', minCount: 1, comment: 'the achievement being awarded (achievement [1]); no maximum in RDF, where the subject is the learner and a graph holding two of their credentials (a CLR) gives that one node two achievements' },
+        { path: 'achievement', rdfPath: null, maxCount: 1, comment: 'one achievement object in each credential (achievement [1]), which only the JSON keeps apart' },
         { path: 'achievement.type', rdfPath: ['ob:achievement', 'rdf:type'], hasValue: 'Achievement', hasIri: 'ob:Achievement', comment: 'an Achievement (its type MUST include Achievement)' },
       ],
       atLeastOneOf: IDENTIFIED('ob:identifier'),
@@ -256,7 +262,8 @@ export const CLR_MODEL: OntologyModel = {
   module: 'clr',
   title: 'Comprehensive Learner Record 2.0 — credential SHACL profile',
   description: 'SHACL shapes for a 1EdTech Comprehensive Learner Record 2.0 — a W3C Verifiable Credential (VC Data Model 2.0) whose subject bundles achievement credentials. A profile of CLR 2.0: the shapes target 1EdTech\'s ClrCredential and ClrSubject classes and constrain the predicates the CLR 2.0, OB 3.0 and VC 2.0 JSON-LD contexts map a credential to, and each requirement is CLR 2.0\'s (its data model, Appendix B). The credentials a CLR bundles are Open Badges 3.0 credentials, which the Open Badges 3.0 profile checks. Registered as data — a second credential format needs no new engine.',
-  version: '2026.10.0',
+  version: '2026.10.1',
+  priorVersion: '2026.10.0', priorCompatibility: 'backward',
   spec: 'https://www.imsglobal.org/spec/clr/v2p0/',
   standards: [
     { title: '1EdTech Comprehensive Learner Record 2.0 (JSON-LD context 2.0.1)', url: 'https://www.imsglobal.org/spec/clr/v2p0/' },

@@ -58,7 +58,7 @@ Each is an independent formalization; see
 | `cmi5` | cmi5: its xAPI profile and course structure |
 | `ob3`, `clr` | Open Badges 3.0 and CLR 2.0 credentials |
 | `ieee-ler`, `adl-tla` | IEEE learning and employment records (P2997, still a draft; 1484.20.3; 1484.2); ADL TLA competencies and proficiency |
-| `soc2`, `eu-ai-act`, `nist-rmf` | SOC 2's logical and physical access criteria (CC6.1–CC6.8) and the evidence events that support them; EU AI Act Articles 9–15 and 50; NIST AI RMF 1.0 |
+| `soc2`, `eu-ai-act`, `nist-rmf` | SOC 2's Common Criteria for logical and physical access (CC6.1–CC6.8), incident response (CC7.3–CC7.5) and change management (CC8.1), and the evidence events that support them; EU AI Act Articles 9–15 and 50; NIST AI RMF 1.0 |
 | `ai-elearning` | An original xAPI 2.0 profile, not a published standard |
 | `foxxi` | Foxxi's own vocabulary |
 
@@ -67,14 +67,39 @@ Each is an independent formalization; see
 - **Beside each ontology:** `/shapes` (its SHACL shapes), `/mappings` (an
   SSSOM mapping set, for modules that align to another vocabulary, such as
   `xapi` to ADL's xAPI ontology), `/term/<name>`, and `POST /validate`,
-  which checks a JSON instance against the shapes. `xapi/context` and
-  `ieee-ler/context` are the JSON-LD contexts that statements and learner
-  records are read through.
+  which checks a JSON instance against the shapes.
+- **JSON reads as RDF.** `/context` is the JSON-LD context a module's JSON
+  instances are read through. xAPI's and the learner record's are written
+  for them; the other eight are generated from their models. The shapes
+  select what a reading produces — a node by its class, and by the domain
+  and range of the properties it has or is reached by, since JSON leaves
+  most nodes untyped — so a SHACL processor checking an instance's reading
+  and `POST /validate` checking its JSON reach the same verdict, as
+  [`tests/each-document-reads-the-same-in-json-and-rdf.test.ts`](tests/each-document-reads-the-same-in-json-and-rdf.test.ts)
+  holds them to (and a CI job holds pySHACL to).
 - **Versions.** Every ontology, shapes graph, mapping set and context has
   a version IRI, `<iri>/<YYYY.MM.PATCH>`. Imports and data cite those
   version IRIs, and a released version never changes. The released files
   are kept in [`ns-releases/`](ns-releases/), which explains how to
   release a new version.
+- **2026.10.0 was the first version; 2026.10.1 is current.** What was
+  published before 2026.10.0 had no version, and 2026.10.0 changed some
+  of its terms in place, ten properties' kinds among them; each term
+  whose kind, domain, range or datatype it replaced says in its
+  `skos:changeNote` what that publication had. 2026.10.1
+  keeps every logical axiom 2026.10.0 gave its terms. It adds terms,
+  typings, definitions and mappings, makes one mapping more precise,
+  deprecates one term and stops deprecating one SCORM value, so its
+  ontologies are `owl:backwardCompatibleWith` 2026.10.0, while most of
+  its shapes graphs check more than 2026.10.0's did
+  (`owl:incompatibleWith`). The rules a new version keeps are in
+  [`ns-releases/`](ns-releases/README.md).
+- **Where the IRIs live.** The namespaces are on the bridge's own host,
+  `foxxi-bridge.interego.xwisee.com`, with no w3id.org or PURL redirect in
+  front of them yet, so they last as long as that host does. (Each
+  document's header names the host it was served from before.) A redirect
+  would let the host change without the IRIs changing; whether to register
+  one is the project owner's decision.
 
 ## Composition with existing substrate primitives
 

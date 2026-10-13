@@ -130,11 +130,14 @@ describe('every document with mappings publishes them as an SSSOM 1.0 mapping se
   it('exactly the documents that map terms publish a set, and their headers point at it', () => {
     expect(mappingSetModules().sort()).toEqual([...withMappings].sort());
     expect(withMappings.sort()).toEqual(['adl-tla', 'cmi5', 'eu-ai-act', 'foxxi', 'ieee-ler', 'nist-rmf', 'soc2', 'xapi']);
+    // ★ REVISED: a document cites its mapping set at its own version — the set released with it — so a
+    // released version's link never moves to a later set.
     for (const m of Object.keys(TURTLE)) {
       const seeAlso = quadsOf(m).filter(t => t.subject.value === DOC_IRI(m) && t.predicate.value === `${RDFS}seeAlso`).map(t => t.object.value);
-      if (withMappings.includes(m)) expect(seeAlso, m).toContain(mappingSetIri(DOC_IRI(m)));
+      const version = quadsOf(m).find(t => t.subject.value === DOC_IRI(m) && t.predicate.value === 'http://www.w3.org/2002/07/owl#versionInfo')?.object.value;
+      if (withMappings.includes(m)) expect(seeAlso, m).toContain(`${mappingSetIri(DOC_IRI(m))}/${version}`);
       else {
-        expect(seeAlso, m).not.toContain(mappingSetIri(DOC_IRI(m)));
+        expect(seeAlso.filter(s => s.startsWith(mappingSetIri(DOC_IRI(m)))), m).toEqual([]);
         expect(renderMappingSet(m), m).toBeNull();
       }
     }
@@ -194,7 +197,10 @@ describe('every document with mappings publishes them as an SSSOM 1.0 mapping se
     const curieMap = meta.curie_map as Record<string, string>;
     const q = quadsOf('xapi');
     const ns = `${NS_ROOT}xapi#`;
-    const declared = new Set(q.filter(t => t.predicate.value === RDF_TYPE && t.subject.value.startsWith(ns)
+    // ★ REVISED: a deprecated term (type and usageType, kept as the datatype properties they were
+    // published as) is not listed; its replacement is mapped in its place.
+    const deprecated = new Set(q.filter(t => t.predicate.value === `${OWL}deprecated` && t.object.value === 'true').map(t => t.subject.value));
+    const declared = new Set(q.filter(t => t.predicate.value === RDF_TYPE && t.subject.value.startsWith(ns) && !deprecated.has(t.subject.value)
       && [`${OWL}Class`, `${OWL}ObjectProperty`, `${OWL}DatatypeProperty`, `${RDFS}Datatype`, `${SKOS}Concept`].includes(t.object.value))
       .map(t => t.subject.value));
     const mappedToAdl = new Set(mappingTriples('xapi').filter(([, , o]) => o.startsWith(ADL_XAPI_NS)).map(([s]) => s));
@@ -221,6 +227,46 @@ describe('every document with mappings publishes them as an SSSOM 1.0 mapping se
     expect(soc2.find(r => r.object_id === 'soc2:CC6.1')).toMatchObject({ object_type: 'owl named individual', subject_type: 'skos concept' });
     const tla = readSet(renderMappingSet('adl-tla')!).rows;
     expect(tla.find(r => r.object_id === 'foxxi_ieee_ler:CompetencyAssertion')).toMatchObject({ object_label: 'Competency Assertion', object_type: 'owl class' });
+  });
+
+  // ★ A review found object_source given only for the rows into ADL's ontology: the rows into Foxxi's
+  // own documents (xAPI to SCORM RTE among them), and the seven other sets, said nothing of where a
+  // target is defined, though that was on record.
+  it('a target\'s source is the document that defines it, at its version, where that is on record, or is left empty', () => {
+    const IE = 'https://markjspivey-xwisee.github.io/interego/ns/';
+    const versionOf = (doc: string): string => {
+      const module = Object.keys(TURTLE).find(m => DOC_IRI(m) === doc)!;
+      return quadsOf(module).find(t => t.subject.value === doc && t.predicate.value === `${OWL}versionInfo`)!.object.value;
+    };
+    const expected = (o: string): { source?: string; version?: string } => {
+      if (o === 'https://w3id.org/sssom/NoTermFound' || o.startsWith(ADL_XAPI_NS)) return { source: ADL_XAPI_ONTOLOGY, version: XAPI_MODEL.counterpart!.version };
+      const doc = o.slice(0, o.indexOf('#'));
+      if (o.startsWith(NS_ROOT)) return { source: doc, version: `${doc}/${versionOf(doc)}` };
+      if (o.startsWith(IE)) return { source: doc };
+      if (o.startsWith('https://w3id.org/xapi/cmi5/')) return { source: 'https://github.com/AICC/CMI-5_Spec_Current' };
+      if (o.startsWith('https://purl.imsglobal.org/spec/vc/')) return { source: doc };
+      // ADL's verbs, CaSS, CTDL-ASN and FOAF: no Foxxi record names the document that defines them.
+      return {};
+    };
+    const sources = new Set<string>();
+    let given = 0;
+    for (const module of mappingSetModules()) {
+      const { meta, rows } = readSet(renderMappingSet(module)!);
+      const curieMap = meta.curie_map as Record<string, string>;
+      for (const r of rows) {
+        const o = expand(r.object_id!, curieMap);
+        const want = expected(o);
+        const got = { ...(r.object_source ? { source: expand(r.object_source, curieMap) } : {}), ...(r.object_source_version ? { version: r.object_source_version } : {}) };
+        expect(got, `${module}: ${r.subject_id} ${r.predicate_id} ${r.object_id}`).toEqual(want);
+        if (want.source) { given++; sources.add(want.source); }
+      }
+    }
+    expect(given).toBeGreaterThan(150);
+    // The substrate's sources are the ontologies docs/ns declares.
+    for (const s of [...sources].filter(x => x.startsWith(IE))) {
+      const q = turtleQuads(readFileSync(new URL(`../../../docs/ns/${s.slice(IE.length)}.ttl`, import.meta.url), 'utf8'));
+      expect(q.some(t => t.subject.value === s && t.predicate.value === RDF_TYPE && t.object.value === `${OWL}Ontology`), s).toBe(true);
+    }
   });
 });
 

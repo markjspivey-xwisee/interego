@@ -1,0 +1,983 @@
+# cmi5 (Quartz) — xAPI profile and course structure — version 2026.10.1
+# https://foxxi-bridge.interego.xwisee.com/ns/cmi5  (this version: https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.1)
+# Generated from the Foxxi single-source model; served with content negotiation as Turtle, RDF/XML, N-Triples, JSON-LD and HTML.
+
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix bibo: <http://purl.org/ontology/bibo/> .
+@prefix foxxi-xapi: <https://foxxi-bridge.interego.xwisee.com/ns/xapi#> .
+@prefix foxxi-cmi5: <https://foxxi-bridge.interego.xwisee.com/ns/cmi5#> .
+
+<https://foxxi-bridge.interego.xwisee.com/ns/cmi5> a owl:Ontology ;
+    dct:title "cmi5 (Quartz) — xAPI profile and course structure"@en ;
+    dct:description "An OWL 2 DL ontology and SHACL shapes for cmi5, the xAPI profile for content launched by a learning management system (Quartz edition): the course structure of §13 (Course, Block, Objective, Assignable Unit), the launch session, the LMS.LaunchData state document (§10) and the learner-preferences document (§11), and the profile's xAPI surface — its 9 verbs, category activities, context and result extensions and activity types — as SKOS concepts mapped to the IRIs cmi5 defines. Builds on, and imports, the Foxxi xAPI 2.0 ontology."@en ;
+    rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL, the AICC or IEEE. Where this document and the published standard differ, the standard governs."@en ,
+        "cmi5 terms the specification itself names by IRI (its verbs, categories, extensions and activity types) are not re-minted as classes or properties: each is a SKOS concept here with a skos:exactMatch to the cmi5 IRI, which is the identifier a statement carries."@en ,
+        "An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at https://foxxi-bridge.interego.xwisee.com/ns/cmi5/context/2026.10.1, which is generated from this document. The shapes at https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.1 constrain that reading, and the Foxxi validator (POST https://foxxi-bridge.interego.xwisee.com/ns/cmi5/validate) checks the JSON against the same shapes."@en ,
+        "The shapes select a node by its class (sh:targetClass) and, as the RDFS domain and range rules make a node an instance of a class, by a property it has (sh:targetSubjectsOf) or by the property that reaches it (sh:targetObjectsOf): a node is checked whether or not it declares its type. The Foxxi validator selects the same nodes of the JSON, and every result cites its shape."@en ,
+        "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/cmi5#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
+    owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.1> ;
+    owl:versionInfo "2026.10.1" ;
+    owl:priorVersion <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.0> ;
+    owl:backwardCompatibleWith <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.0> ;
+    skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
+    dct:creator "Mark Spivey" ;
+    dct:contributor "Claude (Anthropic)" ;
+    dct:publisher "Foxxi Mediums Inc." ;
+    dct:license <https://opensource.org/licenses/MIT> ;
+    dct:rights "© 2026 Mark Spivey (Foxxi Mediums Inc.). Released under the MIT License."@en ;
+    dct:created "2026-06-19"^^xsd:date ;
+    dct:modified "2026-10-13"^^xsd:date ;
+    dct:issued "2026-10-13"^^xsd:date ;
+    dct:language <http://id.loc.gov/vocabulary/iso639-1/en> ;
+    bibo:status <http://purl.org/ontology/bibo/status/published> ;
+    dct:bibliographicCitation "Spivey, M. (2026). cmi5 (Quartz) — xAPI profile and course structure (Version 2026.10.1) [Ontology]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.1" ;
+    vann:preferredNamespacePrefix "foxxi-cmi5" ;
+    vann:preferredNamespaceUri "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#" ;
+    dct:source <https://github.com/AICC/CMI-5_Spec_Current> , <https://standards.ieee.org/ieee/9274.3.1/11183/> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec/cmi5.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.1/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.1> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/mappings/2026.10.1> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/context/2026.10.1> ;
+    owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.1> .
+
+foxxi-cmi5:MasteryScore a rdfs:Datatype ;
+    rdfs:label "Mastery score"@en ;
+    rdfs:comment "A scaled decimal between 0 and 1 inclusive (with up to 4 decimal places). Admits xsd:double as well, for the JSON launch data."@en ;
+    skos:definition "A scaled decimal between 0 and 1 inclusive (with up to 4 decimal places). Admits xsd:double as well, for the JSON launch data."@en ;
+    dct:source "cmi5 Quartz §13.1.4; §10.2.4" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:unionOf (
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:decimal ;
+                owl:withRestrictions ( [ xsd:minInclusive 0 ] [ xsd:maxInclusive 1 ] )
+            ]
+            [
+                a rdfs:Datatype ;
+                owl:onDatatype xsd:double ;
+                owl:withRestrictions ( [ xsd:minInclusive "0.0E0"^^xsd:double ] [ xsd:maxInclusive "1.0E0"^^xsd:double ] )
+            ]
+        )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:LanguagePreferenceList a rdfs:Datatype ;
+    rdfs:label "Language preference list"@en ;
+    rdfs:comment "A comma-separated list of RFC 5646 language tags, in order of preference."@en ;
+    skos:definition "A comma-separated list of RFC 5646 language tags, in order of preference."@en ;
+    dct:source "cmi5 Quartz §11.1" ;
+    owl:equivalentClass [
+        a rdfs:Datatype ;
+        owl:onDatatype xsd:string ;
+        owl:withRestrictions ( [ xsd:pattern "[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*(,[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*)*" ] )
+    ] ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:CourseStructure a owl:Class ;
+    rdfs:label "Course Structure"@en ;
+    rdfs:comment "The root of a cmi5 course structure document (cmi5.xml): the one Course, the objectives it declares, and the tree of Blocks and Assignable Units in sequence."@en ;
+    skos:definition "The root of a cmi5 course structure document (cmi5.xml): the one Course, the objectives it declares, and the tree of Blocks and Assignable Units in sequence."@en ;
+    dct:source "cmi5 Quartz §13.1; §14 (CourseStructure.xsd)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Course a owl:Class ;
+    rdfs:label "Course"@en ;
+    rdfs:comment "The course as its publisher identifies it, by a globally unique IRI (the publisher ID), with a title and a description. In statements it appears through its publisher ID as a grouping activity, and the LMS represents it by a generated activity of type course."@en ;
+    skos:definition "The course as its publisher identifies it, by a globally unique IRI (the publisher ID), with a title and a description. In statements it appears through its publisher ID as a grouping activity, and the LMS represents it by a generated activity of type course."@en ;
+    rdfs:subClassOf foxxi-xapi:Activity ;
+    dct:source "cmi5 Quartz §13.1.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Block a owl:Class ;
+    rdfs:label "Block"@en ;
+    rdfs:comment "A grouping of Assignable Units and nested Blocks, identified by an IRI unique within the course structure, with a title, a description and optional objective references. A block is satisfied when all of its members are."@en ;
+    skos:definition "A grouping of Assignable Units and nested Blocks, identified by an IRI unique within the course structure, with a title, a description and optional objective references. A block is satisfied when all of its members are."@en ;
+    rdfs:subClassOf foxxi-xapi:Activity ;
+    dct:source "cmi5 Quartz §13.1.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Objective a owl:Class ;
+    rdfs:label "Objective"@en ;
+    rdfs:comment "A learning objective, identified by an IRI unique within the course structure, with a title and a description. Blocks and Assignable Units reference objectives."@en ;
+    skos:definition "A learning objective, identified by an IRI unique within the course structure, with a title and a description. Blocks and Assignable Units reference objectives."@en ;
+    dct:source "cmi5 Quartz §13.1.3" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:AssignableUnit a owl:Class ;
+    rdfs:label "Assignable Unit"@en ;
+    rdfs:comment "The smallest launchable unit of content that the LMS tracks: identified by an IRI, with a title, a description and a launch URL, and optionally a launch method, a moveOn criterion, a mastery score, an activity type, launch parameters, an entitlement key and objective references."@en ;
+    skos:definition "The smallest launchable unit of content that the LMS tracks: identified by an IRI, with a title, a description and a launch URL, and optionally a launch method, a moveOn criterion, a mastery score, an activity type, launch parameters, an entitlement key and objective references."@en ;
+    rdfs:subClassOf foxxi-xapi:Activity ;
+    dct:source "cmi5 Quartz §13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Session a owl:Class ;
+    rdfs:label "Session"@en ;
+    rdfs:comment "One launch of one Assignable Unit for one learner, from the LMS's launched statement to the terminated (or abandoned) statement, identified by the session ID the LMS generates and bound to the course registration."@en ;
+    skos:definition "One launch of one Assignable Unit for one learner, from the LMS's launched statement to the terminated (or abandoned) statement, identified by the session ID the LMS generates and bound to the course registration."@en ;
+    dct:source "cmi5 Quartz §3 (Definitions: session); §9.6.3.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:LaunchData a owl:Class ;
+    rdfs:label "Launch Data"@en ;
+    rdfs:comment "The LMS.LaunchData state document the LMS writes before launching an Assignable Unit: the context template, launch mode, moveOn, and when defined the mastery score, launch parameters, return URL and entitlement key."@en ;
+    skos:definition "The LMS.LaunchData state document the LMS writes before launching an Assignable Unit: the context template, launch mode, moveOn, and when defined the mastery score, launch parameters, return URL and entitlement key."@en ;
+    dct:source "cmi5 Quartz §10" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:EntitlementKey a owl:Class ;
+    rdfs:label "Entitlement Key"@en ;
+    rdfs:comment "The entitlement data in the launch data: the key from the course structure, and optionally an alternate key agreed between the LMS and the content provider."@en ;
+    skos:definition "The entitlement data in the launch data: the key from the course structure, and optionally an alternate key agreed between the LMS and the content provider."@en ;
+    dct:source "cmi5 Quartz §10.2.7" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:LearnerPreferences a owl:Class ;
+    rdfs:label "Learner Preferences"@en ;
+    rdfs:comment "The cmi5LearnerPreferences agent-profile document: the learner's ordered language preferences and audio preference."@en ;
+    skos:definition "The cmi5LearnerPreferences agent-profile document: the learner's ordered language preferences and audio preference."@en ;
+    dct:source "cmi5 Quartz §11" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Objectives a owl:Class ;
+    rdfs:label "obsolete Objectives"@en ;
+    rdfs:comment "Formerly a container of the objectives a Block or Assignable Unit references. A Block or Assignable Unit now references each Objective directly, with the property objectives."@en ;
+    skos:definition "Formerly a container of the objectives a Block or Assignable Unit references. A Block or Assignable Unit now references each Objective directly, with the property objectives."@en ;
+    skos:changeNote "2026.10.0: deprecated; a Block or Assignable Unit references each objective with objectives."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy foxxi-cmi5:objectives ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:course a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "course"@en ;
+    rdfs:comment "The one Course of a course structure."@en ;
+    skos:definition "The one Course of a course structure."@en ;
+    rdfs:domain foxxi-cmi5:CourseStructure ;
+    rdfs:range foxxi-cmi5:Course ;
+    dct:source "cmi5 Quartz §13.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:structure a owl:ObjectProperty ;
+    rdfs:label "structure"@en ;
+    rdfs:comment "A top-level Block or Assignable Unit of a course structure. Their sequence is the order of their positions."@en ;
+    skos:definition "A top-level Block or Assignable Unit of a course structure. Their sequence is the order of their positions."@en ;
+    rdfs:domain foxxi-cmi5:CourseStructure ;
+    rdfs:range [ a owl:Class ; owl:unionOf ( foxxi-cmi5:Block foxxi-cmi5:AssignableUnit ) ] ;
+    dct:source "cmi5 Quartz §13.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:block a owl:ObjectProperty ;
+    rdfs:label "block"@en ;
+    rdfs:comment "A Block contained in a course structure or in another Block."@en ;
+    skos:definition "A Block contained in a course structure or in another Block."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-cmi5:CourseStructure foxxi-cmi5:Block ) ] ;
+    rdfs:range foxxi-cmi5:Block ;
+    dct:source "cmi5 Quartz §13.1.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:au a owl:ObjectProperty ;
+    rdfs:label "assignable unit"@en ;
+    skos:notation "au" ;
+    rdfs:comment "An Assignable Unit contained in a course structure or in a Block."@en ;
+    skos:definition "An Assignable Unit contained in a course structure or in a Block."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-cmi5:CourseStructure foxxi-cmi5:Block ) ] ;
+    rdfs:range foxxi-cmi5:AssignableUnit ;
+    dct:source "cmi5 Quartz §13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:position a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "position"@en ;
+    rdfs:comment "The position of a Block or Assignable Unit among the members of its course structure or parent Block, counting from 1 in document order: the sequence cmi5 implies (§13.1). An RDF reading of a course structure states it, since RDF keeps no order of its own."@en ;
+    skos:definition "The position of a Block or Assignable Unit among the members of its course structure or parent Block, counting from 1 in document order: the sequence cmi5 implies (§13.1). An RDF reading of a course structure states it, since RDF keeps no order of its own."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-cmi5:Block foxxi-cmi5:AssignableUnit ) ] ;
+    rdfs:range xsd:positiveInteger ;
+    dct:source "cmi5 Quartz §13.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:objective a owl:ObjectProperty ;
+    rdfs:label "objective"@en ;
+    rdfs:comment "An objective the course structure declares, for its Blocks and Assignable Units to reference."@en ;
+    skos:definition "An objective the course structure declares, for its Blocks and Assignable Units to reference."@en ;
+    skos:changeNote "2026.10.0: its domain is the course structure, which declares its objectives; before it, the unversioned publication gave it the domain Objectives, a container now deprecated."@en ;
+    rdfs:domain foxxi-cmi5:CourseStructure ;
+    rdfs:range foxxi-cmi5:Objective ;
+    dct:source "cmi5 Quartz §13.1.3; §14 (CourseStructure.xsd)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:objectives a owl:ObjectProperty ;
+    rdfs:label "objectives"@en ;
+    rdfs:comment "An objective a Block or an Assignable Unit references (an objectiveReference: the objective's idref)."@en ;
+    skos:definition "An objective a Block or an Assignable Unit references (an objectiveReference: the objective's idref)."@en ;
+    skos:changeNote "2026.10.0: its range is Objective, each objective referenced; before it, the unversioned publication gave it the range Objectives, a container now deprecated."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-cmi5:Block foxxi-cmi5:AssignableUnit ) ] ;
+    rdfs:range foxxi-cmi5:Objective ;
+    dct:source "cmi5 Quartz §13.1.2; §13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:title a owl:DatatypeProperty ;
+    rdfs:label "title"@en ;
+    rdfs:comment "The descriptive title of a Course, Block, Objective or Assignable Unit, as language strings."@en ;
+    skos:definition "The descriptive title of a Course, Block, Objective or Assignable Unit, as language strings."@en ;
+    rdfs:domain [
+        a owl:Class ;
+        owl:unionOf ( foxxi-cmi5:Course foxxi-cmi5:Block foxxi-cmi5:Objective foxxi-cmi5:AssignableUnit )
+    ] ;
+    rdfs:range rdf:langString ;
+    dct:source "cmi5 Quartz §13.1.1–§13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:description a owl:DatatypeProperty ;
+    rdfs:label "description"@en ;
+    rdfs:comment "The detailed description of a Course, Block, Objective or Assignable Unit, as language strings."@en ;
+    skos:definition "The detailed description of a Course, Block, Objective or Assignable Unit, as language strings."@en ;
+    rdfs:domain [
+        a owl:Class ;
+        owl:unionOf ( foxxi-cmi5:Course foxxi-cmi5:Block foxxi-cmi5:Objective foxxi-cmi5:AssignableUnit )
+    ] ;
+    rdfs:range rdf:langString ;
+    dct:source "cmi5 Quartz §13.1.1–§13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:url a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "URL"@en ;
+    skos:notation "url" ;
+    rdfs:comment "A relative or fully qualified URL referencing the launch point of the Assignable Unit; the LMS merges any query string it carries with the cmi5 launch parameters."@en ;
+    skos:definition "A relative or fully qualified URL referencing the launch point of the Assignable Unit; the LMS merges any query string it carries with the cmi5 launch parameters."@en ;
+    rdfs:domain foxxi-cmi5:AssignableUnit ;
+    rdfs:range xsd:anyURI ;
+    dct:source "cmi5 Quartz §13.1.4; §8.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:launchMethod a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "launch method"@en ;
+    skos:notation "launchMethod" ;
+    rdfs:comment "Whether the Assignable Unit requires its own window (OwnWindow) or accepts any window context (AnyWindow, the default)."@en ;
+    skos:definition "Whether the Assignable Unit requires its own window (OwnWindow) or accepts any window context (AnyWindow, the default)."@en ;
+    rdfs:domain foxxi-cmi5:AssignableUnit ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "OwnWindow" "AnyWindow" ) ] ;
+    dct:source "cmi5 Quartz §13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:moveOn a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "move on"@en ;
+    skos:notation "moveOn" ;
+    rdfs:comment "What satisfies the Assignable Unit: Passed, Completed, CompletedAndPassed, CompletedOrPassed, or NotApplicable (the default, under which the LMS considers it satisfied). In the launch data, the value the LMS applies."@en ;
+    skos:definition "What satisfies the Assignable Unit: Passed, Completed, CompletedAndPassed, CompletedOrPassed, or NotApplicable (the default, under which the LMS considers it satisfied). In the launch data, the value the LMS applies."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-cmi5:AssignableUnit foxxi-cmi5:LaunchData ) ] ;
+    rdfs:range [
+        a rdfs:Datatype ;
+        owl:oneOf ( "Passed" "Completed" "CompletedAndPassed" "CompletedOrPassed" "NotApplicable" )
+    ] ;
+    dct:source "cmi5 Quartz §13.1.4; §10.2.5" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:masteryScore a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "mastery score"@en ;
+    skos:notation "masteryScore" ;
+    rdfs:comment "The scaled score at or above which a judged attempt passes; passed and failed statements are based on it when it is given."@en ;
+    skos:definition "The scaled score at or above which a judged attempt passes; passed and failed statements are based on it when it is given."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-cmi5:AssignableUnit foxxi-cmi5:LaunchData ) ] ;
+    rdfs:range foxxi-cmi5:MasteryScore ;
+    dct:source "cmi5 Quartz §13.1.4; §10.2.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:activityType a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "activity type"@en ;
+    skos:notation "activityType" ;
+    rdfs:comment "The activity type the LMS can show for the Assignable Unit before it is first started."@en ;
+    skos:definition "The activity type the LMS can show for the Assignable Unit before it is first started."@en ;
+    skos:changeNote "2026.10.0: an object property, whose value is the activity type itself; before it, the unversioned publication made it a datatype property whose value was the type's IRI, an xsd:anyURI literal."@en ;
+    rdfs:domain foxxi-cmi5:AssignableUnit ;
+    rdfs:range foxxi-xapi:ActivityType ;
+    dct:source "cmi5 Quartz §13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:launchParameters a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "launch parameters"@en ;
+    skos:notation "launchParameters" ;
+    rdfs:comment "Static launch parameters the course designer defines; in the launch data, the value the LMS passes (which may differ)."@en ;
+    skos:definition "Static launch parameters the course designer defines; in the launch data, the value the LMS passes (which may differ)."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-cmi5:AssignableUnit foxxi-cmi5:LaunchData ) ] ;
+    rdfs:range xsd:string ;
+    dct:source "cmi5 Quartz §13.1.4; §10.2.3" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:entitlementKey a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "entitlement key"@en ;
+    skos:notation "entitlementKey" ;
+    rdfs:comment "Data the Assignable Unit uses to decide whether the launching LMS is entitled to use it, defined by the content provider."@en ;
+    skos:definition "Data the Assignable Unit uses to decide whether the launching LMS is entitled to use it, defined by the content provider."@en ;
+    rdfs:domain foxxi-cmi5:AssignableUnit ;
+    rdfs:range xsd:string ;
+    dct:source "cmi5 Quartz §13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:sessionId a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "session ID"@en ;
+    skos:notation "sessionId" ;
+    rdfs:comment "The unique identifier the LMS generates for one launch session, carried in every cmi5 defined and cmi5 allowed statement as the session ID context extension."@en ;
+    skos:definition "The unique identifier the LMS generates for one launch session, carried in every cmi5 defined and cmi5 allowed statement as the session ID context extension."@en ;
+    rdfs:domain foxxi-cmi5:Session ;
+    rdfs:range xsd:string ;
+    dct:source "cmi5 Quartz §9.6.3.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:registration a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "registration"@en ;
+    rdfs:comment "The registration UUID of the learner's enrolment in the course, which the LMS passes at launch and every statement of the session carries."@en ;
+    skos:definition "The registration UUID of the learner's enrolment in the course, which the LMS passes at launch and every statement of the session carries."@en ;
+    rdfs:domain foxxi-cmi5:Session ;
+    rdfs:range foxxi-xapi:UUID ;
+    dct:source "cmi5 Quartz §9.6.1; §8.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:launchMode a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "launch mode"@en ;
+    skos:notation "launchMode" ;
+    rdfs:comment "How the Assignable Unit was launched: Normal (satisfaction-related data is recorded), Browse or Review (it is not)."@en ;
+    skos:definition "How the Assignable Unit was launched: Normal (satisfaction-related data is recorded), Browse or Review (it is not)."@en ;
+    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-cmi5:Session foxxi-cmi5:LaunchData ) ] ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "Normal" "Browse" "Review" ) ] ;
+    dct:source "cmi5 Quartz §10.2.2; §9.6.3.3" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:launchedAU a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "launched AU"@en ;
+    skos:notation "launchedAU" ;
+    rdfs:comment "The Assignable Unit a session is a launch of."@en ;
+    skos:definition "The Assignable Unit a session is a launch of."@en ;
+    rdfs:domain foxxi-cmi5:Session ;
+    rdfs:range foxxi-cmi5:AssignableUnit ;
+    dct:source "cmi5 Quartz §8.1.5 (activityId)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:learner a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "learner"@en ;
+    rdfs:comment "The learner a session is for: the actor the LMS passes at launch."@en ;
+    skos:definition "The learner a session is for: the actor the LMS passes at launch."@en ;
+    rdfs:domain foxxi-cmi5:Session ;
+    rdfs:range foxxi-xapi:Agent ;
+    dct:source "cmi5 Quartz §8.1.3 (actor)" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:contextTemplate a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "context template"@en ;
+    skos:notation "contextTemplate" ;
+    rdfs:comment "The xAPI context the Assignable Unit must use as the template for the context of every statement it sends; it carries the session ID extension and the publisher ID grouping activity."@en ;
+    skos:definition "The xAPI context the Assignable Unit must use as the template for the context of every statement it sends; it carries the session ID extension and the publisher ID grouping activity."@en ;
+    rdfs:domain foxxi-cmi5:LaunchData ;
+    rdfs:range foxxi-xapi:Context ;
+    dct:source "cmi5 Quartz §10.2.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:returnURL a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "return URL"@en ;
+    skos:notation "returnURL" ;
+    rdfs:comment "Where the Assignable Unit redirects the learner when it is terminated, if the LMS gives one."@en ;
+    skos:definition "Where the Assignable Unit redirects the learner when it is terminated, if the LMS gives one."@en ;
+    rdfs:domain foxxi-cmi5:LaunchData ;
+    rdfs:range xsd:anyURI ;
+    dct:source "cmi5 Quartz §10.2.6" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:launchEntitlementKey a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "launch entitlement key"@en ;
+    skos:notation "entitlementKey" ;
+    rdfs:comment "The entitlement data in the launch data. (In the document, its \"entitlementKey\" object.)"@en ;
+    skos:definition "The entitlement data in the launch data. (In the document, its \"entitlementKey\" object.)"@en ;
+    rdfs:domain foxxi-cmi5:LaunchData ;
+    rdfs:range foxxi-cmi5:EntitlementKey ;
+    dct:source "cmi5 Quartz §10.2.7" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:courseStructureKey a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "course structure key"@en ;
+    skos:notation "courseStructure" ;
+    rdfs:comment "The entitlement key from the course structure. (In the document, \"courseStructure\".)"@en ;
+    skos:definition "The entitlement key from the course structure. (In the document, \"courseStructure\".)"@en ;
+    rdfs:domain foxxi-cmi5:EntitlementKey ;
+    rdfs:range xsd:string ;
+    dct:source "cmi5 Quartz §10.2.7.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:alternateKey a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "alternate key"@en ;
+    skos:notation "alternate" ;
+    rdfs:comment "Entitlement data from another source agreed between the LMS and the content provider. (In the document, \"alternate\".)"@en ;
+    skos:definition "Entitlement data from another source agreed between the LMS and the content provider. (In the document, \"alternate\".)"@en ;
+    rdfs:domain foxxi-cmi5:EntitlementKey ;
+    rdfs:range xsd:string ;
+    dct:source "cmi5 Quartz §10.2.7.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:languagePreference a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "language preference"@en ;
+    skos:notation "languagePreference" ;
+    rdfs:comment "The learner's languages, most preferred first."@en ;
+    skos:definition "The learner's languages, most preferred first."@en ;
+    rdfs:domain foxxi-cmi5:LearnerPreferences ;
+    rdfs:range foxxi-cmi5:LanguagePreferenceList ;
+    dct:source "cmi5 Quartz §11.1" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:audioPreference a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "audio preference"@en ;
+    skos:notation "audioPreference" ;
+    rdfs:comment "Whether audio should be on or off at start-up."@en ;
+    skos:definition "Whether audio should be on or off at start-up."@en ;
+    rdfs:domain foxxi-cmi5:LearnerPreferences ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "on" "off" ) ] ;
+    dct:source "cmi5 Quartz §11.2" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:id a owl:DatatypeProperty ;
+    rdfs:label "obsolete id"@en ;
+    rdfs:comment "Formerly the IRI of a Course, Block, Assignable Unit or Objective, as a literal. In RDF that IRI identifies the node itself, so no property carries it and nothing replaces this one."@en ;
+    skos:definition "Formerly the IRI of a Course, Block, Assignable Unit or Objective, as a literal. In RDF that IRI identifies the node itself, so no property carries it and nothing replaces this one."@en ;
+    skos:changeNote "2026.10.0: deprecated."@en ;
+    owl:deprecated true ;
+    rdfs:domain [
+        a owl:Class ;
+        owl:unionOf ( foxxi-cmi5:Course foxxi-cmi5:Block foxxi-cmi5:AssignableUnit foxxi-cmi5:Objective )
+    ] ;
+    rdfs:range xsd:anyURI ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Cmi5Verb a skos:ConceptScheme ;
+    rdfs:label "cmi5 defined verbs"@en ;
+    skos:prefLabel "cmi5 defined verbs"@en ;
+    skos:definition "The verbs cmi5 defines, each mapped to the verb IRI a cmi5 defined statement carries."@en ;
+    rdfs:comment "The verbs cmi5 defines, each mapped to the verb IRI a cmi5 defined statement carries."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    skos:hasTopConcept foxxi-cmi5:Cmi5Verb-launched ,
+        foxxi-cmi5:Cmi5Verb-initialized ,
+        foxxi-cmi5:Cmi5Verb-completed ,
+        foxxi-cmi5:Cmi5Verb-passed ,
+        foxxi-cmi5:Cmi5Verb-failed ,
+        foxxi-cmi5:Cmi5Verb-abandoned ,
+        foxxi-cmi5:Cmi5Verb-waived ,
+        foxxi-cmi5:Cmi5Verb-terminated ,
+        foxxi-cmi5:Cmi5Verb-satisfied .
+
+foxxi-cmi5:Cmi5Verb-launched a skos:Concept ;
+    skos:inScheme foxxi-cmi5:Cmi5Verb ;
+    skos:topConceptOf foxxi-cmi5:Cmi5Verb ;
+    skos:prefLabel "launched"@en ;
+    rdfs:label "launched (cmi5 defined verbs)"@en ;
+    skos:notation "launched" ;
+    skos:definition "The LMS launched the Assignable Unit. Recorded by the LMS before launch, once per session."@en ;
+    rdfs:comment "The LMS launched the Assignable Unit. Recorded by the LMS before launch, once per session."@en ;
+    skos:exactMatch <http://adlnet.gov/expapi/verbs/launched> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Cmi5Verb-initialized a skos:Concept ;
+    skos:inScheme foxxi-cmi5:Cmi5Verb ;
+    skos:topConceptOf foxxi-cmi5:Cmi5Verb ;
+    skos:prefLabel "initialized"@en ;
+    rdfs:label "initialized (cmi5 defined verbs)"@en ;
+    skos:notation "initialized" ;
+    skos:definition "The Assignable Unit has fully initialized. The first statement of any kind the AU sends in a session."@en ;
+    rdfs:comment "The Assignable Unit has fully initialized. The first statement of any kind the AU sends in a session."@en ;
+    skos:exactMatch <http://adlnet.gov/expapi/verbs/initialized> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Cmi5Verb-completed a skos:Concept ;
+    skos:inScheme foxxi-cmi5:Cmi5Verb ;
+    skos:topConceptOf foxxi-cmi5:Cmi5Verb ;
+    skos:prefLabel "completed"@en ;
+    rdfs:label "completed (cmi5 defined verbs)"@en ;
+    skos:notation "completed" ;
+    skos:definition "The learner viewed or did all the relevant activities of the Assignable Unit (progress 100%). At most once per registration."@en ;
+    rdfs:comment "The learner viewed or did all the relevant activities of the Assignable Unit (progress 100%). At most once per registration."@en ;
+    skos:exactMatch <http://adlnet.gov/expapi/verbs/completed> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Cmi5Verb-passed a skos:Concept ;
+    skos:inScheme foxxi-cmi5:Cmi5Verb ;
+    skos:topConceptOf foxxi-cmi5:Cmi5Verb ;
+    skos:prefLabel "passed"@en ;
+    rdfs:label "passed (cmi5 defined verbs)"@en ;
+    skos:notation "passed" ;
+    skos:definition "The learner attempted and succeeded in a judged activity of the Assignable Unit; a scaled score, if given, is at or above the mastery score. At most once per registration."@en ;
+    rdfs:comment "The learner attempted and succeeded in a judged activity of the Assignable Unit; a scaled score, if given, is at or above the mastery score. At most once per registration."@en ;
+    skos:exactMatch <http://adlnet.gov/expapi/verbs/passed> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Cmi5Verb-failed a skos:Concept ;
+    skos:inScheme foxxi-cmi5:Cmi5Verb ;
+    skos:topConceptOf foxxi-cmi5:Cmi5Verb ;
+    skos:prefLabel "failed"@en ;
+    rdfs:label "failed (cmi5 defined verbs)"@en ;
+    skos:notation "failed" ;
+    skos:definition "The learner attempted and failed a judged activity of the Assignable Unit; a scaled score, if given, is below the mastery score."@en ;
+    rdfs:comment "The learner attempted and failed a judged activity of the Assignable Unit; a scaled score, if given, is below the mastery score."@en ;
+    skos:exactMatch <http://adlnet.gov/expapi/verbs/failed> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Cmi5Verb-abandoned a skos:Concept ;
+    skos:inScheme foxxi-cmi5:Cmi5Verb ;
+    skos:topConceptOf foxxi-cmi5:Cmi5Verb ;
+    skos:prefLabel "abandoned"@en ;
+    rdfs:label "abandoned (cmi5 defined verbs)"@en ;
+    skos:notation "abandoned" ;
+    skos:definition "The session was terminated abnormally, by the learner's action or a system failure. Recorded by the LMS on the AU's behalf."@en ;
+    rdfs:comment "The session was terminated abnormally, by the learner's action or a system failure. Recorded by the LMS on the AU's behalf."@en ;
+    skos:exactMatch <https://w3id.org/xapi/adl/verbs/abandoned> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Cmi5Verb-waived a skos:Concept ;
+    skos:inScheme foxxi-cmi5:Cmi5Verb ;
+    skos:topConceptOf foxxi-cmi5:Cmi5Verb ;
+    skos:prefLabel "waived"@en ;
+    rdfs:label "waived (cmi5 defined verbs)"@en ;
+    skos:notation "waived" ;
+    skos:definition "The LMS determined that the Assignable Unit's requirements were met by means other than its moveOn criteria. Carries a reason."@en ;
+    rdfs:comment "The LMS determined that the Assignable Unit's requirements were met by means other than its moveOn criteria. Carries a reason."@en ;
+    skos:exactMatch <https://w3id.org/xapi/adl/verbs/waived> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Cmi5Verb-terminated a skos:Concept ;
+    skos:inScheme foxxi-cmi5:Cmi5Verb ;
+    skos:topConceptOf foxxi-cmi5:Cmi5Verb ;
+    skos:prefLabel "terminated"@en ;
+    rdfs:label "terminated (cmi5 defined verbs)"@en ;
+    skos:notation "terminated" ;
+    skos:definition "The learner ended the session and the Assignable Unit will send no more statements for it. The last statement the AU sends."@en ;
+    rdfs:comment "The learner ended the session and the Assignable Unit will send no more statements for it. The last statement the AU sends."@en ;
+    skos:exactMatch <http://adlnet.gov/expapi/verbs/terminated> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:Cmi5Verb-satisfied a skos:Concept ;
+    skos:inScheme foxxi-cmi5:Cmi5Verb ;
+    skos:topConceptOf foxxi-cmi5:Cmi5Verb ;
+    skos:prefLabel "satisfied"@en ;
+    rdfs:label "satisfied (cmi5 defined verbs)"@en ;
+    skos:notation "satisfied" ;
+    skos:definition "The LMS determined that the learner met the moveOn criteria of all the Assignable Units in a Block, or in the course."@en ;
+    rdfs:comment "The LMS determined that the learner met the moveOn criteria of all the Assignable Units in a Block, or in the course."@en ;
+    skos:exactMatch <https://w3id.org/xapi/adl/verbs/satisfied> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:LaunchMethod a skos:ConceptScheme ;
+    rdfs:label "cmi5 launch methods"@en ;
+    skos:prefLabel "cmi5 launch methods"@en ;
+    skos:definition "The values of an Assignable Unit's launchMethod."@en ;
+    rdfs:comment "The values of an Assignable Unit's launchMethod."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    skos:hasTopConcept foxxi-cmi5:LaunchMethod-OwnWindow , foxxi-cmi5:LaunchMethod-AnyWindow .
+
+foxxi-cmi5:LaunchMethod-OwnWindow a skos:Concept ;
+    skos:inScheme foxxi-cmi5:LaunchMethod ;
+    skos:topConceptOf foxxi-cmi5:LaunchMethod ;
+    skos:prefLabel "own window"@en ;
+    rdfs:label "own window (cmi5 launch methods)"@en ;
+    skos:notation "OwnWindow" ;
+    skos:definition "Launch the Assignable Unit in a new browser window, or by redirecting the current one."@en ;
+    rdfs:comment "Launch the Assignable Unit in a new browser window, or by redirecting the current one."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:LaunchMethod-AnyWindow a skos:Concept ;
+    skos:inScheme foxxi-cmi5:LaunchMethod ;
+    skos:topConceptOf foxxi-cmi5:LaunchMethod ;
+    skos:prefLabel "any window"@en ;
+    rdfs:label "any window (cmi5 launch methods)"@en ;
+    skos:notation "AnyWindow" ;
+    skos:definition "Any window context is acceptable — a frameset, a new window, a redirect. The default."@en ;
+    rdfs:comment "Any window context is acceptable — a frameset, a new window, a redirect. The default."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:MoveOn a skos:ConceptScheme ;
+    rdfs:label "cmi5 moveOn criteria"@en ;
+    skos:prefLabel "cmi5 moveOn criteria"@en ;
+    skos:definition "The values of an Assignable Unit's moveOn: what satisfies the AU."@en ;
+    rdfs:comment "The values of an Assignable Unit's moveOn: what satisfies the AU."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    skos:hasTopConcept foxxi-cmi5:MoveOn-Passed ,
+        foxxi-cmi5:MoveOn-Completed ,
+        foxxi-cmi5:MoveOn-CompletedAndPassed ,
+        foxxi-cmi5:MoveOn-CompletedOrPassed ,
+        foxxi-cmi5:MoveOn-NotApplicable .
+
+foxxi-cmi5:MoveOn-Passed a skos:Concept ;
+    skos:inScheme foxxi-cmi5:MoveOn ;
+    skos:topConceptOf foxxi-cmi5:MoveOn ;
+    skos:prefLabel "Passed"@en ;
+    rdfs:label "Passed (cmi5 moveOn criteria)"@en ;
+    skos:notation "Passed" ;
+    skos:definition "A passed statement satisfies the Assignable Unit."@en ;
+    rdfs:comment "A passed statement satisfies the Assignable Unit."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:MoveOn-Completed a skos:Concept ;
+    skos:inScheme foxxi-cmi5:MoveOn ;
+    skos:topConceptOf foxxi-cmi5:MoveOn ;
+    skos:prefLabel "Completed"@en ;
+    rdfs:label "Completed (cmi5 moveOn criteria)"@en ;
+    skos:notation "Completed" ;
+    skos:definition "A completed statement satisfies the Assignable Unit."@en ;
+    rdfs:comment "A completed statement satisfies the Assignable Unit."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:MoveOn-CompletedAndPassed a skos:Concept ;
+    skos:inScheme foxxi-cmi5:MoveOn ;
+    skos:topConceptOf foxxi-cmi5:MoveOn ;
+    skos:prefLabel "completed and passed"@en ;
+    rdfs:label "completed and passed (cmi5 moveOn criteria)"@en ;
+    skos:notation "CompletedAndPassed" ;
+    skos:definition "Both a completed and a passed statement are required."@en ;
+    rdfs:comment "Both a completed and a passed statement are required."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:MoveOn-CompletedOrPassed a skos:Concept ;
+    skos:inScheme foxxi-cmi5:MoveOn ;
+    skos:topConceptOf foxxi-cmi5:MoveOn ;
+    skos:prefLabel "completed or passed"@en ;
+    rdfs:label "completed or passed (cmi5 moveOn criteria)"@en ;
+    skos:notation "CompletedOrPassed" ;
+    skos:definition "Either a completed or a passed statement satisfies the Assignable Unit."@en ;
+    rdfs:comment "Either a completed or a passed statement satisfies the Assignable Unit."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:MoveOn-NotApplicable a skos:Concept ;
+    skos:inScheme foxxi-cmi5:MoveOn ;
+    skos:topConceptOf foxxi-cmi5:MoveOn ;
+    skos:prefLabel "not applicable"@en ;
+    rdfs:label "not applicable (cmi5 moveOn criteria)"@en ;
+    skos:notation "NotApplicable" ;
+    skos:definition "The LMS considers the Assignable Unit satisfied. The default when no moveOn is given."@en ;
+    rdfs:comment "The LMS considers the Assignable Unit satisfied. The default when no moveOn is given."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:LaunchMode a skos:ConceptScheme ;
+    rdfs:label "cmi5 launch modes"@en ;
+    skos:prefLabel "cmi5 launch modes"@en ;
+    skos:definition "The values of launchMode in the launch data."@en ;
+    rdfs:comment "The values of launchMode in the launch data."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    skos:hasTopConcept foxxi-cmi5:LaunchMode-Normal , foxxi-cmi5:LaunchMode-Browse , foxxi-cmi5:LaunchMode-Review .
+
+foxxi-cmi5:LaunchMode-Normal a skos:Concept ;
+    skos:inScheme foxxi-cmi5:LaunchMode ;
+    skos:topConceptOf foxxi-cmi5:LaunchMode ;
+    skos:prefLabel "Normal"@en ;
+    rdfs:label "Normal (cmi5 launch modes)"@en ;
+    skos:notation "Normal" ;
+    skos:definition "Satisfaction-related data must be recorded."@en ;
+    rdfs:comment "Satisfaction-related data must be recorded."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:LaunchMode-Browse a skos:Concept ;
+    skos:inScheme foxxi-cmi5:LaunchMode ;
+    skos:topConceptOf foxxi-cmi5:LaunchMode ;
+    skos:prefLabel "Browse"@en ;
+    rdfs:label "Browse (cmi5 launch modes)"@en ;
+    skos:notation "Browse" ;
+    skos:definition "Satisfaction-related data must not be recorded; the learner looks around without judgement."@en ;
+    rdfs:comment "Satisfaction-related data must not be recorded; the learner looks around without judgement."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:LaunchMode-Review a skos:Concept ;
+    skos:inScheme foxxi-cmi5:LaunchMode ;
+    skos:topConceptOf foxxi-cmi5:LaunchMode ;
+    skos:prefLabel "Review"@en ;
+    rdfs:label "Review (cmi5 launch modes)"@en ;
+    skos:notation "Review" ;
+    skos:definition "Satisfaction-related data must not be recorded; the learner revisits material already completed."@en ;
+    rdfs:comment "Satisfaction-related data must not be recorded; the learner revisits material already completed."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ContextCategory a skos:ConceptScheme ;
+    rdfs:label "cmi5 category activities"@en ;
+    skos:prefLabel "cmi5 category activities"@en ;
+    skos:definition "The activities cmi5 statements carry in contextActivities.category."@en ;
+    rdfs:comment "The activities cmi5 statements carry in contextActivities.category."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    skos:hasTopConcept foxxi-cmi5:ContextCategory-cmi5 , foxxi-cmi5:ContextCategory-moveon .
+
+foxxi-cmi5:ContextCategory-cmi5 a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ContextCategory ;
+    skos:topConceptOf foxxi-cmi5:ContextCategory ;
+    skos:prefLabel "cmi5 category"@en ;
+    rdfs:label "cmi5 category (cmi5 category activities)"@en ;
+    skos:notation "cmi5" ;
+    skos:definition "Marks a statement as a cmi5 defined statement."@en ;
+    rdfs:comment "Marks a statement as a cmi5 defined statement."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/context/categories/cmi5> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ContextCategory-moveon a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ContextCategory ;
+    skos:topConceptOf foxxi-cmi5:ContextCategory ;
+    skos:prefLabel "moveOn category"@en ;
+    rdfs:label "moveOn category (cmi5 category activities)"@en ;
+    skos:notation "moveon" ;
+    skos:definition "On cmi5 defined statements whose result includes success or completion; on no other statement."@en ;
+    rdfs:comment "On cmi5 defined statements whose result includes success or completion; on no other statement."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/context/categories/moveon> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ContextExtension a skos:ConceptScheme ;
+    rdfs:label "cmi5 context extensions"@en ;
+    skos:prefLabel "cmi5 context extensions"@en ;
+    skos:definition "The context extensions cmi5 defines. (§9.6.3.5, publisherId, was withdrawn in favour of the publisher ID grouping activity of §9.6.2.3.)"@en ;
+    rdfs:comment "The context extensions cmi5 defines. (§9.6.3.5, publisherId, was withdrawn in favour of the publisher ID grouping activity of §9.6.2.3.)"@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    skos:hasTopConcept foxxi-cmi5:ContextExtension-sessionid ,
+        foxxi-cmi5:ContextExtension-masteryscore ,
+        foxxi-cmi5:ContextExtension-launchmode ,
+        foxxi-cmi5:ContextExtension-launchurl ,
+        foxxi-cmi5:ContextExtension-moveon ,
+        foxxi-cmi5:ContextExtension-launchparameters .
+
+foxxi-cmi5:ContextExtension-sessionid a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ContextExtension ;
+    skos:topConceptOf foxxi-cmi5:ContextExtension ;
+    skos:prefLabel "session ID"@en ;
+    rdfs:label "session ID (cmi5 context extensions)"@en ;
+    skos:notation "sessionid" ;
+    skos:definition "The session ID, on every cmi5 defined and cmi5 allowed statement."@en ;
+    rdfs:comment "The session ID, on every cmi5 defined and cmi5 allowed statement."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/context/extensions/sessionid> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ContextExtension-masteryscore a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ContextExtension ;
+    skos:topConceptOf foxxi-cmi5:ContextExtension ;
+    skos:prefLabel "mastery score"@en ;
+    rdfs:label "mastery score (cmi5 context extensions)"@en ;
+    skos:notation "masteryscore" ;
+    skos:definition "The mastery score from the launch data, on launched statements and on the passed or failed statements based on it."@en ;
+    rdfs:comment "The mastery score from the launch data, on launched statements and on the passed or failed statements based on it."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/context/extensions/masteryscore> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ContextExtension-launchmode a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ContextExtension ;
+    skos:topConceptOf foxxi-cmi5:ContextExtension ;
+    skos:prefLabel "launch mode"@en ;
+    rdfs:label "launch mode (cmi5 context extensions)"@en ;
+    skos:notation "launchmode" ;
+    skos:definition "The launch mode the LMS used, on launched statements."@en ;
+    rdfs:comment "The launch mode the LMS used, on launched statements."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/context/extensions/launchmode> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ContextExtension-launchurl a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ContextExtension ;
+    skos:topConceptOf foxxi-cmi5:ContextExtension ;
+    skos:prefLabel "launch URL"@en ;
+    rdfs:label "launch URL (cmi5 context extensions)"@en ;
+    skos:notation "launchurl" ;
+    skos:definition "The fully qualified URL the LMS used to launch the Assignable Unit, without the launch parameters, on launched statements."@en ;
+    rdfs:comment "The fully qualified URL the LMS used to launch the Assignable Unit, without the launch parameters, on launched statements."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/context/extensions/launchurl> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ContextExtension-moveon a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ContextExtension ;
+    skos:topConceptOf foxxi-cmi5:ContextExtension ;
+    skos:prefLabel "move on"@en ;
+    rdfs:label "move on (cmi5 context extensions)"@en ;
+    skos:notation "moveon" ;
+    skos:definition "The moveOn value from the launch data, on launched statements."@en ;
+    rdfs:comment "The moveOn value from the launch data, on launched statements."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/context/extensions/moveon> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ContextExtension-launchparameters a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ContextExtension ;
+    skos:topConceptOf foxxi-cmi5:ContextExtension ;
+    skos:prefLabel "launch parameters"@en ;
+    rdfs:label "launch parameters (cmi5 context extensions)"@en ;
+    skos:notation "launchparameters" ;
+    skos:definition "The launch parameters from the launch data, on launched statements when present."@en ;
+    rdfs:comment "The launch parameters from the launch data, on launched statements when present."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/context/extensions/launchparameters> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ResultExtension a skos:ConceptScheme ;
+    rdfs:label "cmi5 result extensions"@en ;
+    skos:prefLabel "cmi5 result extensions"@en ;
+    skos:definition "The result extensions cmi5 defines."@en ;
+    rdfs:comment "The result extensions cmi5 defines."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    skos:hasTopConcept foxxi-cmi5:ResultExtension-progress , foxxi-cmi5:ResultExtension-reason .
+
+foxxi-cmi5:ResultExtension-progress a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ResultExtension ;
+    skos:topConceptOf foxxi-cmi5:ResultExtension ;
+    skos:prefLabel "progress"@en ;
+    rdfs:label "progress (cmi5 result extensions)"@en ;
+    skos:notation "progress" ;
+    skos:definition "An integer from 0 to 100 inclusive: the completion of the Assignable Unit as a percentage."@en ;
+    rdfs:comment "An integer from 0 to 100 inclusive: the completion of the Assignable Unit as a percentage."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/result/extensions/progress> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ResultExtension-reason a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ResultExtension ;
+    skos:topConceptOf foxxi-cmi5:ResultExtension ;
+    skos:prefLabel "reason"@en ;
+    rdfs:label "reason (cmi5 result extensions)"@en ;
+    skos:notation "reason" ;
+    skos:definition "The reason for the statement, required on a waived statement."@en ;
+    rdfs:comment "The reason for the statement, required on a waived statement."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/result/extensions/reason> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ActivityType a skos:ConceptScheme ;
+    rdfs:label "cmi5 activity types"@en ;
+    skos:prefLabel "cmi5 activity types"@en ;
+    skos:definition "The activity types of the objects the LMS generates for a Block and for the course in satisfied statements."@en ;
+    rdfs:comment "The activity types of the objects the LMS generates for a Block and for the course in satisfied statements."@en ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    skos:hasTopConcept foxxi-cmi5:ActivityType-block , foxxi-cmi5:ActivityType-course .
+
+foxxi-cmi5:ActivityType-block a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ActivityType ;
+    skos:topConceptOf foxxi-cmi5:ActivityType ;
+    skos:prefLabel "block"@en ;
+    rdfs:label "block (cmi5 activity types)"@en ;
+    skos:notation "block" ;
+    skos:definition "The type of the LMS-generated activity representing a Block."@en ;
+    rdfs:comment "The type of the LMS-generated activity representing a Block."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/activitytype/block> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:ActivityType-course a skos:Concept ;
+    skos:inScheme foxxi-cmi5:ActivityType ;
+    skos:topConceptOf foxxi-cmi5:ActivityType ;
+    skos:prefLabel "course"@en ;
+    rdfs:label "course (cmi5 activity types)"@en ;
+    skos:notation "course" ;
+    skos:definition "The type of the LMS-generated activity representing the course."@en ;
+    rdfs:comment "The type of the LMS-generated activity representing the course."@en ;
+    skos:exactMatch <https://w3id.org/xapi/cmi5/activitytype/course> ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+[
+    a owl:AllDisjointClasses ;
+    owl:members (
+        foxxi-cmi5:CourseStructure
+        foxxi-cmi5:Course
+        foxxi-cmi5:Block
+        foxxi-cmi5:Objective
+        foxxi-cmi5:AssignableUnit
+        foxxi-cmi5:Session
+        foxxi-cmi5:LaunchData
+        foxxi-cmi5:EntitlementKey
+        foxxi-cmi5:LearnerPreferences
+    )
+] .
+
+<https://w3id.org/xapi/cmi5/context/extensions/sessionid> a owl:DatatypeProperty ;
+    rdfs:label "session ID (cmi5 context extension)"@en ;
+    rdfs:isDefinedBy <https://github.com/AICC/CMI-5_Spec_Current> .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+    rdfs:label "was derived from"@en ;
+    rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> ;
+    rdfs:domain prov:Entity ;
+    rdfs:range prov:Entity .
+
+skos:ConceptScheme a owl:Class ;
+    rdfs:label "Concept Scheme"@en ;
+    rdfs:comment "A set of concepts, optionally including statements about semantic relationships between those concepts. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    owl:disjointWith skos:Concept .
+
+skos:hasTopConcept a owl:ObjectProperty ;
+    rdfs:label "has top concept"@en ;
+    rdfs:comment "Relates, by convention, a concept scheme to a concept which is topmost in the broader/narrower concept hierarchies for that scheme. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:domain skos:ConceptScheme ;
+    rdfs:range skos:Concept .
+
+skos:Concept a owl:Class ;
+    rdfs:label "Concept"@en ;
+    rdfs:comment "An idea or notion; a unit of thought. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> .
+
+skos:inScheme a owl:ObjectProperty ;
+    rdfs:label "is in scheme"@en ;
+    rdfs:comment "Relates a resource (for example a concept) to a concept scheme in which it is included. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:range skos:ConceptScheme .
+
+skos:topConceptOf a owl:ObjectProperty ;
+    rdfs:label "is top concept in scheme"@en ;
+    rdfs:comment "Relates a concept to the concept scheme that it is a top level concept of. (SKOS)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/2004/02/skos/core> ;
+    rdfs:subPropertyOf skos:inScheme ;
+    owl:inverseOf skos:hasTopConcept .
+
+prov:Entity a owl:Class ;
+    rdfs:label "Entity"@en ;
+    rdfs:comment "A physical, digital, conceptual, or other kind of thing with some fixed aspects. (PROV-O)"@en ;
+    rdfs:isDefinedBy <http://www.w3.org/ns/prov-o> .
+
+dct:title a owl:AnnotationProperty .
+
+dct:description a owl:AnnotationProperty .
+
+skos:historyNote a owl:AnnotationProperty .
+
+dct:creator a owl:AnnotationProperty .
+
+dct:contributor a owl:AnnotationProperty .
+
+dct:publisher a owl:AnnotationProperty .
+
+dct:license a owl:AnnotationProperty .
+
+dct:rights a owl:AnnotationProperty .
+
+dct:created a owl:AnnotationProperty .
+
+dct:modified a owl:AnnotationProperty .
+
+dct:issued a owl:AnnotationProperty .
+
+dct:language a owl:AnnotationProperty .
+
+bibo:status a owl:AnnotationProperty .
+
+dct:bibliographicCitation a owl:AnnotationProperty .
+
+vann:preferredNamespacePrefix a owl:AnnotationProperty .
+
+vann:preferredNamespaceUri a owl:AnnotationProperty .
+
+dct:source a owl:AnnotationProperty .
+
+skos:definition a owl:AnnotationProperty .
+
+foxxi-xapi:Activity a owl:Class .
+
+skos:changeNote a owl:AnnotationProperty .
+
+dct:isReplacedBy a owl:AnnotationProperty .
+
+skos:notation a owl:AnnotationProperty .
+
+foxxi-xapi:ActivityType a owl:Class .
+
+foxxi-xapi:UUID a rdfs:Datatype .
+
+foxxi-xapi:Agent a owl:Class .
+
+foxxi-xapi:Context a owl:Class .
+
+skos:prefLabel a owl:AnnotationProperty .
+
+skos:exactMatch a owl:AnnotationProperty .
