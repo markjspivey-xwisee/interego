@@ -55,11 +55,18 @@ jobs:
               continue
             fi
             # The commit that brought the version to master: the first on master's first-parent line
-            # whose SHA256SUMS lists a file of it. That is this push for a new version, and an earlier
-            # commit for one released before this workflow ran (2026.10.0 reached master without it).
-            sha=$(git log --first-parent --reverse --format=%H "$GITHUB_SHA" -- "$SUMS" | while read -r c; do
-              if git show "$c:$SUMS" 2>/dev/null | awk '{print $2}' | grep -qF "/$v."; then echo "$c"; break; fi
-            done)
+            # whose SHA256SUMS lists the version's files with the checksums they have here. That is
+            # this push for a new version, an earlier commit for one released before this workflow
+            # ran (2026.10.0 reached master without it), and the last of a push's commits that
+            # changed the version's files, when one push brings several.
+            # Each listing is read to its end, by awk: with pipefail, a reader that stops at its first
+            # match (grep -q) can kill the writer with SIGPIPE once a listing outgrows one pipe write,
+            # and the commit that lists the version would be passed over.
+            want=$(awk -v v="/$v." 'index($2, v)' "$SUMS")
+            sha=""
+            for c in $(git log --first-parent --reverse --format=%H "$GITHUB_SHA" -- "$SUMS"); do
+              if [ "$(git show "$c:$SUMS" 2>/dev/null | awk -v v="/$v." 'index($2, v)')" = "$want" ]; then sha=$c; break; fi
+            done
             sha=${sha:-$GITHUB_SHA}
             git tag -a "$tag" -m "Foxxi /ns release $v" "$sha"
             git push origin "refs/tags/$tag"
