@@ -107,9 +107,12 @@ export const LER_MODEL: OntologyModel = {
       ],
     },
     {
-      name: 'EvidenceShape', targetClass: 'Evidence',
+      // ★ BY THE PROPERTY THAT REACHES IT. A record cites its evidence by IRI and never types it, so
+      // the class alone selected nothing in a record's reading; ler:supportedByEvidence has the range
+      // ler:Evidence, so by RDFS (rdfs3) what it reaches is evidence, typed or not.
+      name: 'EvidenceShape', targetClass: 'Evidence', targetObjectsOf: ['ler:supportedByEvidence'], jsonKeys: ['evidence'],
       label: 'Evidence shape',
-      comment: 'An evidence node is identified by an IRI locating the raw record.',
+      comment: 'Evidence — anything an assertion or record entry cites in its support (ler:supportedByEvidence), or that is typed ler:Evidence — is identified by an IRI locating the raw record.',
       constraints: [
         { path: 'id', identifies: true, minCount: 1, nodeKind: 'IRI', comment: 'the evidence location' },
       ],

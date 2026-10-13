@@ -24,15 +24,25 @@
     "InteractionTransparency": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#InteractionTransparency"
     },
+    "TechnicalDocumentation": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#TechnicalDocumentation"
+    },
     "AccuracyRobustness": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#AccuracyRobustness"
     },
     "conformsToArticle": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#conformsToArticle",
       "@type": "@vocab",
-      "@context": {
-        "@vocab": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#Article-"
-      }
+      "@context": [
+        null,
+        {
+          "@vocab": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#Article-",
+          "conformsToArticle": {
+            "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#conformsToArticle",
+            "@type": "@vocab"
+          }
+        }
+      ]
     },
     "article": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#article"

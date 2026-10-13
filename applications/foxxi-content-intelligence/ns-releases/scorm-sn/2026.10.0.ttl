@@ -19,9 +19,9 @@
     dct:description "An OWL 2 DL ontology and SHACL shapes for the sequencing definitions of SCORM 2004 4th Edition: IMS Simple Sequencing 1.0 as SCORM applies it — sequencing definitions and collections, control modes, pre-, exit- and post-condition rules with their conditions and actions, limit conditions, rollup rules, objectives with their global-objective maps, randomization and delivery controls, auxiliary resources — and ADL's extensions: rollup and constrained-choice considerations, objectivesGlobalToSystem, the 4th Edition's extended objective maps (raw, minimum and maximum score, completion status, progress measure), and the navigation presentation that hides LMS controls. It imports the content-packaging ontology, whose items and organizations carry the sequencing."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL or 1EdTech. Where this document and the published standard differ, the standard governs."@en ,
         "Transcribed from the normative schema: imsss_v1p0.xsd and the schemas it includes (IMS Simple Sequencing 1.0), adlseq_v1p3.xsd and adlnav_v1p3.xsd, as distributed with SCORM 2004 4th Edition."@en ,
-        "Since 2026.10.0: adlObjectives points at AdlObjective, the 4th Edition's adlseq:objective, instead of the imsss Objectives class; presentation belongs to the item rather than the sequencing definition; and objectivesGlobalToSystem belongs to the organization."@en ,
-        "The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology's classes. A parsed instance as JSON is checked against the same shapes at POST /ns/scorm-sn/validate, which routes it by its declared type; every result cites its shape."@en ,
+        "Since 2026.10.0: adlObjective relates a sequencing definition to the 4th Edition's adlseq:objective, in place of adlObjectives, which pointed at the imsss Objectives class and is deprecated; presentation is the item's, not the sequencing definition's, and objectivesGlobalToSystem the organization's — both without a domain, so that data written with the earlier reading stays consistent."@en ,
         "An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/context/2026.10.0, which is generated from this document. The shapes at https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes/2026.10.0 constrain that reading, and the Foxxi validator (POST https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/validate) checks the JSON against the same shapes."@en ,
+        "The shapes select a node by its class (sh:targetClass) and, as the RDFS domain and range rules make a node an instance of a class, by a property it has (sh:targetSubjectsOf) or by the property that reaches it (sh:targetObjectsOf): a node is checked whether or not it declares its type. The Foxxi validator selects the same nodes of the JSON, and every result cites its shape."@en ,
         "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/scorm-sn#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -357,10 +357,9 @@ foxxi-scorm-sn:sequencingCollection a owl:ObjectProperty , owl:FunctionalPropert
 foxxi-scorm-sn:objectivesGlobalToSystem a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "objectives global to system"@en ;
     skos:notation "adlseq:objectivesGlobalToSystem" ;
-    rdfs:comment "Whether the global objectives an organization's activities map to are global to the LMS, shared with other packages for the same learner (true, the default), or belong to this package (false)."@en ;
-    skos:definition "Whether the global objectives an organization's activities map to are global to the LMS, shared with other packages for the same learner (true, the default), or belong to this package (false)."@en ;
-    skos:changeNote "2026.10.0: given its domain, the organization, where the attribute is declared; it had none."@en ;
-    rdfs:domain foxxi-scorm-cam:Organization ;
+    rdfs:comment "Whether the global objectives an organization's activities map to are global to the LMS, shared with other packages for the same learner (true, the default), or belong to this package (false). An attribute of the organization."@en ;
+    skos:definition "Whether the global objectives an organization's activities map to are global to the LMS, shared with other packages for the same learner (true, the default), or belong to this package (false). An attribute of the organization."@en ;
+    skos:changeNote "2026.10.0: its comment names the organization, on which adlseq_v1p3.xsd declares the attribute; it had named the item. It has no domain, as it was published, so that data that followed the earlier comment stays consistent."@en ;
     rdfs:range xsd:boolean ;
     dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): objectivesGlobalToSystem" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
@@ -370,8 +369,7 @@ foxxi-scorm-sn:presentation a owl:ObjectProperty , owl:FunctionalProperty ;
     skos:notation "adlnav:presentation" ;
     rdfs:comment "How an item is presented: which LMS navigation controls are hidden while it is delivered. A child of the item, not of its sequencing."@en ;
     skos:definition "How an item is presented: which LMS navigation controls are hidden while it is delivered. A child of the item, not of its sequencing."@en ;
-    skos:changeNote "2026.10.0: its domain is the item, of which adlnav:presentation is a child; it had been the sequencing definition, which an item's presentation was then wrongly inferred to be."@en ;
-    rdfs:domain foxxi-scorm-cam:Item ;
+    skos:changeNote "2026.10.0: its domain, the sequencing definition, is removed: adlnav:presentation is a child of the item, and the domain made an item's presentation a sequencing definition's. It is not replaced by the item, so that data written with the earlier domain stays consistent."@en ;
     rdfs:range foxxi-scorm-sn:Presentation ;
     dct:source "ADL navigation extensions (adlnav_v1p3.xsd): presentation" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
@@ -496,15 +494,27 @@ foxxi-scorm-sn:constrainedChoiceConsiderations a owl:ObjectProperty , owl:Functi
     dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): constrainedChoiceConsiderations" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
 
-foxxi-scorm-sn:adlObjectives a owl:ObjectProperty ;
-    rdfs:label "ADL objectives"@en ;
-    skos:notation "adlseq:objectives" ;
-    rdfs:comment "An adlseq:objective of a sequencing definition: further global-objective maps for one of its objectives (4th Edition)."@en ;
-    skos:definition "An adlseq:objective of a sequencing definition: further global-objective maps for one of its objectives (4th Edition)."@en ;
-    skos:changeNote "2026.10.0: its range is AdlObjective, the 4th Edition's adlseq:objective; it had been the imsss Objectives class, a different element."@en ;
+foxxi-scorm-sn:adlObjective a owl:ObjectProperty ;
+    rdfs:label "adlseq objective"@en ;
+    skos:notation "adlseq:objective" ;
+    rdfs:comment "An adlseq:objective of a sequencing definition: further global-objective maps for one of its objectives (4th Edition). (In a sequencing definition's JSON, an entry of its \"adlObjectives\".)"@en ;
+    skos:definition "An adlseq:objective of a sequencing definition: further global-objective maps for one of its objectives (4th Edition). (In a sequencing definition's JSON, an entry of its \"adlObjectives\".)"@en ;
+    skos:changeNote "2026.10.0: new, in place of adlObjectives, whose range was the imsss Objectives class, a different element."@en ;
     rdfs:domain foxxi-scorm-sn:Sequencing ;
     rdfs:range foxxi-scorm-sn:AdlObjective ;
     dct:source "ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): objectivesType" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
+
+foxxi-scorm-sn:adlObjectives a owl:ObjectProperty ;
+    rdfs:label "obsolete ADL objectives"@en ;
+    skos:notation "adlObjectives" ;
+    rdfs:comment "Formerly the adlseq:objectives of a sequencing definition, read as an imsss Objectives container, which it is not. Use adlObjective, which relates a sequencing definition to each adlseq:objective."@en ;
+    skos:definition "Formerly the adlseq:objectives of a sequencing definition, read as an imsss Objectives container, which it is not. Use adlObjective, which relates a sequencing definition to each adlseq:objective."@en ;
+    skos:changeNote "2026.10.0: deprecated in favour of adlObjective; kept as it was published, with the range Objectives."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy foxxi-scorm-sn:adlObjective ;
+    rdfs:domain foxxi-scorm-sn:Sequencing ;
+    rdfs:range foxxi-scorm-sn:Objectives ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> .
 
 foxxi-scorm-sn:choice a owl:DatatypeProperty , owl:FunctionalProperty ;
@@ -731,6 +741,7 @@ foxxi-scorm-sn:attemptAbsoluteDurationLimit a owl:DatatypeProperty , owl:Functio
     skos:notation "attemptAbsoluteDurationLimit" ;
     rdfs:comment "The longest an attempt on the activity may last, counting all the time it is open, suspensions included. The content reads it as cmi.max_time_allowed."@en ;
     skos:definition "The longest an attempt on the activity may last, counting all the time it is open, suspensions included. The content reads it as cmi.max_time_allowed."@en ;
+    skos:changeNote "2026.10.0: its range is Duration, xs:duration's form as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map."@en ;
     rdfs:domain foxxi-scorm-sn:LimitConditions ;
     rdfs:range foxxi-scorm-sn:Duration ;
     dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@attemptAbsoluteDurationLimit" ;
@@ -741,6 +752,7 @@ foxxi-scorm-sn:attemptExperiencedDurationLimit a owl:DatatypeProperty , owl:Func
     skos:notation "attemptExperiencedDurationLimit" ;
     rdfs:comment "The longest an attempt on the activity may last counting only the time the learner experiences it."@en ;
     skos:definition "The longest an attempt on the activity may last counting only the time the learner experiences it."@en ;
+    skos:changeNote "2026.10.0: its range is Duration, xs:duration's form as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map."@en ;
     rdfs:domain foxxi-scorm-sn:LimitConditions ;
     rdfs:range foxxi-scorm-sn:Duration ;
     dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@attemptExperiencedDurationLimit" ;
@@ -751,6 +763,7 @@ foxxi-scorm-sn:activityAbsoluteDurationLimit a owl:DatatypeProperty , owl:Functi
     skos:notation "activityAbsoluteDurationLimit" ;
     rdfs:comment "The longest all attempts on the activity together may last, counting all the time they are open."@en ;
     skos:definition "The longest all attempts on the activity together may last, counting all the time they are open."@en ;
+    skos:changeNote "2026.10.0: its range is Duration, xs:duration's form as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map."@en ;
     rdfs:domain foxxi-scorm-sn:LimitConditions ;
     rdfs:range foxxi-scorm-sn:Duration ;
     dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@activityAbsoluteDurationLimit" ;
@@ -761,6 +774,7 @@ foxxi-scorm-sn:activityExperiencedDurationLimit a owl:DatatypeProperty , owl:Fun
     skos:notation "activityExperiencedDurationLimit" ;
     rdfs:comment "The longest all attempts on the activity together may last, counting only the time the learner experiences them."@en ;
     skos:definition "The longest all attempts on the activity together may last, counting only the time the learner experiences them."@en ;
+    skos:changeNote "2026.10.0: its range is Duration, xs:duration's form as a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map."@en ;
     rdfs:domain foxxi-scorm-sn:LimitConditions ;
     rdfs:range foxxi-scorm-sn:Duration ;
     dct:source "IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType/@activityExperiencedDurationLimit" ;
@@ -1353,6 +1367,7 @@ foxxi-scorm-sn:hideLMSUI a owl:DatatypeProperty ;
 foxxi-scorm-sn:SequencingRuleConditionName a skos:ConceptScheme ;
     rdfs:label "Sequencing rule conditions"@en ;
     skos:prefLabel "Sequencing rule conditions"@en ;
+    skos:definition "What a sequencing rule condition tests (sequencingRuleConditionType). Objective conditions test the referenced objective, or the primary objective."@en ;
     rdfs:comment "What a sequencing rule condition tests (sequencingRuleConditionType). Objective conditions test the referenced objective, or the primary objective."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:SequencingRuleConditionName-satisfied ,
@@ -1491,6 +1506,7 @@ foxxi-scorm-sn:SequencingRuleConditionName-always a skos:Concept ;
 foxxi-scorm-sn:RollupRuleConditionName a skos:ConceptScheme ;
     rdfs:label "Rollup rule conditions"@en ;
     skos:prefLabel "Rollup rule conditions"@en ;
+    skos:definition "What a rollup condition tests on a child (rollupRuleConditionType): the sequencing rule conditions without the measure comparisons and always."@en ;
     rdfs:comment "What a rollup condition tests on a child (rollupRuleConditionType): the sequencing rule conditions without the measure comparisons and always."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:RollupRuleConditionName-satisfied ,
@@ -1596,6 +1612,7 @@ foxxi-scorm-sn:RollupRuleConditionName-outsideAvailableTimeRange a skos:Concept 
 foxxi-scorm-sn:ConditionOperator a skos:ConceptScheme ;
     rdfs:label "Condition operators"@en ;
     skos:prefLabel "Condition operators"@en ;
+    skos:definition "Whether a condition is negated (conditionOperatorType)."@en ;
     rdfs:comment "Whether a condition is negated (conditionOperatorType)."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:ConditionOperator-not , foxxi-scorm-sn:ConditionOperator-noOp .
@@ -1623,6 +1640,7 @@ foxxi-scorm-sn:ConditionOperator-noOp a skos:Concept ;
 foxxi-scorm-sn:ConditionCombination a skos:ConceptScheme ;
     rdfs:label "Condition combinations"@en ;
     skos:prefLabel "Condition combinations"@en ;
+    skos:definition "How a rule's conditions combine (conditionCombinationType)."@en ;
     rdfs:comment "How a rule's conditions combine (conditionCombinationType)."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:ConditionCombination-all , foxxi-scorm-sn:ConditionCombination-any .
@@ -1650,6 +1668,7 @@ foxxi-scorm-sn:ConditionCombination-any a skos:Concept ;
 foxxi-scorm-sn:PreConditionRuleAction a skos:ConceptScheme ;
     rdfs:label "Pre-condition rule actions"@en ;
     skos:prefLabel "Pre-condition rule actions"@en ;
+    skos:definition "What a pre-condition rule does when it applies (preConditionRuleActionType)."@en ;
     rdfs:comment "What a pre-condition rule does when it applies (preConditionRuleActionType)."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:PreConditionRuleAction-skip ,
@@ -1700,6 +1719,7 @@ foxxi-scorm-sn:PreConditionRuleAction-stopForwardTraversal a skos:Concept ;
 foxxi-scorm-sn:ExitConditionRuleAction a skos:ConceptScheme ;
     rdfs:label "Exit-condition rule actions"@en ;
     skos:prefLabel "Exit-condition rule actions"@en ;
+    skos:definition "What an exit-condition rule does when it applies (exitConditionRuleActionType)."@en ;
     rdfs:comment "What an exit-condition rule does when it applies (exitConditionRuleActionType)."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:ExitConditionRuleAction-exit .
@@ -1717,6 +1737,7 @@ foxxi-scorm-sn:ExitConditionRuleAction-exit a skos:Concept ;
 foxxi-scorm-sn:PostConditionRuleAction a skos:ConceptScheme ;
     rdfs:label "Post-condition rule actions"@en ;
     skos:prefLabel "Post-condition rule actions"@en ;
+    skos:definition "What a post-condition rule does when it applies (postConditionRuleActionType)."@en ;
     rdfs:comment "What a post-condition rule does when it applies (postConditionRuleActionType)."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:PostConditionRuleAction-exitParent ,
@@ -1789,6 +1810,7 @@ foxxi-scorm-sn:PostConditionRuleAction-previous a skos:Concept ;
 foxxi-scorm-sn:RollupActionValues a skos:ConceptScheme ;
     rdfs:label "Rollup actions"@en ;
     skos:prefLabel "Rollup actions"@en ;
+    skos:definition "The status a rollup rule sets on an activity (rollupActionType)."@en ;
     rdfs:comment "The status a rollup rule sets on an activity (rollupActionType)."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:RollupActionValues-satisfied ,
@@ -1839,6 +1861,7 @@ foxxi-scorm-sn:RollupActionValues-incomplete a skos:Concept ;
 foxxi-scorm-sn:ChildActivitySet a skos:ConceptScheme ;
     rdfs:label "Child activity sets"@en ;
     skos:prefLabel "Child activity sets"@en ;
+    skos:definition "For which of an activity's children a rollup rule's conditions must hold (childActivityType). Only children that count in the rollup are considered."@en ;
     rdfs:comment "For which of an activity's children a rollup rule's conditions must hold (childActivityType). Only children that count in the rollup are considered."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:ChildActivitySet-all ,
@@ -1900,6 +1923,7 @@ foxxi-scorm-sn:ChildActivitySet-atLeastPercent a skos:Concept ;
 foxxi-scorm-sn:RandomTiming a skos:ConceptScheme ;
     rdfs:label "Randomization and selection timings"@en ;
     skos:prefLabel "Randomization and selection timings"@en ;
+    skos:definition "When children are selected or reordered (randomTimingType)."@en ;
     rdfs:comment "When children are selected or reordered (randomTimingType)."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:RandomTiming-never ,
@@ -1939,6 +1963,7 @@ foxxi-scorm-sn:RandomTiming-onEachNewAttempt a skos:Concept ;
 foxxi-scorm-sn:RollupConsideration a skos:ConceptScheme ;
     rdfs:label "Rollup consideration values"@en ;
     skos:prefLabel "Rollup consideration values"@en ;
+    skos:definition "When a child counts in a rollup of its parent (adlseq rollupConsiderationType)."@en ;
     rdfs:comment "When a child counts in a rollup of its parent (adlseq rollupConsiderationType)."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:RollupConsideration-always ,
@@ -1989,6 +2014,7 @@ foxxi-scorm-sn:RollupConsideration-ifNotSuspended a skos:Concept ;
 foxxi-scorm-sn:HideLMSUI a skos:ConceptScheme ;
     rdfs:label "Hideable LMS controls"@en ;
     skos:prefLabel "Hideable LMS controls"@en ;
+    skos:definition "The LMS navigation controls an item may hide (adlnav hideLMSUIType)."@en ;
     rdfs:comment "The LMS navigation controls an item may hide (adlnav hideLMSUIType)."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn> ;
     skos:hasTopConcept foxxi-scorm-sn:HideLMSUI-previous ,
@@ -2102,6 +2128,15 @@ foxxi-scorm-sn:HideLMSUI-suspendAll a skos:Concept ;
     )
 ] .
 
+[
+    a owl:AllDisjointClasses ;
+    owl:members (
+        foxxi-scorm-sn:PreConditionRule
+        foxxi-scorm-sn:ExitConditionRule
+        foxxi-scorm-sn:PostConditionRule
+    )
+] .
+
 prov:wasDerivedFrom a owl:ObjectProperty ;
     rdfs:label "was derived from"@en ;
     rdfs:comment "A transformation of an entity into another, an update of an entity resulting in a new one, or the construction of a new entity based on a pre-existing one. (PROV-O)"@en ;
@@ -2190,6 +2225,8 @@ foxxi-scorm-cam:Organization a owl:Class .
 foxxi-scorm-cam:Manifest a owl:Class .
 
 skos:changeNote a owl:AnnotationProperty .
+
+dct:isReplacedBy a owl:AnnotationProperty .
 
 foxxi-scorm-cam:UnitInterval a rdfs:Datatype .
 

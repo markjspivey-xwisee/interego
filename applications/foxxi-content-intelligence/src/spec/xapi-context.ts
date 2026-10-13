@@ -79,7 +79,7 @@ export function xapiJsonLdContext(): Record<string, unknown> {
       version: 'xapi:version',
       attachments: {
         '@id': 'xapi:attachments', '@container': '@set',
-        '@context': { usageType: ref('usageType'), display: lang('display'), description: lang('description'), fileUrl: anyUri('fileUrl') },
+        '@context': { usageType: ref('attachmentUsageType'), display: lang('display'), description: lang('description'), fileUrl: anyUri('fileUrl') },
       },
       contentType: 'xapi:contentType',
       length: 'xapi:length',
@@ -96,7 +96,7 @@ export function xapiJsonLdContext(): Record<string, unknown> {
         '@id': 'xapi:definition',
         '@context': {
           name: lang('name'), description: lang('description'),
-          type: ref('type'), moreInfo: anyUri('moreInfo'),
+          type: ref('activityType'), moreInfo: anyUri('moreInfo'),
           interactionType: 'xapi:interactionType',
           correctResponsesPattern: { '@id': 'xapi:correctResponsesPattern', '@container': '@set' },
           choices: components('choices'), scale: components('scale'), source: components('source'),

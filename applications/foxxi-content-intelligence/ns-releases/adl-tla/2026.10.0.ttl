@@ -408,6 +408,7 @@ foxxi-adl-tla:MOMVerbScheme a skos:ConceptScheme ;
     rdfs:label "MOM performance verb scheme"@en ;
     skos:prefLabel "MOM performance verb scheme"@en ;
     rdfs:comment "The 52 performance verbs of the ADL TLA Master Object Model (MOM), grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb that is a registered verb of ADL's vocabulary — an ADL core verb at adlnet.gov/expapi/verbs, or a cmi5 verb at w3id.org/xapi/adl/verbs — is an exact match of it and names it as its source. Every other verb has an IRI of this vocabulary's, and says so in an editorial note; none is mapped to an IRI that was not found registered. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give some of them IRIs of its own, and has not been checked here."@en ;
+    skos:definition "The 52 performance verbs of the ADL TLA Master Object Model (MOM), grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb that is a registered verb of ADL's vocabulary — an ADL core verb at adlnet.gov/expapi/verbs, or a cmi5 verb at w3id.org/xapi/adl/verbs — is an exact match of it and names it as its source. Every other verb has an IRI of this vocabulary's, and says so in an editorial note; none is mapped to an IRI that was not found registered. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give some of them IRIs of its own, and has not been checked here."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ;
     skos:hasTopConcept foxxi-adl-tla:certified ,
         foxxi-adl-tla:completed ,
@@ -466,6 +467,7 @@ foxxi-adl-tla:MOMActivityTypeScheme a skos:ConceptScheme ;
     rdfs:label "MOM activity types"@en ;
     skos:prefLabel "MOM activity types"@en ;
     rdfs:comment "The activity types the Master Object Model names, as project-coined concepts. None asserts an external alignment: the MOM does not register them under an ADL namespace."@en ;
+    skos:definition "The activity types the Master Object Model names, as project-coined concepts. None asserts an external alignment: the MOM does not register them under an ADL namespace."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ;
     skos:hasTopConcept <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/activity> ,
         <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#activity-type/assessment> ,
@@ -483,6 +485,7 @@ foxxi-adl-tla:MOMExtensionScheme a skos:ConceptScheme ;
     rdfs:label "MOM context extensions"@en ;
     skos:prefLabel "MOM context extensions"@en ;
     rdfs:comment "The context-extension keys the Master Object Model names, as project-coined concepts with no external alignment."@en ;
+    skos:definition "The context-extension keys the Master Object Model names, as project-coined concepts with no external alignment."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ;
     skos:hasTopConcept <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/learner> ,
         <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#extension/evidence> ,
@@ -501,6 +504,7 @@ foxxi-adl-tla:MOMLevel1 a skos:Collection ;
     rdfs:label "Level 1 — Completion & Certification"@en ;
     skos:prefLabel "Level 1 — Completion & Certification"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Completion & Certification\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
+    skos:definition "The MOM verbs this vocabulary groups under \"Completion & Certification\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:certified , foxxi-adl-tla:completed , foxxi-adl-tla:passed , foxxi-adl-tla:failed ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
@@ -508,6 +512,7 @@ foxxi-adl-tla:MOMLevel2 a skos:Collection ;
     rdfs:label "Level 2 — Session Lifecycle (cmi5-aligned)"@en ;
     skos:prefLabel "Level 2 — Session Lifecycle (cmi5-aligned)"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Session Lifecycle (cmi5-aligned)\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
+    skos:definition "The MOM verbs this vocabulary groups under \"Session Lifecycle (cmi5-aligned)\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:launched ,
         foxxi-adl-tla:initialized ,
         foxxi-adl-tla:attended ,
@@ -527,6 +532,7 @@ foxxi-adl-tla:MOMLevel3 a skos:Collection ;
     rdfs:label "Level 3 — Competency Assertions"@en ;
     skos:prefLabel "Level 3 — Competency Assertions"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Competency Assertions\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
+    skos:definition "The MOM verbs this vocabulary groups under \"Competency Assertions\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:assessed ,
         foxxi-adl-tla:contextualized ,
         foxxi-adl-tla:located ,
@@ -542,6 +548,7 @@ foxxi-adl-tla:MOMLevel4 a skos:Collection ;
     rdfs:label "Level 4 — Adaptive Learning Paths & Goal Management"@en ;
     skos:prefLabel "Level 4 — Adaptive Learning Paths & Goal Management"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Adaptive Learning Paths & Goal Management\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
+    skos:definition "The MOM verbs this vocabulary groups under \"Adaptive Learning Paths & Goal Management\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:recommended ,
         foxxi-adl-tla:prioritized ,
         foxxi-adl-tla:organized ,
@@ -561,6 +568,7 @@ foxxi-adl-tla:MOMLevel5 a skos:Collection ;
     rdfs:label "Level 5 — Career & Human-Capital"@en ;
     skos:prefLabel "Level 5 — Career & Human-Capital"@en ;
     rdfs:comment "The MOM verbs this vocabulary groups under \"Career & Human-Capital\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
+    skos:definition "The MOM verbs this vocabulary groups under \"Career & Human-Capital\". A thematic grouping of this project, not an ADL-defined conformance level."@en ;
     skos:member foxxi-adl-tla:recruited ,
         foxxi-adl-tla:appraised ,
         foxxi-adl-tla:detailed ,
@@ -1474,6 +1482,7 @@ foxxi-adl-tla:PerformanceProficiencyFramework a foxxi-adl-tla:ProficiencyScale ,
     rdfs:label "Foxxi Production-Performance Proficiency Framework"@en ;
     skos:prefLabel "Foxxi Production-Performance Proficiency Framework"@en ;
     rdfs:comment "A published proficiency scale for on-the-job production performance, using the Dreyfus five-stage model of skill acquisition. The tla:Level individuals below are the dereferenceable scale an ELR competency assertion is measured against (ler:atProficiency)."@en ;
+    skos:definition "A published proficiency scale for on-the-job production performance, using the Dreyfus five-stage model of skill acquisition. The tla:Level individuals below are the dereferenceable scale an ELR competency assertion is measured against (ler:atProficiency)."@en ;
     dct:source "Dreyfus, S.E. & Dreyfus, H.L. (1980) — A Five-Stage Model of the Mental Activities Involved in Directed Skill Acquisition" ;
     foxxi:construction "minted" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> ;
@@ -1541,6 +1550,7 @@ foxxi-adl-tla:LevelExpert a foxxi-adl-tla:Level , foxxi-ieee-ler:ProficiencyLeve
 foxxi-adl-tla:PerformanceProficiencyRollupRule a foxxi-adl-tla:RollupRule ;
     rdfs:label "Production-performance proficiency roll-up rule"@en ;
     rdfs:comment "Maps a subject's production-performance evidence to a proficiency level in the Foxxi Production-Performance Proficiency Framework, with a confidence. Cited by every performance-basis ler:CompetencyAssertion the ELR emits."@en ;
+    skos:definition "Maps a subject's production-performance evidence to a proficiency level in the Foxxi Production-Performance Proficiency Framework, with a confidence. Cited by every performance-basis ler:CompetencyAssertion the ELR emits."@en ;
     foxxi-adl-tla:rollupRule "Given production performance evidence (n executions carrying an asserted outcome, k successes, mean scored quality q in 0..1): reliability is the Wilson score interval lower bound (z=1.96) on k/n, which rises with evidence and FALLS when a failure is added — so it carries both how often the work succeeded and how much of it there is, and no separate execution count is gated on. Expert if reliability>=0.75 and mean quality q is recorded and q>=0.85; Proficient if reliability>=0.6 and mean quality q is recorded and q>=0.7; Competent if reliability>=0.4; Advanced Beginner if k>=1; else Novice. Quality is a FLOOR, not a scale: every value at or above a band's floor ranks alike. A verified credential with no production evidence maps to Competent; training completion only maps to Novice (Hypothetical). The reported confidence IS the reliability above. This rule is data: its bands are the tla:ProficiencyBand individuals of this document (tla:hasBand), which the evaluator reads as they are published, and this sentence is generated from the same triples." ;
     foxxi-adl-tla:onScale foxxi-adl-tla:PerformanceProficiencyFramework ;
     foxxi:construction "minted" ;
@@ -1601,7 +1611,9 @@ foxxi-adl-tla:BandExpert a foxxi-adl-tla:ProficiencyBand ;
     foxxi-adl-tla:minQuality 0.85 ;
     foxxi-adl-tla:requiresQuality true ;
     skos:notation "5" ;
-    rdfs:comment "Reached at 12 consecutive successes (Wilson 0.757) and not before, matching the previous rule's transition exactly."@en ;
+    rdfs:comment "The band of the production-performance roll-up rule that awards the Expert level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
+    skos:definition "The band of the production-performance roll-up rule that awards the Expert level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
+    skos:note "Reached at 12 consecutive successes (Wilson 0.757) and not before, matching the previous rule's transition exactly."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:BandProficient a foxxi-adl-tla:ProficiencyBand ;
@@ -1611,7 +1623,9 @@ foxxi-adl-tla:BandProficient a foxxi-adl-tla:ProficiencyBand ;
     foxxi-adl-tla:minQuality 0.70 ;
     foxxi-adl-tla:requiresQuality true ;
     skos:notation "4" ;
-    rdfs:comment "Reached at 6 consecutive successes (Wilson 0.610). Six executions with one failure scores 0.436 and does NOT reach it — the case the previous count-gated rule promoted."@en ;
+    rdfs:comment "The band of the production-performance roll-up rule that awards the Proficient level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
+    skos:definition "The band of the production-performance roll-up rule that awards the Proficient level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
+    skos:note "Reached at 6 consecutive successes (Wilson 0.610). Six executions with one failure scores 0.436 and does NOT reach it — the case the previous count-gated rule promoted."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 foxxi-adl-tla:BandCompetent a foxxi-adl-tla:ProficiencyBand ;
@@ -1620,7 +1634,9 @@ foxxi-adl-tla:BandCompetent a foxxi-adl-tla:ProficiencyBand ;
     foxxi-adl-tla:minReliability 0.40 ;
     foxxi-adl-tla:requiresQuality false ;
     skos:notation "3" ;
-    rdfs:comment "Reached at 3 consecutive successes (Wilson 0.438). Asks nothing of quality, because the level's own definition asks nothing of it."@en ;
+    rdfs:comment "The band of the production-performance roll-up rule that awards the Competent level, at the reliability it requires (tla:minReliability); it asks nothing of quality."@en ;
+    skos:definition "The band of the production-performance roll-up rule that awards the Competent level, at the reliability it requires (tla:minReliability); it asks nothing of quality."@en ;
+    skos:note "Reached at 3 consecutive successes (Wilson 0.438). Asks nothing of quality, because the level's own definition asks nothing of it."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/adl-tla> .
 
 [
@@ -1789,3 +1805,5 @@ skos:exactMatch a owl:AnnotationProperty .
 foxxi-ieee-ler:ProficiencyLevel a owl:Class ;
     rdfs:label "Proficiency Level"@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
+
+skos:note a owl:AnnotationProperty .

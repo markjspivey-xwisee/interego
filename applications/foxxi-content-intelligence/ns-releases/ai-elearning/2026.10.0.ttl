@@ -22,6 +22,7 @@
     rdfs:comment "An original profile of xAPI 2.0 by Mark Spivey (Foxxi Mediums Inc.), not a formalization of a published standard. Not affiliated with or endorsed by ADL or IEEE. Its statements are xAPI 2.0 statements, and where this profile and xAPI 2.0 (IEEE 9274.1.1-2023) differ, xAPI 2.0 governs."@en ,
         "Since 2026.10.0, the signer, the claim's signer and a cited source's atom are stated with object properties (signedBy, modelClaimSignedBy, citesAtom): their values were always required to be IRIs (a DID, a urn:pgsl:atom), which the datatype properties first published for them (signer, modelClaimSigner, sourceAtom) cannot have. Those are kept, deprecated, as they were published."@en ,
         "An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/context/2026.10.0, which is generated from this document. The shapes at https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes/2026.10.0 constrain that reading, and the Foxxi validator (POST https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/validate) checks the JSON against the same shapes."@en ,
+        "The shapes select a node by its class (sh:targetClass) and, as the RDFS domain and range rules make a node an instance of a class, by a property it has (sh:targetSubjectsOf) or by the property that reaches it (sh:targetObjectsOf): a node is checked whether or not it declares its type. The Foxxi validator selects the same nodes of the JSON, and every result cites its shape."@en ,
         "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/ai-elearning#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -280,6 +281,7 @@ foxxi-ai-elearning:interventionEfficacy a owl:DatatypeProperty , owl:FunctionalP
 foxxi-ai-elearning:Verb a skos:ConceptScheme ;
     rdfs:label "AI-interaction verbs"@en ;
     skos:prefLabel "AI-interaction verbs"@en ;
+    skos:definition "The three interaction verbs. Reused intent from the prevailing pattern; what differs is the enforced provenance on the statements that carry them."@en ;
     rdfs:comment "The three interaction verbs. Reused intent from the prevailing pattern; what differs is the enforced provenance on the statements that carry them."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> ;
     skos:hasTopConcept foxxi-ai-elearning:Verb-interacted-with-ai ,
@@ -319,6 +321,7 @@ foxxi-ai-elearning:Verb-gave-ai-feedback a skos:Concept ;
 foxxi-ai-elearning:ActivityType a skos:ConceptScheme ;
     rdfs:label "AI-interaction activity types"@en ;
     skos:prefLabel "AI-interaction activity types"@en ;
+    skos:definition "All three activity types the templates reference are DECLARED here — including ai-interaction and ai-feedback — so a statement using them validates against this profile."@en ;
     rdfs:comment "All three activity types the templates reference are DECLARED here — including ai-interaction and ai-feedback — so a statement using them validates against this profile."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning> ;
     skos:hasTopConcept foxxi-ai-elearning:ActivityType-ai-interaction ,

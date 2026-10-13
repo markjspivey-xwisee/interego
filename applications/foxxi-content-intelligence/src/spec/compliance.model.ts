@@ -31,9 +31,47 @@
  * class, which then failed the class's shape for want of the code. Each concept is now typed with
  * its class and carries its code, so the three name the same things and a record naming a concept
  * meets the shapes.
+ *
+ * ★ A CITATION NAMES A CONCEPT OF THE LIST. A record's evidences, conformsToArticle or
+ * addressesFunction takes one of the document's concepts and nothing else (sh:in, generated from the
+ * list), so "CC9.9", "Article99" or "PLAN" is refused rather than read as a criterion, an Article or
+ * a function nobody defined; and a concept's class and code agree (codeShapes, below).
  */
-import { type OntologyModel, NS_ROOT } from '../spec-ontology.js';
+import { type OntologyModel, type OntClass, type OntShape, type OntVocabMember, NS_ROOT } from '../spec-ontology.js';
 import { sourceAt } from '../ns/catalog.js';
+
+/**
+ * ★ A CONCEPT'S CLASS AND ITS CODE AGREE. One shape for each class a list's concepts are typed with
+ * below the list's own class, holding its instances to the codes of the concepts it types: an
+ * obligation of the record-keeping kind is Article 12's, the GOVERN function is the one whose id is
+ * GOVERN. Without it, a RecordKeeping obligation carrying Article 13 met every shape.
+ */
+function codeShapes(classes: readonly OntClass[], members: readonly OntVocabMember[], property: string, list: string): OntShape[] {
+  return classes.flatMap((k): OntShape[] => {
+    const codes = members.filter(mem => (mem.types ?? []).includes(k.name)).map(mem => mem.values?.[property]).filter((v): v is string => !!v);
+    if (!codes.length) return [];
+    return [{
+      name: `${k.name}CodeShape`, targetClass: k.name, label: `${k.label}: its ${property}`,
+      comment: `An instance of ${k.name} is one of the concepts of ${list} typed with it, so its ${property} is theirs: ${codes.join(', ')}.`,
+      constraints: [{ path: property, in: codes, comment: `the ${property} of a ${k.name}` }],
+    }];
+  });
+}
+/** A framework's model with its codes held to its classes: the shape for the list's own class takes
+ *  only the list's codes (an obligation names one of the Articles this document defines), and each
+ *  class below it gets a code shape. */
+function withCodes(m: OntologyModel, list: string, property: string): OntologyModel {
+  const v = m.vocabularies!.find(x => x.name === list)!;
+  const all = v.members.map(mem => mem.values?.[property]).filter((x): x is string => !!x);
+  const root = m.classes.find(c => v.members.every(mem => (mem.types ?? []).includes(c.name)))!;
+  return {
+    ...m,
+    shapes: [
+      ...m.shapes.map(sh => sh.targetClass !== root.name ? sh : { ...sh, constraints: sh.constraints.map(c => c.path === property ? { ...c, in: all } : c) }),
+      ...codeShapes(m.classes.filter(c => c.name !== root.name), v.members, property, v.label ?? list),
+    ],
+  };
+}
 
 /** The substrate's L3 vocabularies (docs/ns). Inside a module its own name resolves to its own
  *  namespace, so the substrate's carries an `ie-` prefix here; the documents print it bare. */
@@ -103,7 +141,7 @@ export const SOC2_MODEL: OntologyModel = {
   shapes: [
     {
       name: 'OperationalEvidenceEventShape', targetClass: 'OperationalEvidenceEvent', label: 'SOC 2 evidence-event conformance',
-      comment: 'An operational evidence event cites a criterion it evidences, carries the instant it occurred, and names the acting agent and the recovered signer, so an audit pack shows who acted and which criterion the event is evidence for.',
+      comment: 'An operational evidence event cites at least one criterion it evidences — one of this document\'s, by its code ("CC6.2") or its IRI — carries the instant it occurred, and names the acting agent and the recovered signer, so an audit pack shows who acted and which criterion the event is evidence for.',
       constraints: [
         { path: 'evidences', minCount: 1, comment: 'cite at least one Trust Services Criterion' },
         { path: 'occurredAt', minCount: 1, maxCount: 1, datatype: 'xsd:dateTime', comment: 'one occurrence instant in the audit period' },
@@ -115,7 +153,7 @@ export const SOC2_MODEL: OntologyModel = {
 };
 
 // ── EU AI Act (Regulation (EU) 2024/1689) — provider/deployer obligations ──
-export const EU_AI_ACT_MODEL: OntologyModel = {
+export const EU_AI_ACT_MODEL: OntologyModel = withCodes({
   selectByDomainAndRange: true,
   generatedContext: true,
   module: 'eu-ai-act',
@@ -142,6 +180,7 @@ export const EU_AI_ACT_MODEL: OntologyModel = {
     { name: 'RiskManagement', label: 'Risk Management (Art.9)', comment: 'Art.9: a risk-management system shall be established, implemented, documented and maintained across the lifecycle of the high-risk AI system.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:RiskManagementRecord'] },
     { name: 'DataGovernance', label: 'Data & Data Governance (Art.10)', comment: 'Art.10: training, validation and testing data sets shall be subject to appropriate data-governance and management practices.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:DataGovernanceAttestation'] },
     { name: 'InteractionTransparency', label: 'Transparency to Persons (Art.50)', comment: 'Art.50: providers shall ensure that AI systems intended to interact directly with natural persons are designed so that those persons are informed that they are interacting with an AI system, unless that is obvious; and providers and deployers shall mark or disclose AI-generated or manipulated content as the Article sets out. Applies to such systems whether or not they are high-risk.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:Article50Disclosure'] },
+    { name: 'TechnicalDocumentation', label: 'Technical Documentation (Art.11)', comment: 'Art.11: the technical documentation of a high-risk AI system is drawn up before the system is placed on the market or put into service, kept up to date, and written to show that the system meets the requirements for high-risk systems, in a form the authorities can assess.', subClassOf: ['Obligation'], changeNote: '2026.10.0: new, so that the list holds Articles 9 to 15 as it says.' },
     { name: 'AccuracyRobustness', label: 'Accuracy, Robustness, Cybersecurity (Art.15)', comment: 'Art.15: high-risk AI systems shall achieve appropriate levels of accuracy, robustness and cybersecurity, consistent throughout their lifecycle.', subClassOf: ['Obligation'], relatedMatch: ['ie-eu-ai-act:AccuracyAttestation'] },
   ],
   properties: [
@@ -155,6 +194,7 @@ export const EU_AI_ACT_MODEL: OntologyModel = {
       members: [
         { name: 'Article9', label: 'Article 9 — Risk management system', comment: 'Establish/maintain a risk-management system across the lifecycle.', exactMatch: ['ie-eu-ai-act:Article9'], types: ['Obligation', 'RiskManagement'], values: { article: '9' } },
         { name: 'Article10', label: 'Article 10 — Data and data governance', comment: 'Data-governance practices for training/validation/testing data.', exactMatch: ['ie-eu-ai-act:Article10'], types: ['Obligation', 'DataGovernance'], values: { article: '10' } },
+        { name: 'Article11', label: 'Article 11 — Technical documentation', comment: 'Technical documentation drawn up before release, kept up to date, and showing compliance.', types: ['Obligation', 'TechnicalDocumentation'], values: { article: '11' }, changeNote: '2026.10.0: new.' },
         { name: 'Article12', label: 'Article 12 — Record-keeping', comment: 'Automatic, lifetime logging ensuring traceability of functioning.', exactMatch: ['ie-eu-ai-act:Article12'], types: ['Obligation', 'RecordKeeping'], values: { article: '12' } },
         { name: 'Article13', label: 'Article 13 — Transparency and provision of information to deployers', comment: 'Transparent operation + instructions for use.', types: ['Obligation', 'Transparency'], values: { article: '13' } },
         { name: 'Article14', label: 'Article 14 — Human oversight', comment: 'Effective human oversight, intervention and interruption.', exactMatch: ['ie-eu-ai-act:Article14'], types: ['Obligation', 'HumanOversight'], values: { article: '14' } },
@@ -163,20 +203,27 @@ export const EU_AI_ACT_MODEL: OntologyModel = {
       ],
     },
   ],
-  disjoint: [['RecordKeeping', 'HumanOversight', 'Transparency', 'RiskManagement', 'DataGovernance', 'AccuracyRobustness', 'InteractionTransparency']],
+  disjoint: [['RecordKeeping', 'HumanOversight', 'Transparency', 'RiskManagement', 'DataGovernance', 'TechnicalDocumentation', 'AccuracyRobustness', 'InteractionTransparency']],
   shapes: [
     {
       name: 'ObligationConformanceShape', targetClass: 'Obligation', label: 'AI Act obligation conformance',
-      comment: 'An obligation names the Article that imposes it. Every Article concept of this document does; so does any obligation a record names by RDFS inference from conformsToArticle\'s range, when it is one of them.',
+      comment: 'An obligation names the Article that imposes it, one of those this document defines. Every Article concept of this document does; so does any obligation a record names by RDFS inference from conformsToArticle\'s range, when it is one of them.',
       constraints: [
         { path: 'article', minCount: 1, maxCount: 1, datatype: 'xsd:string', comment: 'the Article number' },
       ],
     },
+    {
+      name: 'ConformanceClaimShape', targetSubjectsOf: ['conformsToArticle'], label: 'AI Act conformance claim',
+      comment: 'A record offered as evidence of meeting an obligation names one this document defines: one of its Article concepts, by its token ("Article12") or its IRI.',
+      constraints: [
+        { path: 'conformsToArticle', comment: 'an obligation of this document\'s Article list' },
+      ],
+    },
   ],
-};
+}, 'Article', 'article');
 
 // ── NIST AI Risk Management Framework (AI RMF 1.0) — four functions ──
-export const NIST_RMF_MODEL: OntologyModel = {
+export const NIST_RMF_MODEL: OntologyModel = withCodes({
   selectByDomainAndRange: true,
   generatedContext: true,
   module: 'nist-rmf',
@@ -227,8 +274,15 @@ export const NIST_RMF_MODEL: OntologyModel = {
         { path: 'functionId', minCount: 1, maxCount: 1, datatype: 'xsd:string', in: ['GOVERN', 'MAP', 'MEASURE', 'MANAGE'], comment: 'the core function id' },
       ],
     },
+    {
+      name: 'FunctionClaimShape', targetSubjectsOf: ['addressesFunction'], label: 'AI RMF function claim',
+      comment: 'A record of an action that addresses a core function names one of the four: a concept of this document\'s CoreFunction list, by its token ("GOVERN") or its IRI.',
+      constraints: [
+        { path: 'addressesFunction', comment: 'one of the four core functions' },
+      ],
+    },
   ],
-};
+}, 'CoreFunction', 'functionId');
 
 /** The compliance framework ontologies — composed into PGSL + served at
  *  <bridge>/ns/<module> exactly like SPEC_MODELS, but kept OUT of the LMS/LRS

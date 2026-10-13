@@ -53,9 +53,44 @@ shapes:SequencingShape a sh:NodeShape ;
         foxxi-scorm-sn:deliveryControls ,
         foxxi-scorm-sn:rollupConsiderations ,
         foxxi-scorm-sn:constrainedChoiceConsiderations ,
+        foxxi-scorm-sn:adlObjective ,
         foxxi-scorm-sn:adlObjectives ;
     rdfs:label "Sequencing definition conformance"@en ;
     rdfs:comment "A sequencing definition has at most one of each of its parts, and at most one ID and one IDRef (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Sequencing definition conformance: a Sequencing is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:SequencingShape-seqID ,
         shapes:SequencingShape-seqIDRef ,
         shapes:SequencingShape-controlMode ,
@@ -67,7 +102,8 @@ shapes:SequencingShape a sh:NodeShape ;
         shapes:SequencingShape-randomizationControls ,
         shapes:SequencingShape-deliveryControls ,
         shapes:SequencingShape-rollupConsiderations ,
-        shapes:SequencingShape-constrainedChoiceConsiderations ;
+        shapes:SequencingShape-constrainedChoiceConsiderations ,
+        shapes:SequencingShape-adlObjectives ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
 
 shapes:SequencingShape-seqID a sh:PropertyShape ;
@@ -146,11 +182,52 @@ shapes:SequencingShape-constrainedChoiceConsiderations a sh:PropertyShape ;
     sh:message "Sequencing definition conformance — constrainedChoiceConsiderations: at most 1 value"@en ;
     sh:maxCount 1 .
 
+shapes:SequencingShape-adlObjectives a sh:PropertyShape ;
+    sh:path foxxi-scorm-sn:adlObjective ;
+    sh:name "adlObjectives" ;
+    sh:description "each adlseq:objective (adlseq_v1p3.xsd: objectivesType)"@en ;
+    sh:message "Sequencing definition conformance — adlObjectives: an instance of AdlObjective — each adlseq:objective (adlseq_v1p3.xsd: objectivesType)"@en ;
+    sh:nodeKind sh:BlankNodeOrIRI .
+
 shapes:SequencingCollectionShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-sn:SequencingCollection ;
     sh:targetObjectsOf foxxi-scorm-sn:sequencingCollection ;
     rdfs:label "Sequencing collection conformance"@en ;
     rdfs:comment "A sequencing collection holds at least one sequencing definition (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingCollection)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Sequencing collection conformance: a SequencingCollection is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:SequencingCollectionShape-sequencing ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
 
@@ -172,6 +249,40 @@ shapes:ControlModeShape a sh:NodeShape ;
         foxxi-scorm-sn:useCurrentAttemptProgressInfo ;
     rdfs:label "Control mode conformance"@en ;
     rdfs:comment "Each control flag is at most one boolean (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): controlModeType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Control mode conformance: a ControlMode is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ControlModeShape-choice ,
         shapes:ControlModeShape-choiceExit ,
         shapes:ControlModeShape-flow ,
@@ -237,6 +348,40 @@ shapes:RuleConditionShape a sh:NodeShape ;
         foxxi-scorm-sn:ruleConditionName ;
     rdfs:label "Sequencing rule condition conformance"@en ;
     rdfs:comment "A rule condition names what it tests, from the twelve sequencing rule conditions; its operator is not or noOp; its measure threshold is from -1 to 1; its referenced objective is an objective ID (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRuleType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Sequencing rule condition conformance: a RuleCondition is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RuleConditionShape-ruleConditionName ,
         shapes:RuleConditionShape-conditionOperator ,
         shapes:RuleConditionShape-measureThreshold ,
@@ -299,6 +444,40 @@ shapes:RuleConditionsShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-sn:ruleConditionCombination , foxxi-scorm-sn:ruleCondition ;
     rdfs:label "Sequencing rule conditions conformance"@en ;
     rdfs:comment "A rule's conditions combine by all or any (default all), and there is at least one (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): sequencingRuleType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Sequencing rule conditions conformance: a RuleConditions is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RuleConditionsShape-ruleConditionCombination , shapes:RuleConditionsShape-ruleCondition ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
 
@@ -323,6 +502,39 @@ shapes:PreConditionRuleActionShape a sh:NodeShape ;
     sh:targetObjectsOf foxxi-scorm-sn:preConditionRule ;
     rdfs:label "Pre-condition rule conformance"@en ;
     rdfs:comment "A pre-condition rule has exactly one action, one of skip, disabled, hiddenFromChoice, stopForwardTraversal (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): preConditionRuleActionType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+        )
+    ] ;
+    sh:message "Pre-condition rule conformance: a PreConditionRule is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:PreConditionRuleActionShape-ruleAction ,
         shapes:PreConditionRuleActionShape-ruleAction-ruleActionValue ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
@@ -349,6 +561,39 @@ shapes:ExitConditionRuleActionShape a sh:NodeShape ;
     sh:targetObjectsOf foxxi-scorm-sn:exitConditionRule ;
     rdfs:label "Exit-condition rule conformance"@en ;
     rdfs:comment "An exit-condition rule has exactly one action, exit (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): exitConditionRuleActionType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+        )
+    ] ;
+    sh:message "Exit-condition rule conformance: an ExitConditionRule is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ExitConditionRuleActionShape-ruleAction ,
         shapes:ExitConditionRuleActionShape-ruleAction-ruleActionValue ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
@@ -375,6 +620,39 @@ shapes:PostConditionRuleActionShape a sh:NodeShape ;
     sh:targetObjectsOf foxxi-scorm-sn:postConditionRule ;
     rdfs:label "Post-condition rule conformance"@en ;
     rdfs:comment "A post-condition rule has exactly one action, one of exitParent, exitAll, retry, retryAll, continue, previous (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): postConditionRuleActionType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+        )
+    ] ;
+    sh:message "Post-condition rule conformance: a PostConditionRule is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:PostConditionRuleActionShape-ruleAction ,
         shapes:PostConditionRuleActionShape-ruleAction-ruleActionValue ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
@@ -402,6 +680,40 @@ shapes:RuleActionShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-sn:ruleActionValue ;
     rdfs:label "Rule action conformance"@en ;
     rdfs:comment "A rule action has exactly one action from the sequencing rule actions; the rule's own shape narrows it to its kind (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd))."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Rule action conformance: a RuleAction is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RuleActionShape-ruleActionValue ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
 
@@ -439,6 +751,40 @@ shapes:LimitConditionsShape a sh:NodeShape ;
         foxxi-scorm-sn:endTimeLimit ;
     rdfs:label "Limit conditions conformance"@en ;
     rdfs:comment "The attempt limit is a non-negative integer, the four duration limits are xs:duration values, and the begin and end time limits are date-times (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): limitConditionsType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Limit conditions conformance: a LimitConditions is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:LimitConditionsShape-attemptLimit ,
         shapes:LimitConditionsShape-attemptAbsoluteDurationLimit ,
         shapes:LimitConditionsShape-attemptExperiencedDurationLimit ,
@@ -518,6 +864,40 @@ shapes:RollupRulesShape a sh:NodeShape ;
         foxxi-scorm-sn:objectiveMeasureWeight ;
     rdfs:label "Rollup rules conformance"@en ;
     rdfs:comment "The rollup flags are booleans (default true) and the objective measure weight is from 0 to 1 (default 1) (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRulesType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Rollup rules conformance: a RollupRules is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RollupRulesShape-rollupObjectiveSatisfied ,
         shapes:RollupRulesShape-rollupProgressCompletion ,
         shapes:RollupRulesShape-objectiveMeasureWeight ;
@@ -559,6 +939,40 @@ shapes:RollupRuleShape a sh:NodeShape ;
         foxxi-scorm-sn:rollupActionEl ;
     rdfs:label "Rollup rule conformance"@en ;
     rdfs:comment "A rollup rule has a child activity set (default all), a minimum count and percent, exactly one set of conditions and exactly one action (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Rollup rule conformance: a RollupRule is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RollupRuleShape-childActivitySet ,
         shapes:RollupRuleShape-minimumCount ,
         shapes:RollupRuleShape-minimumPercent ,
@@ -616,6 +1030,40 @@ shapes:RollupConditionsShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-sn:rollupConditionCombination , foxxi-scorm-sn:rollupCondition ;
     rdfs:label "Rollup conditions conformance"@en ;
     rdfs:comment "A rollup rule's conditions combine by all or any (default any), and there is at least one (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Rollup conditions conformance: a RollupConditions is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RollupConditionsShape-rollupConditionCombination ,
         shapes:RollupConditionsShape-rollupCondition ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
@@ -642,6 +1090,40 @@ shapes:RollupConditionShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-sn:rollupConditionOperator , foxxi-scorm-sn:rollupConditionName ;
     rdfs:label "Rollup condition conformance"@en ;
     rdfs:comment "A rollup condition names what it tests, from the nine rollup conditions; its operator is not or noOp (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupRuleConditionType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Rollup condition conformance: a RollupCondition is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RollupConditionShape-rollupConditionName ,
         shapes:RollupConditionShape-rollupConditionOperator ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
@@ -681,6 +1163,40 @@ shapes:RollupActionShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-sn:rollupActionValue ;
     rdfs:label "Rollup action conformance"@en ;
     rdfs:comment "A rollup action is exactly one of satisfied, notSatisfied, completed, incomplete (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): rollupActionType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Rollup action conformance: a RollupAction is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RollupActionShape-rollupActionValue ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
 
@@ -696,10 +1212,44 @@ shapes:RollupActionShape-rollupActionValue a sh:PropertyShape ;
 
 shapes:ObjectivesShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-sn:Objectives ;
-    sh:targetObjectsOf foxxi-scorm-sn:objectives ;
+    sh:targetObjectsOf foxxi-scorm-sn:objectives , foxxi-scorm-sn:adlObjectives ;
     sh:targetSubjectsOf foxxi-scorm-sn:primaryObjective , foxxi-scorm-sn:objective ;
     rdfs:label "Objectives conformance"@en ;
     rdfs:comment "Objectives have exactly one primary objective, which contributes to rollup, and any number of others (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectivesType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Objectives conformance: an Objectives is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ObjectivesShape-primaryObjective ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
 
@@ -717,6 +1267,40 @@ shapes:ObjectiveShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-sn:satisfiedByMeasure , foxxi-scorm-sn:minNormalizedMeasure , foxxi-scorm-sn:mapInfo ;
     rdfs:label "Objective conformance"@en ;
     rdfs:comment "An objective has at most one ID, which is required on objectives other than the primary one; satisfiedByMeasure is a boolean; the minimum normalized measure is from -1 to 1 (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Objective conformance: an Objective is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ObjectiveShape-objectiveID ,
         shapes:ObjectiveShape-satisfiedByMeasure ,
         shapes:ObjectiveShape-minNormalizedMeasure ;
@@ -757,6 +1341,40 @@ shapes:ObjectiveMappingShape a sh:NodeShape ;
         foxxi-scorm-sn:writeNormalizedMeasure ;
     rdfs:label "Objective mapping conformance"@en ;
     rdfs:comment "A map names its global objective; its read and write flags are booleans (read default true, write default false) (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): objectiveMappingType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Objective mapping conformance: an ObjectiveMapping is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ObjectiveMappingShape-targetObjectiveID ,
         shapes:ObjectiveMappingShape-readSatisfiedStatus ,
         shapes:ObjectiveMappingShape-readNormalizedMeasure ,
@@ -807,10 +1425,44 @@ shapes:ObjectiveMappingShape-writeNormalizedMeasure a sh:PropertyShape ;
 
 shapes:AdlObjectiveShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-sn:AdlObjective ;
-    sh:targetObjectsOf foxxi-scorm-sn:adlObjectives ;
+    sh:targetObjectsOf foxxi-scorm-sn:adlObjective ;
     sh:targetSubjectsOf foxxi-scorm-sn:adlMapInfo ;
     rdfs:label "ADL objective conformance"@en ;
     rdfs:comment "An adlseq:objective names the objective it extends and has at least one map (ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): objectiveType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "ADL objective conformance: an AdlObjective is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:AdlObjectiveShape-objectiveID , shapes:AdlObjectiveShape-adlMapInfo ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
 
@@ -845,6 +1497,40 @@ shapes:AdlObjectiveMappingShape a sh:NodeShape ;
         foxxi-scorm-sn:writeProgressMeasure ;
     rdfs:label "ADL objective mapping conformance"@en ;
     rdfs:comment "An adlseq:mapInfo names its global objective; its read and write flags are booleans (read default true, write default false) (ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): mapInfoType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "ADL objective mapping conformance: an AdlObjectiveMapping is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:AdlObjectiveMappingShape-targetObjectiveID ,
         shapes:AdlObjectiveMappingShape-readRawScore ,
         shapes:AdlObjectiveMappingShape-readMinScore ,
@@ -956,6 +1642,40 @@ shapes:RandomizationControlsShape a sh:NodeShape ;
         foxxi-scorm-sn:selectionTiming ;
     rdfs:label "Randomization controls conformance"@en ;
     rdfs:comment "The timings are never, once or onEachNewAttempt (default never); selectCount is a non-negative integer; reorderChildren is a boolean (default false) (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): randomizationType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Randomization controls conformance: a RandomizationControls is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RandomizationControlsShape-randomizationTiming ,
         shapes:RandomizationControlsShape-selectCount ,
         shapes:RandomizationControlsShape-reorderChildren ,
@@ -1005,6 +1725,40 @@ shapes:DeliveryControlsShape a sh:NodeShape ;
         foxxi-scorm-sn:objectiveSetByContent ;
     rdfs:label "Delivery controls conformance"@en ;
     rdfs:comment "tracked (default true), completionSetByContent and objectiveSetByContent (default false) are booleans (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): deliveryControlsType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Delivery controls conformance: a DeliveryControls is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:DeliveryControlsShape-tracked ,
         shapes:DeliveryControlsShape-completionSetByContent ,
         shapes:DeliveryControlsShape-objectiveSetByContent ;
@@ -1040,6 +1794,40 @@ shapes:AuxiliaryResourceShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-sn:auxiliaryResourceID , foxxi-scorm-sn:purpose ;
     rdfs:label "Auxiliary resource conformance"@en ;
     rdfs:comment "An auxiliary resource has exactly one ID and one purpose (IMS Simple Sequencing 1.0 (imsss_v1p0.xsd): auxiliaryResourceType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Auxiliary resource conformance: an AuxiliaryResource is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:AuxiliaryResourceShape-auxiliaryResourceID , shapes:AuxiliaryResourceShape-purpose ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
 
@@ -1071,6 +1859,40 @@ shapes:RollupConsiderationsShape a sh:NodeShape ;
         foxxi-scorm-sn:measureSatisfactionIfActive ;
     rdfs:label "Rollup considerations conformance"@en ;
     rdfs:comment "The four requiredFor attributes are always, ifAttempted, ifNotSkipped or ifNotSuspended (default always); measureSatisfactionIfActive is a boolean (default true) (ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): rollupConsiderationsType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Rollup considerations conformance: a RollupConsiderations is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:RollupConsiderationsShape-requiredForSatisfied ,
         shapes:RollupConsiderationsShape-requiredForNotSatisfied ,
         shapes:RollupConsiderationsShape-requiredForCompleted ,
@@ -1128,6 +1950,40 @@ shapes:ConstrainedChoiceConsiderationsShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-sn:preventActivation , foxxi-scorm-sn:constrainChoice ;
     rdfs:label "Constrained choice considerations conformance"@en ;
     rdfs:comment "preventActivation and constrainChoice are booleans (default false) (ADL sequencing extensions, SCORM 2004 4th Edition (adlseq_v1p3.xsd): constrainChoiceConsiderationsType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+            [ sh:class foxxi-scorm-sn:NavigationInterface ]
+        )
+    ] ;
+    sh:message "Constrained choice considerations conformance: a ConstrainedChoiceConsiderations is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ConstrainedChoiceConsiderationsShape-preventActivation ,
         shapes:ConstrainedChoiceConsiderationsShape-constrainChoice ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
@@ -1154,6 +2010,40 @@ shapes:NavigationInterfaceShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-sn:hideLMSUI ;
     rdfs:label "Navigation interface conformance"@en ;
     rdfs:comment "Each hideLMSUI value is one of the seven hideable controls (ADL navigation extensions (adlnav_v1p3.xsd): hideLMSUIType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-sn:Sequencing ]
+            [ sh:class foxxi-scorm-sn:SequencingCollection ]
+            [ sh:class foxxi-scorm-sn:ControlMode ]
+            [ sh:class foxxi-scorm-sn:SequencingRules ]
+            [ sh:class foxxi-scorm-sn:SequencingRule ]
+            [ sh:class foxxi-scorm-sn:PreConditionRule ]
+            [ sh:class foxxi-scorm-sn:ExitConditionRule ]
+            [ sh:class foxxi-scorm-sn:PostConditionRule ]
+            [ sh:class foxxi-scorm-sn:RuleConditions ]
+            [ sh:class foxxi-scorm-sn:RuleCondition ]
+            [ sh:class foxxi-scorm-sn:RuleAction ]
+            [ sh:class foxxi-scorm-sn:LimitConditions ]
+            [ sh:class foxxi-scorm-sn:RollupRules ]
+            [ sh:class foxxi-scorm-sn:RollupRule ]
+            [ sh:class foxxi-scorm-sn:RollupConditions ]
+            [ sh:class foxxi-scorm-sn:RollupCondition ]
+            [ sh:class foxxi-scorm-sn:RollupAction ]
+            [ sh:class foxxi-scorm-sn:Objectives ]
+            [ sh:class foxxi-scorm-sn:Objective ]
+            [ sh:class foxxi-scorm-sn:ObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:RandomizationControls ]
+            [ sh:class foxxi-scorm-sn:DeliveryControls ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResources ]
+            [ sh:class foxxi-scorm-sn:AuxiliaryResource ]
+            [ sh:class foxxi-scorm-sn:RollupConsiderations ]
+            [ sh:class foxxi-scorm-sn:ConstrainedChoiceConsiderations ]
+            [ sh:class foxxi-scorm-sn:AdlObjective ]
+            [ sh:class foxxi-scorm-sn:AdlObjectiveMapping ]
+            [ sh:class foxxi-scorm-sn:Presentation ]
+        )
+    ] ;
+    sh:message "Navigation interface conformance: a NavigationInterface is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:NavigationInterfaceShape-hideLMSUI ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-sn/shapes> .
 

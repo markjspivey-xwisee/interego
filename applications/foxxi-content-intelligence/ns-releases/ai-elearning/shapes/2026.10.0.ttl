@@ -42,6 +42,7 @@ shapes:SignedInteractionRecordShape a sh:NodeShape ;
     sh:targetClass foxxi-ai-elearning:SignedInteractionRecord ;
     sh:targetSubjectsOf foxxi-ai-elearning:signedEnvelope ,
         foxxi-ai-elearning:signedBy ,
+        foxxi-ai-elearning:signer ,
         foxxi-ai-elearning:recordedAt ,
         foxxi-ai-elearning:attestedModel ,
         foxxi-ai-elearning:citedSource ,
@@ -49,6 +50,17 @@ shapes:SignedInteractionRecordShape a sh:NodeShape ;
         foxxi-ai-elearning:interventionEfficacy ;
     rdfs:label "Verifiable AI-interaction record conformance"@en ;
     rdfs:comment "A recorded AI interaction MUST carry a signature and a recovered signer and a record time — so the \"audit trail\" is tamper-evident evidence, not self-asserted text. This is the constraint the self-asserted vendor pattern lacks."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-ai-elearning:AttestedModelClaim ]
+            [ sh:class foxxi-ai-elearning:ContentAddressedSource ]
+            [ sh:class foxxi-ai-elearning:ConfidenceRangeProof ]
+            [ sh:class foxxi-ai-elearning:AiInteraction ]
+            [ sh:class foxxi-ai-elearning:AiQuestion ]
+            [ sh:class foxxi-ai-elearning:AiFeedback ]
+        )
+    ] ;
+    sh:message "Verifiable AI-interaction record conformance: a SignedInteractionRecord is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:SignedInteractionRecordShape-signedEnvelope ,
         shapes:SignedInteractionRecordShape-signer ,
         shapes:SignedInteractionRecordShape-recordedAt ,
@@ -104,9 +116,23 @@ shapes:SignedInteractionRecordShape-confidenceProof a sh:PropertyShape ;
 shapes:AttestedModelClaimShape a sh:NodeShape ;
     sh:targetClass foxxi-ai-elearning:AttestedModelClaim ;
     sh:targetObjectsOf foxxi-ai-elearning:attestedModel ;
-    sh:targetSubjectsOf foxxi-ai-elearning:modelClaimSignedBy , foxxi-ai-elearning:model , foxxi-ai-elearning:provider ;
+    sh:targetSubjectsOf foxxi-ai-elearning:modelClaimSignedBy ,
+        foxxi-ai-elearning:modelClaimSigner ,
+        foxxi-ai-elearning:model ,
+        foxxi-ai-elearning:provider ;
     rdfs:label "Attested model/provider conformance"@en ;
     rdfs:comment "A model/provider claim MUST be signed — attributable to the gateway that made the call — rather than free text the spec trusts."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-ai-elearning:SignedInteractionRecord ]
+            [ sh:class foxxi-ai-elearning:ContentAddressedSource ]
+            [ sh:class foxxi-ai-elearning:ConfidenceRangeProof ]
+            [ sh:class foxxi-ai-elearning:AiInteraction ]
+            [ sh:class foxxi-ai-elearning:AiQuestion ]
+            [ sh:class foxxi-ai-elearning:AiFeedback ]
+        )
+    ] ;
+    sh:message "Attested model/provider conformance: an AttestedModelClaim is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:AttestedModelClaimShape-modelClaimSigner ,
         shapes:AttestedModelClaimShape-model ,
         shapes:AttestedModelClaimShape-provider ;
@@ -142,9 +168,20 @@ shapes:AttestedModelClaimShape-provider a sh:PropertyShape ;
 shapes:ContentAddressedSourceShape a sh:NodeShape ;
     sh:targetClass foxxi-ai-elearning:ContentAddressedSource ;
     sh:targetObjectsOf foxxi-ai-elearning:citedSource ;
-    sh:targetSubjectsOf foxxi-ai-elearning:citesAtom ;
+    sh:targetSubjectsOf foxxi-ai-elearning:citesAtom , foxxi-ai-elearning:sourceAtom ;
     rdfs:label "Content-addressed source conformance"@en ;
     rdfs:comment "A cited source MUST be content-addressed to a urn:pgsl:atom so it resolves to exactly the bytes used — replacing a bare source string."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-ai-elearning:SignedInteractionRecord ]
+            [ sh:class foxxi-ai-elearning:AttestedModelClaim ]
+            [ sh:class foxxi-ai-elearning:ConfidenceRangeProof ]
+            [ sh:class foxxi-ai-elearning:AiInteraction ]
+            [ sh:class foxxi-ai-elearning:AiQuestion ]
+            [ sh:class foxxi-ai-elearning:AiFeedback ]
+        )
+    ] ;
+    sh:message "Content-addressed source conformance: a ContentAddressedSource is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ContentAddressedSourceShape-sourceAtom ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ai-elearning/shapes> .
 
@@ -166,6 +203,17 @@ shapes:ConfidenceRangeProofShape a sh:NodeShape ;
         foxxi-ai-elearning:proofVerified ;
     rdfs:label "Confidence range-proof conformance"@en ;
     rdfs:comment "Confidence is recorded as a committed range proof (≥ threshold) beside the verbatim self-reported number. The threshold is required; the asserted value is optional and explicitly unverified."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-ai-elearning:SignedInteractionRecord ]
+            [ sh:class foxxi-ai-elearning:AttestedModelClaim ]
+            [ sh:class foxxi-ai-elearning:ContentAddressedSource ]
+            [ sh:class foxxi-ai-elearning:AiInteraction ]
+            [ sh:class foxxi-ai-elearning:AiQuestion ]
+            [ sh:class foxxi-ai-elearning:AiFeedback ]
+        )
+    ] ;
+    sh:message "Confidence range-proof conformance: a ConfidenceRangeProof is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ConfidenceRangeProofShape-confidenceThreshold ,
         shapes:ConfidenceRangeProofShape-assertedConfidence ,
         shapes:ConfidenceRangeProofShape-proofVerified ;

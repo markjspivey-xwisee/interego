@@ -413,7 +413,7 @@ shapes:InteractionDefinitionShape-interactionType a sh:PropertyShape ;
     ) .
 
 shapes:InteractionDefinitionShape-type a sh:PropertyShape ;
-    sh:path foxxi-xapi:type ;
+    sh:path foxxi-xapi:activityType ;
     sh:name "type" ;
     sh:description "the Activity type IRI (§5.2.2.3)"@en ;
     sh:message "Activity Definition conformance — type: at most 1 value, an IRI — the Activity type IRI (§5.2.2.3)"@en ;
@@ -774,7 +774,7 @@ shapes:AttachmentShape a sh:NodeShape ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
 
 shapes:AttachmentShape-usageType a sh:PropertyShape ;
-    sh:path foxxi-xapi:usageType ;
+    sh:path foxxi-xapi:attachmentUsageType ;
     sh:name "usageType" ;
     sh:message "Attachment conformance — usageType: exactly 1 value, an IRI"@en ;
     sh:nodeKind sh:IRI ;

@@ -44,7 +44,12 @@
     },
     "structure": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#structure",
-      "@type": "@id"
+      "@type": "@id",
+      "@context": {
+        "entitlementKey": {
+          "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#entitlementKey"
+        }
+      }
     },
     "block": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#block",
@@ -67,8 +72,8 @@
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#objective",
       "@type": "@id"
     },
-    "objectives": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#objectives",
+    "objectiveReference": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#objectiveReference",
       "@type": "@id"
     },
     "title": {
@@ -100,8 +105,8 @@
     "masteryScore": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#masteryScore"
     },
-    "activityType": {
-      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#activityType",
+    "auActivityType": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#auActivityType",
       "@type": "@id",
       "@context": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.0"
     },
@@ -159,6 +164,15 @@
     },
     "audioPreference": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#audioPreference"
+    },
+    "objectives": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#objectiveReference",
+      "@type": "@id"
+    },
+    "activityType": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#auActivityType",
+      "@type": "@id",
+      "@context": "https://foxxi-bridge.interego.xwisee.com/ns/xapi/context/2026.10.0"
     },
     "courseStructure": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#courseStructureKey"

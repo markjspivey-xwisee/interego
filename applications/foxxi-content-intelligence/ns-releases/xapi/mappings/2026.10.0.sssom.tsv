@@ -34,25 +34,25 @@ foxxi_xapi:Duration	Duration	skos:exactMatch	sssom:NoTermFound		semapv:ManualMap
 foxxi_xapi:Extensions	Extensions	skos:relatedMatch	xapi:Extension	Extension	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Related, not the same: ADL's Extension classifies an extension's IRI (a SKOS concept, as an activity type is); this class is the map that carries extension values, keyed by those IRIs.
 foxxi_xapi:Group	Group	skos:exactMatch	xapi:Group	Group	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:InteractionComponent	Interaction Component	skos:exactMatch	xapi:InteractionComponent	InteractionComponent	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-choice	choice	skos:exactMatch	foxxi_scorm_rte:InteractionType-choice	choice	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-choice	choice	skos:exactMatch	foxxi_scorm_rte:InteractionType-choice	choice	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-choice	choice	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-fill-in	fill in	skos:exactMatch	foxxi_scorm_rte:InteractionType-fill-in	fill in	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-fill-in	fill in	skos:exactMatch	foxxi_scorm_rte:InteractionType-fill-in	fill in	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-fill-in	fill in	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-likert	Likert	skos:exactMatch	foxxi_scorm_rte:InteractionType-likert	Likert	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-likert	Likert	skos:exactMatch	foxxi_scorm_rte:InteractionType-likert	Likert	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-likert	Likert	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-long-fill-in	long fill in	skos:exactMatch	foxxi_scorm_rte:InteractionType-long-fill-in	long fill in	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-long-fill-in	long fill in	skos:exactMatch	foxxi_scorm_rte:InteractionType-long-fill-in	long fill in	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-long-fill-in	long fill in	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-matching	matching	skos:exactMatch	foxxi_scorm_rte:InteractionType-matching	matching	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-matching	matching	skos:exactMatch	foxxi_scorm_rte:InteractionType-matching	matching	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-matching	matching	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-numeric	numeric	skos:exactMatch	foxxi_scorm_rte:InteractionType-numeric	numeric	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-numeric	numeric	skos:exactMatch	foxxi_scorm_rte:InteractionType-numeric	numeric	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-numeric	numeric	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-other	other	skos:exactMatch	foxxi_scorm_rte:InteractionType-other	other	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-other	other	skos:exactMatch	foxxi_scorm_rte:InteractionType-other	other	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-other	other	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-performance	performance	skos:exactMatch	foxxi_scorm_rte:InteractionType-performance	performance	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-performance	performance	skos:exactMatch	foxxi_scorm_rte:InteractionType-performance	performance	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-performance	performance	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-sequencing	sequencing	skos:exactMatch	foxxi_scorm_rte:InteractionType-sequencing	sequencing	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-sequencing	sequencing	skos:exactMatch	foxxi_scorm_rte:InteractionType-sequencing	sequencing	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-sequencing	sequencing	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:InteractionType-true-false	true or false	skos:exactMatch	foxxi_scorm_rte:InteractionType-true-false	true or false	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-true-false	true or false	skos:exactMatch	foxxi_scorm_rte:InteractionType-true-false	true or false	semapv:ManualMappingCuration	skos concept	skos concept	foxxi_ns:scorm-rte	https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0	
 foxxi_xapi:InteractionType-true-false	true or false	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:MediaType	Internet media type	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:Number	Number	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
@@ -68,8 +68,10 @@ foxxi_xapi:UUID	UUID	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCura
 foxxi_xapi:Verb	Verb	skos:exactMatch	xapi:Verb	Verb	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:Version	Version	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:account	account	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:activityType	activity type	skos:exactMatch	xapi:type	type	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:actor	actor	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:agent	agent	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:attachmentUsageType	usage type	skos:closeMatch	xapi:usageType	usageType	semapv:ManualMappingCuration	owl object property	owl data property	w3id:xapi/ontology	2017-08-11	Not an exact match because of kind: ADL declares xapi:usageType an owl:DatatypeProperty with the class range xapi:AttachmentUsageType, which OWL 2 DL does not allow; a usage type is an IRI naming a concept, so here it is an object property.
 foxxi_xapi:attachments	attachments	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:authority	authority	skos:exactMatch	xapi:Authority	Authority	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	ADL declares xapi:Authority an owl:ObjectProperty, as this is; its ontology also uses the IRI as a class (a subclass of xapi:Statement, and one of its disjoint classes).
 foxxi_xapi:category	category	skos:exactMatch	xapi:category	category	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
@@ -128,7 +130,5 @@ foxxi_xapi:success	success	skos:exactMatch	xapi:success	success	semapv:ManualMap
 foxxi_xapi:target	target	skos:exactMatch	xapi:target	target	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:team	team	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:timestamp	timestamp	skos:exactMatch	xapi:timeStamp	timeStamp	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:type	type	skos:exactMatch	xapi:type	type	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
-foxxi_xapi:usageType	usage type	skos:closeMatch	xapi:usageType	usageType	semapv:ManualMappingCuration	owl object property	owl data property	w3id:xapi/ontology	2017-08-11	Not an exact match because of kind: ADL declares xapi:usageType an owl:DatatypeProperty with the class range xapi:AttachmentUsageType, which OWL 2 DL does not allow; a usage type is an IRI naming a concept, so here it is an object property.
 foxxi_xapi:verb	verb	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
 foxxi_xapi:version	version	skos:closeMatch	xapi:version	version	semapv:ManualMappingCuration	owl data property	owl annotation property	w3id:xapi/ontology	2017-08-11	Not an exact match because of kind: ADL declares xapi:version an owl:AnnotationProperty, which no class axiom or shape can constrain; here it is a datatype property whose values are xAPI version numbers.

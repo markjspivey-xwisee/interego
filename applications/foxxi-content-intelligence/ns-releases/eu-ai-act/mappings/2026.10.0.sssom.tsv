@@ -2,6 +2,7 @@
 #  eu_ai_act: "https://markjspivey-xwisee.github.io/interego/ns/eu-ai-act#"
 #  foxxi_eu_ai_act: "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act#"
 #  foxxi_ns: "https://foxxi-bridge.interego.xwisee.com/ns/"
+#  interego_ns: "https://markjspivey-xwisee.github.io/interego/ns/"
 #mapping_set_id: "https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/mappings"
 #mapping_set_version: "2026.10.0"
 #mapping_set_title: "EU AI Act (Regulation (EU) 2024/1689) — obligation mapping — mappings"
@@ -15,15 +16,15 @@
 #publication_date: 2026-10-12
 #comment: "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by the European Union. Where this document and the published standard differ, the standard governs."
 subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	object_source_version	comment
-foxxi_eu_ai_act:AccuracyRobustness	Accuracy, Robustness, Cybersecurity (Art.15)	skos:relatedMatch	eu_ai_act:AccuracyAttestation	Accuracy + robustness attestation (Article 15)	semapv:ManualMappingCuration	owl class	owl class			
-foxxi_eu_ai_act:Article-Article10	Article 10 — Data and data governance	skos:exactMatch	eu_ai_act:Article10	Article 10 — Data governance	semapv:ManualMappingCuration	skos concept	owl named individual			
-foxxi_eu_ai_act:Article-Article12	Article 12 — Record-keeping	skos:exactMatch	eu_ai_act:Article12	Article 12 — Record-keeping	semapv:ManualMappingCuration	skos concept	owl named individual			
-foxxi_eu_ai_act:Article-Article14	Article 14 — Human oversight	skos:exactMatch	eu_ai_act:Article14	Article 14 — Human oversight	semapv:ManualMappingCuration	skos concept	owl named individual			
-foxxi_eu_ai_act:Article-Article15	Article 15 — Accuracy, robustness and cybersecurity	skos:exactMatch	eu_ai_act:Article15	Article 15 — Accuracy, robustness and cybersecurity	semapv:ManualMappingCuration	skos concept	owl named individual			
-foxxi_eu_ai_act:Article-Article9	Article 9 — Risk management system	skos:exactMatch	eu_ai_act:Article9	Article 9 — Risk management system	semapv:ManualMappingCuration	skos concept	owl named individual			
-foxxi_eu_ai_act:DataGovernance	Data & Data Governance (Art.10)	skos:relatedMatch	eu_ai_act:DataGovernanceAttestation	Data governance attestation (Article 10)	semapv:ManualMappingCuration	owl class	owl class			
-foxxi_eu_ai_act:HumanOversight	Human Oversight (Art.14)	skos:relatedMatch	eu_ai_act:HumanOversightCheckpoint	Human oversight checkpoint (Article 14)	semapv:ManualMappingCuration	owl class	owl class			
-foxxi_eu_ai_act:InteractionTransparency	Transparency to Persons (Art.50)	skos:relatedMatch	eu_ai_act:Article50Disclosure	Article 50 disclosure	semapv:ManualMappingCuration	owl class	owl class			
-foxxi_eu_ai_act:RecordKeeping	Record-Keeping (Art.12)	skos:relatedMatch	eu_ai_act:LoggedAction	Logged action (Article 12)	semapv:ManualMappingCuration	owl class	owl class			
-foxxi_eu_ai_act:RiskManagement	Risk Management (Art.9)	skos:relatedMatch	eu_ai_act:RiskManagementRecord	Risk management record (Article 9)	semapv:ManualMappingCuration	owl class	owl class			
-foxxi_eu_ai_act:Transparency	Transparency to Deployers (Art.13)	skos:relatedMatch	eu_ai_act:TransparencyDisclosure	Transparency disclosure (Article 13)	semapv:ManualMappingCuration	owl class	owl class			
+foxxi_eu_ai_act:AccuracyRobustness	Accuracy, Robustness, Cybersecurity (Art.15)	skos:relatedMatch	eu_ai_act:AccuracyAttestation	Accuracy + robustness attestation (Article 15)	semapv:ManualMappingCuration	owl class	owl class	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:Article-Article10	Article 10 — Data and data governance	skos:exactMatch	eu_ai_act:Article10	Article 10 — Data governance	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:Article-Article12	Article 12 — Record-keeping	skos:exactMatch	eu_ai_act:Article12	Article 12 — Record-keeping	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:Article-Article14	Article 14 — Human oversight	skos:exactMatch	eu_ai_act:Article14	Article 14 — Human oversight	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:Article-Article15	Article 15 — Accuracy, robustness and cybersecurity	skos:exactMatch	eu_ai_act:Article15	Article 15 — Accuracy, robustness and cybersecurity	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:Article-Article9	Article 9 — Risk management system	skos:exactMatch	eu_ai_act:Article9	Article 9 — Risk management system	semapv:ManualMappingCuration	skos concept	owl named individual	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:DataGovernance	Data & Data Governance (Art.10)	skos:relatedMatch	eu_ai_act:DataGovernanceAttestation	Data governance attestation (Article 10)	semapv:ManualMappingCuration	owl class	owl class	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:HumanOversight	Human Oversight (Art.14)	skos:relatedMatch	eu_ai_act:HumanOversightCheckpoint	Human oversight checkpoint (Article 14)	semapv:ManualMappingCuration	owl class	owl class	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:InteractionTransparency	Transparency to Persons (Art.50)	skos:relatedMatch	eu_ai_act:Article50Disclosure	Article 50 disclosure	semapv:ManualMappingCuration	owl class	owl class	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:RecordKeeping	Record-Keeping (Art.12)	skos:relatedMatch	eu_ai_act:LoggedAction	Logged action (Article 12)	semapv:ManualMappingCuration	owl class	owl class	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:RiskManagement	Risk Management (Art.9)	skos:relatedMatch	eu_ai_act:RiskManagementRecord	Risk management record (Article 9)	semapv:ManualMappingCuration	owl class	owl class	interego_ns:eu-ai-act		
+foxxi_eu_ai_act:Transparency	Transparency to Deployers (Art.13)	skos:relatedMatch	eu_ai_act:TransparencyDisclosure	Transparency disclosure (Article 13)	semapv:ManualMappingCuration	owl class	owl class	interego_ns:eu-ai-act		

@@ -2,7 +2,7 @@
  * ns/model-context.ts — the JSON-LD context that gives a Foxxi document's JSON instances their RDF
  * reading, generated from the document's model.
  *
- * ★ WHY. A shapes graph constrains RDF, and its shapes select nodes by class (sh:targetClass). For
+ * ★ WHY. A shapes graph constrains RDF, and its shapes selected nodes by class (sh:targetClass). For
  * eight of the documents — SCORM CAM, SN and RTE, cmi5, the AI e-learning profile, SOC 2, the EU AI
  * Act and the NIST AI RMF — nothing read their instances into RDF: the validator checked the JSON
  * forms (POST /ns/<module>/validate), and a SHACL processor given the shapes had nothing to select.
@@ -35,7 +35,7 @@
  * know what it means.
  */
 import {
-  type OntologyModel, type OntProperty, type OntShape, contextIri, ns, expandAbs, slugLocal, jsonKeysOf,
+  type OntologyModel, type OntProperty, type OntShape, contextIri, ns, expandAbs, jsonKeysOf, jsonStepsOf, conceptListOf,
 } from '../spec-ontology.js';
 import { XAPI_MODEL, XAPI_CONTEXT_URL } from '../spec/xapi.model.js';
 
@@ -76,7 +76,7 @@ function keyMappings(m: OntologyModel, s: OntShape): Array<{ key: string; proper
   const out: Array<{ key: string; property: string }> = [];
   for (const c of s.constraints) {
     if (c.identifies || c.rdfPath === null) continue;
-    const keys = (c.jsonPath ?? c.path).split('.');
+    const keys = jsonStepsOf(c);
     const rdf = c.rdfPath === undefined ? keys : typeof c.rdfPath === 'string' ? [c.rdfPath] : [...c.rdfPath];
     if (keys.length !== rdf.length) continue;
     keys.forEach((k, i) => {
@@ -106,19 +106,12 @@ export function modelJsonLdContext(m: OntologyModel, otherContexts: Readonly<Rec
     for (const t of s.jsonTypes ?? []) if (s.targetClass && !(t in ctx)) ctx[t] = { '@id': expandAbs(m, s.targetClass) };
   }
 
-  /** The concept scheme whose members are all typed with one of these classes, if one is. */
-  const schemeFor = (classes: readonly string[]): string | undefined => {
-    for (const v of m.vocabularies ?? []) {
-      if (v.members.length && v.members.every(mem => (mem.types ?? []).some(t => classes.includes(t)))) return v.name;
-    }
-    return undefined;
-  };
   /** The datatype every constraint on a key asks for, when they agree on one. */
   const shapeDatatypes = new Map<string, Set<string>>();
   for (const s of m.shapes) {
     for (const c of s.constraints) {
       if (!c.datatype) continue;
-      const key = (c.jsonPath ?? c.path).split('.').pop()!;
+      const key = jsonStepsOf(c).at(-1)!;
       const set = shapeDatatypes.get(key) ?? new Set<string>();
       for (const d of tokens(c.datatype)) set.add(d);
       shapeDatatypes.set(key, set);
@@ -130,8 +123,13 @@ export function modelJsonLdContext(m: OntologyModel, otherContexts: Readonly<Rec
     const id = N + p.name;
     if (p.kind === 'object') {
       const ranges = tokens(p.range);
-      const scheme = schemeFor(ranges);
-      if (scheme) return { '@id': id, '@type': '@vocab', '@context': { '@vocab': `${N}${slugLocal(scheme)}-` } };
+      // A value is a concept of the list the range's instances are, named by its token: read against
+      // that list alone. The scoped context starts empty (null) so that a token is never taken for
+      // one of the document's terms — under @type @vocab a term wins over @vocab, and "occurredAt"
+      // or "Map" would have read as a property or a class — and defines only this term again, which
+      // value expansion looks up.
+      const list = ranges.length === 1 ? conceptListOf(m, ranges[0]!) : undefined;
+      if (list) return { '@id': id, '@type': '@vocab', '@context': [null, { '@vocab': list.base, [key]: { '@id': id, '@type': '@vocab' } }] };
       const other = ranges.map(r => otherContexts[expandAbs(m, r)]).find(Boolean);
       if (other) return { '@id': id, '@type': '@id', '@context': other };
       return { '@id': id, '@type': '@id' };
@@ -169,7 +167,8 @@ export function modelJsonLdContext(m: OntologyModel, otherContexts: Readonly<Rec
   // reaches is a document's root, whose JSON a standard leaves untyped (cmi5's LMS.LaunchData): the
   // key's top-level term is its reading there. Each other reading is scoped to its kinds — by the
   // node's type (a type-scoped context on the kind's term) and by the property that reaches the node
-  // (a property-scoped context on each property whose range is the kind).
+  // (a property-scoped context on each property whose range is the kind, or a union of kinds none of
+  // the others of which reads the key otherwise: cmi5's structure, whose items are blocks or AUs).
   const reached = new Set(m.properties.filter(p => p.kind === 'object' && !p.deprecated && typeof p.range === 'string').map(p => expandAbs(m, p.range as string)));
   const scope = (term: string, key: string, def: TermDef): void => {
     const base = (typeof ctx[term] === 'object' ? ctx[term] : { '@id': N + term }) as TermDef;
@@ -188,6 +187,7 @@ export function modelJsonLdContext(m: OntologyModel, otherContexts: Readonly<Rec
     const top = roots.length === 1 ? roots[0]! : readings.find(r => r.property === owner?.name);
     if (top) ctx[key] = termFor(key, props.get(top.property)!);
     else delete ctx[key];
+    const readsKey = (cls: string): boolean => readings.some(r => r.classes.some(c => expandAbs(m, c) === expandAbs(m, cls)));
     for (const r of readings) {
       if (r === top) continue;
       const def = termFor(key, props.get(r.property)!);
@@ -195,7 +195,9 @@ export function modelJsonLdContext(m: OntologyModel, otherContexts: Readonly<Rec
         if (cls.includes(':')) continue;
         scope(cls, key, def);
         for (const via of m.properties) {
-          if (via.kind === 'object' && !via.deprecated && typeof via.range === 'string' && expandAbs(m, via.range) === expandAbs(m, cls)) scope(via.name, key, def);
+          if (via.kind !== 'object' || via.deprecated) continue;
+          const ranges = tokens(via.range).map(x => expandAbs(m, x));
+          if (ranges.includes(expandAbs(m, cls)) && ranges.every(x => x === expandAbs(m, cls) || !readsKey(x))) scope(via.name, key, def);
         }
       }
     }

@@ -18,7 +18,7 @@ import os
 import sys
 
 import pyshacl
-from rdflib import Dataset, Graph, Namespace
+from rdflib import RDF, Dataset, Graph, Namespace
 from rdflib.graph import DATASET_DEFAULT_GRAPH_ID
 
 SH = Namespace('http://www.w3.org/ns/shacl#')
@@ -47,7 +47,9 @@ def main(d):
             data.add(t)
         conforms, report, _ = pyshacl.validate(data, shacl_graph=sg, inference='none', advanced=True, allow_warnings=True)
         violations, warnings = set(), set()
-        for r in report.subjects(SH.resultSeverity, None):
+        # The report's own results: a result pySHACL nests under one (sh:detail, for a value that does
+        # not conform to an sh:node shape) is the same breach, which the outer result already reports.
+        for r in (x for rep in report.subjects(RDF.type, SH.ValidationReport) for x in report.objects(rep, SH.result)):
             source = report.value(r, SH.sourceShape)
             if e['level'] == 'node':
                 source = owner.get(source, source)

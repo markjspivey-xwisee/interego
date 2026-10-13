@@ -21,9 +21,16 @@
     "addressesFunction": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf#addressesFunction",
       "@type": "@vocab",
-      "@context": {
-        "@vocab": "https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf#CoreFunction-"
-      }
+      "@context": [
+        null,
+        {
+          "@vocab": "https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf#CoreFunction-",
+          "addressesFunction": {
+            "@id": "https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf#addressesFunction",
+            "@type": "@vocab"
+          }
+        }
+      ]
     },
     "functionId": {
       "@id": "https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf#functionId"

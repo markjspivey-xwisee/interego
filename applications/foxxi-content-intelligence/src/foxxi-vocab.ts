@@ -313,7 +313,7 @@ export function vocabGraph(): Graph {
     schemes.set(kind, S);
     g.add(S, A, iri(SKOS + 'ConceptScheme'))
       .add(S, iri(RDFS + 'label'), en(k.scheme.label)).add(S, iri(SKOS + 'prefLabel'), en(k.scheme.label))
-      .add(S, iri(RDFS + 'comment'), en(k.scheme.comment))
+      .add(S, iri(RDFS + 'comment'), en(k.scheme.comment)).add(S, iri(SKOS + 'definition'), en(k.scheme.comment))
       .add(S, iri(RDFS + 'isDefinedBy'), O);
   }
   for (const t of FOXXI_TERMS) {

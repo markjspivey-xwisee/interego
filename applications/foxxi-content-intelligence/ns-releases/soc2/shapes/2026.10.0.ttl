@@ -45,9 +45,15 @@ shapes:OperationalEvidenceEventShape a sh:NodeShape ;
         foxxi-soc2:KeyRotationEvent ,
         foxxi-soc2:IncidentEvent ,
         foxxi-soc2:QuarterlyReviewEvent ;
-    sh:targetSubjectsOf foxxi-soc2:evidences , foxxi-soc2:occurredAt , foxxi-soc2:actingAgent , foxxi-soc2:signer ;
+    sh:targetSubjectsOf foxxi-soc2:evidences ,
+        foxxi-soc2:occurredAt ,
+        foxxi-soc2:actingAgent ,
+        foxxi-soc2:actor ,
+        foxxi-soc2:signer ;
     rdfs:label "SOC 2 evidence-event conformance"@en ;
-    rdfs:comment "An operational evidence event cites a criterion it evidences, carries the instant it occurred, and names the acting agent and the recovered signer, so an audit pack shows who acted and which criterion the event is evidence for."@en ;
+    rdfs:comment "An operational evidence event cites at least one criterion it evidences — one of this document's, by its code (\"CC6.2\") or its IRI — carries the instant it occurred, and names the acting agent and the recovered signer, so an audit pack shows who acted and which criterion the event is evidence for."@en ;
+    sh:not [ sh:or ( [ sh:class foxxi-soc2:TrustServicesCriterion ] ) ] ;
+    sh:message "SOC 2 evidence-event conformance: an OperationalEvidenceEvent is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:OperationalEvidenceEventShape-evidences ,
         shapes:OperationalEvidenceEventShape-occurredAt ,
         shapes:OperationalEvidenceEventShape-actingAgent ,
@@ -58,8 +64,22 @@ shapes:OperationalEvidenceEventShape-evidences a sh:PropertyShape ;
     sh:path foxxi-soc2:evidences ;
     sh:name "evidences" ;
     sh:description "cite at least one Trust Services Criterion"@en ;
-    sh:message "SOC 2 evidence-event conformance — evidences: at least 1 value — cite at least one Trust Services Criterion"@en ;
-    sh:minCount 1 .
+    sh:message "SOC 2 evidence-event conformance — evidences: at least 1 value, one of the concepts of SOC 2 Common Criteria (CC6.1, CC6.2, CC6.3, CC6.4, CC6.5, CC6.6, CC6.7, CC6.8, CC7.3, CC7.4, CC7.5, CC8.1) — cite at least one Trust Services Criterion"@en ;
+    sh:minCount 1 ;
+    sh:in (
+        foxxi-soc2:CommonCriterion-CC6.1
+        foxxi-soc2:CommonCriterion-CC6.2
+        foxxi-soc2:CommonCriterion-CC6.3
+        foxxi-soc2:CommonCriterion-CC6.4
+        foxxi-soc2:CommonCriterion-CC6.5
+        foxxi-soc2:CommonCriterion-CC6.6
+        foxxi-soc2:CommonCriterion-CC6.7
+        foxxi-soc2:CommonCriterion-CC6.8
+        foxxi-soc2:CommonCriterion-CC7.3
+        foxxi-soc2:CommonCriterion-CC7.4
+        foxxi-soc2:CommonCriterion-CC7.5
+        foxxi-soc2:CommonCriterion-CC8.1
+    ) .
 
 shapes:OperationalEvidenceEventShape-occurredAt a sh:PropertyShape ;
     sh:path foxxi-soc2:occurredAt ;

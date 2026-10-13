@@ -19,8 +19,8 @@
     dct:description "An OWL 2 DL ontology and SHACL shapes for cmi5, the xAPI profile for content launched by a learning management system (Quartz edition): the course structure of §13 (Course, Block, Objective, Assignable Unit), the launch session, the LMS.LaunchData state document (§10) and the learner-preferences document (§11), and the profile's xAPI surface — its 9 verbs, category activities, context and result extensions and activity types — as SKOS concepts mapped to the IRIs cmi5 defines. Builds on, and imports, the Foxxi xAPI 2.0 ontology."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL, the AICC or IEEE. Where this document and the published standard differ, the standard governs."@en ,
         "cmi5 terms the specification itself names by IRI (its verbs, categories, extensions and activity types) are not re-minted as classes or properties: each is a SKOS concept here with a skos:exactMatch to the cmi5 IRI, which is the identifier a statement carries."@en ,
-        "The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology's classes. A parsed instance as JSON is checked against the same shapes at POST /ns/cmi5/validate, which routes it by its declared type; every result cites its shape."@en ,
         "An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at https://foxxi-bridge.interego.xwisee.com/ns/cmi5/context/2026.10.0, which is generated from this document. The shapes at https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.0 constrain that reading, and the Foxxi validator (POST https://foxxi-bridge.interego.xwisee.com/ns/cmi5/validate) checks the JSON against the same shapes."@en ,
+        "The shapes select a node by its class (sh:targetClass) and, as the RDFS domain and range rules make a node an instance of a class, by a property it has (sh:targetSubjectsOf) or by the property that reaches it (sh:targetObjectsOf): a node is checked whether or not it declares its type. The Foxxi validator selects the same nodes of the JSON, and every result cites its shape."@en ,
         "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/cmi5#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -148,10 +148,10 @@ foxxi-cmi5:LearnerPreferences a owl:Class ;
 
 foxxi-cmi5:Objectives a owl:Class ;
     rdfs:label "obsolete Objectives"@en ;
-    rdfs:comment "Formerly a container of the objectives a Block or Assignable Unit references. A Block or Assignable Unit now references each Objective directly, with the property objectives."@en ;
-    skos:definition "Formerly a container of the objectives a Block or Assignable Unit references. A Block or Assignable Unit now references each Objective directly, with the property objectives."@en ;
+    rdfs:comment "Formerly a container of the objectives a Block or Assignable Unit references. A Block or Assignable Unit now references each Objective directly, with the property objectiveReference."@en ;
+    skos:definition "Formerly a container of the objectives a Block or Assignable Unit references. A Block or Assignable Unit now references each Objective directly, with the property objectiveReference."@en ;
     owl:deprecated true ;
-    dct:isReplacedBy foxxi-cmi5:objectives ;
+    dct:isReplacedBy foxxi-cmi5:objectiveReference ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
 
 foxxi-cmi5:course a owl:ObjectProperty , owl:FunctionalProperty ;
@@ -202,20 +202,32 @@ foxxi-cmi5:position a owl:DatatypeProperty , owl:FunctionalProperty ;
 
 foxxi-cmi5:objective a owl:ObjectProperty ;
     rdfs:label "objective"@en ;
-    rdfs:comment "An objective the course structure declares, for its Blocks and Assignable Units to reference."@en ;
-    skos:definition "An objective the course structure declares, for its Blocks and Assignable Units to reference."@en ;
-    rdfs:domain foxxi-cmi5:CourseStructure ;
+    rdfs:comment "An objective a course structure declares, for its Blocks and Assignable Units to reference. (Before 2026.10.0, a member of the deprecated Objectives container.)"@en ;
+    skos:definition "An objective a course structure declares, for its Blocks and Assignable Units to reference. (Before 2026.10.0, a member of the deprecated Objectives container.)"@en ;
+    skos:changeNote "2026.10.0: its domain, the Objectives container, is removed: a course structure declares its objectives with it. Not replaced by the course structure, so that data written with the container stays consistent."@en ;
     rdfs:range foxxi-cmi5:Objective ;
     dct:source "cmi5 Quartz §13.1.3; §14 (CourseStructure.xsd)" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
 
-foxxi-cmi5:objectives a owl:ObjectProperty ;
-    rdfs:label "objectives"@en ;
-    rdfs:comment "An objective a Block or an Assignable Unit references (an objectiveReference: the objective's idref)."@en ;
-    skos:definition "An objective a Block or an Assignable Unit references (an objectiveReference: the objective's idref)."@en ;
+foxxi-cmi5:objectiveReference a owl:ObjectProperty ;
+    rdfs:label "objective reference"@en ;
+    skos:notation "objectiveReference" ;
+    rdfs:comment "An objective a Block or an Assignable Unit references, by the objective's idref. (In a course structure's JSON, an entry of its \"objectives\".)"@en ;
+    skos:definition "An objective a Block or an Assignable Unit references, by the objective's idref. (In a course structure's JSON, an entry of its \"objectives\".)"@en ;
+    skos:changeNote "2026.10.0: new, in place of objectives, which related a Block or AU to an Objectives container."@en ;
     rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-cmi5:Block foxxi-cmi5:AssignableUnit ) ] ;
     rdfs:range foxxi-cmi5:Objective ;
     dct:source "cmi5 Quartz §13.1.2; §13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:objectives a owl:ObjectProperty ;
+    rdfs:label "obsolete objectives"@en ;
+    rdfs:comment "Formerly the Objectives container a Block or AU references. A Block or AU now references each objective with objectiveReference."@en ;
+    skos:definition "Formerly the Objectives container a Block or AU references. A Block or AU now references each objective with objectiveReference."@en ;
+    skos:changeNote "2026.10.0: deprecated in favour of objectiveReference; kept as it was published, with the range Objectives."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy foxxi-cmi5:objectiveReference ;
+    rdfs:range foxxi-cmi5:Objectives ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
 
 foxxi-cmi5:title a owl:DatatypeProperty ;
@@ -285,14 +297,27 @@ foxxi-cmi5:masteryScore a owl:DatatypeProperty , owl:FunctionalProperty ;
     dct:source "cmi5 Quartz §13.1.4; §10.2.4" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
 
-foxxi-cmi5:activityType a owl:ObjectProperty , owl:FunctionalProperty ;
+foxxi-cmi5:auActivityType a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "activity type"@en ;
     skos:notation "activityType" ;
-    rdfs:comment "The activity type the LMS can show for the Assignable Unit before it is first started."@en ;
-    skos:definition "The activity type the LMS can show for the Assignable Unit before it is first started."@en ;
+    rdfs:comment "The activity type the LMS can show for the Assignable Unit before it is first started. (In a course structure's JSON, the AU's \"activityType\".)"@en ;
+    skos:definition "The activity type the LMS can show for the Assignable Unit before it is first started. (In a course structure's JSON, the AU's \"activityType\".)"@en ;
+    skos:changeNote "2026.10.0: new, in place of the datatype property activityType: an activity type is an IRI naming a concept, so it is the value of an object property."@en ;
     rdfs:domain foxxi-cmi5:AssignableUnit ;
     rdfs:range foxxi-xapi:ActivityType ;
     dct:source "cmi5 Quartz §13.1.4" ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
+
+foxxi-cmi5:activityType a owl:DatatypeProperty ;
+    rdfs:label "obsolete activity type"@en ;
+    skos:notation "activityType" ;
+    rdfs:comment "Formerly the activity type of an Assignable Unit, as an xsd:anyURI literal. Use auActivityType, whose value is the activity type itself."@en ;
+    skos:definition "Formerly the activity type of an Assignable Unit, as an xsd:anyURI literal. Use auActivityType, whose value is the activity type itself."@en ;
+    skos:changeNote "2026.10.0: deprecated in favour of auActivityType; kept as the datatype property it was published as."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy foxxi-cmi5:auActivityType ;
+    rdfs:domain foxxi-cmi5:AssignableUnit ;
+    rdfs:range xsd:anyURI ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
 
 foxxi-cmi5:launchParameters a owl:DatatypeProperty , owl:FunctionalProperty ;
@@ -437,17 +462,15 @@ foxxi-cmi5:id a owl:DatatypeProperty ;
     rdfs:label "obsolete id"@en ;
     rdfs:comment "Formerly the IRI of a Course, Block, Assignable Unit or Objective, as a literal. In RDF that IRI identifies the node itself, so no property carries it and nothing replaces this one."@en ;
     skos:definition "Formerly the IRI of a Course, Block, Assignable Unit or Objective, as a literal. In RDF that IRI identifies the node itself, so no property carries it and nothing replaces this one."@en ;
+    skos:changeNote "2026.10.0: deprecated; kept with the axioms it was published with."@en ;
     owl:deprecated true ;
-    rdfs:domain [
-        a owl:Class ;
-        owl:unionOf ( foxxi-cmi5:Course foxxi-cmi5:Block foxxi-cmi5:AssignableUnit foxxi-cmi5:Objective )
-    ] ;
     rdfs:range xsd:anyURI ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> .
 
 foxxi-cmi5:Cmi5Verb a skos:ConceptScheme ;
     rdfs:label "cmi5 defined verbs"@en ;
     skos:prefLabel "cmi5 defined verbs"@en ;
+    skos:definition "The verbs cmi5 defines, each mapped to the verb IRI a cmi5 defined statement carries."@en ;
     rdfs:comment "The verbs cmi5 defines, each mapped to the verb IRI a cmi5 defined statement carries."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
     skos:hasTopConcept foxxi-cmi5:Cmi5Verb-launched ,
@@ -562,6 +585,7 @@ foxxi-cmi5:Cmi5Verb-satisfied a skos:Concept ;
 foxxi-cmi5:LaunchMethod a skos:ConceptScheme ;
     rdfs:label "cmi5 launch methods"@en ;
     skos:prefLabel "cmi5 launch methods"@en ;
+    skos:definition "The values of an Assignable Unit's launchMethod."@en ;
     rdfs:comment "The values of an Assignable Unit's launchMethod."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
     skos:hasTopConcept foxxi-cmi5:LaunchMethod-OwnWindow , foxxi-cmi5:LaunchMethod-AnyWindow .
@@ -589,6 +613,7 @@ foxxi-cmi5:LaunchMethod-AnyWindow a skos:Concept ;
 foxxi-cmi5:MoveOn a skos:ConceptScheme ;
     rdfs:label "cmi5 moveOn criteria"@en ;
     skos:prefLabel "cmi5 moveOn criteria"@en ;
+    skos:definition "The values of an Assignable Unit's moveOn: what satisfies the AU."@en ;
     rdfs:comment "The values of an Assignable Unit's moveOn: what satisfies the AU."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
     skos:hasTopConcept foxxi-cmi5:MoveOn-Passed ,
@@ -650,6 +675,7 @@ foxxi-cmi5:MoveOn-NotApplicable a skos:Concept ;
 foxxi-cmi5:LaunchMode a skos:ConceptScheme ;
     rdfs:label "cmi5 launch modes"@en ;
     skos:prefLabel "cmi5 launch modes"@en ;
+    skos:definition "The values of launchMode in the launch data."@en ;
     rdfs:comment "The values of launchMode in the launch data."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
     skos:hasTopConcept foxxi-cmi5:LaunchMode-Normal , foxxi-cmi5:LaunchMode-Browse , foxxi-cmi5:LaunchMode-Review .
@@ -687,6 +713,7 @@ foxxi-cmi5:LaunchMode-Review a skos:Concept ;
 foxxi-cmi5:ContextCategory a skos:ConceptScheme ;
     rdfs:label "cmi5 category activities"@en ;
     skos:prefLabel "cmi5 category activities"@en ;
+    skos:definition "The activities cmi5 statements carry in contextActivities.category."@en ;
     rdfs:comment "The activities cmi5 statements carry in contextActivities.category."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
     skos:hasTopConcept foxxi-cmi5:ContextCategory-cmi5 , foxxi-cmi5:ContextCategory-moveon .
@@ -716,6 +743,7 @@ foxxi-cmi5:ContextCategory-moveon a skos:Concept ;
 foxxi-cmi5:ContextExtension a skos:ConceptScheme ;
     rdfs:label "cmi5 context extensions"@en ;
     skos:prefLabel "cmi5 context extensions"@en ;
+    skos:definition "The context extensions cmi5 defines. (§9.6.3.5, publisherId, was withdrawn in favour of the publisher ID grouping activity of §9.6.2.3.)"@en ;
     rdfs:comment "The context extensions cmi5 defines. (§9.6.3.5, publisherId, was withdrawn in favour of the publisher ID grouping activity of §9.6.2.3.)"@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
     skos:hasTopConcept foxxi-cmi5:ContextExtension-sessionid ,
@@ -794,6 +822,7 @@ foxxi-cmi5:ContextExtension-launchparameters a skos:Concept ;
 foxxi-cmi5:ResultExtension a skos:ConceptScheme ;
     rdfs:label "cmi5 result extensions"@en ;
     skos:prefLabel "cmi5 result extensions"@en ;
+    skos:definition "The result extensions cmi5 defines."@en ;
     rdfs:comment "The result extensions cmi5 defines."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
     skos:hasTopConcept foxxi-cmi5:ResultExtension-progress , foxxi-cmi5:ResultExtension-reason .
@@ -823,6 +852,7 @@ foxxi-cmi5:ResultExtension-reason a skos:Concept ;
 foxxi-cmi5:ActivityType a skos:ConceptScheme ;
     rdfs:label "cmi5 activity types"@en ;
     skos:prefLabel "cmi5 activity types"@en ;
+    skos:definition "The activity types of the objects the LMS generates for a Block and for the course in satisfied statements."@en ;
     rdfs:comment "The activity types of the objects the LMS generates for a Block and for the course in satisfied statements."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
     skos:hasTopConcept foxxi-cmi5:ActivityType-block , foxxi-cmi5:ActivityType-course .
@@ -863,6 +893,10 @@ foxxi-cmi5:ActivityType-course a skos:Concept ;
         foxxi-cmi5:LearnerPreferences
     )
 ] .
+
+<https://w3id.org/xapi/cmi5/context/extensions/sessionid> a owl:DatatypeProperty ;
+    rdfs:label "session ID (cmi5 context extension)"@en ;
+    rdfs:isDefinedBy <https://github.com/AICC/CMI-5_Spec_Current> .
 
 prov:wasDerivedFrom a owl:ObjectProperty ;
     rdfs:label "was derived from"@en ;
@@ -948,6 +982,8 @@ foxxi-xapi:Activity a owl:Class .
 dct:isReplacedBy a owl:AnnotationProperty .
 
 skos:notation a owl:AnnotationProperty .
+
+skos:changeNote a owl:AnnotationProperty .
 
 foxxi-xapi:ActivityType a owl:Class .
 

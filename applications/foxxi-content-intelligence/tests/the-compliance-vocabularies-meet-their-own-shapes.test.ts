@@ -78,8 +78,16 @@ describe('a record that names a concept meets the shapes', () => {
       <${S}actingAgent> <did:web:admin.example> ; <${S}signer> "0xabc" .`, SOC2_MODEL);
     expect(r.conforms, JSON.stringify(r.results)).toBe(true);
   });
-  it('but an obligation the document does not define, named the same way, is refused for want of its Article', () => {
+  it('but an obligation the document does not define, named the same way, is refused: it is not one of its Articles, and has no Article', () => {
+    // ★ REVISED: the record is refused too — a citation names one of the document's Articles.
     const r = verdict(`<${EX}c> <${ns(EU_AI_ACT_MODEL)}conformsToArticle> <${EX}some-obligation> .`, EU_AI_ACT_MODEL);
-    expect(violations(r)).toEqual([`${shapesIri(EU_AI_ACT_MODEL)}#ObligationConformanceShape-article`]);
+    expect(violations(r)).toEqual([
+      `${shapesIri(EU_AI_ACT_MODEL)}#ConformanceClaimShape-conformsToArticle`,
+      `${shapesIri(EU_AI_ACT_MODEL)}#ObligationConformanceShape-article`,
+    ]);
+  });
+  it('and an obligation whose kind and Article disagree is refused', () => {
+    const r = verdict(`<${EX}d> a <${ns(EU_AI_ACT_MODEL)}RecordKeeping> ; <${ns(EU_AI_ACT_MODEL)}article> "13" .`, EU_AI_ACT_MODEL);
+    expect(violations(r)).toEqual([`${shapesIri(EU_AI_ACT_MODEL)}#RecordKeepingCodeShape-article`]);
   });
 });

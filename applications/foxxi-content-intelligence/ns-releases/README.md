@@ -33,6 +33,13 @@ side of it (`latest-version`, `predecessor-version`, `successor-version`; RFC 58
   moves. The release tool refuses to archive anything more under a version whose tag exists.
 - **Imports are by version IRI.** A Foxxi document imports another at a version, so the import
   closure of a released version never changes either.
+- **A term's IRI keeps its meaning.** A term whose kind changes (a datatype property that becomes an
+  object property), or that comes to relate different things, takes a new IRI; the old one stays, as
+  it was published, with `owl:deprecated`, `dct:isReplacedBy` and a `skos:changeNote`, so data
+  written with it still reads as it did. A wrong domain or range is removed rather than replaced. A
+  change that only narrows what a term admits to what its standard allows stays on its IRI, and one
+  that replaces a term's datatype says so in its `skos:changeNote`. 2026.10.0 held what was published
+  before versioning to this rule.
 
 ## Releasing
 

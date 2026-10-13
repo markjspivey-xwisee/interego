@@ -63,7 +63,6 @@ foxxi-ieee-ler:construction a owl:AnnotationProperty ;
     rdfs:label "obsolete construction"@en ;
     rdfs:comment "How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value). Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it."@en ;
     skos:definition "How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value). Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it."@en ;
-    rdfs:range xsd:string ;
     owl:deprecated true ;
     dct:isReplacedBy foxxi:construction ;
     skos:changeNote "2026.10.0: deprecated in favour of the Foxxi vocabulary's construction."@en ;
@@ -316,15 +315,14 @@ foxxi-ieee-ler:recordEntry a owl:ObjectProperty ;
     rdfs:range foxxi-ieee-ler:RecordEntry ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .
 
-foxxi-ieee-ler:holder a owl:ObjectProperty , owl:FunctionalProperty ;
+foxxi-ieee-ler:holder a owl:ObjectProperty ;
     rdfs:label "obsolete holder"@en ;
-    rdfs:comment "Relates an Enterprise Learner Record or a credential to the one Learner it is about. Deprecated: the name reads as a Verifiable Credential's holder, a different relation (who presents a credential, not whom it is about); about learner replaces it."@en ;
-    skos:definition "Relates an Enterprise Learner Record or a credential to the one Learner it is about. Deprecated: the name reads as a Verifiable Credential's holder, a different relation (who presents a credential, not whom it is about); about learner replaces it."@en ;
+    rdfs:comment "Relates an Enterprise Learner Record or a credential to the Learner it is about. Deprecated: the name reads as a Verifiable Credential's holder, a different relation (who presents a credential, not whom it is about); about learner replaces it."@en ;
+    skos:definition "Relates an Enterprise Learner Record or a credential to the Learner it is about. Deprecated: the name reads as a Verifiable Credential's holder, a different relation (who presents a credential, not whom it is about); about learner replaces it."@en ;
     dct:source "IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)" ;
     foxxi:construction "minted" ;
-    rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-ieee-ler:EnterpriseLearnerRecord foxxi-ieee-ler:Credential ) ] ;
     rdfs:range foxxi-ieee-ler:Learner ;
-    skos:changeNote "2026.10.0: deprecated in favour of about learner."@en ;
+    skos:changeNote "2026.10.0: deprecated in favour of about learner; kept with the axioms it was published with."@en ;
     owl:deprecated true ;
     dct:isReplacedBy foxxi-ieee-ler:aboutLearner ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler> .

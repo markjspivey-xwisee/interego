@@ -82,6 +82,22 @@ Each is an independent formalization; see
   version IRIs, and a released version never changes. The released files
   are kept in [`ns-releases/`](ns-releases/), which explains how to
   release a new version.
+- **2026.10.0 is the first version.** What was published before it had no
+  version, and 2026.10.0 changes some of its terms. A term whose kind
+  changed, or that now relates different things, has a new IRI; the old
+  one is kept as it was published, deprecated, so data written with it
+  still reads as it did. Every other change brings a term to what the
+  standard says: a single value, disjoint classes, a domain where there
+  was none or a wider one, a datatype restricted to the standard's values.
+  A term whose datatype was replaced rather than restricted (an
+  `xsd:duration`, which is outside OWL 2's datatype map, for one), or whose
+  domain was removed, says so in its `skos:changeNote`.
+- **Where the IRIs live.** The namespaces are on the bridge's own host,
+  `foxxi-bridge.interego.xwisee.com`, with no w3id.org or PURL redirect in
+  front of them yet, so they last as long as that host does. (Each
+  document's header names the host it was served from before.) A redirect
+  would let the host change without the IRIs changing; whether to register
+  one is the project owner's decision.
 
 ## Composition with existing substrate primitives
 

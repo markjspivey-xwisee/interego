@@ -578,6 +578,7 @@ foxxi-xapi:mbox a owl:DatatypeProperty , owl:FunctionalProperty ;
     skos:notation "mbox" ;
     rdfs:comment "A mailto IRI — \"mailto:\" followed by an email address uniquely assigned to the Agent or Group. An Inverse Functional Identifier."@en ;
     skos:definition "A mailto IRI — \"mailto:\" followed by an email address uniquely assigned to the Agent or Group. An Inverse Functional Identifier."@en ;
+    skos:changeNote "2026.10.0: its range is xsd:anyURI, since an mbox is a mailto IRI, and its domain is Actor, an Agent or a Group, as xAPI has it; they had been xsd:string and Agent."@en ;
     rdfs:domain foxxi-xapi:Actor ;
     rdfs:range xsd:anyURI ;
     dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
@@ -589,6 +590,7 @@ foxxi-xapi:mbox_sha1sum a owl:DatatypeProperty , owl:FunctionalProperty ;
     skos:notation "mbox_sha1sum" ;
     rdfs:comment "The hex-encoded SHA-1 hash of a mailto IRI (the value of an mbox). An Inverse Functional Identifier."@en ;
     skos:definition "The hex-encoded SHA-1 hash of a mailto IRI (the value of an mbox). An Inverse Functional Identifier."@en ;
+    skos:changeNote "2026.10.0: its domain is Actor, an Agent or a Group, as xAPI has it; it had been Agent."@en ;
     rdfs:domain foxxi-xapi:Actor ;
     rdfs:range foxxi-xapi:SHA1Hex ;
     dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
@@ -600,6 +602,7 @@ foxxi-xapi:openid a owl:DatatypeProperty , owl:FunctionalProperty ;
     skos:notation "openid" ;
     rdfs:comment "An OpenID URI that uniquely identifies the Agent or Group. An Inverse Functional Identifier."@en ;
     skos:definition "An OpenID URI that uniquely identifies the Agent or Group. An Inverse Functional Identifier."@en ;
+    skos:changeNote "2026.10.0: its range is xsd:anyURI, since an OpenID is a URI, and its domain is Actor, an Agent or a Group, as xAPI has it; they had been xsd:string and Agent."@en ;
     rdfs:domain foxxi-xapi:Actor ;
     rdfs:range xsd:anyURI ;
     dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
@@ -610,6 +613,7 @@ foxxi-xapi:account a owl:ObjectProperty , owl:FunctionalProperty , owl:InverseFu
     rdfs:label "account"@en ;
     rdfs:comment "A user account on an existing system. An Inverse Functional Identifier."@en ;
     skos:definition "A user account on an existing system. An Inverse Functional Identifier."@en ;
+    skos:changeNote "2026.10.0: its domain is Actor, an Agent or a Group, as xAPI has it; it had been Agent."@en ;
     rdfs:domain foxxi-xapi:Actor ;
     rdfs:range foxxi-xapi:Account ;
     dct:source "IEEE 9274.1.1-2023 §5.2.2.1" ;
@@ -638,6 +642,7 @@ foxxi-xapi:homePage a owl:DatatypeProperty , owl:FunctionalProperty ;
     skos:notation "homePage" ;
     rdfs:comment "The canonical home page of the system an Account is on (an IRL), after FOAF's accountServiceHomePage."@en ;
     skos:definition "The canonical home page of the system an Account is on (an IRL), after FOAF's accountServiceHomePage."@en ;
+    skos:changeNote "2026.10.0: its range is xsd:anyURI, since a home page is an IRL; it had been xsd:string."@en ;
     rdfs:domain foxxi-xapi:Account ;
     rdfs:range xsd:anyURI ;
     dct:source "IEEE 9274.1.1-2023 §5.2.2.1 (Account)" ;
@@ -677,14 +682,27 @@ foxxi-xapi:description a owl:DatatypeProperty ;
     skos:exactMatch xapi:description ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
 
-foxxi-xapi:type a owl:ObjectProperty , owl:FunctionalProperty ;
-    rdfs:label "type"@en ;
-    rdfs:comment "The type of the Activity, an IRI."@en ;
-    skos:definition "The type of the Activity, an IRI."@en ;
+foxxi-xapi:activityType a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "activity type"@en ;
+    skos:notation "type" ;
+    rdfs:comment "The type of the Activity, an IRI. (In a statement, the \"type\" of the Activity Definition.)"@en ;
+    skos:definition "The type of the Activity, an IRI. (In a statement, the \"type\" of the Activity Definition.)"@en ;
+    skos:changeNote "2026.10.0: new, in place of the datatype property type: an activity type is an IRI naming a concept, so it is the value of an object property."@en ;
     rdfs:domain foxxi-xapi:ActivityDefinition ;
     rdfs:range foxxi-xapi:ActivityType ;
     dct:source "IEEE 9274.1.1-2023 §5.2.2.3 (Activity Definition)" ;
     skos:exactMatch xapi:type ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
+
+foxxi-xapi:type a owl:DatatypeProperty ;
+    rdfs:label "obsolete type"@en ;
+    rdfs:comment "Formerly the type of an Activity, as an xsd:anyURI literal. Use activityType, whose value is the activity type itself."@en ;
+    skos:definition "Formerly the type of an Activity, as an xsd:anyURI literal. Use activityType, whose value is the activity type itself."@en ;
+    skos:changeNote "2026.10.0: deprecated in favour of activityType; kept as the datatype property it was published as."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy foxxi-xapi:activityType ;
+    rdfs:domain foxxi-xapi:ActivityDefinition ;
+    rdfs:range xsd:anyURI ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
 
 foxxi-xapi:moreInfo a owl:DatatypeProperty , owl:FunctionalProperty ;
@@ -846,6 +864,7 @@ foxxi-xapi:duration a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "duration"@en ;
     rdfs:comment "The period of time over which the Statement occurred."@en ;
     skos:definition "The period of time over which the Statement occurred."@en ;
+    skos:changeNote "2026.10.0: its range is Duration, ISO 8601's duration format as xAPI restricts it, a pattern on xsd:string; it had been xsd:duration, which is outside the OWL 2 datatype map."@en ;
     rdfs:domain foxxi-xapi:Result ;
     rdfs:range foxxi-xapi:Duration ;
     dct:source "IEEE 9274.1.1-2023 §5.2.2.4; §5.2.7 (Duration)" ;
@@ -1058,11 +1077,12 @@ foxxi-xapi:relevantTypes a owl:ObjectProperty ;
     dct:source "IEEE 9274.1.1-2023 §5.2.2.5 (Context Agents; Context Groups)" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
 
-foxxi-xapi:usageType a owl:ObjectProperty , owl:FunctionalProperty ;
+foxxi-xapi:attachmentUsageType a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "usage type"@en ;
     skos:notation "usageType" ;
-    rdfs:comment "The usage of the Attachment, an IRI coined for that use."@en ;
-    skos:definition "The usage of the Attachment, an IRI coined for that use."@en ;
+    rdfs:comment "The usage of the Attachment, an IRI coined for that use. (In a statement, the Attachment's \"usageType\".)"@en ;
+    skos:definition "The usage of the Attachment, an IRI coined for that use. (In a statement, the Attachment's \"usageType\".)"@en ;
+    skos:changeNote "2026.10.0: new, in place of the datatype property usageType: a usage type is an IRI naming a concept, so it is the value of an object property."@en ;
     rdfs:domain foxxi-xapi:Attachment ;
     rdfs:range foxxi-xapi:AttachmentUsageType ;
     dct:source "IEEE 9274.1.1-2023 §5.2.2.6" ;
@@ -1071,11 +1091,23 @@ foxxi-xapi:usageType a owl:ObjectProperty , owl:FunctionalProperty ;
 
 [
     a owl:Axiom ;
-    owl:annotatedSource foxxi-xapi:usageType ;
+    owl:annotatedSource foxxi-xapi:attachmentUsageType ;
     owl:annotatedProperty skos:closeMatch ;
     owl:annotatedTarget xapi:usageType ;
     rdfs:comment "Not an exact match because of kind: ADL declares xapi:usageType an owl:DatatypeProperty with the class range xapi:AttachmentUsageType, which OWL 2 DL does not allow; a usage type is an IRI naming a concept, so here it is an object property."@en
 ] .
+
+foxxi-xapi:usageType a owl:DatatypeProperty ;
+    rdfs:label "obsolete usage type"@en ;
+    skos:notation "usageType" ;
+    rdfs:comment "Formerly the usage of an Attachment, as an xsd:anyURI literal. Use attachmentUsageType, whose value is the usage type itself."@en ;
+    skos:definition "Formerly the usage of an Attachment, as an xsd:anyURI literal. Use attachmentUsageType, whose value is the usage type itself."@en ;
+    skos:changeNote "2026.10.0: deprecated in favour of attachmentUsageType; kept as the datatype property it was published as."@en ;
+    owl:deprecated true ;
+    dct:isReplacedBy foxxi-xapi:attachmentUsageType ;
+    rdfs:domain foxxi-xapi:Attachment ;
+    rdfs:range xsd:anyURI ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> .
 
 foxxi-xapi:contentType a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "content type"@en ;
@@ -1132,6 +1164,7 @@ foxxi-xapi:extensions a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "extensions"@en ;
     rdfs:comment "A map of further properties keyed by IRI, on an Activity Definition, a Result or a Context."@en ;
     skos:definition "A map of further properties keyed by IRI, on an Activity Definition, a Result or a Context."@en ;
+    skos:changeNote "2026.10.0: its range is the class Extensions, a node whose properties are the extension IRIs; it had been rdf:JSON, a datatype, which an object property cannot have in OWL 2 DL."@en ;
     rdfs:domain [ a owl:Class ; owl:unionOf ( foxxi-xapi:ActivityDefinition foxxi-xapi:Result foxxi-xapi:Context ) ] ;
     rdfs:range foxxi-xapi:Extensions ;
     dct:source "IEEE 9274.1.1-2023 §5.2.7 (Extensions)" ;
@@ -1149,6 +1182,7 @@ foxxi-xapi:extensions a owl:ObjectProperty , owl:FunctionalProperty ;
 foxxi-xapi:InteractionType a skos:ConceptScheme ;
     rdfs:label "Interaction types"@en ;
     skos:prefLabel "Interaction types"@en ;
+    skos:definition "The controlled vocabulary of interaction types for interaction Activities. Each value fixes the format of the correct responses pattern and the learner's response. xAPI takes the ten from the SCORM 2004 run-time data model (cmi.interactions.n.type), and each is an exact match of the one there."@en ;
     rdfs:comment "The controlled vocabulary of interaction types for interaction Activities. Each value fixes the format of the correct responses pattern and the learner's response. xAPI takes the ten from the SCORM 2004 run-time data model (cmi.interactions.n.type), and each is an exact match of the one there."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi> ;
     skos:hasTopConcept foxxi-xapi:InteractionType-true-false ,
@@ -1395,5 +1429,9 @@ skos:closeMatch a owl:AnnotationProperty .
 skos:relatedMatch a owl:AnnotationProperty .
 
 skos:notation a owl:AnnotationProperty .
+
+skos:changeNote a owl:AnnotationProperty .
+
+dct:isReplacedBy a owl:AnnotationProperty .
 
 skos:prefLabel a owl:AnnotationProperty .

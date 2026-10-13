@@ -373,12 +373,13 @@ const LER_TERMS: readonly SemTerm[] = [
   {
     family: 'ler', name: 'holder', kind: 'ObjectProperty', construction: 'minted',
     label: 'holder',
-    definition: 'Relates an Enterprise Learner Record or a credential to the one Learner it is about. Deprecated: the name reads as a Verifiable Credential\'s holder, a different relation (who presents a credential, not whom it is about); about learner replaces it.',
+    definition: 'Relates an Enterprise Learner Record or a credential to the Learner it is about. Deprecated: the name reads as a Verifiable Credential\'s holder, a different relation (who presents a credential, not whom it is about); about learner replaces it.',
     deprecated: true, replacedBy: 'ler:aboutLearner',
-    changeNote: '2026.10.0: deprecated in favour of about learner.',
+    // Kept with the axioms it was published with (its range alone), so data written with it means
+    // what it meant; about learner carries the domain and the functional characteristic.
+    changeNote: '2026.10.0: deprecated in favour of about learner; kept with the axioms it was published with.',
     source: 'IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)',
-    domain: ['ler:EnterpriseLearnerRecord', 'ler:Credential'], range: 'ler:Learner',
-    functional: true,
+    range: 'ler:Learner',
   },
   {
     family: 'ler', name: 'aboutLearner', kind: 'ObjectProperty', construction: 'minted',
@@ -1955,21 +1956,26 @@ function addDisjointness(g: Graph, family: 'ler' | 'tla'): void {
 // The MOM verb ConceptScheme comment.
 const MOM_SCHEME_COMMENT = `The ${MOM_VERBS.length} performance verbs of the ADL TLA Master Object Model (MOM), grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb that is a registered verb of ADL's vocabulary — an ADL core verb at adlnet.gov/expapi/verbs, or a cmi5 verb at w3id.org/xapi/adl/verbs — is an exact match of it and names it as its source. Every other verb has an IRI of this vocabulary's, and says so in an editorial note; none is mapped to an IRI that was not found registered. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give some of them IRIs of its own, and has not been checked here.`;
 
+/** The definition of a MOM level collection. */
+const momLevelDefinition = (lvl: number): string =>
+  `The MOM verbs this vocabulary groups under "${MOM_LEVEL_LABEL[lvl]!.replace(/^Level \d — /, '')}". A thematic grouping of this project, not an ADL-defined conformance level.`;
+
 function addMom(g: Graph, O: NamedNode): void {
   const A = iri(RDF + 'type');
   const scheme = iri(`${TLA_NS}MOMVerbScheme`);
   g.add(scheme, A, iri(SKOS + 'ConceptScheme'))
     .add(scheme, iri(RDFS + 'label'), en('MOM performance verb scheme'))
     .add(scheme, iri(SKOS + 'prefLabel'), en('MOM performance verb scheme'))
-    .add(scheme, iri(RDFS + 'comment'), en(MOM_SCHEME_COMMENT))
+    .add(scheme, iri(RDFS + 'comment'), en(MOM_SCHEME_COMMENT)).add(scheme, iri(SKOS + 'definition'), en(MOM_SCHEME_COMMENT))
     .add(scheme, iri(RDFS + 'isDefinedBy'), O);
   for (const kind of ['activityType', 'extension'] as const) {
     const s = iri(`${TLA_NS}${kind === 'activityType' ? 'MOMActivityTypeScheme' : 'MOMExtensionScheme'}`);
     const label = kind === 'activityType' ? 'MOM activity types' : 'MOM context extensions';
+    const definition = kind === 'activityType'
+      ? 'The activity types the Master Object Model names, as project-coined concepts. None asserts an external alignment: the MOM does not register them under an ADL namespace.'
+      : 'The context-extension keys the Master Object Model names, as project-coined concepts with no external alignment.';
     g.add(s, A, iri(SKOS + 'ConceptScheme')).add(s, iri(RDFS + 'label'), en(label)).add(s, iri(SKOS + 'prefLabel'), en(label))
-      .add(s, iri(RDFS + 'comment'), en(kind === 'activityType'
-        ? 'The activity types the Master Object Model names, as project-coined concepts. None asserts an external alignment: the MOM does not register them under an ADL namespace.'
-        : 'The context-extension keys the Master Object Model names, as project-coined concepts with no external alignment.'))
+      .add(s, iri(RDFS + 'comment'), en(definition)).add(s, iri(SKOS + 'definition'), en(definition))
       .add(s, iri(RDFS + 'isDefinedBy'), O);
   }
   // skos:member relates a Collection TO its members (domain skos:Collection), so the level
@@ -1978,7 +1984,7 @@ function addMom(g: Graph, O: NamedNode): void {
     const L = iri(`${TLA_NS}MOMLevel${lvl}`);
     g.add(L, A, iri(SKOS + 'Collection')).add(L, iri(RDFS + 'label'), en(MOM_LEVEL_LABEL[lvl]!))
       .add(L, iri(SKOS + 'prefLabel'), en(MOM_LEVEL_LABEL[lvl]!))
-      .add(L, iri(RDFS + 'comment'), en(`The MOM verbs this vocabulary groups under "${MOM_LEVEL_LABEL[lvl]!.replace(/^Level \d — /, '')}". A thematic grouping of this project, not an ADL-defined conformance level.`));
+      .add(L, iri(RDFS + 'comment'), en(momLevelDefinition(lvl))).add(L, iri(SKOS + 'definition'), en(momLevelDefinition(lvl)));
     for (const c of MOM_CONCEPTS.filter(x => x.scheme === 'verb' && x.level === lvl)) g.add(L, iri(SKOS + 'member'), iri(TLA_NS + c.name));
     g.add(L, iri(RDFS + 'isDefinedBy'), O);
   }
@@ -2012,7 +2018,7 @@ function addProficiency(g: Graph, O: NamedNode): void {
   // A scale of proficiency levels, not a framework of competencies (it holds no competency).
   g.add(FW, A, iri(`${TLA_NS}ProficiencyScale`)).add(FW, A, iri(SKOS + 'ConceptScheme'))
     .add(FW, iri(RDFS + 'label'), en(PROF_FRAMEWORK_LABEL)).add(FW, iri(SKOS + 'prefLabel'), en(PROF_FRAMEWORK_LABEL))
-    .add(FW, iri(RDFS + 'comment'), en(PROF_FRAMEWORK_COMMENT))
+    .add(FW, iri(RDFS + 'comment'), en(PROF_FRAMEWORK_COMMENT)).add(FW, iri(SKOS + 'definition'), en(PROF_FRAMEWORK_COMMENT))
     .add(FW, iri(DCT + 'source'), str(PROF_FRAMEWORK_SOURCE))
     .add(FW, iri(CONSTRUCTION), str('minted'))
     .add(FW, iri(RDFS + 'isDefinedBy'), O);
@@ -2029,7 +2035,7 @@ function addProficiency(g: Graph, O: NamedNode): void {
   const R = iri(PERF_ROLLUP_RULE_IRI);
   g.add(R, A, iri(`${TLA_NS}RollupRule`))
     .add(R, iri(RDFS + 'label'), en(PROF_ROLLUP_LABEL))
-    .add(R, iri(RDFS + 'comment'), en(PROF_ROLLUP_COMMENT))
+    .add(R, iri(RDFS + 'comment'), en(PROF_ROLLUP_COMMENT)).add(R, iri(SKOS + 'definition'), en(PROF_ROLLUP_COMMENT))
     .add(R, iri(`${TLA_NS}rollupRule`), str(perfRollupRuleText()))
     // The scale whose levels it assigns. Not skos:inScheme: a rule is not one of the scale's concepts.
     .add(R, iri(`${TLA_NS}onScale`), FW)
@@ -2066,7 +2072,7 @@ function addConstructionProperty(g: Graph, O: NamedNode, family: 'ler' | 'tla'):
     .add(L, iri(RDFS + 'label'), en('obsolete construction'))
     .add(L, iri(RDFS + 'comment'), en(`${CONSTRUCTION_DEFINITION} Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it.`))
     .add(L, iri(SKOS + 'definition'), en(`${CONSTRUCTION_DEFINITION} Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it.`))
-    .add(L, iri(RDFS + 'range'), iri(XSD + 'string'))
+    // Kept with the axioms it was published with: none.
     .add(L, iri(OWL + 'deprecated'), typed('true', XSD + 'boolean'))
     .add(L, iri(DCT + 'isReplacedBy'), C)
     .add(L, iri(SKOS + 'changeNote'), en('2026.10.0: deprecated in favour of the Foxxi vocabulary\'s construction.'))

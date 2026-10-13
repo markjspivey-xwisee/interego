@@ -57,7 +57,6 @@ export const SCORM_CAM_MODEL: OntologyModel = {
   notes: [
     'The sample package in deploy/foxxi-scorm-player/site/course is a SCORM 2004 3rd Edition package and ships the 3rd Edition schemas; it conforms to this ontology.',
     'Since 2026.10.0, the text of <schema>, <schemaversion> and <title> is the value of the datatype properties metadataSchema, metadataSchemaVersion and titleText. The object properties schema, schemaversion and title, and the classes Schema, SchemaVersion and Title they pointed at, are deprecated and kept as they were published.',
-    'The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology\'s classes. A parsed instance as JSON is checked against the same shapes at POST /ns/scorm-cam/validate, which routes it by its declared type; every result cites its shape.',
   ],
   classes: [
     { name: 'Manifest', label: 'Manifest', comment: 'The <manifest> of a content package: its identifier, its metadata, the organizations of its content and the resources that content is made of, and any manifests nested in it.', source: `${CP}: manifestType` },

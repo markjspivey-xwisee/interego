@@ -52,6 +52,7 @@ foxxi:VerbScheme a skos:ConceptScheme ;
     rdfs:label "Foxxi xAPI verbs"@en ;
     skos:prefLabel "Foxxi xAPI verbs"@en ;
     rdfs:comment "The xAPI verbs Foxxi statements use that no other authority defines. Each is also a Concept of the Foxxi xAPI Profile."@en ;
+    skos:definition "The xAPI verbs Foxxi statements use that no other authority defines. Each is also a Concept of the Foxxi xAPI Profile."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> ;
     skos:hasTopConcept <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/scene-completed> ,
         <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/asked> ,
@@ -71,6 +72,7 @@ foxxi:ActivityTypeScheme a skos:ConceptScheme ;
     rdfs:label "Foxxi xAPI activity types"@en ;
     skos:prefLabel "Foxxi xAPI activity types"@en ;
     rdfs:comment "The xAPI activity types Foxxi statements carry as object.definition.type."@en ;
+    skos:definition "The xAPI activity types Foxxi statements carry as object.definition.type."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> ;
     skos:hasTopConcept <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/scene> ,
         <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#activities/concept-graph-node> ,
@@ -87,6 +89,7 @@ foxxi:ExtensionScheme a skos:ConceptScheme ;
     rdfs:label "Foxxi xAPI context extensions"@en ;
     skos:prefLabel "Foxxi xAPI context extensions"@en ;
     rdfs:comment "The keys Foxxi statements carry in context.extensions."@en ;
+    skos:definition "The keys Foxxi statements carry in context.extensions."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/foxxi> ;
     skos:hasTopConcept foxxi:slideId ,
         foxxi:sceneTitle ,
@@ -1052,9 +1055,9 @@ vann:preferredNamespaceUri a owl:AnnotationProperty .
 
 skos:prefLabel a owl:AnnotationProperty .
 
-skos:notation a owl:AnnotationProperty .
-
 skos:definition a owl:AnnotationProperty .
+
+skos:notation a owl:AnnotationProperty .
 
 skos:hiddenLabel a owl:AnnotationProperty .
 

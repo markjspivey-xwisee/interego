@@ -47,6 +47,20 @@ shapes:ManifestShape a sh:NodeShape ;
         foxxi-scorm-cam:subManifest ;
     rdfs:label "Manifest conformance"@en ;
     rdfs:comment "A manifest has an identifier, exactly one <organizations> and exactly one <resources> (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): manifestType), and, as SCORM requires, exactly one <metadata> declaring the schema \"ADL SCORM\" and a SCORM 2004 schema version (SCORM 2004 4th Edition Content Aggregation Model)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Metadata ]
+            [ sh:class foxxi-scorm-cam:Organizations ]
+            [ sh:class foxxi-scorm-cam:Organization ]
+            [ sh:class foxxi-scorm-cam:Item ]
+            [ sh:class foxxi-scorm-cam:Resources ]
+            [ sh:class foxxi-scorm-cam:Resource ]
+            [ sh:class foxxi-scorm-cam:File ]
+            [ sh:class foxxi-scorm-cam:Dependency ]
+            [ sh:class foxxi-scorm-cam:SharedDataMap ]
+        )
+    ] ;
+    sh:message "Manifest conformance: a Manifest is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ManifestShape-identifier ,
         shapes:ManifestShape-organizations ,
         shapes:ManifestShape-resources ,
@@ -129,9 +143,27 @@ shapes:ManifestShape-base a sh:PropertyShape ;
 shapes:MetadataShape a sh:NodeShape ;
     sh:targetClass foxxi-scorm-cam:Metadata ;
     sh:targetObjectsOf foxxi-scorm-cam:metadata ;
-    sh:targetSubjectsOf foxxi-scorm-cam:metadataSchema , foxxi-scorm-cam:metadataSchemaVersion , foxxi-scorm-cam:location ;
+    sh:targetSubjectsOf foxxi-scorm-cam:metadataSchema ,
+        foxxi-scorm-cam:metadataSchemaVersion ,
+        foxxi-scorm-cam:schema ,
+        foxxi-scorm-cam:schemaversion ,
+        foxxi-scorm-cam:location ;
     rdfs:label "Metadata conformance"@en ;
     rdfs:comment "Metadata names at most one schema and schema version, and at most one external record (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): metadataType; ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): locationType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Manifest ]
+            [ sh:class foxxi-scorm-cam:Organizations ]
+            [ sh:class foxxi-scorm-cam:Organization ]
+            [ sh:class foxxi-scorm-cam:Item ]
+            [ sh:class foxxi-scorm-cam:Resources ]
+            [ sh:class foxxi-scorm-cam:Resource ]
+            [ sh:class foxxi-scorm-cam:File ]
+            [ sh:class foxxi-scorm-cam:Dependency ]
+            [ sh:class foxxi-scorm-cam:SharedDataMap ]
+        )
+    ] ;
+    sh:message "Metadata conformance: a Metadata is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:MetadataShape-schema , shapes:MetadataShape-schemaversion , shapes:MetadataShape-location ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
 
@@ -165,6 +197,20 @@ shapes:OrganizationsShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-cam:defaultOrganization , foxxi-scorm-cam:organization ;
     rdfs:label "Organizations conformance"@en ;
     rdfs:comment "Organizations name at most one default organization. A content aggregation package — one a learner can take as a course — has at least one organization (SCORM 2004 4th Edition Content Aggregation Model); a package of resources alone has none, and is not launchable."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Manifest ]
+            [ sh:class foxxi-scorm-cam:Metadata ]
+            [ sh:class foxxi-scorm-cam:Organization ]
+            [ sh:class foxxi-scorm-cam:Item ]
+            [ sh:class foxxi-scorm-cam:Resources ]
+            [ sh:class foxxi-scorm-cam:Resource ]
+            [ sh:class foxxi-scorm-cam:File ]
+            [ sh:class foxxi-scorm-cam:Dependency ]
+            [ sh:class foxxi-scorm-cam:SharedDataMap ]
+        )
+    ] ;
+    sh:message "Organizations conformance: an Organizations is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:OrganizationsShape-defaultOrganization , shapes:OrganizationsShape-organization ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
 
@@ -189,6 +235,20 @@ shapes:OrganizationShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-cam:structure , foxxi-scorm-cam:sharedDataGlobalToSystem ;
     rdfs:label "Organization conformance"@en ;
     rdfs:comment "An organization has an identifier, a title (which SCORM requires) and at least one item (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): organizationType); its structure is hierarchical; sharedDataGlobalToSystem is a boolean."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Manifest ]
+            [ sh:class foxxi-scorm-cam:Metadata ]
+            [ sh:class foxxi-scorm-cam:Organizations ]
+            [ sh:class foxxi-scorm-cam:Item ]
+            [ sh:class foxxi-scorm-cam:Resources ]
+            [ sh:class foxxi-scorm-cam:Resource ]
+            [ sh:class foxxi-scorm-cam:File ]
+            [ sh:class foxxi-scorm-cam:Dependency ]
+            [ sh:class foxxi-scorm-cam:SharedDataMap ]
+        )
+    ] ;
+    sh:message "Organization conformance: an Organization is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:OrganizationShape-identifier ,
         shapes:OrganizationShape-title ,
         shapes:OrganizationShape-item ,
@@ -261,6 +321,20 @@ shapes:ItemShape a sh:NodeShape ;
         foxxi-scorm-cam:dataMap ;
     rdfs:label "Item conformance"@en ;
     rdfs:comment "An item has an identifier and a title (which SCORM requires), and references at most one resource (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): itemType). Its completion threshold attributes are numbers from 0 to 1 and its time limit action is one of the four ADL values (ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd))."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Manifest ]
+            [ sh:class foxxi-scorm-cam:Metadata ]
+            [ sh:class foxxi-scorm-cam:Organizations ]
+            [ sh:class foxxi-scorm-cam:Organization ]
+            [ sh:class foxxi-scorm-cam:Resources ]
+            [ sh:class foxxi-scorm-cam:Resource ]
+            [ sh:class foxxi-scorm-cam:File ]
+            [ sh:class foxxi-scorm-cam:Dependency ]
+            [ sh:class foxxi-scorm-cam:SharedDataMap ]
+        )
+    ] ;
+    sh:message "Item conformance: an Item is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ItemShape-identifier ,
         shapes:ItemShape-title ,
         shapes:ItemShape-identifierref ,
@@ -395,6 +469,20 @@ shapes:SharedDataMapShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-cam:targetID , foxxi-scorm-cam:readSharedData , foxxi-scorm-cam:writeSharedData ;
     rdfs:label "Shared data map conformance"@en ;
     rdfs:comment "A shared data map names its store and says whether the content may read and write it (ADL content packaging extensions, SCORM 2004 4th Edition (adlcp_v1p3.xsd): mapType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Manifest ]
+            [ sh:class foxxi-scorm-cam:Metadata ]
+            [ sh:class foxxi-scorm-cam:Organizations ]
+            [ sh:class foxxi-scorm-cam:Organization ]
+            [ sh:class foxxi-scorm-cam:Item ]
+            [ sh:class foxxi-scorm-cam:Resources ]
+            [ sh:class foxxi-scorm-cam:Resource ]
+            [ sh:class foxxi-scorm-cam:File ]
+            [ sh:class foxxi-scorm-cam:Dependency ]
+        )
+    ] ;
+    sh:message "Shared data map conformance: a SharedDataMap is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:SharedDataMapShape-targetID ,
         shapes:SharedDataMapShape-readSharedData ,
         shapes:SharedDataMapShape-writeSharedData ;
@@ -431,6 +519,20 @@ shapes:ResourcesShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-cam:resource ;
     rdfs:label "Resources conformance"@en ;
     rdfs:comment "Resources may set an XML base for their relative URLs (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): resourcesType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Manifest ]
+            [ sh:class foxxi-scorm-cam:Metadata ]
+            [ sh:class foxxi-scorm-cam:Organizations ]
+            [ sh:class foxxi-scorm-cam:Organization ]
+            [ sh:class foxxi-scorm-cam:Item ]
+            [ sh:class foxxi-scorm-cam:Resource ]
+            [ sh:class foxxi-scorm-cam:File ]
+            [ sh:class foxxi-scorm-cam:Dependency ]
+            [ sh:class foxxi-scorm-cam:SharedDataMap ]
+        )
+    ] ;
+    sh:message "Resources conformance: a Resources is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ResourcesShape-base ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
 
@@ -448,6 +550,20 @@ shapes:ResourceShape a sh:NodeShape ;
     sh:targetSubjectsOf foxxi-scorm-cam:type , foxxi-scorm-cam:file , foxxi-scorm-cam:dependency , foxxi-scorm-cam:scormType ;
     rdfs:label "Resource conformance"@en ;
     rdfs:comment "A resource has an identifier and a type (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): resourceType) and, in SCORM, a SCORM type: sco or asset. A SCO also needs an href to launch it, which the importer checks."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Manifest ]
+            [ sh:class foxxi-scorm-cam:Metadata ]
+            [ sh:class foxxi-scorm-cam:Organizations ]
+            [ sh:class foxxi-scorm-cam:Organization ]
+            [ sh:class foxxi-scorm-cam:Item ]
+            [ sh:class foxxi-scorm-cam:Resources ]
+            [ sh:class foxxi-scorm-cam:File ]
+            [ sh:class foxxi-scorm-cam:Dependency ]
+            [ sh:class foxxi-scorm-cam:SharedDataMap ]
+        )
+    ] ;
+    sh:message "Resource conformance: a Resource is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:ResourceShape-identifier ,
         shapes:ResourceShape-type ,
         shapes:ResourceShape-scormType ,
@@ -512,6 +628,20 @@ shapes:FileShape a sh:NodeShape ;
     sh:targetObjectsOf foxxi-scorm-cam:file ;
     rdfs:label "File conformance"@en ;
     rdfs:comment "A file has exactly one href (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): fileType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Manifest ]
+            [ sh:class foxxi-scorm-cam:Metadata ]
+            [ sh:class foxxi-scorm-cam:Organizations ]
+            [ sh:class foxxi-scorm-cam:Organization ]
+            [ sh:class foxxi-scorm-cam:Item ]
+            [ sh:class foxxi-scorm-cam:Resources ]
+            [ sh:class foxxi-scorm-cam:Resource ]
+            [ sh:class foxxi-scorm-cam:Dependency ]
+            [ sh:class foxxi-scorm-cam:SharedDataMap ]
+        )
+    ] ;
+    sh:message "File conformance: a File is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:FileShape-href , shapes:FileShape-metadata ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
 
@@ -536,6 +666,20 @@ shapes:DependencyShape a sh:NodeShape ;
     sh:targetObjectsOf foxxi-scorm-cam:dependency ;
     rdfs:label "Dependency conformance"@en ;
     rdfs:comment "A dependency names exactly one resource (IMS Content Packaging 1.1.4 (imscp_v1p1.xsd): dependencyType)."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-scorm-cam:Manifest ]
+            [ sh:class foxxi-scorm-cam:Metadata ]
+            [ sh:class foxxi-scorm-cam:Organizations ]
+            [ sh:class foxxi-scorm-cam:Organization ]
+            [ sh:class foxxi-scorm-cam:Item ]
+            [ sh:class foxxi-scorm-cam:Resources ]
+            [ sh:class foxxi-scorm-cam:Resource ]
+            [ sh:class foxxi-scorm-cam:File ]
+            [ sh:class foxxi-scorm-cam:SharedDataMap ]
+        )
+    ] ;
+    sh:message "Dependency conformance: a Dependency is not also of a kind this document declares disjoint with it"@en ;
     sh:property shapes:DependencyShape-identifierref ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes> .
 

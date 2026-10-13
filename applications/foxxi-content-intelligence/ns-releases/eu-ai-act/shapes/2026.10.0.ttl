@@ -46,10 +46,11 @@ shapes:ObligationConformanceShape a sh:NodeShape ;
         foxxi-eu-ai-act:RiskManagement ,
         foxxi-eu-ai-act:DataGovernance ,
         foxxi-eu-ai-act:InteractionTransparency ,
+        foxxi-eu-ai-act:TechnicalDocumentation ,
         foxxi-eu-ai-act:AccuracyRobustness ;
     sh:targetSubjectsOf foxxi-eu-ai-act:article ;
     rdfs:label "AI Act obligation conformance"@en ;
-    rdfs:comment "An obligation names the Article that imposes it. Every Article concept of this document does; so does any obligation a record names by RDFS inference from conformsToArticle's range, when it is one of them."@en ;
+    rdfs:comment "An obligation names the Article that imposes it, one of those this document defines. Every Article concept of this document does; so does any obligation a record names by RDFS inference from conformsToArticle's range, when it is one of them."@en ;
     sh:property shapes:ObligationConformanceShape-article ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
 
@@ -57,7 +58,239 @@ shapes:ObligationConformanceShape-article a sh:PropertyShape ;
     sh:path foxxi-eu-ai-act:article ;
     sh:name "article" ;
     sh:description "the Article number"@en ;
-    sh:message "AI Act obligation conformance — article: exactly 1 value, of type xsd:string — the Article number"@en ;
+    sh:message "AI Act obligation conformance — article: exactly 1 value, of type xsd:string, one of \"9\", \"10\", \"11\", \"12\", \"13\", \"14\", \"15\", \"50\" — the Article number"@en ;
     sh:datatype xsd:string ;
     sh:minCount 1 ;
-    sh:maxCount 1 .
+    sh:maxCount 1 ;
+    sh:in ( "9" "10" "11" "12" "13" "14" "15" "50" ) .
+
+shapes:ConformanceClaimShape a sh:NodeShape ;
+    sh:targetSubjectsOf foxxi-eu-ai-act:conformsToArticle ;
+    rdfs:label "AI Act conformance claim"@en ;
+    rdfs:comment "A record offered as evidence of meeting an obligation names one this document defines: one of its Article concepts, by its token (\"Article12\") or its IRI."@en ;
+    sh:property shapes:ConformanceClaimShape-conformsToArticle ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
+
+shapes:ConformanceClaimShape-conformsToArticle a sh:PropertyShape ;
+    sh:path foxxi-eu-ai-act:conformsToArticle ;
+    sh:name "conformsToArticle" ;
+    sh:description "an obligation of this document's Article list"@en ;
+    sh:message "AI Act conformance claim — conformsToArticle: one of the concepts of EU AI Act Articles (Article9, Article10, Article11, Article12, Article13, Article14, Article15, Article50) — an obligation of this document's Article list"@en ;
+    sh:in (
+        foxxi-eu-ai-act:Article-Article9
+        foxxi-eu-ai-act:Article-Article10
+        foxxi-eu-ai-act:Article-Article11
+        foxxi-eu-ai-act:Article-Article12
+        foxxi-eu-ai-act:Article-Article13
+        foxxi-eu-ai-act:Article-Article14
+        foxxi-eu-ai-act:Article-Article15
+        foxxi-eu-ai-act:Article-Article50
+    ) .
+
+shapes:RecordKeepingCodeShape a sh:NodeShape ;
+    sh:targetClass foxxi-eu-ai-act:RecordKeeping ;
+    rdfs:label "Record-Keeping (Art.12): its article"@en ;
+    rdfs:comment "An instance of RecordKeeping is one of the concepts of EU AI Act Articles typed with it, so its article is theirs: 12."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-eu-ai-act:HumanOversight ]
+            [ sh:class foxxi-eu-ai-act:Transparency ]
+            [ sh:class foxxi-eu-ai-act:RiskManagement ]
+            [ sh:class foxxi-eu-ai-act:DataGovernance ]
+            [ sh:class foxxi-eu-ai-act:TechnicalDocumentation ]
+            [ sh:class foxxi-eu-ai-act:AccuracyRobustness ]
+            [ sh:class foxxi-eu-ai-act:InteractionTransparency ]
+        )
+    ] ;
+    sh:message "Record-Keeping (Art.12): its article: a RecordKeeping is not also of a kind this document declares disjoint with it"@en ;
+    sh:property shapes:RecordKeepingCodeShape-article ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
+
+shapes:RecordKeepingCodeShape-article a sh:PropertyShape ;
+    sh:path foxxi-eu-ai-act:article ;
+    sh:name "article" ;
+    sh:description "the article of a RecordKeeping"@en ;
+    sh:message "Record-Keeping (Art.12): its article — article: one of \"12\" — the article of a RecordKeeping"@en ;
+    sh:in ( "12" ) .
+
+shapes:HumanOversightCodeShape a sh:NodeShape ;
+    sh:targetClass foxxi-eu-ai-act:HumanOversight ;
+    rdfs:label "Human Oversight (Art.14): its article"@en ;
+    rdfs:comment "An instance of HumanOversight is one of the concepts of EU AI Act Articles typed with it, so its article is theirs: 14."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-eu-ai-act:RecordKeeping ]
+            [ sh:class foxxi-eu-ai-act:Transparency ]
+            [ sh:class foxxi-eu-ai-act:RiskManagement ]
+            [ sh:class foxxi-eu-ai-act:DataGovernance ]
+            [ sh:class foxxi-eu-ai-act:TechnicalDocumentation ]
+            [ sh:class foxxi-eu-ai-act:AccuracyRobustness ]
+            [ sh:class foxxi-eu-ai-act:InteractionTransparency ]
+        )
+    ] ;
+    sh:message "Human Oversight (Art.14): its article: a HumanOversight is not also of a kind this document declares disjoint with it"@en ;
+    sh:property shapes:HumanOversightCodeShape-article ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
+
+shapes:HumanOversightCodeShape-article a sh:PropertyShape ;
+    sh:path foxxi-eu-ai-act:article ;
+    sh:name "article" ;
+    sh:description "the article of a HumanOversight"@en ;
+    sh:message "Human Oversight (Art.14): its article — article: one of \"14\" — the article of a HumanOversight"@en ;
+    sh:in ( "14" ) .
+
+shapes:TransparencyCodeShape a sh:NodeShape ;
+    sh:targetClass foxxi-eu-ai-act:Transparency ;
+    rdfs:label "Transparency to Deployers (Art.13): its article"@en ;
+    rdfs:comment "An instance of Transparency is one of the concepts of EU AI Act Articles typed with it, so its article is theirs: 13."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-eu-ai-act:RecordKeeping ]
+            [ sh:class foxxi-eu-ai-act:HumanOversight ]
+            [ sh:class foxxi-eu-ai-act:RiskManagement ]
+            [ sh:class foxxi-eu-ai-act:DataGovernance ]
+            [ sh:class foxxi-eu-ai-act:TechnicalDocumentation ]
+            [ sh:class foxxi-eu-ai-act:AccuracyRobustness ]
+            [ sh:class foxxi-eu-ai-act:InteractionTransparency ]
+        )
+    ] ;
+    sh:message "Transparency to Deployers (Art.13): its article: a Transparency is not also of a kind this document declares disjoint with it"@en ;
+    sh:property shapes:TransparencyCodeShape-article ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
+
+shapes:TransparencyCodeShape-article a sh:PropertyShape ;
+    sh:path foxxi-eu-ai-act:article ;
+    sh:name "article" ;
+    sh:description "the article of a Transparency"@en ;
+    sh:message "Transparency to Deployers (Art.13): its article — article: one of \"13\" — the article of a Transparency"@en ;
+    sh:in ( "13" ) .
+
+shapes:RiskManagementCodeShape a sh:NodeShape ;
+    sh:targetClass foxxi-eu-ai-act:RiskManagement ;
+    rdfs:label "Risk Management (Art.9): its article"@en ;
+    rdfs:comment "An instance of RiskManagement is one of the concepts of EU AI Act Articles typed with it, so its article is theirs: 9."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-eu-ai-act:RecordKeeping ]
+            [ sh:class foxxi-eu-ai-act:HumanOversight ]
+            [ sh:class foxxi-eu-ai-act:Transparency ]
+            [ sh:class foxxi-eu-ai-act:DataGovernance ]
+            [ sh:class foxxi-eu-ai-act:TechnicalDocumentation ]
+            [ sh:class foxxi-eu-ai-act:AccuracyRobustness ]
+            [ sh:class foxxi-eu-ai-act:InteractionTransparency ]
+        )
+    ] ;
+    sh:message "Risk Management (Art.9): its article: a RiskManagement is not also of a kind this document declares disjoint with it"@en ;
+    sh:property shapes:RiskManagementCodeShape-article ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
+
+shapes:RiskManagementCodeShape-article a sh:PropertyShape ;
+    sh:path foxxi-eu-ai-act:article ;
+    sh:name "article" ;
+    sh:description "the article of a RiskManagement"@en ;
+    sh:message "Risk Management (Art.9): its article — article: one of \"9\" — the article of a RiskManagement"@en ;
+    sh:in ( "9" ) .
+
+shapes:DataGovernanceCodeShape a sh:NodeShape ;
+    sh:targetClass foxxi-eu-ai-act:DataGovernance ;
+    rdfs:label "Data & Data Governance (Art.10): its article"@en ;
+    rdfs:comment "An instance of DataGovernance is one of the concepts of EU AI Act Articles typed with it, so its article is theirs: 10."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-eu-ai-act:RecordKeeping ]
+            [ sh:class foxxi-eu-ai-act:HumanOversight ]
+            [ sh:class foxxi-eu-ai-act:Transparency ]
+            [ sh:class foxxi-eu-ai-act:RiskManagement ]
+            [ sh:class foxxi-eu-ai-act:TechnicalDocumentation ]
+            [ sh:class foxxi-eu-ai-act:AccuracyRobustness ]
+            [ sh:class foxxi-eu-ai-act:InteractionTransparency ]
+        )
+    ] ;
+    sh:message "Data & Data Governance (Art.10): its article: a DataGovernance is not also of a kind this document declares disjoint with it"@en ;
+    sh:property shapes:DataGovernanceCodeShape-article ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
+
+shapes:DataGovernanceCodeShape-article a sh:PropertyShape ;
+    sh:path foxxi-eu-ai-act:article ;
+    sh:name "article" ;
+    sh:description "the article of a DataGovernance"@en ;
+    sh:message "Data & Data Governance (Art.10): its article — article: one of \"10\" — the article of a DataGovernance"@en ;
+    sh:in ( "10" ) .
+
+shapes:InteractionTransparencyCodeShape a sh:NodeShape ;
+    sh:targetClass foxxi-eu-ai-act:InteractionTransparency ;
+    rdfs:label "Transparency to Persons (Art.50): its article"@en ;
+    rdfs:comment "An instance of InteractionTransparency is one of the concepts of EU AI Act Articles typed with it, so its article is theirs: 50."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-eu-ai-act:RecordKeeping ]
+            [ sh:class foxxi-eu-ai-act:HumanOversight ]
+            [ sh:class foxxi-eu-ai-act:Transparency ]
+            [ sh:class foxxi-eu-ai-act:RiskManagement ]
+            [ sh:class foxxi-eu-ai-act:DataGovernance ]
+            [ sh:class foxxi-eu-ai-act:TechnicalDocumentation ]
+            [ sh:class foxxi-eu-ai-act:AccuracyRobustness ]
+        )
+    ] ;
+    sh:message "Transparency to Persons (Art.50): its article: an InteractionTransparency is not also of a kind this document declares disjoint with it"@en ;
+    sh:property shapes:InteractionTransparencyCodeShape-article ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
+
+shapes:InteractionTransparencyCodeShape-article a sh:PropertyShape ;
+    sh:path foxxi-eu-ai-act:article ;
+    sh:name "article" ;
+    sh:description "the article of a InteractionTransparency"@en ;
+    sh:message "Transparency to Persons (Art.50): its article — article: one of \"50\" — the article of a InteractionTransparency"@en ;
+    sh:in ( "50" ) .
+
+shapes:TechnicalDocumentationCodeShape a sh:NodeShape ;
+    sh:targetClass foxxi-eu-ai-act:TechnicalDocumentation ;
+    rdfs:label "Technical Documentation (Art.11): its article"@en ;
+    rdfs:comment "An instance of TechnicalDocumentation is one of the concepts of EU AI Act Articles typed with it, so its article is theirs: 11."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-eu-ai-act:RecordKeeping ]
+            [ sh:class foxxi-eu-ai-act:HumanOversight ]
+            [ sh:class foxxi-eu-ai-act:Transparency ]
+            [ sh:class foxxi-eu-ai-act:RiskManagement ]
+            [ sh:class foxxi-eu-ai-act:DataGovernance ]
+            [ sh:class foxxi-eu-ai-act:AccuracyRobustness ]
+            [ sh:class foxxi-eu-ai-act:InteractionTransparency ]
+        )
+    ] ;
+    sh:message "Technical Documentation (Art.11): its article: a TechnicalDocumentation is not also of a kind this document declares disjoint with it"@en ;
+    sh:property shapes:TechnicalDocumentationCodeShape-article ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
+
+shapes:TechnicalDocumentationCodeShape-article a sh:PropertyShape ;
+    sh:path foxxi-eu-ai-act:article ;
+    sh:name "article" ;
+    sh:description "the article of a TechnicalDocumentation"@en ;
+    sh:message "Technical Documentation (Art.11): its article — article: one of \"11\" — the article of a TechnicalDocumentation"@en ;
+    sh:in ( "11" ) .
+
+shapes:AccuracyRobustnessCodeShape a sh:NodeShape ;
+    sh:targetClass foxxi-eu-ai-act:AccuracyRobustness ;
+    rdfs:label "Accuracy, Robustness, Cybersecurity (Art.15): its article"@en ;
+    rdfs:comment "An instance of AccuracyRobustness is one of the concepts of EU AI Act Articles typed with it, so its article is theirs: 15."@en ;
+    sh:not [
+        sh:or (
+            [ sh:class foxxi-eu-ai-act:RecordKeeping ]
+            [ sh:class foxxi-eu-ai-act:HumanOversight ]
+            [ sh:class foxxi-eu-ai-act:Transparency ]
+            [ sh:class foxxi-eu-ai-act:RiskManagement ]
+            [ sh:class foxxi-eu-ai-act:DataGovernance ]
+            [ sh:class foxxi-eu-ai-act:TechnicalDocumentation ]
+            [ sh:class foxxi-eu-ai-act:InteractionTransparency ]
+        )
+    ] ;
+    sh:message "Accuracy, Robustness, Cybersecurity (Art.15): its article: an AccuracyRobustness is not also of a kind this document declares disjoint with it"@en ;
+    sh:property shapes:AccuracyRobustnessCodeShape-article ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
+
+shapes:AccuracyRobustnessCodeShape-article a sh:PropertyShape ;
+    sh:path foxxi-eu-ai-act:article ;
+    sh:name "article" ;
+    sh:description "the article of a AccuracyRobustness"@en ;
+    sh:message "Accuracy, Robustness, Cybersecurity (Art.15): its article — article: one of \"15\" — the article of a AccuracyRobustness"@en ;
+    sh:in ( "15" ) .

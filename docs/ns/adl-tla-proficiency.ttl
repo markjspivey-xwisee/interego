@@ -125,7 +125,9 @@ tla:BandExpert a tla:ProficiencyBand ;
     tla:minQuality "0.85"^^xsd:decimal ;
     tla:requiresQuality "true"^^xsd:boolean ;
     skos:notation "5" ;
-    rdfs:comment "Reached at 12 consecutive successes (Wilson 0.757) and not before, matching the previous rule's transition exactly."@en .
+    rdfs:comment "The band of the production-performance roll-up rule that awards the Expert level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
+    skos:definition "The band of the production-performance roll-up rule that awards the Expert level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
+    skos:note "Reached at 12 consecutive successes (Wilson 0.757) and not before, matching the previous rule's transition exactly."@en .
 
 tla:BandProficient a tla:ProficiencyBand ;
     rdfs:label "Proficient band"@en ;
@@ -134,7 +136,9 @@ tla:BandProficient a tla:ProficiencyBand ;
     tla:minQuality "0.70"^^xsd:decimal ;
     tla:requiresQuality "true"^^xsd:boolean ;
     skos:notation "4" ;
-    rdfs:comment "Reached at 6 consecutive successes (Wilson 0.610). Six executions with one failure scores 0.436 and does NOT reach it — the case the previous count-gated rule promoted."@en .
+    rdfs:comment "The band of the production-performance roll-up rule that awards the Proficient level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
+    skos:definition "The band of the production-performance roll-up rule that awards the Proficient level, at the reliability and recorded quality it requires (tla:minReliability, tla:minQuality, tla:requiresQuality)."@en ;
+    skos:note "Reached at 6 consecutive successes (Wilson 0.610). Six executions with one failure scores 0.436 and does NOT reach it — the case the previous count-gated rule promoted."@en .
 
 tla:BandCompetent a tla:ProficiencyBand ;
     rdfs:label "Competent band"@en ;
@@ -142,4 +146,6 @@ tla:BandCompetent a tla:ProficiencyBand ;
     tla:minReliability "0.40"^^xsd:decimal ;
     tla:requiresQuality "false"^^xsd:boolean ;
     skos:notation "3" ;
-    rdfs:comment "Reached at 3 consecutive successes (Wilson 0.438). Asks nothing of quality, because the level's own definition asks nothing of it."@en .
+    rdfs:comment "The band of the production-performance roll-up rule that awards the Competent level, at the reliability it requires (tla:minReliability); it asks nothing of quality."@en ;
+    skos:definition "The band of the production-performance roll-up rule that awards the Competent level, at the reliability it requires (tla:minReliability); it asks nothing of quality."@en ;
+    skos:note "Reached at 3 consecutive successes (Wilson 0.438). Asks nothing of quality, because the level's own definition asks nothing of it."@en .

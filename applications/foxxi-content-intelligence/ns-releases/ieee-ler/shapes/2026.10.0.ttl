@@ -234,8 +234,9 @@ shapes:OrganizationPathStepShape-position a sh:PropertyShape ;
 
 shapes:EvidenceShape a sh:NodeShape ;
     sh:targetClass foxxi-ieee-ler:Evidence ;
+    sh:targetObjectsOf foxxi-ieee-ler:supportedByEvidence ;
     rdfs:label "Evidence shape"@en ;
-    rdfs:comment "An evidence node is identified by an IRI locating the raw record."@en ;
+    rdfs:comment "Evidence — anything an assertion or record entry cites in its support (ler:supportedByEvidence), or that is typed ler:Evidence — is identified by an IRI locating the raw record."@en ;
     sh:nodeKind sh:IRI ;
     sh:message "Evidence shape: the node must be identified by an IRI — the evidence location"@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler/shapes> .

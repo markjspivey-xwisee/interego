@@ -108,7 +108,9 @@ describe('the Foxxi xAPI ontology\'s alignment to ADL\'s, read as OWL', () => {
     }
     const by = (m: string): string[] => toAdl.filter(t => t.predicate.value === m).map(t => t.subject.value.slice(FX.length)).sort();
     expect(by(MATCH.broad)).toEqual(['ActivityDefinition', 'Activity', 'Actor', 'Attachment', 'Context', 'Result', 'Statement'].sort());
-    expect(by(MATCH.close)).toEqual(['Object', 'duration', 'extensions', 'fileUrl', 'member', 'moreInfo', 'name', 'usageType', 'version'].sort());
+    // ★ REVISED: the usage type is attachmentUsageType, the object property that replaced the datatype
+    // property usageType (kept, deprecated, mapping to nothing).
+    expect(by(MATCH.close)).toEqual(['Object', 'attachmentUsageType', 'duration', 'extensions', 'fileUrl', 'member', 'moreInfo', 'name', 'version'].sort());
     expect(by(MATCH.exact).length).toBeGreaterThan(40);
     for (const t of toAdl.filter(x => x.predicate.value === MATCH.broad || x.predicate.value === MATCH.close)) {
       const note = notes.get(`${t.subject.value} ${t.predicate.value} ${t.object.value}`);

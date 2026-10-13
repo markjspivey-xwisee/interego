@@ -56,7 +56,7 @@
       "@container": "@set",
       "@context": {
         "usageType": {
-          "@id": "xapi:usageType",
+          "@id": "xapi:attachmentUsageType",
           "@type": "@id"
         },
         "display": {
@@ -111,7 +111,7 @@
           "@container": "@language"
         },
         "type": {
-          "@id": "xapi:type",
+          "@id": "xapi:activityType",
           "@type": "@id"
         },
         "moreInfo": {

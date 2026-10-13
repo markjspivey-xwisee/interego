@@ -10,10 +10,15 @@
  * agreement job (tools/shacl-agreement/, .github/workflows/foxxi-shacl-agreement.yml), for pySHACL
  * reading the same RDF.
  *
- * Each verdict is the one XML Schema 1.1 and SHACL give. Three engines have been seen to depart from
+ * Each verdict is the one XML Schema 1.1 and SHACL give. Two engines have been seen to depart from
  * them, and no case here turns on those departures: the substrate's processor checks an xsd:dateTime
  * by its pattern alone (it accepts a 13th month) and refuses whitespace in an xsd:anyURI, which XML
- * Schema 1.1 allows; rdflib, under pySHACL, reads a date with no time as an xsd:dateTime at midnight.
+ * Schema 1.1 allows; rdflib, under pySHACL, reads a date with no time, or "20261001", as an
+ * xsd:dateTime, refuses the hour 24:00:00, and accepts a +14:30 offset.
+ *
+ * Nor does any case turn on what the two readings do not share (each-document-reads-the-same-in-
+ * json-and-rdf.test.ts says what, and holds it): a key a context coerces to a datatype, whose JSON
+ * type its RDF reading does not see.
  */
 
 type Json = Record<string, unknown>;
@@ -33,6 +38,10 @@ export interface ReadingCase {
 
 const en = (text: string) => [{ lang: 'en', text }];
 const UUID = 'ec2a3c1b-0a5e-4d3c-9b2a-1f0e9d8c7b6a';
+const SESSION_ID = 'https://w3id.org/xapi/cmi5/context/extensions/sessionid';
+/** A launch data context template with what cmi5 §10.2.1 requires of it: the session ID and the
+ *  publisher ID activity. */
+const TEMPLATE = { registration: UUID, contextActivities: { grouping: [{ id: 'https://example.org/course/refunds/au2' }] }, extensions: { [SESSION_ID]: '6b9e2a2c-5d1f-4c6e-8a3b-7f0e9d8c7b6a' } };
 const SPM = 64000;
 
 const MANIFEST: Json = {
@@ -104,6 +113,11 @@ export const READING_CASES: Readonly<Record<string, readonly ReadingCase[]>> = {
       },
       violates: ['ItemShape-isvisible', 'ResourceShape-metadata'],
     },
+    {
+      name: 'organizations typed as resources',
+      instance: { ...MANIFEST, organizations: { '@type': 'Resources', organization: [{ identifier: 'o', title: 'O', item: [{ identifier: 'i', title: 'I' }] }] } },
+      violates: ['OrganizationsShape'],
+    },
     { name: 'a manifest with a key SCORM does not define', instance: { ...MANIFEST, lom: { general: 'x' } }, refused: 'invalid property' },
   ],
 
@@ -149,6 +163,11 @@ export const READING_CASES: Readonly<Record<string, readonly ReadingCase[]>> = {
       violates: ['LimitConditionsShape-attemptLimit', 'PreConditionRuleActionShape-ruleAction-ruleActionValue', 'RollupActionShape-rollupActionValue', 'RuleConditionShape-ruleConditionName'],
     },
     { name: 'a duration that is not one', instance: { type: 'Sequencing', limitConditions: { attemptAbsoluteDurationLimit: '1 hour' } }, violates: ['LimitConditionsShape-attemptAbsoluteDurationLimit'] },
+    {
+      name: 'an exit-condition rule typed as a pre-condition rule',
+      instance: { type: 'Sequencing', sequencingRules: { exitConditionRule: [{ type: 'PreConditionRule', ruleConditions: { ruleCondition: [{ ruleConditionName: 'completed' }] }, ruleAction: { ruleActionValue: 'exit' } }] } },
+      violates: ['ExitConditionRuleActionShape', 'PreConditionRuleActionShape-ruleAction-ruleActionValue'],
+    },
   ],
 
   'scorm-rte': [
@@ -190,7 +209,9 @@ export const READING_CASES: Readonly<Record<string, readonly ReadingCase[]>> = {
       instance: { type: 'DataModel', successStatus: true, score: [{ scoreScaled: 0.5 }, { scoreScaled: '0.7' }] },
       violates: ['DataModelShape-score', 'DataModelShape-successStatus', 'ScoreShape-scoreScaled'],
     },
-    { name: 'a score typed as an interaction', instance: { type: 'DataModel', score: { type: 'Interaction', scoreScaled: 0.5 } }, violates: ['InteractionShape-interactionId', 'InteractionShape-interactionType'] },
+    // A node selected as one kind and typed as a kind the ontology declares disjoint with it.
+    { name: 'a score typed as an interaction', instance: { type: 'DataModel', score: { type: 'Interaction', scoreScaled: 0.5 } }, violates: ['InteractionShape-interactionId', 'InteractionShape-interactionType', 'ScoreShape'] },
+    { name: 'a score typed as a learner preference', instance: { type: 'DataModel', score: { type: 'LearnerPreference', scoreScaled: 0.5 } }, violates: ['ScoreShape'] },
     { name: 'a comment whose language map is empty', instance: { type: 'DataModel', commentsFromLMS: [{ comment: {} }] }, violates: ['CommentFromLMSShape-comment'] },
     { name: 'a comment in a language that is not a language tag', instance: { type: 'DataModel', commentsFromLMS: [{ comment: { 'en_US!': 'x' } }] }, refused: 'invalid @language value', violates: ['CommentFromLMSShape-comment'] },
   ],
@@ -247,18 +268,23 @@ export const READING_CASES: Readonly<Record<string, readonly ReadingCase[]>> = {
       name: 'the launch data the Foxxi LMS stages',
       instance: {
         contextTemplate: {
-          registration: UUID, contextActivities: { category: [{ id: 'https://w3id.org/xapi/cmi5/context/categories/cmi5' }] },
-          extensions: { 'https://w3id.org/xapi/cmi5/context/extensions/sessionid': '6b9e2a2c-5d1f-4c6e-8a3b-7f0e9d8c7b6a' },
+          registration: UUID, contextActivities: { category: [{ id: 'https://w3id.org/xapi/cmi5/context/categories/cmi5' }], grouping: [{ id: 'https://example.org/course/refunds/au2' }] },
+          extensions: { [SESSION_ID]: '6b9e2a2c-5d1f-4c6e-8a3b-7f0e9d8c7b6a' },
         },
         launchMode: 'Normal', moveOn: 'CompletedOrPassed', masteryScore: 0.8, launchParameters: 'mode=quiz', returnURL: 'https://lms.example.org/return',
         entitlementKey: { courseStructure: 'abc123', alternate: 'xyz' },
       },
     },
-    { name: 'launch data that declares its type', instance: { type: 'LaunchData', contextTemplate: { registration: UUID }, launchMode: 'Review', moveOn: 'NotApplicable', entitlementKey: { courseStructure: 'k' } } },
+    { name: 'launch data that declares its type', instance: { type: 'LaunchData', contextTemplate: TEMPLATE, launchMode: 'Review', moveOn: 'NotApplicable', entitlementKey: { courseStructure: 'k' } } },
     {
       name: 'launch data with an unknown launch mode and an entitlement key without its course structure key',
-      instance: { contextTemplate: { registration: UUID }, launchMode: 'Practice', moveOn: 'Passed', entitlementKey: { alternate: 'x' } },
+      instance: { contextTemplate: TEMPLATE, launchMode: 'Practice', moveOn: 'Passed', entitlementKey: { alternate: 'x' } },
       violates: ['EntitlementKeyShape-courseStructure', 'LaunchDataShape-launchMode'],
+    },
+    {
+      name: 'launch data whose context template has neither the session ID nor the publisher ID activity',
+      instance: { type: 'LaunchData', contextTemplate: { registration: UUID, contextActivities: { category: [{ id: 'https://w3id.org/xapi/cmi5/context/categories/cmi5' }] } }, launchMode: 'Normal', moveOn: 'Passed' },
+      violates: ['LaunchDataShape-contextTemplate-publisher', 'LaunchDataShape-contextTemplate-sessionid'],
     },
     {
       name: 'a session, with its learner as xAPI writes an Agent',
@@ -267,6 +293,31 @@ export const READING_CASES: Readonly<Record<string, readonly ReadingCase[]>> = {
         learner: { objectType: 'Agent', account: { homePage: 'https://lms.example.org', name: 'learner-7' } },
         launchedAU: { id: 'https://example.org/course/refunds/au2', title: en('Quiz'), description: en('Quiz'), url: 'https://example.org/au2/index.html' },
       },
+    },
+    {
+      name: 'a session whose learner has no account',
+      instance: { type: 'Session', registration: UUID, sessionId: 's-1', learner: { mbox: 'mailto:ada@example.org', openid: 'https://id.example.org/ada' } },
+      violates: ['SessionShape-learner'],
+    },
+    {
+      name: 'a session whose learner is a Group',
+      instance: { type: 'Session', registration: UUID, sessionId: 's-1', learner: { objectType: 'Group', account: { homePage: 'https://lms.example.org', name: 'team-1' } } },
+      violates: ['SessionShape-learner'],
+    },
+    {
+      name: 'a structure item that declares no type, with an AU\'s entitlement key',
+      instance: {
+        type: 'CourseStructure', course: { id: 'https://example.org/course/c', title: en('C'), description: en('D') },
+        structure: [{ id: 'https://example.org/course/c/au', title: en('AU'), description: en('AU'), url: 'au.html', entitlementKey: 'k-1' }],
+      },
+    },
+    {
+      name: 'a course typed as a block',
+      instance: {
+        type: 'CourseStructure', course: { type: 'Block', id: 'https://example.org/course/c', title: en('C'), description: en('D') },
+        structure: [{ type: 'AssignableUnit', id: 'https://example.org/course/c/au', title: en('AU'), description: en('AU'), url: 'au.html' }],
+      },
+      violates: ['CourseShape'],
     },
     {
       name: 'a session whose AU has no URL',
@@ -306,11 +357,18 @@ export const READING_CASES: Readonly<Record<string, readonly ReadingCase[]>> = {
       instance: { type: 'SignedInteractionRecord', signedEnvelope: 'env', signer: 'did:web:t.example', recordedAt: '2026-10-01T12:00:00Z', attestedModel: { model: 'claude-opus' } },
       violates: ['AttestedModelClaimShape-modelClaimSigner'],
     },
+    // A record that carries a model claim's property is, by that property's domain, a model claim, and
+    // the ontology declares the two disjoint: the claim is a node of its own (attestedModel).
+    {
+      name: 'a record that states its model itself, not in a model claim',
+      instance: { '@type': 'SignedInteractionRecord', signedEnvelope: 'env', signer: 'did:web:t.example', recordedAt: '2026-10-01T12:00:00Z', model: 'claude-opus', modelClaimSigner: 'did:web:t.example' },
+      violates: ['AttestedModelClaimShape'],
+    },
     {
       name: 'the self-asserted record the demo shows rejected',
       instance: { '@type': 'SignedInteractionRecord', assertedConfidence: 0.9, model: 'claude-opus', sources: ['Roediger & Karpicke (2006)'] },
       refused: 'invalid property',
-      violates: ['AttestedModelClaimShape-modelClaimSigner', 'ConfidenceRangeProofShape-confidenceThreshold', 'SignedInteractionRecordShape-recordedAt', 'SignedInteractionRecordShape-signedEnvelope', 'SignedInteractionRecordShape-signer'],
+      violates: ['AttestedModelClaimShape', 'AttestedModelClaimShape-modelClaimSigner', 'ConfidenceRangeProofShape', 'ConfidenceRangeProofShape-confidenceThreshold', 'SignedInteractionRecordShape-recordedAt', 'SignedInteractionRecordShape-signedEnvelope', 'SignedInteractionRecordShape-signer'],
     },
   ],
 
@@ -322,12 +380,37 @@ export const READING_CASES: Readonly<Record<string, readonly ReadingCase[]>> = {
       instance: { type: 'DeployEvent', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:ci.example.org', signer: '0xdef' },
       violates: ['OperationalEvidenceEventShape-actingAgent'],
     },
+    // owl:deprecated retracts no axiom: actor's domain still makes its subject an event.
+    {
+      name: 'an event recorded with actor that declares no type',
+      instance: { id: 'https://example.org/ev/3', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00Z', actor: 'did:web:ci.example.org', signer: '0xdef' },
+      violates: ['OperationalEvidenceEventShape-actingAgent'],
+    },
     {
       name: 'a key rotation whose time is not a time, and with two signers',
       instance: { type: 'KeyRotationEvent', evidences: 'CC6.1', occurredAt: '1 October 2026', actingAgent: 'did:web:ops.example.org', signer: ['0x1', '0x2'] },
       violates: ['OperationalEvidenceEventShape-occurredAt', 'OperationalEvidenceEventShape-signer'],
     },
     { name: 'an incident that evidences no criterion', instance: { type: 'IncidentEvent', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:ops.example.org', signer: '0x1' }, violates: ['OperationalEvidenceEventShape-evidences'] },
+    {
+      name: 'an event citing CC9.9, which the list does not have, beside CC6.2',
+      instance: { type: 'AccessChangeEvent', evidences: ['CC6.2', 'CC9.9'], occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:admin.example.org', signer: '0x1' },
+      violates: ['OperationalEvidenceEventShape-evidences'],
+    },
+    {
+      name: 'an event citing an IRI from elsewhere',
+      instance: { type: 'DeployEvent', evidences: 'https://elsewhere.example/criteria/x', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:ci.example.org', signer: '0x1' },
+      violates: ['OperationalEvidenceEventShape-evidences'],
+    },
+    {
+      name: 'an event citing a word that is one of the context\'s terms',
+      instance: { type: 'DeployEvent', evidences: 'occurredAt', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:ci.example.org', signer: '0x1' },
+      violates: ['OperationalEvidenceEventShape-evidences'],
+    },
+    {
+      name: 'an event citing CC8.1 by its IRI',
+      instance: { type: 'DeployEvent', evidences: 'https://foxxi-bridge.interego.xwisee.com/ns/soc2#CommonCriterion-CC8.1', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'did:web:ci.example.org', signer: '0x1' },
+    },
     {
       name: 'an acting agent that is not an IRI',
       instance: { type: 'DeployEvent', evidences: 'CC8.1', occurredAt: '2026-10-01T12:00:00Z', actingAgent: 'ci bot', signer: '0x1' },
@@ -340,12 +423,45 @@ export const READING_CASES: Readonly<Record<string, readonly ReadingCase[]>> = {
     { name: 'an obligation with its Article', instance: { type: 'RecordKeeping', id: 'https://example.org/obligations/logs', article: '12' } },
     { name: 'an obligation without its Article', instance: { type: 'HumanOversight', id: 'https://example.org/obligations/oversight' }, violates: ['ObligationConformanceShape-article'] },
     { name: 'an obligation with two Articles, which declares no type', instance: { id: 'https://example.org/obligations/x', article: ['13', '14'] }, violates: ['ObligationConformanceShape-article'] },
+    {
+      name: 'an obligation of every kind, each with its Article',
+      instance: {
+        '@graph': [
+          { type: 'RiskManagement', id: 'https://example.org/obligations/9', article: '9' }, { type: 'DataGovernance', id: 'https://example.org/obligations/10', article: '10' },
+          { type: 'TechnicalDocumentation', id: 'https://example.org/obligations/11', article: '11' }, { type: 'RecordKeeping', id: 'https://example.org/obligations/12', article: '12' },
+          { type: 'Transparency', id: 'https://example.org/obligations/13', article: '13' }, { type: 'HumanOversight', id: 'https://example.org/obligations/14', article: '14' },
+          { type: 'AccuracyRobustness', id: 'https://example.org/obligations/15', article: '15' }, { type: 'InteractionTransparency', id: 'https://example.org/obligations/50', article: '50' },
+        ],
+      },
+    },
+    { name: 'a record-keeping obligation that names Article 13', instance: { type: 'RecordKeeping', id: 'https://example.org/obligations/x', article: '13' }, violates: ['RecordKeepingCodeShape-article'] },
+    {
+      name: 'an obligation of two kinds',
+      instance: { type: ['RecordKeeping', 'HumanOversight'], id: 'https://example.org/obligations/x', article: '12' },
+      violates: ['HumanOversightCodeShape', 'HumanOversightCodeShape-article', 'RecordKeepingCodeShape'],
+    },
+    { name: 'an obligation of an Article the document does not define', instance: { type: 'Obligation', id: 'https://example.org/obligations/x', article: '99' }, violates: ['ObligationConformanceShape-article'] },
+    { name: 'a record citing Article 99', instance: { id: 'https://example.org/actions/x', conformsToArticle: 'Article99' }, violates: ['ConformanceClaimShape-conformsToArticle'] },
+    { name: 'a record citing a class rather than an Article', instance: { id: 'https://example.org/actions/x', conformsToArticle: ['Article11', 'RecordKeeping'] }, violates: ['ConformanceClaimShape-conformsToArticle'] },
   ],
 
   'nist-rmf': [
     { name: 'a record of an action that addresses GOVERN', instance: { id: 'https://example.org/actions/policy', addressesFunction: 'GOVERN' } },
     { name: 'a function with its id', instance: { type: 'Measure', id: 'https://example.org/functions/measure', functionId: 'MEASURE' } },
-    { name: 'a function whose id is not one of the four', instance: { type: 'Govern', id: 'https://example.org/functions/g', functionId: 'GOVERNING' }, violates: ['FunctionEvidenceShape-functionId'] },
+    { name: 'a function whose id is not one of the four', instance: { type: 'Govern', id: 'https://example.org/functions/g', functionId: 'GOVERNING' }, violates: ['FunctionEvidenceShape-functionId', 'GovernCodeShape-functionId'] },
+    {
+      name: 'the four functions, each with its id',
+      instance: {
+        '@graph': [
+          { type: 'Govern', id: 'https://example.org/functions/1', functionId: 'GOVERN' }, { type: 'Map', id: 'https://example.org/functions/2', functionId: 'MAP' },
+          { type: 'Measure', id: 'https://example.org/functions/3', functionId: 'MEASURE' }, { type: 'Manage', id: 'https://example.org/functions/4', functionId: 'MANAGE' },
+        ],
+      },
+    },
+    { name: 'a Govern function whose id is MAP', instance: { type: 'Govern', id: 'https://example.org/functions/g', functionId: 'MAP' }, violates: ['GovernCodeShape-functionId'] },
+    { name: 'a record addressing PLAN', instance: { id: 'https://example.org/actions/x', addressesFunction: 'PLAN' }, violates: ['FunctionClaimShape-addressesFunction'] },
+    { name: 'a record addressing Map, a class name, not the function MAP', instance: { id: 'https://example.org/actions/x', addressesFunction: 'Map' }, violates: ['FunctionClaimShape-addressesFunction'] },
+    { name: 'a record addressing GOVERN by its IRI', instance: { id: 'https://example.org/actions/x', addressesFunction: 'https://foxxi-bridge.interego.xwisee.com/ns/nist-rmf#CoreFunction-GOVERN' } },
     { name: 'a function id with no type, in the wrong case', instance: { id: 'https://example.org/functions/m', functionId: 'Map' }, violates: ['FunctionEvidenceShape-functionId'] },
   ],
 };

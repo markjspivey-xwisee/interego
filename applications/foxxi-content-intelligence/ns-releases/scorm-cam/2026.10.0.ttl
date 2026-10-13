@@ -20,8 +20,8 @@
         "Transcribed from the normative schema: imscp_v1p1.xsd (IMS Content Packaging 1.1.4) and adlcp_v1p3.xsd, as distributed with SCORM 2004 4th Edition."@en ,
         "The sample package in deploy/foxxi-scorm-player/site/course is a SCORM 2004 3rd Edition package and ships the 3rd Edition schemas; it conforms to this ontology."@en ,
         "Since 2026.10.0, the text of <schema>, <schemaversion> and <title> is the value of the datatype properties metadataSchema, metadataSchemaVersion and titleText. The object properties schema, schemaversion and title, and the classes Schema, SchemaVersion and Title they pointed at, are deprecated and kept as they were published."@en ,
-        "The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology's classes. A parsed instance as JSON is checked against the same shapes at POST /ns/scorm-cam/validate, which routes it by its declared type; every result cites its shape."@en ,
         "An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/context/2026.10.0, which is generated from this document. The shapes at https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/shapes/2026.10.0 constrain that reading, and the Foxxi validator (POST https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/validate) checks the JSON against the same shapes."@en ,
+        "The shapes select a node by its class (sh:targetClass) and, as the RDFS domain and range rules make a node an instance of a class, by a property it has (sh:targetSubjectsOf) or by the property that reaches it (sh:targetObjectsOf): a node is checked whether or not it declares its type. The Foxxi validator selects the same nodes of the JSON, and every result cites its shape."@en ,
         "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/scorm-cam#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -571,6 +571,7 @@ foxxi-scorm-cam:sharedDataGlobalToSystem a owl:DatatypeProperty , owl:Functional
 foxxi-scorm-cam:ScormType a skos:ConceptScheme ;
     rdfs:label "SCORM types"@en ;
     skos:prefLabel "SCORM types"@en ;
+    skos:definition "The values of adlcp:scormType on a resource."@en ;
     rdfs:comment "The values of adlcp:scormType on a resource."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> ;
     skos:hasTopConcept foxxi-scorm-cam:ScormType-sco , foxxi-scorm-cam:ScormType-asset .
@@ -598,6 +599,7 @@ foxxi-scorm-cam:ScormType-asset a skos:Concept ;
 foxxi-scorm-cam:TimeLimitAction a skos:ConceptScheme ;
     rdfs:label "Time limit actions"@en ;
     skos:prefLabel "Time limit actions"@en ;
+    skos:definition "The values of adlcp:timeLimitAction, and so of cmi.time_limit_action."@en ;
     rdfs:comment "The values of adlcp:timeLimitAction, and so of cmi.time_limit_action."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> ;
     skos:hasTopConcept foxxi-scorm-cam:TimeLimitAction-exit-message ,
@@ -648,6 +650,7 @@ foxxi-scorm-cam:TimeLimitAction-continue-no-message a skos:Concept ;
 foxxi-scorm-cam:Structure a skos:ConceptScheme ;
     rdfs:label "Organization structures"@en ;
     skos:prefLabel "Organization structures"@en ;
+    skos:definition "The values of an organization's structure attribute that SCORM uses."@en ;
     rdfs:comment "The values of an organization's structure attribute that SCORM uses."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam> ;
     skos:hasTopConcept foxxi-scorm-cam:Structure-hierarchical .
