@@ -27,28 +27,37 @@ side of it (`latest-version`, `predecessor-version`, `successor-version`; RFC 58
 - **Each version names the one before it, and says whether it keeps its meaning.** A document's
   header says `owl:priorVersion` once it has had a release, and `owl:backwardCompatibleWith` or
   `owl:incompatibleWith` that version; the release tool refuses a new version that does not. An
-  ontology and its shapes graph can differ here: 2026.10.1's ontologies only add to 2026.10.0's, while
-  most of its shapes graphs check more, so data that met 2026.10.0's shapes may not meet them.
+  ontology and its shapes graph can differ here. 2026.10.1's ontologies keep every term 2026.10.0
+  defined with the kind, domain, range, characteristics and superclasses it had, and HermiT finds
+  the same subsumptions, equivalences and disjointness among 2026.10.0's classes; most of its shapes
+  graphs check more, so data that met 2026.10.0's shapes may not meet them.
 - **A version is released once: when it reaches `master`.** The commit that brings it there is
-  tagged `foxxi-ns-<version>` (`.github/workflows/foxxi-ns-release-tags.yml`, which finds that commit
-  even when it runs later: 2026.10.0 reached `master` before the workflow did), and from 2026.10.1
-  on, a version's documents cite the source files they were generated from at that tag
-  (`prov:wasDerivedFrom`), which never moves. The release tool refuses to archive anything more under
-  a version whose tag exists.
+  tagged `foxxi-ns-<version>`. `.github/workflows/foxxi-ns-release-tags.yml` tags the first commit on
+  `master` whose `SHA256SUMS` lists the version's files with the checksums they have, so it finds that
+  commit even when it runs later, as it did for 2026.10.0, which reached `master` before the workflow
+  did. From 2026.10.1 on, a version's documents cite the source files they were generated from at
+  that tag (`prov:wasDerivedFrom`), which never moves. The release tool refuses to archive anything
+  more under a version whose tag exists.
 - **Imports are by version IRI.** A Foxxi document imports another at a version, so the import
   closure of a released version never changes either.
 - **A released term keeps its meaning.** From one release to the next, a term whose kind would
   change (a datatype property that becomes an object property), or that would come to relate
   different things, takes a new IRI instead; the old one stays as it was released, with
   `owl:deprecated`, `dct:isReplacedBy` and a `skos:changeNote`, so data written with it still reads
-  as it did. A wrong domain or range is removed rather than replaced. A change that only narrows
+  as it did. A wrong domain or range is removed rather than replaced; the version then no longer
+  entails what it did, so it is `owl:incompatibleWith` the one before. A change that only narrows
   what a term admits to what its standard allows stays on its IRI, says so in a `skos:changeNote`
   where it replaces a datatype, and makes the version `owl:incompatibleWith` the one before.
 - **The rule starts at 2026.10.0, the first release.** The publication before it had no versions,
-  and 2026.10.0 changed some of its terms in place — ten properties' kinds and five properties'
-  domains or ranges among them. 2026.10.0 is released, so later versions keep those terms as it has
-  them rather than change them again; each term whose kind, domain, range or datatype it replaced
-  says in its `skos:changeNote` what the unversioned publication had.
+  and 2026.10.0 changed many of its terms in place. 2026.10.0 is released, so later versions keep
+  those terms as it has them rather than change them again. A `skos:changeNote` says what the
+  unversioned publication had on the ten properties whose kind 2026.10.0 changed, and on some whose
+  domain, range or datatype it replaced, among them cmi5's `objective` and `objectives`, SCORM SN's
+  `objectivesGlobalToSystem`, `presentation` and `adlObjectives`, and xAPI's `mbox` and `duration`.
+  Its other changes to that publication are not noted term by term: domains widened to what the
+  standards allow, such as an xAPI actor of a SubStatement as well as a Statement; datatypes
+  narrowed to the standards' value spaces, such as a registration's UUID; some superclasses; and the
+  Foxxi vocabulary's types, which became OWL classes.
 
 ## Releasing
 

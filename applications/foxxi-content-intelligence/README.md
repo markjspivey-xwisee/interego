@@ -83,17 +83,23 @@ Each is an independent formalization; see
   are kept in [`ns-releases/`](ns-releases/), which explains how to
   release a new version.
 - **2026.10.0 was the first version; 2026.10.1 is current.** What was
-  published before 2026.10.0 had no version, and 2026.10.0 changed some
-  of its terms in place, ten properties' kinds among them; each term
-  whose kind, domain, range or datatype it replaced says in its
-  `skos:changeNote` what that publication had. 2026.10.1
-  keeps every logical axiom 2026.10.0 gave its terms. It adds terms,
-  typings, definitions and mappings, makes one mapping more precise,
-  deprecates one term and stops deprecating one SCORM value, so its
-  ontologies are `owl:backwardCompatibleWith` 2026.10.0, while most of
-  its shapes graphs check more than 2026.10.0's did
-  (`owl:incompatibleWith`). The rules a new version keeps are in
-  [`ns-releases/`](ns-releases/README.md).
+  published before 2026.10.0 had no version, and 2026.10.0 changed many
+  of its terms in place. The ten properties whose kind it changed, and
+  some whose domain, range or datatype it replaced, say in a
+  `skos:changeNote` what that publication had; its other changes are not
+  noted term by term, and [`ns-releases/`](ns-releases/README.md) says
+  what they were. 2026.10.1 keeps every term 2026.10.0 defined with the
+  kind, domain, range, characteristics and superclasses it had, and
+  HermiT finds the same subsumptions, equivalences and disjointness among
+  2026.10.0's classes. It adds terms, typings, definitions and mappings,
+  makes one mapping more precise, deprecates one term and stops
+  deprecating one SCORM value. It also adds Technical Documentation to
+  the EU AI Act's disjoint classes, rewords the TLA roll-up rule's
+  account of where its bands are, and cites its source files at its
+  release tag rather than at `master`. So its ontologies are
+  `owl:backwardCompatibleWith` 2026.10.0, while most of its shapes graphs
+  check more than 2026.10.0's did (`owl:incompatibleWith`). The rules a
+  new version keeps are in [`ns-releases/`](ns-releases/README.md).
 - **Where the IRIs live.** The namespaces are on the bridge's own host,
   `foxxi-bridge.interego.xwisee.com`, with no w3id.org or PURL redirect in
   front of them yet, so they last as long as that host does. (Each
