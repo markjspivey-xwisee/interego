@@ -130,11 +130,14 @@ describe('every document with mappings publishes them as an SSSOM 1.0 mapping se
   it('exactly the documents that map terms publish a set, and their headers point at it', () => {
     expect(mappingSetModules().sort()).toEqual([...withMappings].sort());
     expect(withMappings.sort()).toEqual(['adl-tla', 'cmi5', 'eu-ai-act', 'foxxi', 'ieee-ler', 'nist-rmf', 'soc2', 'xapi']);
+    // ★ REVISED: a document cites its mapping set at its own version — the set released with it — so a
+    // released version's link never moves to a later set.
     for (const m of Object.keys(TURTLE)) {
       const seeAlso = quadsOf(m).filter(t => t.subject.value === DOC_IRI(m) && t.predicate.value === `${RDFS}seeAlso`).map(t => t.object.value);
-      if (withMappings.includes(m)) expect(seeAlso, m).toContain(mappingSetIri(DOC_IRI(m)));
+      const version = quadsOf(m).find(t => t.subject.value === DOC_IRI(m) && t.predicate.value === 'http://www.w3.org/2002/07/owl#versionInfo')?.object.value;
+      if (withMappings.includes(m)) expect(seeAlso, m).toContain(`${mappingSetIri(DOC_IRI(m))}/${version}`);
       else {
-        expect(seeAlso, m).not.toContain(mappingSetIri(DOC_IRI(m)));
+        expect(seeAlso.filter(s => s.startsWith(mappingSetIri(DOC_IRI(m)))), m).toEqual([]);
         expect(renderMappingSet(m), m).toBeNull();
       }
     }

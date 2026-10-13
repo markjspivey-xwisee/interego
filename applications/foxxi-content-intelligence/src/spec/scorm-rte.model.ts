@@ -52,6 +52,10 @@ const RESULT = '^(correct|incorrect|unanticipated|neutral|-?([0-9]+(\\.[0-9]+)?|
 const NAV_REQUEST = '^(continue|previous|exit|exitAll|abandon|abandonAll|suspendAll|_none_|\\{target=[^}]+\\}(choice|jump))$';
 
 export const SCORM_RTE_MODEL: OntologyModel = {
+  // Read through its generated JSON-LD context (ns/model-context.ts): a node a property reaches is
+  // selected by that property as well as by its class.
+  selectByDomainAndRange: true,
+  generatedContext: true,
   module: 'scorm-rte',
   title: 'SCORM 2004 4th Edition — Run-Time Environment data model (cmi, adl.nav, adl.data)',
   description:
@@ -204,7 +208,7 @@ export const SCORM_RTE_MODEL: OntologyModel = {
       members: [
         { name: 'time-out', label: 'time out', notation: 'time-out', comment: 'The SCO ended because the maximum time allowed was exceeded.' },
         { name: 'suspend', label: 'suspend', comment: 'The learner suspended the attempt, to resume it later.' },
-        { name: 'logout', label: 'logout', comment: 'Deprecated by ADL, which says it should not be used. An LMS that receives it processes an Exit All navigation request when the SCO is taken away.', deprecated: true },
+        { name: 'logout', label: 'logout', comment: 'A value ADL has deprecated for a SCO to set: a SCO should not use it. An LMS that receives it processes an Exit All navigation request when the SCO is taken away.', changeNote: '2026.10.0: no longer marked owl:deprecated. ADL deprecated the token for a SCO to set, but an LMS must still process it, so the value is not obsolete; its comment says how it is deprecated.' },
         { name: 'normal', label: 'normal', comment: 'The SCO ended normally.' },
         { name: '', label: '(empty)', comment: 'No exit condition was set: the default.' },
       ],
@@ -303,10 +307,20 @@ export const SCORM_RTE_MODEL: OntologyModel = {
         { path: 'sessionTime', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIMEINTERVAL, comment: 'cmi.session_time, timeinterval (second,10,2)' },
         { path: 'totalTime', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIMEINTERVAL, comment: 'cmi.total_time, timeinterval (second,10,2)' },
         { path: 'maxTimeAllowed', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIMEINTERVAL, comment: 'cmi.max_time_allowed, timeinterval (second,10,2)' },
-        { path: 'suspendData', maxCount: 1, datatype: 'xsd:string', pattern: `^[\\s\\S]{0,${SUSPEND_DATA_SPM}}$`, severity: 'Warning', comment: `cmi.suspend_data, within its SPM of ${SUSPEND_DATA_SPM} characters to be portable` },
+        { path: 'suspendData', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.suspend_data' },
+        { path: 'suspendData', name: 'suspendData-SPM', pattern: `^[\\s\\S]{0,${SUSPEND_DATA_SPM}}$`, severity: 'Warning', comment: `cmi.suspend_data, within its SPM of ${SUSPEND_DATA_SPM} characters to be portable` },
         { path: 'navRequest', maxCount: 1, datatype: 'xsd:string', pattern: NAV_REQUEST, comment: 'adl.nav.request' },
         { path: 'navRequestValidContinue', maxCount: 1, datatype: 'xsd:string', in: VALIDITY, comment: 'adl.nav.request_valid.continue' },
         { path: 'navRequestValidPrevious', maxCount: 1, datatype: 'xsd:string', in: VALIDITY, comment: 'adl.nav.request_valid.previous' },
+        // ★ The elements below are single-valued (owl:FunctionalProperty), and the shape said so in
+        // its description without constraining them.
+        { path: 'version', maxCount: 1, datatype: 'xsd:string', comment: 'cmi._version' },
+        { path: 'launchData', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.launch_data' },
+        { path: 'learnerId', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.learner_id' },
+        { path: 'learnerName', maxCount: 1, comment: 'cmi.learner_name, localized_string_type' },
+        { path: 'location', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.location' },
+        { path: 'score', maxCount: 1, comment: 'cmi.score' },
+        { path: 'learnerPreference', maxCount: 1, comment: 'cmi.learner_preference' },
       ],
     },
     {
@@ -330,6 +344,7 @@ export const SCORM_RTE_MODEL: OntologyModel = {
         { path: 'latency', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIMEINTERVAL, comment: 'cmi.interactions.n.latency, timeinterval (second,10,2)' },
         { path: 'interactionTimestamp', maxCount: 1, datatype: 'xsd:string', pattern: SCORM_TIME, comment: 'cmi.interactions.n.timestamp, time (second,10,0)' },
         { path: 'interactionDescription', maxCount: 1, datatype: 'rdf:langString', comment: 'cmi.interactions.n.description, localized_string_type' },
+        { path: 'learnerResponse', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.interactions.n.learner_response' },
       ],
     },
     {
@@ -340,6 +355,8 @@ export const SCORM_RTE_MODEL: OntologyModel = {
         { path: 'objectiveSuccessStatus', maxCount: 1, datatype: 'xsd:string', in: SUCCESS_STATUS, comment: 'cmi.objectives.n.success_status' },
         { path: 'objectiveCompletionStatus', maxCount: 1, datatype: 'xsd:string', in: COMPLETION_STATUS, comment: 'cmi.objectives.n.completion_status' },
         { path: 'objectiveProgressMeasure', maxCount: 1, datatype: NUMBER, minInclusive: 0, maxInclusive: 1, comment: 'cmi.objectives.n.progress_measure, from 0 to 1' },
+        { path: 'objectiveScore', maxCount: 1, comment: 'cmi.objectives.n.score' },
+        { path: 'objectiveDescription', maxCount: 1, datatype: 'rdf:langString', comment: 'cmi.objectives.n.description, localized_string_type' },
       ],
     },
     {
@@ -349,7 +366,8 @@ export const SCORM_RTE_MODEL: OntologyModel = {
         { path: 'audioLevel', maxCount: 1, datatype: NUMBER, minInclusive: 0, comment: 'audio_level, 0 or more' },
         { path: 'deliverySpeed', maxCount: 1, datatype: NUMBER, minInclusive: 0, comment: 'delivery_speed, 0 or more' },
         { path: 'audioCaptioning', maxCount: 1, datatype: 'xsd:integer', minInclusive: -1, maxInclusive: 1, comment: 'audio_captioning: -1, 0 or 1' },
-        { path: 'preferenceLanguage', maxCount: 1, datatype: 'xsd:string', pattern: `^[\\s\\S]{0,${SHORT_SPM}}$`, severity: 'Warning', comment: `language, within its SPM of ${SHORT_SPM} characters to be portable` },
+        { path: 'preferenceLanguage', maxCount: 1, datatype: 'xsd:string', comment: 'cmi.learner_preference.language' },
+        { path: 'preferenceLanguage', name: 'preferenceLanguage-SPM', pattern: `^[\\s\\S]{0,${SHORT_SPM}}$`, severity: 'Warning', comment: `language, within its SPM of ${SHORT_SPM} characters to be portable` },
       ],
     },
     {
@@ -397,7 +415,8 @@ export const SCORM_RTE_MODEL: OntologyModel = {
       comment: `A shared data store has an ID; content beyond its SPM is reported as a warning (${RTE}: adl.data).`,
       constraints: [
         { path: 'sharedDataId', minCount: 1, maxCount: 1, datatype: 'xsd:string', comment: 'adl.data.n.id' },
-        { path: 'sharedDataStore', maxCount: 1, datatype: 'xsd:string', pattern: `^[\\s\\S]{0,${SUSPEND_DATA_SPM}}$`, severity: 'Warning', comment: `adl.data.n.store, within its SPM of ${SUSPEND_DATA_SPM} characters to be portable` },
+        { path: 'sharedDataStore', maxCount: 1, datatype: 'xsd:string', comment: 'adl.data.n.store' },
+        { path: 'sharedDataStore', name: 'sharedDataStore-SPM', pattern: `^[\\s\\S]{0,${SUSPEND_DATA_SPM}}$`, severity: 'Warning', comment: `adl.data.n.store, within its SPM of ${SUSPEND_DATA_SPM} characters to be portable` },
       ],
     },
   ],

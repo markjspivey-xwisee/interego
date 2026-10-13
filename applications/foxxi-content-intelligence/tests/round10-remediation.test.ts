@@ -36,15 +36,19 @@ describe('round-10 — profile Concepts/Templates/Patterns carry type + inScheme
 
 // ── MINOR: IEEE-LER exactMatch→closeMatch to the IMS credential types (no false identity) ─
 describe('round-10 — IEEE-LER uses closeMatch (not exactMatch) to IMS credential types', () => {
-  it('the Transcript/Credential alignments to OB3/CLR are skos:closeMatch', () => {
+  it('the Transcript/Credential alignments to OB3/CLR are never skos:exactMatch', () => {
     // ★ REVISED: read as triples. 1EdTech's vocabularies now have prefixes (ob:, clr:), so the
     // Turtle prints these IRIs compactly and the old text match saw nothing.
     const q = turtleQuads(renderSemOntologyTurtle('ler'));
     // Round-11 corrected the targets to the CANONICAL, dereferenceable vocab.html class IRIs
-    // (the /spec/{ob/v3p0,clr/v2p0}/… paths 404). closeMatch (not exactMatch) still holds.
-    const closeTargets = q.filter(t => t.predicate.value === `${SKOS}closeMatch`).map(t => t.object.value);
-    expect(closeTargets).toContain('https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential');
-    expect(closeTargets).toContain('https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential');
+    // (the /spec/{ob/v3p0,clr/v2p0}/… paths 404). A Transcript closeMatches a CLR credential.
+    // ★ REVISED (2026.10.0): an Open Badges credential and a CLR credential are each a KIND of
+    // ler:Credential, which is what its definition says, so Credential narrowMatches both rather
+    // than closeMatch them — still not exactMatch.
+    const targets = (rel: string) => q.filter(t => t.predicate.value === `${SKOS}${rel}`).map(t => t.object.value);
+    expect(targets('closeMatch')).toContain('https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential');
+    expect(q.filter(t => t.subject.value === `${LER_NS}Credential` && t.predicate.value === `${SKOS}narrowMatch`).map(t => t.object.value).sort())
+      .toEqual(['https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential', 'https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential']);
     // No exactMatch (strict identity) to the IMS credential types.
     const exactTargets = q.filter(t => t.predicate.value === `${SKOS}exactMatch`).map(t => t.object.value);
     expect(exactTargets.filter(o => /^https:\/\/purl\.imsglobal\.org\/spec\/(vc\/)?(ob|clr)/.test(o))).toEqual([]);
@@ -57,8 +61,9 @@ describe('round-10 — ler/tla JSON-LD carries domain/range/closeMatch (faithful
     const q = await jsonLdQuads(renderSemOntologyJsonLd('ler'));
     expect(q.some(x => x.predicate.value === `${RDFS}domain`)).toBe(true);
     expect(q.some(x => x.predicate.value === `${RDFS}range`)).toBe(true);
-    // The Credential class carries a closeMatch to OB3 (not exactMatch).
-    expect(iriObjectsOf(q, `${LER_NS}Credential`, `${SKOS}closeMatch`)).toContain('https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential');
+    // The Credential class carries its alignment to OB3 (not exactMatch). ★ REVISED (2026.10.0): a
+    // narrowMatch — an Open Badges credential is a kind of ler:Credential.
+    expect(iriObjectsOf(q, `${LER_NS}Credential`, `${SKOS}narrowMatch`)).toContain('https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential');
     expect(iriObjectsOf(q, `${LER_NS}Credential`, `${SKOS}exactMatch`)).toEqual([]);
   });
   it('the JSON-LD @context maps domain/range/closeMatch/inScheme to @id', () => {

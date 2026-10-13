@@ -495,6 +495,7 @@ import { COMPLIANCE_MODELS } from '../src/spec/compliance.model.js';
 import { composeSpecOntology as composeComplianceOntology } from '../src/spec-ontology.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemOntologyHtml, renderSemOntologyNTriples, renderSemOntologyRdfXml, renderSemTermJsonLd, semDocMeta, renderElrContext } from '../src/ler-tla-vocab.js';
 import { renderXapiContext } from '../src/spec/xapi-context.js';
+import { modelContextIri, renderModelContext } from '../src/ns/model-context.js';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js';
@@ -6634,6 +6635,17 @@ const app = createVerticalBridge({
         res.setHeader('Link', [...termLinks(specOntologyIri(model), req.params.name), linkTo(specShapesIri(model), 'describedby', 'text/turtle')].join(', '));
         res.type('application/ld+json').send(JSON.stringify(term, null, 2));
       });
+      // The JSON-LD context the module's JSON instances are read through (src/ns/model-context.ts),
+      // for a module whose context is generated from its model; registered before /:version.
+      if (model.generatedContext) {
+        const sendContext = (req: import('express').Request, res: import('express').Response): void => {
+          const m = liveModel(moduleName, model);
+          sendNegotiated(req, res, modelContextIri(m), [{ type: 'application/ld+json', body: () => renderModelContext(m) }],
+            [...currentVersionLinks(modelContextIri(m), 'context', m.version), linkTo(specOntologyIri(m), 'describedby', 'text/turtle')]);
+        };
+        a.get(`/ns/${moduleName}/context`, sendContext);
+        a.get(`/ns/${moduleName}/context/:version`, answerVersion({ iri: modelContextIri(model), kind: 'context', current, live: sendContext, what: 'context' }));
+      }
       a.get(`/ns/${moduleName}/:version`, answerVersion({ iri: specOntologyIri(model), kind: 'ontology', current, live: sendOntology, what: 'ontology' }));
     }
 

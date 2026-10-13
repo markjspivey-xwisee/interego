@@ -19,25 +19,25 @@
 #mapping_provider: "https://foxxi-bridge.interego.xwisee.com/ns/cmi5"
 #publication_date: 2026-10-12
 #comment: "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL, the AICC or IEEE. Where this document and the published standard differ, the standard governs."
-subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	comment
-foxxi_cmi5:ActivityType-block	block	skos:exactMatch	cmi5_activitytype:block		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ActivityType-course	course	skos:exactMatch	cmi5_activitytype:course		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:Cmi5Verb-abandoned	abandoned	skos:exactMatch	adl_w3id:abandoned		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:Cmi5Verb-completed	completed	skos:exactMatch	adl:completed		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:Cmi5Verb-failed	failed	skos:exactMatch	adl:failed		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:Cmi5Verb-initialized	initialized	skos:exactMatch	adl:initialized		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:Cmi5Verb-launched	launched	skos:exactMatch	adl:launched		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:Cmi5Verb-passed	passed	skos:exactMatch	adl:passed		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:Cmi5Verb-satisfied	satisfied	skos:exactMatch	adl_w3id:satisfied		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:Cmi5Verb-terminated	terminated	skos:exactMatch	adl:terminated		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:Cmi5Verb-waived	waived	skos:exactMatch	adl_w3id:waived		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ContextCategory-cmi5	cmi5 category	skos:exactMatch	cmi5_category:cmi5		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ContextCategory-moveon	moveOn category	skos:exactMatch	cmi5_category:moveon		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ContextExtension-launchmode	launch mode	skos:exactMatch	cmi5_context_extension:launchmode		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ContextExtension-launchparameters	launch parameters	skos:exactMatch	cmi5_context_extension:launchparameters		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ContextExtension-launchurl	launch URL	skos:exactMatch	cmi5_context_extension:launchurl		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ContextExtension-masteryscore	mastery score	skos:exactMatch	cmi5_context_extension:masteryscore		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ContextExtension-moveon	move on	skos:exactMatch	cmi5_context_extension:moveon		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ContextExtension-sessionid	session ID	skos:exactMatch	cmi5_context_extension:sessionid		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ResultExtension-progress	progress	skos:exactMatch	cmi5_result_extension:progress		semapv:ManualMappingCuration	skos concept			
-foxxi_cmi5:ResultExtension-reason	reason	skos:exactMatch	cmi5_result_extension:reason		semapv:ManualMappingCuration	skos concept			
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	object_source_version	comment
+foxxi_cmi5:ActivityType-block	block	skos:exactMatch	cmi5_activitytype:block		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ActivityType-course	course	skos:exactMatch	cmi5_activitytype:course		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:Cmi5Verb-abandoned	abandoned	skos:exactMatch	adl_w3id:abandoned		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:Cmi5Verb-completed	completed	skos:exactMatch	adl:completed		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:Cmi5Verb-failed	failed	skos:exactMatch	adl:failed		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:Cmi5Verb-initialized	initialized	skos:exactMatch	adl:initialized		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:Cmi5Verb-launched	launched	skos:exactMatch	adl:launched		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:Cmi5Verb-passed	passed	skos:exactMatch	adl:passed		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:Cmi5Verb-satisfied	satisfied	skos:exactMatch	adl_w3id:satisfied		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:Cmi5Verb-terminated	terminated	skos:exactMatch	adl:terminated		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:Cmi5Verb-waived	waived	skos:exactMatch	adl_w3id:waived		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ContextCategory-cmi5	cmi5 category	skos:exactMatch	cmi5_category:cmi5		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ContextCategory-moveon	moveOn category	skos:exactMatch	cmi5_category:moveon		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ContextExtension-launchmode	launch mode	skos:exactMatch	cmi5_context_extension:launchmode		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ContextExtension-launchparameters	launch parameters	skos:exactMatch	cmi5_context_extension:launchparameters		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ContextExtension-launchurl	launch URL	skos:exactMatch	cmi5_context_extension:launchurl		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ContextExtension-masteryscore	mastery score	skos:exactMatch	cmi5_context_extension:masteryscore		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ContextExtension-moveon	move on	skos:exactMatch	cmi5_context_extension:moveon		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ContextExtension-sessionid	session ID	skos:exactMatch	cmi5_context_extension:sessionid		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ResultExtension-progress	progress	skos:exactMatch	cmi5_result_extension:progress		semapv:ManualMappingCuration	skos concept				
+foxxi_cmi5:ResultExtension-reason	reason	skos:exactMatch	cmi5_result_extension:reason		semapv:ManualMappingCuration	skos concept				

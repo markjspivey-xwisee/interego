@@ -38,6 +38,12 @@ const NUMBER = ['xsd:integer', 'xsd:decimal', 'xsd:double'] as const;
 const CMI5 = 'https://w3id.org/xapi/cmi5/';
 
 export const CMI5_MODEL: OntologyModel = {
+  // The course structure's langstrings are written, after its XML, as lists of {lang, text}.
+  jsonLanguageStrings: 'list',
+  // Read through its generated JSON-LD context (ns/model-context.ts): a node a property reaches is
+  // selected by that property as well as by its class.
+  selectByDomainAndRange: true,
+  generatedContext: true,
   module: 'cmi5',
   title: 'cmi5 (Quartz) — xAPI profile and course structure',
   description: 'An OWL 2 DL ontology and SHACL shapes for cmi5, the xAPI profile for content launched by a learning management system (Quartz edition): the course structure of §13 (Course, Block, Objective, Assignable Unit), the launch session, the LMS.LaunchData state document (§10) and the learner-preferences document (§11), and the profile\'s xAPI surface — its 9 verbs, category activities, context and result extensions and activity types — as SKOS concepts mapped to the IRIs cmi5 defines. Builds on, and imports, the Foxxi xAPI 2.0 ontology.',
@@ -259,6 +265,8 @@ export const CMI5_MODEL: OntologyModel = {
         { path: 'registration', minCount: 1, maxCount: 1, pattern: UUID, comment: 'registration UUID (§9.6.1)' },
         { path: 'sessionId', minCount: 1, maxCount: 1, datatype: 'xsd:string', comment: 'session ID (§9.6.3.1)' },
         { path: 'launchMode', maxCount: 1, in: LAUNCH_MODE, comment: 'launchMode vocabulary (§10.2.2)' },
+        { path: 'launchedAU', maxCount: 1, comment: 'the one AU it is a launch of' },
+        { path: 'learner', maxCount: 1, comment: 'the one learner it is for' },
       ],
     },
     {
@@ -272,6 +280,14 @@ export const CMI5_MODEL: OntologyModel = {
         { path: 'launchParameters', maxCount: 1, datatype: 'xsd:string', comment: 'launch parameters (§10.2.3)' },
         { path: 'returnURL', maxCount: 1, datatype: 'xsd:anyURI', comment: 'return URL (§10.2.6)' },
         { path: 'entitlementKey', jsonPath: 'entitlementKey', rdfPath: 'launchEntitlementKey', maxCount: 1, comment: 'entitlement key object (§10.2.7)' },
+      ],
+    },
+    {
+      name: 'EntitlementKeyShape', targetClass: 'EntitlementKey', label: 'cmi5 entitlement key conformance',
+      comment: `${Q} §10.2.7: the entitlement key in the launch data carries the key from the course structure, which the LMS must provide, and may carry an alternate key; each is a string. The document names them "courseStructure" and "alternate".`,
+      constraints: [
+        { path: 'courseStructure', rdfPath: 'courseStructureKey', minCount: 1, maxCount: 1, datatype: 'xsd:string', comment: 'the key from the course structure (§10.2.7.1)' },
+        { path: 'alternate', rdfPath: 'alternateKey', maxCount: 1, datatype: 'xsd:string', comment: 'an alternate key (§10.2.7.2)' },
       ],
     },
     {

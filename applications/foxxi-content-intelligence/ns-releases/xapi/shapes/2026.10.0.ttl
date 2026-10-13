@@ -34,9 +34,9 @@
     dct:bibliographicCitation "Spivey, M. (2026). xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes/2026.10.0" ;
     dct:source <https://standards.ieee.org/ieee/9274.1.1/7321/> ,
         <https://opensource.ieee.org/xapi/xapi-base-standard-documentation> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/xapi.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/xapi> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/xapi.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.0> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/xapi/2026.10.0> .
 
 shapes:StatementShape a sh:NodeShape ;
@@ -710,9 +710,12 @@ shapes:ContextShape-contextActivities a sh:PropertyShape ;
 
 shapes:ContextAgentShape a sh:NodeShape ;
     sh:targetClass foxxi-xapi:ContextAgent ;
+    sh:targetObjectsOf foxxi-xapi:contextAgents ;
     rdfs:label "Context agent conformance"@en ;
     rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.5: a context agent has objectType contextAgent, exactly one Agent, and relevant types that are IRIs."@en ,
         "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): objectType (minCount 1, maxCount 1, in {contextAgent}) — contextAgent (§5.2.2.5); read as rdf:type"@en ;
+    sh:class foxxi-xapi:ContextAgent ;
+    sh:message "Context agent conformance: the node must be an instance of ContextAgent"@en ;
     sh:property shapes:ContextAgentShape-agent , shapes:ContextAgentShape-relevantTypes ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
 
@@ -732,9 +735,12 @@ shapes:ContextAgentShape-relevantTypes a sh:PropertyShape ;
 
 shapes:ContextGroupShape a sh:NodeShape ;
     sh:targetClass foxxi-xapi:ContextGroup ;
+    sh:targetObjectsOf foxxi-xapi:contextGroups ;
     rdfs:label "Context group conformance"@en ;
     rdfs:comment "IEEE 9274.1.1-2023 §5.2.2.5: a context group has objectType contextGroup, exactly one Group, and relevant types that are IRIs."@en ,
         "Requirements on the JSON document that have no property path in this RDF graph, checked by the Foxxi validator (JSON-LD-keyword requirements such as @context are consumed before the graph exists; a Verifiable Credential's proof is a graph of its own): objectType (minCount 1, maxCount 1, in {contextGroup}) — contextGroup (§5.2.2.5); read as rdf:type"@en ;
+    sh:class foxxi-xapi:ContextGroup ;
+    sh:message "Context group conformance: the node must be an instance of ContextGroup"@en ;
     sh:property shapes:ContextGroupShape-group , shapes:ContextGroupShape-relevantTypes ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/xapi/shapes> .
 

@@ -88,6 +88,8 @@ export interface OntClass extends OntMappings {
    *  deprecated, never deleted. */
   deprecated?: boolean;
   replacedBy?: string;
+  /** What changed about the term, and in which version (skos:changeNote). */
+  changeNote?: string;
 }
 export interface OntProperty extends OntMappings {
   name: string; label: string; comment: string;
@@ -104,13 +106,26 @@ export interface OntProperty extends OntMappings {
   /** As for a class: kept, marked owl:deprecated, and pointed at its replacement if it has one. */
   deprecated?: boolean;
   replacedBy?: string;
+  /** What changed about the term, and in which version (skos:changeNote). */
+  changeNote?: string;
 }
 export interface OntVocabMember extends OntMappings {
   name: string; label: string; comment?: string;
   /** The literal token the standard uses (skos:notation). Defaults to `name`. */
   notation?: string;
-  /** A value the standard has deprecated but still defines (owl:deprecated on the concept). */
+  /** A concept this vocabulary no longer uses (owl:deprecated on the concept, "obsolete" in its
+   *  rdfs:label). Not for a value the standard deprecates but still defines, which a processor must
+   *  still handle (SCORM's cmi.exit logout): that is said in the concept's comment. */
   deprecated?: boolean;
+  /** Classes of this document the concept is an instance of, besides skos:Concept: where a class
+   *  and a code list name the same things (an EU AI Act obligation, a NIST core function), each
+   *  concept is typed with its class, so data that names the concept meets the class's shapes. */
+  types?: readonly string[];
+  /** Datatype property values the concept carries (property name → value), e.g. the Article
+   *  number of the obligation an Article concept stands for. */
+  values?: Readonly<Record<string, string>>;
+  /** What changed about the concept, and when (skos:changeNote). */
+  changeNote?: string;
 }
 export interface OntVocab { name: string; label?: string; comment?: string; members: OntVocabMember[] }
 /** A datatype defined by restricting a built-in one (OWL 2 DL DatatypeDefinition). */
@@ -128,6 +143,10 @@ export interface OntDatatype {
 }
 export interface ShapeConstraint {
   path: string; comment?: string;
+  /** The property shape's name within its node shape (`<NodeShape>-<name>`), when one path carries
+   *  two constraints that must stay apart — a severity applies to every constraint of the property
+   *  shape it is on, so a Warning gets a property shape of its own. Defaults to the path. */
+  name?: string;
   // The JSON key the validator traverses (dotted, array-flattening), when it differs
   // from the RDF `path`. Defaults to `path`. Lets a constraint's published RDF predicate
   // stay decoupled from the JSON shape it checks — e.g. a JSON-LD-keyword path (@context)
@@ -166,7 +185,9 @@ export interface ShapeConstraint {
   notHasValue?: string | number | boolean;
   notHasIri?: string;
   /** How serious a breach is (sh:severity): a Violation unless the standard makes the requirement a
-   *  recommendation — a value beyond a SCORM SPM is allowed, only not portable, so a Warning. */
+   *  recommendation — a value beyond a SCORM SPM is allowed, only not portable, so a Warning. SHACL
+   *  applies a severity to every constraint of the property shape that has it, so a constraint with
+   *  one carries only what it qualifies, and is `name`d apart from the path's other constraints. */
   severity?: 'Warning' | 'Info';
 }
 /** One way a node can satisfy a shape's `atLeastOneOf`: a value on a path (or, with `identifies`,
@@ -190,6 +211,11 @@ export interface OntShape {
    *  document's context maps each key to that predicate), so the validator, which reads the JSON,
    *  checks the same nodes. */
   jsonKeys?: readonly string[];
+  /** The class every focus node must be an instance of (sh:class on the node shape), for a shape
+   *  that also selects nodes by the property that reaches them, where the standard requires them to
+   *  be typed: a node reached that way but untyped is then refused rather than passed. In JSON, the
+   *  node's declared type (its local name, or one of jsonTypes) must name the class. */
+  nodeClass?: string;
   closed?: boolean; ignoredProperties?: string[];
   constraints: ShapeConstraint[];
   /** Exactly one of these paths must be present (rendered as sh:xone, enforced by the
@@ -217,6 +243,8 @@ export interface OntologyModel {
   /** The released version this one follows (owl:priorVersion of the ontology and of its shapes
    *  graph, which share its version), once the module has had one. */
   priorVersion?: string;
+  /** Whether this version keeps the meaning of the prior one (see DocMeta.priorCompatibility). */
+  priorCompatibility?: 'backward' | 'incompatible';
   /** For a shapes-only model whose vocabulary is another document at its ontology IRI (ieee-ler):
    *  that document's version, which its shapes graph imports. Otherwise the shapes graph imports
    *  this model's own ontology at this model's version. */
@@ -248,17 +276,43 @@ export interface OntologyModel {
   profileOf?: string[];
   /** External terms the document constrains (see OntReference). */
   references?: OntReference[];
+  /** How the document's JSON instances write a language-tagged string, which its JSON-LD context
+   *  (ns/model-context.ts) reads: a language map ({"en": "…"}, the default), or a list of
+   *  {lang, text} objects, as cmi5's course structure writes its langstrings. */
+  jsonLanguageStrings?: 'map' | 'list';
+  /** The shapes also select what RDFS's domain and range rules make an instance of their class: the
+   *  subjects of this document's properties whose domain is the class (sh:targetSubjectsOf; rdfs2)
+   *  and the values of its object properties whose range is the class (sh:targetObjectsOf; rdfs3).
+   *  The validator selects the same nodes of the JSON, by the keys those properties are read from.
+   *  So a node is checked whether or not its JSON declares a type — a SCORM run-time data model by
+   *  its completion status, a score by the key that reaches it, a cmi5 course. A shape that
+   *  selected by class alone missed every untyped node, and JSON leaves most nodes untyped. */
+  selectByDomainAndRange?: boolean;
+  /** The document's JSON instances are read into it through a JSON-LD 1.1 context generated from
+   *  this model (ns/model-context.ts) and published with it, at contextIri(m): the RDF reading its
+   *  shapes constrain, as the Foxxi validator constrains the JSON. */
+  generatedContext?: boolean;
   /** The ontology this document is aligned to term by term: its IRI, and the namespace of its
    *  terms. The SSSOM mapping set then accounts for every term: a term with no mapping into that
    *  ontology is listed as mapped to sssom:NoTermFound there, so a gap reads as a gap, not as an
    *  oversight. */
-  counterpart?: { readonly iri: string; readonly namespace: string };
+  counterpart?: {
+    readonly iri: string; readonly namespace: string;
+    /** The counterpart's version the mappings are to (SSSOM object_source_version): its version IRI
+     *  or versionInfo, or, for one that has neither, the date it was last modified. */
+    readonly version?: string;
+    /** Where what the counterpart declares at that version is recorded. */
+    readonly record?: string;
+  };
 }
 
 // ── IRI helpers ───────────────────────────────────────────────────────────────
 export const ontologyIri = (m: OntologyModel): string => `${NS_ROOT}${m.module}`;
 export const ns = (m: OntologyModel): string => `${ontologyIri(m)}#`;
 export const shapesIri = (m: OntologyModel): string => `${ontologyIri(m)}/shapes`;
+/** Where the JSON-LD context generated from a document (generatedContext) is published, without a
+ *  version; its version IRI is `<this>/<version>`. */
+export const contextIri = (m: OntologyModel): string => `${ontologyIri(m)}/context`;
 
 /** A Turtle-safe PN_LOCAL for a term's IRI local part. Vocabulary MEMBER names can be raw
  *  spec enum values (e.g. the SCORM `exit,message` / `not attempted` / `-1` timeLimitAction
@@ -371,13 +425,25 @@ export function docMeta(m: OntologyModel): DocMeta {
   return {
     sourceCode: [`${APP_SRC}spec/${MODEL_FILE[m.module] ?? m.module}.model.ts`, `${APP_SRC}spec-ontology.ts`],
     iri: ontologyIri(m), ns: ns(m), prefix: foxxiPrefix(m.module),
-    title: m.title, description: m.description, version: m.version, ...(m.priorVersion ? { priorVersion: m.priorVersion } : {}),
+    title: m.title, description: m.description, version: m.version,
+    ...(m.priorVersion ? { priorVersion: m.priorVersion, ...(m.priorCompatibility ? { priorCompatibility: m.priorCompatibility } : {}) } : {}),
     created: m.created ?? DEFAULT_DATES.created, modified: m.modified ?? DEFAULT_DATES.modified, issued: m.issued ?? DEFAULT_DATES.issued,
     standards: m.standards ?? [{ title: m.title, url: m.spec }],
     bodies: m.bodies ?? [], ...(m.notice ? { notice: m.notice } : {}),
-    seeAlso: [shapesIri(m), ...(modelHasMappings(m) ? [mappingSetIri(ontologyIri(m))] : []), ...(m.seeAlso ?? [])],
+    // Its own shapes and mapping set at the versions released with it, so a released version's
+    // links never move: they share its version.
+    seeAlso: [
+      `${shapesIri(m)}/${m.version}`, ...(modelHasMappings(m) ? [`${mappingSetIri(ontologyIri(m))}/${m.version}`] : []),
+      ...(m.generatedContext ? [`${contextIri(m)}/${m.version}`] : []), ...(m.seeAlso ?? []),
+    ],
     imports: (m.imports ?? []).map(i => /^https?:\/\//.test(i) ? i : `${NS_ROOT}${i}`),
-    notes: [...(m.derivedFrom ? [`Transcribed from the normative schema: ${m.derivedFrom}.`] : []), ...(m.notes ?? [])],
+    notes: [
+      ...(m.derivedFrom ? [`Transcribed from the normative schema: ${m.derivedFrom}.`] : []),
+      ...(m.notes ?? []),
+      ...(m.generatedContext ? [`An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at ${contextIri(m)}/${m.version}, which is generated from this document. The shapes at ${shapesIri(m)}/${m.version} constrain that reading, and the Foxxi validator (POST ${ontologyIri(m)}/validate) checks the JSON against the same shapes.`] : []),
+      // ★ The retired host, said in the document: data signed while it was live names its terms there.
+      `Earlier publications served this document's terms under ${NS_ROOT_LEGACY}${m.module}#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more.`,
+    ],
   };
 }
 /** The shapes graph's self-description. */
@@ -386,10 +452,11 @@ export function shapesDocMeta(m: OntologyModel): DocMeta {
   return {
     ...o, iri: shapesIri(m), ns: undefined, prefix: undefined,
     title: `${m.title} — SHACL shapes`,
-    description: `SHACL shapes for ${m.title}: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST ${ontologyIri(m)}/validate). Each validation result cites the shape it came from.`,
+    description: `SHACL shapes for ${m.title}: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST ${ontologyIri(m)}/validate). Each validation result cites the shape it came from.${m.generatedContext ? ` An instance written as JSON is read into RDF through the JSON-LD context at ${contextIri(m)}/${m.version}.` : ''}`,
     // The ontology at the version these shapes were written for: a released shapes graph keeps
     // constraining the vocabulary it was released with after the ontology takes a new version.
-    seeAlso: [ontologyIri(m)], imports: [versionIri({ iri: ontologyIri(m), version: m.ontologyVersion ?? m.version })], notes: [], constrains: ontologyIri(m),
+    seeAlso: [versionIri({ iri: ontologyIri(m), version: m.ontologyVersion ?? m.version })],
+    imports: [versionIri({ iri: ontologyIri(m), version: m.ontologyVersion ?? m.version })], notes: [], constrains: ontologyIri(m),
   };
 }
 
@@ -443,7 +510,12 @@ export function canonicalDouble(n: number): string {
 }
 
 /** The complete OWL 2 DL ontology for `m`: header, datatypes, classes, properties, code lists,
- *  and MIREOT declarations of every external term it uses. */
+ *  and MIREOT declarations of every external term it uses.
+ *
+ *  ★ EVERY TERM'S DEFINITION IS STATED TWICE, THE SAME STRING: skos:definition, the property SKOS
+ *  gives definitions and SKOS-aware tools read, and rdfs:comment, which OWL tools display and OOPS!
+ *  checks for. Classes and properties had only the comment and concepts only the definition, so a
+ *  reader looking for one found half the terms undefined. */
 export function ontologyGraph(m: OntologyModel): Graph {
   const g = new Graph();
   const O = addHeader(g, docMeta(m));
@@ -455,7 +527,7 @@ export function ontologyGraph(m: OntologyModel): Graph {
   for (const d of m.datatypes ?? []) {
     const D = iri(ns(m) + d.name);
     g.add(D, A, P(RDFS + 'Datatype'));
-    g.add(D, P(RDFS + 'label'), en(naturalLabel(d.label, 'class'))).add(D, P(RDFS + 'comment'), en(d.comment));
+    g.add(D, P(RDFS + 'label'), en(naturalLabel(d.label, 'class'))).add(D, P(RDFS + 'comment'), en(d.comment)).add(D, P(SKOS + 'definition'), en(d.comment));
     if (d.source) g.add(D, P(DCT + 'source'), str(d.source));
     // One restriction per base; several bases are united. Facet values are literals of the
     // base's own value space (OWL 2 §4.7): a double's bound is a double, not a decimal.
@@ -503,7 +575,8 @@ export function ontologyGraph(m: OntologyModel): Graph {
     const l = labelOf(c.label, 'class', c.label, c.notation);
     g.add(C, A, P(OWL + 'Class')).add(C, P(RDFS + 'label'), en(obsolete(l.label, c)));
     if (l.notation) g.add(C, P(SKOS + 'notation'), str(l.notation));
-    g.add(C, P(RDFS + 'comment'), en(c.comment));
+    g.add(C, P(RDFS + 'comment'), en(c.comment)).add(C, P(SKOS + 'definition'), en(c.comment));
+    if (c.changeNote) g.add(C, P(SKOS + 'changeNote'), en(c.changeNote));
     deprecate(C, c);
     for (const sup of c.subClassOf ?? []) g.add(C, P(RDFS + 'subClassOf'), iri(expandAbs(m, sup)));
     for (const eq of c.equivalentClass ?? []) g.add(C, P(OWL + 'equivalentClass'), iri(expandAbs(m, eq)));
@@ -524,7 +597,8 @@ export function ontologyGraph(m: OntologyModel): Graph {
     const l = labelOf(p.label, 'property', p.name, p.notation);
     g.add(S, P(RDFS + 'label'), en(obsolete(l.label, p)));
     if (l.notation) g.add(S, P(SKOS + 'notation'), str(l.notation));
-    g.add(S, P(RDFS + 'comment'), en(p.comment));
+    g.add(S, P(RDFS + 'comment'), en(p.comment)).add(S, P(SKOS + 'definition'), en(p.comment));
+    if (p.changeNote) g.add(S, P(SKOS + 'changeNote'), en(p.changeNote));
     deprecate(S, p);
     if (p.domain) g.add(S, P(RDFS + 'domain'), classRef(g, m, p.domain));
     if (p.oneOf?.length) {
@@ -558,7 +632,13 @@ export function ontologyGraph(m: OntologyModel): Graph {
         .add(M, P(SKOS + 'inScheme'), V).add(M, P(SKOS + 'topConceptOf'), V)
         .add(M, P(SKOS + 'prefLabel'), en(word)).add(M, P(RDFS + 'label'), en(obsolete(`${word} (${vl})`, mem)))
         .add(M, P(SKOS + 'notation'), str(mem.notation ?? mem.name));
-      if (mem.comment) g.add(M, P(SKOS + 'definition'), en(mem.comment));
+      if (mem.comment) g.add(M, P(SKOS + 'definition'), en(mem.comment)).add(M, P(RDFS + 'comment'), en(mem.comment));
+      for (const t of mem.types ?? []) g.add(M, A, iri(expandAbs(m, t)));
+      for (const [prop, value] of Object.entries(mem.values ?? {})) {
+        if (!m.properties.some(p => p.name === prop && p.kind === 'datatype')) throw new Error(`${m.module}:${mem.name}: ${prop} is not a datatype property of this document`);
+        g.add(M, iri(expandAbs(m, prop)), str(value));
+      }
+      if (mem.changeNote) g.add(M, P(SKOS + 'changeNote'), en(mem.changeNote));
       deprecate(M, mem);
       addMappings(g, m, M, mem);
       def(M);
@@ -607,14 +687,15 @@ function rdfPathTokens(c: ShapeConstraint): string[] | null {
  * The IRI of each property shape a node shape publishes. Named, not blank: a validation report's
  * sh:sourceShape then says which constraint a result is about — the same IRI the Foxxi validator
  * cites for it — and a consumer can cite one, reuse it, or turn it off with sh:deactivated.
- * `<NodeShape>-<path>`, numbered from the second when a path repeats in one shape.
+ * `<NodeShape>-<path>` (or `-<name>`, where the constraint names itself), numbered from the second
+ * when a path repeats in one shape.
  */
 export function propertyShapeIris(m: OntologyModel, s: OntShape): Map<ShapeConstraint, string> {
   const out = new Map<ShapeConstraint, string>();
   const seen = new Map<string, number>();
   for (const c of s.constraints) {
     if (c.identifies || rdfPathTokens(c) === null) continue;
-    const base = `${s.name}-${c.path.replace(/[^A-Za-z0-9_]+/g, '-').replace(/^-+|-+$/g, '')}`;
+    const base = `${s.name}-${(c.name ?? c.path).replace(/[^A-Za-z0-9_]+/g, '-').replace(/^-+|-+$/g, '')}`;
     const n = (seen.get(base) ?? 0) + 1;
     seen.set(base, n);
     out.set(c, `${shapesIri(m)}#${n === 1 ? base : `${base}-${n}`}`);
@@ -652,6 +733,109 @@ function describe(c: ShapeConstraint, tokens: readonly string[]): string {
   return `${name}: ${parts.length ? parts.join(', ') : 'see the constraint'}${c.comment ? ` — ${c.comment}` : ''}`;
 }
 
+/** The JSON keys a property is read from: its name, and every key a shape reads it from. */
+export function jsonKeysOf(m: OntologyModel, property: string): string[] {
+  const keys = new Set<string>([property]);
+  for (const sh of m.shapes) {
+    for (const c of sh.constraints) {
+      if (c.rdfPath === null || c.rdfPath === undefined) continue;
+      const rdf = typeof c.rdfPath === 'string' ? [c.rdfPath] : [...c.rdfPath];
+      const keysOfPath = (c.jsonPath ?? c.path).split('.');
+      if (rdf.length === keysOfPath.length && rdf.at(-1) === property) keys.add(keysOfPath.at(-1)!);
+    }
+  }
+  return [...keys];
+}
+/** The classes whose instances are this document's concepts — each class a code list's members are
+ *  typed with (an EU AI Act obligation, a NIST AI RMF function, a SOC 2 criterion) — as IRIs. Data
+ *  names such a concept; what the concept carries is in this document, not in the data. */
+export function conceptClassesOf(m: OntologyModel): Set<string> {
+  return new Set((m.vocabularies ?? []).flatMap(v => v.members.flatMap(mem => (mem.types ?? []).map(t => expandAbs(m, t)))));
+}
+/** The class and its subclasses, as IRIs. */
+const classAndSubclasses = (m: OntologyModel, cls: string): Set<string> =>
+  new Set([expandAbs(m, cls), ...subclassesOf(m, cls).map(c => expandAbs(m, c))]);
+/** The object properties of this document whose values a shape selects by range (selectByDomainAndRange):
+ *  each non-deprecated one whose single range is the shape's class or a subclass of it. */
+export function rangeTargets(m: OntologyModel, s: OntShape): string[] {
+  if (!m.selectByDomainAndRange || !s.targetClass) return [];
+  const classes = classAndSubclasses(m, s.targetClass);
+  // A class whose instances are a code list's concepts (an EU AI Act obligation) is left out: a
+  // record names such a concept by its IRI, and what the concept carries is in this document, not in
+  // the record, so its shape is met by the document (the concepts are its instances), not by data.
+  const conceptClasses = conceptClassesOf(m);
+  return m.properties.filter(p => p.kind === 'object' && !p.deprecated && typeof p.range === 'string'
+    && classes.has(expandAbs(m, p.range)) && !conceptClasses.has(expandAbs(m, p.range))).map(p => p.name);
+}
+/** The JSON keys read into more than one property: a key that is one property's name and is read
+ *  into another on some kind of node (cmi5's entitlementKey, of an Assignable Unit and of launch
+ *  data). The context reads such a key by the node's declared type, so an untyped node's key says
+ *  nothing about what the node is. */
+export function ambiguousKeys(m: OntologyModel): Set<string> {
+  const readInto = new Map<string, Set<string>>();
+  const note = (k: string, p: string): void => { readInto.set(k, (readInto.get(k) ?? new Set()).add(p)); };
+  for (const p of m.properties) if (!p.deprecated) note(p.name, p.name);
+  for (const p of m.properties) if (!p.deprecated) for (const k of jsonKeysOf(m, p.name)) note(k, p.name);
+  return new Set([...readInto].filter(([, ps]) => ps.size > 1).map(([k]) => k));
+}
+/** The properties of this document whose subjects a shape selects by domain (selectByDomainAndRange):
+ *  each non-deprecated one whose single domain is the shape's class or a subclass of it, except one
+ *  read from a key that is read into another property too (ambiguousKeys). By RDFS (rdfs2), a
+ *  subject of such a property is an instance of the class. */
+export function domainTargets(m: OntologyModel, s: OntShape): string[] {
+  if (!m.selectByDomainAndRange || !s.targetClass) return [];
+  const classes = classAndSubclasses(m, s.targetClass);
+  const ambiguous = ambiguousKeys(m);
+  return m.properties.filter(p => !p.deprecated && typeof p.domain === 'string' && classes.has(expandAbs(m, p.domain))
+    && !jsonKeysOf(m, p.name).some(k => ambiguous.has(k))).map(p => p.name);
+}
+/** The nodes a shape selects by a property they have (sh:targetSubjectsOf): those it names, and its
+ *  domain targets. */
+export function targetSubjectsOf(m: OntologyModel, s: OntShape): string[] {
+  return [...new Set([...(s.targetSubjectsOf ?? []), ...domainTargets(m, s)])];
+}
+/** The JSON keys by which the validator selects a node for a shape, as the RDF reading's
+ *  sh:targetSubjectsOf selects it: the keys its domain targets are read from. */
+export function shapeSubjectKeys(m: OntologyModel, s: OntShape): string[] {
+  return [...new Set(domainTargets(m, s).flatMap(p => jsonKeysOf(m, p)))];
+}
+/** The values a shape selects by the property that reaches them (sh:targetObjectsOf): those it names,
+ *  and its range targets. */
+export function targetObjectsOf(m: OntologyModel, s: OntShape): string[] {
+  return [...new Set([...(s.targetObjectsOf ?? []), ...rangeTargets(m, s)])];
+}
+/** The JSON keys whose values the validator checks against a shape, as the RDF reading's
+ *  sh:targetObjectsOf selects them: those it names, and the keys its range targets are read from. */
+export function shapeJsonKeys(m: OntologyModel, s: OntShape): string[] {
+  return [...new Set([...(s.jsonKeys ?? []), ...rangeTargets(m, s).flatMap(p => jsonKeysOf(m, p))])];
+}
+
+/** Whether a constraint's class is met by every node the property has: in a document whose shapes select
+ *  by domain and range, when the class is the single range of the property the constraint is on — by
+ *  RDFS (rdfs3) each value is then an instance of it, typed or not. */
+function untypedIsClass(m: OntologyModel, c: ShapeConstraint): boolean {
+  if (!m.selectByDomainAndRange || !c.class) return false;
+  const tokens = rdfPathTokens(c);
+  const prop = tokens ? m.properties.find(p => p.name === tokens.at(-1)) : undefined;
+  return !!prop && typeof prop.range === 'string' && expandAbs(m, prop.range) === expandAbs(m, c.class);
+}
+
+/** Every class this document declares as a subclass of `cls`, at any depth. */
+export function subclassesOf(m: OntologyModel, cls: string): string[] {
+  const target = expandAbs(m, cls);
+  const out: string[] = [];
+  const queue = [target];
+  while (queue.length) {
+    const sup = queue.shift()!;
+    for (const c of m.classes) {
+      if (out.includes(c.name) || !(c.subClassOf ?? []).some(x => expandAbs(m, x) === sup)) continue;
+      out.push(c.name);
+      queue.push(expandAbs(m, c.name));
+    }
+  }
+  return out;
+}
+
 /** The SHACL shapes graph for `m`. */
 export function shapesGraph(m: OntologyModel): Graph {
   const g = new Graph();
@@ -660,11 +844,20 @@ export function shapesGraph(m: OntologyModel): Graph {
   for (const s of m.shapes) {
     const N = iri(shapeNs + s.name);
     g.add(N, A, P(SH + 'NodeShape'));
-    if (s.targetClass) g.add(N, P(SH + 'targetClass'), iri(expandAbs(m, s.targetClass)));
-    for (const p of s.targetObjectsOf ?? []) g.add(N, P(SH + 'targetObjectsOf'), iri(expandAbs(m, p)));
-    for (const p of s.targetSubjectsOf ?? []) g.add(N, P(SH + 'targetSubjectsOf'), iri(expandAbs(m, p)));
+    // ★ THE CLASS AND EVERY SUBCLASS THIS DOCUMENT DECLARES. SHACL selects an instance of a subclass
+    // only through rdfs:subClassOf triples in the data graph, which a record read from JSON does not
+    // carry: an AccessChangeEvent was never selected by the shape for OperationalEvidenceEvent, and
+    // passed without its signer. Each subclass is a target of its own, so the shapes need no ontology
+    // beside the data.
+    if (s.targetClass) for (const t of [s.targetClass, ...subclassesOf(m, s.targetClass)]) g.add(N, P(SH + 'targetClass'), iri(expandAbs(m, t)));
+    for (const p of targetObjectsOf(m, s)) g.add(N, P(SH + 'targetObjectsOf'), iri(expandAbs(m, p)));
+    for (const p of targetSubjectsOf(m, s)) g.add(N, P(SH + 'targetSubjectsOf'), iri(expandAbs(m, p)));
     if (s.label) g.add(N, P(RDFS + 'label'), en(s.label));
     if (s.comment) g.add(N, P(RDFS + 'comment'), en(s.comment));
+    if (s.nodeClass) {
+      g.add(N, P(SH + 'class'), iri(expandAbs(m, s.nodeClass)));
+      g.add(N, P(SH + 'message'), en(`${s.label ?? s.name}: the node must be an instance of ${s.nodeClass}`));
+    }
     if (s.constraints.some(c => c.identifies)) {
       g.add(N, P(SH + 'nodeKind'), P(SH + 'IRI'));
       const idc = s.constraints.find(c => c.identifies)!;
@@ -709,7 +902,16 @@ export function shapesGraph(m: OntologyModel): Graph {
         if (dts.length === 1) g.add(ps, P(SH + 'datatype'), iri(expandAbs(m, dts[0]!)));
         else g.add(ps, P(SH + 'or'), g.list(dts.map(dt => { const b = g.bnode(); g.add(b, P(SH + 'datatype'), iri(expandAbs(m, dt))); return b; })));
       }
-      if (c.class) g.add(ps, P(SH + 'class'), iri(expandAbs(m, c.class)));
+      if (c.class) {
+        if (untypedIsClass(m, c)) {
+          // The class is the property's range, so by RDFS (rdfs3) every value is an instance of it,
+          // whatever else it is typed with: the constraint is that the value is a node, and the class's
+          // own shape selects it by the property (sh:targetObjectsOf) and checks it as one. sh:class
+          // asks for an rdf:type in the data, which a node read from JSON rarely has: it refused every
+          // cmi5 course read from a course structure.
+          if (!c.nodeKind) g.add(ps, P(SH + 'nodeKind'), P(SH + 'BlankNodeOrIRI'));
+        } else g.add(ps, P(SH + 'class'), iri(expandAbs(m, c.class)));
+      }
       if (c.nodeKind) g.add(ps, P(SH + 'nodeKind'), P(SH + c.nodeKind));
       if (c.minCount != null) g.add(ps, P(SH + 'minCount'), int(c.minCount));
       if (c.maxCount != null) g.add(ps, P(SH + 'maxCount'), int(c.maxCount));
@@ -824,10 +1026,34 @@ export interface ValidationResult {
   shapesIri: string;
 }
 const IRI_RE = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$/;
-const XSD_NUM = new Set(['xsd:decimal', 'xsd:double', 'xsd:float', 'xsd:integer', 'xsd:nonNegativeInteger', 'xsd:positiveInteger', 'xsd:int']);
-const XSD_STR = new Set(['xsd:string', 'xsd:anyURI', 'xsd:language', 'xsd:token', 'xsd:normalizedString']);
-const DATETIME_RE = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
-const DURATION_RE = /^P(?:\d+(?:\.\d+)?Y)?(?:\d+(?:\.\d+)?M)?(?:\d+(?:\.\d+)?W)?(?:\d+(?:\.\d+)?D)?(?:T(?:\d+(?:\.\d+)?H)?(?:\d+(?:\.\d+)?M)?(?:\d+(?:\.\d+)?S)?)?$/;
+/**
+ * ★ A JSON VALUE FITS A DATATYPE EXACTLY WHEN ITS RDF READING DOES. This validator claims the
+ * constraints the SHACL publishes, so it takes a datatype's lexical space as XML Schema 1.1 Part 2
+ * defines it — the space a SHACL processor checks sh:datatype against, an ill-typed literal failing.
+ * It had taken any 4-2-2 date and 2-2 time ("2026-13-45T99:99:99Z", "2026-10-01 10:00", a lowercase
+ * t), any number for an integer, and durations with weeks and fractions XML Schema does not have.
+ */
+/** xsd:dateTime (XSD 1.1 §3.3.7): seconds required, an upper-case T, 24:00:00 only as itself, a day
+ *  that exists in its month, an optional time zone of at most ±14:00. */
+export function isXsdDateTime(v: string): boolean {
+  const m = /^(-?(?:[1-9][0-9]{3,}|0[0-9]{3}))-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T(?:([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])(?:\.[0-9]+)?|24:00:00(?:\.0+)?)(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))?$/.exec(v);
+  if (!m) return false;
+  const year = Number(m[1]); const month = Number(m[2]); const day = Number(m[3]);
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
+  return day <= days;
+}
+/** xsd:duration (XSD 1.1 §3.3.6): years, months, days, hours, minutes and seconds, at least one of
+ *  them; a T only before a time component; a fraction only on the seconds; no weeks. */
+export const XSD_DURATION_RE = /^-?P(?=[0-9]|T[0-9])(?:[0-9]+Y)?(?:[0-9]+M)?(?:[0-9]+D)?(?:T(?=[0-9])(?:[0-9]+H)?(?:[0-9]+M)?(?:[0-9]+(?:\.[0-9]+)?S)?)?$/;
+/** xsd:language (XSD 1.1 §3.4.3): a BCP 47 shaped tag. */
+const XSD_LANGUAGE_RE = /^[a-zA-Z]{1,8}(?:-[a-zA-Z0-9]{1,8})*$/;
+/** The integer datatypes, each with the range its value space allows. */
+const XSD_INTEGERS: Readonly<Record<string, readonly [number, number]>> = {
+  'xsd:integer': [-Infinity, Infinity], 'xsd:nonNegativeInteger': [0, Infinity], 'xsd:positiveInteger': [1, Infinity],
+  'xsd:int': [-2147483648, 2147483647],
+};
+const XSD_REALS = new Set(['xsd:decimal', 'xsd:double', 'xsd:float']);
 
 /** Why a raw JSON value does not fit a datatype token, or null when it does. Tokens this
  *  validator has no JSON reading for impose nothing here (the RDF shape still states them). */
@@ -835,12 +1061,27 @@ function jsonDatatypeFailure(token: string, item: unknown): string | null {
   // XML Schema's namespace is http://www.w3.org/2001/XMLSchema#; some published contexts (1EdTech's
   // OB 3.0) write its datatypes with https, and a value typed so is still read as that datatype here.
   const dt = token.replace(/^https?:\/\/www\.w3\.org\/2001\/XMLSchema#/, 'xsd:');
-  if (XSD_STR.has(dt)) return typeof item === 'string' ? null : `expected a string (${dt})`;
+  if (dt === 'xsd:string' || dt === 'xsd:anyURI') return typeof item === 'string' ? null : `expected a string (${dt})`;
+  if (dt === 'xsd:normalizedString') return typeof item === 'string' && !/[\t\n\r]/.test(item) ? null : 'expected a string with no tab, line feed or carriage return (xsd:normalizedString)';
+  if (dt === 'xsd:token') return typeof item === 'string' && !/[\t\n\r]|^ | $|  /.test(item) ? null : 'expected a string with no tab, line break, leading, trailing or double space (xsd:token)';
+  if (dt === 'xsd:language') return typeof item === 'string' && XSD_LANGUAGE_RE.test(item) ? null : 'expected a language tag (xsd:language)';
   if (dt === 'xsd:boolean') return typeof item === 'boolean' ? null : 'expected a boolean';
-  if (XSD_NUM.has(dt)) return typeof item === 'number' ? null : `expected a number (${dt})`;
-  if (dt === 'xsd:dateTime') return typeof item === 'string' && DATETIME_RE.test(item) ? null : 'expected an RFC 3339 dateTime';
-  if (dt === 'xsd:duration') return typeof item === 'string' && DURATION_RE.test(item) ? null : 'expected an ISO 8601 duration';
-  if (dt === 'rdf:langString') return typeof item === 'string' || (typeof item === 'object' && item !== null) ? null : 'expected a language-tagged string or language map';
+  const range = XSD_INTEGERS[dt];
+  if (range) return typeof item === 'number' && Number.isInteger(item) && item >= range[0] && item <= range[1] ? null : `expected an integer${range[0] === 0 ? ' of at least 0' : range[0] === 1 ? ' of at least 1' : ''} (${dt})`;
+  if (XSD_REALS.has(dt)) return typeof item === 'number' && Number.isFinite(item) ? null : `expected a number (${dt})`;
+  if (dt === 'xsd:dateTime') return typeof item === 'string' && isXsdDateTime(item) ? null : 'expected an xsd:dateTime (YYYY-MM-DDThh:mm:ss, a real date and time, an optional time zone)';
+  if (dt === 'xsd:duration') return typeof item === 'string' && XSD_DURATION_RE.test(item) ? null : 'expected an xsd:duration (PnYnMnDTnHnMnS)';
+  // A language-tagged string is an object in JSON — an entry of a language map, or a {lang, text}
+  // item — since a plain string has no language, and its RDF reading is an xsd:string, which
+  // sh:datatype rdf:langString refuses.
+  // Its tag must be well-formed (BCP 47), as a JSON-LD processor in safe mode requires of a
+  // language; a {lang, text} item with no lang is read as a plain string.
+  if (dt === 'rdf:langString') {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return 'expected a language-tagged string: a language map, or a {lang, text} object';
+    const o = item as Record<string, unknown>;
+    const [tag, text] = 'lang' in o || 'text' in o ? [o.lang, o.text] : (Object.entries(o)[0] ?? []);
+    return typeof tag === 'string' && XSD_LANGUAGE_RE.test(tag) && typeof text === 'string' ? null : 'expected a language-tagged string with a well-formed language tag (BCP 47)';
+  }
   return null;
 }
 
@@ -883,7 +1124,12 @@ export function validateAgainstShape(m: OntologyModel, shapeName: string, instan
     const severity = c.severity ?? 'Violation';
     const v = pick(instance, c.jsonPath ?? c.path);
     const present = v !== undefined && v !== null;
-    const arr = Array.isArray(v) ? v : present ? [v] : [];
+    // A language map's entries are its values, one language-tagged string each, as in its reading.
+    const langMap = c.datatype === 'rdf:langString' && present && typeof v === 'object' && !Array.isArray(v)
+      && !('lang' in (v as object) && 'text' in (v as object));
+    const arr = Array.isArray(v) ? v : langMap
+      ? Object.entries(v as Record<string, unknown>).flatMap(([lang, x]) => (Array.isArray(x) ? x : [x]).filter(t => t !== null && t !== undefined).map(t => ({ [lang]: t })))
+      : present ? [v] : [];
     if (c.minCount != null && arr.length < c.minCount) results.push({ path: c.path, message: `expected at least ${c.minCount} value(s)`, sourceShape, severity });
     if (c.maxCount != null && arr.length > c.maxCount) results.push({ path: c.path, message: `expected at most ${c.maxCount} value(s)`, value: v, sourceShape, severity });
     if (c.hasValue !== undefined && !arr.some(item => item === c.hasValue)) results.push({ path: c.path, message: `must include the value ${String(c.hasValue)}`, sourceShape, severity });
@@ -925,6 +1171,13 @@ export function validateAgainstShape(m: OntologyModel, shapeName: string, instan
       if (c.in && !c.in.includes(String(item))) viol(`not in the allowed vocabulary {${c.in.join(', ')}}`);
       if (c.minInclusive != null && typeof item === 'number' && item < c.minInclusive) viol(`must be ≥ ${c.minInclusive}`);
       if (c.maxInclusive != null && typeof item === 'number' && item > c.maxInclusive) viol(`must be ≤ ${c.maxInclusive}`);
+    }
+  }
+  if (shape.nodeClass) {
+    const declared = (['@type', 'objectType', 'type'] as const).flatMap(k => { const t = instance[k]; return Array.isArray(t) ? t : t === undefined ? [] : [t]; }).map(String);
+    const local = shape.nodeClass.split(/[#/:]/).pop()!;
+    if (!declared.some(t => t.split(/[#/:]/).pop() === local || (shape.jsonTypes ?? []).includes(t))) {
+      results.push({ path: 'objectType', message: `the node must be an instance of ${shape.nodeClass}`, sourceShape: nodeShape, severity: 'Violation' });
     }
   }
   if (shape.exactlyOneOf) {

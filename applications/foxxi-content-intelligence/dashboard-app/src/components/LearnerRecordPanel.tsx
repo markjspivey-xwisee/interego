@@ -38,7 +38,7 @@ interface ElrCompetency {
   supersedes?: string;
 }
 interface ElrCredential {
-  id: string; achievementName?: string; issuer: string;
+  id: string; achievementName?: string; issuer?: string;
   verified: boolean; rawDataLocation: string;
 }
 interface ElrRawDataLocation { kind: string; location: string; description: string }
@@ -295,7 +295,7 @@ export function LearnerRecordPanel({ session }: { session: FoxxiSession }) {
               {elr.credentials.map((c, i) => (
                 <div key={i} style={rowStyle}>
                   <span style={{ flex: 1, fontSize: 13 }}>{c.achievementName ?? c.id}</span>
-                  <Pill tone="neutral" title={c.issuer}>iss: {shorten(c.issuer)}</Pill>
+                  {c.issuer && <Pill tone="neutral" title={c.issuer}>iss: {shorten(c.issuer)}</Pill>}
                   <Pill tone={c.verified ? 'good' : 'bad'}>{c.verified ? 'verified ✓' : 'unverified'}</Pill>
                 </div>
               ))}

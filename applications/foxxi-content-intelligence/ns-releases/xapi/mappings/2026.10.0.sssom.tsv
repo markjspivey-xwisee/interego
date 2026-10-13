@@ -1,13 +1,14 @@
 #curie_map:
 #  foaf: "http://xmlns.com/foaf/0.1/"
 #  foxxi_ns: "https://foxxi-bridge.interego.xwisee.com/ns/"
+#  foxxi_scorm_rte: "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#"
 #  foxxi_xapi: "https://foxxi-bridge.interego.xwisee.com/ns/xapi#"
 #  w3id: "https://w3id.org/"
 #  xapi: "https://w3id.org/xapi/ontology#"
 #mapping_set_id: "https://foxxi-bridge.interego.xwisee.com/ns/xapi/mappings"
 #mapping_set_version: "2026.10.0"
 #mapping_set_title: "xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model — mappings"
-#mapping_set_description: "Mappings from the terms of xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model (https://foxxi-bridge.interego.xwisee.com/ns/xapi) to other vocabularies: one row for each SKOS mapping the ontology makes, generated from it. The ontology is aligned term by term to https://w3id.org/xapi/ontology; each of its 44 terms with no counterpart there is listed as mapped to sssom:NoTermFound."
+#mapping_set_description: "Mappings from the terms of xAPI 2.0 (IEEE 9274.1.1-2023) — Statement data model (https://foxxi-bridge.interego.xwisee.com/ns/xapi) to other vocabularies: one row for each SKOS mapping the ontology makes, generated from it. The ontology is aligned term by term to https://w3id.org/xapi/ontology; each of its 44 terms with no counterpart there is listed as mapped to sssom:NoTermFound. The mappings into it, and the reasons a match is broad or close, are to it as it was at 2017-08-11 (object_source_version); what it declares there, and its axioms, are recorded at https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/adl-xapi-ontology.ts."
 #creator_label:
 #  - "Mark Spivey"
 #license: "https://opensource.org/licenses/MIT"
@@ -16,108 +17,118 @@
 #mapping_provider: "https://foxxi-bridge.interego.xwisee.com/ns/xapi"
 #publication_date: 2026-10-12
 #comment: "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by IEEE or ADL. Where this document and the published standard differ, the standard governs."
-subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	comment
-foxxi_xapi:Account	Account	skos:exactMatch	xapi:Account	Account	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:Activity	Activity	skos:broadMatch	xapi:Activity	Activity	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	Broader there: ADL's ontology places Activity Definitions and activity types (xapi:ActivityDefinition, and under it xapi:ActivityType) under xapi:Activity by rdfs:subClassOf, so its instances include them; here an Activity's definition and its type are not Activities.
-foxxi_xapi:ActivityDefinition	Activity Definition	skos:broadMatch	xapi:ActivityDefinition	Activity	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	Broader there: ADL's ontology places activity types (xapi:ActivityType) under xapi:ActivityDefinition by rdfs:subClassOf, so its instances include them; here an activity type is not an Activity Definition. ADL's ontology also labels the class Activity, the label of its Activity class; it is the Activity Definition.
-foxxi_xapi:ActivityType	Activity Type	skos:exactMatch	xapi:ActivityType	ActivityType	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:Actor	Actor	skos:broadMatch	xapi:Actor	Actor	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	Broader there: ADL's ontology places Accounts (xapi:Account) under xapi:Actor by rdfs:subClassOf, so its instances include them; here an Account is not an Actor.
-foxxi_xapi:Agent	Agent	skos:exactMatch	xapi:Agent	Agent	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:Attachment	Attachment	skos:broadMatch	xapi:Attachments	Attachments	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	Broader there: ADL's ontology places attachment usage types (xapi:AttachmentUsageType) under xapi:Attachments by rdfs:subClassOf, so its instances include them; here an Attachment's usage type is not an Attachment. ADL names the class in the plural, after the Statement's attachments property; its instances are the Attachment objects.
-foxxi_xapi:AttachmentUsageType	Attachment Usage Type	skos:exactMatch	xapi:AttachmentUsageType	AttachmentUsageType	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:Context	Context	skos:broadMatch	xapi:Context	Context	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	Broader there: ADL's ontology places context activities (xapi:ContextActivities) under xapi:Context by rdfs:subClassOf, so its instances include them; here a Context's context activities are not a Context.
-foxxi_xapi:ContextActivities	Context Activities	skos:exactMatch	xapi:ContextActivities	ContextActivities	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:ContextAgent	Context Agent	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl class		w3id:xapi/ontology	
-foxxi_xapi:ContextGroup	Context Group	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl class		w3id:xapi/ontology	
-foxxi_xapi:Duration	Duration	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	
-foxxi_xapi:Extensions	Extensions	skos:relatedMatch	xapi:Extension	Extension	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	Related, not the same: ADL's Extension classifies an extension's IRI (a SKOS concept, as an activity type is); this class is the map that carries extension values, keyed by those IRIs.
-foxxi_xapi:Group	Group	skos:exactMatch	xapi:Group	Group	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:InteractionComponent	Interaction Component	skos:exactMatch	xapi:InteractionComponent	InteractionComponent	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:InteractionType-choice	choice	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:InteractionType-fill-in	fill in	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:InteractionType-likert	Likert	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:InteractionType-long-fill-in	long fill in	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:InteractionType-matching	matching	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:InteractionType-numeric	numeric	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:InteractionType-other	other	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:InteractionType-performance	performance	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:InteractionType-sequencing	sequencing	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:InteractionType-true-false	true or false	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	
-foxxi_xapi:MediaType	Internet media type	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	
-foxxi_xapi:Number	Number	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	
-foxxi_xapi:Object	Object	skos:closeMatch	xapi:Object	Object	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	Not an exact match: ADL's ontology makes xapi:Object disjoint from xapi:Actor (owl:AllDisjointClasses), so an Agent or Group is never an Object there, while xAPI 2.0 lets either be the Object of a Statement (§5.2.2.3) and here Object includes them; and it places Activity Definitions and activity types under xapi:Object, through xapi:Activity. Read as an equivalence, every Agent or Group here would be unsatisfiable.
-foxxi_xapi:Result	Result	skos:broadMatch	xapi:Result	Result	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	Broader there: ADL's ontology places xapi:Score under xapi:Result — with rdfs:subClassof, a property RDFS does not define, so no tool reads the triple as an axiom; read as intended, a Result there includes its Score, and here a Score is not a Result. Mapped as broader so that the alignment holds when that triple is corrected.
-foxxi_xapi:SHA1Hex	SHA-1 hex	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	
-foxxi_xapi:ScaledScore	Scaled score	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	
-foxxi_xapi:Score	Score	skos:exactMatch	xapi:Score	Score	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:Statement	Statement	skos:broadMatch	xapi:Statement	Statement	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	Broader there: ADL's ontology places the parts of a Statement (Actor, Verb, Object, Context, Result, Authority, Attachments) and the Sub-Statement under xapi:Statement by rdfs:subClassOf, so its instances include them; here a Statement is the record alone, and disjoint from its parts.
-foxxi_xapi:StatementRef	Statement Reference	skos:exactMatch	xapi:StatementRef	StatementRef	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:SubStatement	Sub-Statement	skos:exactMatch	xapi:SubStatement	SubStatement	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:UUID	UUID	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	
-foxxi_xapi:Verb	Verb	skos:exactMatch	xapi:Verb	Verb	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	
-foxxi_xapi:Version	Version	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	
-foxxi_xapi:account	account	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:actor	actor	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:agent	agent	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:attachments	attachments	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:authority	authority	skos:exactMatch	xapi:Authority	Authority	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	ADL declares xapi:Authority an owl:ObjectProperty, as this is; its ontology also uses the IRI as a class (a subclass of xapi:Statement, and one of its disjoint classes).
-foxxi_xapi:category	category	skos:exactMatch	xapi:category	category	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:choices	choices	skos:exactMatch	xapi:choices	choices	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:completion	completion	skos:exactMatch	xapi:completion	completion	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:componentId	component id	skos:exactMatch	xapi:interactionId	interactionID	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:contentType	content type	skos:exactMatch	xapi:contentType	contentType	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:context	context	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:contextActivities	context activities	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:contextAgents	context agents	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:contextGroups	context groups	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:correctResponsesPattern	correct responses pattern	skos:exactMatch	xapi:correctResponsesPattern	correctResponsesPattern	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:definition	definition	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:description	description	skos:exactMatch	xapi:description	description	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:display	display	skos:exactMatch	xapi:display	display	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:duration	duration	skos:closeMatch	xapi:duration	duration	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	Not an exact match: ADL's ontology gives xapi:duration the range xsd:duration, which is outside the OWL 2 datatype map, whose values are not strings, and whose lexical space has no weeks (PnW), which xAPI allows; here a duration is the ISO 8601 string the standard prescribes. Read as an equivalence, every duration here would be inconsistent.
-foxxi_xapi:extensions	extensions	skos:closeMatch	xapi:extensions	extensions	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	Not an exact match: ADL's ontology gives xapi:extensions two domains, xapi:ActivityDefinition and the union of its extension concepts, so whatever has extensions would be an Activity Definition — and so an Activity and an Object, which a Result or a Context cannot be there; and its extensions point at extension concepts, where here they point at the map that carries the values. Read as an equivalence, every Result or Context with extensions would be inconsistent.
-foxxi_xapi:fileUrl	file URL	skos:closeMatch	xapi:fileURL	fileURL	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	Not an exact match: ADL's ontology gives xapi:fileURL the range xsd:string, and here a file URL is an xsd:anyURI (an IRL); OWL 2 keeps the two value spaces apart, so read as an equivalence every file URL here would be inconsistent.
-foxxi_xapi:group	group	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:grouping	grouping	skos:exactMatch	xapi:grouping	grouping	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:homePage	home page	skos:closeMatch	foaf:accountServiceHomepage		semapv:ManualMappingCuration	owl data property			
-foxxi_xapi:homePage	home page	skos:exactMatch	xapi:homePage	homePage	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:id	id	skos:exactMatch	xapi:id	id	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:instructor	instructor	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:interactionType	interaction type	skos:exactMatch	xapi:interactionType	interactionType	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:language	language	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	
-foxxi_xapi:length	length	skos:exactMatch	xapi:length	length	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:max	max	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	
-foxxi_xapi:mbox	mbox	skos:exactMatch	xapi:mbox	mbox	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:mbox_sha1sum	mbox SHA-1 sum	skos:exactMatch	xapi:mbox_sha1sum	mbox_sha1sum	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:member	member	skos:closeMatch	xapi:member	member	semapv:ManualMappingCuration	owl object property	owl data property	w3id:xapi/ontology	Not an exact match because of kind: ADL declares xapi:member an owl:DatatypeProperty, whose values are literals; a Group's members are Agents, individuals, so here it is an object property.
-foxxi_xapi:min	min	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	
-foxxi_xapi:moreInfo	more info	skos:closeMatch	xapi:moreInfo	moreInfo	semapv:ManualMappingCuration	owl data property	owl object property	w3id:xapi/ontology	Not an exact match because of kind: ADL declares xapi:moreInfo an owl:ObjectProperty with the datatype range xsd:anyURI, which OWL 2 DL does not allow; the value is an IRL, a literal, so here it is a datatype property.
-foxxi_xapi:name	name	skos:closeMatch	xapi:name	name	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	Not an exact match: ADL's ontology gives xapi:name two ranges, rdf:langString and xsd:string, whose value spaces are disjoint, so no value is in both; and two domains, one of them xapi:ActivityDefinition, so whatever has a name would be an Activity Definition. Read as an equivalence, every name here — of an Agent, a Group, an Account or an Activity — would be inconsistent.
-foxxi_xapi:object	object	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:objectType	object type	skos:exactMatch	xapi:objectType	objectType	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:openid	OpenID	skos:exactMatch	xapi:openid	openid	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:other	other	skos:exactMatch	xapi:other	other	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:parent	parent	skos:exactMatch	xapi:parent	parent	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:platform	platform	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	
-foxxi_xapi:raw	raw	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	
-foxxi_xapi:registration	registration	skos:exactMatch	xapi:registration	registration	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:relevantTypes	relevant types	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:response	response	skos:exactMatch	xapi:response	response	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:result	result	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:revision	revision	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	
-foxxi_xapi:scale	scale	skos:exactMatch	xapi:scale	scale	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:scaled	scaled	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	
-foxxi_xapi:score	score	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:sha2	SHA-2	skos:exactMatch	xapi:sha2	sha2	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:source	source	skos:exactMatch	xapi:source	source	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:statement	statement	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:steps	steps	skos:exactMatch	xapi:steps	steps	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:stored	stored	skos:exactMatch	xapi:stored	stored	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:success	success	skos:exactMatch	xapi:success	success	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:target	target	skos:exactMatch	xapi:target	target	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:team	team	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:timestamp	timestamp	skos:exactMatch	xapi:timeStamp	timeStamp	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	
-foxxi_xapi:type	type	skos:exactMatch	xapi:type	type	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	
-foxxi_xapi:usageType	usage type	skos:closeMatch	xapi:usageType	usageType	semapv:ManualMappingCuration	owl object property	owl data property	w3id:xapi/ontology	Not an exact match because of kind: ADL declares xapi:usageType an owl:DatatypeProperty with the class range xapi:AttachmentUsageType, which OWL 2 DL does not allow; a usage type is an IRI naming a concept, so here it is an object property.
-foxxi_xapi:verb	verb	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	
-foxxi_xapi:version	version	skos:closeMatch	xapi:version	version	semapv:ManualMappingCuration	owl data property	owl annotation property	w3id:xapi/ontology	Not an exact match because of kind: ADL declares xapi:version an owl:AnnotationProperty, which no class axiom or shape can constrain; here it is a datatype property whose values are xAPI version numbers.
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	object_source_version	comment
+foxxi_xapi:Account	Account	skos:exactMatch	xapi:Account	Account	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Activity	Activity	skos:broadMatch	xapi:Activity	Activity	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Broader there: ADL's ontology places Activity Definitions and activity types (xapi:ActivityDefinition, and under it xapi:ActivityType) under xapi:Activity by rdfs:subClassOf, so its instances include them; here an Activity's definition and its type are not Activities.
+foxxi_xapi:ActivityDefinition	Activity Definition	skos:broadMatch	xapi:ActivityDefinition	Activity	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Broader there: ADL's ontology places activity types (xapi:ActivityType) under xapi:ActivityDefinition by rdfs:subClassOf, so its instances include them; here an activity type is not an Activity Definition. ADL's ontology also labels the class Activity, the label of its Activity class; it is the Activity Definition.
+foxxi_xapi:ActivityType	Activity Type	skos:exactMatch	xapi:ActivityType	ActivityType	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Actor	Actor	skos:broadMatch	xapi:Actor	Actor	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Broader there: ADL's ontology places Accounts (xapi:Account) under xapi:Actor by rdfs:subClassOf, so its instances include them; here an Account is not an Actor.
+foxxi_xapi:Agent	Agent	skos:exactMatch	xapi:Agent	Agent	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Attachment	Attachment	skos:broadMatch	xapi:Attachments	Attachments	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Broader there: ADL's ontology places attachment usage types (xapi:AttachmentUsageType) under xapi:Attachments by rdfs:subClassOf, so its instances include them; here an Attachment's usage type is not an Attachment. ADL names the class in the plural, after the Statement's attachments property; its instances are the Attachment objects.
+foxxi_xapi:AttachmentUsageType	Attachment Usage Type	skos:exactMatch	xapi:AttachmentUsageType	AttachmentUsageType	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Context	Context	skos:broadMatch	xapi:Context	Context	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Broader there: ADL's ontology places context activities (xapi:ContextActivities) under xapi:Context by rdfs:subClassOf, so its instances include them; here a Context's context activities are not a Context.
+foxxi_xapi:ContextActivities	Context Activities	skos:exactMatch	xapi:ContextActivities	ContextActivities	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:ContextAgent	Context Agent	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl class		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:ContextGroup	Context Group	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl class		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Duration	Duration	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Extensions	Extensions	skos:relatedMatch	xapi:Extension	Extension	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Related, not the same: ADL's Extension classifies an extension's IRI (a SKOS concept, as an activity type is); this class is the map that carries extension values, keyed by those IRIs.
+foxxi_xapi:Group	Group	skos:exactMatch	xapi:Group	Group	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionComponent	Interaction Component	skos:exactMatch	xapi:InteractionComponent	InteractionComponent	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-choice	choice	skos:exactMatch	foxxi_scorm_rte:InteractionType-choice	choice	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-choice	choice	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-fill-in	fill in	skos:exactMatch	foxxi_scorm_rte:InteractionType-fill-in	fill in	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-fill-in	fill in	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-likert	Likert	skos:exactMatch	foxxi_scorm_rte:InteractionType-likert	Likert	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-likert	Likert	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-long-fill-in	long fill in	skos:exactMatch	foxxi_scorm_rte:InteractionType-long-fill-in	long fill in	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-long-fill-in	long fill in	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-matching	matching	skos:exactMatch	foxxi_scorm_rte:InteractionType-matching	matching	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-matching	matching	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-numeric	numeric	skos:exactMatch	foxxi_scorm_rte:InteractionType-numeric	numeric	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-numeric	numeric	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-other	other	skos:exactMatch	foxxi_scorm_rte:InteractionType-other	other	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-other	other	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-performance	performance	skos:exactMatch	foxxi_scorm_rte:InteractionType-performance	performance	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-performance	performance	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-sequencing	sequencing	skos:exactMatch	foxxi_scorm_rte:InteractionType-sequencing	sequencing	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-sequencing	sequencing	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:InteractionType-true-false	true or false	skos:exactMatch	foxxi_scorm_rte:InteractionType-true-false	true or false	semapv:ManualMappingCuration	skos concept	skos concept			
+foxxi_xapi:InteractionType-true-false	true or false	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	skos concept		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:MediaType	Internet media type	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Number	Number	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Object	Object	skos:closeMatch	xapi:Object	Object	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Not an exact match: ADL's ontology makes xapi:Object disjoint from xapi:Actor (owl:AllDisjointClasses), so an Agent or Group is never an Object there, while xAPI 2.0 lets either be the Object of a Statement (§5.2.2.3) and here Object includes them; and it places Activity Definitions and activity types under xapi:Object, through xapi:Activity. Read as an equivalence, every Agent or Group here would be unsatisfiable.
+foxxi_xapi:Result	Result	skos:broadMatch	xapi:Result	Result	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Broader there: ADL's ontology places xapi:Score under xapi:Result — with rdfs:subClassof, a property RDFS does not define, so no tool reads the triple as an axiom; read as intended, a Result there includes its Score, and here a Score is not a Result. Mapped as broader so that the alignment holds when that triple is corrected.
+foxxi_xapi:SHA1Hex	SHA-1 hex	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:ScaledScore	Scaled score	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Score	Score	skos:exactMatch	xapi:Score	Score	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Statement	Statement	skos:broadMatch	xapi:Statement	Statement	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	Broader there: ADL's ontology places the parts of a Statement (Actor, Verb, Object, Context, Result, Authority, Attachments) and the Sub-Statement under xapi:Statement by rdfs:subClassOf, so its instances include them; here a Statement is the record alone, and disjoint from its parts.
+foxxi_xapi:StatementRef	Statement Reference	skos:exactMatch	xapi:StatementRef	StatementRef	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:SubStatement	Sub-Statement	skos:exactMatch	xapi:SubStatement	SubStatement	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:UUID	UUID	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Verb	Verb	skos:exactMatch	xapi:Verb	Verb	semapv:ManualMappingCuration	owl class	owl class	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:Version	Version	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	rdfs datatype		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:account	account	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:actor	actor	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:agent	agent	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:attachments	attachments	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:authority	authority	skos:exactMatch	xapi:Authority	Authority	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	ADL declares xapi:Authority an owl:ObjectProperty, as this is; its ontology also uses the IRI as a class (a subclass of xapi:Statement, and one of its disjoint classes).
+foxxi_xapi:category	category	skos:exactMatch	xapi:category	category	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:choices	choices	skos:exactMatch	xapi:choices	choices	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:completion	completion	skos:exactMatch	xapi:completion	completion	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:componentId	component id	skos:exactMatch	xapi:interactionId	interactionID	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:contentType	content type	skos:exactMatch	xapi:contentType	contentType	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:context	context	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:contextActivities	context activities	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:contextAgents	context agents	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:contextGroups	context groups	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:correctResponsesPattern	correct responses pattern	skos:exactMatch	xapi:correctResponsesPattern	correctResponsesPattern	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:definition	definition	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:description	description	skos:exactMatch	xapi:description	description	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:display	display	skos:exactMatch	xapi:display	display	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:duration	duration	skos:closeMatch	xapi:duration	duration	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	Not an exact match: ADL's ontology gives xapi:duration the range xsd:duration, which is outside the OWL 2 datatype map, whose values are not strings, and whose lexical space has no weeks (PnW), which xAPI allows; here a duration is the ISO 8601 string the standard prescribes. Read as an equivalence, every duration here would be inconsistent.
+foxxi_xapi:extensions	extensions	skos:closeMatch	xapi:extensions	extensions	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	Not an exact match: ADL's ontology gives xapi:extensions two domains, xapi:ActivityDefinition and the union of its extension concepts, so whatever has extensions would be an Activity Definition — and so an Activity and an Object, which a Result or a Context cannot be there; and its extensions point at extension concepts, where here they point at the map that carries the values. Read as an equivalence, every Result or Context with extensions would be inconsistent.
+foxxi_xapi:fileUrl	file URL	skos:closeMatch	xapi:fileURL	fileURL	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	Not an exact match: ADL's ontology gives xapi:fileURL the range xsd:string, and here a file URL is an xsd:anyURI (an IRL); OWL 2 keeps the two value spaces apart, so read as an equivalence every file URL here would be inconsistent.
+foxxi_xapi:group	group	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:grouping	grouping	skos:exactMatch	xapi:grouping	grouping	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:homePage	home page	skos:closeMatch	foaf:accountServiceHomepage		semapv:ManualMappingCuration	owl data property				
+foxxi_xapi:homePage	home page	skos:exactMatch	xapi:homePage	homePage	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:id	id	skos:exactMatch	xapi:id	id	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:instructor	instructor	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:interactionType	interaction type	skos:exactMatch	xapi:interactionType	interactionType	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:language	language	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:length	length	skos:exactMatch	xapi:length	length	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:max	max	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:mbox	mbox	skos:exactMatch	xapi:mbox	mbox	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:mbox_sha1sum	mbox SHA-1 sum	skos:exactMatch	xapi:mbox_sha1sum	mbox_sha1sum	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:member	member	skos:closeMatch	xapi:member	member	semapv:ManualMappingCuration	owl object property	owl data property	w3id:xapi/ontology	2017-08-11	Not an exact match because of kind: ADL declares xapi:member an owl:DatatypeProperty, whose values are literals; a Group's members are Agents, individuals, so here it is an object property.
+foxxi_xapi:min	min	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:moreInfo	more info	skos:closeMatch	xapi:moreInfo	moreInfo	semapv:ManualMappingCuration	owl data property	owl object property	w3id:xapi/ontology	2017-08-11	Not an exact match because of kind: ADL declares xapi:moreInfo an owl:ObjectProperty with the datatype range xsd:anyURI, which OWL 2 DL does not allow; the value is an IRL, a literal, so here it is a datatype property.
+foxxi_xapi:name	name	skos:closeMatch	xapi:name	name	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	Not an exact match: ADL's ontology gives xapi:name two ranges, rdf:langString and xsd:string, whose value spaces are disjoint, so no value is in both; and two domains, one of them xapi:ActivityDefinition, so whatever has a name would be an Activity Definition. Read as an equivalence, every name here — of an Agent, a Group, an Account or an Activity — would be inconsistent.
+foxxi_xapi:object	object	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:objectType	object type	skos:exactMatch	xapi:objectType	objectType	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:openid	OpenID	skos:exactMatch	xapi:openid	openid	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:other	other	skos:exactMatch	xapi:other	other	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:parent	parent	skos:exactMatch	xapi:parent	parent	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:platform	platform	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:raw	raw	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:registration	registration	skos:exactMatch	xapi:registration	registration	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:relevantTypes	relevant types	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:response	response	skos:exactMatch	xapi:response	response	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:result	result	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:revision	revision	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:scale	scale	skos:exactMatch	xapi:scale	scale	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:scaled	scaled	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl data property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:score	score	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:sha2	SHA-2	skos:exactMatch	xapi:sha2	sha2	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:source	source	skos:exactMatch	xapi:source	source	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:statement	statement	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:steps	steps	skos:exactMatch	xapi:steps	steps	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:stored	stored	skos:exactMatch	xapi:stored	stored	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:success	success	skos:exactMatch	xapi:success	success	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:target	target	skos:exactMatch	xapi:target	target	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:team	team	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:timestamp	timestamp	skos:exactMatch	xapi:timeStamp	timeStamp	semapv:ManualMappingCuration	owl data property	owl data property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:type	type	skos:exactMatch	xapi:type	type	semapv:ManualMappingCuration	owl object property	owl object property	w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:usageType	usage type	skos:closeMatch	xapi:usageType	usageType	semapv:ManualMappingCuration	owl object property	owl data property	w3id:xapi/ontology	2017-08-11	Not an exact match because of kind: ADL declares xapi:usageType an owl:DatatypeProperty with the class range xapi:AttachmentUsageType, which OWL 2 DL does not allow; a usage type is an IRI naming a concept, so here it is an object property.
+foxxi_xapi:verb	verb	skos:exactMatch	sssom:NoTermFound		semapv:ManualMappingCuration	owl object property		w3id:xapi/ontology	2017-08-11	
+foxxi_xapi:version	version	skos:closeMatch	xapi:version	version	semapv:ManualMappingCuration	owl data property	owl annotation property	w3id:xapi/ontology	2017-08-11	Not an exact match because of kind: ADL declares xapi:version an owl:AnnotationProperty, which no class axiom or shape can constrain; here it is a datatype property whose values are xAPI version numbers.

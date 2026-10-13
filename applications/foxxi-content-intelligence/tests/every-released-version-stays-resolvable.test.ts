@@ -54,9 +54,11 @@ const archivedFiles: ArchivedFile[] = ARCHIVED.map(file => {
 });
 const currentOf = (iri: string): string => ARTIFACTS.find(a => a.iri === iri)!.version;
 
-it('covers every artifact the bridge publishes: 14 ontologies, 12 shapes graphs, 8 mapping sets, 2 contexts', () => {
+// ★ REVISED: ten contexts — xAPI's, the Enterprise Learner Record's, and the eight generated from the
+// documents whose JSON instances they read (src/ns/model-context.ts).
+it('covers every artifact the bridge publishes: 14 ontologies, 12 shapes graphs, 8 mapping sets, 10 contexts', () => {
   const count = (k: Published['kind']): number => ARTIFACTS.filter(a => a.kind === k).length;
-  expect([count('ontology'), count('shapes'), count('mappings'), count('context')]).toEqual([14, 12, 8, 2]);
+  expect([count('ontology'), count('shapes'), count('mappings'), count('context')]).toEqual([14, 12, 8, 10]);
   expect(new Set(ARTIFACTS.map(a => a.iri)).size).toBe(ARTIFACTS.length);
   // …and nothing is archived that the bridge does not publish.
   for (const f of archivedFiles) expect(ARTIFACTS.some(a => a.iri === f.iri && a.kind === f.kind), f.file).toBe(true);

@@ -24,8 +24,13 @@ side of it (`latest-version`, `predecessor-version`, `successor-version`; RFC 58
   file differs from it or is missing.
 - **A changed artifact takes a new version.** Versions are `YYYY.MM.PATCH`, each above every version
   released before it. The test fails while an artifact differs from its archived current version.
-- **Each version names the one before it.** A document's header says `owl:priorVersion` once it has
-  had a release; the release tool refuses a new version that does not.
+- **Each version names the one before it, and says whether it keeps its meaning.** A document's
+  header says `owl:priorVersion` once it has had a release, and `owl:backwardCompatibleWith` or
+  `owl:incompatibleWith` that version; the release tool refuses a new version that does not.
+- **A version is released once.** The commit that brings a version to `master` is tagged
+  `foxxi-ns-<version>` (`.github/workflows/foxxi-ns-release-tags.yml`), and the version's documents
+  cite the source files they were generated from at that tag (`prov:wasDerivedFrom`), which never
+  moves. The release tool refuses to archive anything more under a version whose tag exists.
 - **Imports are by version IRI.** A Foxxi document imports another at a version, so the import
   closure of a released version never changes either.
 

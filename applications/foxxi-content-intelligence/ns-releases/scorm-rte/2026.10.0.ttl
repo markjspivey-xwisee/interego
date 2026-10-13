@@ -19,7 +19,9 @@
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL or IEEE. Where this document and the published standard differ, the standard governs."@en ,
         "Element names in dotted notation (cmi.completion_status, adl.nav.request) are each property's skos:notation; n and m stand for the index of an entry in a collection."@en ,
         "SPM is a smallest permitted maximum: the length every LMS must accept. A longer value is allowed, but only an LMS that supports more keeps it whole, so the shapes report one beyond its SPM as a sh:Warning, not a sh:Violation."@en ,
-        "The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology's classes. A parsed instance as JSON is checked against the same shapes at POST /ns/scorm-rte/validate, which routes it by its declared type; every result cites its shape."@en ;
+        "The shapes select nodes by class (sh:targetClass): an RDF producer types the nodes it describes with this ontology's classes. A parsed instance as JSON is checked against the same shapes at POST /ns/scorm-rte/validate, which routes it by its declared type; every result cites its shape."@en ,
+        "An instance written as JSON is read into this ontology through the JSON-LD 1.1 context published at https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/context/2026.10.0, which is generated from this document. The shapes at https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes/2026.10.0 constrain that reading, and the Foxxi validator (POST https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/validate) checks the JSON against the same shapes."@en ,
+        "Earlier publications served this document's terms under https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/scorm-rte#, on a host since retired. A term IRI in that namespace names the term with the same local name in this one; the Foxxi validator reads it so, and nothing is published there any more."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
     skos:historyNote "Versioned by calendar (YYYY.MM.PATCH) from 2026.10.0: the version numbers this document, not the standard it formalizes. Every released version stays resolvable at its version IRI, and the content there never changes. Earlier publications carried no version IRI, and their owl:versionInfo restated the version of the standard."@en ;
@@ -39,13 +41,15 @@
     dct:source <https://adlnet.gov/past-projects/scorm> ,
         <https://standards.ieee.org/ieee/1484.11.1/10324/> ,
         <https://standards.ieee.org/ieee/1484.11.2/7698/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/scorm-rte.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes> .
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/scorm-rte.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/shapes/2026.10.0> ,
+        <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte/context/2026.10.0> .
 
 foxxi-scorm-rte:TimeInterval a rdfs:Datatype ;
     rdfs:label "Time interval"@en ;
     rdfs:comment "SCORM's timeinterval (second,10,2): an ISO 8601 duration P[yY][mM][dD][T[hH][nM][s[.s]S]], with integer components and the seconds to a hundredth; at least one component. Defined on xsd:string because xsd:duration is outside the OWL 2 datatype map."@en ;
+    skos:definition "SCORM's timeinterval (second,10,2): an ISO 8601 duration P[yY][mM][dD][T[hH][nM][s[.s]S]], with integer components and the seconds to a hundredth; at least one component. Defined on xsd:string because xsd:duration is outside the OWL 2 datatype map."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: timeinterval (second,10,2)" ;
     owl:equivalentClass [
         a rdfs:Datatype ;
@@ -61,6 +65,7 @@ foxxi-scorm-rte:TimeInterval a rdfs:Datatype ;
 foxxi-scorm-rte:Time a rdfs:Datatype ;
     rdfs:label "Time"@en ;
     rdfs:comment "SCORM's time (second,10,0): an ISO 8601 point in time, YYYY[-MM[-DD[Thh[:mm[:ss[.s[TZD]]]]]]], to a hundredth of a second, any trailing part omitted. Defined on xsd:string because its partial forms are not xsd:dateTime values."@en ;
+    skos:definition "SCORM's time (second,10,0): an ISO 8601 point in time, YYYY[-MM[-DD[Thh[:mm[:ss[.s[TZD]]]]]]], to a hundredth of a second, any trailing part omitted. Defined on xsd:string because its partial forms are not xsd:dateTime values."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: time (second,10,0)" ;
     owl:equivalentClass [
         a rdfs:Datatype ;
@@ -76,6 +81,7 @@ foxxi-scorm-rte:Time a rdfs:Datatype ;
 foxxi-scorm-rte:Real a rdfs:Datatype ;
     rdfs:label "Real number"@en ;
     rdfs:comment "SCORM's real (10,7): a decimal, or a double, which is what JSON-LD 1.1 (§8.6) makes of a JSON number with a fraction."@en ;
+    skos:definition "SCORM's real (10,7): a decimal, or a double, which is what JSON-LD 1.1 (§8.6) makes of a JSON number with a fraction."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: real (10,7)" ;
     owl:equivalentClass [ a rdfs:Datatype ; owl:unionOf ( xsd:decimal xsd:double ) ] ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
@@ -83,6 +89,7 @@ foxxi-scorm-rte:Real a rdfs:Datatype ;
 foxxi-scorm-rte:ScaledReal a rdfs:Datatype ;
     rdfs:label "Scaled real number"@en ;
     rdfs:comment "A real (10,7) from -1 to 1."@en ;
+    skos:definition "A real (10,7) from -1 to 1."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.score.scaled, cmi.scaled_passing_score" ;
     owl:equivalentClass [
         a rdfs:Datatype ;
@@ -104,6 +111,7 @@ foxxi-scorm-rte:ScaledReal a rdfs:Datatype ;
 foxxi-scorm-rte:UnitInterval a rdfs:Datatype ;
     rdfs:label "Unit interval"@en ;
     rdfs:comment "A real (10,7) from 0 to 1."@en ;
+    skos:definition "A real (10,7) from 0 to 1."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.progress_measure, cmi.completion_threshold" ;
     owl:equivalentClass [
         a rdfs:Datatype ;
@@ -125,6 +133,7 @@ foxxi-scorm-rte:UnitInterval a rdfs:Datatype ;
 foxxi-scorm-rte:NonNegativeReal a rdfs:Datatype ;
     rdfs:label "Non-negative real number"@en ;
     rdfs:comment "A real (10,7) of 0 or more."@en ;
+    skos:definition "A real (10,7) of 0 or more."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.learner_preference.audio_level, cmi.learner_preference.delivery_speed" ;
     owl:equivalentClass [
         a rdfs:Datatype ;
@@ -146,12 +155,14 @@ foxxi-scorm-rte:NonNegativeReal a rdfs:Datatype ;
 foxxi-scorm-rte:DataModel a owl:Class ;
     rdfs:label "Run-time data"@en ;
     rdfs:comment "The run-time data of one learner attempt on a SCO, which the SCO reads and writes through API_1484_11: the cmi data model, and ADL's navigation (adl.nav) and shared data (adl.data) data models."@en ;
+    skos:definition "The run-time data of one learner attempt on a SCO, which the SCO reads and writes through API_1484_11: the cmi data model, and ADL's navigation (adl.nav) and shared data (adl.data) data models."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi; adl.nav; adl.data" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Comment a owl:Class ;
     rdfs:label "Comment"@en ;
     rdfs:comment "A comment on a SCO, with the location in the SCO it applies to and when it was made: from the learner, or from the LMS."@en ;
+    skos:definition "A comment on a SCO, with the location in the SCO it applies to and when it was made: from the learner, or from the LMS."@en ;
     owl:disjointUnionOf ( foxxi-scorm-rte:CommentFromLearner foxxi-scorm-rte:CommentFromLMS ) ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_learner, cmi.comments_from_lms" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
@@ -160,6 +171,7 @@ foxxi-scorm-rte:CommentFromLearner a owl:Class ;
     rdfs:label "Comment from learner"@en ;
     skos:notation "cmi.comments_from_learner.n" ;
     rdfs:comment "A comment the learner makes on the SCO. [RW]"@en ;
+    skos:definition "A comment the learner makes on the SCO. [RW]"@en ;
     rdfs:subClassOf foxxi-scorm-rte:Comment ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_learner" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
@@ -168,6 +180,7 @@ foxxi-scorm-rte:CommentFromLMS a owl:Class ;
     rdfs:label "Comment from LMS"@en ;
     skos:notation "cmi.comments_from_lms.n" ;
     rdfs:comment "A comment the LMS gives the SCO to show the learner. [RO]"@en ;
+    skos:definition "A comment the LMS gives the SCO to show the learner. [RO]"@en ;
     rdfs:subClassOf foxxi-scorm-rte:Comment ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_lms" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
@@ -176,6 +189,7 @@ foxxi-scorm-rte:LearnerPreference a owl:Class ;
     rdfs:label "Learner preference"@en ;
     skos:notation "cmi.learner_preference" ;
     rdfs:comment "The learner's preferences for the SCO: audio level, language, delivery speed and audio captioning. [RW]"@en ;
+    skos:definition "The learner's preferences for the SCO: audio level, language, delivery speed and audio captioning. [RW]"@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.learner_preference" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
@@ -183,6 +197,7 @@ foxxi-scorm-rte:Interaction a owl:Class ;
     rdfs:label "Interaction"@en ;
     skos:notation "cmi.interactions.n" ;
     rdfs:comment "A recognized interaction the learner responded to, such as a question: its ID, type, objectives, timestamp, correct responses, weighting, learner response, result, latency and description."@en ;
+    skos:definition "A recognized interaction the learner responded to, such as a question: its ID, type, objectives, timestamp, correct responses, weighting, learner response, result, latency and description."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
@@ -190,6 +205,7 @@ foxxi-scorm-rte:InteractionObjective a owl:Class ;
     rdfs:label "Interaction objective"@en ;
     skos:notation "cmi.interactions.n.objectives.m" ;
     rdfs:comment "An objective an interaction is associated with, by the objective's ID."@en ;
+    skos:definition "An objective an interaction is associated with, by the objective's ID."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.objectives" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
@@ -197,6 +213,7 @@ foxxi-scorm-rte:CorrectResponse a owl:Class ;
     rdfs:label "Correct response"@en ;
     skos:notation "cmi.interactions.n.correct_responses.m" ;
     rdfs:comment "A correct response to an interaction, as a pattern whose form depends on the interaction type."@en ;
+    skos:definition "A correct response to an interaction, as a pattern whose form depends on the interaction type."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.correct_responses" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
@@ -204,18 +221,21 @@ foxxi-scorm-rte:Objective a owl:Class ;
     rdfs:label "Objective"@en ;
     skos:notation "cmi.objectives.n" ;
     rdfs:comment "A learning objective the SCO tracks: its ID, score, success status, completion status, progress measure and description."@en ;
+    skos:definition "A learning objective the SCO tracks: its ID, score, success status, completion status, progress measure and description."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.objectives" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Score a owl:Class ;
     rdfs:label "Score"@en ;
     rdfs:comment "A score: scaled, raw, minimum and maximum — of the SCO (cmi.score) or of an objective (cmi.objectives.n.score)."@en ;
+    skos:definition "A score: scaled, raw, minimum and maximum — of the SCO (cmi.score) or of an objective (cmi.objectives.n.score)."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.score, cmi.objectives.n.score" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:TargetedRequestValidity a owl:Class ;
     rdfs:label "Targeted request validity"@en ;
     rdfs:comment "Whether a choice or jump navigation request to a target activity would be valid now: the target's activity identifier, and true, false or unknown. [RO]"@en ;
+    skos:definition "Whether a choice or jump navigation request to a target activity would be valid now: the target's activity identifier, and true, false or unknown. [RO]"@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.nav.request_valid.choice, adl.nav.request_valid.jump" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
@@ -223,6 +243,7 @@ foxxi-scorm-rte:SharedData a owl:Class ;
     rdfs:label "Shared data store"@en ;
     skos:notation "adl.data.n" ;
     rdfs:comment "A shared data store the SCO has access to, as its item's adlcp:map in the content package grants: its ID, and its content, which the SCO may read or write as the map allows. Added in the 4th Edition."@en ;
+    skos:definition "A shared data store the SCO has access to, as its item's adlcp:map in the content package grants: its ID, and its content, which the SCO may read or write as the map allows. Added in the 4th Edition."@en ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.data" ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
@@ -230,6 +251,7 @@ foxxi-scorm-rte:version a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "data model version"@en ;
     skos:notation "cmi._version" ;
     rdfs:comment "[RO] The version of the data model the LMS supports: \"1.0\"."@en ;
+    skos:definition "[RO] The version of the data model the LMS supports: \"1.0\"."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi._version" ;
@@ -239,6 +261,7 @@ foxxi-scorm-rte:completionStatus a owl:DatatypeProperty , owl:FunctionalProperty
     rdfs:label "completion status"@en ;
     skos:notation "cmi.completion_status" ;
     rdfs:comment "[RW] Whether the learner has completed the SCO: completed, incomplete, not attempted or unknown."@en ;
+    skos:definition "[RW] Whether the learner has completed the SCO: completed, incomplete, not attempted or unknown."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "completed" "incomplete" "not attempted" "unknown" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.completion_status" ;
@@ -248,6 +271,7 @@ foxxi-scorm-rte:completionThreshold a owl:DatatypeProperty , owl:FunctionalPrope
     rdfs:label "completion threshold"@en ;
     skos:notation "cmi.completion_threshold" ;
     rdfs:comment "[RO] The progress measure, from 0 to 1, at or above which the SCO is complete — the item's minimum progress measure in the content package (adlcp:completionThreshold)."@en ;
+    skos:definition "[RO] The progress measure, from 0 to 1, at or above which the SCO is complete — the item's minimum progress measure in the content package (adlcp:completionThreshold)."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:UnitInterval ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.completion_threshold" ;
@@ -257,6 +281,7 @@ foxxi-scorm-rte:credit a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "credit"@en ;
     skos:notation "cmi.credit" ;
     rdfs:comment "[RO] Whether the learner is credited for performance in the SCO: credit or no-credit."@en ;
+    skos:definition "[RO] Whether the learner is credited for performance in the SCO: credit or no-credit."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "credit" "no-credit" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.credit" ;
@@ -266,6 +291,7 @@ foxxi-scorm-rte:entry a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "entry"@en ;
     skos:notation "cmi.entry" ;
     rdfs:comment "[RO] Whether the learner has been in the SCO before in this attempt: ab-initio (first time), resume (after a suspension), or empty."@en ;
+    skos:definition "[RO] Whether the learner has been in the SCO before in this attempt: ab-initio (first time), resume (after a suspension), or empty."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "ab-initio" "resume" "" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.entry" ;
@@ -275,6 +301,7 @@ foxxi-scorm-rte:exit a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "exit"@en ;
     skos:notation "cmi.exit" ;
     rdfs:comment "[WO] How or why the learner left the SCO: time-out, suspend, normal, empty, or the deprecated logout. Anything but suspend ends the attempt."@en ;
+    skos:definition "[WO] How or why the learner left the SCO: time-out, suspend, normal, empty, or the deprecated logout. Anything but suspend ends the attempt."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "time-out" "suspend" "logout" "normal" "" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.exit" ;
@@ -284,6 +311,7 @@ foxxi-scorm-rte:launchData a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "launch data"@en ;
     skos:notation "cmi.launch_data" ;
     rdfs:comment "[RO] Data the SCO needs to start, from its item's adlcp:dataFromLMS in the content package; characterstring, SPM 4000."@en ;
+    skos:definition "[RO] Data the SCO needs to start, from its item's adlcp:dataFromLMS in the content package; characterstring, SPM 4000."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.launch_data" ;
@@ -293,6 +321,7 @@ foxxi-scorm-rte:learnerId a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "learner ID"@en ;
     skos:notation "cmi.learner_id" ;
     rdfs:comment "[RO] The learner's identifier; long_identifier_type, SPM 4000."@en ;
+    skos:definition "[RO] The learner's identifier; long_identifier_type, SPM 4000."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.learner_id" ;
@@ -302,6 +331,7 @@ foxxi-scorm-rte:learnerName a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "learner name"@en ;
     skos:notation "cmi.learner_name" ;
     rdfs:comment "[RO] The learner's name; localized_string_type, SPM 250."@en ;
+    skos:definition "[RO] The learner's name; localized_string_type, SPM 250."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [ a rdfs:Datatype ; owl:unionOf ( xsd:string rdf:langString ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.learner_name" ;
@@ -311,6 +341,7 @@ foxxi-scorm-rte:learnerPreference a owl:ObjectProperty , owl:FunctionalProperty 
     rdfs:label "learner preference"@en ;
     skos:notation "cmi.learner_preference" ;
     rdfs:comment "The learner's preferences for the SCO."@en ;
+    skos:definition "The learner's preferences for the SCO."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:LearnerPreference ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.learner_preference" ;
@@ -320,6 +351,7 @@ foxxi-scorm-rte:location a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "location"@en ;
     skos:notation "cmi.location" ;
     rdfs:comment "[RW] Where in the SCO the learner is, as the SCO records it, for resuming; characterstring, SPM 1000."@en ;
+    skos:definition "[RW] Where in the SCO the learner is, as the SCO records it, for resuming; characterstring, SPM 1000."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.location" ;
@@ -329,6 +361,7 @@ foxxi-scorm-rte:maxTimeAllowed a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "maximum time allowed"@en ;
     skos:notation "cmi.max_time_allowed" ;
     rdfs:comment "[RO] How much time the learner has in the attempt — from the activity's attempt absolute duration limit; timeinterval (second,10,2)."@en ;
+    skos:definition "[RO] How much time the learner has in the attempt — from the activity's attempt absolute duration limit; timeinterval (second,10,2)."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:TimeInterval ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.max_time_allowed" ;
@@ -338,6 +371,7 @@ foxxi-scorm-rte:mode a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "mode"@en ;
     skos:notation "cmi.mode" ;
     rdfs:comment "[RO] How the SCO is presented: browse, normal or review."@en ;
+    skos:definition "[RO] How the SCO is presented: browse, normal or review."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "browse" "normal" "review" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.mode" ;
@@ -347,6 +381,7 @@ foxxi-scorm-rte:progressMeasure a owl:DatatypeProperty , owl:FunctionalProperty 
     rdfs:label "progress measure"@en ;
     skos:notation "cmi.progress_measure" ;
     rdfs:comment "[RW] How far the learner has got towards completing the SCO, from 0 to 1."@en ;
+    skos:definition "[RW] How far the learner has got towards completing the SCO, from 0 to 1."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:UnitInterval ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.progress_measure" ;
@@ -356,6 +391,7 @@ foxxi-scorm-rte:scaledPassingScore a owl:DatatypeProperty , owl:FunctionalProper
     rdfs:label "scaled passing score"@en ;
     skos:notation "cmi.scaled_passing_score" ;
     rdfs:comment "[RO] The scaled score, from -1 to 1, the learner must reach to pass the SCO."@en ;
+    skos:definition "[RO] The scaled score, from -1 to 1, the learner must reach to pass the SCO."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:ScaledReal ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.scaled_passing_score" ;
@@ -365,6 +401,7 @@ foxxi-scorm-rte:score a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "score"@en ;
     skos:notation "cmi.score" ;
     rdfs:comment "The learner's score in the SCO."@en ;
+    skos:definition "The learner's score in the SCO."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:Score ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.score" ;
@@ -374,6 +411,7 @@ foxxi-scorm-rte:sessionTime a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "session time"@en ;
     skos:notation "cmi.session_time" ;
     rdfs:comment "[WO] How long the learner spent in the SCO in this session; timeinterval (second,10,2)."@en ;
+    skos:definition "[WO] How long the learner spent in the SCO in this session; timeinterval (second,10,2)."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:TimeInterval ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.session_time" ;
@@ -383,6 +421,7 @@ foxxi-scorm-rte:successStatus a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "success status"@en ;
     skos:notation "cmi.success_status" ;
     rdfs:comment "[RW] Whether the learner has mastered the SCO: passed, failed or unknown."@en ;
+    skos:definition "[RW] Whether the learner has mastered the SCO: passed, failed or unknown."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "passed" "failed" "unknown" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.success_status" ;
@@ -392,6 +431,7 @@ foxxi-scorm-rte:suspendData a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "suspend data"@en ;
     skos:notation "cmi.suspend_data" ;
     rdfs:comment "[RW] Data the SCO keeps between sessions; characterstring, SPM 64000 in the 4th Edition."@en ;
+    skos:definition "[RW] Data the SCO keeps between sessions; characterstring, SPM 64000 in the 4th Edition."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.suspend_data" ;
@@ -401,6 +441,7 @@ foxxi-scorm-rte:timeLimitAction a owl:DatatypeProperty , owl:FunctionalProperty 
     rdfs:label "time limit action"@en ;
     skos:notation "cmi.time_limit_action" ;
     rdfs:comment "[RO] What the SCO should do when the maximum time allowed is exceeded — from its item's adlcp:timeLimitAction in the content package."@en ;
+    skos:definition "[RO] What the SCO should do when the maximum time allowed is exceeded — from its item's adlcp:timeLimitAction in the content package."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [
         a rdfs:Datatype ;
@@ -413,6 +454,7 @@ foxxi-scorm-rte:totalTime a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "total time"@en ;
     skos:notation "cmi.total_time" ;
     rdfs:comment "[RO] How long the learner has spent in the SCO in the attempt, over all sessions; timeinterval (second,10,2)."@en ;
+    skos:definition "[RO] How long the learner has spent in the SCO in the attempt, over all sessions; timeinterval (second,10,2)."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:TimeInterval ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.total_time" ;
@@ -422,6 +464,7 @@ foxxi-scorm-rte:commentsFromLearner a owl:ObjectProperty ;
     rdfs:label "comment from learner"@en ;
     skos:notation "cmi.comments_from_learner" ;
     rdfs:comment "[RW] A comment from the learner; the collection is ordered."@en ;
+    skos:definition "[RW] A comment from the learner; the collection is ordered."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:CommentFromLearner ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_learner" ;
@@ -431,6 +474,7 @@ foxxi-scorm-rte:commentsFromLMS a owl:ObjectProperty ;
     rdfs:label "comment from LMS"@en ;
     skos:notation "cmi.comments_from_lms" ;
     rdfs:comment "[RO] A comment from the LMS; the collection is ordered."@en ;
+    skos:definition "[RO] A comment from the LMS; the collection is ordered."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:CommentFromLMS ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_lms" ;
@@ -440,6 +484,7 @@ foxxi-scorm-rte:interactions a owl:ObjectProperty ;
     rdfs:label "interaction"@en ;
     skos:notation "cmi.interactions" ;
     rdfs:comment "[RW] An interaction; the collection is ordered."@en ;
+    skos:definition "[RW] An interaction; the collection is ordered."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:Interaction ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions" ;
@@ -449,6 +494,7 @@ foxxi-scorm-rte:objectives a owl:ObjectProperty ;
     rdfs:label "objective"@en ;
     skos:notation "cmi.objectives" ;
     rdfs:comment "[RW] An objective; the collection is ordered."@en ;
+    skos:definition "[RW] An objective; the collection is ordered."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:Objective ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.objectives" ;
@@ -458,6 +504,7 @@ foxxi-scorm-rte:comment a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "comment text"@en ;
     skos:notation "comment" ;
     rdfs:comment "[RW from the learner, RO from the LMS] The text of a comment; localized_string_type, SPM 4000."@en ;
+    skos:definition "[RW from the learner, RO from the LMS] The text of a comment; localized_string_type, SPM 4000."@en ;
     rdfs:domain foxxi-scorm-rte:Comment ;
     rdfs:range rdf:langString ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_learner.n.comment, cmi.comments_from_lms.n.comment" ;
@@ -467,6 +514,7 @@ foxxi-scorm-rte:commentLocation a owl:DatatypeProperty , owl:FunctionalProperty 
     rdfs:label "comment location"@en ;
     skos:notation "location" ;
     rdfs:comment "[RW from the learner, RO from the LMS] Where in the SCO a comment applies; characterstring, SPM 250."@en ;
+    skos:definition "[RW from the learner, RO from the LMS] Where in the SCO a comment applies; characterstring, SPM 250."@en ;
     rdfs:domain foxxi-scorm-rte:Comment ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_learner.n.location, cmi.comments_from_lms.n.location" ;
@@ -476,6 +524,7 @@ foxxi-scorm-rte:commentTimestamp a owl:DatatypeProperty , owl:FunctionalProperty
     rdfs:label "comment timestamp"@en ;
     skos:notation "timestamp" ;
     rdfs:comment "[RW from the learner, RO from the LMS] When a comment was made; time (second,10,0)."@en ;
+    skos:definition "[RW from the learner, RO from the LMS] When a comment was made; time (second,10,0)."@en ;
     rdfs:domain foxxi-scorm-rte:Comment ;
     rdfs:range foxxi-scorm-rte:Time ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.comments_from_learner.n.timestamp, cmi.comments_from_lms.n.timestamp" ;
@@ -485,6 +534,7 @@ foxxi-scorm-rte:audioLevel a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "audio level"@en ;
     skos:notation "cmi.learner_preference.audio_level" ;
     rdfs:comment "[RW] How loud the SCO's audio should be, as a multiple of its normal level (1); 0 or more."@en ;
+    skos:definition "[RW] How loud the SCO's audio should be, as a multiple of its normal level (1); 0 or more."@en ;
     rdfs:domain foxxi-scorm-rte:LearnerPreference ;
     rdfs:range foxxi-scorm-rte:NonNegativeReal ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.learner_preference.audio_level" ;
@@ -494,6 +544,7 @@ foxxi-scorm-rte:preferenceLanguage a owl:DatatypeProperty , owl:FunctionalProper
     rdfs:label "preferred language"@en ;
     skos:notation "cmi.learner_preference.language" ;
     rdfs:comment "[RW] The language the learner prefers for the SCO, as a language tag; characterstring, SPM 250."@en ;
+    skos:definition "[RW] The language the learner prefers for the SCO, as a language tag; characterstring, SPM 250."@en ;
     rdfs:domain foxxi-scorm-rte:LearnerPreference ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.learner_preference.language" ;
@@ -503,6 +554,7 @@ foxxi-scorm-rte:deliverySpeed a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "delivery speed"@en ;
     skos:notation "cmi.learner_preference.delivery_speed" ;
     rdfs:comment "[RW] How fast the SCO should deliver content, as a multiple of its normal speed (1); 0 or more."@en ;
+    skos:definition "[RW] How fast the SCO should deliver content, as a multiple of its normal speed (1); 0 or more."@en ;
     rdfs:domain foxxi-scorm-rte:LearnerPreference ;
     rdfs:range foxxi-scorm-rte:NonNegativeReal ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.learner_preference.delivery_speed" ;
@@ -512,6 +564,7 @@ foxxi-scorm-rte:audioCaptioning a owl:DatatypeProperty , owl:FunctionalProperty 
     rdfs:label "audio captioning"@en ;
     skos:notation "cmi.learner_preference.audio_captioning" ;
     rdfs:comment "[RW] Whether captions accompany the SCO's audio: -1 off, 0 no change, 1 on."@en ;
+    skos:definition "[RW] Whether captions accompany the SCO's audio: -1 off, 0 no change, 1 on."@en ;
     rdfs:domain foxxi-scorm-rte:LearnerPreference ;
     rdfs:range xsd:integer ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.learner_preference.audio_captioning" ;
@@ -521,6 +574,7 @@ foxxi-scorm-rte:interactionId a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "interaction ID"@en ;
     skos:notation "cmi.interactions.n.id" ;
     rdfs:comment "[RW] The interaction's identifier; long_identifier_type, SPM 4000."@en ;
+    skos:definition "[RW] The interaction's identifier; long_identifier_type, SPM 4000."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.id" ;
@@ -530,6 +584,7 @@ foxxi-scorm-rte:interactionType a owl:DatatypeProperty , owl:FunctionalProperty 
     rdfs:label "interaction type"@en ;
     skos:notation "cmi.interactions.n.type" ;
     rdfs:comment "[RW] The kind of interaction: true-false, choice, fill-in, long-fill-in, likert, matching, performance, sequencing, numeric or other."@en ;
+    skos:definition "[RW] The kind of interaction: true-false, choice, fill-in, long-fill-in, likert, matching, performance, sequencing, numeric or other."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range [
         a rdfs:Datatype ;
@@ -553,6 +608,7 @@ foxxi-scorm-rte:interactionObjectives a owl:ObjectProperty ;
     rdfs:label "interaction objective"@en ;
     skos:notation "cmi.interactions.n.objectives" ;
     rdfs:comment "[RW] An objective the interaction is associated with."@en ;
+    skos:definition "[RW] An objective the interaction is associated with."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range foxxi-scorm-rte:InteractionObjective ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.objectives" ;
@@ -562,6 +618,7 @@ foxxi-scorm-rte:interactionTimestamp a owl:DatatypeProperty , owl:FunctionalProp
     rdfs:label "interaction timestamp"@en ;
     skos:notation "cmi.interactions.n.timestamp" ;
     rdfs:comment "[RW] When the interaction was first made available to the learner; time (second,10,0)."@en ;
+    skos:definition "[RW] When the interaction was first made available to the learner; time (second,10,0)."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range foxxi-scorm-rte:Time ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.timestamp" ;
@@ -571,6 +628,7 @@ foxxi-scorm-rte:correctResponses a owl:ObjectProperty ;
     rdfs:label "correct response"@en ;
     skos:notation "cmi.interactions.n.correct_responses" ;
     rdfs:comment "[RW] A correct response to the interaction."@en ;
+    skos:definition "[RW] A correct response to the interaction."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range foxxi-scorm-rte:CorrectResponse ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.correct_responses" ;
@@ -580,6 +638,7 @@ foxxi-scorm-rte:weighting a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "weighting"@en ;
     skos:notation "cmi.interactions.n.weighting" ;
     rdfs:comment "[RW] How much the interaction counts relative to the others; real (10,7)."@en ;
+    skos:definition "[RW] How much the interaction counts relative to the others; real (10,7)."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range foxxi-scorm-rte:Real ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.weighting" ;
@@ -589,6 +648,7 @@ foxxi-scorm-rte:learnerResponse a owl:DatatypeProperty , owl:FunctionalProperty 
     rdfs:label "learner response"@en ;
     skos:notation "cmi.interactions.n.learner_response" ;
     rdfs:comment "[RW] The learner's response, in the form the interaction type prescribes."@en ;
+    skos:definition "[RW] The learner's response, in the form the interaction type prescribes."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.learner_response" ;
@@ -598,6 +658,7 @@ foxxi-scorm-rte:result a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "result"@en ;
     skos:notation "cmi.interactions.n.result" ;
     rdfs:comment "[RW] How the learner's response was judged: correct, incorrect, unanticipated, neutral, or a real number."@en ;
+    skos:definition "[RW] How the learner's response was judged: correct, incorrect, unanticipated, neutral, or a real number."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.result" ;
@@ -607,6 +668,7 @@ foxxi-scorm-rte:latency a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "latency"@en ;
     skos:notation "cmi.interactions.n.latency" ;
     rdfs:comment "[RW] How long the learner took to respond, from when the interaction was made available; timeinterval (second,10,2)."@en ;
+    skos:definition "[RW] How long the learner took to respond, from when the interaction was made available; timeinterval (second,10,2)."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range foxxi-scorm-rte:TimeInterval ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.latency" ;
@@ -616,6 +678,7 @@ foxxi-scorm-rte:interactionDescription a owl:DatatypeProperty , owl:FunctionalPr
     rdfs:label "interaction description"@en ;
     skos:notation "cmi.interactions.n.description" ;
     rdfs:comment "[RW] A description of the interaction; localized_string_type, SPM 250."@en ;
+    skos:definition "[RW] A description of the interaction; localized_string_type, SPM 250."@en ;
     rdfs:domain foxxi-scorm-rte:Interaction ;
     rdfs:range rdf:langString ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.description" ;
@@ -625,6 +688,7 @@ foxxi-scorm-rte:interactionObjectiveId a owl:DatatypeProperty , owl:FunctionalPr
     rdfs:label "interaction objective ID"@en ;
     skos:notation "cmi.interactions.n.objectives.m.id" ;
     rdfs:comment "[RW] The identifier of an objective the interaction is associated with; long_identifier_type, SPM 4000."@en ;
+    skos:definition "[RW] The identifier of an objective the interaction is associated with; long_identifier_type, SPM 4000."@en ;
     rdfs:domain foxxi-scorm-rte:InteractionObjective ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.objectives.m.id" ;
@@ -634,6 +698,7 @@ foxxi-scorm-rte:correctResponsePattern a owl:DatatypeProperty , owl:FunctionalPr
     rdfs:label "correct response pattern"@en ;
     skos:notation "cmi.interactions.n.correct_responses.m.pattern" ;
     rdfs:comment "[RW] A correct response, in the form the interaction type prescribes."@en ;
+    skos:definition "[RW] A correct response, in the form the interaction type prescribes."@en ;
     rdfs:domain foxxi-scorm-rte:CorrectResponse ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.interactions.n.correct_responses.m.pattern" ;
@@ -643,6 +708,7 @@ foxxi-scorm-rte:objectiveId a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "objective ID"@en ;
     skos:notation "cmi.objectives.n.id" ;
     rdfs:comment "[RW] The objective's identifier; long_identifier_type, SPM 4000."@en ;
+    skos:definition "[RW] The objective's identifier; long_identifier_type, SPM 4000."@en ;
     rdfs:domain foxxi-scorm-rte:Objective ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.objectives.n.id" ;
@@ -652,6 +718,7 @@ foxxi-scorm-rte:objectiveScore a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "objective score"@en ;
     skos:notation "cmi.objectives.n.score" ;
     rdfs:comment "[RW] The learner's score on the objective."@en ;
+    skos:definition "[RW] The learner's score on the objective."@en ;
     rdfs:domain foxxi-scorm-rte:Objective ;
     rdfs:range foxxi-scorm-rte:Score ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.objectives.n.score" ;
@@ -661,6 +728,7 @@ foxxi-scorm-rte:objectiveSuccessStatus a owl:DatatypeProperty , owl:FunctionalPr
     rdfs:label "objective success status"@en ;
     skos:notation "cmi.objectives.n.success_status" ;
     rdfs:comment "[RW] Whether the learner has mastered the objective: passed, failed or unknown."@en ;
+    skos:definition "[RW] Whether the learner has mastered the objective: passed, failed or unknown."@en ;
     rdfs:domain foxxi-scorm-rte:Objective ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "passed" "failed" "unknown" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.objectives.n.success_status" ;
@@ -670,6 +738,7 @@ foxxi-scorm-rte:objectiveCompletionStatus a owl:DatatypeProperty , owl:Functiona
     rdfs:label "objective completion status"@en ;
     skos:notation "cmi.objectives.n.completion_status" ;
     rdfs:comment "[RW] Whether the learner has completed the objective: completed, incomplete, not attempted or unknown."@en ;
+    skos:definition "[RW] Whether the learner has completed the objective: completed, incomplete, not attempted or unknown."@en ;
     rdfs:domain foxxi-scorm-rte:Objective ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "completed" "incomplete" "not attempted" "unknown" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.objectives.n.completion_status" ;
@@ -679,6 +748,7 @@ foxxi-scorm-rte:objectiveProgressMeasure a owl:DatatypeProperty , owl:Functional
     rdfs:label "objective progress measure"@en ;
     skos:notation "cmi.objectives.n.progress_measure" ;
     rdfs:comment "[RW] How far the learner has got towards completing the objective, from 0 to 1."@en ;
+    skos:definition "[RW] How far the learner has got towards completing the objective, from 0 to 1."@en ;
     rdfs:domain foxxi-scorm-rte:Objective ;
     rdfs:range foxxi-scorm-rte:UnitInterval ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.objectives.n.progress_measure" ;
@@ -688,6 +758,7 @@ foxxi-scorm-rte:objectiveDescription a owl:DatatypeProperty , owl:FunctionalProp
     rdfs:label "objective description"@en ;
     skos:notation "cmi.objectives.n.description" ;
     rdfs:comment "[RW] A description of the objective; localized_string_type, SPM 250."@en ;
+    skos:definition "[RW] A description of the objective; localized_string_type, SPM 250."@en ;
     rdfs:domain foxxi-scorm-rte:Objective ;
     rdfs:range rdf:langString ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.objectives.n.description" ;
@@ -697,6 +768,7 @@ foxxi-scorm-rte:scoreScaled a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "scaled score"@en ;
     skos:notation "score.scaled" ;
     rdfs:comment "[RW] The score normalized to the range -1 to 1."@en ;
+    skos:definition "[RW] The score normalized to the range -1 to 1."@en ;
     rdfs:domain foxxi-scorm-rte:Score ;
     rdfs:range foxxi-scorm-rte:ScaledReal ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.score.scaled" ;
@@ -706,6 +778,7 @@ foxxi-scorm-rte:scoreRaw a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "raw score"@en ;
     skos:notation "score.raw" ;
     rdfs:comment "[RW] The score, between the minimum and the maximum; real (10,7)."@en ;
+    skos:definition "[RW] The score, between the minimum and the maximum; real (10,7)."@en ;
     rdfs:domain foxxi-scorm-rte:Score ;
     rdfs:range foxxi-scorm-rte:Real ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.score.raw" ;
@@ -715,6 +788,7 @@ foxxi-scorm-rte:scoreMin a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "minimum score"@en ;
     skos:notation "score.min" ;
     rdfs:comment "[RW] The lowest possible score; real (10,7)."@en ;
+    skos:definition "[RW] The lowest possible score; real (10,7)."@en ;
     rdfs:domain foxxi-scorm-rte:Score ;
     rdfs:range foxxi-scorm-rte:Real ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.score.min" ;
@@ -724,6 +798,7 @@ foxxi-scorm-rte:scoreMax a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "maximum score"@en ;
     skos:notation "score.max" ;
     rdfs:comment "[RW] The highest possible score; real (10,7)."@en ;
+    skos:definition "[RW] The highest possible score; real (10,7)."@en ;
     rdfs:domain foxxi-scorm-rte:Score ;
     rdfs:range foxxi-scorm-rte:Real ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: cmi.score.max" ;
@@ -733,6 +808,7 @@ foxxi-scorm-rte:navRequest a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "navigation request"@en ;
     skos:notation "adl.nav.request" ;
     rdfs:comment "[RW] The navigation request the SCO wants processed when it ends: continue, previous, {target=ID}choice, {target=ID}jump (4th Edition), exit, exitAll, abandon, abandonAll, suspendAll, or _none_ (the default)."@en ;
+    skos:definition "[RW] The navigation request the SCO wants processed when it ends: continue, previous, {target=ID}choice, {target=ID}jump (4th Edition), exit, exitAll, abandon, abandonAll, suspendAll, or _none_ (the default)."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.nav.request" ;
@@ -742,6 +818,7 @@ foxxi-scorm-rte:navRequestValidContinue a owl:DatatypeProperty , owl:FunctionalP
     rdfs:label "continue request valid"@en ;
     skos:notation "adl.nav.request_valid.continue" ;
     rdfs:comment "[RO] Whether a continue request would be valid now: true, false or unknown."@en ;
+    skos:definition "[RO] Whether a continue request would be valid now: true, false or unknown."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "true" "false" "unknown" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.nav.request_valid.continue" ;
@@ -751,6 +828,7 @@ foxxi-scorm-rte:navRequestValidPrevious a owl:DatatypeProperty , owl:FunctionalP
     rdfs:label "previous request valid"@en ;
     skos:notation "adl.nav.request_valid.previous" ;
     rdfs:comment "[RO] Whether a previous request would be valid now: true, false or unknown."@en ;
+    skos:definition "[RO] Whether a previous request would be valid now: true, false or unknown."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "true" "false" "unknown" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.nav.request_valid.previous" ;
@@ -760,6 +838,7 @@ foxxi-scorm-rte:navRequestValidChoice a owl:ObjectProperty ;
     rdfs:label "choice request valid"@en ;
     skos:notation "adl.nav.request_valid.choice" ;
     rdfs:comment "[RO] Whether a choice request for a target activity would be valid now, one entry per target asked about."@en ;
+    skos:definition "[RO] Whether a choice request for a target activity would be valid now, one entry per target asked about."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:TargetedRequestValidity ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.nav.request_valid.choice" ;
@@ -769,6 +848,7 @@ foxxi-scorm-rte:navRequestValidJump a owl:ObjectProperty ;
     rdfs:label "jump request valid"@en ;
     skos:notation "adl.nav.request_valid.jump" ;
     rdfs:comment "[RO] Whether a jump request to a target activity would be valid now, one entry per target asked about. Added in the 4th Edition."@en ;
+    skos:definition "[RO] Whether a jump request to a target activity would be valid now, one entry per target asked about. Added in the 4th Edition."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:TargetedRequestValidity ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.nav.request_valid.jump" ;
@@ -778,6 +858,7 @@ foxxi-scorm-rte:requestTarget a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "request target"@en ;
     skos:notation "target" ;
     rdfs:comment "The identifier of the target activity of a choice or jump request."@en ;
+    skos:definition "The identifier of the target activity of a choice or jump request."@en ;
     rdfs:domain foxxi-scorm-rte:TargetedRequestValidity ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.nav.request_valid.choice.{target=}, adl.nav.request_valid.jump.{target=}" ;
@@ -787,6 +868,7 @@ foxxi-scorm-rte:requestValidity a owl:DatatypeProperty , owl:FunctionalProperty 
     rdfs:label "request validity"@en ;
     skos:notation "requestValidity" ;
     rdfs:comment "Whether the request would be valid: true, false or unknown."@en ;
+    skos:definition "Whether the request would be valid: true, false or unknown."@en ;
     rdfs:domain foxxi-scorm-rte:TargetedRequestValidity ;
     rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "true" "false" "unknown" ) ] ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.nav.request_valid" ;
@@ -796,6 +878,7 @@ foxxi-scorm-rte:sharedData a owl:ObjectProperty ;
     rdfs:label "shared data"@en ;
     skos:notation "adl.data" ;
     rdfs:comment "A shared data store the SCO has access to; the collection is ordered. Added in the 4th Edition."@en ;
+    skos:definition "A shared data store the SCO has access to; the collection is ordered. Added in the 4th Edition."@en ;
     rdfs:domain foxxi-scorm-rte:DataModel ;
     rdfs:range foxxi-scorm-rte:SharedData ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.data" ;
@@ -805,6 +888,7 @@ foxxi-scorm-rte:sharedDataId a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "shared data ID"@en ;
     skos:notation "adl.data.n.id" ;
     rdfs:comment "[RO] The identifier of the store: the target ID of the item's adlcp:map; long_identifier_type."@en ;
+    skos:definition "[RO] The identifier of the store: the target ID of the item's adlcp:map; long_identifier_type."@en ;
     rdfs:domain foxxi-scorm-rte:SharedData ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.data.n.id" ;
@@ -814,6 +898,7 @@ foxxi-scorm-rte:sharedDataStore a owl:DatatypeProperty , owl:FunctionalProperty 
     rdfs:label "shared data content"@en ;
     skos:notation "adl.data.n.store" ;
     rdfs:comment "[RW, as the map allows] The content of the store; characterstring, SPM 64000."@en ;
+    skos:definition "[RW, as the map allows] The content of the store; characterstring, SPM 64000."@en ;
     rdfs:domain foxxi-scorm-rte:SharedData ;
     rdfs:range xsd:string ;
     dct:source "SCORM 2004 4th Edition Run-Time Environment: adl.data.n.store" ;
@@ -836,6 +921,7 @@ foxxi-scorm-rte:CompletionStatus-completed a skos:Concept ;
     rdfs:label "completed (Completion statuses)"@en ;
     skos:notation "completed" ;
     skos:definition "The learner has completed it."@en ;
+    rdfs:comment "The learner has completed it."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:CompletionStatus-incomplete a skos:Concept ;
@@ -845,6 +931,7 @@ foxxi-scorm-rte:CompletionStatus-incomplete a skos:Concept ;
     rdfs:label "incomplete (Completion statuses)"@en ;
     skos:notation "incomplete" ;
     skos:definition "The learner has started but not completed it."@en ;
+    rdfs:comment "The learner has started but not completed it."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:CompletionStatus-not-attempted a skos:Concept ;
@@ -854,6 +941,7 @@ foxxi-scorm-rte:CompletionStatus-not-attempted a skos:Concept ;
     rdfs:label "not attempted (Completion statuses)"@en ;
     skos:notation "not attempted" ;
     skos:definition "The learner has not started it."@en ;
+    rdfs:comment "The learner has not started it."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:CompletionStatus-unknown a skos:Concept ;
@@ -863,6 +951,7 @@ foxxi-scorm-rte:CompletionStatus-unknown a skos:Concept ;
     rdfs:label "unknown (Completion statuses)"@en ;
     skos:notation "unknown" ;
     skos:definition "Whether it is completed is not known."@en ;
+    rdfs:comment "Whether it is completed is not known."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:SuccessStatus a skos:ConceptScheme ;
@@ -881,6 +970,7 @@ foxxi-scorm-rte:SuccessStatus-passed a skos:Concept ;
     rdfs:label "passed (Success statuses)"@en ;
     skos:notation "passed" ;
     skos:definition "The learner has mastered it."@en ;
+    rdfs:comment "The learner has mastered it."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:SuccessStatus-failed a skos:Concept ;
@@ -890,6 +980,7 @@ foxxi-scorm-rte:SuccessStatus-failed a skos:Concept ;
     rdfs:label "failed (Success statuses)"@en ;
     skos:notation "failed" ;
     skos:definition "The learner has not mastered it."@en ;
+    rdfs:comment "The learner has not mastered it."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:SuccessStatus-unknown a skos:Concept ;
@@ -899,6 +990,7 @@ foxxi-scorm-rte:SuccessStatus-unknown a skos:Concept ;
     rdfs:label "unknown (Success statuses)"@en ;
     skos:notation "unknown" ;
     skos:definition "Whether the learner has mastered it is not known."@en ;
+    rdfs:comment "Whether the learner has mastered it is not known."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Credit a skos:ConceptScheme ;
@@ -915,6 +1007,7 @@ foxxi-scorm-rte:Credit-credit a skos:Concept ;
     rdfs:label "credit (Credit values)"@en ;
     skos:notation "credit" ;
     skos:definition "The learner is credited for performance in the SCO."@en ;
+    rdfs:comment "The learner is credited for performance in the SCO."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Credit-no-credit a skos:Concept ;
@@ -924,6 +1017,7 @@ foxxi-scorm-rte:Credit-no-credit a skos:Concept ;
     rdfs:label "no credit (Credit values)"@en ;
     skos:notation "no-credit" ;
     skos:definition "The learner is not credited for performance in the SCO."@en ;
+    rdfs:comment "The learner is not credited for performance in the SCO."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Entry a skos:ConceptScheme ;
@@ -940,6 +1034,7 @@ foxxi-scorm-rte:Entry-ab-initio a skos:Concept ;
     rdfs:label "ab initio (Entry values)"@en ;
     skos:notation "ab-initio" ;
     skos:definition "The learner enters the SCO for the first time in the attempt."@en ;
+    rdfs:comment "The learner enters the SCO for the first time in the attempt."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Entry-resume a skos:Concept ;
@@ -949,6 +1044,7 @@ foxxi-scorm-rte:Entry-resume a skos:Concept ;
     rdfs:label "resume (Entry values)"@en ;
     skos:notation "resume" ;
     skos:definition "The learner resumes a suspended attempt."@en ;
+    rdfs:comment "The learner resumes a suspended attempt."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Entry-term a skos:Concept ;
@@ -958,6 +1054,7 @@ foxxi-scorm-rte:Entry-term a skos:Concept ;
     rdfs:label "(empty) (Entry values)"@en ;
     skos:notation "" ;
     skos:definition "Neither: an attempt that is not new and was not suspended."@en ;
+    rdfs:comment "Neither: an attempt that is not new and was not suspended."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Exit a skos:ConceptScheme ;
@@ -978,6 +1075,7 @@ foxxi-scorm-rte:Exit-time-out a skos:Concept ;
     rdfs:label "time out (Exit values)"@en ;
     skos:notation "time-out" ;
     skos:definition "The SCO ended because the maximum time allowed was exceeded."@en ;
+    rdfs:comment "The SCO ended because the maximum time allowed was exceeded."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Exit-suspend a skos:Concept ;
@@ -987,16 +1085,18 @@ foxxi-scorm-rte:Exit-suspend a skos:Concept ;
     rdfs:label "suspend (Exit values)"@en ;
     skos:notation "suspend" ;
     skos:definition "The learner suspended the attempt, to resume it later."@en ;
+    rdfs:comment "The learner suspended the attempt, to resume it later."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Exit-logout a skos:Concept ;
     skos:inScheme foxxi-scorm-rte:Exit ;
     skos:topConceptOf foxxi-scorm-rte:Exit ;
     skos:prefLabel "logout"@en ;
-    rdfs:label "obsolete logout (Exit values)"@en ;
+    rdfs:label "logout (Exit values)"@en ;
     skos:notation "logout" ;
-    skos:definition "Deprecated by ADL, which says it should not be used. An LMS that receives it processes an Exit All navigation request when the SCO is taken away."@en ;
-    owl:deprecated true ;
+    skos:definition "A value ADL has deprecated for a SCO to set: a SCO should not use it. An LMS that receives it processes an Exit All navigation request when the SCO is taken away."@en ;
+    rdfs:comment "A value ADL has deprecated for a SCO to set: a SCO should not use it. An LMS that receives it processes an Exit All navigation request when the SCO is taken away."@en ;
+    skos:changeNote "2026.10.0: no longer marked owl:deprecated. ADL deprecated the token for a SCO to set, but an LMS must still process it, so the value is not obsolete; its comment says how it is deprecated."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Exit-normal a skos:Concept ;
@@ -1006,6 +1106,7 @@ foxxi-scorm-rte:Exit-normal a skos:Concept ;
     rdfs:label "normal (Exit values)"@en ;
     skos:notation "normal" ;
     skos:definition "The SCO ended normally."@en ;
+    rdfs:comment "The SCO ended normally."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Exit-term a skos:Concept ;
@@ -1015,6 +1116,7 @@ foxxi-scorm-rte:Exit-term a skos:Concept ;
     rdfs:label "(empty) (Exit values)"@en ;
     skos:notation "" ;
     skos:definition "No exit condition was set: the default."@en ;
+    rdfs:comment "No exit condition was set: the default."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Mode a skos:ConceptScheme ;
@@ -1031,6 +1133,7 @@ foxxi-scorm-rte:Mode-browse a skos:Concept ;
     rdfs:label "browse (Modes)"@en ;
     skos:notation "browse" ;
     skos:definition "The learner looks at the SCO without credit."@en ;
+    rdfs:comment "The learner looks at the SCO without credit."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Mode-normal a skos:Concept ;
@@ -1040,6 +1143,7 @@ foxxi-scorm-rte:Mode-normal a skos:Concept ;
     rdfs:label "normal (Modes)"@en ;
     skos:notation "normal" ;
     skos:definition "The SCO is presented normally, for credit as cmi.credit says."@en ;
+    rdfs:comment "The SCO is presented normally, for credit as cmi.credit says."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:Mode-review a skos:Concept ;
@@ -1049,6 +1153,7 @@ foxxi-scorm-rte:Mode-review a skos:Concept ;
     rdfs:label "review (Modes)"@en ;
     skos:notation "review" ;
     skos:definition "The learner reviews a SCO already experienced."@en ;
+    rdfs:comment "The learner reviews a SCO already experienced."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:TimeLimitAction a skos:ConceptScheme ;
@@ -1068,6 +1173,7 @@ foxxi-scorm-rte:TimeLimitAction-exit-message a skos:Concept ;
     rdfs:label "exit with a message (Time limit actions)"@en ;
     skos:notation "exit,message" ;
     skos:definition "Leave the SCO, and tell the learner why."@en ;
+    rdfs:comment "Leave the SCO, and tell the learner why."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:TimeLimitAction-exit-no-message a skos:Concept ;
@@ -1077,6 +1183,7 @@ foxxi-scorm-rte:TimeLimitAction-exit-no-message a skos:Concept ;
     rdfs:label "exit without a message (Time limit actions)"@en ;
     skos:notation "exit,no message" ;
     skos:definition "Leave the SCO without telling the learner."@en ;
+    rdfs:comment "Leave the SCO without telling the learner."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:TimeLimitAction-continue-message a skos:Concept ;
@@ -1086,6 +1193,7 @@ foxxi-scorm-rte:TimeLimitAction-continue-message a skos:Concept ;
     rdfs:label "continue with a message (Time limit actions)"@en ;
     skos:notation "continue,message" ;
     skos:definition "Stay in the SCO, and tell the learner the time is up."@en ;
+    rdfs:comment "Stay in the SCO, and tell the learner the time is up."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:TimeLimitAction-continue-no-message a skos:Concept ;
@@ -1095,6 +1203,7 @@ foxxi-scorm-rte:TimeLimitAction-continue-no-message a skos:Concept ;
     rdfs:label "continue without a message (Time limit actions)"@en ;
     skos:notation "continue,no message" ;
     skos:definition "Stay in the SCO without telling the learner."@en ;
+    rdfs:comment "Stay in the SCO without telling the learner."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType a skos:ConceptScheme ;
@@ -1120,6 +1229,7 @@ foxxi-scorm-rte:InteractionType-true-false a skos:Concept ;
     rdfs:label "true or false (Interaction types)"@en ;
     skos:notation "true-false" ;
     skos:definition "The learner judges a statement true or false."@en ;
+    rdfs:comment "The learner judges a statement true or false."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType-choice a skos:Concept ;
@@ -1129,6 +1239,7 @@ foxxi-scorm-rte:InteractionType-choice a skos:Concept ;
     rdfs:label "choice (Interaction types)"@en ;
     skos:notation "choice" ;
     skos:definition "The learner chooses one or more options."@en ;
+    rdfs:comment "The learner chooses one or more options."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType-fill-in a skos:Concept ;
@@ -1138,6 +1249,7 @@ foxxi-scorm-rte:InteractionType-fill-in a skos:Concept ;
     rdfs:label "fill in (Interaction types)"@en ;
     skos:notation "fill-in" ;
     skos:definition "The learner enters one or more short texts."@en ;
+    rdfs:comment "The learner enters one or more short texts."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType-long-fill-in a skos:Concept ;
@@ -1147,6 +1259,7 @@ foxxi-scorm-rte:InteractionType-long-fill-in a skos:Concept ;
     rdfs:label "long fill in (Interaction types)"@en ;
     skos:notation "long-fill-in" ;
     skos:definition "The learner enters a long text."@en ;
+    rdfs:comment "The learner enters a long text."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType-likert a skos:Concept ;
@@ -1156,6 +1269,7 @@ foxxi-scorm-rte:InteractionType-likert a skos:Concept ;
     rdfs:label "Likert (Interaction types)"@en ;
     skos:notation "likert" ;
     skos:definition "The learner chooses a point on a scale."@en ;
+    rdfs:comment "The learner chooses a point on a scale."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType-matching a skos:Concept ;
@@ -1165,6 +1279,7 @@ foxxi-scorm-rte:InteractionType-matching a skos:Concept ;
     rdfs:label "matching (Interaction types)"@en ;
     skos:notation "matching" ;
     skos:definition "The learner matches sources to targets."@en ;
+    rdfs:comment "The learner matches sources to targets."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType-performance a skos:Concept ;
@@ -1174,6 +1289,7 @@ foxxi-scorm-rte:InteractionType-performance a skos:Concept ;
     rdfs:label "performance (Interaction types)"@en ;
     skos:notation "performance" ;
     skos:definition "The learner carries out a task in steps."@en ;
+    rdfs:comment "The learner carries out a task in steps."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType-sequencing a skos:Concept ;
@@ -1183,6 +1299,7 @@ foxxi-scorm-rte:InteractionType-sequencing a skos:Concept ;
     rdfs:label "sequencing (Interaction types)"@en ;
     skos:notation "sequencing" ;
     skos:definition "The learner puts items in order."@en ;
+    rdfs:comment "The learner puts items in order."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType-numeric a skos:Concept ;
@@ -1192,6 +1309,7 @@ foxxi-scorm-rte:InteractionType-numeric a skos:Concept ;
     rdfs:label "numeric (Interaction types)"@en ;
     skos:notation "numeric" ;
     skos:definition "The learner enters a number."@en ;
+    rdfs:comment "The learner enters a number."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionType-other a skos:Concept ;
@@ -1201,6 +1319,7 @@ foxxi-scorm-rte:InteractionType-other a skos:Concept ;
     rdfs:label "other (Interaction types)"@en ;
     skos:notation "other" ;
     skos:definition "Any other kind of interaction."@en ;
+    rdfs:comment "Any other kind of interaction."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionResult a skos:ConceptScheme ;
@@ -1220,6 +1339,7 @@ foxxi-scorm-rte:InteractionResult-correct a skos:Concept ;
     rdfs:label "correct (Interaction results)"@en ;
     skos:notation "correct" ;
     skos:definition "The response was correct."@en ;
+    rdfs:comment "The response was correct."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionResult-incorrect a skos:Concept ;
@@ -1229,6 +1349,7 @@ foxxi-scorm-rte:InteractionResult-incorrect a skos:Concept ;
     rdfs:label "incorrect (Interaction results)"@en ;
     skos:notation "incorrect" ;
     skos:definition "The response was incorrect."@en ;
+    rdfs:comment "The response was incorrect."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionResult-unanticipated a skos:Concept ;
@@ -1238,6 +1359,7 @@ foxxi-scorm-rte:InteractionResult-unanticipated a skos:Concept ;
     rdfs:label "unanticipated (Interaction results)"@en ;
     skos:notation "unanticipated" ;
     skos:definition "The response was not one the SCO anticipated."@en ;
+    rdfs:comment "The response was not one the SCO anticipated."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:InteractionResult-neutral a skos:Concept ;
@@ -1247,6 +1369,7 @@ foxxi-scorm-rte:InteractionResult-neutral a skos:Concept ;
     rdfs:label "neutral (Interaction results)"@en ;
     skos:notation "neutral" ;
     skos:definition "The response is neither correct nor incorrect."@en ;
+    rdfs:comment "The response is neither correct nor incorrect."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:AudioCaptioning a skos:ConceptScheme ;
@@ -1265,6 +1388,7 @@ foxxi-scorm-rte:AudioCaptioning-_-1 a skos:Concept ;
     rdfs:label "off (Audio captioning values)"@en ;
     skos:notation "-1" ;
     skos:definition "Captioning is off."@en ;
+    rdfs:comment "Captioning is off."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:AudioCaptioning-0 a skos:Concept ;
@@ -1274,6 +1398,7 @@ foxxi-scorm-rte:AudioCaptioning-0 a skos:Concept ;
     rdfs:label "no change (Audio captioning values)"@en ;
     skos:notation "0" ;
     skos:definition "No change from the SCO's own setting."@en ;
+    rdfs:comment "No change from the SCO's own setting."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:AudioCaptioning-1 a skos:Concept ;
@@ -1283,6 +1408,7 @@ foxxi-scorm-rte:AudioCaptioning-1 a skos:Concept ;
     rdfs:label "on (Audio captioning values)"@en ;
     skos:notation "1" ;
     skos:definition "Captioning is on."@en ;
+    rdfs:comment "Captioning is on."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType a skos:ConceptScheme ;
@@ -1308,6 +1434,7 @@ foxxi-scorm-rte:NavigationRequestType-continue a skos:Concept ;
     rdfs:label "continue (Navigation requests)"@en ;
     skos:notation "continue" ;
     skos:definition "Go to the next activity in flow."@en ;
+    rdfs:comment "Go to the next activity in flow."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType-previous a skos:Concept ;
@@ -1317,6 +1444,7 @@ foxxi-scorm-rte:NavigationRequestType-previous a skos:Concept ;
     rdfs:label "previous (Navigation requests)"@en ;
     skos:notation "previous" ;
     skos:definition "Go to the previous activity in flow."@en ;
+    rdfs:comment "Go to the previous activity in flow."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType-choice a skos:Concept ;
@@ -1326,6 +1454,7 @@ foxxi-scorm-rte:NavigationRequestType-choice a skos:Concept ;
     rdfs:label "choice (Navigation requests)"@en ;
     skos:notation "choice" ;
     skos:definition "Go to the target activity, as if the learner had chosen it."@en ;
+    rdfs:comment "Go to the target activity, as if the learner had chosen it."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType-jump a skos:Concept ;
@@ -1335,6 +1464,7 @@ foxxi-scorm-rte:NavigationRequestType-jump a skos:Concept ;
     rdfs:label "jump (Navigation requests)"@en ;
     skos:notation "jump" ;
     skos:definition "Go to the target activity, regardless of the learner's navigation controls. Added in the 4th Edition."@en ;
+    rdfs:comment "Go to the target activity, regardless of the learner's navigation controls. Added in the 4th Edition."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType-exit a skos:Concept ;
@@ -1344,6 +1474,7 @@ foxxi-scorm-rte:NavigationRequestType-exit a skos:Concept ;
     rdfs:label "exit (Navigation requests)"@en ;
     skos:notation "exit" ;
     skos:definition "End the current activity."@en ;
+    rdfs:comment "End the current activity."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType-exitAll a skos:Concept ;
@@ -1353,6 +1484,7 @@ foxxi-scorm-rte:NavigationRequestType-exitAll a skos:Concept ;
     rdfs:label "exit all (Navigation requests)"@en ;
     skos:notation "exitAll" ;
     skos:definition "End the whole activity tree."@en ;
+    rdfs:comment "End the whole activity tree."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType-abandon a skos:Concept ;
@@ -1362,6 +1494,7 @@ foxxi-scorm-rte:NavigationRequestType-abandon a skos:Concept ;
     rdfs:label "abandon (Navigation requests)"@en ;
     skos:notation "abandon" ;
     skos:definition "Abandon the current activity."@en ;
+    rdfs:comment "Abandon the current activity."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType-abandonAll a skos:Concept ;
@@ -1371,6 +1504,7 @@ foxxi-scorm-rte:NavigationRequestType-abandonAll a skos:Concept ;
     rdfs:label "abandon all (Navigation requests)"@en ;
     skos:notation "abandonAll" ;
     skos:definition "Abandon the whole activity tree."@en ;
+    rdfs:comment "Abandon the whole activity tree."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType-suspendAll a skos:Concept ;
@@ -1380,6 +1514,7 @@ foxxi-scorm-rte:NavigationRequestType-suspendAll a skos:Concept ;
     rdfs:label "suspend all (Navigation requests)"@en ;
     skos:notation "suspendAll" ;
     skos:definition "Suspend the whole activity tree, to resume later."@en ;
+    rdfs:comment "Suspend the whole activity tree, to resume later."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:NavigationRequestType-_none_ a skos:Concept ;
@@ -1389,6 +1524,7 @@ foxxi-scorm-rte:NavigationRequestType-_none_ a skos:Concept ;
     rdfs:label "none (Navigation requests)"@en ;
     skos:notation "_none_" ;
     skos:definition "No request: the default."@en ;
+    rdfs:comment "No request: the default."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:RequestValidity a skos:ConceptScheme ;
@@ -1407,6 +1543,7 @@ foxxi-scorm-rte:RequestValidity-true a skos:Concept ;
     rdfs:label "true (Request validities)"@en ;
     skos:notation "true" ;
     skos:definition "The request would be valid."@en ;
+    rdfs:comment "The request would be valid."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:RequestValidity-false a skos:Concept ;
@@ -1416,6 +1553,7 @@ foxxi-scorm-rte:RequestValidity-false a skos:Concept ;
     rdfs:label "false (Request validities)"@en ;
     skos:notation "false" ;
     skos:definition "The request would not be valid."@en ;
+    rdfs:comment "The request would not be valid."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 foxxi-scorm-rte:RequestValidity-unknown a skos:Concept ;
@@ -1425,6 +1563,7 @@ foxxi-scorm-rte:RequestValidity-unknown a skos:Concept ;
     rdfs:label "unknown (Request validities)"@en ;
     skos:notation "unknown" ;
     skos:definition "Whether the request would be valid cannot be determined now."@en ;
+    rdfs:comment "Whether the request would be valid cannot be determined now."@en ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte> .
 
 [
@@ -1520,8 +1659,10 @@ vann:preferredNamespaceUri a owl:AnnotationProperty .
 
 dct:source a owl:AnnotationProperty .
 
+skos:definition a owl:AnnotationProperty .
+
 skos:notation a owl:AnnotationProperty .
 
 skos:prefLabel a owl:AnnotationProperty .
 
-skos:definition a owl:AnnotationProperty .
+skos:changeNote a owl:AnnotationProperty .

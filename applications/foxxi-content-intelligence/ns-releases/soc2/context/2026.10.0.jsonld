@@ -1,0 +1,50 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "id": "@id",
+    "type": "@type",
+    "TrustServicesCriterion": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#TrustServicesCriterion"
+    },
+    "OperationalEvidenceEvent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#OperationalEvidenceEvent"
+    },
+    "AccessChangeEvent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#AccessChangeEvent"
+    },
+    "DeployEvent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#DeployEvent"
+    },
+    "KeyRotationEvent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#KeyRotationEvent"
+    },
+    "IncidentEvent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#IncidentEvent"
+    },
+    "QuarterlyReviewEvent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#QuarterlyReviewEvent"
+    },
+    "evidences": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#evidences",
+      "@type": "@vocab",
+      "@context": {
+        "@vocab": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#CommonCriterion-"
+      }
+    },
+    "occurredAt": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#occurredAt",
+      "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+    },
+    "actingAgent": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#actingAgent",
+      "@type": "@id"
+    },
+    "signer": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#signer"
+    },
+    "actor": {
+      "@id": "https://foxxi-bridge.interego.xwisee.com/ns/soc2#actor",
+      "@type": "http://www.w3.org/2001/XMLSchema#anyURI"
+    }
+  }
+}

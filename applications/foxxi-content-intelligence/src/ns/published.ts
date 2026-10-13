@@ -6,7 +6,8 @@
  * tools/release-ns.ts archives it in ns-releases/, and from then on the bridge answers that version
  * IRI from the archive (releases.ts). This is the list the release tool archives and the tests hold
  * the archive to: fourteen ontologies, twelve shapes graphs, the mapping sets of the ontologies that
- * map their terms, and the two contexts data is read through.
+ * map their terms, and the contexts data is read through — xAPI's, the Enterprise Learner Record's,
+ * and one generated from each document whose JSON instances it reads (ns/model-context.ts).
  */
 import {
   renderOwl, renderOwlNTriples, renderOwlRdfXml, renderJsonLd, renderShacl, renderShaclNTriples, renderShaclRdfXml,
@@ -23,6 +24,7 @@ import {
 } from '../ler-tla-vocab.js';
 import { renderVocabTurtle, renderVocabNTriples, renderVocabRdfXml, renderVocabJsonLd, foxxiDocMeta } from '../foxxi-vocab.js';
 import { mappingSetModules, renderMappingSet } from './mapping-sets.js';
+import { modelContextIri, renderModelContext } from './model-context.js';
 import { mappingSetIri } from './sssom.js';
 import { NS_BASE } from './catalog.js';
 
@@ -38,6 +40,8 @@ export interface Published {
   readonly version: string;
   /** For a document: the released version this one follows (its owl:priorVersion). */
   readonly priorVersion?: string;
+  /** For a document with a prior version: whether it keeps the prior version's meaning. */
+  readonly priorCompatibility?: 'backward' | 'incompatible';
   /** What is released: a document's Turtle, a mapping set's SSSOM/TSV, a context's JSON. */
   readonly render: () => string;
   /** A document's other forms, each a serialization of the graph its Turtle is. */
@@ -48,19 +52,20 @@ const MODELS: readonly OntologyModel[] = [...Object.values(SPEC_MODELS), ...Obje
 
 /** The ontology documents. */
 function ontologies(): Published[] {
-  const prior = (p: string | undefined): { priorVersion?: string } => (p ? { priorVersion: p } : {});
+  const prior = (p: string | undefined, c?: 'backward' | 'incompatible'): { priorVersion?: string; priorCompatibility?: 'backward' | 'incompatible' } =>
+    (p ? { priorVersion: p, ...(c ? { priorCompatibility: c } : {}) } : {});
   return [
     ...MODELS.map((m): Published => ({
-      kind: 'ontology', iri: ontologyIri(m), version: m.version, ...prior(docMeta(m).priorVersion), render: () => renderOwl(m),
+      kind: 'ontology', iri: ontologyIri(m), version: m.version, ...prior(docMeta(m).priorVersion, docMeta(m).priorCompatibility), render: () => renderOwl(m),
       forms: { ntriples: () => renderOwlNTriples(m), rdfxml: () => renderOwlRdfXml(m), jsonld: () => renderJsonLd(m) },
     })),
     ...(['ler', 'tla'] as const).map((f): Published => ({
-      kind: 'ontology', iri: semDocMeta(f).iri, version: semDocMeta(f).version, ...prior(semDocMeta(f).priorVersion),
+      kind: 'ontology', iri: semDocMeta(f).iri, version: semDocMeta(f).version, ...prior(semDocMeta(f).priorVersion, semDocMeta(f).priorCompatibility),
       render: () => renderSemOntologyTurtle(f),
       forms: { ntriples: () => renderSemOntologyNTriples(f), rdfxml: () => renderSemOntologyRdfXml(f), jsonld: () => renderSemOntologyJsonLd(f) },
     })),
     {
-      kind: 'ontology', iri: foxxiDocMeta().iri, version: foxxiDocMeta().version, ...prior(foxxiDocMeta().priorVersion),
+      kind: 'ontology', iri: foxxiDocMeta().iri, version: foxxiDocMeta().version, ...prior(foxxiDocMeta().priorVersion, foxxiDocMeta().priorCompatibility),
       render: renderVocabTurtle, forms: { ntriples: renderVocabNTriples, rdfxml: renderVocabRdfXml, jsonld: renderVocabJsonLd },
     },
   ];
@@ -70,7 +75,7 @@ function ontologies(): Published[] {
 function shapesGraphs(): Published[] {
   return [...MODELS, LER_MODEL].map((m): Published => ({
     kind: 'shapes', iri: shapesIri(m), version: m.version,
-    ...(shapesDocMeta(m).priorVersion ? { priorVersion: shapesDocMeta(m).priorVersion } : {}),
+    ...(shapesDocMeta(m).priorVersion ? { priorVersion: shapesDocMeta(m).priorVersion, priorCompatibility: shapesDocMeta(m).priorCompatibility } : {}),
     render: () => renderShacl(m),
     forms: { ntriples: () => renderShaclNTriples(m), rdfxml: () => renderShaclRdfXml(m), jsonld: () => renderShaclJsonLd(m) },
   }));
@@ -98,6 +103,7 @@ function contexts(): Published[] {
   return [
     { kind: 'context', iri: unversioned(XAPI_CONTEXT_URL, XAPI_MODEL.version), version: XAPI_MODEL.version, render: renderXapiContext },
     { kind: 'context', iri: unversioned(ELR_CONTEXT_URL, ler), version: ler, render: renderElrContext },
+    ...MODELS.filter(m => m.generatedContext).map((m): Published => ({ kind: 'context', iri: modelContextIri(m), version: m.version, render: () => renderModelContext(m) })),
   ];
 }
 

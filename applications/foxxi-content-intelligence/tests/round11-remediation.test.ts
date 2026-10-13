@@ -30,9 +30,11 @@ describe('round-11 — IEEE-LER OB3/CLR closeMatch targets are the canonical voc
   const ttl = renderSemOntologyTurtle('ler');
   it('closeMatch points at vc/ob and vc/clr vocab.html (which resolve 200)', () => {
     // ★ REVISED: read as triples (the Turtle now writes these IRIs with 1EdTech's ob:/clr: prefixes).
-    const closeTargets = turtleQuads(ttl).filter(t => t.predicate.value === `${SKOS}closeMatch`).map(t => t.object.value);
-    expect(closeTargets).toContain('https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential');
-    expect(closeTargets).toContain('https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential');
+    // ★ REVISED (2026.10.0): ler:Credential narrowMatches the two credentials (each is a kind of
+    // it); the targets of either relation are the canonical vocab.html IRIs.
+    const targets = turtleQuads(ttl).filter(t => [`${SKOS}closeMatch`, `${SKOS}narrowMatch`].includes(t.predicate.value)).map(t => t.object.value);
+    expect(targets).toContain('https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential');
+    expect(targets).toContain('https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential');
   });
   it('the old 404-ing /spec/ob/v3p0 + /spec/clr/v2p0 class IRIs are gone', () => {
     expect(ttl).not.toMatch(/spec\/ob\/v3p0\/OpenBadgeCredential/);

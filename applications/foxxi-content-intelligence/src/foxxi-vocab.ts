@@ -21,7 +21,7 @@
 // header (ns/catalog.ts). This module stays light on purpose: thirty modules import it for
 // FOXXI_NS alone, so it must not pull in the lattice or the spec-ontology engine.
 import {
-  Graph, iri, en, str, bool, RDF, RDFS, OWL, SKOS, DCT, toTurtle, toJsonLd, toNTriples, toRdfXml,
+  Graph, iri, en, str, bool, RDF, RDFS, OWL, SKOS, DCT, XSD, toTurtle, toJsonLd, toNTriples, toRdfXml,
   type NamedNode, type BlankNode, type Term, type JsonLdTerm,
 } from './ns/rdf.js';
 import { ALL_PREFIXES, CREATOR, PUBLISHER, addHeader, declareExternalTerms, foxxiPrefix, versionIri, alternates, type DocMeta } from './ns/catalog.js';
@@ -47,6 +47,9 @@ import { naturalLabel } from './ns/labels.js';
  * now import it. That duplication is why the host rot went unnoticed for so long.
  */
 export const FOXXI_NS = 'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#';
+/** How a term of a Foxxi document relates to the Interego substrate (an annotation property). */
+export const FOXXI_CONSTRUCTION = `${FOXXI_NS}construction`;
+export const CONSTRUCTION_DEFINITION = 'How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value).';
 /** The retired Azure namespace. Retained for reference / legacy-IRI canonicalization
  *  (ids minted under it live in signed content + xAPI object ids we must never rewrite).
  *  It is NOT asserted as a published owl:sameAs: that Azure host is permanently paused,
@@ -253,21 +256,28 @@ const KIND: Record<FoxxiTermKind, { xapiClass?: string; scheme?: { name: string;
   Type: {},
 };
 
-/** The label a term is published with: words, never a token (the token is its skos:notation),
- *  qualified by its kind where a bare word would collide with a class (`activities/composition`
- *  beside the `Composition` class). */
-function termLabel(t: FoxxiTerm): string {
+/** The words a term is named by — its skos:prefLabel: words, never a token (the token is its
+ *  skos:notation), qualified by its kind where a bare word would collide with a class
+ *  (`activities/composition` beside the `Composition` class). */
+function termWords(t: FoxxiTerm): string {
   const base = t.kind === 'Verb' ? t.label.replace(/-/g, ' ')
     : t.kind === 'ActivityType' ? `${t.label.replace(/-/g, ' ')} activity type`
       : t.kind === 'Extension' ? `${naturalLabel(t.label, 'property')} extension`
         : t.label;
-  // A deprecated term's label begins "obsolete " (the OBO Foundry convention; it also keeps the
-  // label unique beside the term that replaces it, which often has its name).
-  return t.replacedBy ? `obsolete ${base}` : base;
+  return base;
+}
+/** The rdfs:label a term is published with: its words, and for a deprecated term "obsolete " before
+ *  them (the OBO Foundry convention; it also keeps the label unique beside the term that replaces
+ *  it, which often has its name). Only the rdfs:label says it, never a SKOS label. */
+function termLabel(t: FoxxiTerm): string {
+  return t.replacedBy ? `obsolete ${termWords(t)}` : termWords(t);
 }
 
 /** The token a concept is matched by in statements: the last segment of its IRI. */
 const notationOf = (t: FoxxiTerm): string => t.name.split('/').pop()!;
+
+/** The vocabulary document's version. */
+export const FOXXI_VOCAB_VERSION = '2026.10.0';
 
 /** Self-description of the vocabulary document. */
 export function foxxiDocMeta(): DocMeta {
@@ -275,11 +285,11 @@ export function foxxiDocMeta(): DocMeta {
     iri: FOXXI_VOCAB_DOC, ns: FOXXI_NS, prefix: foxxiPrefix('foxxi'),
     title: 'Foxxi Content Intelligence vocabulary',
     description: FOXXI_VOCAB_COMMENT,
-    version: '2026.10.0', created: '2026-05-20', modified: '2026-10-12', issued: '2026-10-12',
+    version: FOXXI_VOCAB_VERSION, created: '2026-05-20', modified: '2026-10-12', issued: '2026-10-12',
     standards: [],
     bodies: ['ADL'],
     notice: `An original vocabulary of the Foxxi vertical, by ${CREATOR} (${PUBLISHER}). It formalizes no standard; its xAPI concepts are typed with classes of ADL's xAPI ontology (https://w3id.org/xapi/ontology), which is not affiliated with or endorsing this vocabulary.`,
-    seeAlso: [...COMPOSED_SPEC_ONTOLOGIES, `${FOXXI_VOCAB_DOC.replace('/ns/foxxi', '/xapi/profile')}`, mappingSetIri(FOXXI_VOCAB_DOC)],
+    seeAlso: [...COMPOSED_SPEC_ONTOLOGIES, `${FOXXI_VOCAB_DOC.replace('/ns/foxxi', '/xapi/profile')}`, `${mappingSetIri(FOXXI_VOCAB_DOC)}/${FOXXI_VOCAB_VERSION}`],
     sourceCode: ['applications/foxxi-content-intelligence/src/foxxi-vocab.ts'],
     notes: [
       'Path-structured term names (verbs/…, activities/…) are part of the IRI: <https://foxxi-bridge.interego.xwisee.com/ns/foxxi#verbs/asked> is one term. The Turtle writes such IRIs in full, which every reader takes; as a prefixed name the slash would have to be escaped (foxxi:verbs\\/asked).',
@@ -312,15 +322,20 @@ export function vocabGraph(): Graph {
     const k = KIND[t.kind];
     if (k.xapiClass) {
       const S = schemes.get(t.kind)!;
+      // A concept replaced by another of its list names the same thing by a second IRI: its words are
+      // its replacement's preferred label, and two concepts of one list with one preferred label are
+      // what SKOS's labelling convention (and ISO 25964) rule out. So its words are a hidden label —
+      // found by a search, not shown as a second entry — and its replacement is named beside it.
+      const replacedInList = !!t.replacedBy && FOXXI_TERMS.some(r => r.name === t.replacedBy && r.kind === t.kind);
       g.add(T, A, iri(SKOS + 'Concept')).add(T, A, iri(k.xapiClass))
-        .add(T, iri(SKOS + 'prefLabel'), en(label)).add(T, iri(RDFS + 'label'), en(label))
+        .add(T, iri(SKOS + (replacedInList ? 'hiddenLabel' : 'prefLabel')), en(termWords(t))).add(T, iri(RDFS + 'label'), en(label))
         .add(T, iri(SKOS + 'notation'), str(notationOf(t)))
-        .add(T, iri(SKOS + 'definition'), en(t.definition))
+        .add(T, iri(SKOS + 'definition'), en(t.definition)).add(T, iri(RDFS + 'comment'), en(t.definition))
         .add(T, iri(SKOS + 'inScheme'), S).add(T, iri(SKOS + 'topConceptOf'), S).add(S, iri(SKOS + 'hasTopConcept'), T);
     } else {
       g.add(T, A, iri(OWL + 'Class'))
         .add(T, iri(RDFS + 'label'), en(label))
-        .add(T, iri(RDFS + 'comment'), en(t.definition));
+        .add(T, iri(RDFS + 'comment'), en(t.definition)).add(T, iri(SKOS + 'definition'), en(t.definition));
       for (const sup of t.subClassOf ?? []) g.add(T, iri(RDFS + 'subClassOf'), iri(/^https?:\/\//.test(sup) ? sup : FOXXI_NS + sup));
     }
     for (const m of t.closeMatch ?? []) g.add(T, iri(SKOS + 'closeMatch'), iri(m));
@@ -331,6 +346,15 @@ export function vocabGraph(): Graph {
     }
     g.add(T, iri(RDFS + 'isDefinedBy'), O);
   }
+  // The construction annotation the IEEE LER and ADL TLA documents' terms carry: a notion of the
+  // Foxxi vertical's, not of either standard, so it is a term of this vocabulary.
+  const C = iri(FOXXI_CONSTRUCTION);
+  g.add(C, A, iri(OWL + 'AnnotationProperty'))
+    .add(C, iri(RDFS + 'label'), en('construction'))
+    .add(C, iri(RDFS + 'comment'), en(CONSTRUCTION_DEFINITION)).add(C, iri(SKOS + 'definition'), en(CONSTRUCTION_DEFINITION))
+    .add(C, iri(RDFS + 'range'), iri(XSD + 'string'))
+    .add(C, iri(SKOS + 'changeNote'), en('2026.10.0: new here. The IEEE LER and ADL TLA documents\' terms carry it, where they carried foxxi-ieee-ler:construction, a term of one of them.'))
+    .add(C, iri(RDFS + 'isDefinedBy'), O);
   declareExternalTerms(g, [FOXXI_NS]);
   _graph = g;
   return g;

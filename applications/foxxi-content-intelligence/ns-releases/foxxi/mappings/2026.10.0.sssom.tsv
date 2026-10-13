@@ -16,7 +16,7 @@
 #mapping_provider: "https://foxxi-bridge.interego.xwisee.com/ns/foxxi"
 #publication_date: 2026-10-12
 #comment: "An original vocabulary of the Foxxi vertical, by Mark Spivey (Foxxi Mediums Inc.). It formalizes no standard; its xAPI concepts are typed with classes of ADL's xAPI ontology (https://w3id.org/xapi/ontology), which is not affiliated with or endorsing this vocabulary."
-subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	comment
-foxxi:CompetencyAssertion	Competency Assertion	skos:closeMatch	foxxi_ieee_ler:CompetencyAssertion	Competency Assertion	semapv:ManualMappingCuration	owl class	owl class		
-foxxi:CourseCompletionCredential	Course Completion Credential	skos:closeMatch	ob:OpenBadgeCredential		semapv:ManualMappingCuration	owl class			
-foxxi:WalletEnvelope	Wallet Envelope	skos:closeMatch	clr:ClrCredential		semapv:ManualMappingCuration	owl class			
+subject_id	subject_label	predicate_id	object_id	object_label	mapping_justification	subject_type	object_type	object_source	object_source_version	comment
+foxxi:CompetencyAssertion	Competency Assertion	skos:closeMatch	foxxi_ieee_ler:CompetencyAssertion	Competency Assertion	semapv:ManualMappingCuration	owl class	owl class			
+foxxi:CourseCompletionCredential	Course Completion Credential	skos:closeMatch	ob:OpenBadgeCredential		semapv:ManualMappingCuration	owl class				
+foxxi:WalletEnvelope	Wallet Envelope	skos:closeMatch	clr:ClrCredential		semapv:ManualMappingCuration	owl class				

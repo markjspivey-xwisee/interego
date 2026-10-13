@@ -7,8 +7,12 @@
  * validates a statement/manifest it is validating against this composed, dereferenceable
  * ontology, and every result cites a sh:NodeShape IRI under <bridge>/ns/<module>/shapes.
  */
-import { type OntologyModel, validateAgainstShape, shapesIri, composeSpecOntology, ns, NS_ROOT, NS_ROOT_LEGACY, type ValidationResult, type ComposedOntology } from '../spec-ontology.js';
+import {
+  type OntologyModel, validateAgainstShape, shapesIri, shapeJsonKeys, shapeSubjectKeys, conceptClassesOf, jsonKeysOf, expandAbs,
+  composeSpecOntology, ns, NS_ROOT, NS_ROOT_LEGACY, type ValidationResult, type ComposedOntology,
+} from '../spec-ontology.js';
 import { validateStatement } from '../xapi-validate.js';
+import { foreignContextKeys } from '../ns/model-context.js';
 import { XAPI_MODEL } from './xapi.model.js';
 import { CMI5_MODEL } from './cmi5.model.js';
 import { SCORM_CAM_MODEL } from './scorm-cam.model.js';
@@ -99,6 +103,9 @@ export function validateInstance(module: string, instance: Record<string, unknow
 /** Validate an instance against ANY ontology model by type-routing to its shapes —
  *  used for compliance models (soc2 / eu-ai-act / nist-rmf) served via the same
  *  /ns/<module> projection but registered outside the LMS/LRS SPEC_MODELS path. */
+/** An absolute IRI, which a context reads as a node where a property's values are nodes. */
+const ABSOLUTE_IRI = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$/;
+
 export function validateInstanceWith(m: OntologyModel, instance: Record<string, unknown>): ValidationResult {
   // Route to the shape whose targetClass matches the instance's declared type
   // (@type / objectType / type) — running EVERY shape against one flat instance would
@@ -184,33 +191,75 @@ export function validateInstanceWith(m: OntologyModel, instance: Record<string, 
       || (s.jsonTypes ?? []).some(t => bare.has(t)),
     ) : [];
   };
-  const matched = shapesFor(rawTypes);
+  // The shapes that select a node by a property it has (sh:targetSubjectsOf): those whose subject
+  // keys it carries with a value. A null, an empty list and an empty language map have no RDF
+  // reading, so they select nothing.
+  const languageMapKeys = new Set(m.jsonLanguageStrings === 'list' ? [] : m.properties
+    .filter(p => p.kind === 'datatype' && (typeof p.range === 'string' ? [p.range] : [...(p.range ?? [])]).includes('rdf:langString'))
+    .flatMap(p => jsonKeysOf(m, p.name)));
+  const hasValue = (node: Record<string, unknown>, k: string): boolean => {
+    const v = node[k];
+    if (v === undefined || v === null || (Array.isArray(v) && v.every(x => x === null))) return false;
+    if (languageMapKeys.has(k) && typeof v === 'object' && !Array.isArray(v)) return Object.values(v as object).some(x => x !== null && x !== undefined);
+    return true;
+  };
+  const bySubjectKeys = (node: Record<string, unknown>): OntologyModel['shapes'] =>
+    m.shapes.filter(s => shapeSubjectKeys(m, s).some(k => hasValue(node, k)));
+  const matched = [...new Set([...shapesFor(rawTypes), ...bySubjectKeys(instance)])];
   // No vacuous pass: an instance that declares a type matching no shape is checked
   // against ALL the model's shapes (so a bogus/absent type cannot skip validation);
-  // an untyped instance falls back to the model's primary shape.
+  // an instance that neither declares a type nor has a property that says what it is falls back
+  // to the model's primary shape — unless that shape's class is one whose instances are the
+  // document's own concepts (an EU AI Act obligation): data cites those, and an untyped record
+  // that cites one is not taken for one.
   const targeted = m.shapes.filter(s => s.targetClass !== undefined);
-  const shapes = matched.length ? matched : (rawTypes.length ? targeted : targeted.slice(0, 1));
+  const concepts = conceptClassesOf(m);
+  const primary = targeted.slice(0, 1).filter(s => !concepts.has(expandAbs(m, s.targetClass!)));
+  const shapes = matched.length ? matched : (rawTypes.length ? targeted : primary);
   const out: ValidationResult['results'] = [];
   for (const s of shapes) out.push(...validateAgainstShape(m, s.name, instance).results);
   // A SHACL processor checks every node of a shape's class, not only the document's root: a
   // nested object that declares a type a shape is written for is checked against that shape too,
   // as it is in the document's RDF reading — and so is a nested object reached by a key whose
-  // values a shape selects (sh:targetObjectsOf; the shape names the key, jsonKeys). A nested object
+  // values a shape selects (sh:targetObjectsOf; the shape names the key, jsonKeys), or that has a
+  // key whose subjects a shape selects (sh:targetSubjectsOf). A nested object
   // no shape is written for is left alone — the no-vacuous-pass rule is about the document, not
   // every node in it — and so are the @context and a credential's proof, which its RDF reading
   // puts in a graph of its own.
   const visit = (value: unknown, at: string, key?: string): void => {
     if (Array.isArray(value)) { for (const v of value) visit(v, at, key); return; }
+    // A value that names a node by its IRI is that node. Where the document describes it, it is checked
+    // where it is described; where it does not, the node has nothing but its IRI — as in the RDF
+    // reading, where a shape that selects it by the property finds no more than that.
+    if (typeof value === 'string' && m.selectByDomainAndRange && key !== undefined && ABSOLUTE_IRI.test(value) && !described.has(value)) {
+      for (const s of m.shapes.filter(sh => shapeJsonKeys(m, sh).includes(key))) {
+        out.push(...validateAgainstShape(m, s.name, { id: value }).results.map(r => ({ ...r, path: `${at}.${r.path}` })));
+      }
+      return;
+    }
     if (!value || typeof value !== 'object') return;
     const node = value as Record<string, unknown>;
     if (at) {
-      const byKey = key === undefined ? [] : m.shapes.filter(s => s.jsonKeys?.includes(key));
-      for (const s of new Set([...shapesFor(typesOf(node)), ...byKey])) {
+      const byKey = key === undefined ? [] : m.shapes.filter(s => shapeJsonKeys(m, s).includes(key));
+      for (const s of new Set([...shapesFor(typesOf(node)), ...byKey, ...bySubjectKeys(node)])) {
         out.push(...validateAgainstShape(m, s.name, node).results.map(r => ({ ...r, path: `${at}.${r.path}` })));
       }
     }
-    for (const [k, v] of Object.entries(node)) if (k !== '@context' && k !== 'proof') visit(v, at ? `${at}.${k}` : k, k);
+    // A value read through another document's context (cmi5's contextTemplate, an xAPI Context) holds
+    // that document's terms, which this document's shapes do not select.
+    for (const [k, v] of Object.entries(node)) if (k !== '@context' && k !== 'proof' && !foreign.has(k)) visit(v, at ? `${at}.${k}` : k, k);
   };
+  const foreign = foreignContextKeys(m);
+  // The IRIs of the nodes the document describes (an object with an id).
+  const described = new Set<string>();
+  const collect = (v: unknown): void => {
+    if (Array.isArray(v)) { v.forEach(collect); return; }
+    if (!v || typeof v !== 'object') return;
+    const o = v as Record<string, unknown>;
+    for (const k of ['@id', 'id']) if (typeof o[k] === 'string') described.add(o[k] as string);
+    for (const [k, x] of Object.entries(o)) if (k !== '@context' && k !== 'proof' && !foreign.has(k)) collect(x);
+  };
+  collect(instance);
   visit(instance, '');
   return { conforms: out.length === 0, results: out, shapesIri: shapesIri(m) };
 }

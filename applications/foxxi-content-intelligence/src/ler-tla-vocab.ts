@@ -65,6 +65,7 @@ import {
   type NamedNode, type BlankNode, type JsonLdTerm,
 } from './ns/rdf.js';
 import { ALL_PREFIXES, addHeader, declareExternalTerms, foxxiPrefix, versionIri, alternates, type DocMeta } from './ns/catalog.js';
+import { FOXXI_CONSTRUCTION, CONSTRUCTION_DEFINITION, foxxiDocMeta } from './foxxi-vocab.js';
 import { renderOntologyHtml } from './ns/html.js';
 import { mappingSetIri } from './ns/sssom.js';
 
@@ -85,6 +86,8 @@ export const P2997 = 'https://standards.ieee.org/ieee/2997/10632/';
 /** Each document's version (YYYY.MM.PATCH; see ns/catalog.ts). */
 const LER_VERSION = '2026.10.0';
 const TLA_VERSION = '2026.10.0';
+/** The version of the IEEE LER shapes graph (spec/ler.model.ts), which the two documents cite at its version. */
+export const LER_SHAPES_VERSION = '2026.10.0';
 
 /** Interego substrate prefixes the two ontologies compose over. */
 const PREFIXES: Record<string, string> = {
@@ -136,11 +139,16 @@ export interface SemTerm {
    *  maintained standards naming similar things does not make their instances interchangeable, and
    *  a reasoner would merge both class extensions on the strength of an editorial judgement. */
   closeMatch?: readonly string[];
+  /** `skos:narrowMatch` — a term of another standard that names a kind of this one (an Open Badges
+   *  credential is a kind of credential). */
+  narrowMatch?: readonly string[];
   /** Substrate primitives a composed/view/role term emerges from. */
   constructedFrom?: readonly string[];
   /** owl:deprecated: kept so what cites it still resolves, and dct:isReplacedBy the term to use. */
   deprecated?: boolean;
   replacedBy?: string;
+  /** What changed about the term, and in which version (skos:changeNote). */
+  changeNote?: string;
 }
 
 // ── IEEE LER family ──────────────────────────────────────────────────
@@ -272,11 +280,12 @@ const LER_TERMS: readonly SemTerm[] = [
     source: 'IEEE 1484.2-2024 (Learning and Employment Record Ecosystems); W3C Verifiable Credentials Data Model 2.0',
     subClassOf: ['vc:VerifiableCredential', 'amta:Attestation'],
     constructedFrom: ['vc:VerifiableCredential', 'iep:verifiableCredential'],
-    // closeMatch (NOT exactMatch): OB3 OpenBadgeCredential is a SUBTYPE of this broader Credential
-    // class, not identical to it — so a strict identity claim would be wrong.
-    // Target the CANONICAL, dereferenceable 1EdTech vocab IRI (the /spec/ob/v3p0/OpenBadgeCredential
-    // path 404s; the class IRI the OB 3.0 JSON-LD context resolves to is vc/ob/vocab.html#…).
-    closeMatch: ['https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential'],
+    // narrowMatch: an Open Badges 3.0 credential and a CLR 2.0 credential are each a KIND of this
+    // broader Credential, as its definition says — not the same notion (exactMatch), and more than
+    // merely close (closeMatch, which said less than the definition). Targets are the canonical,
+    // dereferenceable 1EdTech vocab IRIs the OB 3.0 and CLR 2.0 JSON-LD contexts resolve to.
+    narrowMatch: ['https://purl.imsglobal.org/spec/vc/ob/vocab.html#OpenBadgeCredential', 'https://purl.imsglobal.org/spec/vc/clr/vocab.html#ClrCredential'],
+    changeNote: '2026.10.0: Open Badges and CLR credentials are narrower matches (kinds of a Credential), where the Open Badges one had been a close match.',
   },
   {
     family: 'ler', name: 'Endorsement', kind: 'Class', construction: 'composed',
@@ -366,6 +375,7 @@ const LER_TERMS: readonly SemTerm[] = [
     label: 'holder',
     definition: 'Relates an Enterprise Learner Record or a credential to the one Learner it is about. Deprecated: the name reads as a Verifiable Credential\'s holder, a different relation (who presents a credential, not whom it is about); about learner replaces it.',
     deprecated: true, replacedBy: 'ler:aboutLearner',
+    changeNote: '2026.10.0: deprecated in favour of about learner.',
     source: 'IEEE P2997 (Enterprise Learner Record); IEEE 1484.2-2024 (Learning and Employment Record Ecosystems)',
     domain: ['ler:EnterpriseLearnerRecord', 'ler:Credential'], range: 'ler:Learner',
     functional: true,
@@ -663,6 +673,240 @@ const LER_TERMS: readonly SemTerm[] = [
     domain: 'ler:RecordEntry', range: 'xsd:boolean',
     functional: true,
   },
+  // ── The rest of what a Foxxi Enterprise Learner Record says: every field that states a fact has
+  // a term (the record's context maps each), so nothing in a record is left to VC 2.0's
+  // undefined-terms context. Names given beside an IRI are for a reader that does not dereference it.
+  {
+    family: 'ler', name: 'conformsToLabel', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'conforms-to label',
+    definition: 'The title of the standard an Enterprise Learner Record conforms to (its dct:conformsTo), given for a reader that does not dereference that IRI.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:string',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'hasCredential', kind: 'ObjectProperty', construction: 'minted',
+    label: 'has credential',
+    definition: 'Relates an Enterprise Learner Record to a credential conferred on its learner that the record lists. The credential itself is where its raw data location says.',
+    source: 'IEEE P2997 (Enterprise Learner Record: credentials held, by indication of where they are stored)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'ler:Credential',
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'achievementName', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'achievement name',
+    definition: 'The name of the achievement a credential confers, as the credential gives it.',
+    source: '1EdTech Open Badges 3.0 (Achievement: name), as a record lists the credential',
+    domain: 'ler:Credential', range: 'xsd:string',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'proofVerified', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'proof verified',
+    definition: 'Whether the proof of a credential a record lists verified when the record was assembled.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:Credential', range: 'xsd:boolean',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'verbDisplay', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'verb display',
+    definition: 'How the statement a record entry was projected from displays its verb, in one language.',
+    source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.2 (Verb: display), as a record entry carries it',
+    domain: 'ler:RecordEntry', range: 'xsd:string',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'activityName', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'activity name',
+    definition: 'The name of the activity or task a record entry is about, as its statement names it.',
+    source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.3 (Activity Definition: name), as a record entry carries it',
+    domain: 'ler:RecordEntry', range: 'xsd:string',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'outcomeQuality', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'outcome quality',
+    definition: 'The quality of the outcome of the work a record entry records: the scaled score of its statement, from -1 to 1. A decimal, or a double, which is what JSON-LD makes of a JSON number.',
+    source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.4 (Score: scaled), as a record entry carries it',
+    domain: 'ler:RecordEntry', range: ['xsd:decimal', 'xsd:double'],
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'duration', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'duration',
+    definition: 'How long the work a record entry records took: an ISO 8601 duration, as its statement\'s result gives it.',
+    source: 'IEEE 9274.1.1-2023 (xAPI 2.0) §5.2.2.4 (Result: duration), as a record entry carries it',
+    domain: 'ler:RecordEntry', range: 'xsd:string',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'costUSD', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'cost in US dollars',
+    definition: 'What the work a record entry records cost, in US dollars, as its statement reports it. A decimal, or a double.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:RecordEntry', range: ['xsd:decimal', 'xsd:double'],
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'competencyLabel', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'competency label',
+    definition: 'The name of the competency a competency assertion is about (ler:aboutCompetency), given for a reader that does not dereference it.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:CompetencyAssertion', range: 'xsd:string',
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'frameworkName', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'framework name',
+    definition: 'The name of the competency framework the competency of an assertion belongs to, as the credential that aligns it names it.',
+    source: '1EdTech Open Badges 3.0 (Alignment: targetFramework), as an assertion carries it',
+    domain: 'ler:CompetencyAssertion', range: 'xsd:string',
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'proficiencyLabel', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'proficiency label',
+    definition: 'The name of the proficiency level a competency assertion places its subject at (ler:atProficiency), given for a reader that does not dereference it.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:CompetencyAssertion', range: 'xsd:string',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'proficiencyRank', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'proficiency rank',
+    definition: 'The rank of that proficiency level on its scale: 1 for the lowest.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:CompetencyAssertion', range: 'xsd:positiveInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'trainingCompletionCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'training completion count',
+    definition: 'How many training completions a competency assertion rests on.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:CompetencyAssertion', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'performanceExecutionCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'performance execution count',
+    definition: 'How many distinct tasks performed a competency assertion rests on.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:CompetencyAssertion', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'performanceSuccessRate', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'performance success rate',
+    definition: 'The share of performances that asserted an outcome and succeeded, from 0 to 1: of all a record lists, or of those a competency assertion rests on. A decimal, or a double.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: ['ler:EnterpriseLearnerRecord', 'ler:CompetencyAssertion'], range: ['xsd:decimal', 'xsd:double'],
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'performanceMeanQuality', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'performance mean quality',
+    definition: 'The mean quality of the outcomes of the performances a competency assertion rests on, where they were scored. A decimal, or a double.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:CompetencyAssertion', range: ['xsd:decimal', 'xsd:double'],
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'supersessionNote', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'supersession note',
+    definition: 'Why a competency assertion replaces a weaker one made before it about the same competency, in words: performance evidence superseding an inference from training, say.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:CompetencyAssertion', range: 'xsd:string',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'experienceCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'experience count',
+    definition: 'How many learning experiences an Enterprise Learner Record lists.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'performanceCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'performance count',
+    definition: 'How many performance records an Enterprise Learner Record lists.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'credentialCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'credential count',
+    definition: 'How many credentials an Enterprise Learner Record lists.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'verifiedCredentialCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'verified credential count',
+    definition: 'How many of the credentials an Enterprise Learner Record lists had a proof that verified when it was assembled.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'competencyCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'competency count',
+    definition: 'How many competency assertions an Enterprise Learner Record makes.',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'assertedCompetencyCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'asserted competency count',
+    definition: 'How many of a record\'s competency assertions are asserted (iep:Asserted).',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'inferredCompetencyCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'inferred competency count',
+    definition: 'How many of a record\'s competency assertions are hypothetical, inferred from learning experiences (iep:Hypothetical).',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
+  {
+    family: 'ler', name: 'performanceVerifiedCompetencyCount', kind: 'DatatypeProperty', construction: 'minted',
+    label: 'performance-verified competency count',
+    definition: 'How many of a record\'s competency assertions rest on observed performance (their evidence basis is performance).',
+    source: 'Foxxi (the Enterprise Learner Record it assembles)',
+    domain: 'ler:EnterpriseLearnerRecord', range: 'xsd:nonNegativeInteger',
+    functional: true,
+    changeNote: '2026.10.0: new, for a field of the record that had no term.',
+  },
 ];
 
 /** The JSON-LD context of a Foxxi Enterprise Learner Record, used after the W3C VC 2.0 context —
@@ -683,17 +927,21 @@ export const ELR_CONTEXT_URL = `${LER_DOC}/context/${LER_VERSION}`;
  * competency assertion, where `id` names the competency and `assertionId` the assertion node (a
  * property-scoped context may do that; JSON-LD 1.1 §4.1.11).
  *
- * ★ EVERY FIELD THAT STATES A FACT HAS A TERM. Who the record is about, the organisations on its
- * path, each entry's activity, verb, time and outcome, each assertion's competency, level,
- * confidence, rule, agent and evidence, and where the raw data is kept: each is read into this
- * vocabulary, an IRI as an IRI. A review found the record's activity and task IRIs, an assertion's
- * type and a performance's success read as issuer-dependent terms (strings, for the IRIs), and an
- * entry's verb and time read with the xAPI ontology's terms — whose domain made every entry an xAPI
- * Statement, and every entry a Statement the xAPI shapes refused. Entries have their own terms now.
- * What is left without a term is presentation derived from the rest — the display names of things
- * named by IRI (verbDisplay, activityName, taskName, label, proficiencyLabel, proficiencyRank,
- * conformsToLabel) and the summary counts — which the record lists VC 2.0's undefined-terms context
- * last to read as issuer-dependent IRIs (VC 2.0 §5.2), not to drop.
+ * ★ EVERY FIELD HAS A TERM. Who the record is about, the organisations on its path, each entry's
+ * activity, verb, time, outcome, quality, duration, cost and observer, each assertion's competency,
+ * level, confidence, rule, agent, evidence and the figures it rests on, the credentials the record
+ * lists, the record's summary counts, and where the raw data is kept: each is read into this
+ * vocabulary (or into rdfs:, dct:, prov: and iep: where those already name the thing), an IRI as an
+ * IRI. A review found the record's activity and task IRIs, an assertion's type and a performance's
+ * success read as issuer-dependent terms (strings, for the IRIs), and an entry's verb and time read
+ * with the xAPI ontology's terms — whose domain made every entry an xAPI Statement, and every entry
+ * a Statement the xAPI shapes refused. A second review found the display names, the evidence
+ * figures, the summary counts and every field of a listed credential still left to VC 2.0's
+ * undefined-terms context; a name given beside an IRI, a count and an issuer are facts, so each has
+ * a term now. The undefined-terms context stays last in a record's @context (VC 2.0 §5.2), for a
+ * field a later version adds before its context does; a record this code writes leaves nothing to it.
+ * `summary` and an assertion's `evidenceSummary` are nests (@nest): their figures are said of the
+ * record, and of the assertion.
  *
  * ★ AN ORGANISATION PATH IS A LIST OF STEPS. Each step is a node of its own (ler:OrganizationPathStep,
  * the W3C n-ary relation pattern): its `id` names the organisation (ler:pathOrganization), and its
@@ -723,6 +971,13 @@ export function elrJsonLdContext(): Record<string, unknown> {
     taskId: { '@id': 'ler:aboutActivity', '@type': '@id' },
     taskType: { '@id': 'ler:activityType', '@type': '@id' },
     success: 'ler:succeeded',
+    verbDisplay: 'ler:verbDisplay',
+    activityName: 'ler:activityName',
+    taskName: 'ler:activityName',
+    quality: 'ler:outcomeQuality',
+    durationIso: 'ler:duration',
+    costUsd: 'ler:costUSD',
+    observedBy: { '@id': 'prov:wasAttributedTo', '@type': '@id' },
   };
   return {
     '@context': {
@@ -731,12 +986,14 @@ export function elrJsonLdContext(): Record<string, unknown> {
       ler: LER_NS, tla: TLA_NS,
       iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
       prov: 'http://www.w3.org/ns/prov#', dct: 'http://purl.org/dc/terms/',
+      rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
       xsd: 'http://www.w3.org/2001/XMLSchema#', hydra: 'http://www.w3.org/ns/hydra/core#',
       EnterpriseLearnerRecord: 'ler:EnterpriseLearnerRecord',
       CompetencyAssertion: 'ler:CompetencyAssertion',
       Asserted: 'iep:Asserted',
       Hypothetical: 'iep:Hypothetical',
       conformsTo: { '@id': 'dct:conformsTo', '@type': '@id' },
+      conformsToLabel: 'ler:conformsToLabel',
       // prov:generatedAtTime, not dct:created: the Foxxi documents use dct:created as an annotation
       // property in their headers, and OWL 2 DL cannot read one IRI as two kinds of property.
       assembledAt: { '@id': 'prov:generatedAtTime', '@type': 'xsd:dateTime' },
@@ -759,6 +1016,27 @@ export function elrJsonLdContext(): Record<string, unknown> {
       performanceRecords: { '@id': 'ler:recordEntry', '@container': '@set', '@context': entry },
       rawDataLocation: { '@id': 'ler:dataLocation', '@type': 'xsd:anyURI' },
       modalStatus: { '@id': 'iep:modalStatus', '@type': '@vocab' },
+      // The credentials a record lists, each by its id: its issuer (an IRI), the name of the
+      // achievement it confers, and whether its proof verified when the record was assembled.
+      credentials: {
+        '@id': 'ler:hasCredential', '@container': '@set',
+        '@context': {
+          issuer: { '@id': 'ler:issuedBy', '@type': '@id' },
+          achievementName: 'ler:achievementName',
+          verified: 'ler:proofVerified',
+        },
+      },
+      // The summary's figures are said of the record itself.
+      summary: '@nest',
+      experienceCount: 'ler:experienceCount',
+      performanceCount: 'ler:performanceCount',
+      performanceSuccessRate: 'ler:performanceSuccessRate',
+      credentialCount: 'ler:credentialCount',
+      verifiedCredentialCount: 'ler:verifiedCredentialCount',
+      competencyCount: 'ler:competencyCount',
+      assertedCompetencies: 'ler:assertedCompetencyCount',
+      inferredCompetencies: 'ler:inferredCompetencyCount',
+      performanceVerifiedCompetencies: 'ler:performanceVerifiedCompetencyCount',
       competencies: {
         '@id': 'ler:hasAssertion', '@container': '@set',
         '@context': {
@@ -775,6 +1053,17 @@ export function elrJsonLdContext(): Record<string, unknown> {
           assertingAgent: { '@id': 'prov:wasAttributedTo', '@type': '@id' },
           evidence: { '@id': 'ler:supportedByEvidence', '@type': '@id', '@container': '@set' },
           basis: 'ler:evidenceBasis',
+          // What the assertion is called: "Demonstrated: …", "Inferred: …".
+          label: 'rdfs:label',
+          framework: 'ler:frameworkName',
+          proficiencyLabel: 'ler:proficiencyLabel',
+          proficiencyRank: 'ler:proficiencyRank',
+          // The evidence figures are said of the assertion itself.
+          evidenceSummary: '@nest',
+          trainingCompletions: 'ler:trainingCompletionCount',
+          performanceExecutions: 'ler:performanceExecutionCount',
+          performanceAvgQuality: 'ler:performanceMeanQuality',
+          supersedes: 'ler:supersessionNote',
         },
       },
     },
@@ -1471,8 +1760,8 @@ export function perfRollupRuleText(): string {
     + 'Quality is a FLOOR, not a scale: every value at or above a band\'s floor ranks alike. '
     + 'A verified credential with no production evidence maps to Competent; training completion only maps to '
     + 'Novice (Hypothetical). The reported confidence IS the reliability above. '
-    + 'This rule is DATA: it is parsed at runtime from docs/ns/adl-tla-proficiency.ttl, and this sentence is '
-    + 'generated from the same triples the evaluator walks.';
+    + 'This rule is data: its bands are the tla:ProficiencyBand individuals of this document (tla:hasBand), '
+    + 'which the evaluator reads as they are published, and this sentence is generated from the same triples.';
 }
 
 // Proficiency framework + roll-up-rule metadata — shared verbatim by the Turtle
@@ -1541,7 +1830,7 @@ export function semDocMeta(family: 'ler' | 'tla'): DocMeta {
     ? {
         iri: LER_DOC, ns: LER_NS, prefix: foxxiPrefix('ieee-ler'),
         title: 'IEEE Learning and Employment Records (LER) — Foxxi composable ontology',
-        description: 'An OWL 2 DL vocabulary for the IEEE learning-and-employment-record family — the IEEE P2997 Enterprise Learner Record (active PAR), IEEE 1484.20.3-2022 Shareable Competency Definitions, IEEE 1484.2-2024 LER Ecosystems and the earlier IEEE 1484.20.1-2007 Reusable Competency Definitions (now inactive-reserved) — modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate\'s attestation, event-record, resource-descriptor and aggregation primitives, not new classes. Each term records how it is built (foxxi-ieee-ler:construction) and from which substrate primitives (iep:constructedFrom).',
+        description: 'An OWL 2 DL vocabulary for the IEEE learning-and-employment-record family — the IEEE P2997 Enterprise Learner Record (active PAR), IEEE 1484.20.3-2022 Shareable Competency Definitions, IEEE 1484.2-2024 LER Ecosystems and the earlier IEEE 1484.20.1-2007 Reusable Competency Definitions (now inactive-reserved) — modelled as compositions over the Interego substrate: most concepts are aggregations, views or roles over the substrate\'s attestation, event-record, resource-descriptor and aggregation primitives, not new classes. Each term records how it is built (foxxi:construction, an annotation of the Foxxi vocabulary) and from which substrate primitives (iep:constructedFrom, the Interego substrate\'s own relation).',
         version: LER_VERSION, created: '2026-05-20', modified: '2026-10-12', issued: '2026-10-12',
         standards: [
           { title: 'IEEE P2997 — Standard for Enterprise Learner Record (active PAR)', url: P2997 },
@@ -1550,10 +1839,12 @@ export function semDocMeta(family: 'ler' | 'tla'): DocMeta {
           { title: 'IEEE 1484.20.1-2007 — Data Model for Reusable Competency Definitions (inactive-reserved)', url: 'https://standards.ieee.org/ieee/1484.20.1/4012/' },
         ],
         bodies: ['IEEE', 'ADL', '1EdTech'],
-        seeAlso: [TLA_DOC, `${LER_DOC}/shapes`, mappingSetIri(LER_DOC), 'https://markjspivey-xwisee.github.io/interego/ns/iep#'],
+        // Its own shapes and mapping set at the versions released with it; the other document at its
+        // document IRI.
+        seeAlso: [TLA_DOC, `${LER_DOC}/shapes/${LER_SHAPES_VERSION}`, `${mappingSetIri(LER_DOC)}/${LER_VERSION}`, 'https://markjspivey-xwisee.github.io/interego/ns/iep#'],
         sourceCode: ['applications/foxxi-content-intelligence/src/ler-tla-vocab.ts'],
         notes: [
-          `Cross-standard alignments to the ADL TLA ontology and to CaSS, CTDL-ASN, Open Badges and CLR are SKOS mapping relations (closeMatch / exactMatch), never owl:equivalentClass: they record that two standards name closely related notions, not that their instances are interchangeable. They are also published as an SSSOM mapping set at ${mappingSetIri(LER_DOC)}.`,
+          `Cross-standard alignments to the ADL TLA ontology and to CaSS, CTDL-ASN, Open Badges and CLR are SKOS mapping relations (closeMatch and narrowMatch), never owl:equivalentClass: they record that two standards name closely related notions, or that one names a kind of the other, not that their instances are interchangeable. They are also published as an SSSOM mapping set at ${mappingSetIri(LER_DOC)}.`,
           'Interego substrate terms (iep:, amta:, hela:) are referenced, not imported: the substrate ontologies are declared here term by term so this document is self-contained OWL 2 DL and loads without network access to them.',
           `A Foxxi Enterprise Learner Record is JSON-LD read through the W3C VC 2.0 context and the record context published at ${ELR_CONTEXT_URL}, which maps its fields to this vocabulary; the shapes at ${LER_DOC}/shapes constrain that RDF reading.`,
         ],
@@ -1569,7 +1860,7 @@ export function semDocMeta(family: 'ler' | 'tla'): DocMeta {
           { title: 'CaSS competency schema 0.4', url: 'https://schema.cassproject.org/0.4/' },
         ],
         bodies: ['ADL', 'IEEE', 'the CaSS project'],
-        seeAlso: [LER_DOC, `${LER_DOC}/shapes`, mappingSetIri(TLA_DOC), 'https://markjspivey-xwisee.github.io/interego/ns/iep#'],
+        seeAlso: [LER_DOC, `${LER_DOC}/shapes/${LER_SHAPES_VERSION}`, `${mappingSetIri(TLA_DOC)}/${TLA_VERSION}`, 'https://markjspivey-xwisee.github.io/interego/ns/iep#'],
         sourceCode: ['applications/foxxi-content-intelligence/src/ler-tla-vocab.ts', 'docs/ns/adl-tla-proficiency.ttl'],
         notes: [
           `Cross-standard alignments to the IEEE LER ontology, CaSS and the ADL xAPI verb registry are SKOS mapping relations, never owl:equivalentClass. They are also published as an SSSOM mapping set at ${mappingSetIri(TLA_DOC)}.`,
@@ -1583,7 +1874,10 @@ const KIND_TYPE: Record<TermKind, string> = {
   Concept: SKOS + 'Concept', Collection: SKOS + 'Collection',
 };
 const IEP_CONSTRUCTED_FROM = 'https://markjspivey-xwisee.github.io/interego/ns/iep#constructedFrom';
-const CONSTRUCTION = `${LER_NS}construction`;
+/** The construction annotation every term carries: the Foxxi vocabulary's (foxxi:construction). The
+ *  LER document's own, which both documents' terms used to carry, is kept there, deprecated. */
+const CONSTRUCTION = FOXXI_CONSTRUCTION;
+const LER_CONSTRUCTION = `${LER_NS}construction`;
 
 function addTerm(g: Graph, t: SemTerm, O: NamedNode): void {
   const S = iri((t.family === 'ler' ? LER_NS : TLA_NS) + t.name);
@@ -1592,7 +1886,8 @@ function addTerm(g: Graph, t: SemTerm, O: NamedNode): void {
   if (t.functional) g.add(S, A, iri(OWL + 'FunctionalProperty'));
   // A deprecated term's label begins "obsolete " (the OBO Foundry convention ROBOT checks).
   g.add(S, iri(RDFS + 'label'), en(t.deprecated ? `obsolete ${t.label}` : t.label));
-  g.add(S, iri(RDFS + 'comment'), en(t.definition));
+  // The definition as skos:definition and as rdfs:comment, the same string, as in every Foxxi document.
+  g.add(S, iri(RDFS + 'comment'), en(t.definition)).add(S, iri(SKOS + 'definition'), en(t.definition));
   g.add(S, iri(DCT + 'source'), str(t.source));
   // The emergent-composable facet — machine-readable.
   g.add(S, iri(CONSTRUCTION), str(t.construction));
@@ -1617,6 +1912,8 @@ function addTerm(g: Graph, t: SemTerm, O: NamedNode): void {
     g.add(S, iri(RDFS + 'range'), expr(t.range, t.kind === 'DatatypeProperty'));
   }
   for (const cm of t.closeMatch ?? []) g.add(S, iri(SKOS + 'closeMatch'), iri(abs(cm)));
+  for (const nm of t.narrowMatch ?? []) g.add(S, iri(SKOS + 'narrowMatch'), iri(abs(nm)));
+  if (t.changeNote) g.add(S, iri(SKOS + 'changeNote'), en(t.changeNote));
   // A composed / view / role term names the substrate primitives it
   // emerges from — the "emergent composable" claim, in RDF.
   for (const cf of t.constructedFrom ?? []) g.add(S, iri(IEP_CONSTRUCTED_FROM), iri(abs(cf)));
@@ -1656,7 +1953,7 @@ function addDisjointness(g: Graph, family: 'ler' | 'tla'): void {
 }
 
 // The MOM verb ConceptScheme comment.
-const MOM_SCHEME_COMMENT = `The ${MOM_VERBS.length} Master Object Model performance verbs, grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb that is a registered xAPI verb — an ADL core verb at adlnet.gov/expapi/verbs, or a cmi5 verb at w3id.org/xapi/adl/verbs — is an exact match of it and names it as its source; every other verb was coined by this project and says so in an editorial note, with no mapping to an IRI that does not exist.`;
+const MOM_SCHEME_COMMENT = `The ${MOM_VERBS.length} performance verbs of the ADL TLA Master Object Model (MOM), grouped into five thematic levels (this project's own pedagogical organisation, NOT ADL-defined numbered conformance levels). A verb that is a registered verb of ADL's vocabulary — an ADL core verb at adlnet.gov/expapi/verbs, or a cmi5 verb at w3id.org/xapi/adl/verbs — is an exact match of it and names it as its source. Every other verb has an IRI of this vocabulary's, and says so in an editorial note; none is mapped to an IRI that was not found registered. ADL's TLA xAPI profile (w3id.org/xapi/tla) may give some of them IRIs of its own, and has not been checked here.`;
 
 function addMom(g: Graph, O: NamedNode): void {
   const A = iri(RDF + 'type');
@@ -1692,7 +1989,7 @@ function addMom(g: Graph, O: NamedNode): void {
     if (!definition) throw new Error(`ler-tla-vocab: MOM concept ${c.name} has no definition`);
     g.add(C, A, iri(SKOS + 'Concept'))
       .add(C, iri(RDFS + 'label'), en(momLabel(c))).add(C, iri(SKOS + 'prefLabel'), en(momLabel(c)))
-      .add(C, iri(SKOS + 'definition'), en(definition))
+      .add(C, iri(SKOS + 'definition'), en(definition)).add(C, iri(RDFS + 'comment'), en(definition))
       .add(C, iri(SKOS + 'notation'), str(c.label))
       .add(C, iri(SKOS + 'inScheme'), s).add(C, iri(SKOS + 'topConceptOf'), s).add(s, iri(SKOS + 'hasTopConcept'), C)
       .add(C, iri(CONSTRUCTION), str('concept'));
@@ -1702,7 +1999,7 @@ function addMom(g: Graph, O: NamedNode): void {
       // counterpart says it was coined here; no IRI is ever fabricated for one.
       const registered = momVerbMatch(c.label);
       if (registered) g.add(C, iri(SKOS + 'exactMatch'), iri(registered)).add(C, iri(DCT + 'source'), iri(registered));
-      else g.add(C, iri(SKOS + 'editorialNote'), en('Coined by this vocabulary: no registered xAPI verb has this meaning.'));
+      else g.add(C, iri(SKOS + 'editorialNote'), en('The IRI is this vocabulary\'s: the verb is one of the MOM\'s, and no verb of ADL\'s vocabulary (adlnet.gov/expapi/verbs) or of cmi5\'s (w3id.org/xapi/adl/verbs) has its meaning. ADL\'s TLA xAPI profile (w3id.org/xapi/tla) may give it an IRI of its own; that profile has not been checked here.'));
     }
     g.add(C, iri(RDFS + 'isDefinedBy'), O);
   }
@@ -1723,7 +2020,7 @@ function addProficiency(g: Graph, O: NamedNode): void {
     const L = iri(proficiencyLevelIri(l.name));
     g.add(L, A, iri(`${TLA_NS}Level`)).add(L, A, iri(`${LER_NS}ProficiencyLevel`)).add(L, A, iri(SKOS + 'Concept'))
       .add(L, iri(RDFS + 'label'), en(l.label)).add(L, iri(SKOS + 'prefLabel'), en(l.label))
-      .add(L, iri(RDFS + 'comment'), en(l.comment))
+      .add(L, iri(RDFS + 'comment'), en(l.comment)).add(L, iri(SKOS + 'definition'), en(l.comment))
       .add(L, iri(SKOS + 'inScheme'), FW).add(L, iri(SKOS + 'topConceptOf'), FW).add(FW, iri(SKOS + 'hasTopConcept'), L)
       .add(L, iri(SKOS + 'notation'), str(String(l.rank)))
       .add(L, iri(CONSTRUCTION), str('concept'))
@@ -1750,14 +2047,30 @@ function addProficiency(g: Graph, O: NamedNode): void {
   }
 }
 
-/** The construction annotation property — declared once, in the IEEE-LER ontology. */
-function addConstructionProperty(g: Graph, O: NamedNode): void {
+/**
+ * The construction annotation. ★ A NOTION OF THE VERTICAL'S, NOT OF A STANDARD'S: it was a term of the
+ * IEEE LER document, and the ADL TLA document's terms carried it too — a term of one standard's
+ * formalization annotating another's. It is the Foxxi vocabulary's now (foxxi:construction); each
+ * document declares it with MIREOT's minimum, and the LER document keeps its own, deprecated, so
+ * what cites that still resolves.
+ */
+function addConstructionProperty(g: Graph, O: NamedNode, family: 'ler' | 'tla'): void {
   const C = iri(CONSTRUCTION);
   g.add(C, iri(RDF + 'type'), iri(OWL + 'AnnotationProperty'))
     .add(C, iri(RDFS + 'label'), en('construction'))
-    .add(C, iri(RDFS + 'comment'), en('How a term relates to the Interego substrate: minted (genuinely new vocabulary), composed (an aggregation over substrate primitives), view (a query projection), role (a role a generic Agent plays), or concept (a SKOS code-list value).'))
-    .add(C, iri(RDFS + 'range'), iri(XSD + 'string'))
-    .add(C, iri(RDFS + 'isDefinedBy'), O);
+    .add(C, iri(RDFS + 'comment'), en(CONSTRUCTION_DEFINITION))
+    .add(C, iri(RDFS + 'isDefinedBy'), iri(foxxiDocMeta().iri));
+  if (family !== 'ler') return;
+  const L = iri(LER_CONSTRUCTION);
+  g.add(L, iri(RDF + 'type'), iri(OWL + 'AnnotationProperty'))
+    .add(L, iri(RDFS + 'label'), en('obsolete construction'))
+    .add(L, iri(RDFS + 'comment'), en(`${CONSTRUCTION_DEFINITION} Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it.`))
+    .add(L, iri(SKOS + 'definition'), en(`${CONSTRUCTION_DEFINITION} Deprecated: the Foxxi vocabulary's construction (foxxi:construction) replaces it.`))
+    .add(L, iri(RDFS + 'range'), iri(XSD + 'string'))
+    .add(L, iri(OWL + 'deprecated'), typed('true', XSD + 'boolean'))
+    .add(L, iri(DCT + 'isReplacedBy'), C)
+    .add(L, iri(SKOS + 'changeNote'), en('2026.10.0: deprecated in favour of the Foxxi vocabulary\'s construction.'))
+    .add(L, iri(RDFS + 'isDefinedBy'), O);
 }
 
 const _graphs = new Map<'ler' | 'tla', Graph>();
@@ -1776,7 +2089,7 @@ export function semOntologyGraph(family: 'ler' | 'tla'): Graph {
 function buildSemOntologyGraph(family: 'ler' | 'tla'): Graph {
   const g = new Graph();
   const O = addHeader(g, semDocMeta(family));
-  if (family === 'ler') addConstructionProperty(g, O);
+  addConstructionProperty(g, O, family);
   for (const t of family === 'ler' ? LER_TERMS : TLA_TERMS) addTerm(g, t, O);
   if (family === 'tla') { addMom(g, O); addProficiency(g, O); }
   addDisjointness(g, family);
@@ -1788,7 +2101,7 @@ function buildSemOntologyGraph(family: 'ler' | 'tla'): Graph {
   for (const u of [...declared.classes, ...declared.object, ...declared.datatype, ...declared.annotation]) {
     if (!u.startsWith(siblingNs)) continue;
     const local = u.slice(siblingNs.length);
-    const label = u === CONSTRUCTION ? 'construction' : TERM_INDEX.get(`${sibling}:${local}`)?.label;
+    const label = TERM_INDEX.get(`${sibling}:${local}`)?.label;
     if (!label) throw new Error(`ler-tla-vocab: ${u} is used in /ns/${family === 'ler' ? 'ieee-ler' : 'adl-tla'} but defined nowhere`);
     if (!g.objects(iri(u), RDFS + 'label').length) g.add(iri(u), iri(RDFS + 'label'), en(label));
     g.add(iri(u), iri(RDFS + 'isDefinedBy'), iri(sibling === 'ler' ? LER_DOC : TLA_DOC));

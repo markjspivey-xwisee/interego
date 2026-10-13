@@ -54,13 +54,14 @@ export interface SssomRow {
   readonly subject_type?: SssomEntityType;
   readonly object_type?: SssomEntityType;
   readonly object_source?: string;
+  readonly object_source_version?: string;
   readonly comment?: string;
 }
 
 /** The columns written, in the order the SSSOM schema lists the slots. */
 export const SSSOM_COLUMNS = [
   'subject_id', 'subject_label', 'predicate_id', 'object_id', 'object_label', 'mapping_justification',
-  'subject_type', 'object_type', 'object_source', 'comment',
+  'subject_type', 'object_type', 'object_source', 'object_source_version', 'comment',
 ] as const satisfies ReadonlyArray<keyof SssomRow>;
 
 export interface MappingSetSource {
@@ -73,7 +74,7 @@ export interface MappingSetSource {
   /** What is on record about a target outside this document. */
   readonly lookup?: (iri: string) => MappingTargetInfo | undefined;
   /** The ontology this document is aligned to term by term (see the header). */
-  readonly counterpart?: { readonly iri: string; readonly namespace: string };
+  readonly counterpart?: { readonly iri: string; readonly namespace: string; readonly version?: string; readonly record?: string };
 }
 
 const MAPPING_RELATIONS = ['exactMatch', 'closeMatch', 'broadMatch', 'narrowMatch', 'relatedMatch'] as const;
@@ -151,6 +152,7 @@ export function mappingRows(src: MappingSetSource): SssomRow[] {
       object_id: curie(o), object_label: target?.label, mapping_justification: MANUAL_CURATION,
       subject_type: entityTypeIn(g, s), object_type: target?.type,
       object_source: inCounterpart ? curie(src.counterpart!.iri) : undefined,
+      object_source_version: inCounterpart ? src.counterpart!.version : undefined,
       comment: notes.get(`${s} ${t.p.value} ${o}`),
     }));
   }
@@ -167,6 +169,7 @@ export function mappingRows(src: MappingSetSource): SssomRow[] {
         subject_id: curie(s), subject_label: labelIn(g, s), predicate_id: 'skos:exactMatch',
         object_id: NO_TERM_FOUND, mapping_justification: MANUAL_CURATION,
         subject_type: entityTypeIn(g, s), object_source: curie(src.counterpart.iri),
+        object_source_version: src.counterpart.version,
       }));
     }
   }
@@ -215,7 +218,8 @@ export function renderSssomTsv(src: MappingSetSource): string {
   const curieMap = usedPrefixes(rows, [subjectSource], src.prefixes);
   const gaps = rows.filter(r => r.object_id === NO_TERM_FOUND).length;
   const description = `Mappings from the terms of ${meta.title} (${meta.iri}) to other vocabularies: one row for each SKOS mapping the ontology makes, generated from it.`
-    + (src.counterpart ? ` The ontology is aligned term by term to ${src.counterpart.iri}; each of its ${gaps} terms with no counterpart there is listed as mapped to sssom:NoTermFound.` : '');
+    + (src.counterpart ? ` The ontology is aligned term by term to ${src.counterpart.iri}; each of its ${gaps} terms with no counterpart there is listed as mapped to sssom:NoTermFound.` : '')
+    + (src.counterpart?.version ? ` The mappings into it, and the reasons a match is broad or close, are to it as it was at ${src.counterpart.version} (object_source_version)${src.counterpart.record ? `; what it declares there, and its axioms, are recorded at ${src.counterpart.record}` : ''}.` : '');
   const md: string[] = ['curie_map:'];
   for (const [p, ns] of Object.entries(curieMap)) md.push(`  ${p}: ${yamlString(ns)}`);
   md.push(

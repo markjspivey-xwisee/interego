@@ -7,6 +7,7 @@
     "iep": "https://markjspivey-xwisee.github.io/interego/ns/iep#",
     "prov": "http://www.w3.org/ns/prov#",
     "dct": "http://purl.org/dc/terms/",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
     "xsd": "http://www.w3.org/2001/XMLSchema#",
     "hydra": "http://www.w3.org/ns/hydra/core#",
     "EnterpriseLearnerRecord": "ler:EnterpriseLearnerRecord",
@@ -17,6 +18,7 @@
       "@id": "dct:conformsTo",
       "@type": "@id"
     },
+    "conformsToLabel": "ler:conformsToLabel",
     "assembledAt": {
       "@id": "prov:generatedAtTime",
       "@type": "xsd:dateTime"
@@ -81,7 +83,17 @@
           "@id": "ler:activityType",
           "@type": "@id"
         },
-        "success": "ler:succeeded"
+        "success": "ler:succeeded",
+        "verbDisplay": "ler:verbDisplay",
+        "activityName": "ler:activityName",
+        "taskName": "ler:activityName",
+        "quality": "ler:outcomeQuality",
+        "durationIso": "ler:duration",
+        "costUsd": "ler:costUSD",
+        "observedBy": {
+          "@id": "prov:wasAttributedTo",
+          "@type": "@id"
+        }
       }
     },
     "performanceRecords": {
@@ -109,7 +121,17 @@
           "@id": "ler:activityType",
           "@type": "@id"
         },
-        "success": "ler:succeeded"
+        "success": "ler:succeeded",
+        "verbDisplay": "ler:verbDisplay",
+        "activityName": "ler:activityName",
+        "taskName": "ler:activityName",
+        "quality": "ler:outcomeQuality",
+        "durationIso": "ler:duration",
+        "costUsd": "ler:costUSD",
+        "observedBy": {
+          "@id": "prov:wasAttributedTo",
+          "@type": "@id"
+        }
       }
     },
     "rawDataLocation": {
@@ -120,6 +142,28 @@
       "@id": "iep:modalStatus",
       "@type": "@vocab"
     },
+    "credentials": {
+      "@id": "ler:hasCredential",
+      "@container": "@set",
+      "@context": {
+        "issuer": {
+          "@id": "ler:issuedBy",
+          "@type": "@id"
+        },
+        "achievementName": "ler:achievementName",
+        "verified": "ler:proofVerified"
+      }
+    },
+    "summary": "@nest",
+    "experienceCount": "ler:experienceCount",
+    "performanceCount": "ler:performanceCount",
+    "performanceSuccessRate": "ler:performanceSuccessRate",
+    "credentialCount": "ler:credentialCount",
+    "verifiedCredentialCount": "ler:verifiedCredentialCount",
+    "competencyCount": "ler:competencyCount",
+    "assertedCompetencies": "ler:assertedCompetencyCount",
+    "inferredCompetencies": "ler:inferredCompetencyCount",
+    "performanceVerifiedCompetencies": "ler:performanceVerifiedCompetencyCount",
     "competencies": {
       "@id": "ler:hasAssertion",
       "@container": "@set",
@@ -159,7 +203,16 @@
           "@type": "@id",
           "@container": "@set"
         },
-        "basis": "ler:evidenceBasis"
+        "basis": "ler:evidenceBasis",
+        "label": "rdfs:label",
+        "framework": "ler:frameworkName",
+        "proficiencyLabel": "ler:proficiencyLabel",
+        "proficiencyRank": "ler:proficiencyRank",
+        "evidenceSummary": "@nest",
+        "trainingCompletions": "ler:trainingCompletionCount",
+        "performanceExecutions": "ler:performanceExecutionCount",
+        "performanceAvgQuality": "ler:performanceMeanQuality",
+        "supersedes": "ler:supersessionNote"
       }
     }
   }

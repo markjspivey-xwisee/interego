@@ -1,0 +1,63 @@
+name: Foxxi SHACL Agreement
+
+# Does a second SHACL processor give the Foxxi readings the verdicts the Foxxi tests hold?
+#
+# The Foxxi tests read instances of the Foxxi documents into RDF — the eight documents through the
+# contexts generated from their models, xAPI statements through /ns/xapi/context, Open Badges 3.0 and
+# CLR 2.0 credentials through 1EdTech's and W3C's contexts, an Enterprise Learner Record through the
+# record context — and hold each reading to its verdict with the substrate's SHACL processor
+# (@interego/core). Two processors that read the spec the same wrong way agree with each other and
+# with their tests, so this job gives pySHACL the same readings, the same published shapes and the
+# same verdicts (applications/foxxi-content-intelligence/tools/shacl-agreement/).
+#
+# The verdicts are the shapes', under XML Schema 1.1 and SHACL. Where an engine is known to depart
+# from them, no case turns on it (see tests/support/both-readings-cases.ts).
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/src/**'
+      - 'applications/foxxi-content-intelligence/tests/support/**'
+      - 'applications/foxxi-content-intelligence/tools/shacl-agreement/**'
+      - '.github/workflows/foxxi-shacl-agreement.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/src/**'
+      - 'applications/foxxi-content-intelligence/tests/support/**'
+      - 'applications/foxxi-content-intelligence/tools/shacl-agreement/**'
+      - '.github/workflows/foxxi-shacl-agreement.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  agreement:
+    name: "Foxxi readings: pySHACL gives the verdicts the tests hold"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install the workspace
+        run: npm ci
+      # The application imports the built @interego/* packages.
+      - name: Build the packages
+        run: npm run build
+
+      - name: Install pySHACL
+        run: pip install --quiet 'pyshacl==0.40.1'
+
+      - name: Write the readings, the shapes and the verdicts
+        run: npx tsx applications/foxxi-content-intelligence/tools/shacl-agreement/emit.ts "$RUNNER_TEMP/foxxi-readings"
+
+      - name: Validate them with pySHACL
+        run: python3 applications/foxxi-content-intelligence/tools/shacl-agreement/check_pyshacl.py "$RUNNER_TEMP/foxxi-readings"

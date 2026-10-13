@@ -74,35 +74,41 @@
 tla:ProficiencyBand a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Proficiency band"@en ;
-    rdfs:comment "One band of the production-performance roll-up rule: the reliability and quality a subject's evidence must reach to be assigned a tla:Level. Bands are evaluated highest rank first and the first satisfied one wins."@en .
+    rdfs:comment "One band of the production-performance roll-up rule: the reliability and quality a subject's evidence must reach to be assigned a tla:Level. Bands are evaluated highest rank first and the first satisfied one wins."@en ;
+    skos:definition "One band of the production-performance roll-up rule: the reliability and quality a subject's evidence must reach to be assigned a tla:Level. Bands are evaluated highest rank first and the first satisfied one wins."@en .
 
 tla:hasBand a owl:ObjectProperty ;
     rdfs:label "has band"@en ;
     rdfs:comment "Relates a roll-up rule to one of the bands it evaluates."@en ;
+    skos:definition "Relates a roll-up rule to one of the bands it evaluates."@en ;
     rdfs:domain tla:RollupRule ;
     rdfs:range tla:ProficiencyBand .
 
 tla:minReliability a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "minimum reliability"@en ;
     rdfs:comment "The Wilson score interval lower bound (z=1.96) on the success rate that this band requires. Chosen over a raw execution count deliberately: the Wilson bound already rises with sample size and FALLS when a failure is added, so one number carries both 'how often it worked' and 'how much evidence there is'. Gating on a bare count alongside it let a failing record promote a subject."@en ;
+    skos:definition "The Wilson score interval lower bound (z=1.96) on the success rate that this band requires. Chosen over a raw execution count deliberately: the Wilson bound already rises with sample size and FALLS when a failure is added, so one number carries both 'how often it worked' and 'how much evidence there is'. Gating on a bare count alongside it let a failing record promote a subject."@en ;
     rdfs:domain tla:ProficiencyBand ;
     rdfs:range xsd:decimal .
 
 tla:minQuality a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "minimum mean quality"@en ;
     rdfs:comment "Floor on the mean scored outcome quality (0..1). A FLOOR, not a scale — every value at or above it ranks alike."@en ;
+    skos:definition "Floor on the mean scored outcome quality (0..1). A FLOOR, not a scale — every value at or above it ranks alike."@en ;
     rdfs:domain tla:ProficiencyBand ;
     rdfs:range xsd:decimal .
 
 tla:requiresQuality a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "requires recorded quality"@en ;
     rdfs:comment "Whether quality must have been RECORDED at all to win this band. A band whose published level speaks of high-quality performance may not be reached on unscored work."@en ;
+    skos:definition "Whether quality must have been RECORDED at all to win this band. A band whose published level speaks of high-quality performance may not be reached on unscored work."@en ;
     rdfs:domain tla:ProficiencyBand ;
     rdfs:range xsd:boolean .
 
 tla:awardsLevel a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "awards level"@en ;
     rdfs:comment "The tla:Level a subject satisfying this band is assigned."@en ;
+    skos:definition "The tla:Level a subject satisfying this band is assigned."@en ;
     rdfs:domain tla:ProficiencyBand ;
     rdfs:range tla:Level .
 

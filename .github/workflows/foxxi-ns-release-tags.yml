@@ -1,0 +1,59 @@
+name: Foxxi /ns release tags
+
+# Tag the commit that releases a version of the Foxxi /ns documents.
+#
+# A released version of a Foxxi ontology, shapes graph, mapping set or context never changes
+# (applications/foxxi-content-intelligence/ns-releases/). Its header cites the source files it
+# was generated from (prov:wasDerivedFrom), and those files keep changing on master, so a citation
+# of master would turn false at the next commit. Each version cites its sources at its release
+# tag, `foxxi-ns-<version>`, instead (src/ns/catalog.ts, sourceAt). This job makes that tag on
+# the commit that brings the version onto master, whose tree generated it: the
+# every-released-version-stays-resolvable test fails while a document differs from its archived
+# version, so the archive and the source agree at that commit.
+#
+# A tag is made once and never moved. tools/release-ns.ts refuses to release anything more under
+# a version whose tag exists, so one version is one release.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/ns-releases/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: foxxi-ns-release-tags
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag each newly released version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Tag versions that have no release tag yet
+        env:
+          SUMS: applications/foxxi-content-intelligence/ns-releases/SHA256SUMS
+        run: |
+          set -euo pipefail
+          # Every archived file is <path>/<version>.<extension>; the version is YYYY.MM.PATCH.
+          versions=$(awk '{print $2}' "$SUMS" | sed -E 's#.*/([0-9]{4}\.[0-9]{1,2}\.[0-9]+)\.[a-z.]+$#\1#' | sort -u)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for v in $versions; do
+            tag="foxxi-ns-$v"
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "$tag exists — left as it is"
+              continue
+            fi
+            git tag -a "$tag" -m "Foxxi /ns release $v" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+            echo "::notice::tagged $GITHUB_SHA as $tag"
+          done

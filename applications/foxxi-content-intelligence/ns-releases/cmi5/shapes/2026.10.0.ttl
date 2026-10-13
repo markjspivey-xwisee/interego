@@ -16,7 +16,7 @@
 
 <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> a owl:Ontology ;
     dct:title "cmi5 (Quartz) — xAPI profile and course structure — SHACL shapes"@en ;
-    dct:description "SHACL shapes for cmi5 (Quartz) — xAPI profile and course structure: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/cmi5/validate). Each validation result cites the shape it came from."@en ;
+    dct:description "SHACL shapes for cmi5 (Quartz) — xAPI profile and course structure: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/cmi5/validate). Each validation result cites the shape it came from. An instance written as JSON is read into RDF through the JSON-LD context at https://foxxi-bridge.interego.xwisee.com/ns/cmi5/context/2026.10.0."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by ADL, the AICC or IEEE. Where this document and the published standard differ, the standard governs."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -33,13 +33,14 @@
     bibo:status <http://purl.org/ontology/bibo/status/published> ;
     dct:bibliographicCitation "Spivey, M. (2026). cmi5 (Quartz) — xAPI profile and course structure — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes/2026.10.0" ;
     dct:source <https://github.com/AICC/CMI-5_Spec_Current> , <https://standards.ieee.org/ieee/9274.3.1/11183/> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/cmi5.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/cmi5> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/cmi5.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.0> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/2026.10.0> .
 
 shapes:CourseStructureShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:CourseStructure ;
+    sh:targetSubjectsOf foxxi-cmi5:course , foxxi-cmi5:structure , foxxi-cmi5:objective ;
     rdfs:label "cmi5 course structure conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1: a course structure contains exactly one Course and at least one top-level Block or Assignable Unit."@en ;
     sh:property shapes:CourseStructureShape-course , shapes:CourseStructureShape-structure ;
@@ -50,7 +51,7 @@ shapes:CourseStructureShape-course a sh:PropertyShape ;
     sh:name "course" ;
     sh:description "exactly one Course (§13.1)"@en ;
     sh:message "cmi5 course structure conformance — course: exactly 1 value, an instance of Course — exactly one Course (§13.1)"@en ;
-    sh:class foxxi-cmi5:Course ;
+    sh:nodeKind sh:BlankNodeOrIRI ;
     sh:minCount 1 ;
     sh:maxCount 1 .
 
@@ -63,6 +64,7 @@ shapes:CourseStructureShape-structure a sh:PropertyShape ;
 
 shapes:CourseShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:Course ;
+    sh:targetObjectsOf foxxi-cmi5:course ;
     rdfs:label "cmi5 Course conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1.1: a Course is identified by an IRI and has a title and a description."@en ;
     sh:nodeKind sh:IRI ;
@@ -86,6 +88,7 @@ shapes:CourseShape-description a sh:PropertyShape ;
 
 shapes:BlockShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:Block ;
+    sh:targetObjectsOf foxxi-cmi5:block ;
     rdfs:label "cmi5 Block conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1.2: a Block is identified by an IRI and has a title and a description."@en ;
     sh:nodeKind sh:IRI ;
@@ -118,6 +121,8 @@ shapes:BlockShape-position a sh:PropertyShape ;
 
 shapes:AssignableUnitShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:AssignableUnit ;
+    sh:targetObjectsOf foxxi-cmi5:au , foxxi-cmi5:launchedAU ;
+    sh:targetSubjectsOf foxxi-cmi5:url , foxxi-cmi5:launchMethod , foxxi-cmi5:activityType ;
     rdfs:label "cmi5 Assignable Unit conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1.4: an AU is identified by an IRI and has a title, a description and a launch URL. moveOn (default NotApplicable) and launchMethod (default AnyWindow) take their vocabularies; masteryScore is a decimal in [0, 1]."@en ;
     sh:nodeKind sh:IRI ;
@@ -218,6 +223,7 @@ shapes:AssignableUnitShape-entitlementKey a sh:PropertyShape ;
 
 shapes:ObjectiveShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:Objective ;
+    sh:targetObjectsOf foxxi-cmi5:objective , foxxi-cmi5:objectives ;
     rdfs:label "cmi5 Objective conformance"@en ;
     rdfs:comment "cmi5 Quartz §13.1.3: an Objective is identified by an IRI and has a title and a description."@en ;
     sh:nodeKind sh:IRI ;
@@ -241,9 +247,14 @@ shapes:ObjectiveShape-description a sh:PropertyShape ;
 
 shapes:SessionShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:Session ;
+    sh:targetSubjectsOf foxxi-cmi5:sessionId , foxxi-cmi5:registration , foxxi-cmi5:launchedAU , foxxi-cmi5:learner ;
     rdfs:label "cmi5 session conformance"@en ;
     rdfs:comment "cmi5 Quartz §9.6.1, §9.6.3.1, §10.2.2: a session carries a registration UUID and a session ID; launchMode takes its vocabulary."@en ;
-    sh:property shapes:SessionShape-registration , shapes:SessionShape-sessionId , shapes:SessionShape-launchMode ;
+    sh:property shapes:SessionShape-registration ,
+        shapes:SessionShape-sessionId ,
+        shapes:SessionShape-launchMode ,
+        shapes:SessionShape-launchedAU ,
+        shapes:SessionShape-learner ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
 
 shapes:SessionShape-registration a sh:PropertyShape ;
@@ -272,8 +283,23 @@ shapes:SessionShape-launchMode a sh:PropertyShape ;
     sh:maxCount 1 ;
     sh:in ( "Normal" "Browse" "Review" ) .
 
+shapes:SessionShape-launchedAU a sh:PropertyShape ;
+    sh:path foxxi-cmi5:launchedAU ;
+    sh:name "launchedAU" ;
+    sh:description "the one AU it is a launch of"@en ;
+    sh:message "cmi5 session conformance — launchedAU: at most 1 value — the one AU it is a launch of"@en ;
+    sh:maxCount 1 .
+
+shapes:SessionShape-learner a sh:PropertyShape ;
+    sh:path foxxi-cmi5:learner ;
+    sh:name "learner" ;
+    sh:description "the one learner it is for"@en ;
+    sh:message "cmi5 session conformance — learner: at most 1 value — the one learner it is for"@en ;
+    sh:maxCount 1 .
+
 shapes:LaunchDataShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:LaunchData ;
+    sh:targetSubjectsOf foxxi-cmi5:contextTemplate , foxxi-cmi5:returnURL ;
     rdfs:label "cmi5 LMS.LaunchData conformance"@en ;
     rdfs:comment "cmi5 Quartz §10.2: the launch data has a context template, a launch mode and a moveOn; a mastery score is a decimal in [0, 1]."@en ;
     sh:property shapes:LaunchDataShape-contextTemplate ,
@@ -344,8 +370,35 @@ shapes:LaunchDataShape-entitlementKey a sh:PropertyShape ;
     sh:message "cmi5 LMS.LaunchData conformance — entitlementKey: at most 1 value — entitlement key object (§10.2.7)"@en ;
     sh:maxCount 1 .
 
+shapes:EntitlementKeyShape a sh:NodeShape ;
+    sh:targetClass foxxi-cmi5:EntitlementKey ;
+    sh:targetObjectsOf foxxi-cmi5:launchEntitlementKey ;
+    sh:targetSubjectsOf foxxi-cmi5:courseStructureKey , foxxi-cmi5:alternateKey ;
+    rdfs:label "cmi5 entitlement key conformance"@en ;
+    rdfs:comment "cmi5 Quartz §10.2.7: the entitlement key in the launch data carries the key from the course structure, which the LMS must provide, and may carry an alternate key; each is a string. The document names them \"courseStructure\" and \"alternate\"."@en ;
+    sh:property shapes:EntitlementKeyShape-courseStructure , shapes:EntitlementKeyShape-alternate ;
+    rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/cmi5/shapes> .
+
+shapes:EntitlementKeyShape-courseStructure a sh:PropertyShape ;
+    sh:path foxxi-cmi5:courseStructureKey ;
+    sh:name "courseStructure" ;
+    sh:description "the key from the course structure (§10.2.7.1)"@en ;
+    sh:message "cmi5 entitlement key conformance — courseStructure: exactly 1 value, of type xsd:string — the key from the course structure (§10.2.7.1)"@en ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 .
+
+shapes:EntitlementKeyShape-alternate a sh:PropertyShape ;
+    sh:path foxxi-cmi5:alternateKey ;
+    sh:name "alternate" ;
+    sh:description "an alternate key (§10.2.7.2)"@en ;
+    sh:message "cmi5 entitlement key conformance — alternate: at most 1 value, of type xsd:string — an alternate key (§10.2.7.2)"@en ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 .
+
 shapes:LearnerPreferencesShape a sh:NodeShape ;
     sh:targetClass foxxi-cmi5:LearnerPreferences ;
+    sh:targetSubjectsOf foxxi-cmi5:languagePreference , foxxi-cmi5:audioPreference ;
     rdfs:label "cmi5 learner preferences conformance"@en ;
     rdfs:comment "cmi5 Quartz §11: languagePreference is a comma-separated list of RFC 5646 tags; audioPreference is \"on\" or \"off\"."@en ;
     sh:property shapes:LearnerPreferencesShape-languagePreference , shapes:LearnerPreferencesShape-audioPreference ;

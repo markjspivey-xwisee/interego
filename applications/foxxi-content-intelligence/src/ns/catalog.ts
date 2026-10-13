@@ -101,6 +101,10 @@ export interface DocMeta {
   readonly version: string;
   /** The released version this one follows (owl:priorVersion), once the document has had one. */
   readonly priorVersion?: string;
+  /** Whether data and documents written against the prior version keep their meaning under this
+   *  one: owl:backwardCompatibleWith, or owl:incompatibleWith, the prior version. A document with a
+   *  prior version must say which (tools/release-ns.ts refuses one that does not). */
+  readonly priorCompatibility?: 'backward' | 'incompatible';
   /** ISO dates (YYYY-MM-DD). */
   readonly created: string;
   readonly modified: string;
@@ -119,12 +123,22 @@ export interface DocMeta {
   readonly notes?: readonly string[];
   /** For a shapes graph: the ontology it constrains. */
   readonly constrains?: string;
-  /** Repository paths of the files this document is generated from (prov:wasDerivedFrom). */
+  /** Repository paths of the files this document is generated from (prov:wasDerivedFrom, each at
+   *  this version's release tag). */
   readonly sourceCode?: readonly string[];
 }
 
-/** Where the source a document is generated from can be read. */
-export const REPO_BLOB = 'https://github.com/markjspivey-xwisee/interego/blob/master/';
+/**
+ * ★ A RELEASED VERSION CITES THE SOURCE IT WAS GENERATED FROM AS IT WAS, NOT AS IT IS. A version's
+ * content never changes, so its prov:wasDerivedFrom cannot name a file on master, which does: the
+ * claim would turn false at the next commit. Each version's sources are cited at its release tag,
+ * `foxxi-ns-<version>`, which .github/workflows/foxxi-ns-release-tags.yml makes on the commit that
+ * brings the version onto master — the commit whose tree generated it — and which is never moved.
+ */
+export const releaseTag = (version: string): string => `foxxi-ns-${version}`;
+/** A repository file as it was at a version's release tag. */
+export const sourceAt = (version: string, path: string): string =>
+  `https://github.com/markjspivey-xwisee/interego/blob/${releaseTag(version)}/${path}`;
 
 /** The IRI of a specific version of a document. */
 export const versionIri = (meta: Pick<DocMeta, 'iri' | 'version'>): string => `${meta.iri}/${meta.version}`;
@@ -173,7 +187,11 @@ export function addHeader(g: Graph, meta: DocMeta, kind = 'Ontology'): NamedNode
   for (const n of meta.notes ?? []) g.add(O, iri(RDFS + 'comment'), en(n));
   g.add(O, iri(OWL + 'versionIRI'), iri(versionIri(meta)));
   g.add(O, iri(OWL + 'versionInfo'), str(meta.version));
-  if (meta.priorVersion) g.add(O, iri(OWL + 'priorVersion'), iri(versionIri({ iri: meta.iri, version: meta.priorVersion })));
+  if (meta.priorVersion) {
+    const prior = iri(versionIri({ iri: meta.iri, version: meta.priorVersion }));
+    g.add(O, iri(OWL + 'priorVersion'), prior);
+    if (meta.priorCompatibility) g.add(O, iri(OWL + (meta.priorCompatibility === 'backward' ? 'backwardCompatibleWith' : 'incompatibleWith')), prior);
+  }
   g.add(O, iri(SKOS + 'historyNote'), en(VERSIONING_NOTE));
   g.add(O, iri(DCT + 'creator'), str(CREATOR));
   g.add(O, iri(DCT + 'contributor'), str(CONTRIBUTOR));
@@ -191,7 +209,7 @@ export function addHeader(g: Graph, meta: DocMeta, kind = 'Ontology'): NamedNode
     g.add(O, iri(VANN + 'preferredNamespaceUri'), str(meta.ns));
   }
   for (const s of meta.standards) g.add(O, iri(DCT + 'source'), iri(s.url));
-  for (const f of meta.sourceCode ?? []) g.add(O, iri(PROV + 'wasDerivedFrom'), iri(REPO_BLOB + f));
+  for (const f of meta.sourceCode ?? []) g.add(O, iri(PROV + 'wasDerivedFrom'), iri(sourceAt(meta.version, f)));
   for (const s of meta.seeAlso ?? []) g.add(O, iri(RDFS + 'seeAlso'), iri(s));
   for (const i of meta.imports ?? []) g.add(O, iri(OWL + 'imports'), iri(i));
   return O;

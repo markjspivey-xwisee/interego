@@ -16,7 +16,7 @@
 
 <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> a owl:Ontology ;
     dct:title "EU AI Act (Regulation (EU) 2024/1689) — obligation mapping — SHACL shapes"@en ;
-    dct:description "SHACL shapes for EU AI Act (Regulation (EU) 2024/1689) — obligation mapping: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/validate). Each validation result cites the shape it came from."@en ;
+    dct:description "SHACL shapes for EU AI Act (Regulation (EU) 2024/1689) — obligation mapping: the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/validate). Each validation result cites the shape it came from. An instance written as JSON is read into RDF through the JSON-LD context at https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/context/2026.10.0."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by the European Union. Where this document and the published standard differ, the standard governs."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -33,15 +33,23 @@
     bibo:status <http://purl.org/ontology/bibo/status/published> ;
     dct:bibliographicCitation "Spivey, M. (2026). EU AI Act (Regulation (EU) 2024/1689) — obligation mapping — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes/2026.10.0" ;
     dct:source <https://eur-lex.europa.eu/eli/reg/2024/1689/oj> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/2026.10.0> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/2026.10.0> .
 
 shapes:ObligationConformanceShape a sh:NodeShape ;
-    sh:targetClass foxxi-eu-ai-act:Obligation ;
+    sh:targetClass foxxi-eu-ai-act:Obligation ,
+        foxxi-eu-ai-act:RecordKeeping ,
+        foxxi-eu-ai-act:HumanOversight ,
+        foxxi-eu-ai-act:Transparency ,
+        foxxi-eu-ai-act:RiskManagement ,
+        foxxi-eu-ai-act:DataGovernance ,
+        foxxi-eu-ai-act:InteractionTransparency ,
+        foxxi-eu-ai-act:AccuracyRobustness ;
+    sh:targetSubjectsOf foxxi-eu-ai-act:article ;
     rdfs:label "AI Act obligation conformance"@en ;
-    rdfs:comment "An obligation assertion MUST name the Article it satisfies."@en ;
+    rdfs:comment "An obligation names the Article that imposes it. Every Article concept of this document does; so does any obligation a record names by RDFS inference from conformsToArticle's range, when it is one of them."@en ;
     sh:property shapes:ObligationConformanceShape-article ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/eu-ai-act/shapes> .
 

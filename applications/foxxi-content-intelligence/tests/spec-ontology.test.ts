@@ -60,7 +60,8 @@ describe('renderJsonLd', () => {
     expect(j['@graph'][0]['@id']).toBe(ontologyIri(XAPI_MODEL));
     expect(j['@graph'].some((n: any) => n['@type'] === 'owl:Class')).toBe(true);
     expect(Object.keys(j).sort()).toEqual(['@context', '@graph']);
-    expect(iriObjectsOf(turtleQuads(renderOwl(XAPI_MODEL)), ontologyIri(XAPI_MODEL), `${RDFS}seeAlso`)).toContain(shapesIri(XAPI_MODEL));
+    // ★ REVISED: the shapes at the document's own version, released with it.
+    expect(iriObjectsOf(turtleQuads(renderOwl(XAPI_MODEL)), ontologyIri(XAPI_MODEL), `${RDFS}seeAlso`)).toContain(`${shapesIri(XAPI_MODEL)}/${XAPI_MODEL.version}`);
     expect(turtleQuads(renderShacl(XAPI_MODEL)).find(t => t.subject.value === shapesIri(XAPI_MODEL) && t.predicate.value === 'http://purl.org/dc/terms/description')?.object.value)
       .toContain(`POST ${ontologyIri(XAPI_MODEL)}/validate`);
   });

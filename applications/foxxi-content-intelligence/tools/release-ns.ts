@@ -8,12 +8,17 @@
  *    for a document (RDFC-1.0), the same bytes for a mapping set or a context — or the artifact has
  *    changed without a new version, which is refused;
  *  - its current version not archived yet: it must be above every archived version, and a document
- *    must name the newest of them as its priorVersion (owl:priorVersion); then it is archived.
+ *    must name the newest of them as its priorVersion (owl:priorVersion) and say whether it keeps
+ *    that version's meaning (owl:backwardCompatibleWith or owl:incompatibleWith); then it is archived.
+ *  - and its version must still be open: a version whose release tag (`foxxi-ns-<version>`, see
+ *    src/ns/catalog.ts) exists has been released, and its documents cite their sources at that tag,
+ *    so nothing more is released under it.
  * A file in the archive whose bytes no longer match SHA256SUMS is refused too.
  *
  * usage: npx tsx applications/foxxi-content-intelligence/tools/release-ns.ts [--check]
  *   --check  write nothing; exit 1 if anything would be archived or anything is refused.
  */
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -21,6 +26,7 @@ import { dirname, join, relative, sep } from 'node:path';
 import { Parser, Writer } from 'n3';
 import { publishedArtifacts, type Published } from '../src/ns/published.js';
 import { RELEASES_DIR, compareVersions, releaseFile, releasedVersions } from '../src/ns/releases.js';
+import { releaseTag } from '../src/ns/catalog.js';
 
 const require = createRequire(import.meta.url);
 const { canonize } = require('rdf-canonize') as {
@@ -35,6 +41,15 @@ const canonicalGraph = (turtle: string): Promise<string> => canonize(
   { algorithm: 'RDFC-1.0', inputFormat: 'application/n-quads', maxWorkFactor: 2 },
 );
 const isDocument = (a: Published): boolean => a.kind === 'ontology' || a.kind === 'shapes';
+/** Whether a version's release tag exists in this clone (fetch tags first: `git fetch --tags`). */
+const tagged = new Map<string, boolean>();
+const isTagged = (version: string): boolean => {
+  if (!tagged.has(version)) {
+    const out = execFileSync('git', ['tag', '--list', releaseTag(version)], { encoding: 'utf8' }).trim();
+    tagged.set(version, out.length > 0);
+  }
+  return tagged.get(version)!;
+};
 
 const refused: string[] = [];
 const archived: string[] = [];
@@ -52,6 +67,14 @@ for (const a of publishedArtifacts()) {
     const released = readFileSync(file, 'utf8');
     const same = isDocument(a) ? await canonicalGraph(released) === await canonicalGraph(bytes) : released === bytes;
     if (!same) refused.push(`${a.iri} has changed since ${a.version} was released: give it a new version above ${newest} and release that`);
+    continue;
+  }
+  if (isTagged(a.version)) {
+    refused.push(`${a.iri}/${a.version}: version ${a.version} was released (tag ${releaseTag(a.version)}); release this at a version above it`);
+    continue;
+  }
+  if (isDocument(a) && newest && !a.priorCompatibility) {
+    refused.push(`${a.iri}/${a.version}: say whether it keeps ${newest}'s meaning (priorCompatibility: owl:backwardCompatibleWith or owl:incompatibleWith)`);
     continue;
   }
   if (isDocument(a) && (a.priorVersion ?? undefined) !== newest) {

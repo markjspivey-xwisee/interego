@@ -16,7 +16,7 @@
 
 <https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes> a owl:Ontology ;
     dct:title "AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria) — SHACL shapes"@en ;
-    dct:description "SHACL shapes for AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria): the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/soc2/validate). Each validation result cites the shape it came from."@en ;
+    dct:description "SHACL shapes for AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria): the constraints an instance must satisfy, published so any SHACL processor can check what the Foxxi validator checks (POST https://foxxi-bridge.interego.xwisee.com/ns/soc2/validate). Each validation result cites the shape it came from. An instance written as JSON is read into RDF through the JSON-LD context at https://foxxi-bridge.interego.xwisee.com/ns/soc2/context/2026.10.0."@en ;
     rdfs:comment "Independent formalization by Mark Spivey (Foxxi Mediums Inc.). Not affiliated with or endorsed by the AICPA. Where this document and the published standard differ, the standard governs."@en ;
     owl:versionIRI <https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes/2026.10.0> ;
     owl:versionInfo "2026.10.0" ;
@@ -33,18 +33,24 @@
     bibo:status <http://purl.org/ontology/bibo/status/published> ;
     dct:bibliographicCitation "Spivey, M. (2026). AICPA SOC 2 — Trust Services Criteria (Security / Common Criteria) — SHACL shapes (Version 2026.10.0) [SHACL shapes graph]. Foxxi Mediums Inc. https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes/2026.10.0" ;
     dct:source <https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022> ;
-    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
-        <https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
-    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/soc2> ;
+    prov:wasDerivedFrom <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec/compliance.model.ts> ,
+        <https://github.com/markjspivey-xwisee/interego/blob/foxxi-ns-2026.10.0/applications/foxxi-content-intelligence/src/spec-ontology.ts> ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/ns/soc2/2026.10.0> ;
     owl:imports <https://foxxi-bridge.interego.xwisee.com/ns/soc2/2026.10.0> .
 
 shapes:OperationalEvidenceEventShape a sh:NodeShape ;
-    sh:targetClass foxxi-soc2:OperationalEvidenceEvent ;
+    sh:targetClass foxxi-soc2:OperationalEvidenceEvent ,
+        foxxi-soc2:AccessChangeEvent ,
+        foxxi-soc2:DeployEvent ,
+        foxxi-soc2:KeyRotationEvent ,
+        foxxi-soc2:IncidentEvent ,
+        foxxi-soc2:QuarterlyReviewEvent ;
+    sh:targetSubjectsOf foxxi-soc2:evidences , foxxi-soc2:occurredAt , foxxi-soc2:actingAgent , foxxi-soc2:signer ;
     rdfs:label "SOC 2 evidence-event conformance"@en ;
-    rdfs:comment "An operational evidence event MUST cite the criterion it evidences, carry the instant it occurred, and identify the recovered signer — so the audit pack proves WHO acted and WHICH control it evidences."@en ;
+    rdfs:comment "An operational evidence event cites a criterion it evidences, carries the instant it occurred, and names the acting agent and the recovered signer, so an audit pack shows who acted and which criterion the event is evidence for."@en ;
     sh:property shapes:OperationalEvidenceEventShape-evidences ,
         shapes:OperationalEvidenceEventShape-occurredAt ,
-        shapes:OperationalEvidenceEventShape-actor ,
+        shapes:OperationalEvidenceEventShape-actingAgent ,
         shapes:OperationalEvidenceEventShape-signer ;
     rdfs:isDefinedBy <https://foxxi-bridge.interego.xwisee.com/ns/soc2/shapes> .
 
@@ -64,11 +70,11 @@ shapes:OperationalEvidenceEventShape-occurredAt a sh:PropertyShape ;
     sh:minCount 1 ;
     sh:maxCount 1 .
 
-shapes:OperationalEvidenceEventShape-actor a sh:PropertyShape ;
-    sh:path foxxi-soc2:actor ;
-    sh:name "actor" ;
-    sh:description "the acting DID"@en ;
-    sh:message "SOC 2 evidence-event conformance — actor: exactly 1 value, an IRI — the acting DID"@en ;
+shapes:OperationalEvidenceEventShape-actingAgent a sh:PropertyShape ;
+    sh:path foxxi-soc2:actingAgent ;
+    sh:name "actingAgent" ;
+    sh:description "the acting agent, by its DID"@en ;
+    sh:message "SOC 2 evidence-event conformance — actingAgent: exactly 1 value, an IRI — the acting agent, by its DID"@en ;
     sh:nodeKind sh:IRI ;
     sh:minCount 1 ;
     sh:maxCount 1 .

@@ -13,7 +13,6 @@
  */
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import jsonld from 'jsonld';
 import { Parser, Writer, type Quad } from 'n3';
 import { validateAgainstShape as shacl } from '@interego/core';
@@ -23,48 +22,17 @@ import { turtleQuads, OWL, RDF_TYPE } from './support/ns-graph.js';
 import { assembleEnterpriseLearnerRecord, PERF_EXT, PERFORMED_VERB } from '../src/learner-record.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { FOXXI_NS } from '../src/foxxi-vocab.js';
-import { ELR_CONTEXT_URL, LER_NS, elrJsonLdContext, renderSemOntologyTurtle } from '../src/ler-tla-vocab.js';
+import { ELR_CONTEXT_URL, LER_NS, renderSemOntologyTurtle } from '../src/ler-tla-vocab.js';
+import { VC2, UNDEFINED_TERMS, read, documentLoader, at, statement, performed, completed, record } from './support/elr-records.js';
 
-const CONTEXTS = new URL('./support/contexts/', import.meta.url);
-const VC2 = 'https://www.w3.org/ns/credentials/v2';
-const UNDEFINED_TERMS = 'https://www.w3.org/ns/credentials/undefined-terms/v2';
-const read = (f: string): string => readFileSync(new URL(f, CONTEXTS), 'utf8');
 const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex');
-
-/** Answers only the three contexts a record names; anything else is an error, never a fetch. */
-const documentLoader = async (url: string) => {
-  const doc = url === VC2 ? JSON.parse(read('credentials-v2.jsonld'))
-    : url === UNDEFINED_TERMS ? JSON.parse(read('credentials-undefined-terms-v2.jsonld'))
-      : url === ELR_CONTEXT_URL ? elrJsonLdContext() : undefined;
-  if (!doc) throw new Error(`the test fetches nothing: ${url}`);
-  return { contextUrl: undefined, documentUrl: url, document: doc };
-};
-
-const at = (n: number): string => `2026-10-0${n}T10:00:00Z`;
-const statement = (id: string, verb: string, extra: Record<string, unknown>, ts: string): StoredStatement => ({
-  id, stored: ts, voided: false,
-  statement: {
-    id, verb: { id: verb }, timestamp: ts,
-    actor: { objectType: 'Agent', account: { homePage: 'https://bridge.example', name: 'did:web:p.example' } },
-    ...extra,
-  },
-});
-const performed = (id: string, ts: string, success: boolean): StoredStatement => statement(id, PERFORMED_VERB, {
+/** A performance with everything a statement can say of it: a scaled score, a duration, a cost and the
+ *  observer who attested it. */
+const performedFully = (id: string, ts: string): StoredStatement => statement(id, PERFORMED_VERB, {
   object: { objectType: 'Activity', id: `urn:task:${id}`, definition: { name: { en: 'Refund a disputed order' }, type: `${FOXXI_NS}ProductionTask` } },
-  result: { success },
-  context: { extensions: { [PERF_EXT.contextKind]: 'production' } },
+  result: { success: true, score: { scaled: 0.8 }, duration: 'PT12M' },
+  context: { extensions: { [PERF_EXT.contextKind]: 'production', [PERF_EXT.costUsd]: 1.25, [PERF_EXT.observedBy]: 'did:web:reviewer.example' } },
 }, ts);
-const completed = statement('c1', 'http://adlnet.gov/expapi/verbs/completed', {
-  object: { objectType: 'Activity', id: 'https://bridge.example/course/refunds', definition: { name: { en: 'Refunds 101' } } },
-}, at(1));
-
-async function record() {
-  return assembleEnterpriseLearnerRecord({
-    learnerDid: 'did:web:p.example', learnerPodUrl: 'https://pod.example/p/', tenantDid: 'did:web:tenant.example', lrsEndpoint: 'https://bridge.example',
-    statements: [completed, performed('p1', at(2), true), performed('p2', at(3), true), performed('p3', at(4), true)],
-    subjectKind: 'agent', fetch: (async () => { throw new Error('no pod here'); }) as never,
-  });
-}
 async function triplesOf(doc: unknown): Promise<Quad[]> {
   const nq = await jsonld.toRDF(doc as jsonld.JsonLdDocument, { format: 'application/n-quads', documentLoader, safe: true } as unknown as jsonld.Options.ToRdf) as unknown as string;
   return new Parser({ format: 'application/n-quads' }).parse(nq);
@@ -204,17 +172,50 @@ describe('an Enterprise Learner Record', () => {
     expect(rdfFault.results.filter(r => r.severity === 'Violation').map(r => r.sourceShape)).toEqual([step]);
   });
 
-  it('only presentation is left to issuer-dependent terms: the display names and the summary counts', async () => {
-    const q = await triplesOf(await record());
+  // ★ REVISED. This listed twenty fields left to VC 2.0's undefined-terms context as presentation:
+  // the display names and the summary counts. A second review held them to be facts — a name given
+  // beside an IRI, an evidence figure, a count — and found a record that lists credentials left
+  // their issuer, the link to them and whether their proof verified there too. Each has a term now.
+  it('leaves nothing to issuer-dependent terms: names, figures, counts and listed credentials all have terms', async () => {
     const UT = 'https://www.w3.org/ns/credentials/undefined-term#';
-    const undefinedTerms = [...new Set(q.map(t => t.predicate.value).filter(p => p.startsWith(UT)).map(p => p.slice(UT.length)))].sort();
-    // Every one is a display name of something the record names by IRI, or a count derived from the
-    // entries: VC 2.0 §5.2 reads them as issuer-dependent terms rather than dropping them.
-    expect(undefinedTerms).toEqual([
-      'activityName', 'assertedCompetencies', 'competencyCount', 'conformsToLabel', 'credentialCount', 'evidenceSummary',
-      'experienceCount', 'inferredCompetencies', 'label', 'performanceCount', 'performanceExecutions', 'performanceSuccessRate',
-      'performanceVerifiedCompetencies', 'proficiencyLabel', 'proficiencyRank', 'summary', 'taskName', 'trainingCompletions',
-      'verbDisplay', 'verifiedCredentialCount',
-    ]);
+    const elr = await assembleEnterpriseLearnerRecord({
+      learnerDid: 'did:web:p.example', learnerPodUrl: 'https://pod.example/p/', tenantDid: 'did:web:tenant.example', lrsEndpoint: 'https://bridge.example',
+      learnerName: 'Ada',
+      statements: [completed, performedFully('p1', at(2)), performedFully('p2', at(3)), performed('p3', at(4), true)],
+      subjectKind: 'agent', fetch: (async () => { throw new Error('no pod here'); }) as never,
+    });
+    // A listed credential, as the record lists one it found in the learner's wallet.
+    const withCredential = { ...elr, credentials: [{ id: 'urn:uuid:7d8c1f2e-1111-4222-8333-944455556666', achievementName: 'Refunds 101', issuer: 'did:web:tenant.example', verified: true, rawDataLocation: 'https://pod.example/p/cred-1' }] };
+    const q = await triplesOf(withCredential);
+    expect([...new Set(q.map(t => t.predicate.value).filter(p => p.startsWith(UT)))]).toEqual([]);
+    const of = (s: string, p: string): Quad[] => q.filter(t => t.subject.value === s && t.predicate.value === p);
+    // The credential is a node of the record's, its issuer an IRI.
+    const cred = 'urn:uuid:7d8c1f2e-1111-4222-8333-944455556666';
+    expect(of(elr.id, `${LER_NS}hasCredential`).map(t => t.object.value)).toEqual([cred]);
+    expect(of(cred, `${LER_NS}issuedBy`).map(t => t.object.termType)).toEqual(['NamedNode']);
+    expect(of(cred, `${LER_NS}proofVerified`).map(t => t.object.value)).toEqual(['true']);
+    expect(of(cred, `${LER_NS}achievementName`).map(t => t.object.value)).toEqual(['Refunds 101']);
+    // The summary's counts are said of the record, as integers.
+    const count = of(elr.id, `${LER_NS}experienceCount`)[0]!.object as { value: string; datatype: { value: string } };
+    expect([count.value, count.datatype.value]).toEqual(['1', 'http://www.w3.org/2001/XMLSchema#integer']);
+    // A performance's quality, duration, cost and observer.
+    const entries = of(elr.id, `${LER_NS}recordEntry`).map(t => t.object.value);
+    const full = entries.filter(e => of(e, `${LER_NS}costUSD`).length);
+    expect(full).toHaveLength(2);
+    for (const e of full) {
+      expect(of(e, `${LER_NS}outcomeQuality`).map(t => t.object.value)).toEqual(['8.0E-1']);
+      expect(of(e, `${LER_NS}duration`).map(t => t.object.value)).toEqual(['PT12M']);
+      expect(of(e, 'http://www.w3.org/ns/prov#wasAttributedTo').map(t => t.object.value)).toEqual(['did:web:reviewer.example']);
+    }
+    // An assertion's name, its level's rank and its evidence figures are said of the assertion.
+    for (const a of of(elr.id, `${LER_NS}hasAssertion`).map(t => t.object.value)) {
+      expect(of(a, 'http://www.w3.org/2000/01/rdf-schema#label')).toHaveLength(1);
+      expect(of(a, `${LER_NS}proficiencyRank`)).toHaveLength(1);
+      expect(of(a, `${LER_NS}trainingCompletionCount`)).toHaveLength(1);
+    }
+    // Every LER term the record uses is one the LER ontology defines.
+    const ontology = turtleQuads(renderSemOntologyTurtle('ler'));
+    const declared = new Set(ontology.filter(t => t.predicate.value === RDF_TYPE).map(t => t.subject.value));
+    expect([...new Set(q.map(t => t.predicate.value).filter(p => p.startsWith(LER_NS)))].filter(p => !declared.has(p))).toEqual([]);
   });
 });
