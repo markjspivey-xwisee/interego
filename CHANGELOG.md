@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-14 — Pattern note: decorating an external system
+
+`docs/patterns/decorating-an-external-system.md` is a Layer 2 applicability note on the pattern I2IDL-X instantiates. A decorator publishes signed graphs about a system it does not control, such as a glossary, a learning platform, a record store or a reference architecture. The note says how to do that without restating or forking the system: refer to its things by its own identifiers, pinned to a release. Keep five origins in graphs of their own: the system's, derived, added, proposed (Hypothetical until ratified) and the decorator's own. Give agents controls rather than instructions. Track the system's releases with a contract check, and mark a proposal the system later asserts itself as adopted. Carry the system's rights. Say who decorated it and that the system's publisher did not. Ratify through the protocol's modal algebra, never by editing the system. It adds no terms and requires nothing for conformance.
+
 ## 2026-10-13 — I2IDL-X: the build reasons with HermiT 1.4.5
 
 The I2IDL-X build's OWL 2 DL consistency checks now run on HermiT 1.4.5 (OWL API 4.5), not the HermiT 1.3.8 bundled with owlready2. The jar comes from ROBOT's 1.9.11 release, pinned in `config.json` with its SHA-256. `tools/refresh-evidence.sh --reasoner` fetches it, and the build checks the hash on every run.
