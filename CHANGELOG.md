@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-14 — Foxxi dispatch: fixes from the review of #615
+
+Codex's review of #615 found three faults in the dispatch registry, fixed here:
+- **Failed writes are retried.** A registry write the pod did not take was not tried again until some other change, so a restart could lose an acknowledged dispatch, or bring a withdrawn one back. `registryWriter` now retries with backoff (five seconds, doubling, at most five minutes) until a write succeeds.
+- **Racing launches cannot both take the last slot.** Two launches racing for a dispatch's last launch could both pass the check before either was counted, because course resolution sat between them. `reserveLaunch` now checks and counts in one step after the last wait, and a launch whose attempt fails to start is given back.
+- **A capped dispatch can still resume.** An attempt under way could not be resumed once its dispatch had used its last launch, so a dispatch capped at one launch lost resume after the first session. Resuming now takes no launch, and is refused only when the dispatch is withdrawn or expired.
+
+`tests/scorm-dispatch.test.ts` covers each fault, and the two route tests fail against the merged code.
+
 ## 2026-10-14 — Pattern note: decorating an external system
 
 `docs/patterns/decorating-an-external-system.md` is a Layer 2 applicability note on the pattern I2IDL-X instantiates. A decorator publishes signed graphs about a system it does not control, such as a glossary, a learning platform, a record store or a reference architecture. The note says how to do that without restating or forking the system: refer to its things by its own identifiers, pinned to a release. Keep five origins in graphs of their own: the system's, derived, added, proposed (Hypothetical until ratified) and the decorator's own. Give agents controls rather than instructions. Track the system's releases with a contract check, and mark a proposal the system later asserts itself as adopted. Carry the system's rights. Say who decorated it and that the system's publisher did not. Ratify through the protocol's modal algebra, never by editing the system. It adds no terms and requires nothing for conformance.
