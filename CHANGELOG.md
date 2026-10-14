@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-14 — Relay scope checks honor verified identity aliases
+
+A session using its canonical identity-server DID can use an existing grant recorded under that same identity service's legacy agent slug. The signed credential is verified under its original subject, and descriptor attribution remains canonical. Exact DID grants take precedence even when revoked or narrowed; foreign hosts, ambiguous aliases and unsigned authority do not gain access. Alias grants and invalid results are reread on every request so owner revocation and scope changes remain visible.
+
 ## 2026-10-14 — Foxxi decorations: canonical Interego IRIs with bridge controls
 
 The decorator kit can mint catalog and proposal identities under an Interego namespace base while filling service controls from the serving bridge. The bridge uses the same optional canonical base for Turtle, JSON-LD, JSON, HTML and SSSOM, and links document representations to their canonical IRIs. Omitting the option preserves the ten existing graph outputs byte for byte. Tests compare all five decorations after identity normalization and exercise the canonical links and bridge targets over HTTP. Publication and deployment are separate operations.

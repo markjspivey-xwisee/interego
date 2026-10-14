@@ -249,6 +249,7 @@ import { signedActPayload } from './signed-act.js';
 import { loadRequestObservers } from './request-observers.js';
 import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
+import { selectDelegationSubject, cacheDelegationSubject } from './delegation-subject.js';
 import { INVOKE_AFFORDANCE_OUTPUT, loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
 import { protectResourcePublication } from './resource-publication.js';
 import { readClientSigningKeys } from './client-signing-keys.js';
@@ -1932,19 +1933,28 @@ interface DelegationAuthority {
   readonly basis: 'signed-chain' | 'registry-only' | 'none';
   /** Why the signed chain was not the basis, verbatim from the chain walk. */
   readonly chainReason: string | null;
+  /** Original registry/credential subject used to evaluate the authenticated principal. */
+  readonly registeredAgentId: string;
+  /** Legacy alias grants are never memoized across owner updates. */
+  readonly cacheable: boolean;
 }
 
 async function resolveDelegationAuthority(agentId: string, podUrl: string): Promise<DelegationAuthority> {
+  let subject = selectDelegationSubject(agentId, [], IDENTITY_URL);
+  let delegationAgentId = agentId;
   let scope: string | undefined;
   let valid = false;
   let basis: DelegationAuthority['basis'] = 'none';
   let chainReason: string | null = null;
   try {
+    const profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+    subject = selectDelegationSubject(agentId, profile?.authorizedAgents ?? [], IDENTITY_URL);
+    delegationAgentId = subject.registered;
     // Prefer the more-recently-verified value: walk the signed chain (the relay always
     // has a verifier — see delegationVerifier above) so the scope we read is the one the
     // owner cryptographically attested to.
     const verified = await verifyAgentDelegation(
-      agentId as IRI,
+      delegationAgentId as IRI,
       podUrl,
       { fetch: solidFetch, verifier: delegationVerifier },
     );
@@ -1955,7 +1965,7 @@ async function resolveDelegationAuthority(agentId: string, podUrl: string): Prom
     } else {
       chainReason = verified.reason ?? 'signed delegation chain did not anchor to the pod owner';
       const registryOnly = await verifyAgentDelegation(
-        agentId as IRI,
+        delegationAgentId as IRI,
         podUrl,
         { fetch: solidFetch },
       );
@@ -1974,6 +1984,8 @@ async function resolveDelegationAuthority(agentId: string, podUrl: string): Prom
     writeEligible: valid && WRITE_ELIGIBLE_SCOPES.has(resolvedScope),
     basis,
     chainReason,
+    registeredAgentId: delegationAgentId,
+    cacheable: cacheDelegationSubject(valid, subject),
   };
 }
 
@@ -1998,15 +2010,17 @@ async function runScopeGate(
   const authority = await resolveDelegationAuthority(agentId, podUrl);
   const valid = authority.enforced;
   const resolvedScope = authority.scope;
-  if (agentScopeCache.size >= SCOPE_CACHE_MAX) {
-    const oldestKey = agentScopeCache.keys().next().value;
-    if (oldestKey !== undefined) agentScopeCache.delete(oldestKey);
+  if (authority.cacheable) {
+    if (agentScopeCache.size >= SCOPE_CACHE_MAX) {
+      const oldestKey = agentScopeCache.keys().next().value;
+      if (oldestKey !== undefined) agentScopeCache.delete(oldestKey);
+    }
+    agentScopeCache.set(key, {
+      scope: resolvedScope,
+      valid,
+      expiresAt: Date.now() + SCOPE_CACHE_TTL_MS,
+    });
   }
-  agentScopeCache.set(key, {
-    scope: resolvedScope,
-    valid,
-    expiresAt: Date.now() + SCOPE_CACHE_TTL_MS,
-  });
 
   if (valid && WRITE_ELIGIBLE_SCOPES.has(resolvedScope)) return { allowed: true };
   return {

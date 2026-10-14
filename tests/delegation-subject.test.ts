@@ -1,0 +1,22 @@
+#!/usr/bin/env tsx
+import assert from 'node:assert/strict';
+import { selectDelegationSubject, cacheDelegationSubject } from '../delegation-subject.js';
+const ID='https://identity.interego.xwisee.com';
+const slug='chatgpt-u-pk-731e988c2c5b';
+const did='did:web:identity.interego.xwisee.com:agents:'+slug;
+const alias=selectDelegationSubject(did,[{agentId:slug}],ID);
+assert.equal(alias.registered,slug);
+assert.equal(alias.basis,'identity-alias');
+assert.equal(cacheDelegationSubject(true,alias),false,'a legacy grant is reread after every owner change');
+const exact=selectDelegationSubject(did,[{agentId:slug},{agentId:did}],ID);
+assert.equal(exact.registered,did,'an exact canonical row wins independently of its scope or revocation');
+assert.equal(cacheDelegationSubject(true,exact),true);
+assert.equal(cacheDelegationSubject(false,exact),false);
+assert.equal(selectDelegationSubject('did:web:attacker.test:agents:'+slug,[{agentId:slug}],ID).basis,'missing','a foreign DID authority is not the same agent');
+assert.equal(selectDelegationSubject('did:web:identity.interego.xwisee.com:another:'+slug,[{agentId:slug}],ID).basis,'missing','a DID suffix alone never binds a grant');
+assert.equal(selectDelegationSubject(did,[{agentId:'../'+slug}],ID).basis,'missing','path-shaped aliases are refused');
+assert.equal(selectDelegationSubject(did,[{agentId:slug},{agentId:slug}],ID).basis,'ambiguous','duplicate alias rows cannot choose a grant');
+assert.equal(selectDelegationSubject(did,[],ID).basis,'missing');
+assert.equal(selectDelegationSubject('did:key:z6MkOther',[{agentId:'did:key:z6MkOther'}],ID).basis,'exact','other exact IRI registrations keep their existing semantics');
+assert.equal(selectDelegationSubject(slug,[{agentId:slug}],ID).basis,'exact','legacy exact-subject callers retain existing behavior');
+process.stdout.write('Delegation subject identity and cache invariants passed\n');
