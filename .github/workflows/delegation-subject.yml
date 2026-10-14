@@ -7,7 +7,7 @@ on:
       - 'deploy/mcp-relay/delegation-subject.ts'
       - 'deploy/mcp-relay/session-actor.ts'
       - 'deploy/mcp-relay/server.ts'
-      - 'tests/delegation-subject.test.ts'
+      - 'deploy/mcp-relay/tests/delegation-subject.test.ts'
       - '.github/workflows/delegation-subject.yml'
 permissions:
   contents: read
@@ -21,4 +21,4 @@ jobs:
         with: { node-version: '22', cache: 'npm' }
       - run: npm ci
       - run: npm run build
-      - run: npx vitest run tests/delegation-subject.test.ts
+      - run: npx tsx deploy/mcp-relay/tests/delegation-subject.test.ts
