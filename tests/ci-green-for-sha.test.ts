@@ -156,6 +156,93 @@ describe('the gate excludes its own run, or it waits for itself forever', () => 
   });
 });
 
+
+describe('GitHub dependency-update proposals are separate from artifact checks', () => {
+  // Metadata from live run 38641533280 on relay merge 78bb5a9e. Its update_files
+  // errors prevented proposals; this was not a failed test of the merged artifact.
+  const updater = {
+    name: 'npm_and_yarn in /.',
+    path: 'dynamic/dependabot/dependabot-updates',
+    event: 'dynamic',
+    actor: { login: 'dependabot[bot]' },
+    status: 'completed',
+    conclusion: 'failure',
+  };
+  const read = (runs: unknown[]) => runsForSha('a'.repeat(40), {
+    repo: 'o/r', token: 't', self: 'Auto-deploy master',
+    fetchFn: async () => ({
+      ok: true, json: async () => ({ workflow_runs: runs }),
+    }) as unknown as Response,
+  });
+  const artifactChecks = () => [
+    lint(),
+    { ...done('pages build and deployment', 'success'), path: 'dynamic/pages/pages-build-deployment', event: 'dynamic', actor: { login: 'github-pages[bot]' } },
+  ];
+
+  it.each([
+    { status: 'completed', conclusion: 'failure' },
+    { status: 'in_progress', conclusion: null },
+  ])('does not wait or refuse on the exact updater metadata ($status)', async (state) => {
+    const got = await read([...artifactChecks(), { ...updater, ...state }]);
+    expect(got.map((r) => r.name)).toEqual(['ESLint', 'pages build and deployment']);
+    expect(verdict(got).state).toBe('green');
+  });
+
+  it.each([
+    { label: 'wrong path', different: { path: '.github/workflows/dependabot-updates.yml' } },
+    { label: 'wrong actor', different: { actor: { login: 'github-actions[bot]' } } },
+    { label: 'wrong event', different: { event: 'push' } },
+    { label: 'missing path', different: { path: undefined } },
+    { label: 'missing actor', different: { actor: undefined } },
+    { label: 'missing event', different: { event: undefined } },
+    { label: 'similar path', different: { path: 'dynamic/dependabot/dependabot-updates-spoof' } },
+  ])('refuses a failed same-name workflow with $label', async ({ different }) => {
+    const got = await read([...artifactChecks(), { ...updater, ...different }]);
+    expect(got).toHaveLength(3);
+    expect(verdict(got).state).toBe('red');
+    expect(verdict(got).failed).toContain('npm_and_yarn in /.: failure');
+  });
+
+  it.each(['failure', 'cancelled'])('still refuses actual security checks with conclusion %s', async (conclusion) => {
+    const security = {
+      ...done('Security audit', conclusion),
+      path: '.github/workflows/security-audit.yml',
+      event: 'push',
+      actor: { login: 'dependabot[bot]' },
+    };
+    const got = await read([...artifactChecks(), updater, security]);
+    expect(verdict(got).state).toBe('red');
+    expect(verdict(got).failed).toContain(`Security audit: ${conclusion}`);
+  });
+
+  it('still waits for a same-name artifact check in progress', async () => {
+    const got = await read([...artifactChecks(), {
+      ...updater, event: 'pull_request', status: 'in_progress', conclusion: null,
+    }]);
+    expect(verdict(got).state).toBe('pending');
+    expect(verdict(got).pending).toContain('npm_and_yarn in /.');
+  });
+
+  it.each(['failure', 'cancelled'])('still counts dynamic pages and refuses %s', async (conclusion) => {
+    const checks = artifactChecks();
+    const got = await read([checks[0], { ...checks[1], conclusion }, updater]);
+    expect(verdict(got).state).toBe('red');
+    expect(verdict(got).failed).toContain(`pages build and deployment: ${conclusion}`);
+  });
+
+  it('does not let updater runs fill the census floor or replace required ESLint', async () => {
+    const short = await read([lint(), updater]);
+    expect(verdict(short).state).toBe('too-few');
+    const missingLint = await read([
+      done('Relay Tests', 'success'), done('Base without verticals', 'success'), updater,
+    ]);
+    expect(verdict(missingLint).state).toBe('too-few');
+    expect(verdict(missingLint).detail).toContain('no ESLint run');
+    expect(MIN_RUNS).toBe(2);
+    expect(REQUIRED_RUNS).toEqual(['ESLint']);
+  });
+});
+
 describe('★ a short listing is a wait until the deadline, not a refusal on sight', () => {
   // 2026-09-21, commit 0f40814b: five runs listed, then two, then one poll answered 200 with an
   // empty list while the mutation gate was still running. The floor read it as final and refused

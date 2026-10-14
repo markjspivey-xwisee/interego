@@ -9,8 +9,9 @@
  * this repository has already paid for skipping the wait once: the note in its own memory reads
  * "CI is a DEPLOY GATE; skipping it took the bridge down."
  *
- * So auto-deploy blocks here until every other workflow run for the same sha has CONCLUDED, and
- * refuses unless all of them succeeded.
+ * So auto-deploy blocks here until every other artifact-checking workflow for the same sha has
+ * CONCLUDED, and refuses unless all of them succeeded. GitHub's dependency updater creates future
+ * update proposals; it does not check the current artifact (see the exact metadata filter below).
  *
  * ── ★ WHY IT COUNTS RUNS AND REFUSES A SMALL NUMBER ──────────────────────────────────────────
  *
@@ -81,7 +82,7 @@ export const POST_DEPLOY_WORKFLOWS = ['Client signature live check'];
 const PASSING = new Set(['success', 'skipped', 'neutral']);
 
 /**
- * Runs for `sha`, excluding this workflow's own and the post-deploy checks it dispatches.
+ * Runs for `sha`, excluding this workflow's own, its post-deploy checks and GitHub's dependency updater.
  *
  * ★ EXCLUDING SELF IS NOT OPTIONAL: this tool runs INSIDE one of the runs it would otherwise wait
  * for, so counting itself deadlocks until the timeout and then reports a failure that is only the
@@ -105,6 +106,13 @@ export async function runsForSha(sha, { repo, token, self, ignore = POST_DEPLOY_
   const all = Array.isArray(body?.workflow_runs) ? body.workflow_runs : [];
   return all
     .filter((r) => r?.name !== self && !ignore.includes(r?.name))
+    // 2026-10-14, run 38641533280: GitHub's updater failed to produce dependency-update
+    // proposals and stopped the verified relay rollout at 78bb5a9e. It tests no artifact.
+    // Match all three GitHub-supplied fields; a display name or bot author alone cannot
+    // excuse a failed security/code workflow. Dynamic pages builds still count.
+    .filter((r) => !(r?.path === 'dynamic/dependabot/dependabot-updates'
+      && r?.event === 'dynamic'
+      && r?.actor?.login === 'dependabot[bot]'))
     .map((r) => ({ name: r?.name ?? '(unnamed)', status: r?.status, conclusion: r?.conclusion, ...(typeof r?.html_url === 'string' ? { url: r.html_url } : {}) }));
 }
 
