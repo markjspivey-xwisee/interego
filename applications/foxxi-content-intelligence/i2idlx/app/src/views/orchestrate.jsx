@@ -1,7 +1,7 @@
-// Orchestrate: a team of Claude agents onboards a (fictional) organization's learning inventory into
+// Orchestrate: a team of model agents onboards a (fictional) organization's learning inventory into
 // I2IDL-X's semantic layer. Left: the team, the plan as swimlanes, and the transcript of messages, handoffs
 // and tool calls. Right: the workbench itself, driven by those calls. Watch a recorded run, or run the
-// team live on your own Claude account; either way everything happens in a sandbox in this page.
+// team live on your connected model account; either way everything happens in a sandbox in this page.
 import { META, PORTS, RUN } from "../data.js";
 import { Icon } from "../icons.jsx";
 import { Avatar, CodeBlock, CopyBtn, Modal, Seg, useUI } from "../ui.jsx";
@@ -68,7 +68,7 @@ function Header({ orc, onLive }) {
   return (
     <header className="orc-head">
       <div className="orc-title">
-        <div className="eyebrow">Orchestrate · eight Claude agents, one workbench</div>
+        <div className="eyebrow">Orchestrate · eight model agents, one workbench</div>
         <h1 className="h-display">{ORG.name} joins the semantic layer <span className="tag" title={ORG.note}>fictional</span></h1>
       </div>
       <div className="orc-ctl">
@@ -213,7 +213,7 @@ function Intro({ orc, onLive }) {
       <p className="small muted">The inventory: {RECORDS.length} records from the academy's LMS, registry, credential platform and org chart. Some are harder than they look: one describes two kinds of thing at once, one has no concept in the glossary, and one is also published to a registry that speaks another vocabulary.</p>
       <div className="row wrap">
         <button className="btn primary" onClick={() => orc.start("recorded")} disabled={!orc.trace}><Icon name="play" filled />Watch the recorded run</button>
-        <button className="btn" onClick={onLive}><Icon name="sparkle" />Run it live with Claude</button>
+        <button className="btn" onClick={onLive}><Icon name="sparkle" />Run it live with your model</button>
       </div>
       <p className="tiny muted">Everything happens in a sandbox in this page. The agents' proposals, votes and pack never reach the team's shared review queue, and the writes to Interego are only staged; you approve or decline them, and nothing is sent from this page.</p>
     </div>
@@ -312,14 +312,16 @@ function Provenance({ orc }) {
 }
 
 function LiveModal({ orc, onClose }) {
+  const { sample } = useCaps();
+  const modelTiers = !!sample && sample.modelTiers !== false;
   const [tier, setTier] = useStored("orc.tier", "quick");
   const ok = orc.live.available;
   return (
-    <Modal title="Run the team live with Claude" onClose={onClose}>
+    <Modal title="Run the team live with your model" onClose={onClose}>
       <div className="stack">
-        <p className="small">Each step becomes one Claude call on <b>your</b> account — about a dozen calls for the whole run — and each agent gets only its step's tools: these workbench functions, acting on a sandbox in this page. Nothing is published; the writes are staged for your approval.</p>
-        <Seg label="Speed" value={tier} onChange={setTier} options={[{ v: "quick", l: "Fast" }, { v: "default", l: "Thorough" }]} />
-        <p className="tiny muted">{tier === "quick" ? "Fast: a quick model, about a second per round; a run takes a minute or two." : "Thorough: the everyday model thinks before each round; a run takes several minutes."} Agents can make mistakes; that is part of what the Ontologist and the reviewers are there to catch.</p>
+        <p className="small">Each step becomes one model call on <b>your</b> account — about a dozen calls for the whole run — and each agent gets only its step's tools: these workbench functions, acting on a sandbox in this page. Nothing is published; the writes are staged for your approval.</p>
+        {modelTiers ? <Seg label="Speed" value={tier} onChange={setTier} options={[{ v: "quick", l: "Fast" }, { v: "default", l: "Thorough" }]} /> : null}
+        <p className="tiny muted">Response times depend on your connected model. Agents can make mistakes; review their evidence and staged changes.</p>
         {!ok ? <div className="note"><Icon name="info" /><span className="small">{orc.live.reason}</span></div> : null}
         <div className="row"><span className="spacer" /><button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={!ok} onClick={() => { onClose(); orc.start("live", { tier }); }}><Icon name="play" filled />Start</button></div>

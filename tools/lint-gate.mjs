@@ -262,7 +262,9 @@ const UNLINTED_FRONTIER = {
   //    the slack, and Foxxi's dispatch and course ask (src/scorm-dispatch.ts, src/course-ask.ts,
   //    src/i2idl-glossary.ts, their three tests and the glossary fixture) took the root past it.
   //    All seven lint clean.
-  applications: { errors: 1452, files: 763 },
+  // CI measured 808 application source files after the native I2IDL-X modules;
+  // the error pin remains unchanged.
+  applications: { errors: 1452, files: 808 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },

@@ -1,0 +1,261 @@
+name: I2IDL-X browser and original client oracles
+
+# Reuse completed native or golden outputs; no ontology generation, reasoning, publishing,
+# deployment or real-user pod writes happen in this bounded UI workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      native_run_id:
+        description: Successful bounded native diagnostic run containing complete native outputs
+        required: false
+        type: string
+      golden_run_id:
+        description: Completed golden workflow run containing complete native outputs
+        required: false
+        type: string
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/i2idlx-ui-oracle.yml'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/cache-ui-assets.ts'
+      - 'tools/i2idlx-hosted-visitor-smoke.py'
+  workflow_run:
+    workflows: ['I2IDL-X complete golden parity', 'I2IDL-X bounded native diagnostic']
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: i2idlx-ui-${{ github.event.pull_request.number || github.event.workflow_run.id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: Original client oracles and hosted visitor render
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      INTEREGO_CORE_SRC: ${{ github.workspace }}/packages/core/src
+      INTEREGO_TSX: ${{ github.workspace }}/node_modules/.bin/tsx
+      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
+      PYTHONHASHSEED: '0'
+      TZ: UTC
+    steps:
+      - name: Locate completed outputs from the exact source head
+        id: source
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const repository = owner + '/' + repo;
+            const inputs = context.payload.inputs || {};
+            const nativeId = inputs.native_run_id?.trim();
+            const goldenId = inputs.golden_run_id?.trim();
+            if (nativeId && goldenId) throw new Error('Select one native or golden run, not both.');
+            let id = nativeId || goldenId || context.payload.workflow_run?.id;
+            const expectedSha = context.payload.pull_request?.head.sha || context.payload.workflow_run?.head_sha;
+            const expectedPr = context.payload.pull_request?.number;
+            if (!id) {
+              if (!expectedSha) throw new Error('Select a completed native or golden workflow run ID.');
+              // Only automatic PR selection waits. Explicit IDs and workflow_run
+              // events still require their named build to be eligible immediately.
+              const waitForPr = Boolean(context.payload.pull_request);
+              const deadline = Date.now() + (waitForPr ? 8 * 60 * 1000 : 0);
+              let selected;
+              for (;;) {
+                const listing = await github.rest.actions.listWorkflowRunsForRepo({
+                  owner, repo, head_sha: expectedSha, event: 'pull_request', per_page: 100
+                });
+                const runs = listing.data.workflow_runs.filter(run => run.head_sha === expectedSha);
+                const eligible = [
+                  ...runs.filter(run => run.name === 'I2IDL-X bounded native diagnostic' &&
+                    run.status === 'completed' && run.conclusion === 'success'),
+                  ...runs.filter(run => run.name === 'I2IDL-X complete golden parity' && run.status === 'completed')
+                ];
+                for (const candidate of eligible) {
+                  const prefix = candidate.name === 'I2IDL-X bounded native diagnostic' ?
+                    'i2idlx-native-diagnostic-' : 'i2idlx-golden-parity-';
+                  const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({
+                    owner, repo, run_id: candidate.id, per_page: 100
+                  });
+                  if (artifacts.artifacts.some(artifact => artifact.name === prefix + candidate.id && !artifact.expired)) {
+                    selected = candidate;
+                    break;
+                  }
+                }
+                if (selected) break;
+                const remaining = deadline - Date.now();
+                if (!waitForPr || remaining <= 0) throw new Error('No completed native or golden outputs are available for this exact head within the bounded wait. Retry only this UI job after native outputs are uploaded.');
+                const delay = Math.min(30 * 1000, remaining);
+                core.info('Waiting for completed outputs from source ' + expectedSha +
+                  '; ' + Math.ceil(remaining / 1000) + ' seconds remain. Rechecking in ' + Math.ceil(delay / 1000) + ' seconds.');
+                await new Promise(resolve => setTimeout(resolve, delay));
+              }
+              id = selected.id;
+            }
+            if (!/^[0-9]+$/.test(String(id))) throw new Error('A real build workflow run ID is required.');
+            const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(id) });
+            const native = run.name === 'I2IDL-X bounded native diagnostic';
+            const golden = run.name === 'I2IDL-X complete golden parity';
+            const expectedPath = native ? '.github/workflows/i2idlx-native-diagnostic.yml' : '.github/workflows/i2idlx-golden-parity.yml';
+            if ((!native && !golden) || run.path !== expectedPath ||
+                run.repository?.full_name !== repository || run.head_repository?.full_name !== repository ||
+                (expectedSha && run.head_sha !== expectedSha) ||
+                (expectedPr && !run.pull_requests.some(pr => pr.number === expectedPr))) {
+              throw new Error('Selected build run does not belong to the expected repository, workflow and source head.');
+            }
+            if ((nativeId && !native) || (goldenId && !golden)) throw new Error('The selected input names a different build workflow.');
+            if (run.status !== 'completed' || (native && run.conclusion !== 'success')) {
+              throw new Error('The selected build has no complete eligible outputs yet. Retry only this UI job after its artifact upload; do not restart ontology generation.');
+            }
+            const name = (native ? 'i2idlx-native-diagnostic-' : 'i2idlx-golden-parity-') + id;
+            const { data: listing } = await github.rest.actions.listWorkflowRunArtifacts({ owner, repo, run_id: Number(id), per_page: 100 });
+            const artifact = listing.artifacts.find(item => item.name === name && !item.expired);
+            if (!artifact) throw new Error('The selected run has no retained generated outputs. Retry only this UI job after artifact upload.');
+            core.setOutput('run_id', String(id));
+            core.setOutput('artifact_name', artifact.name);
+            core.setOutput('artifact_id', String(artifact.id));
+            core.setOutput('head_sha', run.head_sha);
+            core.setOutput('kind', native ? 'native-diagnostic' : 'golden');
+            core.setOutput('conclusion', run.conclusion || '');
+            core.info('Using actual ' + artifact.name + ' from source ' + run.head_sha + '. UI evidence does not establish complete golden parity.');
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.source.outputs.head_sha }}
+      - uses: actions/setup-node@v6
+        with: { node-version: '22', cache: npm }
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12' }
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.run_id }}
+          name: ${{ steps.source.outputs.artifact_name }}
+          path: applications/foxxi-content-intelligence/i2idlx
+      - name: Verify diagnostic completion and normalize existing native output paths
+        env:
+          BUILD_KIND: ${{ steps.source.outputs.kind }}
+          BUILD_RUN_ID: ${{ steps.source.outputs.run_id }}
+          BUILD_HEAD_SHA: ${{ steps.source.outputs.head_sha }}
+          BUILD_ARTIFACT_ID: ${{ steps.source.outputs.artifact_id }}
+          BUILD_CONCLUSION: ${{ steps.source.outputs.conclusion }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const root = process.env.I2IDLX_ROOT;
+          if (process.env.BUILD_KIND === 'native-diagnostic') {
+            const diagnostic = path.join(root, '.cache', 'native-diagnostic');
+            const run = JSON.parse(fs.readFileSync(path.join(diagnostic, 'run.json'), 'utf8'));
+            const outcome = JSON.parse(fs.readFileSync(path.join(diagnostic, 'native-outcome.json'), 'utf8'));
+            assert.equal(run.headSha, process.env.BUILD_HEAD_SHA, 'native receipt source head differs');
+            assert.equal(run.runId, process.env.BUILD_RUN_ID, 'native receipt run differs');
+            assert.equal(outcome.headSha, process.env.BUILD_HEAD_SHA, 'native outcome source head differs');
+            assert.equal(outcome.exitCode, 0, 'bounded native build did not finish successfully');
+            for (const file of ['dist-native/semantic-layer.json', 'dist-native/published.json',
+              'dist-native/verification-report.md', 'app-native/data.json', 'site-native/app.html']) {
+              assert.ok(fs.statSync(path.join(diagnostic, file)).size > 0, 'missing complete native output: ' + file);
+            }
+            for (const [source, target] of [['dist-native', 'dist-ts'], ['app-native', 'app/build-ts'], ['site-native', 'site-ts']]) {
+              fs.cpSync(path.join(diagnostic, source), path.join(root, target), { recursive: true });
+            }
+          }
+          const evidence = path.join(root, '.cache', 'ui-oracle-shots');
+          fs.mkdirSync(evidence, { recursive: true });
+          fs.writeFileSync(path.join(evidence, 'source-build.json'), JSON.stringify({
+            kind: process.env.BUILD_KIND, runId: process.env.BUILD_RUN_ID,
+            artifactId: process.env.BUILD_ARTIFACT_ID, headSha: process.env.BUILD_HEAD_SHA,
+            buildConclusion: process.env.BUILD_CONCLUSION,
+            scope: 'Original client and hosted visitor oracles against completed native outputs; complete Python/native golden parity is a separate gate.'
+          }, null, 2) + '\n');
+          JS
+          echo "UI and original client oracles consume completed native outputs. Complete Python/native golden parity remains a separate gate." >> "$GITHUB_STEP_SUMMARY"
+      - name: Require generated native data and graph inputs
+        run: |
+          test -s "$I2IDLX_ROOT/app/build-ts/data.json"
+          test -s "$I2IDLX_ROOT/dist-ts/semantic-layer.json"
+          test -s "$I2IDLX_ROOT/dist-ts/published.json"
+      - name: Install locked client and independent browser oracle dependencies
+        run: |
+          npm ci
+          npm run build
+          npm ci --prefix "$I2IDLX_ROOT/app"
+          python3 -m pip install 'pyshacl==0.30.1' 'rdflib==7.1.4' 'playwright==1.56.0'
+          python3 -m playwright install --with-deps chromium
+      - name: Read the pinned canonical history for app extraction only
+        run: |
+          mkdir -p .cache
+          git clone https://github.com/blakeplock/i2idl-linked-data "$I2IDL_CLONE"
+          git -C "$I2IDL_CLONE" checkout --detach 9f865995d879165d8fa49422915a5e53d2ecebf9
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 9f865995d879165d8fa49422915a5e53d2ecebf9
+      - name: Rebundle current app using existing native graph and reasoning outputs
+        run: |
+          npx tsx "$I2IDLX_ROOT/typescript/build-app.ts" "$I2IDLX_ROOT" --dist "$I2IDLX_ROOT/dist-ts" --out "$I2IDLX_ROOT/app/build-ts" --site "$I2IDLX_ROOT/site-ts"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const root = process.env.I2IDLX_ROOT;
+          // Original oracles expect these names. Every copied byte is a native
+          // output; all replacements remain inside this disposable runner.
+          fs.cpSync(path.join(root, 'dist-ts'), path.join(root, 'dist'), { recursive: true });
+          fs.cpSync(path.join(root, 'app', 'build-ts'), path.join(root, 'app', 'build'), { recursive: true });
+          fs.cpSync(path.join(root, 'site-ts'), path.join(root, 'site'), { recursive: true });
+          fs.mkdirSync(path.join(root, '.cache', 'ui-oracle-shots'), { recursive: true });
+          JS
+      - name: Cache only the scripts and fonts named by the generated page
+        run: npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/cache-ui-assets.ts "$I2IDLX_ROOT/site/app.html" "$I2IDLX_ROOT/.cache/ui-oracle-assets"
+      - name: Unchanged desktop, mobile, export and workspace smoke oracle
+        run: python3 -I "$I2IDLX_ROOT/tools/smoke_app.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" --shots "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Original control, SPARQL, classification and exported-record cross-check
+        run: python3 -I "$I2IDLX_ROOT/tools/check_app_logic.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Replay original orchestration trace and validate every staged write
+        run: python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT"
+      - name: Hosted path without credentials or model capabilities
+        run: python3 -I tools/i2idlx-hosted-visitor-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Export actual public home renders for visual inspection
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import pathlib
+          import os
+          shots = pathlib.Path(os.environ["I2IDLX_ROOT"]) / ".cache" / "ui-oracle-shots"
+          for width in (1440, 420):
+              image = shots / ("hosted-home-" + str(width) + ".png")
+              if not image.is_file():
+                  print("Public home render not available yet:", image.name)
+                  continue
+              if image.stat().st_size > 1_000_000:
+                  print("Public home render exceeds the bounded log export:", image.name)
+                  continue
+              content = image.read_bytes()
+              if not content.startswith(bytes([137, 80, 78, 71, 13, 10, 26, 10])):
+                  raise ValueError("Expected an actual PNG screenshot: " + image.name)
+              print("I2IDLX_UI_SCREENSHOT=" + json.dumps({
+                  "file": image.name, "width": width, "mimeType": "image/png",
+                  "bytes": len(content), "data": base64.b64encode(content).decode("ascii")
+              }, separators=(",", ":")))
+          PY
+      - name: Retain real browser screenshots and exported record evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2idlx-ui-oracle-${{ github.run_id }}
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/.cache/ui-oracle-shots
+            applications/foxxi-content-intelligence/i2idlx/.cache/ui-oracle-assets/receipt.json
+            applications/foxxi-content-intelligence/i2idlx/app/build/check.cjs
+            applications/foxxi-content-intelligence/i2idlx/app/build/orc-check.cjs
+            applications/foxxi-content-intelligence/i2idlx/app/build/data.json
+            applications/foxxi-content-intelligence/i2idlx/site/app.html

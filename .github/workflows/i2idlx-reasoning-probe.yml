@@ -1,0 +1,106 @@
+name: I2IDL-X shared-input closure diagnostic
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-parity-probe.ts'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-probe-input*'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-probe-reports*'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-footprint*'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning.ts'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/literal-datatypes.ts'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/rdf.ts'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/generate.ts'
+      - 'applications/foxxi-content-intelligence/i2idlx/src/layer.py'
+      - 'applications/foxxi-content-intelligence/i2idlx/config.json'
+      - '.github/workflows/i2idlx-reasoning-probe.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: i2idlx-reasoning-probe-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: Exact shared-input closure difference
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      INTEREGO_CORE_SRC: ${{ github.workspace }}/packages/core/src
+      INTEREGO_TSX: ${{ github.workspace }}/node_modules/.bin/tsx
+      I2IDLX_REASONER_JAR: ${{ github.workspace }}/applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
+      I2IDLX_BUILT_DATE: '2026-10-08'
+      I2IDLX_MODIFIED: '2026-10-13'
+      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
+      PYTHONHASHSEED: '0'
+      TZ: UTC
+    steps:
+      - name: Start the bounded diagnostic deadline
+        run: echo "I2IDLX_PROBE_DEADLINE=$(( $(date +%s) + 780 ))" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install the locked substrate and exact independent oracle
+        timeout-minutes: 4
+        run: |
+          npm ci
+          npm run build
+          python3 -m pip install 'pyshacl==0.30.1' 'owlrl==7.1.4' 'rdflib==7.1.4'
+      - name: Compile the native diagnostic
+        timeout-minutes: 2
+        run: npx tsc --noEmit -p "$I2IDLX_ROOT/tsconfig.native.json"
+      - name: Verify private normalization and the actual independent literal conversion
+        timeout-minutes: 1
+        run: |
+          npx tsx --test "$I2IDLX_ROOT/typescript/reasoning-probe-input.test.ts" "$I2IDLX_ROOT/typescript/reasoning-probe-reports.test.ts" "$I2IDLX_ROOT/typescript/reasoning-footprint.test.ts"
+          npx tsx "$I2IDLX_ROOT/typescript/reasoning-probe-input-fixtures.ts"
+          npx tsx "$I2IDLX_ROOT/typescript/reasoning-footprint-fixtures.ts" "$I2IDLX_ROOT"
+      - name: Cache only retained pinned input bytes
+        uses: actions/cache@v4
+        with:
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/.cache/upper
+            applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
+          key: i2idlx-golden-pins-${{ hashFiles('applications/foxxi-content-intelligence/i2idlx/evidence/upper/manifest.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/refresh-upper-data.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/semantic-data.json', 'applications/foxxi-content-intelligence/i2idlx/config.json') }}
+      - name: Prepare exact source and shared input snapshots
+        timeout-minutes: 6
+        run: |
+          remaining=$(( I2IDLX_PROBE_DEADLINE - $(date +%s) ))
+          test "$remaining" -gt 0
+          timeout --signal=TERM --kill-after=10s "${remaining}s" npx tsx "$I2IDLX_ROOT/typescript/prepare-source.ts" "$I2IDLX_ROOT" "$I2IDL_CLONE"
+          remaining=$(( I2IDLX_PROBE_DEADLINE - $(date +%s) ))
+          test "$remaining" -gt 0
+          timeout --signal=TERM --kill-after=10s "${remaining}s" npx tsx "$I2IDLX_ROOT/typescript/prepare-build-inputs.ts" "$I2IDLX_ROOT"
+      - name: Compare actual closed quads from both reasoners
+        timeout-minutes: 6
+        run: |
+          mkdir -p "$I2IDLX_ROOT/.cache/reasoning-probe"
+          remaining=$(( I2IDLX_PROBE_DEADLINE - $(date +%s) ))
+          test "$remaining" -gt 0
+          if (( remaining > 350 )); then remaining=350; fi
+          timeout --signal=TERM --kill-after=10s "${remaining}s" npx tsx "$I2IDLX_ROOT/typescript/reasoning-parity-probe.ts" "$I2IDLX_ROOT" 2>&1 | tee "$I2IDLX_ROOT/.cache/reasoning-probe/probe.log"
+      - name: Retain diagnostic evidence even when closure differs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2idlx-reasoning-probe-${{ github.run_id }}
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: applications/foxxi-content-intelligence/i2idlx/.cache/reasoning-probe

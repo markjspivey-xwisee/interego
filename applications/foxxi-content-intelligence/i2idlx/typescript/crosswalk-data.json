@@ -1,0 +1,1556 @@
+{
+  "ENACTMENTS": [
+    [
+      "a-b-testing",
+      "operationalizes",
+      "foxxi/le-design-ab-experiment",
+      0.9,
+      "Pre-registers an A/B comparison between content variants with a power analysis and analysis plan."
+    ],
+    [
+      "testing-for-learning-impact",
+      "operationalizes",
+      "foxxi/le-design-ab-experiment",
+      0.7,
+      "Impact testing realized as a pre-registered controlled comparison of variants."
+    ],
+    [
+      "knowledge-retention",
+      "measures",
+      "foxxi/le-analyze-learning-curve",
+      0.8,
+      "Tracks per-concept performance over attempts and flags plateaus, a retention signal."
+    ],
+    [
+      "spaced-repetition",
+      "operationalizes",
+      "foxxi/schedule-spaced-repetition",
+      0.95,
+      "Schedules spaced review reminders for a learner."
+    ],
+    [
+      "retrieval-practice",
+      "operationalizes",
+      "foxxi/schedule-spaced-repetition",
+      0.55,
+      "Scheduled reminders prompt spaced retrieval; the affordance schedules, it does not itself test recall."
+    ],
+    [
+      "mastery-learning",
+      "operationalizes",
+      "foxxi/launch-au-with-prereq",
+      0.75,
+      "Gates the next cmi5 AU on a verified credential for its prerequisite: progression on demonstrated mastery."
+    ],
+    [
+      "mastery-learning",
+      "measures",
+      "foxxi/le-calibrate-mastery-threshold",
+      0.75,
+      "Calibrates the cmi5 mastery score against downstream performance."
+    ],
+    [
+      "competency-based-learning",
+      "operationalizes",
+      "foxxi/le-framework-gap-analysis",
+      0.7,
+      "Cross-references framework competencies with taught concepts to find untaught competencies and unaligned concepts."
+    ],
+    [
+      "learning-engineering",
+      "operationalizes",
+      "foxxi/le-framework-gap-analysis",
+      0.6,
+      "One of the learning-engineering analyses the bridge exposes over a tenant's courses and framework."
+    ],
+    [
+      "learning-engineering-process",
+      "measures",
+      "foxxi/le-analyze-learning-curve",
+      0.5,
+      "Supplies investigation-phase evidence (learning curves) that the process iterates on."
+    ],
+    [
+      "prior-knowledge",
+      "measures",
+      "foxxi/le-estimate-concept-difficulty",
+      0.5,
+      "Estimates concept difficulty from prerequisite depth and cohort signal, i.e. how much prior knowledge a concept presumes."
+    ],
+    [
+      "continuous-improvement",
+      "operationalizes",
+      "foxxi/course-propose-successor",
+      0.55,
+      "A course proposes its own successor from evidence, making iteration a governed, recorded act."
+    ],
+    [
+      "evidence-based-practice",
+      "operationalizes",
+      "foxxi/review-method-evidence",
+      0.65,
+      "Checks the evidence coverage behind an intervention method before it is used."
+    ],
+    [
+      "decision-tracking",
+      "records",
+      "relay/publish_context",
+      0.55,
+      "A design decision recorded as a signed context descriptor; later revisions chain to it by iep:supersedes."
+    ],
+    [
+      "design-revision",
+      "records",
+      "relay/publish_context",
+      0.5,
+      "A revision published with iep:supersedes pointing at the decision it revises."
+    ],
+    [
+      "concept-map",
+      "explains",
+      "foxxi/explore-concept-map",
+      0.9,
+      "Returns a course's published concept graph (concepts, prerequisite edges) as a navigable map."
+    ],
+    [
+      "concept-map",
+      "operationalizes",
+      "foxxi/publish-concept-map",
+      0.85,
+      "Publishes a course's concept map as a federated, citable pod artifact."
+    ],
+    [
+      "learning-analytics",
+      "operationalizes",
+      "foxxi/cohort-concept-intelligence",
+      0.75,
+      "Cross-pod cohort concept-overlap analytics."
+    ],
+    [
+      "data-informed-decision-making",
+      "operationalizes",
+      "foxxi/derive-adaptive-policy",
+      0.6,
+      "Derives an adaptive sequencing policy from cohort evidence."
+    ],
+    [
+      "personalization",
+      "operationalizes",
+      "foxxi/derive-adaptive-policy",
+      0.65,
+      "Adapts sequencing policy to cohort evidence."
+    ],
+    [
+      "personalized-learning",
+      "operationalizes",
+      "foxxi/content-resolve-signed",
+      0.75,
+      "Resolves a composition for the learner from their own record."
+    ],
+    [
+      "adaptive-instructional-system",
+      "realizes",
+      "foxxi/content-resolve-signed",
+      0.6,
+      "Per-learner path resolution over compositions is the adaptive core of Foxxi delivery."
+    ],
+    [
+      "adaptive-hypermedia",
+      "realizes",
+      "foxxi/content-next-signed",
+      0.55,
+      "Each answered step returns the next step chosen from the learner's record: adaptive navigation."
+    ],
+    [
+      "intelligent-tutoring-system",
+      "realizes",
+      "foxxi/find-tutor-for-competency",
+      0.65,
+      "Searches the tutor-agent marketplace for a specific competency."
+    ],
+    [
+      "pedagogical-agent",
+      "realizes",
+      "foxxi/register-tutor-agent",
+      0.7,
+      "Registers an AI tutor agent in the marketplace."
+    ],
+    [
+      "pedagogical-agent",
+      "explains",
+      "foxxi/course-ask",
+      0.6,
+      "Role-framed, grounded Q&A over an analyzed course."
+    ],
+    [
+      "ai-assisted-teaching",
+      "operationalizes",
+      "foxxi/ask-course-question-agentic",
+      0.6,
+      "Agentic retrieval-augmented answers over a course federation."
+    ],
+    [
+      "microlearning",
+      "operationalizes",
+      "foxxi/content-fragment-signed",
+      0.6,
+      "Authors a single fragment of teaching or support, the microlearning unit."
+    ],
+    [
+      "digital-learning-materials",
+      "operationalizes",
+      "foxxi/content-compose-signed",
+      0.6,
+      "Composes fragments into a lesson, module, course or curriculum."
+    ],
+    [
+      "competency",
+      "measures",
+      "foxxi/ai-assess-competency",
+      0.7,
+      "An AI mentor signs a Hypothetical competency assertion that a human must countersign."
+    ],
+    [
+      "competency",
+      "measures",
+      "foxxi/resolve-aligned-competency",
+      0.6,
+      "Decides whether a held competency satisfies a required one across aligned frameworks."
+    ],
+    [
+      "competency",
+      "credentials",
+      "foxxi/issue-credential",
+      0.8,
+      "Issues a competency credential as the vertical's authority."
+    ],
+    [
+      "competency",
+      "credentials",
+      "foxxi/prove-competency",
+      0.75,
+      "Proves a held competency with BBS+ selective disclosure."
+    ],
+    [
+      "learning-assessment",
+      "measures",
+      "foxxi/ai-assess-competency",
+      0.55,
+      "AI-mentored competency assessment, held Hypothetical until countersigned."
+    ],
+    [
+      "formative-assessment",
+      "measures",
+      "foxxi/content-next-signed",
+      0.5,
+      "Each step's answer is checked in the flow before the learner moves on."
+    ],
+    [
+      "summative-assessment",
+      "records",
+      "foxxi/record-course-completion-signed",
+      0.55,
+      "Records a cmi5 completion, the summative outcome of an AU."
+    ],
+    [
+      "ai-tool-validation-for-education",
+      "operationalizes",
+      "foxxi/open-agent-evaluation",
+      0.7,
+      "Opens an evaluation cohort to validate an AI agent or harness before use."
+    ],
+    [
+      "ai-tool-validation-for-education",
+      "measures",
+      "foxxi/compare-agent-evaluation",
+      0.65,
+      "Compares the evaluation cohort's portfolio."
+    ],
+    [
+      "human-controlled-ai-in-education",
+      "enforces",
+      "foxxi/set-autonomy-policy",
+      0.8,
+      "Amends when an AI judge may act without a person: human control over AI autonomy."
+    ],
+    [
+      "human-agency-in-ai",
+      "explains",
+      "foxxi/autonomy-status",
+      0.6,
+      "Shows who may assert what without a person, so agency boundaries are inspectable."
+    ],
+    [
+      "human-accountability-in-ai",
+      "enforces",
+      "foxxi/countersign-assessment",
+      0.8,
+      "A human countersigns an AI mentor's competency assertion before it becomes a full credential."
+    ],
+    [
+      "privacy-by-design",
+      "operationalizes",
+      "foxxi/generate-dpia",
+      0.8,
+      "Generates a data protection impact assessment for a learning deployment."
+    ],
+    [
+      "data-privacy",
+      "operationalizes",
+      "foxxi/generate-dpia",
+      0.65,
+      "A DPIA is the documented control through which privacy obligations are assessed."
+    ],
+    [
+      "learner-privacy",
+      "enforces",
+      "foxxi/prove-competency",
+      0.65,
+      "Selective disclosure proves one competency without revealing the rest of the record."
+    ],
+    [
+      "standards-compliance",
+      "operationalizes",
+      "foxxi/audit-compliance-trail",
+      0.6,
+      "Composes a single-query audit chain over compliance evidence."
+    ],
+    [
+      "standards-compliance",
+      "records",
+      "foxxi/publish-compliance-evidence",
+      0.6,
+      "Publishes compliance evidence as a governed, signed record."
+    ],
+    [
+      "data-ownership",
+      "realizes",
+      "foxxi/register-self-sovereign-learner",
+      0.7,
+      "Registers a learner (human or agent) with their own pod: the learner holds the record."
+    ],
+    [
+      "learner-agency",
+      "operationalizes",
+      "foxxi/content-admit-signed",
+      0.6,
+      "The learner chooses which forms of content suit them at a competency."
+    ],
+    [
+      "user-directed-customization",
+      "operationalizes",
+      "foxxi/content-admit-signed",
+      0.6,
+      "Learner-directed selection of content forms."
+    ],
+    [
+      "self-regulated-learning",
+      "operationalizes",
+      "foxxi/review-record",
+      0.55,
+      "The learner reviews their own performance record (ELR + CLR) to plan next steps."
+    ],
+    [
+      "self-monitoring",
+      "operationalizes",
+      "foxxi/review-record",
+      0.55,
+      "Reviewing one's own record is the monitoring step of self-regulation."
+    ],
+    [
+      "xapi-statement",
+      "records",
+      "foxxi/write-xapi-statements-signed",
+      0.9,
+      "Writes the actor's own xAPI statements to the Statements Resource."
+    ],
+    [
+      "statement-resource",
+      "realizes",
+      "foxxi/read-xapi-statements-signed",
+      0.8,
+      "Reads statements back from the Statements Resource."
+    ],
+    [
+      "learning-record",
+      "records",
+      "foxxi/write-xapi-statements-signed",
+      0.75,
+      "Each written statement is a learning record in the LRS."
+    ],
+    [
+      "learning-record-store-lrs",
+      "realizes",
+      "foxxi/discover-lrs",
+      0.9,
+      "Dereferences the LRS's own xAPI about discovery document."
+    ],
+    [
+      "learning-record-provider-lrp",
+      "realizes",
+      "foxxi/emit-cmi5-session",
+      0.6,
+      "Emits a conformant cmi5 session trace, the bridge acting as a record provider."
+    ],
+    [
+      "learning-record-consumer-lrc",
+      "realizes",
+      "foxxi/query-experience-index",
+      0.7,
+      "Federates a statement query across several LRSs (TLA experience index)."
+    ],
+    [
+      "total-learning-architecture-tla",
+      "realizes",
+      "foxxi/query-experience-index",
+      0.6,
+      "Implements the TLA experience-index pattern over multiple LRSs."
+    ],
+    [
+      "registration",
+      "records",
+      "foxxi/emit-cmi5-session",
+      0.6,
+      "cmi5 sessions carry the registration that groups an attempt's statements."
+    ],
+    [
+      "experience-api-xapi",
+      "implements",
+      "foxxi/write-xapi-statements-signed",
+      0.75,
+      "Signed transport over the standard xAPI Statements Resource."
+    ],
+    [
+      "ieee-9274-1-1-2023-xapi",
+      "implements",
+      "foxxi/discover-lrs",
+      0.7,
+      "Serves the standard xAPI about resource."
+    ],
+    [
+      "x-experience-api-version",
+      "implements",
+      "foxxi/discover-lrs",
+      0.6,
+      "The about resource reports the xAPI versions the LRS supports."
+    ],
+    [
+      "xapi-profile",
+      "implements",
+      "foxxi/extend-standards",
+      0.75,
+      "Authors an xAPI Profile fragment or context extension that composes with the host profile."
+    ],
+    [
+      "xapi-extension",
+      "implements",
+      "foxxi/extend-standards",
+      0.8,
+      "Mints a new xAPI context extension as a dereferenceable profile fragment."
+    ],
+    [
+      "streaming-learning-data",
+      "realizes",
+      "relay/subscribe_to_pod",
+      0.55,
+      "Subscribes to live change notifications from a pod."
+    ],
+    [
+      "ieee-1484-11-2-2020-ecmascript-runtime-api",
+      "implements",
+      "foxxi/scorm-launch-signed",
+      0.75,
+      "Starts an attempt on the SCORM sequencing engine that exposes the ECMAScript runtime API."
+    ],
+    [
+      "ieee-1484-11-1-2022-content-object-communication",
+      "implements",
+      "foxxi/scorm-submit-signed",
+      0.7,
+      "Commits the current SCO's run-time data-model values and advances."
+    ],
+    [
+      "ieee-1484-13-4-2016-ims-content-packaging-mapping",
+      "implements",
+      "foxxi/upload-scorm-package",
+      0.7,
+      "Accepts IMS content packages (SCORM zips) for ingestion."
+    ],
+    [
+      "ieee-1484-13-4-2016-ims-content-packaging-mapping",
+      "implements",
+      "foxxi/ingest-content-package",
+      0.7,
+      "Ingests SCORM, cmi5 and xAPI content packages."
+    ],
+    [
+      "ieee-1484-2-2024-learning-employment-record-ecosystems",
+      "implements",
+      "foxxi/assemble-learner-record",
+      0.75,
+      "Assembles an enterprise learner record in the LER ecosystem model."
+    ],
+    [
+      "enterprise-learner-record",
+      "realizes",
+      "foxxi/assemble-learner-record",
+      0.85,
+      "Assembles an Enterprise Learner Record (IEEE P2997) for a human or agent."
+    ],
+    [
+      "verifiable-learning-and-employment-record",
+      "realizes",
+      "foxxi/export-clr",
+      0.8,
+      "Exports a verifiable 1EdTech CLR 2.0 learner record."
+    ],
+    [
+      "digital-credential",
+      "credentials",
+      "foxxi/issue-completion-credential",
+      0.8,
+      "Issues a W3C VC / Open Badges 3.0 completion credential."
+    ],
+    [
+      "digital-credential",
+      "credentials",
+      "foxxi/verify-credential",
+      0.8,
+      "Verifies a credential."
+    ],
+    [
+      "micro-credential",
+      "credentials",
+      "foxxi/issue-credential",
+      0.7,
+      "Issues a competency credential, a micro-credential when scoped to one competency."
+    ],
+    [
+      "ieee-1484-20-3-2022-shareable-competency-definitions",
+      "implements",
+      "foxxi/export-case-framework",
+      0.7,
+      "Exports the tenant's competency framework as 1EdTech CASE 1.0 for exchange."
+    ],
+    [
+      "shareable-competency-definition-scd",
+      "implements",
+      "foxxi/push-to-cass",
+      0.65,
+      "Pushes the competency framework to an ADL CaSS server."
+    ],
+    [
+      "ieee-1484-20-2-2022-defining-competencies",
+      "implements",
+      "foxxi/declare-framework-alignment",
+      0.6,
+      "Declares alignment associations between competency definitions across frameworks."
+    ],
+    [
+      "learning-metadata",
+      "realizes",
+      "foxxi/publish-course-catalog-product",
+      0.6,
+      "Publishes course metadata as a federated (HyprCat) data product."
+    ],
+    [
+      "metadata-tagging",
+      "operationalizes",
+      "foxxi/course-analyze",
+      0.5,
+      "Analyzes a package and fingerprints its tooling and structure into metadata."
+    ],
+    [
+      "linked-data",
+      "implements",
+      "foxxi/publish-ontology",
+      0.75,
+      "Hosts an ontology as dereferenceable, content-negotiated linked data on Interego."
+    ],
+    [
+      "controlled-vocabulary",
+      "operationalizes",
+      "foxxi/publish-ontology",
+      0.6,
+      "Publishes a vocabulary at a resolvable hash namespace."
+    ],
+    [
+      "named-graph",
+      "realizes",
+      "relay/publish_context",
+      0.8,
+      "Publishes a named graph together with a signed context descriptor."
+    ],
+    [
+      "named-graph",
+      "realizes",
+      "relay/get_descriptor",
+      0.6,
+      "Reads a named graph back with its descriptor."
+    ],
+    [
+      "internationalized-resource-identifier-iri",
+      "realizes",
+      "relay/dereference",
+      0.55,
+      "Dereferences an IRI to what it denotes."
+    ],
+    [
+      "semantic-interoperability",
+      "realizes",
+      "relay/resolve_linked_data",
+      0.55,
+      "Resolves a published vocabulary as linked data so independent agents share term meaning."
+    ],
+    [
+      "resource-description-framework-rdf",
+      "implements",
+      "relay/resolve_linked_data",
+      0.6,
+      "Serves published graphs as RDF (Turtle or JSON-LD)."
+    ],
+    [
+      "json-ld",
+      "implements",
+      "relay/resolve_linked_data",
+      0.55,
+      "Returns JSON-LD projections of published graphs."
+    ],
+    [
+      "interoperability",
+      "implements",
+      "relay/invoke_affordance",
+      0.5,
+      "Invokes another vertical's affordance from its published manifest, with no per-vertical client."
+    ]
+  ],
+  "ROLE_CAPABILITIES": [
+    [
+      "profile-author",
+      "foxxi/extend-standards",
+      0.75,
+      "Authoring an xAPI Profile fragment or extension is the profile author's core act."
+    ],
+    [
+      "profile-author",
+      "foxxi/xapi-author-signed",
+      0.55,
+      "Authors native xAPI content against a profile."
+    ],
+    [
+      "profile-validator",
+      "foxxi/verify-extension",
+      0.55,
+      "Independently verifies that a subject extended a standard."
+    ],
+    [
+      "instructional-designer",
+      "foxxi/content-compose-signed",
+      0.65,
+      "Composes fragments into lessons, modules and courses."
+    ],
+    [
+      "instructional-designer",
+      "foxxi/scorm-author-signed",
+      0.6,
+      "Authors a conformant SCORM 2004 course."
+    ],
+    [
+      "learning-design-practitioner",
+      "foxxi/content-compose-signed",
+      0.6,
+      "Composes learning designs from fragments."
+    ],
+    [
+      "learning-experience-design-lxd",
+      "foxxi/content-compose-signed",
+      0.55,
+      "Experience design realized as composition of delivered content."
+    ],
+    [
+      "subject-matter-expert-sme",
+      "foxxi/content-fragment-signed",
+      0.6,
+      "Contributes a fragment of teaching or support from domain expertise."
+    ]
+  ],
+  "ROLE_TAGS": {
+    "[learning-engineer]": [
+      "learning-engineer",
+      0.85,
+      "Foxxi gates this affordance to the learning-engineer role (tag in its manifest title)."
+    ]
+  },
+  "XAPI": "https://w3id.org/xapi/ontology#",
+  "XPROF": "https://w3id.org/xapi/profiles/ontology#",
+  "FOXXI_NS": "https://foxxi-bridge.interego.xwisee.com/ns/",
+  "LER": "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#",
+  "TLA": "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#",
+  "FX_XAPI": "https://foxxi-bridge.interego.xwisee.com/ns/xapi#",
+  "FX_SCORM_CAM": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#",
+  "FX_SCORM_RTE": "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#",
+  "FX_CMI5": "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#",
+  "SDO": "https://schema.org/",
+  "VC": "https://www.w3.org/2018/credentials#",
+  "IEP": "https://markjspivey-xwisee.github.io/interego/ns/iep#",
+  "UNESCO": "http://vocabularies.unesco.org/thesaurus/",
+  "ST": "standards-text",
+  "AI": "ai-drafted",
+  "EC": "evidence-cited",
+  "MAPPINGS": [
+    [
+      "xapi-statement",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#Statement",
+      0.85,
+      "standards-text",
+      "Both denote the xAPI Statement data structure defined by the xAPI base standard."
+    ],
+    [
+      "verb",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#Verb",
+      0.85,
+      "standards-text",
+      "Both denote the xAPI Verb element identified by an IRI with a display language map."
+    ],
+    [
+      "activity",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#Activity",
+      0.8,
+      "standards-text",
+      "Both denote the xAPI Activity an Actor interacts with."
+    ],
+    [
+      "activity-definition",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#ActivityDefinition",
+      0.85,
+      "standards-text",
+      "Both denote the optional Activity Definition metadata object."
+    ],
+    [
+      "actor",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#Actor",
+      0.85,
+      "standards-text",
+      "Both denote the Statement's Actor (Agent or Group)."
+    ],
+    [
+      "xapi-agent",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#Agent",
+      0.85,
+      "standards-text",
+      "Both denote the xAPI Agent identified by an inverse functional identifier."
+    ],
+    [
+      "xapi-group",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#Group",
+      0.85,
+      "standards-text",
+      "Both denote the xAPI Group of Agents, identified or anonymous."
+    ],
+    [
+      "account-object",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#Account",
+      0.8,
+      "standards-text",
+      "Both denote the xAPI Account (homePage + name) identity structure."
+    ],
+    [
+      "context-activities",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#ContextActivities",
+      0.8,
+      "standards-text",
+      "Both denote the contextActivities structure of a Statement's Context."
+    ],
+    [
+      "result-object",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#Result",
+      0.85,
+      "standards-text",
+      "Both denote the Statement Result (score, success, completion, response, duration)."
+    ],
+    [
+      "attachment",
+      "closeMatch",
+      "https://w3id.org/xapi/ontology#Attachments",
+      0.7,
+      "standards-text",
+      "I2IDL names one attachment; the ontology class names the Statement's attachments structure."
+    ],
+    [
+      "statement-reference",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#StatementRef",
+      0.85,
+      "standards-text",
+      "Both denote the StatementRef object that points to another Statement by id."
+    ],
+    [
+      "substatement",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#SubStatement",
+      0.85,
+      "standards-text",
+      "Both denote the embedded SubStatement object."
+    ],
+    [
+      "xapi-extension",
+      "closeMatch",
+      "https://w3id.org/xapi/ontology#Extension",
+      0.75,
+      "standards-text",
+      "Both denote an IRI-keyed extension; the ontology also types its three placements."
+    ],
+    [
+      "xapi-extension",
+      "narrowMatch",
+      "https://w3id.org/xapi/ontology#ContextExtension",
+      0.7,
+      "standards-text",
+      "A context extension is the placement of an extension in Statement Context."
+    ],
+    [
+      "xapi-extension",
+      "narrowMatch",
+      "https://w3id.org/xapi/ontology#ResultExtension",
+      0.7,
+      "standards-text",
+      "A result extension is the placement of an extension in Statement Result."
+    ],
+    [
+      "xapi-extension",
+      "narrowMatch",
+      "https://w3id.org/xapi/ontology#ActivityExtension",
+      0.7,
+      "standards-text",
+      "An activity extension is the placement of an extension in an Activity Definition."
+    ],
+    [
+      "state-resource",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#StateResource",
+      0.8,
+      "standards-text",
+      "Both denote the /activities/state document resource."
+    ],
+    [
+      "agent-profile-resource",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#AgentProfileResource",
+      0.8,
+      "standards-text",
+      "Both denote the /agents/profile document resource."
+    ],
+    [
+      "activity-profile-resource",
+      "exactMatch",
+      "https://w3id.org/xapi/ontology#ActivityProfileResource",
+      0.8,
+      "standards-text",
+      "Both denote the /activities/profile document resource."
+    ],
+    [
+      "document-profile-resource",
+      "closeMatch",
+      "https://w3id.org/xapi/ontology#DocumentResource",
+      0.7,
+      "standards-text",
+      "Both denote xAPI's name/document storage; the ontology class generalizes the three document resources."
+    ],
+    [
+      "interaction-activity",
+      "relatedMatch",
+      "https://w3id.org/xapi/ontology#InteractionComponent",
+      0.5,
+      "ai-drafted",
+      "Interaction activities are described with interaction components (choices, source/target, scale)."
+    ],
+    [
+      "learning-record",
+      "narrowMatch",
+      "https://w3id.org/xapi/ontology#Statement",
+      0.65,
+      "ai-drafted",
+      "An xAPI Statement is one machine-readable form of a learning record."
+    ],
+    [
+      "xapi-profile",
+      "exactMatch",
+      "https://w3id.org/xapi/profiles/ontology#Profile",
+      0.85,
+      "standards-text",
+      "Both denote the xAPI Profile defined by the xAPI Profiles specification."
+    ],
+    [
+      "statement-template",
+      "exactMatch",
+      "https://w3id.org/xapi/profiles/ontology#StatementTemplate",
+      0.85,
+      "standards-text",
+      "Both denote a Profile's Statement Template."
+    ],
+    [
+      "xapi-pattern",
+      "exactMatch",
+      "https://w3id.org/xapi/profiles/ontology#Pattern",
+      0.85,
+      "standards-text",
+      "Both denote a Profile Pattern over Statement Templates."
+    ],
+    [
+      "statement-template-rule",
+      "exactMatch",
+      "https://w3id.org/xapi/profiles/ontology#StatementTemplateRule",
+      0.85,
+      "standards-text",
+      "Both denote a JSONPath-located rule inside a Statement Template."
+    ],
+    [
+      "enterprise-learner-record",
+      "closeMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#EnterpriseLearnerRecord",
+      0.75,
+      "ai-drafted",
+      "Both name the organizational record integrating a learner's data across experiences."
+    ],
+    [
+      "verifiable-learning-and-employment-record",
+      "relatedMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#EnterpriseLearnerRecord",
+      0.6,
+      "ai-drafted",
+      "A verifiable LER is a checkable form of the record the ELR integrates."
+    ],
+    [
+      "competency",
+      "closeMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#Competency",
+      0.7,
+      "ai-drafted",
+      "Both name a defined capability that can be assessed and referenced across systems."
+    ],
+    [
+      "competency",
+      "relatedMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#CompetencyDefinition",
+      0.6,
+      "ai-drafted",
+      "The LER class is the definition record of a competency, not the capability itself."
+    ],
+    [
+      "shareable-competency-definition-scd",
+      "closeMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#CompetencyDefinition",
+      0.65,
+      "ai-drafted",
+      "An SCD is a machine-readable competency definition (IEEE 1484.20.3)."
+    ],
+    [
+      "digital-credential",
+      "closeMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#Credential",
+      0.7,
+      "ai-drafted",
+      "Both name an issued, verifiable claim about achievement or qualification."
+    ],
+    [
+      "micro-credential",
+      "broadMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#Credential",
+      0.75,
+      "ai-drafted",
+      "A micro-credential is a credential scoped to a smaller unit of learning."
+    ],
+    [
+      "minimum-proficiency-level",
+      "broadMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#ProficiencyLevel",
+      0.55,
+      "ai-drafted",
+      "An MPL is a specific benchmark level on a proficiency scale."
+    ],
+    [
+      "ai-competency-framework-for-teachers-ai-cft",
+      "broadMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#CompetencyFramework",
+      0.6,
+      "ai-drafted",
+      "AI CFT is one competency framework."
+    ],
+    [
+      "learner-model",
+      "relatedMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#LearnerProfile",
+      0.6,
+      "ai-drafted",
+      "The TLA learner profile holds the learner characteristics a learner model represents."
+    ],
+    [
+      "learning-record-store-lrs",
+      "narrowMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#TransactionalLRS",
+      0.7,
+      "ai-drafted",
+      "A transactional LRS is a TLA-specific kind of LRS."
+    ],
+    [
+      "learning-record-store-lrs",
+      "narrowMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#AuthoritativeLRS",
+      0.7,
+      "ai-drafted",
+      "An authoritative LRS is a TLA-specific kind of LRS."
+    ],
+    [
+      "learning-record-store-lrs",
+      "narrowMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#NoisyLRS",
+      0.65,
+      "ai-drafted",
+      "A noisy LRS is a TLA-specific kind of LRS."
+    ],
+    [
+      "learning-metadata",
+      "narrowMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#LearningActivityMetadata",
+      0.65,
+      "ai-drafted",
+      "TLA activity metadata is learning metadata about activities specifically."
+    ],
+    [
+      "digital-credential",
+      "closeMatch",
+      "https://schema.org/EducationalOccupationalCredential",
+      0.7,
+      "ai-drafted",
+      "Both name an educational or occupational credential that can be issued and recognized."
+    ],
+    [
+      "educational-institution",
+      "closeMatch",
+      "https://schema.org/EducationalOrganization",
+      0.75,
+      "ai-drafted",
+      "Both name an organization whose principal purpose is instruction."
+    ],
+    [
+      "massive-open-online-course-mooc",
+      "broadMatch",
+      "https://schema.org/Course",
+      0.75,
+      "ai-drafted",
+      "A MOOC is a course designed for open access at scale."
+    ],
+    [
+      "open-educational-resources-oer",
+      "broadMatch",
+      "https://schema.org/LearningResource",
+      0.7,
+      "ai-drafted",
+      "OER are learning resources under open licences."
+    ],
+    [
+      "digital-learning-materials",
+      "closeMatch",
+      "https://schema.org/LearningResource",
+      0.6,
+      "ai-drafted",
+      "Both name resources used to support teaching and learning."
+    ],
+    [
+      "digital-credential",
+      "relatedMatch",
+      "https://www.w3.org/2018/credentials#VerifiableCredential",
+      0.6,
+      "ai-drafted",
+      "A VC is one technical form a digital credential can take."
+    ],
+    [
+      "verifiable-learning-and-employment-record",
+      "relatedMatch",
+      "https://www.w3.org/2018/credentials#VerifiableCredential",
+      0.55,
+      "ai-drafted",
+      "Verifiable LERs are typically expressed as or wrapped in VCs."
+    ],
+    [
+      "technology-affordance",
+      "relatedMatch",
+      "https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance",
+      0.55,
+      "ai-drafted",
+      "A design-time technology affordance is what a runtime hypermedia affordance enacts."
+    ],
+    [
+      "unesco-education-domain",
+      "exactMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept2",
+      0.9,
+      "evidence-cited",
+      "I2IDL's definition paraphrases UNESCO's scope note for the preferred term it cites."
+    ],
+    [
+      "unesco-curriculum",
+      "exactMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept49",
+      0.9,
+      "evidence-cited",
+      "Same scope as UNESCO's note for the cited term: the subjects taught, time allotted to each, and their sequence."
+    ],
+    [
+      "unesco-educational-management",
+      "exactMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept31",
+      0.85,
+      "evidence-cited",
+      "Both mean the management of educational establishments; I2IDL lists the activities involved."
+    ],
+    [
+      "unesco-educational-administration",
+      "exactMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept21",
+      0.85,
+      "evidence-cited",
+      "Both concern administering part or the whole of an education system."
+    ],
+    [
+      "unesco-educational-institutions",
+      "exactMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept44",
+      0.85,
+      "evidence-cited",
+      "Same label and cited as the direct source; I2IDL enumerates the kinds of institution."
+    ],
+    [
+      "unesco-educational-facilities",
+      "exactMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept95",
+      0.85,
+      "evidence-cited",
+      "Same label and cited as the direct source; I2IDL's definition reuses UNESCO's alternative labels (academic, school facilities)."
+    ],
+    [
+      "unesco-educational-evaluation",
+      "exactMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept88",
+      0.85,
+      "evidence-cited",
+      "Same label and cited as the direct source; I2IDL lists what is evaluated."
+    ],
+    [
+      "unesco-educational-policy",
+      "closeMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept9",
+      0.8,
+      "evidence-cited",
+      "UNESCO scopes the term to official statements of goals; I2IDL adds principles and directions that shape decisions."
+    ],
+    [
+      "unesco-educational-sciences-and-environment",
+      "narrowMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept4",
+      0.75,
+      "evidence-cited",
+      "I2IDL's concept also covers learning environments, so UNESCO's Educational sciences is narrower."
+    ],
+    [
+      "unesco-educational-systems-and-levels",
+      "narrowMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept37",
+      0.75,
+      "evidence-cited",
+      "I2IDL's concept adds levels and stages, so UNESCO's Educational systems is narrower."
+    ],
+    [
+      "unesco-teaching-and-training",
+      "narrowMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept83",
+      0.7,
+      "evidence-cited",
+      "Teaching methods are one part of what I2IDL's Teaching and training covers."
+    ],
+    [
+      "unesco-teaching-and-training",
+      "narrowMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept84",
+      0.7,
+      "evidence-cited",
+      "Training is one part of what I2IDL's Teaching and training covers."
+    ],
+    [
+      "unesco-technical-and-vocational-study-subjects",
+      "relatedMatch",
+      "http://vocabularies.unesco.org/thesaurus/concept71",
+      0.65,
+      "evidence-cited",
+      "Fields of study versus a kind of formal education: associated, but neither contains the other."
+    ],
+    [
+      "xapi-statement",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Statement",
+      0.85,
+      "standards-text",
+      "Both denote the xAPI Statement (IEEE 9274.1.1-2023 §5.2.2): Actor, Verb and Object, with an optional Result, Context, timestamp and Attachments."
+    ],
+    [
+      "verb",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Verb",
+      0.85,
+      "standards-text",
+      "Both denote the xAPI Verb (§5.2.2.2): an IRI naming the action, with a language map for its display."
+    ],
+    [
+      "activity",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Activity",
+      0.8,
+      "standards-text",
+      "Both denote the xAPI Activity (§5.2.2.3): what an Actor interacts with, identified by an IRI."
+    ],
+    [
+      "activity-definition",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#ActivityDefinition",
+      0.85,
+      "standards-text",
+      "Both denote the optional Activity Definition metadata object (§5.2.2.3)."
+    ],
+    [
+      "actor",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Actor",
+      0.85,
+      "standards-text",
+      "Both denote whom a Statement is about (§5.2.2.1): the individual or group performing its action, an Agent or a Group."
+    ],
+    [
+      "xapi-agent",
+      "closeMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Agent",
+      0.8,
+      "standards-text",
+      "I2IDL's concept is the xAPI representation of an individual Actor; the class is the person or system it represents, by the same Inverse Functional Identifier (§5.2.2.1)."
+    ],
+    [
+      "xapi-group",
+      "closeMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Group",
+      0.8,
+      "standards-text",
+      "I2IDL's concept is the xAPI representation of a collection of Agents; the class is the group it represents, identified or anonymous (§5.2.2.1)."
+    ],
+    [
+      "account-object",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Account",
+      0.8,
+      "standards-text",
+      "Both denote the xAPI Account (§5.2.2.1): a system's home page and the name of the account on it."
+    ],
+    [
+      "context-activities",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#ContextActivities",
+      0.8,
+      "standards-text",
+      "Both denote the contextActivities of a Statement's Context (§5.2.2.5): parent, grouping, category and other."
+    ],
+    [
+      "result-object",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Result",
+      0.85,
+      "standards-text",
+      "Both denote the Statement Result (§5.2.2.4): score, success, completion, response, duration and extensions."
+    ],
+    [
+      "attachment",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Attachment",
+      0.85,
+      "standards-text",
+      "Both denote one attachment (§5.2.2.6): an artifact logically part of a Statement, described by usage type, display, content type, length and SHA-2 hash."
+    ],
+    [
+      "statement-reference",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#StatementRef",
+      0.85,
+      "standards-text",
+      "Both denote the StatementRef object (§5.2.2.3) that points to another Statement by its id."
+    ],
+    [
+      "substatement",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#SubStatement",
+      0.85,
+      "standards-text",
+      "Both denote the SubStatement (§5.2.2.3): a Statement nested as the Object of another."
+    ],
+    [
+      "interaction-activity",
+      "relatedMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#InteractionComponent",
+      0.5,
+      "ai-drafted",
+      "Interaction activities are described with interaction components (choices, scale points, sources and targets, steps)."
+    ],
+    [
+      "learning-record",
+      "narrowMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Statement",
+      0.65,
+      "ai-drafted",
+      "An xAPI Statement is one machine-readable form of a learning record."
+    ],
+    [
+      "context-object",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Context",
+      0.85,
+      "standards-text",
+      "Both denote a Statement's optional Context (§5.2.2.5): registration, context activities, context agents and groups, platform, language, a related Statement, extensions."
+    ],
+    [
+      "context-agent",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#ContextAgent",
+      0.85,
+      "standards-text",
+      "Both denote xAPI 2.0's Context Agent (§5.2.2.5): a relationship of one Statement to one Agent, with optional relevant types."
+    ],
+    [
+      "context-group",
+      "exactMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#ContextGroup",
+      0.85,
+      "standards-text",
+      "Both denote xAPI 2.0's Context Group (§5.2.2.5): a relationship of one Statement to one Group, with optional relevant types."
+    ],
+    [
+      "identified-group",
+      "relatedMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Group",
+      0.7,
+      "standards-text",
+      "I2IDL's concept is the representation of a Group that carries its own Inverse Functional Identifier; the class is the group itself, of either kind (§5.2.2.1)."
+    ],
+    [
+      "anonymous-group",
+      "relatedMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Group",
+      0.7,
+      "standards-text",
+      "I2IDL's concept is the representation of a Group known only by its members; the class is the group itself, of either kind (§5.2.2.1)."
+    ],
+    [
+      "interaction-activity",
+      "relatedMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#ActivityDefinition",
+      0.65,
+      "standards-text",
+      "I2IDL defines it as an Activity Definition with an interaction type (§5.2.2.3) but files it under Activity; related until that is settled."
+    ],
+    [
+      "xapi-extension",
+      "relatedMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/xapi#Extensions",
+      0.55,
+      "ai-drafted",
+      "An extension is one IRI-keyed entry of an extensions map; the class is the map, a node whose properties are the extension IRIs."
+    ],
+    [
+      "interaction-activity",
+      "relatedMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#Interaction",
+      0.55,
+      "ai-drafted",
+      "xAPI defines its interaction types after SCORM 2004's run-time interactions (cmi.interactions), whose recorded responses the class models."
+    ],
+    [
+      "learning-record",
+      "narrowMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#DataModel",
+      0.6,
+      "ai-drafted",
+      "SCORM's run-time data for one learner's attempt on a SCO is one machine-readable form of a learning record."
+    ],
+    [
+      "learning-metadata",
+      "narrowMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#Metadata",
+      0.55,
+      "ai-drafted",
+      "A content package's metadata element describes the package or one of its parts: learning metadata in one placement."
+    ],
+    [
+      "digital-learning-materials",
+      "narrowMatch",
+      "https://foxxi-bridge.interego.xwisee.com/ns/cmi5#AssignableUnit",
+      0.55,
+      "ai-drafted",
+      "An assignable unit is the launchable unit of content a cmi5 course tracks: one kind of digital learning material."
+    ]
+  ],
+  "REPLACED_2026_10_13": "2026-10-13T11:20:00+00:00",
+  "EXEMPLARS": [
+    [
+      "sparql",
+      "https://id.i2idl.org/sparql"
+    ],
+    [
+      "endpoint",
+      "https://id.i2idl.org/sparql"
+    ],
+    [
+      "json-ld",
+      "https://id.i2idl.org/glossary.jsonld"
+    ],
+    [
+      "simple-knowledge-organization-system-skos",
+      "https://id.i2idl.org/scheme"
+    ],
+    [
+      "controlled-vocabulary",
+      "https://id.i2idl.org/scheme"
+    ],
+    [
+      "linked-data",
+      "https://id.i2idl.org/concepts/linked-data"
+    ],
+    [
+      "named-graph",
+      "{ENACT}"
+    ],
+    [
+      "technology-affordance",
+      "{CATALOG}#port-sparql-get"
+    ],
+    [
+      "rest-api",
+      "https://relay.interego.xwisee.com/.well-known/operations"
+    ],
+    [
+      "xapi-profile",
+      "https://foxxi-bridge.interego.xwisee.com/xapi/profile"
+    ]
+  ],
+  "SPECS": [
+    [
+      "experience-api-xapi",
+      "https://opensource.ieee.org/xapi/xapi-base-standard-documentation"
+    ],
+    [
+      "ieee-9274-1-1-2023-xapi",
+      "https://opensource.ieee.org/xapi/xapi-base-standard-documentation"
+    ],
+    [
+      "xapi-profile",
+      "https://github.com/adlnet/xapi-profiles"
+    ],
+    [
+      "resource-description-framework-rdf",
+      "https://www.w3.org/TR/rdf11-concepts/"
+    ],
+    [
+      "simple-knowledge-organization-system-skos",
+      "https://www.w3.org/TR/skos-reference/"
+    ],
+    [
+      "sparql",
+      "https://www.w3.org/TR/sparql11-query/"
+    ],
+    [
+      "json-ld",
+      "https://www.w3.org/TR/json-ld11/"
+    ],
+    [
+      "json",
+      "https://www.rfc-editor.org/rfc/rfc8259"
+    ],
+    [
+      "internationalized-resource-identifier-iri",
+      "https://www.rfc-editor.org/rfc/rfc3987"
+    ]
+  ],
+  "VERIFIED_EXTERNAL": [
+    "https://schema.org/EducationalOccupationalCredential",
+    "https://schema.org/EducationalOrganization",
+    "https://schema.org/Course",
+    "https://schema.org/LearningResource",
+    "https://www.w3.org/2018/credentials#VerifiableCredential"
+  ],
+  "SUPERSEDED": {
+    "m-xapi-statement-1": [
+      "m-xapi-statement-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-verb-1": [
+      "m-verb-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-activity-1": [
+      "m-activity-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-activity-definition-1": [
+      "m-activity-definition-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-actor-1": [
+      "m-actor-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-xapi-agent-1": [
+      "m-xapi-agent-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-xapi-group-1": [
+      "m-xapi-group-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-account-object-1": [
+      "m-account-object-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-context-activities-1": [
+      "m-context-activities-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-result-object-1": [
+      "m-result-object-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-attachment-1": [
+      "m-attachment-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-statement-reference-1": [
+      "m-statement-reference-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-substatement-1": [
+      "m-substatement-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-interaction-activity-1": [
+      "m-interaction-activity-2",
+      "2026-10-13T11:20:00+00:00"
+    ],
+    "m-learning-record-1": [
+      "m-learning-record-2",
+      "2026-10-13T11:20:00+00:00"
+    ]
+  }
+}

@@ -15,7 +15,8 @@ export const VOTE = {
 };
 
 export function ConsensusChip({ itemKey }) {
-  const { tallies, policy } = useCaps();
+  const { tallies, policy, sharedReady } = useCaps();
+  if (!sharedReady) return <span className="chip" title="Connect an admitted account and verify shared pod data.">Team review unavailable</span>;
   const t = tallies.get(itemKey);
   const s = consensus(t, policy.quorum);
   const cls = s === "ratified" ? "asserted" : s === "rejected" ? "counterfactual" : "hypothetical";
@@ -25,13 +26,13 @@ export function ConsensusChip({ itemKey }) {
 }
 
 export function VoteBar({ itemKey, compact }) {
-  const { tallies, myBallot, vote, writable, signedIn, resolved } = useCaps();
+  const { tallies, myBallot, vote, writable, signedIn, resolved, sharedReady } = useCaps();
   const { toast } = useUI();
   const t = tallies.get(itemKey);
   const mine = myBallot.v[itemKey];
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState(mine ? mine.note || "" : "");
-  const why = !resolved ? "Loading…" : !signedIn ? "Sign in to claude.ai to vote." : !writable ? "Your access to this page is view-only; ask the owner for Contributor access to vote." : "";
+  const why = !resolved ? "Loading…" : !signedIn ? "Connect Interego to vote." : !sharedReady ? "Team reviews are unavailable until your admitted account can verify the shared pod." : !writable ? "Your access to this page is view-only; ask the workbench owner to admit your verified account to vote." : "";
   const cast = async (choice) => {
     const next = mine && mine.vote === choice ? null : choice;
     try {

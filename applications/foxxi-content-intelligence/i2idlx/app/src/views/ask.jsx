@@ -1,7 +1,8 @@
-// Ask Claude, grounded in the glossary: Claude reads the release through page tools (search, look up,
+// Ask, grounded in the glossary: Claude reads the release through page tools (search, look up,
 // paths, capabilities, team notes) and cites every term as [[concept-id]]. Runs on the viewer's own account.
 import { C, META, byId, kindById, typeById, fieldById, SOURCES, ACTIONS, roleById, enactByConcept, mapsByConcept, inhByConcept, shortestPaths, relationBetween, conceptsByAction, systemLabel, COLLECTIONS } from "../data.js";
 import { search } from "../search.js";
+import { askInstructions } from "../ask-rules.js";
 import { useCaps } from "../caps.js";
 import { Icon } from "../icons.jsx";
 import { useUI, Seg } from "../ui.jsx";
@@ -30,18 +31,7 @@ function full(c, notes) {
   };
 }
 
-const RULES = (ctx) => `You are the glossary assistant inside Interpretant, a workbench for the ${META.scheme.title} (release ${META.release}, ${C.length} approved concepts), decorated with I2IDL-X: Interego and Foxxi capability links ("enactments") and crosswalks to other vocabularies.
-
-How to answer:
-- Ground every statement about a term in the glossary. Look terms up with the tools before you define, compare or recommend them; quote or closely paraphrase I2IDL's definitions and never invent one.
-- Cite each glossary term you discuss inline as [[concept-id]] using ids from the tools or the index below, e.g. [[learning-record-store-lrs]]. The page turns these into links.
-- I2IDL definitions, editorial notes and relations are asserted by I2IDL. I2IDL-X capability links and crosswalks are AI-drafted and Hypothetical until reviewers ratify them; say so when you rely on them.
-- If the glossary has no entry for something, say so plainly, then answer from general knowledge and label it as such.
-- Write for a practitioner: short paragraphs or bullets, no preamble, no sign-off.
-${ctx ? `\nThe person is looking at: ${ctx}.` : ""}
-
-Index of all ${C.length} terms (id: label):
-${INDEX}`;
+const RULES = (ctx) => askInstructions({ schemeTitle: META.scheme.title, release: META.release, conceptCount: C.length, context: ctx, index: INDEX });
 
 function retrieval(question, ctxIds) {
   // used when this viewer can't run page tools: put the likely-relevant entries in the prompt
@@ -146,11 +136,11 @@ export function useAskEngine() {
     } catch (e) {
       const code = e && e.code;
       const msg = code === "cancelled" ? null
-        : code === "not_granted" || code === "sampling_disabled" || code === "not_declared" || code === "capability_disabled" ? "Claude isn't available on this page for your account."
+        : code === "not_granted" || code === "sampling_disabled" || code === "not_declared" || code === "capability_disabled" ? "A model isn't connected on this page for your account."
         : code === "rate_limited" ? "Too many requests right now. Try again in a little while."
         : code === "session_expired" ? "Your session expired. Sign in again to keep asking."
         : code === "prompt_too_large" ? "That conversation got too long. Start a new one."
-        : "Something went wrong reaching Claude. Try again.";
+        : "Something went wrong reaching your connected model. Try again.";
       setTurns((all) => all.map((x, i) => (i === all.length - 1 ? { ...x, content: (e && e.text) || x.content, pending: false, error: msg, stopped: code === "cancelled" } : x)));
     } finally {
       setBusy(false);
@@ -159,7 +149,7 @@ export function useAskEngine() {
 
   const stop = () => ctl.current && ctl.current.abort();
   const reset = () => { stop(); setTurns([]); setCtx([]); };
-  return { available: !!sample, turns, busy, draft, setDraft, ctx, setCtx, send, stop, reset, tier, setTier };
+  return { available: !!sample, modelTiers: !!sample && sample.modelTiers !== false, turns, busy, draft, setDraft, ctx, setCtx, send, stop, reset, tier, setTier };
 }
 
 const STARTERS = [
@@ -171,7 +161,7 @@ const STARTERS = [
 ];
 
 export function Ask({ engine }) {
-  const { turns, busy, draft, setDraft, send, stop, reset, ctx, setCtx, available, tier, setTier } = engine;
+  const { turns, busy, draft, setDraft, send, stop, reset, ctx, setCtx, available, modelTiers, tier, setTier } = engine;
   const log = useRef(null);
   const box = useRef(null);
   useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [turns]);
@@ -179,8 +169,8 @@ export function Ask({ engine }) {
   if (!available) {
     return (
       <div className="page" style={{ maxWidth: 720 }}>
-        <div className="empty"><Icon name="sparkle" /><div><b>Ask Claude isn't available here</b></div>
-          <div className="small">Open this page in claude.ai while signed in to ask questions grounded in the glossary. Everything else works without it.</div></div>
+        <div className="empty"><Icon name="sparkle" /><div><b>Ask isn't available here</b></div>
+          <div className="small">Use Connect for the real MCP-client Ask workflow. Running Ask inside this page requires an explicit host sampling adapter or your own API key. Browsing, exports and local packs work without a model.</div></div>
       </div>
     );
   }
@@ -189,9 +179,9 @@ export function Ask({ engine }) {
       <div className="ask-log" ref={log}>
         {!turns.length ? (
           <div className="stack" style={{ gap: 14, paddingTop: 20 }}>
-            <div className="eyebrow">Ask Claude · grounded in {META.release}</div>
+            <div className="eyebrow">Ask · grounded in {META.release}</div>
             <h1 className="serif" style={{ fontSize: 34, fontWeight: 600, lineHeight: 1.1 }}>Ask the glossary anything.</h1>
-            <p className="lede">Claude looks terms up in the release as it answers and cites every term it uses. Capability links and crosswalks are flagged as hypotheses. Answers run on your own Claude account.</p>
+            <p className="lede">The model looks terms up in the release as it answers and cites every term it uses. Capability links and crosswalks are flagged as hypotheses. Answers run on your connected model account.</p>
             <div className="suggests">{STARTERS.map((s) => <button key={s} className="chip" onClick={() => send(s, [])}>{s}</button>)}</div>
           </div>
         ) : turns.map((t, i) => (
@@ -212,12 +202,12 @@ export function Ask({ engine }) {
         {ctx.length ? <div className="row wrap small"><span className="muted">About:</span>{ctx.map((id) => byId.get(id) ? <span key={id} className="chip"><span className={"dot kd-" + byId.get(id).k} />{byId.get(id).l}</span> : null)}<button className="btn ghost sm" onClick={() => setCtx([])}>Clear</button></div> : null}
         <div className="box">
           <textarea ref={box} rows={1} value={draft} placeholder="Ask about any term, compare terms, or plan a course glossary…" onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(draft); } }} aria-label="Ask Claude" />
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(draft); } }} aria-label="Ask" />
           {busy ? <button className="btn" onClick={stop}><Icon name="stop" />Stop</button> : <button className="btn primary" onClick={() => send(draft)} disabled={!draft.trim()}><Icon name="arrowRight" />Ask</button>}
         </div>
         <div className="row wrap tiny muted">
-          <Seg label="Speed" value={tier} onChange={setTier} options={[{ v: "quick", l: "Fast" }, { v: "default", l: "Thorough" }]} />
-          <span className="grow">Uses your Claude account. Answers can be wrong; check the cited entries.</span>
+          {modelTiers ? <Seg label="Speed" value={tier} onChange={setTier} options={[{ v: "quick", l: "Fast" }, { v: "default", l: "Thorough" }]} /> : null}
+          <span className="grow">Uses your connected model account. Answers can be wrong; check the cited entries.</span>
           {turns.length ? <button className="btn ghost sm" onClick={reset}>New conversation</button> : null}
         </div>
       </div>

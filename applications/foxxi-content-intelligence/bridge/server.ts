@@ -450,6 +450,7 @@ import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, registr
 import { glossaryLoader } from '../src/i2idl-glossary.js';
 import { askCourse } from '../src/course-ask.js';
 import { attachDecorationRoutes } from '../src/decorations/routes.js';
+import { attachWorkbenchRoutes, workbenchEncryptionKeypair, workbenchOwnerAnchors } from '../src/i2idlx-workbench.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import {
   attachScormSequencingRoutes, parseManifest, createSession, processNavigation,
@@ -12509,6 +12510,24 @@ attachGuidanceServing(app, '/guidance', FOXXI_GUIDANCE, { base: bridgeBaseUrl, a
 attachDecorationRoutes(app, {
   baseUrl: bridgeBaseUrl,
   canonicalBase: process.env.FOXXI_DECORATION_CANONICAL_BASE,
+});
+
+// Optional I2IDL-X pod documents and native generated web surfaces.
+// Shared state is admitted by deployment config; private state uses the verified caller own pod.
+attachWorkbenchRoutes(app, {
+  baseUrl: bridgeBaseUrl,
+  sharedPodUrl: process.env.FOXXI_I2IDLX_SHARED_POD_URL || undefined,
+  participantIds: (process.env.FOXXI_I2IDLX_PARTICIPANTS || '').split(',').map(s => s.trim()).filter(Boolean),
+  editorDids: (process.env.FOXXI_I2IDLX_EDITORS || '').split(',').map(s => s.trim()).filter(Boolean),
+  ownerAnchors: workbenchOwnerAnchors(process.env.FOXXI_I2IDLX_OWNER_ANCHORS),
+  verifyCaller: verifyPrivatePerformanceCaller,
+  ownPod: privatePerformancePod,
+  canonicalPod: canonicalPublicPodUrl,
+  fetch: guardedFetchFn(globalThis.fetch) as typeof fetch,
+  encryptionKeypair: () => workbenchEncryptionKeypair(process.env.FOXXI_BRIDGE_PRIVATE_KEY),
+  siteDirectory: process.env.FOXXI_I2IDLX_SITE_DIR || undefined,
+  distDirectory: process.env.FOXXI_I2IDLX_DIST_DIR || undefined,
+  appDataFile: process.env.FOXXI_I2IDLX_APP_DATA_FILE || undefined,
 });
 
 // Terminal JSON error handler: a malformed request body makes body-parser throw a SyntaxError

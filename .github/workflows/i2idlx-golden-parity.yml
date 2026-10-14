@@ -1,0 +1,108 @@
+name: I2IDL-X complete golden parity
+
+# Migration gate only: builds and verifies; never publishes or deploys.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/i2idlx/**'
+      - 'applications/foxxi-content-intelligence/src/**'
+      - 'packages/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.base.json'
+      - '.github/workflows/i2idlx-golden-parity.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: i2idlx-golden-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  golden:
+    name: Complete Python versus native TypeScript build
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      INTEREGO_CORE_SRC: ${{ github.workspace }}/packages/core/src
+      INTEREGO_TSX: ${{ github.workspace }}/node_modules/.bin/tsx
+      I2IDLX_REASONER_JAR: ${{ github.workspace }}/applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
+      I2IDLX_BUILT_DATE: '2026-10-08'
+      I2IDLX_MODIFIED: '2026-10-13'
+      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
+      I2IDLX_HERMIT: '1'
+      PYTHONHASHSEED: '0'
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install the locked native dependencies and build substrate packages
+        run: |
+          npm ci
+          npm run build
+          npm ci --prefix "$I2IDLX_ROOT/app"
+      - name: Install the independent Python migration oracle
+        run: python3 -m pip install 'pyshacl==0.30.1' 'owlrl==7.1.4' 'rdflib==7.1.4'
+      - name: Compile native build and parity modules
+        run: npx tsc --noEmit -p "$I2IDLX_ROOT/tsconfig.native.json"
+      - name: Diagnose small closures against the independent Python reasoner
+        # This diagnostic exposes differences; complete build parity below stays mandatory.
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p "$I2IDLX_ROOT/.cache"
+          npx tsx "$I2IDLX_ROOT/typescript/reasoning-oracle-fixtures.ts" | tee "$I2IDLX_ROOT/.cache/reasoning-oracle-fixtures.jsonl"
+      - name: Check out the full upstream history at its exact commit
+        run: |
+          mkdir -p .cache
+          git clone https://github.com/blakeplock/i2idl-linked-data "$I2IDL_CLONE"
+          git -C "$I2IDL_CLONE" checkout --detach 9f865995d879165d8fa49422915a5e53d2ecebf9
+          test "$(git -C "$I2IDL_CLONE" rev-parse --is-shallow-repository)" = false
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 9f865995d879165d8fa49422915a5e53d2ecebf9
+      - name: Cache only byte-pinned upper inputs and the pinned ROBOT jar
+        uses: actions/cache@v4
+        with:
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/.cache/upper
+            applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
+          key: i2idlx-golden-pins-${{ hashFiles('applications/foxxi-content-intelligence/i2idlx/evidence/upper/manifest.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/refresh-upper-data.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/semantic-data.json', 'applications/foxxi-content-intelligence/i2idlx/config.json') }}
+      - name: Recompute both complete builds and require exact parity
+        run: npx tsx "$I2IDLX_ROOT/typescript/check-parity.ts" "$I2IDLX_ROOT" --prepare-inputs
+      - name: Retain parity evidence and both generated outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2idlx-golden-parity-${{ github.run_id }}
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/.cache/golden-parity
+            applications/foxxi-content-intelligence/i2idlx/.cache/reasoning-oracle-fixtures.jsonl
+            applications/foxxi-content-intelligence/i2idlx/.cache/golden-inputs
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-profile-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-snapshots.json
+            applications/foxxi-content-intelligence/i2idlx/dist
+            applications/foxxi-content-intelligence/i2idlx/dist-ts
+            applications/foxxi-content-intelligence/i2idlx/app/build/data.json
+            applications/foxxi-content-intelligence/i2idlx/app/build-ts/data.json
+            applications/foxxi-content-intelligence/i2idlx/site
+            applications/foxxi-content-intelligence/i2idlx/site-ts

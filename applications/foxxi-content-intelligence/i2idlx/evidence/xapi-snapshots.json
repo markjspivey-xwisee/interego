@@ -1,0 +1,16 @@
+[
+  {
+    "file": "xapi-ontology.ttl",
+    "source": "https://w3id.org/xapi/ontology",
+    "resolvedUrl": "https://adlnet.github.io/xapi-ontology/ontology.ttl",
+    "sha256": "5e234b9f7972672065e1d0b7dc9b2369b3af16c79f11d97739613dd8d46c76a3",
+    "bytes": 21337
+  },
+  {
+    "file": "xapi-profile-ontology.ttl",
+    "source": "https://w3id.org/xapi/profiles/ontology",
+    "resolvedUrl": "https://adlnet.github.io/xapi-profiles/ontology/ontology.ttl",
+    "sha256": "7418ed94df9382cc8afa3da6148a4c6c34f9ccb71af7f9ce098e4bbd5d435e30",
+    "bytes": 12064
+  }
+]

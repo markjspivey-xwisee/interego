@@ -1,5 +1,5 @@
 # ────────────────────────────────────────────────────────────
-#  Foxxi vertical bridge — Azure Container Apps deployment.
+#  Foxxi vertical bridge — Railway production deployment.
 #
 #  Preserves the on-disk repo layout under /app so the bridge's
 #  relative imports (`../affordances.ts`, `../src/...`, `../../_shared/...`,
@@ -11,13 +11,11 @@
 #  sources (no separate compile step needed for the vertical).
 # ────────────────────────────────────────────────────────────
 
-# ★ ONE STAGE (2026-09-22), as Dockerfile.jev-harness-bridge: a runtime stage that copied /app out
-# of a build stage cost 15 s to move node_modules aside, 8 s to copy /app back and 40 s to re-hash
-# every intermediate layer for the registry cache (a second stage needs cache-to mode=max). A
-# single stage already has the layers the runtime stage assembled by hand, each cached and pushed
-# on its own; the harness image's cached build went from 2:40 to 0:43 (job 1:08, beside 2:04–2:29 for the three two-stage bridges in the same run). Same files, same command.
-ARG NODE_BASE=node:22-slim
-FROM ${NODE_BASE}
+# The runtime keeps the existing cached bridge-base layers. A separate native web build stage
+# inherits those layers and copies back ONLY generated public artifacts, not another /app tree.
+# Git history, downloaded reasoner/cache and build-only Java never enter the runtime image.
+ARG NODE_BASE=node:22-bookworm-slim
+FROM ${NODE_BASE} AS bridge-base
 
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
@@ -123,12 +121,42 @@ RUN mkdir -p node_modules/@interego \
   && ln -sfn /app/packages/constitutional node_modules/@interego/constitutional
 
 
+# I2IDL-X pages are generated natively from verified publisher evidence and an immutable
+# canonical glossary commit. New upstream versions cannot silently enter an image.
+FROM bridge-base AS i2idlx-builder
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates openjdk-17-jre-headless \
+  && rm -rf /var/lib/apt/lists/* \
+  && java -version 2>&1 | grep -E 'version "17[.]'
+RUN npm ci --prefix applications/foxxi-content-intelligence/i2idlx/app
+ENV I2IDL_CLONE=/tmp/i2idlx-canonical-source
+# Preserve the handoff's agreed publication baseline instead of stamping every rebuild as new.
+ENV I2IDLX_BUILT_DATE=2026-10-08
+ENV I2IDLX_MODIFIED=2026-10-13
+ENV I2IDLX_NOW=2026-10-13T20:30:00+00:00
+RUN npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/prepare-source.ts \
+  /app/applications/foxxi-content-intelligence/i2idlx /tmp/i2idlx-canonical-source
+# Use exactly the golden gate's retained snapshots. Only missing xAPI TTLs and
+# byte-pinned upper/ROBOT inputs may be restored; no live --all evidence refresh.
+RUN npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/prepare-build-inputs.ts \
+  /app/applications/foxxi-content-intelligence/i2idlx
+RUN npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/build.ts \
+  /app/applications/foxxi-content-intelligence/i2idlx
+RUN test -s applications/foxxi-content-intelligence/i2idlx/site-ts/app.html \
+  && test -s applications/foxxi-content-intelligence/i2idlx/site-ts/index.html \
+  && test -s applications/foxxi-content-intelligence/i2idlx/dist-ts/native-verification.json
+
+FROM bridge-base AS runtime
+COPY --from=i2idlx-builder /app/applications/foxxi-content-intelligence/i2idlx/site-ts/ ./applications/foxxi-content-intelligence/i2idlx/site-ts/
+COPY --from=i2idlx-builder /app/applications/foxxi-content-intelligence/i2idlx/dist-ts/ ./applications/foxxi-content-intelligence/i2idlx/dist-ts/
+COPY --from=i2idlx-builder /app/applications/foxxi-content-intelligence/i2idlx/app/build-ts/ ./applications/foxxi-content-intelligence/i2idlx/app/build-ts/
+
 EXPOSE 6080
 
 ENV PORT=6080
 ENV NODE_NO_WARNINGS=1
 
-# Defaults — override via Azure Container App env vars at deploy time.
+# Defaults — override via Railway service variables at deploy time.
 #
 # ────────────────────────────────────────────────────────────
 #  Gate-fronted write architecture
@@ -168,6 +196,15 @@ ENV FOXXI_POD_WRITE_SECRET=
 # previously-published bridge-signed descriptors can no longer be linked
 # back to a live signer. Override at deploy time for stable identity.
 ENV FOXXI_BRIDGE_PRIVATE_KEY=
+
+# Optional workbench writes are disabled until the deployment owner supplies existing pod,
+# participant/editor and independently verified owner signing-key bindings. No account creation.
+ENV FOXXI_I2IDLX_SHARED_POD_URL=
+ENV FOXXI_I2IDLX_PARTICIPANTS=
+ENV FOXXI_I2IDLX_EDITORS=
+ENV FOXXI_I2IDLX_OWNER_ANCHORS={}
+ENV FOXXI_I2IDLX_SITE_DIR=/app/applications/foxxi-content-intelligence/i2idlx/site-ts
+ENV FOXXI_I2IDLX_DIST_DIR=/app/applications/foxxi-content-intelligence/i2idlx/dist-ts
 
 # The commit this image was built from, surfaced at /health (mounted by the shared
 # createVerticalBridge factory) so a deploy can be VERIFIED rather than assumed.

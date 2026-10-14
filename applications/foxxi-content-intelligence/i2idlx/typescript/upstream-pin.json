@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/blakeplock/i2idl-linked-data",
+  "commit": "9f865995d879165d8fa49422915a5e53d2ecebf9",
+  "graphPath": "public/glossary.jsonld",
+  "graphSha256": "e075d1210c952f06609337c48a58079495ae324f3de05566971ebd6ee3f48751",
+  "release": "v0.0.86"
+}

@@ -1,0 +1,151 @@
+name: I2IDL-X TypeScript parity
+
+# Native build modules are checked on PRs into master. Python is retained only
+# as an independent migration oracle, and this workflow publishes no data.
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/i2idlx/**'
+      - 'applications/foxxi-content-intelligence/src/ns/**'
+      - 'applications/foxxi-content-intelligence/src/i2idlx-workbench.ts'
+      - 'applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts'
+      - 'applications/foxxi-content-intelligence/src/decorations/**'
+      - 'applications/foxxi-content-intelligence/tests/i2idlx-*.test.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.base.json'
+      - '.github/workflows/i2idlx-typescript.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: i2idlx-typescript-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Native I2IDL-X modules compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      - run: npm run build
+      - name: Capture the two exact official xAPI Turtle inputs
+        run: |
+          node --input-type=module <<'JS'
+          import { createHash } from 'node:crypto';
+          import { mkdir, writeFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { Parser } from 'n3';
+          const root = 'applications/foxxi-content-intelligence/i2idlx';
+          const cache = join(root, '.cache', 'golden-inputs');
+          const evidence = join(root, 'evidence');
+          const snapshots = [
+            ['xapi-ontology.ttl', 'https://w3id.org/xapi/ontology'],
+            ['xapi-profile-ontology.ttl', 'https://w3id.org/xapi/profiles/ontology'],
+          ];
+          const captured = [];
+          for (const [file, source] of snapshots) {
+            const response = await fetch(source, {
+              headers: { Accept: 'text/turtle', 'User-Agent': 'i2idlx-xapi-snapshot-capture/1.0' },
+              signal: AbortSignal.timeout(60000),
+            });
+            if (!response.ok) throw new Error(source + ' returned HTTP ' + response.status);
+            if (new URL(response.url).protocol !== 'https:') throw new Error('Capture redirect left HTTPS');
+            const bytes = Buffer.from(await response.arrayBuffer());
+            if (!bytes.length || bytes.length > 524288) throw new Error(file + ' exceeds the bounded snapshot marker size or is empty');
+            new Parser({ format: 'Turtle', baseIRI: response.url }).parse(bytes.toString('utf8'));
+            const receipt = { file, source, resolvedUrl: response.url, sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length };
+            captured.push({ receipt, bytes });
+          }
+          await mkdir(cache, { recursive: true });
+          await mkdir(evidence, { recursive: true });
+          for (const { receipt, bytes } of captured) {
+            await writeFile(join(cache, receipt.file), bytes);
+            await writeFile(join(evidence, receipt.file), bytes);
+          }
+          const snapshotsReceipt = { capturedAt: new Date().toISOString(), snapshots: captured.map(row => row.receipt) };
+          const receiptJson = JSON.stringify(snapshotsReceipt, null, 2) + '\n';
+          await writeFile(join(cache, 'xapi-snapshots.json'), receiptJson);
+          await writeFile(join(evidence, 'xapi-snapshots.json'), receiptJson);
+          for (const { receipt, bytes } of captured) {
+            process.stdout.write('I2IDLX_XAPI_SNAPSHOT=' + JSON.stringify({ ...receipt, base64: bytes.toString('base64') }) + '\n');
+          }
+          JS
+      - name: Retain the actual captured xAPI bytes and receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2idlx-xapi-snapshots-${{ github.run_id }}
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/.cache/golden-inputs
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-profile-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-snapshots.json
+      - name: Export exact generated capability documentation
+        run: |
+          node --import=tsx --input-type=module <<'JS'
+          import { createHash } from 'node:crypto';
+          import { buildSkills } from './tools/build-skills.ts';
+          const files = await buildSkills(process.cwd());
+          for (const path of ['docs/skills/foxxi/SKILL.md', 'docs/skills/foxxi/reference.md', 'docs/skills/README.md']) {
+            const content = files.get(path);
+            if (content == null) throw new Error('Missing generated document: ' + path);
+            process.stdout.write('I2IDLX_GENERATED_DOC ' + JSON.stringify({ path, content, sha256: createHash('sha256').update(content).digest('hex') }) + '\n');
+          }
+          JS
+      - run: npx tsc --noEmit -p applications/foxxi-content-intelligence/i2idlx/tsconfig.native.json
+
+  units:
+    name: Native fixtures and full upstream history parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+    steps:
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      - run: npm run build
+      - name: Native reasoning, semantic and history fixtures
+        run: npx tsx --test applications/foxxi-content-intelligence/i2idlx/typescript/*.test.ts
+      - name: Independent RDF and workbench security checks
+        run: npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-parity.test.ts applications/foxxi-content-intelligence/tests/i2idlx-workbench.test.ts applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts
+      - name: Checkout the pinned upstream source, including its history
+        run: |
+          mkdir -p .cache
+          git clone https://github.com/blakeplock/i2idl-linked-data "$I2IDL_CLONE"
+          git -C "$I2IDL_CLONE" checkout 9f86599
+      - name: Compare every native release snapshot and event with Python
+        run: |
+          ROOT=applications/foxxi-content-intelligence/i2idlx
+          python3 -I "$ROOT/typescript/history-parity.py" "$I2IDL_CLONE" public/glossary.jsonld .cache/python-history.json
+          npx tsx "$ROOT/typescript/history-parity.ts" "$I2IDL_CLONE" public/glossary.jsonld .cache/typescript-history.json
+          node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; assert.deepEqual(JSON.parse(fs.readFileSync('.cache/typescript-history.json','utf8')), JSON.parse(fs.readFileSync('.cache/python-history.json','utf8'))); process.stdout.write('Every history snapshot, event and reconciliation matches\\n');"
+
+  decorations:
+    name: Freeze all five decoration publication inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      - run: npm run build
+      - run: npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/decoration-snapshot.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: decoration-snapshot
+          path: applications/foxxi-content-intelligence/i2idlx/dist-ts/decoration-snapshot.json
