@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 67 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 69 affordances.
 
 ## `foxxi.i2idlx_capabilities`
 
@@ -71,6 +71,36 @@ Save ONLY the verified caller account ballot/note/usage or private workspace; po
 | `document` | object | yes | Complete schema-validated document: ballots {v}, notes {n}, usage {u}, policy {quorum}, or workspace {packs,stars,recents?,at?}. Every property is signature-covered. |
 | `expected_etag` | string | yes | Exact strong ETag from the preceding read, or empty string ONLY when that read reported absent. Conflicts require read-and-merge, never a blind retry. |
 | `owner_encryption_key` | string | yes | Required for ALL shared/private document writes: owner-held canonical base64 X25519 public key, bound by this exact author signature. Obtain from owned signing context, never an unsigned pod document. |
+
+## `foxxi.i2idlx_ask`
+
+**Ask I2IDL-X using your connected AI client**
+
+Return a bounded public glossary/semantic context packet and the workbench Ask instructions for YOUR connected AI/MCP client to answer with its own model. This read-only operation does not sample, answer, store the question, access team/private pod data or incur project model charges. Accepts plain arguments or the arguments inside a relay-signed envelope; no identity claim is made by this public operation.
+
+- Action: `urn:iep:action:foxxi:i2idlx-ask`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/ask` (served by a bespoke route; not through the bridge's MCP endpoint)
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `question` | string | yes | Question for your client to answer, nonempty and at most 4000 UTF-8 bytes. It is returned as task data, never a server model instruction. |
+| `concept_ids` | array | no | At most 14 existing canonical glossary ids to include. Unknown ids are refused; lexical retrieval fills remaining bounded context. |
+
+## `foxxi.i2idlx_orchestrate`
+
+**Run the I2IDL-X eight-role recipe in your AI client**
+
+Return bounded public context plus the existing eight-role/twelve-step Interpretant workflow for YOUR connected AI/MCP client to execute with its own model. The server creates no run/agents/gate/staging and never samples or publishes. Browser sandbox method names are source descriptors, not MCP operations. Clients must discover current real controls, report unperformed checks and get human authorization before external writes.
+
+- Action: `urn:iep:action:foxxi:i2idlx-orchestrate`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/orchestrate` (served by a bespoke route; not through the bridge's MCP endpoint)
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `example` | boolean | no | Set true to use the explicitly fictional Kestrel Point brief/inventory from the existing walkthrough. Do not also supply brief or records. |
+| `brief` | string | no | Required unless example=true: your nonempty brief, at most 6000 UTF-8 bytes. The client adapts scenario-specific wording only when your inventory supports it. |
+| `records` | array | no | Required unless example=true: 1..20 unique {id,title,description,sourceTypes?} entries; UTF-8 maxima120/400/2400 bytes and at most10 source type names of200 bytes each. No arbitrary paths/URLs/model keys. |
+| `concept_ids` | array | no | At most14 existing canonical ids for selected public glossary context. |
 
 ## `foxxi.record_private_performance_outcome`
 

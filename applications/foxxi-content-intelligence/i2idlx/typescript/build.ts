@@ -77,7 +77,7 @@ export async function buildNative(root=DEFAULT_ROOT,options:NativeBuildOptions={
   if(!decorationShapes.conforms)throw new Error('Materialized decorations fail SHACL: '+decorationShapes.text);
   writeDecorations(build,decorations);
   const examples=await progressStage('native:worked-examples',()=>workedExamples(build));
-  const report=verification.report+'\n## Worked examples\n'+examples.join('\n')+'\n\n- PASS — materialized '+decorations.affordances+' per-concept affordances\n';
+  const report=verification.report+'\n## Worked examples\n'+examples.join('\n')+'\n\n- PASS — '+decorations.affordances+' concrete affordances materialized\n';
   await writeFile(join(build.outputDir,'verification-report.md'),report);
   if(!options.graphsOnly) {
     const appDir=resolve(options.appDir??join(root,'app','build-ts'));

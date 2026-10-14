@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 67 tools (i2idlx-capabilities, i2idlx-challenge, i2idlx-session, i2idlx-read, i2idlx-write, record-private-performance-outcome-signed, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 69 tools (i2idlx-capabilities, i2idlx-challenge, i2idlx-session, i2idlx-read, i2idlx-write, i2idlx-ask, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 67
+  affordances: 69
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -33,6 +33,8 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.i2idlx_session` | Signature/delegation-verify the calling actor on their own existing pod, consume the one-use server nonce, and return a derived account identifier plus actual… | `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/session` *(HTTP only)* |
 | `foxxi.i2idlx_read` | Read encrypted author-signed ballots, notes, usage and policy from the configured shared pod ONLY as an admitted signed participant, or decrypt only the caller… | `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/read` *(HTTP only)* |
 | `foxxi.i2idlx_write` | Save ONLY the verified caller account ballot/note/usage or private workspace; policy requires a configured verified editor DID. | `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/write` *(HTTP only)* |
+| `foxxi.i2idlx_ask` | Return a bounded public glossary/semantic context packet and the workbench Ask instructions for YOUR connected AI/MCP client to answer with its own model. | `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/ask` *(HTTP only)* |
+| `foxxi.i2idlx_orchestrate` | Return bounded public context plus the existing eight-role/twelve-step Interpretant workflow for YOUR connected AI/MCP client to execute with its own model. | `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/orchestrate` *(HTTP only)* |
 | `foxxi.record_private_performance_outcome` | Signed payload {agent_id,timestamp,outcome:{episode_id,plan_id,plan_sha256,intervention:{type,delivered,artifact:{uri,version,sha256},delivered_at},post,fresh?… | `POST https://foxxi-bridge.interego.xwisee.com/agent/performance/outcome` *(HTTP only)* |
 | `foxxi.read_private_performance_outcomes` | Signed payload {agent_id,timestamp,episode_id?}. | `POST https://foxxi-bridge.interego.xwisee.com/agent/performance/outcomes` *(HTTP only)* |
 | `foxxi.read_private_performance_calibration` | Signed payload {agent_id,timestamp}. | `POST https://foxxi-bridge.interego.xwisee.com/agent/performance/calibration` *(HTTP only)* |

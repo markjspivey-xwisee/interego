@@ -99,7 +99,7 @@ function contextFor(data: Row, query: string, ids: unknown) {
   }));
   const meta = object(data.meta) ? data.meta : {}, semantic = object(data.semantic) ? data.semantic : {};
   const categories = rows(semantic.categories).filter(c => selected.selected.some(s => s.rc === c.id)).slice(0, 14).map(c =>
-    ({ ...pick(c, ['id', 'label', 'def', 'cls', 'parent', 'mode', 'why']), upperTypes: strings(c.all, 32) }));
+    ({ ...pick(c, ['label', 'def', 'cls', 'parent', 'mode', 'why']), id: text(c.id), upperTypes: strings(c.all, 32) }));
   const categoryIds = new Set(categories.map(c => text(c.id)));
   const disjoint = object(semantic.disjoint) ? Object.fromEntries(Object.entries(semantic.disjoint)
     .filter(([key]) => key.split('|').some(id => categoryIds.has(id))).slice(0, 100).map(([key, value]) => [key,

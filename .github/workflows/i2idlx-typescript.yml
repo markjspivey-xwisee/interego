@@ -36,6 +36,61 @@ jobs:
         with: { node-version: '22', cache: 'npm' }
       - run: npm ci
       - run: npm run build
+      - name: Capture the two exact official xAPI Turtle inputs
+        run: |
+          node --input-type=module <<'JS'
+          import { createHash } from 'node:crypto';
+          import { mkdir, writeFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { Parser } from 'n3';
+          const root = 'applications/foxxi-content-intelligence/i2idlx';
+          const cache = join(root, '.cache', 'golden-inputs');
+          const evidence = join(root, 'evidence');
+          const snapshots = [
+            ['xapi-ontology.ttl', 'https://w3id.org/xapi/ontology'],
+            ['xapi-profile-ontology.ttl', 'https://w3id.org/xapi/profiles/ontology'],
+          ];
+          const captured = [];
+          for (const [file, source] of snapshots) {
+            const response = await fetch(source, {
+              headers: { Accept: 'text/turtle', 'User-Agent': 'i2idlx-xapi-snapshot-capture/1.0' },
+              signal: AbortSignal.timeout(60000),
+            });
+            if (!response.ok) throw new Error(source + ' returned HTTP ' + response.status);
+            if (new URL(response.url).protocol !== 'https:') throw new Error('Capture redirect left HTTPS');
+            const bytes = Buffer.from(await response.arrayBuffer());
+            if (!bytes.length || bytes.length > 524288) throw new Error(file + ' exceeds the bounded snapshot marker size or is empty');
+            new Parser({ format: 'Turtle', baseIRI: response.url }).parse(bytes.toString('utf8'));
+            const receipt = { file, source, resolvedUrl: response.url, sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length };
+            captured.push({ receipt, bytes });
+          }
+          await mkdir(cache, { recursive: true });
+          await mkdir(evidence, { recursive: true });
+          for (const { receipt, bytes } of captured) {
+            await writeFile(join(cache, receipt.file), bytes);
+            await writeFile(join(evidence, receipt.file), bytes);
+          }
+          const snapshotsReceipt = { capturedAt: new Date().toISOString(), snapshots: captured.map(row => row.receipt) };
+          const receiptJson = JSON.stringify(snapshotsReceipt, null, 2) + '\n';
+          await writeFile(join(cache, 'xapi-snapshots.json'), receiptJson);
+          await writeFile(join(evidence, 'xapi-snapshots.json'), receiptJson);
+          for (const { receipt, bytes } of captured) {
+            process.stdout.write('I2IDLX_XAPI_SNAPSHOT=' + JSON.stringify({ ...receipt, base64: bytes.toString('base64') }) + '\n');
+          }
+          JS
+      - name: Retain the actual captured xAPI bytes and receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2idlx-xapi-snapshots-${{ github.run_id }}
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/.cache/golden-inputs
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-profile-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-snapshots.json
       - name: Export exact generated capability documentation
         run: |
           node --import=tsx --input-type=module <<'JS'

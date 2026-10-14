@@ -13,7 +13,7 @@ on:
     branches: [master]
     paths:
       - '.github/workflows/i2idlx-ui-oracle.yml'
-      - 'tools/i2idlx-cache-ui-assets.ts'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/cache-ui-assets.ts'
       - 'tools/i2idlx-hosted-visitor-smoke.py'
   workflow_run:
     workflows: ['I2IDL-X complete golden parity']
@@ -111,7 +111,7 @@ jobs:
           fs.mkdirSync(path.join(root, '.cache', 'ui-oracle-shots'), { recursive: true });
           JS
       - name: Cache only the scripts and fonts named by the generated page
-        run: npx tsx tools/i2idlx-cache-ui-assets.ts "$I2IDLX_ROOT/site/app.html" "$I2IDLX_ROOT/.cache/ui-oracle-assets"
+        run: npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/cache-ui-assets.ts "$I2IDLX_ROOT/site/app.html" "$I2IDLX_ROOT/.cache/ui-oracle-assets"
       - name: Unchanged desktop, mobile, export and workspace smoke oracle
         run: python3 -I "$I2IDLX_ROOT/tools/smoke_app.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" --shots "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Original control, SPARQL, classification and exported-record cross-check
@@ -120,6 +120,31 @@ jobs:
         run: python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT"
       - name: Hosted path without credentials or model capabilities
         run: python3 -I tools/i2idlx-hosted-visitor-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Export actual public home renders for visual inspection
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import pathlib
+          import os
+          shots = pathlib.Path(os.environ["I2IDLX_ROOT"]) / ".cache" / "ui-oracle-shots"
+          for width in (1440, 420):
+              image = shots / ("hosted-home-" + str(width) + ".png")
+              if not image.is_file():
+                  print("Public home render not available yet:", image.name)
+                  continue
+              if image.stat().st_size > 1_000_000:
+                  print("Public home render exceeds the bounded log export:", image.name)
+                  continue
+              content = image.read_bytes()
+              if not content.startswith(bytes([137, 80, 78, 71, 13, 10, 26, 10])):
+                  raise ValueError("Expected an actual PNG screenshot: " + image.name)
+              print("I2IDLX_UI_SCREENSHOT=" + json.dumps({
+                  "file": image.name, "width": width, "mimeType": "image/png",
+                  "bytes": len(content), "data": base64.b64encode(content).decode("ascii")
+              }, separators=(",", ":")))
+          PY
       - name: Retain real browser screenshots and exported record evidence
         if: always()
         uses: actions/upload-artifact@v4

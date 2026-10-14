@@ -7,16 +7,15 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, appendFileSync } from 'node:fs';
-import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { appendFileSync } from 'node:fs';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DEFAULT_ROOT, loadConfig, type BuildConfig } from './config.js';
 import { buildNative } from './build.js';
 import { checkAppData } from './check-app-data.js';
 import { canonicalRdf, compareRdfFiles } from './parity.js';
-import { refreshEvidence } from './refresh-evidence.js';
-import { refreshUpper } from './refresh-upper.js';
+import { prepareBuildInputs } from './prepare-build-inputs.js';
 import { verifyPublished } from './verify-published.js';
 import { progress, progressStage } from './progress.js';
 
@@ -99,22 +98,6 @@ async function sourceInputs(root: string): Promise<Record<string, string>> {
   return Object.fromEntries(await Promise.all(paths.sort().map(async file =>
     [file.slice(root.length + 1), createHash('sha256').update(await readFile(file)).digest('hex')])));
 }
-async function prepareInputs(root: string): Promise<void> {
-  // Immutable upper publisher bytes are restored only when their pins still match.
-  await progressStage('inputs:upper', () => refreshUpper(root));
-  const cfg = loadConfig(root), snapshots = join(root, '.cache', 'golden-inputs');
-  // The original xAPI endpoints expose no versioned URL in config. Fetch their
-  // absent snapshots once, record hashes, and share those exact bytes across both
-  // engines. Keep the committed Foxxi/relay/app snapshots and their old seeds.
-  const missing = ['xapi-ontology.ttl', 'xapi-profile-ontology.ttl'].filter(file => !existsSync(join(root, 'evidence', file)));
-  if (missing.length) {
-    await progressStage('inputs:xapi-base', () => refreshEvidence(root, { mode: 'base', outputDir: snapshots }));
-    for (const file of missing) await copyFile(join(snapshots, file), join(root, 'evidence', file));
-  }
-  const reasoner = cfg.reasoner.jar;
-  if (!existsSync(reasoner)) await progressStage('inputs:reasoner', () => refreshEvidence(root, { mode: 'reasoner', reasonerFile: reasoner }));
-  assert.equal(createHash('sha256').update(await readFile(reasoner)).digest('hex'), cfg.reasoner.sha256, 'ROBOT jar differs from its recorded pin');
-}
 function fixedEnvironment(cfg: BuildConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env,
     TZ: 'UTC', PYTHONHASHSEED: '0', I2IDLX_BUILT_DATE: FIXED_BUILT, I2IDLX_MODIFIED: FIXED_MODIFIED,
@@ -149,7 +132,7 @@ export async function checkParity(root = DEFAULT_ROOT, options: GoldenOptions = 
     assert.equal(head, UPSTREAM_COMMIT, 'upstream HEAD is not the full pinned commit');
     const shallow = (await command('git', ['rev-parse', '--is-shallow-repository'], cfg.i2idl.localClone, env, join(output, 'upstream-history.log'))).trim();
     assert.equal(shallow, 'false', 'full upstream history is required to derive releases and fact-level changes');
-    if (options.prepareInputs) await progressStage('inputs:all', () => prepareInputs(root));
+    if (options.prepareInputs) await progressStage('inputs:all', () => prepareBuildInputs(root));
     const before = await sourceInputs(root);
     await writeFile(join(output, 'input-fingerprints.json'), JSON.stringify(before, null, 2) + '\n');
     if (!options.compareOnly) {

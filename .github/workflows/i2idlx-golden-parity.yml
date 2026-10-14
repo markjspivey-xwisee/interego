@@ -25,7 +25,7 @@ jobs:
   golden:
     name: Complete Python versus native TypeScript build
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 360
     env:
       I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
       I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
@@ -88,6 +88,10 @@ jobs:
           retention-days: 14
           path: |
             applications/foxxi-content-intelligence/i2idlx/.cache/golden-parity
+            applications/foxxi-content-intelligence/i2idlx/.cache/golden-inputs
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-profile-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-snapshots.json
             applications/foxxi-content-intelligence/i2idlx/dist
             applications/foxxi-content-intelligence/i2idlx/dist-ts
             applications/foxxi-content-intelligence/i2idlx/app/build/data.json
