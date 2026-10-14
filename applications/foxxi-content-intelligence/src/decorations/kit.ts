@@ -77,6 +77,10 @@ export interface Control {
   readonly headers?: Readonly<Record<string, string>>;
   /** What the system asks of a caller to be let in, in words. */
   readonly auth?: string;
+  /** The query variables a call must give ({?…} variables are otherwise optional). */
+  readonly required?: readonly string[];
+  /** Anything else a caller must know to make the call, in words: a precondition header, say. */
+  readonly note?: string;
   readonly readOnly: boolean;
   readonly cites?: string;
 }
@@ -160,6 +164,7 @@ export function checkDecoration(spec: DecorationSpec): string[] {
     for (const v of templateVariables(c.target).path) if (!bound.has(v)) out.push(`control ${c.id} uses {${v}}, which the decoration does not bind`);
     if (!templateVariables(c.target).path.length && !/^https:\/\//.test(c.target)) out.push(`control ${c.id} has neither a bound template nor an https target`);
     if (c.method === 'GET' && !c.readOnly) out.push(`control ${c.id}: a GET changes nothing, so it is read-only`);
+    for (const r of c.required ?? []) if (!templateVariables(c.target).query.includes(r)) out.push(`control ${c.id} requires ${r}, which is not one of its query variables`);
   }
   for (const a of spec.alignments) { has(a.part, `alignment to ${a.target}`); if (!/^https?:\/\//.test(a.target)) out.push(`alignment target ${a.target} is not an IRI`); }
   for (const e of spec.enactments) { has(e.part, `enactment ${e.action}`); if (!/^urn:iep:action:foxxi:[a-z0-9-]+$/.test(e.action)) out.push(`enactment action ${e.action} is not a Foxxi action`); }
@@ -174,16 +179,23 @@ export function checkDecoration(spec: DecorationSpec): string[] {
 const pctEncode = (s: string, reserved: boolean): string =>
   reserved ? encodeURI(s).replace(/%25([0-9A-Fa-f]{2})/g, '%$1') : encodeURIComponent(s).replace(/[!'()*]/g, ch => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
 
-/** Expand an RFC 6570 template ({var}, {+var}, {?a,b}); absent query variables are left out. */
+/**
+ * Expand an RFC 6570 template ({var}, {+var}, {?a,b}); absent query variables are left out. A value
+ * is used exactly as given, except where the template goes on with a path ("{+endpoint}/about"):
+ * there its trailing slashes are dropped, so the join has one slash. A whole-URL binding such as
+ * "{+jwks}" keeps a trailing slash, which may name a different resource.
+ */
 export function expandTemplate(t: string, values: Readonly<Record<string, string | undefined>>, keepUnbound = false): string {
-  return t.replace(TEMPLATE_EXPR, (m, op: string, names: string) => {
+  return t.replace(TEMPLATE_EXPR, (m: string, op: string, names: string, at: number) => {
     const vars = names.split(',');
     if (keepUnbound && vars.some(v => values[v] === undefined)) return m;
+    const joined = t[at + m.length] === '/';
+    const value = (v: string): string | undefined => (joined && values[v] !== undefined ? values[v]!.replace(/\/+$/, '') : values[v]);
     if (op === '?') {
       const pairs = vars.filter(v => values[v] !== undefined).map(v => `${v}=${pctEncode(values[v]!, false)}`);
       return pairs.length ? `?${pairs.join('&')}` : '';
     }
-    return vars.map(v => (values[v] === undefined ? '' : pctEncode(values[v]!, op === '+'))).join(',');
+    return vars.map(v => (value(v) === undefined ? '' : pctEncode(value(v)!, op === '+'))).join(',');
   });
 }
 
@@ -191,6 +203,7 @@ export interface BoundControl {
   readonly id: string; readonly part: string; readonly title: string; readonly method: Control['method'];
   readonly href: string; readonly template: string; readonly readOnly: boolean;
   readonly accept?: string; readonly contentType?: string; readonly headers?: Readonly<Record<string, string>>; readonly auth?: string;
+  readonly required?: readonly string[]; readonly note?: string;
 }
 
 /**
@@ -210,7 +223,7 @@ export function bindControls(spec: DecorationSpec, values: Readonly<Record<strin
     if (u.username || u.password) return { ok: false, error: `${name} must not carry credentials` };
   }
   for (const k of Object.keys(values)) if (!(k in bindings)) return { ok: false, error: `${spec.title} binds no variable named ${k}` };
-  const filled: Record<string, string> = { ...Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.replace(/\/+$/, '')])), [BRIDGE_VAR]: bridgeBase.replace(/\/+$/, '') };
+  const filled: Record<string, string> = { ...values, [BRIDGE_VAR]: bridgeBase };
   const controls: BoundControl[] = [];
   for (const c of spec.controls) {
     const { path } = templateVariables(c.target);
@@ -222,6 +235,7 @@ export function bindControls(spec: DecorationSpec, values: Readonly<Record<strin
       href: expandTemplate(pathOnly, filled) + query, template: c.target,
       ...(c.accept ? { accept: c.accept } : {}), ...(c.contentType ? { contentType: c.contentType } : {}),
       ...(c.headers ? { headers: c.headers } : {}), ...(c.auth ? { auth: c.auth } : {}),
+      ...(c.required?.length ? { required: c.required } : {}), ...(c.note ? { note: c.note } : {}),
     });
   }
   return { ok: true, controls };
@@ -304,6 +318,7 @@ export function catalogGraph(spec: DecorationSpec, baseUrl: string): Graph {
       // Hydra has no term for a safe operation; a GET is one by its method, and any other read says so in words.
       if (c.readOnly && c.method !== 'GET') g.add(C, iri(RDFS + 'comment'), en('Changes nothing: it only reads.'));
       if (c.auth) g.add(C, iri(RDFS + 'comment'), en(`To be let in: ${c.auth}`));
+      if (c.note) g.add(C, iri(RDFS + 'comment'), en(c.note));
       for (const [h, v] of Object.entries(c.headers ?? {})) g.add(C, iri(RDFS + 'comment'), en(`Send the header ${h}: ${v}.`));
       if (c.cites) g.add(C, iri(DCT + 'source'), en(c.cites));
       // The serving bridge's own base is filled in; what is left is the caller's to bind.
@@ -319,7 +334,7 @@ export function catalogGraph(spec: DecorationSpec, baseUrl: string): Graph {
           g.add(T, iri(HYDRA + 'mapping'), M);
           g.add(M, iri(RDF + 'type'), iri(HYDRA + 'IriTemplateMapping'));
           g.add(M, iri(HYDRA + 'variable'), str(v));
-          g.add(M, iri(HYDRA + 'required'), bool(path.includes(v)));
+          g.add(M, iri(HYDRA + 'required'), bool(path.includes(v) || (c.required ?? []).includes(v)));
         }
       } else {
         g.add(C, iri(HYDRA + 'target'), iri(target));

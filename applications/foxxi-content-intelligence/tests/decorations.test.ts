@@ -98,6 +98,17 @@ describe('the documents', () => {
     const target = g.triples.find(t => t.s.value === control && t.p.value === `${HYDRA}target`)!.o;
     const template = g.triples.find(t => t.s.value === target.value && t.p.value === `${HYDRA}template`)!.o.value;
     expect(template).toBe('{+endpoint}/statements{?statementId,agent,verb,activity,registration,related_activities,related_agents,since,until,limit,format,attachments,ascending}');
+    // A query variable a call must give is required in the template's mapping; the rest are not.
+    const mappings = (control: string): Record<string, boolean> => {
+      const t = g.triples.find(x => x.s.value === `${BASE}/decorations/lrs-x#control-${control}` && x.p.value === `${HYDRA}target`)!.o;
+      const ms = g.triples.filter(x => x.s.value === t.value && x.p.value === `${HYDRA}mapping`).map(x => x.o.value);
+      return Object.fromEntries(ms.map(m => [
+        g.triples.find(x => x.s.value === m && x.p.value === `${HYDRA}variable`)!.o.value,
+        g.triples.find(x => x.s.value === m && x.p.value === `${HYDRA}required`)!.o.value === 'true',
+      ]));
+    };
+    expect(mappings('state-put')).toEqual({ endpoint: true, activityId: true, agent: true, registration: false, stateId: true });
+    expect(mappings('statement-put')).toEqual({ endpoint: true, statementId: true });
     expect(g.triples.some(t => t.s.value === `${BASE}/decorations/lrs-x#statements` && t.p.value === `${IEP}affordance` && t.o.value === control)).toBe(true);
   });
 
@@ -148,12 +159,31 @@ describe('the documents', () => {
 describe('binding an instance decoration', () => {
   const lrs = DECORATIONS['lrs-x'];
 
-  it('fills the instance\'s endpoint and leaves the query variables for each call', () => {
+  it('fills the instance\'s endpoint and leaves the query variables for each call, saying which a call must give', () => {
     const bound = bindControls(lrs, { endpoint: 'https://lrs.example.com/xapi/' }, BASE);
     if (!bound.ok) throw new Error(bound.error);
     expect(bound.controls).toHaveLength(lrs.controls.length);
     expect(bound.controls.find(c => c.id === 'about')).toMatchObject({ method: 'GET', href: 'https://lrs.example.com/xapi/about', readOnly: true });
-    expect(bound.controls.find(c => c.id === 'state-put')).toMatchObject({ method: 'PUT', href: 'https://lrs.example.com/xapi/activities/state{?activityId,agent,registration,stateId}', headers: { 'X-Experience-API-Version': '2.0.0' } });
+    expect(bound.controls.find(c => c.id === 'state-put')).toMatchObject({ method: 'PUT', href: 'https://lrs.example.com/xapi/activities/state{?activityId,agent,registration,stateId}', headers: { 'X-Experience-API-Version': '2.0.0' }, required: ['activityId', 'agent', 'stateId'] });
+    expect(bound.controls.find(c => c.id === 'agent-profile-put')!.note).toMatch(/^Send If-Match with the document's ETag/);
+  });
+
+  it('offers every xAPI document operation: state, activity profile and agent profile, each read, written, merged and deleted', () => {
+    const ops = (part: string) => lrs.controls.filter(c => c.part === part).map(c => c.method).sort();
+    for (const part of ['state', 'activity-profile', 'agent-profile']) expect(ops(part)).toEqual(['DELETE', 'GET', 'POST', 'PUT']);
+  });
+
+  it('keeps a whole-URL binding exactly as given, and joins a base binding to its path with one slash', () => {
+    const bound = bindControls(DECORATIONS['lms-x'], { jwks: 'https://lms.example.com/keys/', lineitem: 'https://lms.example.com/li/7/' }, BASE);
+    if (!bound.ok) throw new Error(bound.error);
+    expect(bound.controls.find(c => c.id === 'keys')!.href).toBe('https://lms.example.com/keys/');
+    expect(bound.controls.find(c => c.id === 'score-post')!.href).toBe('https://lms.example.com/li/7/scores');
+  });
+
+  it('refuses a spec whose control requires a variable it does not take', () => {
+    const lti = DECORATIONS['lti-x'];
+    const broken = { ...lti, controls: lti.controls.map(c => (c.id === 'tool-keys' ? { ...c, required: ['kid'] } : c)) };
+    expect(checkDecoration(broken)).toEqual(['control tool-keys requires kid, which is not one of its query variables']);
   });
 
   it('gives only the controls whose variables were bound', () => {
