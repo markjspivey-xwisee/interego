@@ -8,6 +8,8 @@ on:
     paths:
       - 'applications/foxxi-content-intelligence/i2idlx/**'
       - 'applications/foxxi-content-intelligence/src/ns/**'
+      - 'applications/foxxi-content-intelligence/src/i2idlx-workbench.ts'
+      - 'applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts'
       - 'applications/foxxi-content-intelligence/src/decorations/**'
       - 'applications/foxxi-content-intelligence/tests/i2idlx-*.test.ts'
       - 'package.json'
@@ -51,8 +53,8 @@ jobs:
       - run: npm run build
       - name: Native reasoning, semantic and history fixtures
         run: npx tsx --test applications/foxxi-content-intelligence/i2idlx/typescript/*.test.ts
-      - name: Independent RDF parity checks
-        run: npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-parity.test.ts
+      - name: Independent RDF and workbench security checks
+        run: npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-parity.test.ts applications/foxxi-content-intelligence/tests/i2idlx-workbench.test.ts applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts
       - name: Checkout the pinned upstream source, including its history
         run: |
           mkdir -p .cache

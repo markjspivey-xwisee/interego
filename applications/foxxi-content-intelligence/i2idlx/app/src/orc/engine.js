@@ -1,7 +1,7 @@
 // The orchestration engine. Two ways to run the same workflow over the same sandbox and tools:
 //   recorded — replays a real run (every role a separate Claude agent), re-executing each tool call so the
 //              workbench shows it happen; results are checked against the recording as they replay.
-//   live     — runs the team on the viewer's own Claude account through the sample capability: each step
+//   live     — runs the team on the viewer's own your connected model account through the sample capability: each step
 //              is one call whose tools are this page's functions (world.js).
 // Both feed one transcript, one step map and one presentation queue the workbench pane plays.
 /* global React */
@@ -72,14 +72,14 @@ How to work:
 }
 
 const LIVE_ERRORS = {
-  not_granted: "Claude isn't allowed on this page for your account, so the live run stopped.",
-  sampling_disabled: "Claude isn't available for your account, so the live run stopped.",
-  not_declared: "This page can no longer ask Claude.", capability_disabled: "Claude isn't available in this view.",
-  tools_unavailable: "This view can't give Claude page tools, so a live run isn't possible here. The recorded run works everywhere.",
-  rate_limited: "Too many Claude requests right now. Wait a little, then resume.",
+  not_granted: "your connected model isn't allowed on this page for your account, so the live run stopped.",
+  sampling_disabled: "your connected model isn't available for your account, so the live run stopped.",
+  not_declared: "This page can no longer ask your connected model.", capability_disabled: "your connected model isn't available in this view.",
+  tools_unavailable: "This view can't give your connected model page tools, so a live run isn't possible here. The recorded run works everywhere.",
+  rate_limited: "Too many your connected model requests right now. Wait a little, then resume.",
   session_expired: "Your session expired. Sign in again, then resume.",
   prompt_too_large: "A step grew too large for one request.",
-  refused: "Claude declined a step.", empty_completion: "A step came back empty.",
+  refused: "your connected model declined a step.", empty_completion: "A step came back empty.",
 };
 
 export function useOrchestra(trace) {
@@ -100,17 +100,17 @@ export function useOrchestra(trace) {
   const presenter = useMemo(makePresenter, []);
   const run = useRef(null);
   const seq = useRef(0);
-  const [live, setLive] = useState({ available: false, reason: "Checking whether Claude can run here…" });
+  const [live, setLive] = useState({ available: false, reason: "Checking whether your connected model can run here…" });
 
   // Can this view run a live team? Needs the sample capability with page tools.
   useEffect(() => {
     if (!caps.resolved) return;
-    if (!caps.sample) { setLive({ available: false, reason: "Open this page in claude.ai, signed in, to run the team live on your own Claude account." }); return; }
+    if (!caps.sample) { setLive({ available: false, reason: "Use Connect to attach a model through your AI client's Interego connection, or add your own API key. The recorded sandbox example remains available." }); return; }
     let on = true;
     caps.sample.limits().then((l) => {
       if (!on) return;
-      setLive(l && l.tools ? { available: true, maxTools: l.tools.maxCount || 5 } : { available: false, reason: "This view can't give Claude page tools, so only the recorded run is available here." });
-    }).catch(() => on && setLive({ available: false, reason: "Claude isn't available in this view." }));
+      setLive(l && l.tools ? { available: true, maxTools: l.tools.maxCount || 5 } : { available: false, reason: "This view can't give your connected model page tools, so only the recorded run is available here." });
+    }).catch(() => on && setLive({ available: false, reason: "your connected model isn't available in this view." }));
     return () => { on = false; };
   }, [caps.resolved, caps.sample]);
 
@@ -328,7 +328,7 @@ export function useOrchestra(trace) {
         add({ id: nid(), type: "note", tone: "muted", text: `Recorded run, ${new Date(trace.recordedAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}: each role was a separate Claude agent acting through these tools. The page re-runs every call as it replays, so the workbench shows each one happen.` });
         await replay(r);
       } else {
-        add({ id: nid(), type: "note", tone: "muted", text: `Live run on your Claude account (${opts.tier === "quick" ? "fast" : "thorough"}): one Claude call per step, each with only that step's tools. Nothing leaves the sandbox without your approval.` });
+        add({ id: nid(), type: "note", tone: "muted", text: `Live run on your connected model account (${opts.tier === "quick" ? "fast" : "thorough"}): one your connected model call per step, each with only that step's tools. Nothing leaves the sandbox without your approval.` });
         await runLiveTeam(r, opts.tier || "quick", live.maxTools || 5);
       }
       if (run.current === r) { setProgress(1); setState("done"); run.current = null; }
@@ -336,7 +336,7 @@ export function useOrchestra(trace) {
       if (e === CANCEL || (e && e.code === "cancelled")) return;
       if (run.current !== r) return;
       r.ctl.abort();
-      const text = (e && e.code && LIVE_ERRORS[e.code]) || (e && e.code ? "Something went wrong reaching Claude. Try again later." : String((e && e.message) || e));
+      const text = (e && e.code && LIVE_ERRORS[e.code]) || (e && e.code ? "Something went wrong reaching your connected model. Try again later." : String((e && e.message) || e));
       setMessage(text);
       add({ id: nid(), type: "note", tone: "warn", text });
       setState("error");

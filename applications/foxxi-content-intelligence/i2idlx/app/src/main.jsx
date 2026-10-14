@@ -1,6 +1,7 @@
 // Interpretant — the app shell: top bar, routing, keyboard, theme, overlays and shared context.
 import { META, C, ITEMS, byId } from "./data.js";
 import { CapsProvider, useCaps, consensus } from "./caps.js";
+import { WorkbenchConnection } from "./connection.jsx";
 import { Icon, Mark } from "./icons.jsx";
 import { UI, useToasts, useHoverCards, Modal, Avatar } from "./ui.jsx";
 import { Palette } from "./palette.jsx";
@@ -85,7 +86,7 @@ function Shell() {
 
   const nav = (
     <nav className="nav" aria-label="Views">
-      {NAV.filter((n) => n.v !== "ask" || engine.available).map((n) => (
+      {NAV.map((n) => (
         <a key={n.v} href={"#" + n.h} aria-current={route.view === n.v ? "page" : undefined}>
           <Icon name={n.icon} />{n.l}{n.v === "review" && needVotes ? <span className="count" title={`${needVotes} items have no votes yet`}>{needVotes}</span> : null}
           {n.v === "packs" && caps.ws.packs.length ? <span className="count">{caps.ws.packs.length}</span> : null}
@@ -105,6 +106,7 @@ function Shell() {
           <button className="searchbtn" onClick={() => setPal(true)} aria-label="Search terms"><Icon name="search" /><span className="ph">Search {C.length} terms…</span><kbd>/</kbd></button>
           {nav}
           <div className="tools">
+            <WorkbenchConnection />
             <LensToggle lens={lens} setLens={(v) => { setLens(v); toast(v === "i2idl" ? "Showing only what I2IDL publishes" : "Showing I2IDL with the I2IDL-X layers", { icon: "layers" }); }} />
             <a className={cx("btn sm fori2idl", route.view === "fori2idl" && "on")} href="#for-i2idl" title="What I2IDL-X does with I2IDL's linked data, mapped to I2IDL's own roadmap"><Icon name="flag" /><span>For I2IDL</span></a>
             <button className="btn ghost icon" onClick={() => setTheme(nextTheme)} title={`Theme: ${theme} (switch to ${nextTheme})`} aria-label="Switch theme">
@@ -115,8 +117,9 @@ function Shell() {
           </div>
         </header>
         <div className="navbar2">{nav}</div>
+        {caps.dbError ? <div className="note warn small" role="status">Some pod data could not be verified. Shared results may be stale; unconfirmed workspace edits remain held.</div> : null}
         <main className={cx("view", route.view === "orchestrate" && "view-fixed")} id="main">
-          {route.view === "orchestrate" ? <Orchestrate /> : <ViewFor route={route} engine={engine.available ? engine : null} />}
+          {route.view === "orchestrate" ? <Orchestrate /> : <ViewFor route={route} engine={engine} />}
         </main>
       </div>
       {pal ? <Palette onClose={() => setPal(false)} ask={ask} current={current} setTheme={setTheme} /> : null}
@@ -141,7 +144,7 @@ function Help({ onClose }) {
           <b>Rights</b>
           <p className="muted">{META.scheme.rights} I2IDL-original definitions, explanations and modeling: {META.license.holder}, <a href={META.license.url} target="_blank" rel="noopener">{META.license.name}</a> (<a href={META.license.file} target="_blank" rel="noopener">DATA-LICENSE</a>). Every evidence record shows its source's own rights; exports carry the attribution for each source they use.</p>
           <b>What is shared here</b>
-          <p className="muted">Votes, notes and “I use this” marks are visible to everyone with access to this page; packs, stars and recent terms are private to you. Ask Claude runs on your own Claude account.</p>
+          <p className="muted">Votes, notes and “I use this” marks are visible to everyone with access to this page; packs, stars and recent terms are private to you. Ask and Orchestrate use your connected client's model subscription, with your own API key as an optional fallback.</p>
           <b>What's whose</b>
           <p className="muted">Every element carries a label: <b>I2IDL</b> for the glossary as I2IDL publishes it; <b>I2IDL-X · derived</b>, <b>· added</b> or <b>· proposed</b> for the layer on top; <b>Interego</b>, <b>Foxxi</b> or <b>Your team</b> for the rest. The <b>I2IDL only</b> lens hides every layer. Click any label for details.</p>
           <b>Independence</b>

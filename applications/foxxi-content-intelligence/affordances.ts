@@ -26,6 +26,63 @@ import type {
 // ─────────────────────────────────────────────────────────────────────
 
 export const foxxiAffordances: ReadonlyArray<Affordance> = [
+  // I2IDL-X workbench: the generic relay follows these signed external routes.
+  // Identity, owner binding and editor checks live in src/i2idlx-workbench.ts.
+  {
+    action: 'urn:iep:action:foxxi:i2idlx-capabilities' as IRI,
+    toolName: 'foxxi.i2idlx_capabilities', title: 'Inspect I2IDL-X workbench connection capabilities',
+    description: 'Inspect optional pod storage and the workbench signed session/read/write links. No model is funded by the project; client subscription sampling is optional.',
+    method: 'GET', targetTemplate: '{base}/i2idlx/capabilities', externallyRouted: true,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }, inputs: [],
+  },
+  {
+    action: 'urn:iep:action:foxxi:i2idlx-challenge' as IRI,
+    toolName: 'foxxi.i2idlx_challenge', title: 'Get a one-use I2IDL-X sign-in nonce',
+    description: 'Get a server-issued nonce bound to this bridge. Sign it immediately with Interego sign_request, with i2idlx_operation=session and the returned audience. Expires in 60 seconds.',
+    method: 'GET', targetTemplate: '{base}/i2idlx/challenge', externallyRouted: true,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }, inputs: [],
+  },
+  {
+    action: 'urn:iep:action:foxxi:i2idlx-session' as IRI,
+    toolName: 'foxxi.i2idlx_session', title: 'Verify an Interego identity for I2IDL-X',
+    description: 'Signature/delegation-verify the calling actor on their own existing pod, consume the one-use server nonce, and return a derived account identifier plus actual write/editor standing. Never accepts a claimed userId and never registers a pod.',
+    method: 'POST', targetTemplate: '{base}/i2idlx/api/session', externallyRouted: true,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputs: [
+      { name: 'owner_encryption_key', type: 'string', required: false, description: 'Optional owner-held X25519 key from authenticated signing context, signature-covered; determines whether private writes can be available. Never resolve this from unsigned pod key bytes.' },
+      { name: 'nonce', type: 'string', required: true, description: 'Fresh one-use nonce from i2idlx-challenge.' },
+      { name: 'i2idlx_operation', type: 'string', required: true, description: 'Must be session; signature binds the route operation.' },
+      { name: 'bridge_audience', type: 'string', required: true, description: 'Exact audience returned by i2idlx-challenge, without a trailing slash.' },
+    ],
+  },
+  {
+    action: 'urn:iep:action:foxxi:i2idlx-read' as IRI,
+    toolName: 'foxxi.i2idlx_read', title: 'Read verified I2IDL-X pod documents',
+    description: 'Read author-signed ballots, notes, usage and policy from the configured shared pod, or decrypt only the caller account private workspace from their own pod. Signature/delegation and author ownership are rechecked on reads; unreadable or forged state is an error rather than empty data.',
+    method: 'POST', targetTemplate: '{base}/i2idlx/api/read', externallyRouted: true,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'i2idlx_operation', type: 'string', required: true, description: 'Must be read.' },
+      { name: 'bridge_audience', type: 'string', required: true, description: 'Exact advertised bridge audience.' },
+      { name: 'collection', type: 'string', required: false, description: 'ballots, notes, usage, or all (all shared collections and policy).' },
+      { name: 'doc_path', type: 'string', required: false, description: 'settings/policy, <shared-collection>/<derived-account-id>, or data/users/<own-derived-account-id>/workspace. Supply collection OR doc_path.' },
+    ],
+  },
+  {
+    action: 'urn:iep:action:foxxi:i2idlx-write' as IRI,
+    toolName: 'foxxi.i2idlx_write', title: 'Conditionally save an author-owned I2IDL-X document',
+    description: 'Save ONLY the verified caller account ballot/note/usage or private workspace; policy requires a configured verified editor DID. Retains the exact author-signed envelope, uses signed read ETag for CAS, and reports durable only after a verified unchanged readback. Private workspace requires owner encryption plus a stable bridge key. No project database or plaintext private fallback.',
+    method: 'POST', targetTemplate: '{base}/i2idlx/api/write', externallyRouted: true,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputs: [
+      { name: 'i2idlx_operation', type: 'string', required: true, description: 'Must be write.' },
+      { name: 'bridge_audience', type: 'string', required: true, description: 'Exact advertised bridge audience.' },
+      { name: 'doc_path', type: 'string', required: true, description: 'Own ballots/<id>, notes/<id>, usage/<id>, data/users/<id>/workspace, or settings/policy for a verified editor.' },
+      { name: 'document', type: 'object', required: true, description: 'Complete schema-validated document: ballots {v}, notes {n}, usage {u}, policy {quorum}, or workspace {packs,stars,recents?,at?}. Every property is signature-covered.' },
+      { name: 'expected_etag', type: 'string', required: true, description: 'Exact strong ETag from the preceding read, or empty string ONLY when that read reported absent. Conflicts require read-and-merge, never a blind retry.' },
+      { name: 'owner_encryption_key', type: 'string', required: false, description: 'Required for private workspace writes: owner-held canonical base64 X25519 public key, bound by this exact author signature. Obtain from owned signing context, never an unsigned pod document.' },
+    ],
+  },
   ...telemetryAffordances,
   ...privatePerformanceAffordances,
   // ── The door to the LRS ────────────────────────────────────────────────────

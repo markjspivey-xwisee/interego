@@ -31,7 +31,7 @@ export function VoteBar({ itemKey, compact }) {
   const mine = myBallot.v[itemKey];
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState(mine ? mine.note || "" : "");
-  const why = !resolved ? "Loading…" : !signedIn ? "Sign in to claude.ai to vote." : !writable ? "Your access to this page is view-only; ask the owner for Contributor access to vote." : "";
+  const why = !resolved ? "Loading…" : !signedIn ? "Connect Interego to vote." : !writable ? "Your access to this page is view-only; ask the workbench owner to admit your verified account to vote." : "";
   const cast = async (choice) => {
     const next = mine && mine.vote === choice ? null : choice;
     try {

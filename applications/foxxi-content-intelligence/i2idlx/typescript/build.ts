@@ -15,6 +15,7 @@ import { shaclValidate } from './validation.js';
 import { buildApp } from './build-app.js';
 import { checkAppData } from './check-app-data.js';
 import { buildSite } from './build-site.js';
+import { publicationRecord } from './publication-record.js';
 import { agentWalk } from './agent-walk.js';
 
 const { namedNode: nn, literal, quad } = DataFactory;
@@ -80,6 +81,8 @@ export async function buildNative(root=DEFAULT_ROOT,options:NativeBuildOptions={
   if(!options.graphsOnly) {
     const appDir=resolve(options.appDir??join(root,'app','build-ts'));
     const siteDir=resolve(options.siteDir??join(root,'site-ts'));
+    const receipts=await publicationRecord(root,{outputDir:build.outputDir});
+    if(receipts.problems.length)throw new Error('Publication receipts failed: '+receipts.problems.join('; '));
     await agentWalk(root,{distDir:build.outputDir,live:false});
     await buildApp(root,{distDir:build.outputDir,outputDir:appDir,siteDir,now:process.env.I2IDLX_NOW});
     checkAppData(join(appDir,'data.json'));
