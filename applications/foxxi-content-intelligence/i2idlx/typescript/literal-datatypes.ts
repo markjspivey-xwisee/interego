@@ -4,7 +4,7 @@
  */
 import { createRequire } from 'node:module';
 import { Store, Parser, DataFactory } from 'n3';
-import type { Term, DataFactory as RdfDataFactory } from '@rdfjs/types';
+import type { Term, Literal, NamedNode, DirectionalLanguage, DataFactory as RdfDataFactory } from '@rdfjs/types';
 
 const XSD_STRING='http://www.w3.org/2001/XMLSchema#string';
 export const MIXED_LITERAL_DATATYPE=Symbol('mixed source literal datatype');
@@ -55,6 +55,14 @@ export function oracleLiteralDatatypes(graph:Store):ReadonlyMap<string,string|nu
   }
   return out;
 }
+/** Create only literal forms the pinned N3 factory can preserve exactly. */
+export function sourceLiteral(value:string,languageOrDatatype?:string|NamedNode|DirectionalLanguage):{term:Literal;datatype:string|null} {
+  if(languageOrDatatype&&typeof languageOrDatatype==='object'&&
+    (!('termType' in languageOrDatatype)||languageOrDatatype.termType!=='NamedNode'))
+    throw new Error('Pinned N3 cannot preserve directional literals; refusing to discard their direction');
+  const term=DataFactory.literal(value,languageOrDatatype);
+  return {term,datatype:languageOrDatatype&&typeof languageOrDatatype==='object'?languageOrDatatype.value:null};
+}
 export function parseWithLiteralDatatypes(text:string,format:'Turtle'|'N-Quads'='Turtle',baseIRI?:string):ParsedRdf {
   const choices=new WeakMap<object,string|null>(),datatypes=new Map<string,LiteralDatatype>();
   const chosen=(term:Term):void=>{
@@ -65,10 +73,10 @@ export function parseWithLiteralDatatypes(text:string,format:'Turtle'|'N-Quads'=
   const factory:RdfDataFactory={
     ...DataFactory,
     literal(value,languageOrDatatype) {
-      const term=DataFactory.literal(value,languageOrDatatype);
+      const {term,datatype}=sourceLiteral(value,languageOrDatatype);
       // _completeLiteral creates a discarded default term before an explicit
       // datatype/language replacement. Record only final quad terms.
-      choices.set(term,languageOrDatatype&&typeof languageOrDatatype==='object'?languageOrDatatype.value:null);
+      choices.set(term,datatype);
       return term;
     },
     quad(subject,predicate,object,graph) {

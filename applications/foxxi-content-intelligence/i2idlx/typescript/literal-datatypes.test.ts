@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { Parser, Store, DataFactory } from 'n3';
 import { parseWithLiteralDatatypes, parseJsonLdWithLiteralDatatypes, literalKey, literalDatatypesOf,
-  oracleLiteralDatatypes, retainLiteralDatatypes, addQuadsWithLiteralDatatypes } from './literal-datatypes.js';
+  oracleLiteralDatatypes, retainLiteralDatatypes, addQuadsWithLiteralDatatypes, sourceLiteral } from './literal-datatypes.js';
 import { closure, has, RDF, XSD } from './reasoning.js';
 
 const prefixes='@prefix : <urn:source-test:> . @prefix xsd: <'+XSD+'> . ';
@@ -19,6 +19,16 @@ describe('literal source provenance without changing RDF/JS graphs',()=>{
     assert.equal(origins.get(literalKey(object(parsed.graph,'language'))),null);
     assert.equal(origins.get(literalKey(object(parsed.graph,'explicit'))),XSD+'string');
     assert.equal(origins.get(literalKey(object(parsed.graph,'number'))),XSD+'integer');
+  });
+  it('creates supported literals with N3 and refuses directional literals before any direction can be discarded',()=>{
+    const plain=sourceLiteral('plain'),language=sourceLiteral('English','en');
+    const type=DataFactory.namedNode(XSD+'string'),typed=sourceLiteral('typed',type);
+    assert.equal(plain.term.equals(DataFactory.literal('plain')),true);assert.equal(plain.datatype,null);
+    assert.equal(language.term.equals(DataFactory.literal('English','en')),true);assert.equal(language.datatype,null);
+    assert.equal(typed.term.equals(DataFactory.literal('typed',type)),true);assert.equal(typed.datatype,XSD+'string');
+    const directional={language:'en',direction:'rtl'} as const;
+    assert.throws(()=>sourceLiteral('English',directional),/refusing to discard their direction/);
+    assert.deepEqual(directional,{language:'en',direction:'rtl'});
   });
   it('records the selected explicit term rather than the parser\'s discarded default literal',()=>{
     const parsed=parseWithLiteralDatatypes(prefixes+':s :p "typed"^^xsd:string .');
