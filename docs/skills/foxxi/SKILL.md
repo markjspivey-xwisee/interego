@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 57 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 62 tools (record-private-performance-outcome-signed, read-private-performance-outcomes-signed, read-private-performance-calibration-signed, discover-lrs, discover-assigned-courses, discover-course-catalogs, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 57
+  affordances: 62
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -85,4 +85,9 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.scorm_author` | Author a SCORM 2004 course as yourself. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/author` *(HTTP only)* |
 | `foxxi.scorm_launch` | Launch an authored SCORM course as yourself. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/launch` *(HTTP only)* |
 | `foxxi.scorm_submit` | Submit the current SCO. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/submit` *(HTTP only)* |
+| `foxxi.scorm_course_ask` | Ask a question about a course authored on this bridge. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/ask` *(HTTP only)* |
+| `foxxi.scorm_dispatch` | As a course's author, make a dispatch: a stub package another organization's LMS imports like any SCORM package. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/dispatch` *(HTTP only)* |
+| `foxxi.scorm_dispatch_revoke` | Withdraw one of your dispatches. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/dispatch/revoke` *(HTTP only)* |
+| `foxxi.scorm_dispatches` | Your dispatches, optionally for one course: each one's state (live, revoked, expired, exhausted), its launch, completion and pass counts, and its package links. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/dispatches` *(HTTP only)* |
+| `foxxi.bind_decoration` | LRS-X decorates any xAPI 2.0 Learning Record Store, and LMS-X any LMS that speaks LTI 1.3 Advantage and OneRoster 1.2: each is a catalog of controls (one per r… | `POST https://foxxi-bridge.interego.xwisee.com/agent/decorations/bind` *(HTTP only)* |
 

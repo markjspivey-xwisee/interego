@@ -61,7 +61,7 @@ describe('a submission and the grade it ends in', () => {
   });
 });
 
-describe('the bridge wires its own LMS to its own Tool', () => {
+describe('the bridge wires its own LMS, and other LMSs, to its own Tool', () => {
   const src = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
 
   it('launches for the learner the signature names, never one the caller names', () => {
@@ -73,13 +73,35 @@ describe('the bridge wires its own LMS to its own Tool', () => {
     expect(gradebook).toMatch(/ltiPlatform\.gradebookFor\(learner\.did\)/);
   });
 
-  it('plays only its own LMS\'s launches, with the same engine step as every attempt, into the learner\'s pod', () => {
+  it('plays its own LMS\'s launches, with the same engine step as every attempt, into the learner\'s pod', () => {
     expect(src).toMatch(/extraPlatforms: \[ltiPlatform\.registration\(\)\]/);
     expect(src).toMatch(/onResourceLaunch: \(launch\) => startLtiPlay\(launch\)/);
-    expect(src).toMatch(/if \(launch\.issuer !== ltiPlatform\.issuer\) return null;/);
+    expect(src).toMatch(/const own = launch\.issuer === ltiPlatform\.issuer;/);
+    // Only this bridge's own LMS names the learner's pod: another LMS's custom claim is not read for it.
+    expect(src).toMatch(/const podUrl = own && typeof launch\.custom\.foxxi_learner_pod === 'string'/);
     expect(src.match(/advanceScormPlay\(/g)?.length).toBeGreaterThanOrEqual(3);
     expect(src).toMatch(/const learnerPod = play\.learnerPod \?\? resolveSubjectPodUrl\(play\.learnerDid\)/);
     expect(src).toMatch(/launch\.ags\?\.scope\.includes\(AGS_SCOPE\.score\)/);
+  });
+
+  it('plays another LMS\'s launch that names a course, as the account that LMS signed for, kept in the LRS alone', () => {
+    const start = src.slice(src.indexOf('async function startLtiPlay('), src.indexOf('function ltiPlayAt('));
+    // A launch naming no course is still the dashboard's.
+    expect(start).toMatch(/if \(!own && !courseId\) return null;/);
+    // One LMS's sub is not another's.
+    expect(start).toMatch(/tenantIdOf\(own \? `scorm:\$\{launch\.sub\}` : `scorm:lti:\$\{launch\.issuer\}#\$\{launch\.sub\}`\)/);
+    expect(start).toMatch(/lens: DEFAULT_TENANT,[\s\S]*actorAccount: \{ homePage: launch\.issuer, name: launch\.sub \}, keptBy: 'tool-lrs'/);
+    // The statements name that account, and no pod's lattice is written for a learner with no pod here.
+    expect(src).toMatch(/account: play\.actorAccount \?\? \{ homePage: String\(authoritativeSource\), name: play\.learnerDid \}/);
+    expect(src).toMatch(/if \(play\.keptBy === 'tool-lrs'\) return;\n  \/\/ Foundation-first/);
+  });
+
+  it('records a dispatched attempt nowhere on the bridge: the launching LMS keeps it', () => {
+    expect(src).toMatch(/if \(play\.keptBy !== 'launching-lms'\) await recordScormCompletion\(play, play\.ended\);/);
+    expect(src).toMatch(/if \(!play\.ended\.recorded && play\.keptBy !== 'launching-lms'\) await recordScormCompletion/);
+    const engine = src.slice(src.indexOf('const dispatchEngine: DispatchEngine<ScormPlay, AgentScormCourse>'), src.indexOf('attachScormDispatchRoutes(app, {'));
+    expect(engine).toMatch(/keptBy: 'launching-lms'/);
+    expect(engine).toMatch(/await advanceScormPlay\(play, answers\)/);
   });
 
   it('keeps an ended attempt until its grade is in and the record holds it, so neither is lost', () => {

@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 57 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 62 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -876,4 +876,80 @@ Submit the current SCO. For an assessment SCO pass { answers:[...] } — the pla
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, session_id, answers? }). answers is the ordered array for an assessment SCO, one string per question: fill-in its text; numeric a number; choice the option letter ("B") or its text, several letters joined by commas ("A, C"); true-false true or false; sequencing the letters of the shown items in their right order ("C, A, B"); matching one target letter per prompt, in prompt order ("B, A, C"); likert one letter; long-fill-in its text. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.scorm_course_ask`
+
+**Ask an authored course a question**
+
+Ask a question about a course authored on this bridge. The answer is assembled, not generated: the I2IDL Digital Learning Glossary terms the question names (found by I2IDL-X's surface forms), what I2IDL says each means, where the course covers it, and the course sections whose words overlap the question. Every field says whose it is: definitions and sources are I2IDL's; the provenance wording ("Direct source definition" / "I2IDL synthesis supported by source evidence") and reuse class are I2IDL-X · derived; referent categories and enactments are I2IDL-X · proposed (Hypothetical). A definition whose direct sources do not allow commercial reuse is not quoted, and I2IDL's card is linked instead. No model is called, and an assessment's questions are never read. Read-only; no signature needed.
+
+- Action: `urn:iep:action:foxxi:scorm-course-ask`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/ask` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `course_id` | string | yes | The authored course's id. |
+| `question` | string | yes | The question, up to 500 characters. |
+| `author_did` | string | no | The author's DID, when the course is not yet known to this bridge. |
+
+## `foxxi.scorm_dispatch`
+
+**Dispatch a course to another LMS (SCORM 2004 or 1.2 stub)**
+
+As a course's author, make a dispatch: a stub package another organization's LMS imports like any SCORM package. The stub holds no content and no answers; its one SCO opens the course on this bridge in a frame, the SCORM engine sequences and grades it, and the stub reports score, completion, success, each answered question and the time spent through that LMS's own SCORM API. That LMS keeps the learner's record: the bridge is not told who the learner is, and counts only launches, completions and passes for you. A learner who closes the course mid-way resumes it. Optional expires_at and launch_limit bound the dispatch; foxxi.scorm_dispatch_revoke withdraws it, and every copy of the stub stops launching. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:scorm-dispatch-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/dispatch` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, title?, expires_at? (ISO 8601, in the future), launch_limit? (whole number ≥ 1) }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.scorm_dispatch_revoke`
+
+**Withdraw a course dispatch**
+
+Withdraw one of your dispatches. Every copy of its stub then answers that the course was withdrawn; attempts already under way may finish. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:scorm-dispatch-revoke-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/dispatch/revoke` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, dispatch_id }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.scorm_dispatches`
+
+**List your course dispatches and their usage**
+
+Your dispatches, optionally for one course: each one's state (live, revoked, expired, exhausted), its launch, completion and pass counts, and its package links. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:scorm-dispatches-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/dispatches` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id? }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.bind_decoration`
+
+**Bind a decoration's controls to your own LRS or LMS**
+
+LRS-X decorates any xAPI 2.0 Learning Record Store, and LMS-X any LMS that speaks LTI 1.3 Advantage and OneRoster 1.2: each is a catalog of controls (one per resource or service, with the headers and scope it asks for) and a set of Hypothetical proposals tying each part to the I2IDL glossary and to the Foxxi capabilities that enact it. Give the decoration and your instance's URLs (LRS-X: endpoint; LMS-X: configuration, jwks, lineitems, lineitem, memberships, oneroster), and get the controls with them filled in. The bridge fetches nothing; it only fills the templates. The catalogs are at {base}/decorations/<id> (Turtle, JSON-LD, JSON or HTML) and the proposals at {base}/decorations/<id>/proposals. Each decoration is independent work, not affiliated with or endorsed by the publisher of what it decorates.
+
+- Action: `urn:iep:action:foxxi:bind-decoration`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/decorations/bind` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `decoration` | string | yes | lrs-x or lms-x (lti-x, ler-x and tla-x decorate specifications and an architecture, and need no binding). |
+| `values` | object | yes | Each binding variable to an https URL of your instance, e.g. { "endpoint": "https://lrs.example.com/xapi" }. |
 

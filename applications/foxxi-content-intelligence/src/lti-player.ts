@@ -57,7 +57,7 @@ export interface PlayOutcome {
   readonly gradebook: GradePassback;
 }
 
-function htmlEscape(s: string): string {
+export function htmlEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
@@ -76,7 +76,8 @@ textarea{min-height:7rem}input[type=radio],input[type=checkbox]{width:auto}selec
 button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:.65rem 1.3rem;font:inherit;cursor:pointer;margin-top:.5rem}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}ul.graded{padding-left:1.1rem}`;
 
-function page(title: string, crumb: string, inner: string): string {
+/** A page in the player's style: the one stylesheet, a crumb naming where the launch came from, and the content. */
+export function page(title: string, crumb: string, inner: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer"><title>${htmlEscape(title)}</title><style>${STYLE}</style></head><body>
 <p class="crumb">${htmlEscape(crumb)}</p>
@@ -84,7 +85,7 @@ ${inner}
 </body></html>`;
 }
 
-function gradedCard(graded: GradedView | undefined): string {
+export function gradedCard(graded: GradedView | undefined): string {
   if (!graded) return '';
   const rows = graded.detail.map((d) => {
     const verdict = d.correct === null ? 'Recorded' : d.correct ? 'Right' : 'Not right';
@@ -131,32 +132,37 @@ function questionControl(q: LearnerQuestion): string {
   return `<label><span>${htmlEscape(q.question)}</span><input name="${name}"${attrs} required></label>`;
 }
 
-/** The SCO to read and, when it is assessed, answer. The form posts back to the page it is on. */
-export function renderScoPage(args: { courseTitle: string; sco: ScoView; graded?: GradedView; error?: string }): string {
+/**
+ * The SCO to read and, when it is assessed, answer. The form posts back to the page it is on.
+ * `crumb` names where the launch came from; `after` is markup the caller built (never learner or
+ * author text) placed after the form: a dispatch's ask form and its message to the stub.
+ */
+export function renderScoPage(args: { courseTitle: string; sco: ScoView; graded?: GradedView; error?: string; crumb?: string; after?: string }): string {
   const { sco } = args;
   const questions = sco.assessment?.length ? `<ol class="q">${sco.assessment.map((q) => `<li>${questionControl(q)}</li>`).join('')}</ol>` : '';
   const inner = `${gradedCard(args.graded)}
 <h1>${htmlEscape(sco.title)}</h1>
 ${args.error ? `<div class="card bad" role="alert">${htmlEscape(args.error)}</div>` : ''}
 <div class="body">${courseMarkdownHtml(sco.body)}</div>
-<form method="POST">${questions}<button type="submit">${sco.assessment?.length ? 'Submit answers' : 'Continue'}</button></form>`;
-  return page(`${sco.title} · ${args.courseTitle}`, `${args.courseTitle} · launched from your LMS over LTI 1.3`, inner);
+<form method="POST">${questions}<button type="submit">${sco.assessment?.length ? 'Submit answers' : 'Continue'}</button></form>${args.after ?? ''}`;
+  return page(`${sco.title} · ${args.courseTitle}`, args.crumb ?? `${args.courseTitle} · launched from your LMS over LTI 1.3`, inner);
 }
 
 /**
  * The end of the attempt: the engine's outcome, whether the learner's record holds it, and what
  * happened to the grade. `retry` names what sending the page again would still do.
  */
-export function renderOutcomePage(args: { courseTitle: string; outcome: PlayOutcome; graded?: GradedView; retry?: { record: boolean; grade: boolean } }): string {
+export function renderOutcomePage(args: { courseTitle: string; outcome: PlayOutcome; graded?: GradedView; retry?: { record: boolean; grade: boolean }; recordPlace?: string }): string {
   const { outcome, retry } = args;
   const pct = Math.round(outcome.score * 100);
   const gb = outcome.gradebook;
   const grade = gb.posted
     ? `<p class="ok">Your LMS has the grade: ${gb.scoreGiven ?? pct} of ${gb.scoreMaximum ?? 100}, posted to its gradebook over LTI Assignment and Grade Services.</p>`
     : `<p class="bad">The grade did not reach your LMS: ${htmlEscape(gb.why ?? 'no gradebook was offered for this launch')}.</p>`;
+  const place = args.recordPlace ?? 'your learner record';
   const record = outcome.recorded
-    ? `<p>The attempt is in your learner record: ${outcome.recordedStatements} statement${outcome.recordedStatements === 1 ? '' : 's'}, graded by the SCORM engine.</p>`
-    : '<p class="bad">The attempt is not in your learner record yet: the record did not keep its outcome.</p>';
+    ? `<p>The attempt is in ${htmlEscape(place)}: ${outcome.recordedStatements} statement${outcome.recordedStatements === 1 ? '' : 's'}, graded by the SCORM engine.</p>`
+    : `<p class="bad">The attempt is not in ${htmlEscape(place)} yet: the record did not keep its outcome.</p>`;
   const again = retry?.record ? (retry.grade ? 'Record the attempt and send the grade again' : 'Record the attempt again') : 'Send the grade again';
   const inner = `${gradedCard(args.graded)}
 <h1>${outcome.passed ? 'Passed' : 'Not passed yet'}: ${pct}%</h1>
