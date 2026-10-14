@@ -79,6 +79,16 @@ describe('the dispatch registry', () => {
     expect(r.reserveLaunch('d-nonexistentnonexistent', 0)).toBeUndefined();
   });
 
+  it('dates the last launch only when its attempt starts, so a launch given back leaves the date as it was', () => {
+    const r = new DispatchRegistry();
+    const d = made(r.create({ courseId: 'c', title: 'C', owner: 'did:a' }, 0));
+    r.reserveLaunch(d.id, Date.parse('2026-10-01T00:00:00Z'));
+    r.launched(d.id, Date.parse('2026-10-01T00:00:00Z'));
+    r.reserveLaunch(d.id, Date.parse('2026-10-02T00:00:00Z'));
+    r.releaseLaunch(d.id);
+    expect(d.usage).toMatchObject({ launches: 1, lastLaunchAt: '2026-10-01T00:00:00.000Z' });
+  });
+
   it('keeps trying a durable write that fails, later each time, until one succeeds', async () => {
     vi.useFakeTimers();
     try {
@@ -309,7 +319,7 @@ const questions: LearnerQuestion[] = [
 ];
 const view = (i: number): ScoView => ({ id: course.scos[i]!.id, title: course.scos[i]!.title, body: course.scos[i]!.body, ...(i === 1 ? { assessment: questions } : {}) });
 const engine: DispatchEngine<FakePlay> = {
-  start: (c) => ({ ok: true, play: { course: c, at: 0 } }),
+  start: (c) => { if (c.courseId === 'broken') throw new Error('engine fault'); return { ok: true, play: { course: c, at: 0 } }; },
   current: (p) => (p.at < 2 ? { sco: view(p.at), questions: p.at === 1 ? questions : [] } : null),
   async advance(p, answers): Promise<DispatchStep> {
     if (p.at === 0) { p.at = 1; return { ok: true, done: false, sco: view(1) }; }
@@ -368,7 +378,7 @@ describe('the dispatch routes', () => {
         return typeof b.as === 'string' ? { ok: true, callerDid: b.as, payload: b } : { ok: false, status: 401, error: 'agent signature required' };
       },
       // 'slow' is the same course, resolved after a pause, so two launches can overlap.
-      resolveCourse: async (id) => (id === 'refunds' ? course : id === 'slow' ? new Promise(r => setTimeout(() => r({ ...course, courseId: 'slow' }), 50)) : null),
+      resolveCourse: async (id) => (id === 'refunds' ? course : id === 'broken' ? { ...course, courseId: 'broken' } : id === 'slow' ? new Promise(r => setTimeout(() => r({ ...course, courseId: 'slow' }), 50)) : null),
       ownerOf: async (c) => (c as typeof course).owner,
       rateLimit: () => (limitNext ? (limitNext = false, { ok: false, retryAfterSeconds: 9 }) : { ok: true }),
       persist: () => { persisted++; },
@@ -502,6 +512,14 @@ describe('the dispatch routes', () => {
     const both = await Promise.all([1, 2].map(() => fetch(`${base}/scorm/dispatch/${id}/launch?scorm=2004`, { redirect: 'manual', headers: { Accept: 'application/json' } })));
     expect(both.map(x => x.status).sort()).toEqual([303, 410]);
     expect(registry.get(id)!.usage.launches).toBe(1);
+  });
+
+  it('gives the launch back when the attempt throws on starting, so a capped dispatch is not used up', async () => {
+    const r = await json(`${base}/agent/scorm/dispatch`, sign(course.owner, { course_id: 'broken', launch_limit: 1 }));
+    const id = ((await r.json()) as { dispatch: { id: string } }).dispatch.id;
+    expect((await json(`${base}/scorm/dispatch/${id}/launch`)).status).toBe(500);
+    expect(registry.get(id)!.usage).toEqual({ launches: 0, completed: 0, passed: 0 });
+    expect((await json(`${base}/scorm/dispatch/${id}/launch`)).status).toBe(500);   // still live: not 410
   });
 
   it('finds a dispatch another process made in the durable copy, and limits the author\'s calls', async () => {

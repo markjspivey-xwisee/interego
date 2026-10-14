@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-14 — Foxxi dispatch: a launch that does not start leaves no trace
+
+Codex's review of #618 found two more gaps in launch reservation, now closed. A launch whose attempt threw on starting was never given back, so it could use up a capped dispatch until the next restart. It is now given back whether the attempt refuses to start or throws. And a reserved launch moved the dispatch's last-launch time even when its attempt never started. That time is now set only once the attempt starts. Both tests fail against the merged code.
+
 ## 2026-10-14 — Foxxi dispatch: fixes from the review of #615
 
 Codex's review of #615 found three faults in the dispatch registry, fixed here:

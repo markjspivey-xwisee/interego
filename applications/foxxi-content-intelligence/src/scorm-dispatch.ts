@@ -137,17 +137,20 @@ export class DispatchRegistry {
   countLaunch(id: string, now: number): void { const d = this.byId.get(id); if (d) { d.usage.launches++; d.usage.lastLaunchAt = new Date(now).toISOString(); this.dirty = true; } }
   /**
    * Take a launch, if the dispatch is live: the check and the count are one step, so two launches
-   * racing for a dispatch's last launch cannot both take it. Answers the state it found.
+   * racing for a dispatch's last launch cannot both take it. Answers the state it found. The time of
+   * the last launch is not touched until the attempt starts (`launched`).
    */
   reserveLaunch(id: string, now: number): DispatchState | undefined {
     const d = this.byId.get(id);
     if (!d) return undefined;
     const state = dispatchState(d, now);
-    if (state === 'live') this.countLaunch(id, now);
+    if (state === 'live') { d.usage.launches++; this.dirty = true; }
     return state;
   }
   /** Give back a launch that was taken for an attempt that then did not start. */
   releaseLaunch(id: string): void { const d = this.byId.get(id); if (d && d.usage.launches > 0) { d.usage.launches--; this.dirty = true; } }
+  /** Note that a reserved launch's attempt started. */
+  launched(id: string, now: number): void { const d = this.byId.get(id); if (d) { d.usage.lastLaunchAt = new Date(now).toISOString(); this.dirty = true; } }
   countEnd(id: string, outcome: { completed: boolean; passed: boolean }): void {
     const d = this.byId.get(id);
     if (!d) return;
@@ -723,11 +726,15 @@ export function attachScormDispatchRoutes<P, C extends DispatchCourse = Dispatch
       if (!course) { gone(req, res, 404, 'The course behind this dispatch is not available.'); return; }
       // The launch is taken here, after the last await, in the same step that checks the dispatch is
       // still live; if the attempt then fails to start, it is given back.
+      const id = randomBytes(24).toString('base64url');
       const taken = deps.registry.reserveLaunch(d.id, now());
       if (taken !== 'live') { gone(req, res, 410, STATE_WORDS[taken ?? 'revoked']); return; }
-      const id = randomBytes(24).toString('base64url');
-      const started = deps.engine.start(course, `dispatch:${d.id}:${id}`);
+      // Whatever stops the attempt from starting, a refusal or a throw, gives the launch back.
+      let started: ReturnType<typeof deps.engine.start>;
+      try { started = deps.engine.start(course, `dispatch:${d.id}:${id}`); }
+      catch (err) { deps.registry.releaseLaunch(d.id); deps.persist(); throw err; }
       if (!started.ok) { deps.registry.releaseLaunch(d.id); deps.persist(); gone(req, res, started.status, started.error); return; }
+      deps.registry.launched(d.id, now());
       for (const [k, v] of plays) if (v.expiresAt < now()) plays.delete(k);
       if (plays.size >= PLAYS_MAX) { const oldest = plays.keys().next().value; if (oldest !== undefined) plays.delete(oldest); }
       const parentOrigin = stubOrigin(req.query.parentOrigin);
