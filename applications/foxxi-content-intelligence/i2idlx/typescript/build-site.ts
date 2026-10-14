@@ -73,6 +73,11 @@ function add(m:Map<string,number>,k:string,n=1):void {m.set(k,(m.get(k)??0)+n);}
 function byText<T>(f:(v:T)=>string):(a:T,b:T)=>number {return(a,b)=>compareText(f(a),f(b));}
 function readJson<T>(p:string):T {return JSON.parse(readFileSync(p,'utf8')) as T;}
 function recursiveFiles(dir:string):string[] {return readdirSync(dir,{withFileTypes:true}).flatMap(e=>{if(e.name.startsWith('.')||e.name==='__pycache__'||e.name==='node_modules')return[];const p=join(dir,e.name);return e.isDirectory()?recursiveFiles(p):e.isFile()&&!e.name.endsWith('.pyc')?[p]:[];});}
+export interface OriginDeclarations { groups:{id:string}[]; origins:{id:string}[] }
+/** Include origin groups as well as leaves so linked group terms receive anchors. */
+export function originVocabularyDeclarations(source:OriginDeclarations):string {
+  return [...source.groups,...source.origins].map(origin=>'i2x:origin-'+origin.id+' a skos:Concept .').join('\n');
+}
 /** Render the reference from built RDF and verification records; never runs Python. */
 export async function buildSite(root:string,options:SiteOptions={}):Promise<{output:string;terms:number;controls:number;queries:number}> {
   const ROOT=resolve(root),cfg=readJson<Config>(join(ROOT,'config.json'));
@@ -128,7 +133,7 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
   const sections:[string,string][]=[],sectionOf=new Map<string,string>(),order:string[]=[];let current:string|undefined;
   const ontologySource=readFileSync(join(ROOT,'src','i2idlx.ttl.tmpl'),'utf8')
     .replace('{{CHANGE_KINDS}}',CHANGE_KINDS.map(([code])=>'i2x:change-'+code+' a skos:Concept .').join('\n'))
-    .replace('{{ORIGINS}}',readJson<{origins:{id:string}[]}>(join(ROOT,'src','origins.json')).origins.map(o=>'i2x:origin-'+o.id+' a skos:Concept .').join('\n'))
+    .replace('{{ORIGINS}}',originVocabularyDeclarations(readJson<OriginDeclarations>(join(ROOT,'src','origins.json'))))
     .replace('{{REFERENT_CATEGORIES}}',semantic.CATEGORIES.map(c=>'i2x:'+c.cls+' a owl:Class .\ni2x:category-'+c.id+' a skos:Concept .').join('\n'));
   for(const line of ontologySource.split(/\r?\n/)){const s=/^#\s+([A-Z])\.\s+(.+?)\s*$/.exec(line);if(s){current=s[1];sections.push([current!,s[2]!.replace(/\.$/,'')]);continue;}
     const m=/^(i2x|gs):([A-Za-z0-9_-]+)[\s;.]/.exec(line);if(m&&current){const iri=(m[1]==='i2x'?NS:GSNS)+m[2];if(!sectionOf.has(iri)){sectionOf.set(iri,m[1]==='gs'?'H':current);order.push(iri);}}}

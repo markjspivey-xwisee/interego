@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { shareUrlBootstrap } from './build-app.js';
 import { canonicalizeNeighborhoodTargets } from './decorations.js';
+import { originVocabularyDeclarations } from './build-site.js';
 import { construct, parseTurtle, nn, PROV } from './rdf.js';
 
 const archive = 'https://claude.ai/artifact/retained-archive';
@@ -59,4 +60,17 @@ test('malformed declared neighborhood targets are refused', () => {
   const graph=parseTurtle('<urn:test:neighborhood> <'+PROV+'wasDerivedFrom> <'+queryNode+'>; '+
     '<'+hydra+'target> <https://example.org/wrong?query=SELECT> .');
   assert.throws(()=>canonicalizeNeighborhoodTargets(graph,queryNode),/Unexpected neighborhood target/);
+});
+
+test('reference vocabulary declarations include origin groups before their linked leaves', () => {
+  const source=originVocabularyDeclarations({
+    groups:[{id:'x'},{id:'another-group'}],
+    origins:[{id:'i2idl'},{id:'derived'},{id:'added'}],
+  });
+  const ns='https://example.org/i2idlx#';
+  const graph=parseTurtle('@prefix i2x: <'+ns+'> . @prefix skos: <http://www.w3.org/2004/02/skos/core#> . '+source);
+  for(const id of ['x','another-group','i2idl','derived','added']) {
+    assert.equal(graph.getQuads(nn(ns+'origin-'+id),nn('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),nn('http://www.w3.org/2004/02/skos/core#Concept'),null).length,1);
+  }
+  assert.ok(source.indexOf('origin-x ')<source.indexOf('origin-derived '));
 });

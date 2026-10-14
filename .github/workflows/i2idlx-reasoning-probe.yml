@@ -74,7 +74,7 @@ jobs:
         run: |
           remaining=$(( I2IDLX_PROBE_DEADLINE - $(date +%s) ))
           test "$remaining" -gt 0
-          timeout --signal=TERM --kill-after=10s "${remaining}s" npx tsx "$I2IDLX_ROOT/typescript/prepare-source.ts" "$I2IDLX_ROOT"
+          timeout --signal=TERM --kill-after=10s "${remaining}s" npx tsx "$I2IDLX_ROOT/typescript/prepare-source.ts" "$I2IDLX_ROOT" "$I2IDL_CLONE"
           remaining=$(( I2IDLX_PROBE_DEADLINE - $(date +%s) ))
           test "$remaining" -gt 0
           timeout --signal=TERM --kill-after=10s "${remaining}s" npx tsx "$I2IDLX_ROOT/typescript/prepare-build-inputs.ts" "$I2IDLX_ROOT"
