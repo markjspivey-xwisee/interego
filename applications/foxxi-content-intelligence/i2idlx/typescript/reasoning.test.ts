@@ -79,6 +79,10 @@ describe('native OWL RL saturation',()=>{
     const equal=closure(graph(' :flag a owl:FunctionalProperty . :x :flag "true"^^xsd:boolean,"1"^^xsd:boolean . '));
     expect(equal.errors).toEqual([]);
   });
+  it('recognizes a proven sameAs spelling of rdf:nil as the list terminator',()=>{
+    const g=graph(' rdf:nil owl:sameAs :nilAlias . :list rdf:first :A; rdf:rest :nilAlias . ');
+    expect(rdfList(g,nn('urn:test:list')).map(n=>n.value)).toEqual(['urn:test:A']);
+  });
   it('keeps non-equivalent multiple list values malformed',()=>{
     const malformed=graph(' :list rdf:first :A,:B;rdf:rest rdf:nil . ');
     expect(()=>rdfList(malformed,nn('urn:test:list'))).toThrow(/non-equivalent/);

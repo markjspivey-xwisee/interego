@@ -53,7 +53,13 @@
     "ops:wipe-pod": "bash scripts/ops/wipe-pod-one.sh",
     "ops:wipe-parallel": "bash scripts/ops/wipe-parallel.sh",
     "build:artifact": "node tools/build-workspace-artifact.mjs",
-    "check:tracked-bytes": "node tools/tracked-bytes-lint.mjs"
+    "check:tracked-bytes": "node tools/tracked-bytes-lint.mjs",
+    "i2idlx:build": "tsx applications/foxxi-content-intelligence/i2idlx/typescript/build.ts",
+    "i2idlx:check": "tsc --noEmit -p applications/foxxi-content-intelligence/i2idlx/tsconfig.native.json",
+    "i2idlx:refresh": "tsx applications/foxxi-content-intelligence/i2idlx/typescript/refresh-evidence.ts",
+    "i2idlx:record": "tsx applications/foxxi-content-intelligence/i2idlx/typescript/publication-record.ts",
+    "i2idlx:verify-published": "tsx applications/foxxi-content-intelligence/i2idlx/typescript/verify-published.ts",
+    "i2idlx:walk": "tsx applications/foxxi-content-intelligence/i2idlx/typescript/agent-walk.ts"
   },
   "keywords": [
     "rdf",

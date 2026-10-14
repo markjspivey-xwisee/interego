@@ -47,14 +47,19 @@ test('RDF/XML snapshots preserve URI, language and typed literal semantics', asy
   assert.equal(graph.getQuads('https://example.test/Seed', RDF + 'type', OWL + 'Class', null).length, 1);
   const label = graph.getQuads('https://example.test/Seed', RDFS + 'label', null, null)[0]!.object;
   assert.equal(label.value, 'Seed class');
+  assert.equal(label.termType, 'Literal');
+  if (label.termType !== 'Literal') throw new Error('expected a literal label');
   assert.equal(label.language, 'en');
-  assert.equal(graph.getQuads('https://example.test/Seed', 'https://example.test/count', null, null)[0]!.object.datatype!.value, 'http://www.w3.org/2001/XMLSchema#integer');
+  const count = graph.getQuads('https://example.test/Seed', 'https://example.test/count', null, null)[0]!.object;
+  assert.equal(count.termType, 'Literal');
+  if (count.termType !== 'Literal') throw new Error('expected a typed count literal');
+  assert.equal(count.datatype.value, 'http://www.w3.org/2001/XMLSchema#integer');
 });
 
 test('semantic-data migration retains the published set of 196 referenced terms', () => {
   const terms = referenced_terms();
   assert.equal(terms.size, 196);
-  assert.ok(terms.has('obo:BFO_0000196'));
+  assert.ok(terms.has('obo:BFO_0000015'));
   assert.ok(terms.has('ler:CompetencyDefinition'));
   assert.ok(!terms.has('i2x:isClassifiedBy'));
 });

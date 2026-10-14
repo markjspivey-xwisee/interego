@@ -25,7 +25,6 @@ const SKOS = 'http://www.w3.org/2004/02/skos/core#';
 const DCT = 'http://purl.org/dc/terms/';
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const HYDRA = 'http://www.w3.org/ns/hydra/core#';
-const ACTION = 'https://relay.interego.xwisee.com/ns/iep/action/';
 const UNESCO_SCHEME = 'http://vocabularies.unesco.org/thesaurus';
 const UNESCO_API = 'https://vocabularies.unesco.org/rest/v1/unesco/data?format=application/ld%2Bjson&uri=';
 const UA = 'i2idlx-refresh/1.0';

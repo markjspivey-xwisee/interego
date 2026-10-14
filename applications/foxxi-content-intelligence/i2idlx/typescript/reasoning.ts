@@ -41,7 +41,7 @@ export function union(...graphs: Store[]): Store {
 export function rdfList(g: Store, head: Term): Term[] {
   const out: Term[] = [], seen = new Set<string>();
   let n = head;
-  while (!n.equals(nn(RDF + 'nil'))) {
+  while (!n.equals(nn(RDF + 'nil')) && !has(g,n,OWL+'sameAs',nn(RDF+'nil')) && !has(g,nn(RDF+'nil'),OWL+'sameAs',n)) {
     if (seen.has(termKey(n))) throw new Error('Cyclic RDF list at ' + n.value);
     seen.add(termKey(n));
     const first = objects(g, n, RDF + 'first'), rest = objects(g, n, RDF + 'rest');

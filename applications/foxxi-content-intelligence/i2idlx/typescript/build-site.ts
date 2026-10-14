@@ -83,8 +83,8 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
   const NS=IRI.ontology!+'#',CAT=IRI.catalog!+'#',EN=IRI.enactments!+'#',MP=IRI.mappings!+'#';
   const prefixes=Object.entries({
     i2x:NS,cat:CAT,en:EN,mp:MP,i2idl:'https://id.i2idl.org/concepts/','i2idl-type':'https://id.i2idl.org/collections/type/',
-    'i2idl-field':'https://id.i2idl.org/collections/field/',gs:GSNS,'iep':IEP,ieh:IEH,ie:'https://markjspivey-xwisee.github.io/interego/ns/interego#',
-    hyprcat:'https://markjspivey-xwisee.github.io/interego/ns/hyprcat#',hypragent:HYPRAGENT,foxxi:'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#',
+    'i2idl-field':'https://id.i2idl.org/collections/field/',gs:GSNS,'iep':IEP,'ieh':IEH,ie:'https://markjspivey-xwisee.github.io/interego/ns/interego#',
+    hyprcat:'https://markjspivey-xwisee.github.io/interego/ns/hyprcat#','hypragent':HYPRAGENT,foxxi:'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#',
     ler:'https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#',tla:'https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#',
     'foxxi-xapi':'https://foxxi-bridge.interego.xwisee.com/ns/xapi#','foxxi-scorm-cam':'https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#',
     'foxxi-scorm-rte':'https://foxxi-bridge.interego.xwisee.com/ns/scorm-rte#','foxxi-cmi5':'https://foxxi-bridge.interego.xwisee.com/ns/cmi5#',
