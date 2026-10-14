@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-14 — Pattern note: decorating an external system
+
+`docs/patterns/decorating-an-external-system.md` is a Layer 2 applicability note on the pattern I2IDL-X instantiates. A decorator publishes signed graphs about a system it does not control, such as a glossary, a learning platform, a record store or a reference architecture. The note says how to do that without restating or forking the system: refer to its things by its own identifiers, pinned to a release. Keep five origins in graphs of their own: the system's, derived, added, proposed (Hypothetical until ratified) and the decorator's own. Give agents controls rather than instructions. Track the system's releases with a contract check, and mark a proposal the system later asserts itself as adopted. Carry the system's rights. Say who decorated it and that the system's publisher did not. Ratify through the protocol's modal algebra, never by editing the system. It adds no terms and requires nothing for conformance.
+
 ## 2026-10-14 — Foxxi: the decorator kit, and LRS-X, LMS-X, LTI-X, LER-X and TLA-X
 
 A decorator kit (`src/decorations/kit.ts`) builds a decoration of a system Foxxi does not control from one declarative spec. A spec lists the system's parts, each by its own identifier and defining section; controls on each part, as RFC 6570 templates; and alignments, enactments and gaps. From it the kit produces three documents. The catalog is a HyprCat catalog of the parts, each with affordance-bearing controls whose targets are Hydra IRI templates. The proposals are SKOS mappings with their reasons, enactments and gaps, all Hypothetical. The third is an SSSOM 1.0 mapping set, with each gap mapped to `sssom:NoTermFound`. Every document carries the not-affiliated statement, refers to the specification without reproducing it, and mints no term.
