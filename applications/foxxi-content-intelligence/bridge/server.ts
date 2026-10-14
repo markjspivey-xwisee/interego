@@ -446,7 +446,7 @@ import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
-import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, type DispatchEngine } from '../src/scorm-dispatch.js';
+import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, registryWriter, type DispatchEngine } from '../src/scorm-dispatch.js';
 import { glossaryLoader } from '../src/i2idl-glossary.js';
 import { askCourse } from '../src/course-ask.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
@@ -12116,7 +12116,6 @@ async function advanceScormPlay(play: ScormPlay, answersGiven: unknown): Promise
 // on the tenant pod beside course-authors.json, so a withdrawal survives a restart.
 const DISPATCHES_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/dispatches.json` : '';
 const scormDispatches = new DispatchRegistry();
-let dispatchesWrite: ReturnType<typeof setTimeout> | undefined;
 let dispatchesReadAt = 0;
 async function readDispatches(): Promise<void> {
   if (!DISPATCHES_RESOURCE) return;
@@ -12126,8 +12125,9 @@ async function readDispatches(): Promise<void> {
     if (r.ok) scormDispatches.load(await r.json());
   } catch { /* none yet, or the pod is unreachable: what this process holds stands */ }
 }
-async function writeDispatches(): Promise<void> {
-  if (!DISPATCHES_RESOURCE || !scormDispatches.dirty) return;
+/** Write the registry to the pod. True when the pod holds what this process holds. */
+async function writeDispatches(): Promise<boolean> {
+  if (!DISPATCHES_RESOURCE || !scormDispatches.dirty) return true;
   scormDispatches.dirty = false;
   const f = globalThis.fetch as typeof fetch;
   try {
@@ -12136,15 +12136,17 @@ async function writeDispatches(): Promise<void> {
     const container = DISPATCHES_RESOURCE.replace(/[^/]+$/, '');
     await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
     const w = await f(DISPATCHES_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scormDispatches) });
-    if (!w.ok) scormDispatches.dirty = true;
-  } catch { scormDispatches.dirty = true; }
+    if (w.ok) return true;
+  } catch { /* tried again below */ }
+  scormDispatches.dirty = true;
+  return false;
 }
-/** Write the registry soon: changes within two seconds go in one write. */
-function persistDispatches(): void {
-  if (dispatchesWrite) return;
-  dispatchesWrite = setTimeout(() => { dispatchesWrite = undefined; void writeDispatches(); }, 2_000);
-  (dispatchesWrite as { unref?: () => void }).unref?.();
-}
+/**
+ * Write the registry soon: changes within two seconds go in one write, and a write the pod does not
+ * take is tried again with backoff (five seconds, doubling, at most five minutes), so an acknowledged
+ * dispatch or withdrawal is not lost to one failed write.
+ */
+const persistDispatches = registryWriter(writeDispatches);
 void readDispatches();
 
 /** The SCORM engine as a dispatch plays it: the same sequencing and grading as every attempt, recorded nowhere here. */

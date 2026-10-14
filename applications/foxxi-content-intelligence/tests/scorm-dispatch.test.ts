@@ -5,7 +5,7 @@
  * author makes, lists and withdraws dispatches; a withdrawn, expired or exhausted dispatch stops
  * every copy of its stub.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import AdmZip from 'adm-zip';
 import type { Express } from 'express';
 import { createRequire } from 'node:module';
@@ -15,7 +15,7 @@ import { Script } from 'node:vm';
 import { JSDOM } from 'jsdom';
 import {
   DispatchRegistry, answeredFor, attachScormDispatchRoutes, dispatchManifest, dispatchState, dispatchWrapper, dispatchZip, mergeDispatch,
-  perAddressLimiter, reportScript, stubOrigin, type DispatchCourse, type DispatchEngine, type DispatchRecord, type DispatchStep, type ScormVersion,
+  perAddressLimiter, registryWriter, reportScript, stubOrigin, type DispatchCourse, type DispatchEngine, type DispatchRecord, type DispatchStep, type ScormVersion,
 } from '../src/scorm-dispatch.js';
 import { conceptMatcher, parseI2idlGlossary, parseI2idlxDecorations } from '../src/i2idl-glossary.js';
 import { parseManifest } from '../src/scorm-sequencing.js';
@@ -66,6 +66,39 @@ describe('the dispatch registry', () => {
     made(r.create({ courseId: 'c', title: 'C', owner: 'did:b' }, 0));
     expect(r.create({ courseId: 'c', title: 'C', owner: 'did:c' }, 0)).toEqual({ refused: 'this bridge holds as many dispatches as it can' });
     expect(r.get(first.id)).toBe(first);
+  });
+
+  it('takes a launch only from a live dispatch, in one step, and gives back one that did not start', () => {
+    const r = new DispatchRegistry();
+    const d = made(r.create({ courseId: 'c', title: 'C', owner: 'did:a', launchLimit: 1 }, 0));
+    expect(r.reserveLaunch(d.id, 0)).toBe('live');
+    expect(r.reserveLaunch(d.id, 0)).toBe('exhausted');
+    expect(d.usage.launches).toBe(1);
+    r.releaseLaunch(d.id);
+    expect(r.reserveLaunch(d.id, 0)).toBe('live');
+    expect(r.reserveLaunch('d-nonexistentnonexistent', 0)).toBeUndefined();
+  });
+
+  it('keeps trying a durable write that fails, later each time, until one succeeds', async () => {
+    vi.useFakeTimers();
+    try {
+      const outcomes = [false, false, true];
+      const at: number[] = [];
+      const persist = registryWriter(async () => { at.push(Date.now()); return outcomes.shift() ?? true; }, { debounceMs: 2_000, firstRetryMs: 5_000, maxRetryMs: 60_000 });
+      const start = Date.now();
+      persist(); persist();   // changes close together share one write
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(at.map(t => t - start)).toEqual([2_000]);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(at.map(t => t - start)).toEqual([2_000, 7_000]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(at.map(t => t - start)).toEqual([2_000, 7_000, 17_000]);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(at).toHaveLength(3);   // succeeded: nothing more until the next change
+      const thrown = registryWriter(async () => { throw new Error('pod down'); }, { debounceMs: 1, firstRetryMs: 10 });
+      thrown();
+      await vi.advanceTimersByTimeAsync(1);   // a write that throws is retried too, not lost
+    } finally { vi.useRealTimers(); }
   });
 
   it('limits a learner\'s address by a window wider than an agent\'s', () => {
@@ -334,7 +367,8 @@ describe('the dispatch routes', () => {
         const b = body as Record<string, unknown>;
         return typeof b.as === 'string' ? { ok: true, callerDid: b.as, payload: b } : { ok: false, status: 401, error: 'agent signature required' };
       },
-      resolveCourse: async (id) => (id === 'refunds' ? course : null),
+      // 'slow' is the same course, resolved after a pause, so two launches can overlap.
+      resolveCourse: async (id) => (id === 'refunds' ? course : id === 'slow' ? new Promise(r => setTimeout(() => r({ ...course, courseId: 'slow' }), 50)) : null),
       ownerOf: async (c) => (c as typeof course).owner,
       rateLimit: () => (limitNext ? (limitNext = false, { ok: false, retryAfterSeconds: 9 }) : { ok: true }),
       persist: () => { persisted++; },
@@ -450,6 +484,24 @@ describe('the dispatch routes', () => {
     await launch(brief);
     clock += 120_000;
     expect(await (await json(`${base}/scorm/dispatch/${brief}/launch`)).json()).toEqual({ error: 'This course\'s dispatch has expired. Ask whoever runs your learning system to renew it.' });
+  });
+
+  it('resumes an attempt under way after the dispatch has used its last launch, and starts no new one', async () => {
+    const id = await dispatch({ launch_limit: 1 });
+    const play = await launch(id);
+    const playId = play.split('/').pop()!;
+    expect(registry.get(id)!.usage.launches).toBe(1);
+    expect(await launch(id, `scorm=2004&parentOrigin=https%3A%2F%2Flms.example&resume=${playId}`)).toBe(play);
+    expect((await json(`${base}/scorm/dispatch/${id}/launch`)).status).toBe(410);
+    expect(registry.get(id)!.usage.launches).toBe(1);
+  });
+
+  it('gives a dispatch\'s last launch to one of two launches that race for it', async () => {
+    const r = await json(`${base}/agent/scorm/dispatch`, sign(course.owner, { course_id: 'slow', launch_limit: 1 }));
+    const id = ((await r.json()) as { dispatch: { id: string } }).dispatch.id;
+    const both = await Promise.all([1, 2].map(() => fetch(`${base}/scorm/dispatch/${id}/launch?scorm=2004`, { redirect: 'manual', headers: { Accept: 'application/json' } })));
+    expect(both.map(x => x.status).sort()).toEqual([303, 410]);
+    expect(registry.get(id)!.usage.launches).toBe(1);
   });
 
   it('finds a dispatch another process made in the durable copy, and limits the author\'s calls', async () => {

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-14 — Foxxi dispatch: fixes from the review of #615
+
+Codex's review of #615 found three faults in the dispatch registry, fixed here:
+- **Failed writes are retried.** A registry write the pod did not take was not tried again until some other change, so a restart could lose an acknowledged dispatch, or bring a withdrawn one back. `registryWriter` now retries with backoff (five seconds, doubling, at most five minutes) until a write succeeds.
+- **Racing launches cannot both take the last slot.** Two launches racing for a dispatch's last launch could both pass the check before either was counted, because course resolution sat between them. `reserveLaunch` now checks and counts in one step after the last wait, and a launch whose attempt fails to start is given back.
+- **A capped dispatch can still resume.** An attempt under way could not be resumed once its dispatch had used its last launch, so a dispatch capped at one launch lost resume after the first session. Resuming now takes no launch, and is refused only when the dispatch is withdrawn or expired.
+
+`tests/scorm-dispatch.test.ts` covers each fault, and the two route tests fail against the merged code.
+
 ## 2026-10-14 — Foxxi: dispatch to other LMSs, their launches played here, and asking a course
 
 **Dispatch.** A course's author can now dispatch it to another organization's LMS (`foxxi.scorm_dispatch`). The LMS imports a stub package, SCORM 2004 4th Edition or SCORM 1.2. The stub holds no content and no answers. Its one SCO opens the course on the bridge in a frame, the SCORM engine sequences and grades it, and the stub reports back through the LMS's own API: the score, success, completion, one interaction per answered question, and the session time, in each version's data model. The course's mastery score goes into the manifest as the passing score. An attempt is kept in `suspend_data`, so it resumes. The LMS keeps the learner's record: the stub never sends the bridge the learner's id, and nothing is recorded on the bridge in anyone's name. The author sees each dispatch's launches, completions and passes (`foxxi.scorm_dispatches`). A dispatch can be withdrawn (`foxxi.scorm_dispatch_revoke`), given an expiry or capped at a number of launches, and any of these stops every copy of the stub. Dispatches are kept on the tenant pod beside `course-authors.json`. A full registry refuses a new dispatch rather than evicting an old one. Launches and asks are limited per address with their own windows, because one organization's learners can share an address.

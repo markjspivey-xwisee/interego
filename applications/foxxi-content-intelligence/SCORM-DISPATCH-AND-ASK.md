@@ -71,7 +71,13 @@ Choices, and why:
 - **The registry never evicts.** A dispatch is a promise to another organization. A full registry,
   or an author holding a thousand, refuses a new dispatch rather than dropping an old one. It is
   kept on the tenant pod beside `course-authors.json`, merged (larger counts, earlier withdrawal)
-  with the durable copy before each write, and re-read when a dispatch is not in the process.
+  with the durable copy before each write, and re-read when a dispatch is not in the process. A
+  write the pod does not take is tried again with backoff, so an acknowledged dispatch or withdrawal
+  is not lost to one failed write.
+- **A launch is taken in one step.** The check that a dispatch is live and the count of its launch
+  are one synchronous step, after the last wait, so two launches racing for a dispatch's last launch
+  cannot both take it; a launch whose attempt fails to start is given back. Resuming an attempt
+  under way takes no launch, so it works after the dispatch has used its last one.
 - **Limits sized for learners.** One organization's learners can share an address, so launches and
   asks have their own per-address windows (120 and 60 a minute), not the agentic limit, which
   guards model calls and allows ten per five minutes.

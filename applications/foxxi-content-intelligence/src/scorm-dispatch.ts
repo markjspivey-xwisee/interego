@@ -135,6 +135,19 @@ export class DispatchRegistry {
   ownedBy(owner: string): DispatchRecord[] { return [...this.byId.values()].filter(d => d.owner === owner); }
   revoke(id: string, now: number): void { const d = this.byId.get(id); if (d && !d.revokedAt) { d.revokedAt = new Date(now).toISOString(); this.dirty = true; } }
   countLaunch(id: string, now: number): void { const d = this.byId.get(id); if (d) { d.usage.launches++; d.usage.lastLaunchAt = new Date(now).toISOString(); this.dirty = true; } }
+  /**
+   * Take a launch, if the dispatch is live: the check and the count are one step, so two launches
+   * racing for a dispatch's last launch cannot both take it. Answers the state it found.
+   */
+  reserveLaunch(id: string, now: number): DispatchState | undefined {
+    const d = this.byId.get(id);
+    if (!d) return undefined;
+    const state = dispatchState(d, now);
+    if (state === 'live') this.countLaunch(id, now);
+    return state;
+  }
+  /** Give back a launch that was taken for an attempt that then did not start. */
+  releaseLaunch(id: string): void { const d = this.byId.get(id); if (d && d.usage.launches > 0) { d.usage.launches--; this.dirty = true; } }
   countEnd(id: string, outcome: { completed: boolean; passed: boolean }): void {
     const d = this.byId.get(id);
     if (!d) return;
@@ -157,6 +170,36 @@ export class DispatchRegistry {
     return n;
   }
   get size(): number { return this.byId.size; }
+}
+
+/**
+ * Keep the registry durable: a call asks for a write soon (changes close together share one), and a
+ * write that fails is tried again, a little later each time, until one succeeds. `write` answers
+ * whether the durable copy now holds what this process holds.
+ */
+export function registryWriter(
+  write: () => Promise<boolean>,
+  opts: { debounceMs?: number; firstRetryMs?: number; maxRetryMs?: number; setTimer?: (fn: () => void, ms: number) => unknown } = {},
+): () => void {
+  const debounce = opts.debounceMs ?? 2_000;
+  const first = opts.firstRetryMs ?? 5_000;
+  const max = opts.maxRetryMs ?? 5 * 60_000;
+  const setTimer = opts.setTimer ?? ((fn, ms) => { const t = setTimeout(fn, ms); (t as { unref?: () => void }).unref?.(); return t; });
+  let scheduled = false;
+  let backoff = 0;
+  const schedule = (ms: number): void => {
+    if (scheduled) return;
+    scheduled = true;
+    setTimer(() => {
+      scheduled = false;
+      void write().catch(() => false).then((ok) => {
+        if (ok) { backoff = 0; return; }
+        backoff = Math.min(backoff ? backoff * 2 : first, max);
+        schedule(backoff);
+      });
+    }, ms);
+  };
+  return () => schedule(debounce);
 }
 
 /** What the author sees of a dispatch: its record, its state, and where its packages are. */
@@ -667,16 +710,24 @@ export function attachScormDispatchRoutes<P, C extends DispatchCourse = Dispatch
   app.get('/scorm/dispatch/:id/launch', async (req, res) => {
     try {
       res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer');
-      const d = await liveDispatch(req, res);
-      if (!d) return;
+      const d = await known(String(req.params.id ?? ''));
+      if (!d) { gone(req, res, 404, 'There is no such course dispatch.'); return; }
+      // An attempt under way resumes even once the dispatch has used its last launch: resuming
+      // starts nothing new. A withdrawn or expired dispatch resumes nothing.
+      const state = dispatchState(d, now());
       const resume = typeof req.query.resume === 'string' ? playAt(req.query.resume) : undefined;
-      if (resume && resume.dispatchId === d.id && !resume.ended) { res.redirect(303, `${base}/scorm/dispatch/play/${resume.id}`); return; }
+      if (resume && resume.dispatchId === d.id && !resume.ended && (state === 'live' || state === 'exhausted')) { res.redirect(303, `${base}/scorm/dispatch/play/${resume.id}`); return; }
+      if (state !== 'live') { gone(req, res, 410, STATE_WORDS[state]); return; }
       if (limited(req, res, launchesByAddress)) return;
       const course = await deps.resolveCourse(d.courseId);
       if (!course) { gone(req, res, 404, 'The course behind this dispatch is not available.'); return; }
+      // The launch is taken here, after the last await, in the same step that checks the dispatch is
+      // still live; if the attempt then fails to start, it is given back.
+      const taken = deps.registry.reserveLaunch(d.id, now());
+      if (taken !== 'live') { gone(req, res, 410, STATE_WORDS[taken ?? 'revoked']); return; }
       const id = randomBytes(24).toString('base64url');
       const started = deps.engine.start(course, `dispatch:${d.id}:${id}`);
-      if (!started.ok) { gone(req, res, started.status, started.error); return; }
+      if (!started.ok) { deps.registry.releaseLaunch(d.id); deps.persist(); gone(req, res, started.status, started.error); return; }
       for (const [k, v] of plays) if (v.expiresAt < now()) plays.delete(k);
       if (plays.size >= PLAYS_MAX) { const oldest = plays.keys().next().value; if (oldest !== undefined) plays.delete(oldest); }
       const parentOrigin = stubOrigin(req.query.parentOrigin);
@@ -684,7 +735,6 @@ export function attachScormDispatchRoutes<P, C extends DispatchCourse = Dispatch
         id, dispatchId: d.id, play: started.play, version: req.query.scorm === '1.2' ? '1.2' : '2004',
         ...(parentOrigin ? { parentOrigin } : {}), expiresAt: now() + PLAY_TTL_MS, tally: { correct: 0, total: 0 }, report: [],
       });
-      deps.registry.countLaunch(d.id, now());
       deps.persist();
       res.redirect(303, `${base}/scorm/dispatch/play/${id}`);
     } catch (err) { failed(res, err, 'dispatch-launch'); }
