@@ -411,7 +411,8 @@ for (const tool of ['register_agent', 'revoke_agent', 'publish_directory', 'rebu
 }
 check('publish_context restricts the SELF-GRANT (not the publish) to the own pod',
   /requireOwnPod\(args, podUrl, 'publish_context:self-grant'\)/.test(SERVER)
-  && /if \(!me && selfGrantOk\)/.test(SERVER));
+  && /const maySelfRegister = canAutoRegisterPrincipal\(selfGrantOk, registrationSubject\)/.test(SERVER_CODE)
+  && /if \(!me && maySelfRegister\)/.test(SERVER_CODE));
 check('set_reachability derives its pod from callerOwnPod, not selfPodUrl',
   /const podUrl = await callerOwnPod\(args\);/.test(SERVER));
 // ★★ THE ESCAPE HATCH IS GONE, NOT "OFF BY DEFAULT". This used to assert that
