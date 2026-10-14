@@ -1,5 +1,5 @@
 // Runtime capabilities: who is viewing (user), the team's shared ballots/notes/usage (db), each viewer's
-// private workspace (db data/users/<id>, else browser storage), Ask Claude (sample) and file saves
+// private workspace (db data/users/<id>, else browser storage), the connected model (sample) and file saves
 // (downloads). Every capability is optional: the page renders fully without any of them.
 /* global React */
 import { store } from "./util.js";
@@ -86,6 +86,7 @@ export function CapsProvider({ children }) {
   const [wsSource, setWsSource] = useState("pending");
   const [tools, setTools] = useState(false);
   const [dbError, setDbError] = useState(null);
+  const [sharedReady, setSharedReady] = useState(false);
   const [savingShared, setSavingShared] = useState(false);
   const sharedBusy = useRef(false);
   const chains = useRef(new Map()); // path → promise chain (one write at a time per document)
@@ -103,7 +104,9 @@ export function CapsProvider({ children }) {
     const refresh = async () => {
       const [db, user, sample, downloads] = await Promise.all(["db", "user", "sample", "downloads"].map(resolveCap));
       if (!live) return;
-      if (lastDb !== db) { clearTimeout(wsTimer.current); wsNext.current = null; wsPending.current = false; lastDb = db; }
+      if (lastDb !== db) { clearTimeout(wsTimer.current); wsNext.current = null; wsPending.current = false; lastDb = db;
+        setMe(null); setSharedReady(false); setBallots(new Map()); setNotes(new Map()); setUsage(new Map()); setPolicy(DEFAULT_POLICY); setDbError(null);
+      }
       setCaps({ db, user, sample, downloads, resolved: true });
       if (!user) { setMe(null); setCanWrite(null); }
       if (user) {
@@ -130,19 +133,32 @@ export function CapsProvider({ children }) {
   const myId = me ? me.id : null;
   useEffect(() => {
     const db = caps.db;
-    if (!db) return;
-    const offs = [];
-    const fail = (e) => setDbError(e && e.code ? e.code : "unavailable");
+    setSharedReady(false); setBallots(new Map()); setNotes(new Map()); setUsage(new Map()); setPolicy(DEFAULT_POLICY);
+    if (!db || !myId) return;
+    if (me.sharedRead === false) { setDbError("shared_unavailable"); return; }
+    let live = true;
+    const offs = [], loaded = new Set();
+    const fail = (e) => {
+      if (!live) return;
+      loaded.clear(); setSharedReady(false);
+      setBallots(new Map()); setNotes(new Map()); setUsage(new Map()); setPolicy(DEFAULT_POLICY);
+      setDbError(e && e.code ? e.code : "unavailable");
+    };
+    const ready = (name, apply) => (s) => {
+      if (!live) return;
+      apply(s); loaded.add(name);
+      if (loaded.size === 4) { setSharedReady(true); setDbError(null); }
+    };
     try {
-      offs.push(db.collection("ballots").onSnapshot((s) => setBallots(docsToMap(s)), fail));
-      offs.push(db.collection("notes").onSnapshot((s) => setNotes(docsToMap(s)), fail));
-      offs.push(db.collection("usage").onSnapshot((s) => setUsage(docsToMap(s)), fail));
-      offs.push(db.doc("settings/policy").onSnapshot((s) => setPolicy(s.exists ? { ...DEFAULT_POLICY, ...s.data() } : DEFAULT_POLICY), fail));
+      offs.push(db.collection("ballots").onSnapshot(ready("ballots", (s) => setBallots(docsToMap(s))), fail));
+      offs.push(db.collection("notes").onSnapshot(ready("notes", (s) => setNotes(docsToMap(s))), fail));
+      offs.push(db.collection("usage").onSnapshot(ready("usage", (s) => setUsage(docsToMap(s))), fail));
+      offs.push(db.doc("settings/policy").onSnapshot(ready("policy", (s) => setPolicy(s.exists ? { ...DEFAULT_POLICY, ...s.data() } : DEFAULT_POLICY)), fail));
     } catch (e) {
       fail(e);
     }
-    return () => offs.forEach((off) => { try { off(); } catch { /* already closed */ } });
-  }, [caps.db]);
+    return () => { live = false; offs.forEach((off) => { try { off(); } catch { /* already closed */ } }); };
+  }, [caps.db, myId, me && me.sharedRead]);
 
   const write = useCallback((path, body) => {
     const db = caps.db;
@@ -157,7 +173,7 @@ export function CapsProvider({ children }) {
   }, [caps.db]);
 
   const signedIn = !!(caps.db && myId);
-  const writable = signedIn && canWrite === true && me.sharedWrite !== false && !savingShared;
+  const writable = signedIn && canWrite === true && sharedReady && me.sharedWrite !== false && !savingShared;
   const sharedWrite = async (operation) => {
     if (sharedBusy.current) throw { code: "busy" };
     sharedBusy.current = true; setSavingShared(true);
@@ -466,7 +482,7 @@ export function CapsProvider({ children }) {
 
   const value = {
     resolved: caps.resolved, db: caps.db, user: caps.user, sample: caps.sample, downloads: caps.downloads, tools,
-    me, myId, signedIn, writable, canWrite, isOwner: !!(me && me.isOwner), canEdit: !!(me && me.canEdit), dbError,
+    me, myId, signedIn, writable, canWrite, isOwner: !!(me && me.isOwner), canEdit: !!(me && me.canEdit), dbError, sharedReady,
     items: ITEMS, itemByKey, ballots, myBallot, tallies, vote, policy, savePolicy,
     allNotes, addNote, deleteNote, usageByConcept, setUse,
     ws, wsSource, updateWs, save,

@@ -117,7 +117,7 @@ function Shell() {
           </div>
         </header>
         <div className="navbar2">{nav}</div>
-        {caps.dbError ? <div className="note warn small" role="status">Some pod data could not be verified. Shared results may be stale; unconfirmed workspace edits remain held.</div> : null}
+        {caps.dbError ? <div className="note warn small" role="status">Some pod data could not be verified. Team review results are unavailable; unconfirmed workspace edits remain held.</div> : null}
         <main className={cx("view", route.view === "orchestrate" && "view-fixed")} id="main">
           {route.view === "orchestrate" ? <Orchestrate /> : <ViewFor route={route} engine={engine} />}
         </main>
@@ -144,7 +144,7 @@ function Help({ onClose }) {
           <b>Rights</b>
           <p className="muted">{META.scheme.rights} I2IDL-original definitions, explanations and modeling: {META.license.holder}, <a href={META.license.url} target="_blank" rel="noopener">{META.license.name}</a> (<a href={META.license.file} target="_blank" rel="noopener">DATA-LICENSE</a>). Every evidence record shows its source's own rights; exports carry the attribution for each source they use.</p>
           <b>What is shared here</b>
-          <p className="muted">Votes, notes and “I use this” marks are visible to everyone with access to this page; packs, stars and recent terms are private to you. Ask and Orchestrate use your connected client's model subscription, with your own API key as an optional fallback.</p>
+          <p className="muted">Votes, notes and “I use this” marks are encrypted and visible to admitted, verified team members; packs, stars and recent terms are private to you. Ask and Orchestrate use your connected client's model subscription, with your own API key as an optional fallback.</p>
           <b>What's whose</b>
           <p className="muted">Every element carries a label: <b>I2IDL</b> for the glossary as I2IDL publishes it; <b>I2IDL-X · derived</b>, <b>· added</b> or <b>· proposed</b> for the layer on top; <b>Interego</b>, <b>Foxxi</b> or <b>Your team</b> for the rest. The <b>I2IDL only</b> lens hides every layer. Click any label for details.</p>
           <b>Independence</b>

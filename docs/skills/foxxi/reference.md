@@ -1,6 +1,76 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 62 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 67 affordances.
+
+## `foxxi.i2idlx_capabilities`
+
+**Inspect I2IDL-X workbench connection capabilities**
+
+Inspect optional pod storage and the workbench signed session/read/write links. No model is funded by the project; client subscription sampling is optional.
+
+- Action: `urn:iep:action:foxxi:i2idlx-capabilities`
+- HTTP: `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/capabilities` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Inputs: none
+
+## `foxxi.i2idlx_challenge`
+
+**Get a one-use I2IDL-X sign-in nonce**
+
+Get a server-issued nonce bound to this bridge. Sign it immediately with Interego sign_request, with i2idlx_operation=session and the returned audience. Expires in 60 seconds.
+
+- Action: `urn:iep:action:foxxi:i2idlx-challenge`
+- HTTP: `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/challenge` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Inputs: none
+
+## `foxxi.i2idlx_session`
+
+**Verify an Interego identity for I2IDL-X**
+
+Signature/delegation-verify the calling actor on their own existing pod, consume the one-use server nonce, and return a derived account identifier plus actual write/editor standing. Never accepts a claimed userId and never registers a pod.
+
+- Action: `urn:iep:action:foxxi:i2idlx-session`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/session` (served by a bespoke route; not through the bridge's MCP endpoint)
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `owner_encryption_key` | string | no | Optional owner-held X25519 key from authenticated signing context, signature-covered; determines whether private writes can be available. Never resolve this from unsigned pod key bytes. |
+| `nonce` | string | yes | Fresh one-use nonce from i2idlx-challenge. |
+| `i2idlx_operation` | string | yes | Must be session; signature binds the route operation. |
+| `bridge_audience` | string | yes | Exact audience returned by i2idlx-challenge, without a trailing slash. |
+
+## `foxxi.i2idlx_read`
+
+**Read verified I2IDL-X pod documents**
+
+Read author-signed ballots, notes, usage and policy from the configured shared pod, or decrypt only the caller account private workspace from their own pod. Signature/delegation and author ownership are rechecked on reads; unreadable or forged state is an error rather than empty data.
+
+- Action: `urn:iep:action:foxxi:i2idlx-read`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/read` (served by a bespoke route; not through the bridge's MCP endpoint)
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `i2idlx_operation` | string | yes | Must be read. |
+| `bridge_audience` | string | yes | Exact advertised bridge audience. |
+| `collection` | string | no | ballots, notes, usage, or all (all shared collections and policy). |
+| `doc_path` | string | no | settings/policy, <shared-collection>/<derived-account-id>, or data/users/<own-derived-account-id>/workspace. Supply collection OR doc_path. |
+
+## `foxxi.i2idlx_write`
+
+**Conditionally save an author-owned I2IDL-X document**
+
+Save ONLY the verified caller account ballot/note/usage or private workspace; policy requires a configured verified editor DID. Retains the exact author-signed envelope, uses signed read ETag for CAS, and reports durable only after a verified unchanged readback. Private workspace requires owner encryption plus a stable bridge key. No project database or plaintext private fallback.
+
+- Action: `urn:iep:action:foxxi:i2idlx-write`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/write` (served by a bespoke route; not through the bridge's MCP endpoint)
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `i2idlx_operation` | string | yes | Must be write. |
+| `bridge_audience` | string | yes | Exact advertised bridge audience. |
+| `doc_path` | string | yes | Own ballots/<id>, notes/<id>, usage/<id>, data/users/<id>/workspace, or settings/policy for a verified editor. |
+| `document` | object | yes | Complete schema-validated document: ballots {v}, notes {n}, usage {u}, policy {quorum}, or workspace {packs,stars,recents?,at?}. Every property is signature-covered. |
+| `expected_etag` | string | yes | Exact strong ETag from the preceding read, or empty string ONLY when that read reported absent. Conflicts require read-and-merge, never a blind retry. |
+| `owner_encryption_key` | string | no | Required for private workspace writes: owner-held canonical base64 X25519 public key, bound by this exact author signature. Obtain from owned signing context, never an unsigned pod document. |
 
 ## `foxxi.record_private_performance_outcome`
 

@@ -1,7 +1,7 @@
 /**
  * I2IDL-X's optional pod-backed workspace. The pod holds author-signed documents;
  * the bridge is a verifier and conditional-write transport, never a database.
- * Private workspaces are encrypted to the owner AND a stable bridge key.
+ * Shared and private documents are encrypted to their author AND a stable bridge key.
  */
 import express, { type Express } from 'express';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { ethers } from 'ethers';
 import {
   createEncryptedEnvelope, openEncryptedEnvelope, deriveEncryptionKeyPair,
-  makeWalletDelegationVerifier, type EncryptionKeyPair, type EncryptedEnvelope, type IRI,
+  makeWalletDelegationVerifier, ownPodSegmentForAddress, type EncryptionKeyPair, type EncryptedEnvelope, type IRI,
 } from '@interego/core';
 import { readDelegationCredential, verifyAgentDelegation } from '@interego/solid';
 import type { VerifyPrivateCaller } from './private-performance-auth.js';
@@ -40,6 +40,7 @@ export interface WorkbenchConfig {
   siteDirectory?: string;
   distDirectory?: string;
 }
+const MAX_STORED_ENVELOPE_BYTES = 6_000_000;
 const hex = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 const isObject = (o: unknown): o is Record<string, unknown> => !!o && typeof o === 'object' && !Array.isArray(o);
 const safeId = (s: string) => /^(?:u-pk-|u-did-|u-eth-|eth-)[a-z0-9]{8,64}$/.test(s);
@@ -118,16 +119,24 @@ function proofOf(body: unknown): Envelope {
   if (!isObject(body) || typeof body._signed_payload !== 'string' || typeof body._signature !== 'string' || body._session !== undefined) {
     throw new WorkbenchError('An owner/anchor signed request is required; ephemeral session-key proofs are not durable documents.', 401);
   }
-  if (body._signed_payload.length > 1_100_000 || body._signature.length > 2000) throw new WorkbenchError('Signed request too large.', 413);
+  if (Buffer.byteLength(body._signed_payload, 'utf8') > 1_100_000 || body._signature.length > 2000) throw new WorkbenchError('Signed request too large.', 413);
   return { _signed_payload: body._signed_payload, _signature: body._signature };
 }
 export class WorkbenchDocuments {
   constructor(readonly config: WorkbenchConfig) {}
   private requireShared(): string {
     if (!this.config.sharedPodUrl) throw new WorkbenchError('Shared workbench pod is not configured.', 503);
+    if (!this.config.participantIds.length || !this.config.encryptionKeypair()) throw new WorkbenchError('Shared workbench requires admitted accounts and stable encryption configuration.', 503);
     const u = new URL(this.config.sharedPodUrl);
     if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) throw new WorkbenchError('Invalid configured shared pod.', 503);
     return u.href.replace(/\/?$/, '/');
+  }
+  private sharedReader(caller: string | undefined): string {
+    this.requireShared();
+    if (!caller) throw new WorkbenchError('Verified signed participant identity is required for shared workbench reads.', 401);
+    const id = workbenchUserId(this.config.ownPod(caller));
+    if (!this.config.participantIds.includes(id)) throw new WorkbenchError('Account is not admitted to this shared workbench.', 403);
+    return id;
   }
   location(path: string, caller?: string): string {
     const info = pathInfo(path);
@@ -138,7 +147,12 @@ export class WorkbenchDocuments {
   private async authorMatches(actor: string, signer: string, pod: string, write = true): Promise<boolean> {
     if (this.config.verifyAuthor) return this.config.verifyAuthor(actor, signer, pod);
     const direct = /^did:ethr:(0x[0-9a-f]{40})$/i.exec(actor)?.[1];
-    if (direct && direct.toLowerCase() === signer.toLowerCase()) return true;
+    if (direct && direct.toLowerCase() === signer.toLowerCase()) {
+      const account = workbenchUserId(pod), expected = ownPodSegmentForAddress(signer);
+      const pinned = this.config.ownerAnchors?.[account];
+      return account.replace(/^u-eth-/, 'eth-') === expected &&
+        (!pinned || pinned.toLowerCase() === signer.toLowerCase());
+    }
     // Credential verification and signer/scope binding must see the SAME bytes.
     // The storage provider cannot swap an unsigned second VC read into a checked chain.
     const snapshots = new Map<string, Promise<Response>>();
@@ -191,7 +205,16 @@ export class WorkbenchDocuments {
     } catch { throw new WorkbenchError('Stored workbench document failed author/ownership verification.', 503); }
   }
   async read(path: string, caller?: string): Promise<{ exists: boolean; data: Record<string, unknown> | null; etag: string | null; resource_url: string }> {
-    const info = pathInfo(path), url = this.location(path, caller);
+    const info = pathInfo(path);
+    if (info.private && !caller) throw new WorkbenchError('Verified signed account is required for private workbench reads.', 401);
+    if (!info.private) this.sharedReader(caller);
+    const kp = this.config.encryptionKeypair();
+    if (!kp) throw new WorkbenchError('Stable workbench document encryption is unavailable.', 503);
+    const url = this.location(path, caller);
+    if (!info.private) {
+      const root = await this.config.fetch(this.requireShared(), { method: 'HEAD', redirect: 'manual' });
+      if (!root.ok) throw new WorkbenchError('Configured shared pod is unavailable; this workbench does not create pods.', 503);
+    }
     if (info.private && caller) {
       const root = await this.config.fetch(this.config.ownPod(caller), { method: 'HEAD', redirect: 'manual' });
       if (!root.ok) throw new WorkbenchError('An existing own pod is required; this workbench does not register or create accounts.', 403);
@@ -200,25 +223,21 @@ export class WorkbenchDocuments {
     if (r.status === 404 || r.status === 410) return { exists: false, data: null, etag: null, resource_url: url };
     if (!r.ok) throw new WorkbenchError('Workbench pod read is unavailable; no empty-state fallback.', 503);
     const text = await r.text();
-    if (Buffer.byteLength(text) > 2_000_000) throw new WorkbenchError('Stored document exceeds capacity.', 503);
+    if (Buffer.byteLength(text) > MAX_STORED_ENVELOPE_BYTES) throw new WorkbenchError('Stored document exceeds capacity.', 503);
     let raw: unknown;
     try { raw = JSON.parse(text); } catch { throw new WorkbenchError('Stored document is not JSON.', 503); }
-    if (info.private) {
-      const kp = this.config.encryptionKeypair();
-      if (!kp) throw new WorkbenchError('Stable private-workspace encryption is unavailable.', 503);
-      let plaintext: string | null = null;
-      try { plaintext = openEncryptedEnvelope(raw as EncryptedEnvelope, kp); } catch { /* refusal below */ }
-      if (!plaintext) throw new WorkbenchError('Private workspace cannot be decrypted; plaintext fallback refused.', 503);
-      try { raw = JSON.parse(plaintext); } catch { throw new WorkbenchError('Decrypted workspace is malformed.', 503); }
-    }
+    let plaintext: string | null = null;
+    try { plaintext = openEncryptedEnvelope(raw as EncryptedEnvelope, kp); } catch { /* refusal below */ }
+    if (!plaintext) throw new WorkbenchError('Workbench document cannot be decrypted; plaintext fallback refused.', 503);
+    try { raw = JSON.parse(plaintext); } catch { throw new WorkbenchError('Decrypted workbench document is malformed.', 503); }
     const record = await this.verifyRecord(raw, path);
-    if (info.private) {
+    {
       const payload = JSON.parse(record.proof._signed_payload) as Record<string, unknown>;
       const ownerKey = ownerKeyBinding(payload.owner_encryption_key);
       const parsed: unknown = JSON.parse(text);
       if (!ownerKey || !isObject(parsed) || parsed.version !== 1 || parsed.algorithm !== 'X25519-XSalsa20-Poly1305' ||
           !Array.isArray(parsed.wrappedKeys) || !parsed.wrappedKeys.some(w => isObject(w) && w.recipientPublicKey === ownerKey)) {
-        throw new WorkbenchError('Private envelope does not contain the author-signed owner recipient.', 503);
+        throw new WorkbenchError('Encrypted envelope does not contain the author-signed owner recipient.', 503);
       }
     }
     return { exists: true, data: record.document, etag: r.headers.get('etag'), resource_url: url };
@@ -237,6 +256,9 @@ export class WorkbenchDocuments {
     const root = await this.config.fetch(pod, { method: 'HEAD', redirect: 'manual' });
     if (!root.ok) throw new WorkbenchError('An existing own pod is required; no account provisioning is performed.', 403);
     const document = validateWorkbenchDocument(path, p.document);
+    const kp = this.config.encryptionKeypair(), ownerKey = ownerKeyBinding(p.owner_encryption_key);
+    if (!kp || !ownerKey) throw new WorkbenchError('An author-signed owner encryption key and stable bridge encryption are required; unsigned pod keys and plaintext/bridge-only storage refused.', 503);
+
     const expected = p.expected_etag === '' ? null : p.expected_etag;
     if (expected !== null && (typeof expected !== 'string' || !/^"(?:[^"\r\n]{1,200})"$/.test(expected))) throw new WorkbenchError('Signed expected_etag (strong ETag or empty string for create) is required.');
     const current = await this.read(path, auth.callerDid);
@@ -245,12 +267,9 @@ export class WorkbenchDocuments {
     const record: RecordDocument = { schema: 1, path, owner, actor: auth.callerDid, pod, document, proof };
     // Validate the EXACT retained proof too; a verifier must not rewrite or decorate its signed body.
     await this.verifyRecord(record, path);
-    let stored: unknown = record;
-    if (info.private) {
-      const kp = this.config.encryptionKeypair(), ownerKey = ownerKeyBinding(p.owner_encryption_key);
-      if (!kp || !ownerKey) throw new WorkbenchError('An author-signed owner encryption key and stable bridge encryption are required; unsigned pod keys and plaintext/bridge-only storage refused.', 503);
-      stored = createEncryptedEnvelope(JSON.stringify(record), [...new Set([ownerKey, kp.publicKey])], kp);
-    }
+    const stored = createEncryptedEnvelope(JSON.stringify(record), [...new Set([ownerKey, kp.publicKey])], kp);
+    const wire = JSON.stringify(stored);
+    if (Buffer.byteLength(wire, 'utf8') > MAX_STORED_ENVELOPE_BYTES) throw new WorkbenchError('Encrypted document exceeds pod capacity; existing state was not changed.', 413);
     if (!current.exists) {
       const targetPod = info.private ? pod : this.requireShared();
       for (const suffix of ['i2idlx/', 'i2idlx/workbench/', 'i2idlx/workbench/' + (info.private ? 'private/' : 'shared/')]) {
@@ -260,17 +279,17 @@ export class WorkbenchDocuments {
         if (!made.ok && made.status !== 412) throw new WorkbenchError('Workbench document container could not be confirmed.', 503);
       }
     }
-    const r = await this.config.fetch(current.resource_url, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...(expected === null ? { 'If-None-Match': '*' } : { 'If-Match': expected }) }, body: JSON.stringify(stored), redirect: 'manual' });
+    const r = await this.config.fetch(current.resource_url, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...(expected === null ? { 'If-None-Match': '*' } : { 'If-Match': expected }) }, body: wire, redirect: 'manual' });
     if (r.status === 412) throw new WorkbenchError('Conditional pod write conflicted; read and merge before retry.', 409);
     if (!r.ok) throw new WorkbenchError('Pod did not confirm the workspace write.', 503);
     const confirmed = await this.read(path, auth.callerDid);
     if (!confirmed.exists || !same(confirmed.data, document)) throw new WorkbenchError('Workspace write could not be read back unchanged; completion unconfirmed.', 503);
     return { ok: true, durable: true, ...confirmed };
   }
-  async collection(kind: string) {
-    this.requireShared();
+  async collection(kind: string, caller?: string) {
+    this.sharedReader(caller);
     if (!['ballots', 'notes', 'usage'].includes(kind)) throw new WorkbenchError('Unknown shared collection.');
-    const docs = await Promise.all(this.config.participantIds.map(async id => ({ id, ...await this.read(kind + '/' + id) })));
+    const docs = await Promise.all(this.config.participantIds.map(async id => ({ id, ...await this.read(kind + '/' + id, caller) })));
     return { docs };
   }
 }
@@ -300,7 +319,7 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
     reply(res, { nonce, expires_at: new Date(expires).toISOString(), audience: base });
   });
   app.get('/i2idlx/capabilities', (_req, res) => reply(res, {
-    audience: base, shared: !!config.sharedPodUrl, ai: { project_paid: false, subscription: 'client MCP sampling adapter', api_key: 'client memory only' },
+    audience: base, shared: !!config.sharedPodUrl && config.participantIds.length > 0 && !!config.encryptionKeypair(), ai: { project_paid: false, subscription: 'client MCP sampling adapter', api_key: 'client memory only' },
     connection: 'Connect Interego in your AI client, or connect a browser wallet with an existing pod.',
     _affordances: [
       { action: 'urn:iep:action:foxxi:i2idlx-challenge', href: base + '/i2idlx/challenge', method: 'GET' },
@@ -318,17 +337,25 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
       const root = await config.fetch(own, { method: 'HEAD', redirect: 'manual' });
       if (!root.ok) throw new WorkbenchError('Connect an existing Interego pod; this workbench does not create accounts.', 403);
       const writable = await config.verifyCaller(req.body, true);
+      let canWrite = writable.ok;
+      if (canWrite) {
+        try { await docs.assertAuthor(req.body, auth.callerDid, true); }
+        catch { canWrite = false; }
+      }
       reply(res, { me: { id, did: auth.callerDid, name: id, canEdit: config.editorDids.includes(auth.callerDid), isOwner: false },
-        canWrite: writable.ok, sharedWrite: writable.ok && config.participantIds.includes(id), privateEncryption: !!config.encryptionKeypair() && !!ownerKeyBinding(auth.payload.owner_encryption_key) });
+        canWrite,
+        sharedRead: !!config.sharedPodUrl && !!config.encryptionKeypair() && config.participantIds.includes(id),
+        sharedWrite: canWrite && !!config.sharedPodUrl && !!config.encryptionKeypair() && !!ownerKeyBinding(auth.payload.owner_encryption_key) && config.participantIds.includes(id),
+        privateEncryption: !!config.encryptionKeypair() && !!ownerKeyBinding(auth.payload.owner_encryption_key) });
     } catch (e) { refuse(res, e); }
   });
   app.post('/i2idlx/api/read', async (req, res) => {
     try {
       const auth = await binding(req.body, 'read'), p = auth.payload;
       if (p.collection === 'all') {
-        const [ballots, notes, usage, policy] = await Promise.all([docs.collection('ballots'), docs.collection('notes'), docs.collection('usage'), docs.read('settings/policy')]);
+        const [ballots, notes, usage, policy] = await Promise.all([docs.collection('ballots', auth.callerDid), docs.collection('notes', auth.callerDid), docs.collection('usage', auth.callerDid), docs.read('settings/policy', auth.callerDid)]);
         reply(res, { ballots, notes, usage, policy });
-      } else if (typeof p.collection === 'string') reply(res, await docs.collection(p.collection));
+      } else if (typeof p.collection === 'string') reply(res, await docs.collection(p.collection, auth.callerDid));
       else if (typeof p.doc_path === 'string') reply(res, await docs.read(p.doc_path, auth.callerDid));
       else throw new WorkbenchError('collection or doc_path is required.');
     } catch (e) { refuse(res, e); }

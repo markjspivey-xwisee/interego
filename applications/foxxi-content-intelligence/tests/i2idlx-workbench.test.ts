@@ -3,7 +3,7 @@ import express from 'express';
 import { Wallet } from 'ethers';
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { generateKeyPair, openEncryptedEnvelope } from '@interego/core';
+import { generateKeyPair, openEncryptedEnvelope, createEncryptedEnvelope } from '@interego/core';
 import { recoverSignedRequest } from '../src/auth.js';
 import { attachWorkbenchRoutes, WorkbenchDocuments, workbenchUserId, workbenchEncryptionKeypair, validateWorkbenchDocument, type WorkbenchConfig } from '../src/i2idlx-workbench.js';
 
@@ -11,6 +11,7 @@ const alice = Wallet.createRandom(), bob = Wallet.createRandom();
 const actor = (w: typeof alice) => 'did:ethr:' + w.address;
 const id = (w: typeof alice) => 'eth-' + w.address.toLowerCase().slice(2, 14);
 const pod = (w: typeof alice) => 'https://pod.example/' + id(w) + '/';
+const ownerKeys = new Map([[actor(alice), generateKeyPair()], [actor(bob), generateKeyPair()]]);
 const base = 'https://bridge.example';
 const shared = 'https://pod.example/georgio/';
 const ballot = { v: { 'mapping:one': { vote: 'for', note: 'Fixture only.', at: 1 } } };
@@ -19,13 +20,13 @@ async function sign(w: typeof alice, args: Record<string, unknown>) {
   const hash = createHash('sha256').update(_signed_payload).digest('hex');
   return { _signed_payload, _signature: await w.signMessage('sha256:' + hash) };
 }
-const put = (w: typeof alice, path: string, document: unknown, expected_etag = '', owner_encryption_key?: string) =>
+const put = (w: typeof alice, path: string, document: unknown, expected_etag = '', owner_encryption_key: string | undefined = ownerKeys.get(actor(w))!.publicKey) =>
   sign(w, { i2idlx_operation: 'write', bridge_audience: base, doc_path: path, document, expected_etag, ...(owner_encryption_key ? { owner_encryption_key } : {}) });
 function fixture() {
   const files = new Map<string, { body: string; etag: string }>();
   const requests: { url: string; method: string; body?: string; headers: Headers }[] = [];
   let revision = 0, noEtag = false, unreadable = false, conflict = false, loseAck = false;
-  const bridge = generateKeyPair(), owner = generateKeyPair();
+  const bridge = generateKeyPair(), owner = ownerKeys.get(actor(alice))!;
   const fetcher: typeof fetch = async (input, init) => {
     const url = String(input), method = init?.method ?? 'GET', headers = new Headers(init?.headers);
     const body = typeof init?.body === 'string' ? init.body : undefined;
@@ -69,13 +70,15 @@ describe('I2IDL-X pod-backed workbench security', () => {
     const result = await f.documents.write(proof);
     expect(result).toMatchObject({ ok: true, durable: true, exists: true, data: ballot });
     expect(result.resource_url.startsWith(shared)).toBe(true);
-    const written = JSON.parse(f.files.get(result.resource_url)!.body);
+    const ciphertext = JSON.parse(f.files.get(result.resource_url)!.body);
+    const written = JSON.parse(openEncryptedEnvelope(ciphertext, f.bridge)!);
+    expect(f.files.get(result.resource_url)!.body).not.toContain('Fixture only.');
     expect(written.proof).toEqual(proof);
     expect(written.actor).toBe(actor(alice));
     expect(written.owner).toBe(id(alice));
     const request = f.requests.find(r => r.method === 'PUT' && r.url.endsWith('.json'))!;
     expect(request.headers.get('If-None-Match')).toBe('*');
-    expect((await new WorkbenchDocuments(f.config).read(path)).data).toEqual(ballot);
+    expect((await new WorkbenchDocuments(f.config).read(path, actor(alice))).data).toEqual(ballot);
   });
   it('refuses cross-account ballots and private workspace writes before any pod write', async () => {
     const f = fixture();
@@ -110,7 +113,7 @@ describe('I2IDL-X pod-backed workbench security', () => {
     const next = { v: { 'mapping:one': { vote: 'against', note: '', at: 2 } } };
     await f.documents.write(await put(alice, path, next, first.etag!));
     await expect(f.documents.write(await put(alice, path, ballot, first.etag!))).rejects.toThrow('another device');
-    expect((await f.documents.read(path)).data).toEqual(next);
+    expect((await f.documents.read(path, actor(alice))).data).toEqual(next);
   });
   it('propagates conditional storage conflicts and refuses existing documents without an ETag', async () => {
     const f = fixture(), path = 'ballots/' + id(alice);
@@ -124,24 +127,24 @@ describe('I2IDL-X pod-backed workbench security', () => {
     const f = fixture(), path = 'ballots/' + id(alice);
     const saved = await f.documents.write(await put(alice, path, ballot));
     const file = f.files.get(saved.resource_url)!;
-    const tampered = JSON.parse(file.body); tampered.document.v['mapping:one'].vote = 'against';
-    file.body = JSON.stringify(tampered);
-    await expect(f.documents.read(path)).rejects.toThrow('verification');
+    const tampered = JSON.parse(openEncryptedEnvelope(JSON.parse(file.body), f.bridge)!); tampered.document.v['mapping:one'].vote = 'against';
+    file.body = JSON.stringify(createEncryptedEnvelope(JSON.stringify(tampered), [f.owner.publicKey, f.bridge.publicKey], generateKeyPair()));
+    await expect(f.documents.read(path, actor(alice))).rejects.toThrow('verification');
     f.unreadable();
-    await expect(f.documents.collection('ballots')).rejects.toThrow('unavailable');
+    await expect(f.documents.collection('ballots', actor(alice))).rejects.toThrow('unavailable');
   });
   it('keeps an authentic historical record readable after the request replay window', async () => {
     const f = fixture(), path = 'ballots/' + id(alice);
     await f.documents.write(await put(alice, path, ballot));
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120000);
-    try { expect((await f.documents.read(path)).data).toEqual(ballot); }
+    try { expect((await f.documents.read(path, actor(alice))).data).toEqual(ballot); }
     finally { clock.mockRestore(); }
   });
   it('rechecks historical author delegation instead of trusting a storage location', async () => {
     const f = fixture(), path = 'ballots/' + id(alice);
     await f.documents.write(await put(alice, path, ballot));
     const revoked = new WorkbenchDocuments({ ...f.config, verifyAuthor: async () => false });
-    await expect(revoked.read(path)).rejects.toThrow('verification');
+    await expect(revoked.read(path, actor(alice))).rejects.toThrow('verification');
   });
   it('stores only ciphertext on the own pod and wraps the private workspace key to its owner', async () => {
     const f = fixture(), path = 'data/users/' + id(alice) + '/workspace';
@@ -159,7 +162,7 @@ describe('I2IDL-X pod-backed workbench security', () => {
     const f = fixture(), path = 'data/users/' + id(alice) + '/workspace';
     const attacker = generateKeyPair();
     f.files.set(pod(alice) + 'keys/encryption.json', { body: JSON.stringify({ algorithm: attacker.algorithm, publicKey: attacker.publicKey }), etag: '"1"' });
-    await expect(f.documents.write(await put(alice, path, { packs: [], stars: [] }))).rejects.toThrow('author-signed owner encryption');
+    await expect(f.documents.write(await put(alice, path, { packs: [], stars: [] }, '', ''))).rejects.toThrow('author-signed owner encryption');
     const saved = await f.documents.write(await put(alice, path, { packs: [], stars: [] }, '', f.owner.publicKey));
     const wire = JSON.parse(f.files.get(saved.resource_url)!.body);
     expect(wire.wrappedKeys.some((w: { recipientPublicKey: string }) => w.recipientPublicKey === attacker.publicKey)).toBe(false);
@@ -168,6 +171,20 @@ describe('I2IDL-X pod-backed workbench security', () => {
     wire.wrappedKeys = wire.wrappedKeys.filter((w: { recipientPublicKey: string }) => w.recipientPublicKey !== f.owner.publicKey);
     f.files.get(saved.resource_url)!.body = JSON.stringify(wire);
     await expect(f.documents.read(path, actor(alice))).rejects.toThrow('owner recipient');
+  });
+  it('encrypts shared records and requires admitted caller identity for every shared read', async () => {
+    const f = fixture(), path = 'ballots/' + id(alice);
+    const saved = await f.documents.write(await put(alice, path, ballot));
+    const envelope = JSON.parse(f.files.get(saved.resource_url)!.body);
+    expect(openEncryptedEnvelope(envelope, f.owner)).not.toBeNull();
+    await expect(f.documents.read(path)).rejects.toThrow('participant identity');
+    const noMember = new WorkbenchDocuments({ ...f.config, participantIds: [id(alice)] });
+    await expect(noMember.read(path, actor(bob))).rejects.toThrow('not admitted');
+    await expect(noMember.collection('ballots', actor(bob))).rejects.toThrow('not admitted');
+    const missingKeys = new WorkbenchDocuments({ ...f.config, encryptionKeypair: () => null });
+    await expect(missingKeys.collection('ballots', actor(alice))).rejects.toThrow('stable encryption');
+    const missingMembers = new WorkbenchDocuments({ ...f.config, participantIds: [] });
+    await expect(missingMembers.collection('ballots', actor(alice))).rejects.toThrow('admitted accounts');
   });
   it('refuses invalid owner bindings and plaintext or bridge-only fallback', async () => {
     const f = fixture(), path = 'data/users/' + id(alice) + '/workspace';
@@ -181,10 +198,33 @@ describe('I2IDL-X pod-backed workbench security', () => {
     expect(() => validateWorkbenchDocument('notes/' + id(alice), { n: { a: { c: 'concept', text: 'x'.repeat(2001), at: 1 } } })).toThrow();
     expect(() => validateWorkbenchDocument('../notes/' + id(alice), { n: {} })).toThrow();
   });
+  it('round-trips large signed encrypted documents within the admitted byte limits', async () => {
+    const f = fixture(), path = 'notes/' + id(alice);
+    // JSON escaping plus retained signed-payload duplication exceeds the old 2 MB envelope cap.
+    const document = { n: Object.fromEntries(Array.from({ length: 400 }, (_, i) =>
+      ['note-' + i, { c: 'concept', text: String.fromCharCode(0).repeat(350), at: 1 }])) };
+    const proof = await put(alice, path, document);
+    expect(Buffer.byteLength(JSON.stringify(document), 'utf8')).toBeLessThan(1_000_000);
+    expect(Buffer.byteLength(proof._signed_payload, 'utf8')).toBeLessThan(1_100_000);
+    const saved = await f.documents.write(proof);
+    const wire = f.files.get(saved.resource_url)!.body;
+    expect(Buffer.byteLength(wire, 'utf8')).toBeGreaterThan(2_000_000);
+    expect(Buffer.byteLength(wire, 'utf8')).toBeLessThan(6_000_000);
+    expect((await f.documents.read(path, actor(alice))).data).toEqual(document);
+  });
+  it('bounds signed payloads by UTF-8 bytes rather than UTF-16 code units before transport', async () => {
+    const f = fixture();
+    const proof = await sign(alice, { i2idlx_operation: 'write', bridge_audience: base,
+      doc_path: 'ballots/' + id(alice), document: ballot, expected_etag: '', extra: '😀'.repeat(280000) });
+    expect(proof._signed_payload.length).toBeLessThan(1_100_000);
+    expect(Buffer.byteLength(proof._signed_payload, 'utf8')).toBeGreaterThan(1_100_000);
+    await expect(f.documents.write(proof)).rejects.toThrow('Signed request too large');
+    expect(f.requests.length).toBe(0);
+  });
   it('does not claim completion after a write acknowledgement is lost', async () => {
     const f = fixture(), path = 'ballots/' + id(alice); f.loseAck();
     await expect(f.documents.write(await put(alice, path, ballot))).rejects.toThrow('acknowledgement lost');
-    expect((await f.documents.read(path)).data).toEqual(ballot);
+    expect((await f.documents.read(path, actor(alice))).data).toEqual(ballot);
   });
 });
 describe('I2IDL-X live route contract (local fixture only)', () => {

@@ -22,8 +22,8 @@ export function WorkbenchConnection() {
     <button className="btn sm" onClick={() => setOpen(true)}><Icon name="agent" />{caps.me ? "Connected" : "Connect"}</button>
     {open ? <Modal title="Connect Interego" onClose={() => { setOpen(false); setKey(""); }}>
       <div className="stack" style={{ gap: 14 }}>
-        <p>Connect an existing Interego identity to keep your work across devices. Shared reviews are signed as you; private packs and stars are encrypted on your own pod.</p>
-        {caps.me ? <div className="note"><b>{caps.me.name}</b><div className="small"><code>{caps.me.did}</code></div>{caps.me.privateWrite === false ? <div className="small muted">Private pod saves are unavailable until your connected client or wallet supplies its owned encryption key. Edits remain in this browser.</div> : null}</div>
+        <p>Connect an existing Interego identity to keep your work across devices. Shared reviews are signed as you and encrypted for admitted participants. Private packs and stars are encrypted on your own pod.</p>
+        {caps.me ? <div className="note"><b>{caps.me.name}</b><div className="small"><code>{caps.me.did}</code></div>{caps.me.privateWrite === false ? <div className="small muted">Encrypted pod saves are unavailable until your connected client or wallet supplies its owned encryption key. Edits remain in this browser.</div> : null}</div>
           : <button className="btn primary" disabled={busy} onClick={connect}>{busy ? "Verifying…" : "Connect Interego or browser wallet"}</button>}
         <div className="small muted">In ChatGPT, Claude, or another supported AI client, connect Interego and open this workbench through the connected client. A browser wallet signs as its existing account. This page does not create accounts.</div>
         <b>Ask and Orchestrate</b>

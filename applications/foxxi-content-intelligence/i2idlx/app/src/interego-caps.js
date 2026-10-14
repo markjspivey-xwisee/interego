@@ -32,11 +32,11 @@ async function walletSigner() {
     return { _signed_payload, _signature };
   };
   // This asks the actual owning wallet, never an unsigned document in storage.
-  // Extensions without this capability simply cannot persist private workspace changes here.
+  // Extensions without this capability cannot persist shared or private documents here.
   try {
     const key = await provider.request({ method: "eth_getEncryptionPublicKey", params: [account] });
     if (/^[A-Za-z0-9+/]{43}=$/.test(key || "")) sign.ownerEncryptionKey = key;
-  } catch { /* private edits stay held unless an owner-held key is available */ }
+  } catch { /* pod saves stay unavailable unless an owner-held key is available */ }
   return sign;
 }
 function dbAdapter(call, poll) {
@@ -102,7 +102,7 @@ export async function connectWorkbench() {
   const sign = hostSigner ? (payload) => host.signRequest(payload) : await walletSigner();
   const ownerEncryptionKey = hostSigner ? (typeof host.getOwnerEncryptionKey === "function" ? await host.getOwnerEncryptionKey() : host.ownerEncryptionKey) : sign.ownerEncryptionKey;
   const call = async (operation, args) => {
-    const signed = await sign({ ...args, ...(ownerEncryptionKey && (operation === "session" || (operation === "write" && String(args.doc_path || "").startsWith("data/users/"))) ? { owner_encryption_key: ownerEncryptionKey } : {}), i2idlx_operation: operation, bridge_audience: base });
+    const signed = await sign({ ...args, ...(ownerEncryptionKey && (operation === "session" || (operation === "write")) ? { owner_encryption_key: ownerEncryptionKey } : {}), i2idlx_operation: operation, bridge_audience: base });
     if (!signed || typeof signed._signed_payload !== "string" || typeof signed._signature !== "string") throw failure("Interego did not return an author-signed request.");
     const link = catalog._affordances.find((a) => a.action === "urn:iep:action:foxxi:i2idlx-" + operation);
     if (!link) throw failure("Workbench operation was not advertised.");
@@ -112,7 +112,7 @@ export async function connectWorkbench() {
   if (!challengeLink) throw failure("Workbench did not advertise a sign-in challenge.");
   const challenge = await json(await fetch(challengeLink.href, { cache: "no-store" }));
   const session = await call("session", { nonce: challenge.nonce });
-  const me = { ...session.me, sharedWrite: session.sharedWrite, privateWrite: session.canWrite && session.privateEncryption };
+  const me = { ...session.me, sharedRead: session.sharedRead, sharedWrite: session.sharedWrite, privateWrite: session.canWrite && session.privateEncryption };
   const user = {
     me: async () => me,
     can: async (scope) => scope === "data.write" && session.canWrite,

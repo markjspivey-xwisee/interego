@@ -33,14 +33,36 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     toolName: 'foxxi.i2idlx_capabilities', title: 'Inspect I2IDL-X workbench connection capabilities',
     description: 'Inspect optional pod storage and the workbench signed session/read/write links. No model is funded by the project; client subscription sampling is optional.',
     method: 'GET', targetTemplate: '{base}/i2idlx/capabilities', externallyRouted: true,
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }, inputs: [],
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    outputs: {
+      description: 'Actual signing audience, whether encrypted shared storage is configured, optional model connection contract, and followable challenge/session/read/write controls. No project-paid model connection is claimed.',
+      properties: {
+        audience: { type: 'string', description: 'Exact audience to cover in each signature.' },
+        shared: { type: 'boolean', description: 'True only when shared pod, participant configuration and stable encryption exist.' },
+        ai: { type: 'object', properties: { project_paid: { type: 'boolean' }, subscription: { type: 'string' }, api_key: { type: 'string' } } },
+        connection: { type: 'string', description: 'Connection instructions.' },
+        _affordances: { type: 'array', items: { type: 'object', properties: { action: { type: 'string' }, href: { type: 'string' }, method: { type: 'string', enum: ['GET', 'POST'] } } } },
+        error: { type: 'string' }, code: { type: 'string' },
+      },
+    },
+    inputs: [],
   },
   {
     action: 'urn:iep:action:foxxi:i2idlx-challenge' as IRI,
     toolName: 'foxxi.i2idlx_challenge', title: 'Get a one-use I2IDL-X sign-in nonce',
     description: 'Get a server-issued nonce bound to this bridge. Sign it immediately with Interego sign_request, with i2idlx_operation=session and the returned audience. Expires in 60 seconds.',
     method: 'GET', targetTemplate: '{base}/i2idlx/challenge', externallyRouted: true,
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false }, inputs: [],
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    outputs: {
+      description: 'A fresh one-use sign-in nonce, its expiry and exact bridge audience; HTTP 429 returns an error when pending challenges are exhausted.',
+      properties: {
+        nonce: { type: 'string', description: 'Random server-issued nonce; use once within 60 seconds.' },
+        expires_at: { type: 'string', format: 'date-time' },
+        audience: { type: 'string', description: 'Exact audience to sign for i2idlx-session.' },
+        error: { type: 'string' },
+      },
+    },
+    inputs: [],
   },
   {
     action: 'urn:iep:action:foxxi:i2idlx-session' as IRI,
@@ -48,8 +70,17 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     description: 'Signature/delegation-verify the calling actor on their own existing pod, consume the one-use server nonce, and return a derived account identifier plus actual write/editor standing. Never accepts a claimed userId and never registers a pod.',
     method: 'POST', targetTemplate: '{base}/i2idlx/api/session', externallyRouted: true,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    outputs: {
+      description: 'Verified derived identity and actual own-pod write, encrypted shared read/write and private encryption standing. Editor flags come only from deployment policy. Refusals return error/code without identity.',
+      properties: {
+        me: { type: 'object', properties: { id: { type: 'string' }, did: { type: 'string' }, name: { type: 'string' }, canEdit: { type: 'boolean' }, isOwner: { type: 'boolean' } } },
+        canWrite: { type: 'boolean' }, sharedRead: { type: 'boolean' }, sharedWrite: { type: 'boolean' },
+        privateEncryption: { type: 'boolean', description: 'Stable bridge key and signature-bound owner key are available for private writes.' },
+        error: { type: 'string' }, code: { type: 'string' },
+      },
+    },
     inputs: [
-      { name: 'owner_encryption_key', type: 'string', required: false, description: 'Optional owner-held X25519 key from authenticated signing context, signature-covered; determines whether private writes can be available. Never resolve this from unsigned pod key bytes.' },
+      { name: 'owner_encryption_key', type: 'string', required: false, description: 'Optional owner-held X25519 key from authenticated signing context, signature-covered; determines whether shared/private writes can be available. Never resolve this from unsigned pod key bytes.' },
       { name: 'nonce', type: 'string', required: true, description: 'Fresh one-use nonce from i2idlx-challenge.' },
       { name: 'i2idlx_operation', type: 'string', required: true, description: 'Must be session; signature binds the route operation.' },
       { name: 'bridge_audience', type: 'string', required: true, description: 'Exact audience returned by i2idlx-challenge, without a trailing slash.' },
@@ -58,9 +89,19 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
   {
     action: 'urn:iep:action:foxxi:i2idlx-read' as IRI,
     toolName: 'foxxi.i2idlx_read', title: 'Read verified I2IDL-X pod documents',
-    description: 'Read author-signed ballots, notes, usage and policy from the configured shared pod, or decrypt only the caller account private workspace from their own pod. Signature/delegation and author ownership are rechecked on reads; unreadable or forged state is an error rather than empty data.',
+    description: 'Read encrypted author-signed ballots, notes, usage and policy from the configured shared pod ONLY as an admitted signed participant, or decrypt only the caller account private workspace from their own pod. Signature/delegation and author ownership are rechecked on reads; unreadable or forged state is an error rather than empty data.',
     method: 'POST', targetTemplate: '{base}/i2idlx/api/read', externallyRouted: true,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    outputs: {
+      description: 'Single document: {exists,data,etag,resource_url}, with data null only when absent and etag null when absent or when storage supplies no ETag. Collection: {docs:[{id,exists,data,etag,resource_url}]}. All: {ballots:{docs},notes:{docs},usage:{docs},policy:{exists,data,etag,resource_url}}. Shared plaintext is returned only to admitted verified callers. Unreadable/forged/unauthorized data returns an error, never empty verified state.',
+      properties: {
+        exists: { type: 'boolean' }, resource_url: { type: 'string' },
+        docs: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, exists: { type: 'boolean' }, data: { type: ['object', 'null'] }, etag: { type: ['string', 'null'] }, resource_url: { type: 'string' } } } },
+        ballots: { type: 'object', additionalProperties: true }, notes: { type: 'object', additionalProperties: true }, usage: { type: 'object', additionalProperties: true },
+        policy: { type: 'object', additionalProperties: true },
+        error: { type: 'string' }, code: { type: 'string' },
+      },
+    },
     inputs: [
       { name: 'i2idlx_operation', type: 'string', required: true, description: 'Must be read.' },
       { name: 'bridge_audience', type: 'string', required: true, description: 'Exact advertised bridge audience.' },
@@ -71,16 +112,24 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
   {
     action: 'urn:iep:action:foxxi:i2idlx-write' as IRI,
     toolName: 'foxxi.i2idlx_write', title: 'Conditionally save an author-owned I2IDL-X document',
-    description: 'Save ONLY the verified caller account ballot/note/usage or private workspace; policy requires a configured verified editor DID. Retains the exact author-signed envelope, uses signed read ETag for CAS, and reports durable only after a verified unchanged readback. Private workspace requires owner encryption plus a stable bridge key. No project database or plaintext private fallback.',
+    description: 'Save ONLY the verified caller account ballot/note/usage or private workspace; policy requires a configured verified editor DID. Retains the exact author-signed envelope, uses signed read ETag for CAS, and reports durable only after a verified unchanged readback. Every shared/private document requires author-bound owner encryption plus a stable bridge key. No project database or plaintext private fallback.',
     method: 'POST', targetTemplate: '{base}/i2idlx/api/write', externallyRouted: true,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    outputs: {
+      description: 'After successful conditional encrypted PUT and unchanged verified readback: {ok:true,durable:true,exists:true,data,etag,resource_url}. etag is storage strong ETag or null; a missing ETag prevents further overwrites. A conflict, missing key/member config, failed signature or unconfirmed acknowledgement returns error/code and no durable claim.',
+      properties: {
+        ok: { type: 'boolean' }, durable: { type: 'boolean' }, exists: { type: 'boolean' },
+        data: { type: 'object', additionalProperties: true }, resource_url: { type: 'string' },
+        error: { type: 'string' }, code: { type: 'string', description: 'conflict for HTTP 409; unavailable for other refusals.' },
+      },
+    },
     inputs: [
       { name: 'i2idlx_operation', type: 'string', required: true, description: 'Must be write.' },
       { name: 'bridge_audience', type: 'string', required: true, description: 'Exact advertised bridge audience.' },
       { name: 'doc_path', type: 'string', required: true, description: 'Own ballots/<id>, notes/<id>, usage/<id>, data/users/<id>/workspace, or settings/policy for a verified editor.' },
       { name: 'document', type: 'object', required: true, description: 'Complete schema-validated document: ballots {v}, notes {n}, usage {u}, policy {quorum}, or workspace {packs,stars,recents?,at?}. Every property is signature-covered.' },
       { name: 'expected_etag', type: 'string', required: true, description: 'Exact strong ETag from the preceding read, or empty string ONLY when that read reported absent. Conflicts require read-and-merge, never a blind retry.' },
-      { name: 'owner_encryption_key', type: 'string', required: false, description: 'Required for private workspace writes: owner-held canonical base64 X25519 public key, bound by this exact author signature. Obtain from owned signing context, never an unsigned pod document.' },
+      { name: 'owner_encryption_key', type: 'string', required: true, description: 'Required for ALL shared/private document writes: owner-held canonical base64 X25519 public key, bound by this exact author signature. Obtain from owned signing context, never an unsigned pod document.' },
     ],
   },
   ...telemetryAffordances,
