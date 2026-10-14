@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-14 — I2IDL-X browser evidence follows the requested source head
+
+The browser oracle now runs only for pull requests or an explicit manual selection. Its redundant producer-completion trigger used GitHub's default-branch workflow context while selecting a different producer commit, so browser failures against an unrelated dependency-update run were attributed to the release commit and blocked deployment. Unsupported events are refused before any GitHub API call.
+
+Pull-request browser checks now cover every native/golden producer dependency, including builder/configuration, browser, Foxxi source and core RDF changes. The bounded native producer covers that same dependency union, so UI-only workflow/smoke changes and golden-workflow edits also produce fresh exact-head outputs. Selection still waits at most eight minutes for complete native or golden artifacts from the exact source head. Manual run IDs still require completed eligible outputs immediately, and repository, fork, workflow, source-head, PR, retained-artifact and browser checks are unchanged. The existing selector regressions execute the workflow's actual source; an additional case proves an unrelated workflow_run event emits no evidence and makes no API calls. No deploy-gate exclusion or check floor changes.
+
 ## 2026-10-14 — CI distinguishes dependency-update proposals from artifact checks
 
 The deployment gate excludes a GitHub dependency-update proposal job only when all three GitHub run fields match: `path=dynamic/dependabot/dependabot-updates`, `event=dynamic` and `actor.login=dependabot[bot]`. These jobs prepare future dependency changes rather than test the current artifact. The failed updater on relay merge `78bb5a9e` previously stopped deployment after the artifact checks had passed.

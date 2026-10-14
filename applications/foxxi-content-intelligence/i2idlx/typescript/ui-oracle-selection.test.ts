@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 
 // Execute the actual Actions source, rather than a second selector implementation.
 const workflow=readFileSync(new URL('../../../../.github/workflows/i2idlx-ui-oracle.yml',import.meta.url),'utf8');
-const block=/          script: \|\n((?:            .*\n)+)/.exec(workflow);
+const block=/ {10}script: \|\n((?: {12}.*\n)+)/.exec(workflow);
 assert.ok(block,'the UI workflow must retain its github-script selection block');
 const script=block[1]!.split('\n').map(line=>line.slice(12)).join('\n');
 const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor as new (...args:string[]) => (...args:unknown[])=>Promise<void>;
@@ -33,6 +33,7 @@ function fixture(options:{
   artifacts?:(id:number,poll:number)=>Artifact[];
   selected?:Run;
   payload?:Record<string,unknown>;
+  eventName?:string;
 }={}) {
   const outputs:Record<string,string>={},messages:string[]=[],sleeps:number[]=[];
   const calls={polls:0,gets:0,artifacts:[] as number[]};
@@ -51,7 +52,11 @@ function fixture(options:{
       return {data:{artifacts:options.artifacts?.(args.run_id,calls.polls)??[artifact(options.selected??native())]}};
     },
   }}};
-  const context={repo:{owner:'markjspivey-xwisee',repo:'interego'},payload:options.payload??{pull_request:{number:pr,head:{sha:head}}}};
+  const context={
+    repo:{owner:'markjspivey-xwisee',repo:'interego'},sha:'default-branch-head',
+    eventName:options.eventName??(options.payload?.inputs===undefined?'pull_request':'workflow_dispatch'),
+    payload:options.payload??{pull_request:{number:pr,head:{sha:head}}},
+  };
   const core={setOutput:(key:string,value:string)=>{outputs[key]=value;},info:(message:string)=>{messages.push(message);}};
   const timer=(resolve:()=>void,delay:number)=>{sleeps.push(delay);now+=delay;resolve();return 0;};
   const completion=execute(github,context,core,timer,{now:()=>now});
@@ -129,4 +134,48 @@ test('explicit manual IDs require eligible completed output immediately and neve
   const missing=fixture({payload:{inputs:{}}});
   await assert.rejects(missing.completion,/Select a completed native or golden workflow run ID/);
   assert.equal(missing.calls.polls,0);assert.deepEqual(missing.sleeps,[]);
+});
+
+test('workflow_run cannot attribute unrelated producer outputs to the default-branch commit',async()=>{
+  assert.doesNotMatch(workflow,/^ {2}workflow_run:\s*$/m,'automatic producer events are not a UI trigger');
+  const h=fixture({
+    eventName:'workflow_run',
+    payload:{workflow_run:native({head_sha:'unrelated-dependency-head',pull_requests:[]})},
+  });
+  await assert.rejects(h.completion,/Unsupported UI oracle event: workflow_run/);
+  assert.deepEqual(h.calls,{polls:0,gets:0,artifacts:[]},'unsupported events must stop before GitHub API calls');
+  assert.deepEqual(h.outputs,{});assert.deepEqual(h.messages,[]);assert.deepEqual(h.sleeps,[]);
+});
+
+test('PR browser checks cover every native/golden dependency and concrete workbench inputs',()=>{
+  const paths=(source:string)=>{
+    const block=/^ {4}paths:\n((?: {6}- '[^']+'\n)+)/m.exec(source);
+    assert.ok(block,'producer and browser workflows must declare PR path dependencies');
+    return [...block[1]!.matchAll(/^ {6}- '([^']+)'$/gm)].map(match=>match[1]!);
+  };
+  const uiPaths=paths(workflow);
+  for(const producer of ['i2idlx-native-diagnostic.yml','i2idlx-golden-parity.yml']){
+    const source=readFileSync(new URL('../../../../.github/workflows/'+producer,import.meta.url),'utf8');
+    for(const dependency of paths(source)){
+      assert.ok(uiPaths.includes(dependency),producer+' dependency must also trigger PR browser checks: '+dependency);
+    }
+  }
+  const nativePaths=paths(readFileSync(new URL('../../../../.github/workflows/i2idlx-native-diagnostic.yml',import.meta.url),'utf8'));
+  for(const dependency of uiPaths){
+    assert.ok(nativePaths.includes(dependency),'every UI dependency requires a fresh bounded native producer: '+dependency);
+  }
+  const included=(file:string)=>uiPaths.some(pattern=>pattern.endsWith('/**')?file.startsWith(pattern.slice(0,-2)):file===pattern);
+  for(const file of [
+    'applications/foxxi-content-intelligence/i2idlx/config.json',
+    'applications/foxxi-content-intelligence/i2idlx/typescript/build.ts',
+    'applications/foxxi-content-intelligence/i2idlx/typescript/build-app.ts',
+    'applications/foxxi-content-intelligence/i2idlx/src/i2idlx.ttl.tmpl',
+    'applications/foxxi-content-intelligence/i2idlx/app/src/interego-caps.js',
+    'applications/foxxi-content-intelligence/src/i2idlx-workbench.ts',
+    'applications/foxxi-content-intelligence/src/i2idlx-client-tasks.ts',
+    'packages/core/src/rdf/escape.ts',
+    '.github/workflows/i2idlx-ui-oracle.yml',
+    '.github/workflows/i2idlx-golden-parity.yml',
+    'tools/i2idlx-hosted-visitor-smoke.py',
+  ])assert.ok(included(file),'real builder, configuration, browser and workbench changes require PR browser evidence: '+file);
 });
