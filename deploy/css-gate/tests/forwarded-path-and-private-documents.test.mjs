@@ -13,6 +13,11 @@
  *    `auth-methods.jsonld` is plaintext: anyone listing the root container could read every
  *    account's display name tied to its wallet addresses, passkey labels and DIDs.
  *
+ * And one that stayed open after both: A USER BEARER COULD WRITE ITS OWN SIGN-IN RECORD. The
+ * identity server is its only writer, over the private network. Through the gate, a stolen bearer
+ * (or an OAuth token a client holds) could add its own passkey, wallet or DID there and keep
+ * signing in after the bearer expired. Now only the operator writes it.
+ *
  * Requests are sent with node:http, not fetch(): fetch normalizes `..` out of the URL before it
  * leaves the client, so it could never send the request that exploited hole 1.
  *
@@ -72,13 +77,13 @@ after(async () => {
 const BEARER = { alice: 'Bearer alice-token', operator: 'Bearer test-write-secret' };
 
 /** Send `path` exactly as written, and report the status and what reached the upstream. */
-function send(method, path, authorization) {
+function send(method, path, authorization, extraHeaders = {}) {
   received.length = 0;
   const { hostname, port } = new URL(gate.base);
   return new Promise((resolve, reject) => {
     const req = httpRequest({
       host: hostname, port, method, path,
-      headers: authorization ? { authorization } : {},
+      headers: { ...(authorization ? { authorization } : {}), ...extraHeaders },
     }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
@@ -89,7 +94,7 @@ function send(method, path, authorization) {
       });
     });
     req.on('error', reject);
-    req.end(method === 'PUT' ? '<> a <urn:x> .' : undefined);
+    req.end(['PUT', 'POST', 'PATCH'].includes(method) ? '<> a <urn:x> .' : undefined);
   });
 }
 
@@ -122,6 +127,7 @@ test('★★ a pod\'s sign-in record is not readable anonymously, however it is 
     ['GET', '/alice/auth%2Dmethods.jsonld'], ['GET', '/alice/x/../auth-methods.jsonld'],
     ['GET', '/alice/%2e%2e/alice/auth-methods.jsonld'], ['GET', '/alice%2Fauth-methods.jsonld'],
     ['GET', '//alice/auth-methods.jsonld'], ['GET', '/alice\\auth-methods.jsonld'],
+    ['GET', '/alice/auth-methods.jsonld.meta'], ['GET', '/alice/auth-methods.jsonld.acl'],
   ]) {
     const r = await send(method, path);
     assert.equal(r.status, 401, `${method} ${path} → ${r.status}`);
@@ -148,5 +154,48 @@ test('every other read stays anonymous', async () => {
     const r = await send('GET', path);
     assert.equal(r.status, 200, path);
     assert.deepEqual(r.upstream.map((u) => u.url), [path], path);
+  }
+});
+
+test('★★ a user bearer cannot write its own sign-in record, however it is reached', async () => {
+  for (const [method, path] of [
+    ['PUT', '/alice/auth-methods.jsonld'], ['PATCH', '/alice/auth-methods.jsonld'],
+    ['DELETE', '/alice/auth-methods.jsonld'], ['PUT', '/alice/AUTH-METHODS.jsonld'],
+    ['PUT', '/alice/auth%2Dmethods.jsonld'], ['PUT', '/alice/x/../auth-methods.jsonld'],
+    ['PUT', '/alice/auth-methods.jsonld?x=1'], ['PATCH', '/alice/auth-methods.jsonld.meta'],
+    ['PUT', '/alice/auth-methods.jsonld.acl'],
+  ]) {
+    const r = await send(method, path, BEARER.alice);
+    assert.equal(r.status, 403, `${method} ${path} → ${r.status}`);
+    assert.equal(r.json?.error, 'sign-in record is not writable with a user bearer', `${method} ${path}`);
+    assert.deepEqual(r.upstream, [], `${method} ${path} must not reach CSS`);
+  }
+  // Nor create it by naming it as the Slug of a POST to the pod.
+  for (const slug of ['auth-methods.jsonld', 'Auth-Methods.JSONLD', 'auth%2Dmethods.jsonld', 'x/auth-methods.jsonld', 'auth-methods.jsonld.meta']) {
+    const r = await send('POST', '/alice/', BEARER.alice, { slug });
+    assert.equal(r.status, 403, `Slug ${slug} → ${r.status}`);
+    assert.deepEqual(r.upstream, [], `Slug ${slug} must not reach CSS`);
+  }
+  // An invalid bearer is still told it is invalid, not why the path is refused.
+  const forged = await send('PUT', '/alice/auth-methods.jsonld', 'Bearer not-a-token');
+  assert.equal(forged.status, 401);
+});
+
+test('the operator writes it; the user keeps writing everything else in its pod', async () => {
+  for (const [method, path] of [['PUT', '/alice/auth-methods.jsonld'], ['DELETE', '/bob/auth-methods.jsonld']]) {
+    const r = await send(method, path, BEARER.operator);
+    assert.equal(r.status, 200, `${method} ${path}`);
+    assert.deepEqual(r.upstream.map((u) => [u.method, u.url, u.authorization]), [[method, path, undefined]]);
+  }
+  const slugged = await send('POST', '/alice/', BEARER.operator, { slug: 'auth-methods.jsonld' });
+  assert.equal(slugged.status, 200);
+  for (const [method, path, headers] of [
+    ['POST', '/alice/', { slug: 'notes.ttl' }], ['POST', '/alice/', {}],
+    ['PUT', '/alice/sub/auth-methods.jsonld', {}], ['PUT', '/alice/auth-methods.jsonld.bak', {}],
+    ['POST', '/alice/sub/', { slug: 'auth-methods.jsonld' }],
+  ]) {
+    const r = await send(method, path, BEARER.alice, headers);
+    assert.equal(r.status, 200, `${method} ${path} ${JSON.stringify(headers)} → ${r.status}`);
+    assert.deepEqual(r.upstream.map((u) => u.url), [path]);
   }
 });
