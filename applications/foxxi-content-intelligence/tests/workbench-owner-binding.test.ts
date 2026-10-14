@@ -44,8 +44,9 @@ async function fixture(mode:'valid'|'race'|'forged') {
     ownerAnchors:{[OWNER_ID]:ownerWallet.address},
     ownPod:actor=>{assert.equal(actor,ACTOR);return POD;},
     verifyCaller:async()=>({ok:false,status:401,error:'Unused on historical reads'}),
-    fetch:(async input=>{
+    fetch:(async (input,init)=>{
       const url=typeof input==='string'?input:input instanceof URL?input.href:input.url;
+      if(url===SHARED&&(init?.method??'GET').toUpperCase()==='HEAD')return new Response(null,{status:204});
       if(url===POD+AGENT_REGISTRY_PATH)return new Response(ownerProfileToTurtle(profile),{headers:{'Content-Type':'text/turtle'}});
       if(url===POD+CREDENTIALS_PATH+encodeURIComponent(ACTOR)+'.jsonld'){
         credentialReads++;

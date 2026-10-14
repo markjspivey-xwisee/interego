@@ -169,6 +169,11 @@ function mentions(concepts: Row[], cidx: Row): { suggestions: Row[]; forms: Valu
   return { suggestions, forms: forms.map(f => [f.form, cidx[f.target], f.strong ? 1 : 0, f.sensitive ? 1 : 0]),
     links: concepts.reduce((n, c) => n + (c.md?.length || 0) + (c.mx?.length || 0), 0) };
 }
+/** Sharing a hosted workbench stays on its serving origin; the old Claude artifact is retained as an archive. */
+export function shareUrlBootstrap(archivedUrl: string): string {
+  const archived = JSON.stringify(archivedUrl).replace(/<\//g, '<\\/').replace(/<!--/g, '<\\!--');
+  return 'window.__ARCHIVED_APP_URL__ = ' + archived + '; window.__APP_URL__ = window.claude ? window.__ARCHIVED_APP_URL__ : new URL("/i2idlx/", window.location.href).href;';
+}
 export interface BuildAppOptions { distDir?: string; outputDir?: string; siteDir?: string; dataOnly?: boolean; now?: string; }
 export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.url)), '..'), options: BuildAppOptions = {}): Promise<Row> {
   root = resolve(root);
@@ -611,7 +616,7 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   const page = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>Interpretant Glossary Workbench</title>\n<meta name="description" content="A workbench for the I2IDL Digital Learning Glossary (' + release + '), decorated with the Interego and Foxxi layer I2IDL-X.">\n' +
     '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="' + fonts + '">\n<style>\n' + readFileSync(join(APP, 'src', 'styles.css'), 'utf8') +
     '\n</style>\n</head>\n<body>\n<div id="root"><noscript><p style="padding:24px;font-family:system-ui">Interpretant needs JavaScript. The glossary itself is at <a href="https://www.i2idl.org/glossary">i2idl.org/glossary</a>.</p></noscript></div>\n' +
-    '<script type="application/json" id="i2-data">' + inlineJson(data) + '</script>\n<script>window.__APP_URL__ = ' + inlineJson(cfg.appArtifactUrl || '') + ';</script>\n' +
+    '<script type="application/json" id="i2-data">' + inlineJson(data) + '</script>\n<script>' + shareUrlBootstrap(cfg.appArtifactUrl || '') + '</script>\n' +
     cdn.map(u => '<script src="' + u + '" crossorigin="anonymous"></script>\n').join('') + '<script>\n' + inlineJs(readFileSync(bundle, 'utf8')) + '\n</script>\n</body>\n</html>\n';
   mkdirSync(SITE, { recursive: true }); writeFileSync(join(SITE, 'app.html'), page);
   check(Buffer.byteLength(page) < 16000000, 'workbench HTML is below the 16 MB artifact limit');
