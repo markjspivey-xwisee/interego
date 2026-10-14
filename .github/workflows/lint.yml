@@ -66,6 +66,9 @@ jobs:
       # top-level source root existing that is in none of those three lists at all.
       - name: Lint gate
         run: node tools/lint-gate.mjs
+      - name: Diagnose the changed I2IDL-X selector when lint refuses
+        if: failure()
+        run: npx eslint applications/foxxi-content-intelligence/i2idlx/typescript/ui-oracle-selection.test.ts
       # ★ THE CONFORMANCE RUNNER WAS CALLED BY NOTHING. It gates Candidate Recommendation
       # per STATUS.md and is what spec/STABILITY.md points a second implementation at, yet
       # no workflow, no npm script and no test invoked it — so it printed
