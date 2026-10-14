@@ -32,7 +32,9 @@ if [ "${1:-}" = "--reasoner" ]; then
   # The reasoner the build runs HermiT from (config.json reasoner), fetched from its release and checked against the
   # SHA-256 config.json pins. It is not redistributed with I2IDL-X. I2IDLX_REASONER_JAR puts it somewhere else.
   read -r URL SHA JAR < <(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1]))["reasoner"]; print(r["url"], r["sha256"], r["jar"])' "$ROOT/config.json")
-  DEST="${I2IDLX_REASONER_JAR:-$ROOT/$JAR}"
+  DEST="${I2IDLX_REASONER_JAR:-$JAR}"
+  # A relative path is read from the package root, as build.py reads it, wherever this is run from.
+  case "$DEST" in /*) ;; *) DEST="$ROOT/$DEST" ;; esac
   mkdir -p "$(dirname "$DEST")"
   J="$(mktemp "$(dirname "$DEST")/.reasoner.XXXXXX")"
   trap 'rm -f "$J"' EXIT
