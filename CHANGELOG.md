@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-14 — Foxxi: the decorator kit, and LRS-X, LMS-X, LTI-X, LER-X and TLA-X
+
+A decorator kit (`src/decorations/kit.ts`) builds a decoration of a system Foxxi does not control from one declarative spec. A spec lists the system's parts, each by its own identifier and defining section; controls on each part, as RFC 6570 templates; and alignments, enactments and gaps. From it the kit produces three documents. The catalog is a HyprCat catalog of the parts, each with affordance-bearing controls whose targets are Hydra IRI templates. The proposals are SKOS mappings with their reasons, enactments and gaps, all Hypothetical. The third is an SSSOM 1.0 mapping set, with each gap mapped to `sssom:NoTermFound`. Every document carries the not-affiliated statement, refers to the specification without reproducing it, and mints no term.
+
+Five decorations are built with it:
+- **LRS-X** decorates any xAPI 2.0 Learning Record Store.
+- **LMS-X** decorates any LMS that speaks LTI 1.3 Advantage and OneRoster 1.2.
+- **LTI-X** decorates the LTI 1.3 specification: its claims by their URIs, and how each reads as xAPI.
+- **LER-X** decorates the IEEE learning and employment record standards.
+- **TLA-X** decorates ADL's Total Learning Architecture.
+
+The bridge serves them at `/decorations/<id>` as Turtle, JSON-LD, JSON or HTML, and their proposals at `/decorations/<id>/proposals`. `foxxi.bind_decoration` binds an instance decoration's controls to an organization's own LRS or LMS URLs, without fetching anything. The I2IDL glossary has no term for an LMS, LTI, an experience index, a course catalog, evidence or a transcript, and those gaps are listed. `DECORATIONS.md` records the design. `tools/check-foxxi-affordances.mjs` now reads the decoration route module, and the agent skills are regenerated.
+
 ## 2026-10-14 — Foxxi: dispatch to other LMSs, their launches played here, and asking a course
 
 **Dispatch.** A course's author can now dispatch it to another organization's LMS (`foxxi.scorm_dispatch`). The LMS imports a stub package, SCORM 2004 4th Edition or SCORM 1.2. The stub holds no content and no answers. Its one SCO opens the course on the bridge in a frame, the SCORM engine sequences and grades it, and the stub reports back through the LMS's own API: the score, success, completion, one interaction per answered question, and the session time, in each version's data model. The course's mastery score goes into the manifest as the passing score. An attempt is kept in `suspend_data`, so it resumes. The LMS keeps the learner's record: the stub never sends the bridge the learner's id, and nothing is recorded on the bridge in anyone's name. The author sees each dispatch's launches, completions and passes (`foxxi.scorm_dispatches`). A dispatch can be withdrawn (`foxxi.scorm_dispatch_revoke`), given an expiry or capped at a number of launches, and any of these stops every copy of the stub. Dispatches are kept on the tenant pod beside `course-authors.json`. A full registry refuses a new dispatch rather than evicting an old one. Launches and asks are limited per address with their own windows, because one organization's learners can share an address.

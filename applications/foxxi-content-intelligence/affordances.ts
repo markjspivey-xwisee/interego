@@ -1747,6 +1747,31 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       required: ['kind', 'dispatches'],
     },
   },
+  {
+    action: 'urn:iep:action:foxxi:bind-decoration' as IRI,
+    toolName: 'foxxi.bind_decoration',
+    title: 'Bind a decoration\'s controls to your own LRS or LMS',
+    description: 'LRS-X decorates any xAPI 2.0 Learning Record Store, and LMS-X any LMS that speaks LTI 1.3 Advantage and OneRoster 1.2: each is a catalog of controls (one per resource or service, with the headers and scope it asks for) and a set of Hypothetical proposals tying each part to the I2IDL glossary and to the Foxxi capabilities that enact it. Give the decoration and your instance\'s URLs (LRS-X: endpoint; LMS-X: configuration, jwks, lineitems, lineitem, memberships, oneroster), and get the controls with them filled in. The bridge fetches nothing; it only fills the templates. The catalogs are at {base}/decorations/<id> (Turtle, JSON-LD, JSON or HTML) and the proposals at {base}/decorations/<id>/proposals. Each decoration is independent work, not affiliated with or endorsed by the publisher of what it decorates.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/decorations/bind',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Bind a decoration', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputs: [
+      { name: 'decoration', type: 'string', required: true, description: 'lrs-x or lms-x (lti-x, ler-x and tla-x decorate specifications and an architecture, and need no binding).' },
+      { name: 'values', type: 'object', required: true, description: 'Each binding variable to an https URL of your instance, e.g. { "endpoint": "https://lrs.example.com/xapi" }.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: {
+      description: 'The bound controls. 400 on an unknown decoration, a decoration that takes no binding, an unknown variable, or a URL that is not https (or loopback http) or that carries credentials.',
+      properties: {
+        kind: { type: 'string', description: '"bound-decoration".' },
+        controls: { type: 'array', description: 'Each control: { id, part, title, method, href (query variables left as an RFC 6570 {?…} for each call), readOnly, accept?, contentType?, headers?, auth? }.', items: { type: 'object', additionalProperties: true } },
+        unbound: { type: 'array', description: 'The binding variables you did not give; controls that need them are left out.', items: { type: 'string' } },
+      },
+      required: ['kind', 'controls'],
+    },
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────
