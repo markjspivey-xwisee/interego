@@ -446,6 +446,9 @@ import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes, type PlatformSnapshot } from '../src/lti-platform.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
+import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, type DispatchEngine } from '../src/scorm-dispatch.js';
+import { glossaryLoader } from '../src/i2idl-glossary.js';
+import { askCourse } from '../src/course-ask.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import {
   attachScormSequencingRoutes, parseManifest, createSession, processNavigation,
@@ -9969,6 +9972,14 @@ interface ScormPlay {
   learnerPod?: string;
   /** xAPI context an LMS launch adds to the outcome: the platform, and the course context the attempt ran in. */
   xapiContext?: { platform: string; grouping: Array<Record<string, unknown>> };
+  /** Who the statements name when the learner is not one of this bridge's: the account another LMS vouched for (its issuer, its sub). */
+  actorAccount?: { homePage: string; name: string };
+  /**
+   * Where the outcome is kept. By default in the learner's record: the LRS lens and their pod's lattice.
+   * `tool-lrs`: in this bridge's LRS alone, for a learner another LMS launched, who has no pod here.
+   * `launching-lms`: nowhere on this bridge, because the LMS that launched the attempt keeps it (a dispatch).
+   */
+  keptBy?: 'tool-lrs' | 'launching-lms';
   /** Set once sequencing has ended: the attempt's outcome, and whether the learner's record holds it. */
   ended?: ScormEnded;
 }
@@ -10258,11 +10269,11 @@ function scormCompletionStatements(play: ScormPlay, course: AgentScormCourse, pa
   const courseObj = { objectType: 'Activity', id: courseIri(course.courseId), definition: { name: { en: course.title }, type: 'http://adlnet.gov/expapi/activities/course' } };
   const base = (verb: string, name: string, result: Record<string, unknown>): Record<string, unknown> & { id: string } => ({
     id: randomUUID(), version: '2.0.0',
-    actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: play.learnerDid } },
+    actor: { objectType: 'Agent', account: play.actorAccount ?? { homePage: String(authoritativeSource), name: play.learnerDid } },
     verb: { id: ADL + verb, display: { en: name } }, object: courseObj, result,
     context: {
       ...(play.xapiContext ? { platform: play.xapiContext.platform, contextActivities: { grouping: play.xapiContext.grouping } } : {}),
-      extensions: { [PERF_EXT.observedBy]: play.learnerDid, [PERF_EXT.contextKind]: 'training' },
+      extensions: { ...(play.actorAccount ? {} : { [PERF_EXT.observedBy]: play.learnerDid }), [PERF_EXT.contextKind]: 'training' },
     },
     timestamp: new Date().toISOString(),
   });
@@ -10291,6 +10302,8 @@ async function recordScormCompletion(play: ScormPlay, ended: ScormEnded): Promis
   if (kept.status === 'refused') { ended.unrecorded = `the LRS refused the statements the bridge built: ${kept.refusals.join('; ')}`; return; }
   if (kept.status === 'partial') { ended.unrecorded = `the store holds ${kept.keptIds.length} of its ${ended.statements.length} statements`; return; }
   delete ended.unrecorded;
+  // A learner another LMS launched has no pod here: the LRS holds their record, and no lattice does.
+  if (play.keptBy === 'tool-lrs') return;
   // Foundation-first: PGSL canonical — compose the ACTUAL completion xAPI
   // statements into the learner's shared lattice (lossless), no hand-authored RDF.
   const learnerPod = play.learnerPod ?? resolveSubjectPodUrl(play.learnerDid);
@@ -10493,6 +10506,8 @@ function publicCourseView(c: AgentScormCourse, base: string): Record<string, unk
     packageData: scormArtifactLinks(base, c.courseId).packageData,
     hmd: `${base}/agent/scorm/course/${encodeURIComponent(c.courseId)}?format=markdown`,
     launch: { player: scormPlayerLink(c), affordance: actionUrl('urn:iep:action:foxxi:scorm-launch-signed'), method: 'POST', target: `${base}/agent/scorm/launch` },
+    ask: { affordance: actionUrl('urn:iep:action:foxxi:scorm-course-ask'), method: 'POST', target: `${base}/agent/scorm/ask`, body: { course_id: c.courseId, question: '…' } },
+    dispatch: { affordance: actionUrl('urn:iep:action:foxxi:scorm-dispatch-signed'), method: 'POST', target: `${base}/agent/scorm/dispatch`, note: 'Its author may dispatch it to another organization\'s LMS as a SCORM 2004 or 1.2 stub.' },
   };
 }
 /** The course as HyperMarkdown — rung-1 prose per SCO, rung-3 typed links +
@@ -10512,6 +10527,30 @@ app.get('/agent/scorm/courses', async (req, res) => {
     return;
   }
   res.json({ ok: true, count: agentScormCourses.size, courses: [...agentScormCourses.values()].map(c => publicCourseView(c, base)) });
+});
+// "Ask your course": a question about an authored course, answered from its sections and the I2IDL
+// Digital Learning Glossary, decorated with I2IDL-X (src/course-ask.ts). Assembled, never generated:
+// no model is called, and an assessment's questions are never read. A POST so an agent reaches it as
+// an affordance (a GET affordance carries no inputs), though it changes nothing. Limited per address,
+// more widely than the agentic limit (which guards model calls): a first ask reads the glossary
+// (cached a day), and every ask after it is local.
+const i2idlGlossary = glossaryLoader({ fetch: (input, init) => globalThis.fetch(input, init) });
+const asksByAddress = perAddressLimiter(60, 60_000);
+app.post('/agent/scorm/ask', async (req, res) => {
+  try {
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const courseId = typeof body.course_id === 'string' ? body.course_id.trim() : '';
+    const question = typeof body.question === 'string' ? body.question : '';
+    if (!courseId || !question.trim()) { res.status(400).json({ error: 'course_id and question are required' }); return; }
+    const xffA = req.headers['x-forwarded-for'];
+    const ipA = typeof xffA === 'string' ? xffA.split(',').at(-1)!.trim() : Array.isArray(xffA) ? xffA.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rlA = asksByAddress(ipA);
+    if (!rlA.ok) { res.status(429).json({ error: `rate limit — retry in ${rlA.retryAfterSeconds}s` }); return; }
+    const c = await resolveCourseForRead(courseId, typeof body.author_did === 'string' ? body.author_did : undefined);
+    if (!c) { res.status(404).json({ error: `no authored course "${courseId}"` }); return; }
+    const base = bridgeBaseUrl.replace(/\/$/, '');
+    res.set('Cache-Control', 'no-store').json(askCourse({ course: c, question, sources: await i2idlGlossary(), href: (scoId) => scormArtifactLinks(base, c.courseId).sco(scoId) }));
+  } catch (err) { sendServerError(res, err, 'course-ask'); }
 });
 attachAgentScormArtifacts(app, resolveCourseForRead);
 app.get('/agent/scorm/course/:id', async (req, res) => {
@@ -12011,7 +12050,7 @@ async function advanceScormPlay(play: ScormPlay, answersGiven: unknown): Promise
   const course = play.course;   // resolved at launch (cache or durable pod)
   if (!course) return { ok: false, status: 410, body: { error: 'course no longer available' } };
   if (play.ended) {
-    if (!play.ended.recorded) await recordScormCompletion(play, play.ended);
+    if (!play.ended.recorded && play.keptBy !== 'launching-lms') await recordScormCompletion(play, play.ended);
     return endedStep(play.ended);
   }
   const cur = play.seq.current;
@@ -12062,9 +12101,95 @@ async function advanceScormPlay(play: ScormPlay, answersGiven: unknown): Promise
   const passed = root.success === 'satisfied';
   const score = typeof root.normalizedMeasure === 'number' ? root.normalizedMeasure : (passed ? 1 : 0);
   play.ended = { statements: scormCompletionStatements(play, course, passed, score), completed, passed, score, ...(graded ? { graded } : {}), statementIds: [], recorded: false };
-  await recordScormCompletion(play, play.ended);
+  // A dispatched attempt's record is the launching LMS's: the stub reports the outcome there.
+  if (play.keptBy !== 'launching-lms') await recordScormCompletion(play, play.ended);
   return endedStep(play.ended);
 }
+
+// ── SCORM dispatch: a course authored here, played inside another organization's LMS ─────────
+//
+// The author makes a dispatch; the LMS imports a stub package (SCORM 2004 or 1.2) that frames the
+// course on this bridge and reports the outcome through the LMS's own SCORM API (src/scorm-dispatch.ts).
+// The LMS keeps the learner's record: the stub never tells the bridge who the learner is, and an
+// attempt is played with keptBy 'launching-lms', so nothing is recorded here in anyone's name. What the
+// bridge keeps is the author's view: each dispatch, its state, and its launch / completion / pass counts,
+// on the tenant pod beside course-authors.json, so a withdrawal survives a restart.
+const DISPATCHES_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/dispatches.json` : '';
+const scormDispatches = new DispatchRegistry();
+let dispatchesWrite: ReturnType<typeof setTimeout> | undefined;
+let dispatchesReadAt = 0;
+async function readDispatches(): Promise<void> {
+  if (!DISPATCHES_RESOURCE) return;
+  dispatchesReadAt = Date.now();
+  try {
+    const r = await (globalThis.fetch as typeof fetch)(DISPATCHES_RESOURCE, { headers: { Accept: 'application/json' } });
+    if (r.ok) scormDispatches.load(await r.json());
+  } catch { /* none yet, or the pod is unreachable: what this process holds stands */ }
+}
+async function writeDispatches(): Promise<void> {
+  if (!DISPATCHES_RESOURCE || !scormDispatches.dirty) return;
+  scormDispatches.dirty = false;
+  const f = globalThis.fetch as typeof fetch;
+  try {
+    // Merge the durable copy in first, so another process's dispatches, counts and withdrawals are kept.
+    await readDispatches();
+    const container = DISPATCHES_RESOURCE.replace(/[^/]+$/, '');
+    await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+    const w = await f(DISPATCHES_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scormDispatches) });
+    if (!w.ok) scormDispatches.dirty = true;
+  } catch { scormDispatches.dirty = true; }
+}
+/** Write the registry soon: changes within two seconds go in one write. */
+function persistDispatches(): void {
+  if (dispatchesWrite) return;
+  dispatchesWrite = setTimeout(() => { dispatchesWrite = undefined; void writeDispatches(); }, 2_000);
+  (dispatchesWrite as { unref?: () => void }).unref?.();
+}
+void readDispatches();
+
+/** The SCORM engine as a dispatch plays it: the same sequencing and grading as every attempt, recorded nowhere here. */
+const dispatchEngine: DispatchEngine<ScormPlay, AgentScormCourse> = {
+  start(course, attempt) {
+    let tree;
+    try { tree = parseManifest(buildAgentScormManifest(course)); }
+    catch (e) { return { ok: false, status: 500, error: `the course's manifest did not parse: ${(e as Error).message}` }; }
+    const seq = createSession(tenantIdOf(`scorm:${attempt}`), tree);
+    const nav = processNavigation(seq, 'start');
+    if (!nav.ok || !nav.delivered) return { ok: false, status: 409, error: `SCORM start failed: ${nav.exception ?? nav.message ?? 'no SCO delivered'}` };
+    return { ok: true, play: { seq, courseId: course.courseId, learnerDid: attempt, lens: DEFAULT_TENANT, masteryScore: course.masteryScore, course, keptBy: 'launching-lms' } };
+  },
+  current(play) {
+    const sco = play.seq.current ? scoForActivity(play.course, play.seq.current.id) : undefined;
+    if (!sco) return null;
+    return { sco: scoViewForLearner(sco) as ScoView, questions: sco.assessment?.map((q, i) => questionForLearner(q, i)) ?? [] };
+  },
+  async advance(play, answers) {
+    const step = await advanceScormPlay(play, answers);
+    if (!step.ok) return { ok: false, status: step.status, error: String(step.body.error ?? 'That did not go through.') };
+    if (!step.done) return { ok: true, done: false, ...(step.graded ? { graded: step.graded } : {}), sco: step.sco as ScoView };
+    return { ok: true, done: true, ...(step.graded ? { graded: step.graded } : {}), completed: step.completed, passed: step.passed, score: step.score };
+  },
+  courseTitle: (play) => play.course.title,
+};
+
+attachScormDispatchRoutes(app, {
+  baseUrl: bridgeBaseUrl,
+  registry: scormDispatches,
+  engine: dispatchEngine,
+  verifyCaller: verifyDelegatedCaller,
+  resolveCourse: (courseId) => resolveCourseForRead(courseId),
+  // The author is the first writer of the course id (course-authors.json), as every course write decides it.
+  ownerOf: async (course) => {
+    if (!courseAuthors.has(course.courseId)) await loadCourseAuthors();
+    return courseAuthors.get(course.courseId) ?? course.authoredBy;
+  },
+  rateLimit: checkAgenticRateLimit,
+  persist: persistDispatches,
+  // A dispatch this process does not hold: read the durable copy again, at most every half minute.
+  reload: async () => { if (Date.now() - dispatchesReadAt > 30_000) await readDispatches(); },
+  glossary: i2idlGlossary,
+  serverError: (res, err, where) => sendServerError(res, err, where),
+});
 
 // ── Foxxi's own LMS: a course launched over LTI 1.3 ──────────────────────────────────────────
 //
@@ -12076,8 +12201,13 @@ async function advanceScormPlay(play: ScormPlay, answersGiven: unknown): Promise
 // it against the LMS's published keys and opens the course in the SCORM engine. When the attempt
 // ends, the outcome goes to the learner's record and the Tool posts the grade to the LMS gradebook
 // over AGS, with a token it gets by signing a client assertion. Only this bridge's own LMS vouches
-// for which pod is the learner's, since it checked their signature before it launched. A launch
-// from another LMS keeps the dashboard hand-off.
+// for which pod is the learner's, since it checked their signature before it launched.
+//
+// A launch from another registered LMS plays in the same engine when its resource link names a course
+// (custom foxxi_course_id): the learner is the account that LMS vouched for in its signed id_token
+// (its issuer, its sub), their outcome is kept in this bridge's LRS under that account, and the grade
+// goes back to that LMS's gradebook over AGS. That learner has no pod here, so no lattice holds it.
+// A launch that names no course keeps the dashboard hand-off.
 
 /**
  * An attempt a launch opened: the engine's play, and where its grade goes. Once the attempt ends,
@@ -12092,27 +12222,34 @@ const LTI_PLAYS_MAX = 5000;
 const LTI_PLAY_TTL_MS = 3 * 60 * 60_000;
 
 async function startLtiPlay(launch: VerifiedResourceLaunch): Promise<{ ok: true; redirect: string } | { ok: false; status: number; error: string } | null> {
-  if (launch.issuer !== ltiPlatform.issuer) return null;
-  const courseId = typeof launch.custom.foxxi_course_id === 'string' ? launch.custom.foxxi_course_id : '';
-  const podUrl = typeof launch.custom.foxxi_learner_pod === 'string' ? launch.custom.foxxi_learner_pod : '';
-  if (!courseId || !podUrl || !launch.sub) return { ok: false, status: 400, error: 'this launch names no course, or no learner record, for the SCORM engine to play' };
+  const own = launch.issuer === ltiPlatform.issuer;
+  const courseId = typeof launch.custom.foxxi_course_id === 'string' ? launch.custom.foxxi_course_id.trim() : '';
+  // Another LMS's launch that names no course is the dashboard's, as before.
+  if (!own && !courseId) return null;
+  const podUrl = own && typeof launch.custom.foxxi_learner_pod === 'string' ? launch.custom.foxxi_learner_pod : '';
+  if (!courseId || (own && !podUrl) || !launch.sub) return { ok: false, status: 400, error: 'this launch names no course, or no learner record, for the SCORM engine to play' };
   const course = await resolveCourseForRead(courseId);
   if (!course) return { ok: false, status: 404, error: `no course ${courseId} is played on this bridge's SCORM engine` };
   let tree;
   try { tree = parseManifest(buildAgentScormManifest(course)); }
   catch (e) { return { ok: false, status: 500, error: `the course's manifest did not parse: ${(e as Error).message}` }; }
-  const seq = createSession(tenantIdOf(`scorm:${launch.sub}`), tree);
+  // One LMS's sub is not another's: the attempt is keyed by both.
+  const seq = createSession(tenantIdOf(own ? `scorm:${launch.sub}` : `scorm:lti:${launch.issuer}#${launch.sub}`), tree);
   const nav = processNavigation(seq, 'start');
   if (!nav.ok || !nav.delivered) return { ok: false, status: 409, error: `SCORM start failed: ${nav.exception ?? nav.message ?? 'no SCO delivered'}` };
   const contextId = typeof launch.context?.id === 'string' ? launch.context.id : '';
   const contextTitle = typeof launch.context?.title === 'string' ? launch.context.title : 'LMS course';
-  const play: ScormPlay = {
+  const grouping = contextId ? [{ objectType: 'Activity', id: `${launch.issuer}/contexts/${encodeURIComponent(contextId)}`, definition: { name: { en: contextTitle }, type: 'http://adlnet.gov/expapi/activities/course' } }] : [];
+  const play: ScormPlay = own ? {
     seq, courseId: course.courseId, learnerDid: launch.sub, lens: lensTenantFor(actorForPod(podUrl, MESH_ACTOR_LABELS)),
     masteryScore: course.masteryScore, course, learnerPod: podUrl,
-    xapiContext: {
-      platform: 'Foxxi LMS over LTI 1.3',
-      grouping: contextId ? [{ objectType: 'Activity', id: `${launch.issuer}/contexts/${encodeURIComponent(contextId)}`, definition: { name: { en: contextTitle }, type: 'http://adlnet.gov/expapi/activities/course' } }] : [],
-    },
+    xapiContext: { platform: 'Foxxi LMS over LTI 1.3', grouping },
+  } : {
+    // The learner is the account the launching LMS signed for, kept in this bridge's LRS (the
+    // operator's store), named by that LMS's issuer and its sub, as an xAPI account.
+    seq, courseId: course.courseId, learnerDid: launch.sub, lens: DEFAULT_TENANT,
+    masteryScore: course.masteryScore, course, actorAccount: { homePage: launch.issuer, name: launch.sub }, keptBy: 'tool-lrs',
+    xapiContext: { platform: 'Foxxi SCORM engine over LTI 1.3', grouping },
   };
   const now = Date.now();
   for (const [k, v] of ltiPlays) if (v.expiresAt < now) ltiPlays.delete(k);
@@ -12172,8 +12309,9 @@ function sendEndedAttempt(req: import('express').Request, res: import('express')
   const retry = left.record || left.grade ? { method: 'POST', href: `${bridgeBaseUrl}/lti/play/${id}`, ...left } : undefined;
   const course = { id: lp.play.courseId, title: lp.play.course.title };
   const outcome = { completed: ended.completed, passed: ended.passed, score: ended.score, recordedStatements: ended.recordedStatements, recorded: ended.recorded, gradebook };
-  if (wantsJson(req)) { res.json({ kind: 'lti-play', done: true, ...(ended.graded ? { graded: ended.graded } : {}), course, ...outcome, ...(retry ? { retry } : {}), learner: lp.sub, lens: lp.play.lens }); return; }
-  res.type('html').send(renderOutcomePage({ courseTitle: course.title, outcome, ...(ended.graded ? { graded: ended.graded } : {}), ...(retry ? { retry: left } : {}) }));
+  const recordPlace = lp.play.keptBy === 'tool-lrs' ? 'this Tool\'s learning record store, under your LMS account' : undefined;
+  if (wantsJson(req)) { res.json({ kind: 'lti-play', done: true, ...(ended.graded ? { graded: ended.graded } : {}), course, ...outcome, ...(retry ? { retry } : {}), learner: lp.sub, lens: lp.play.lens, ...(recordPlace ? { recordedIn: recordPlace } : {}) }); return; }
+  res.type('html').send(renderOutcomePage({ courseTitle: course.title, outcome, ...(ended.graded ? { graded: ended.graded } : {}), ...(retry ? { retry: left } : {}), ...(recordPlace ? { recordPlace } : {}) }));
 }
 
 const ltiPlayGone = 'This launch has ended, or it expired. Launch the course again from your LMS.';
