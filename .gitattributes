@@ -46,6 +46,7 @@
 *.mjs    text eol=lf diff
 *.cjs    text eol=lf diff
 *.json   text eol=lf diff
+*.toml   text eol=lf diff
 *.jsonld text eol=lf diff
 *.md     text eol=lf diff
 *.html   text eol=lf diff

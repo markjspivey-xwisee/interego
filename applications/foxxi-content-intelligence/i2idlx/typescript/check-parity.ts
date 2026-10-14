@@ -17,10 +17,12 @@ import { checkAppData } from './check-app-data.js';
 import { canonicalRdf, compareRdfFiles } from './parity.js';
 import { refreshEvidence } from './refresh-evidence.js';
 import { refreshUpper } from './refresh-upper.js';
+import { verifyPublished } from './verify-published.js';
 
 export const UPSTREAM_COMMIT = '9f865995d879165d8fa49422915a5e53d2ecebf9';
-const FIXED_NOW = '2026-10-14T00:00:00+00:00';
-const FIXED_DATE = '2026-10-14';
+const FIXED_NOW = '2026-10-13T20:30:00+00:00';
+const FIXED_BUILT = '2026-10-08';
+const FIXED_MODIFIED = '2026-10-13';
 const GRAPH_KEYS = ['shapes', 'ontology', 'rules', 'catalog', 'enactments', 'mappings', 'releases', 'changes', 'alignments', 'referents'] as const;
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 interface GoldenOptions { prepareInputs?: boolean; compareOnly?: boolean; python?: string; outputDir?: string }
@@ -108,7 +110,7 @@ async function prepareInputs(root: string): Promise<void> {
 }
 function fixedEnvironment(cfg: BuildConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env,
-    TZ: 'UTC', PYTHONHASHSEED: '0', I2IDLX_BUILT_DATE: FIXED_DATE, I2IDLX_MODIFIED: FIXED_DATE,
+    TZ: 'UTC', PYTHONHASHSEED: '0', I2IDLX_BUILT_DATE: FIXED_BUILT, I2IDLX_MODIFIED: FIXED_MODIFIED,
     I2IDLX_NOW: FIXED_NOW, I2IDLX_HERMIT: '1', I2IDL_CLONE: cfg.i2idl.localClone,
     INTEREGO_CORE_SRC: cfg.interegoCoreSrc, INTEREGO_TSX: cfg.tsx, I2IDLX_REASONER_JAR: cfg.reasoner.jar,
   };
@@ -132,7 +134,7 @@ export async function checkParity(root = DEFAULT_ROOT, options: GoldenOptions = 
   for (const key of Object.keys(process.env)) if (key.startsWith('I2IDLX_NOW_')) delete process.env[key];
   delete process.env.I2IDLX_ALLOW_UNPUBLISHED;
   const rdf: RdfResult[] = [], failures: string[] = [];
-  const report: Record<string, unknown> = { status: 'running', fixedNow: FIXED_NOW, upstreamCommit: UPSTREAM_COMMIT, ignored: ['owlrl.seconds', 'disjointCheck.seconds', 'hermit.*.sample/clash.seconds', 'app meta.built'], rdf };
+  const report: Record<string, unknown> = { status: 'running', fixedNow: FIXED_NOW, builtDate: FIXED_BUILT, modifiedDate: FIXED_MODIFIED, upstreamCommit: UPSTREAM_COMMIT, ignored: ['owlrl.seconds', 'disjointCheck.seconds', 'hermit.*.sample/clash.seconds', 'app meta.built'], rdf };
   try {
     const head = (await command('git', ['rev-parse', 'HEAD'], cfg.i2idl.localClone, env, join(output, 'upstream-head.log'))).trim();
     assert.equal(head, UPSTREAM_COMMIT, 'upstream HEAD is not the full pinned commit');
@@ -184,10 +186,14 @@ export async function checkParity(root = DEFAULT_ROOT, options: GoldenOptions = 
     assert.deepEqual(verification.failures, [], 'native full verification reported failed gates');
     const semantic = await json(join(native, 'semantic-layer.json'));
     assert.ok(semantic !== null && typeof semantic === 'object' && !Array.isArray(semantic) && semantic.hermit && Object.keys(semantic.hermit).length > 0, 'HermiT returned no fresh results');
+    const published = await verifyPublished(root, { outputDir: native });
+    report.liveRepresentations = published;
+    if (published.graphs.length !== GRAPH_KEYS.length) failures.push('live publication verification checked ' + published.graphs.length + ', expected all ten graphs');
+    if (!published.ok) failures.push('native outputs differ from live negotiated publications: ' + published.failed.join(', '));
     report.status = failures.length ? 'failed' : 'passed';
     report.failures = failures;
     if (failures.length) throw new Error('Golden parity failed:\n' + failures.join('\n'));
-    process.stdout.write('PASS all ten publishable graphs, local decorations, fresh semantics, verified publication receipts and workbench data match the independent complete Python build.\n');
+    process.stdout.write('PASS all ten publishable graphs, local decorations, fresh semantics, verified publication receipts and workbench data match the independent complete Python build; all ten live Turtle/JSON-LD graphs match and HyperMarkdown resolves.\n');
   } catch (error) {
     report.status = 'failed'; report.error = String(error);
     throw error;

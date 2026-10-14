@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { loadConfig } from './config.js';
+import { cw } from './generate.js';
 
 type Value = ReturnType<typeof JSON.parse>;
 type Row = Record<string, Value>;
@@ -147,8 +148,12 @@ async function refreshApp(ctx: Context): Promise<void> {
   }
   keep(ctx, 'relay-inputs.json', jsonText(sortedRecord(inputs)));
   const i2x = ctx.cfg.relayNsRoot + '/' + ctx.cfg.owner + '/' + ctx.cfg.slugs.ontology + '#';
-  const maps = new Graph(readFileSync(join(ctx.dist, ctx.cfg.slugs.mappings + '.ttl'), 'utf8'));
-  const targets = [...new Set(maps.objects(null, i2x + 'proposedObject').map(t => t.value))].sort();
+  const mappingFile = join(ctx.dist, ctx.cfg.slugs.mappings + '.ttl');
+  // A pristine checkout has not generated dist yet. The same declarative mapping
+  // rows the generator uses supply its complete target set, including superseded
+  // proposals, so refreshing snapshots does not depend on already built outputs.
+  const targetIris = existsSync(mappingFile) ? new Graph(readFileSync(mappingFile, 'utf8')).objects(null, i2x + 'proposedObject').map(t => t.value) : cw.MAPPINGS.map(row => row[2]);
+  const targets = [...new Set(targetIris)].sort();
   const vocabs: [string, Graph][] = ['xapi-ontology.ttl', 'xapi-profile-ontology.ttl', 'iep.ttl'].map(name => {
     const bytes = ctx.files.get(name), text = bytes ? decode(bytes) : readFileSync(join(ctx.evidence, name), 'utf8');
     return [name, new Graph(text)];

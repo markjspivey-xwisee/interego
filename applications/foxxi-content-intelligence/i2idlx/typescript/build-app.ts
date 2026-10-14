@@ -324,7 +324,9 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
     actions[a] = { sys: 'relay', n: name, t: clean(op.title), lb: clean(op.title), d: clean(op.description), m: get(op, 'method'), u: get(op, 'target'), mt: 'application/json',
       ro: null, de: null, ix: null, xr: null, co: [], in: inputs, cls: get(op, 'classification'), auth: (op['hydra:expectsHeader'] || []).some((h: Row) => h['hydra:headerName'] === 'Authorization' && h['hydra:required']) };
   }
-  check(nFx === 139 && Object.keys(actions).length - nFx === 51, nFx + ' bridge affordances and ' + (Object.keys(actions).length - nFx) + ' relay operations');
+  const bridgeSnapshot: Row[] = JSON.parse(readFileSync(join(EV, 'foxxi-affordances.json'), 'utf8'));
+  const expectedBridgeActions = new Set(bridgeSnapshot.filter(r => r.action).map(r => r.action)), expectedRelayActions = new Set(relayOps.map(r => r.action));
+  check(nFx === expectedBridgeActions.size && [...expectedBridgeActions].every(a => actions[a] && actions[a].sys !== 'relay') && expectedRelayActions.size === Object.keys(actions).length - nFx && [...expectedRelayActions].every(a => actions[a]?.sys === 'relay'), nFx + ' bridge affordances and ' + (Object.keys(actions).length - nFx) + ' relay operations match the actual snapshots');
   const enactments: Row[] = enact.subjects(RDF + 'type', NS + 'Enactment').map(s => {
     return { id: local(str(s), EN), c: local(str(enact.value(s, NS + 'enactedConcept')), CONCEPTS), a: str(enact.value(s, NS + 'viaAction')),
       r: local(str(enact.value(s, NS + 'enactmentRole')), NS + 'role-'), cf: Number(str(enact.value(s, NS + 'confidence'))), w: enact.text(s, NS + 'rationale'),
@@ -342,8 +344,7 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   // their declarative source wording and prove every row is present in the RDF graph.
   const roleCaps: Row[] = [];
   for (const [c, key, confidence, why] of cw.ROLE_CAPABILITIES) roleCaps.push({ c, a: ACTION_ROOT + key, note: confidence.toFixed(2) + ' — ' + why });
-  const foxxiSnapshot: Row[] = JSON.parse(readFileSync(join(EV, 'foxxi-affordances.json'), 'utf8'));
-  const foxxiByKey: Row = Object.fromEntries(foxxiSnapshot.filter(r => r.action).map(r => [r.action.split('/ns/iep/action/').pop(), r]));
+  const foxxiByKey: Row = Object.fromEntries(bridgeSnapshot.filter(r => r.action).map(r => [r.action.split('/ns/iep/action/').pop(), r]));
   for (const [tag, [c]] of Object.entries(cw.ROLE_TAGS)) {
     for (const key of Object.keys(foxxiByKey).filter(k => foxxiByKey[k].title.startsWith(tag)).sort()) {
       roleCaps.push({ c, a: ACTION_ROOT + key, note: 'derived: ' + tag + ' in manifest title' });

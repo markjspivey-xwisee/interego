@@ -32,9 +32,9 @@ jobs:
       INTEREGO_CORE_SRC: ${{ github.workspace }}/packages/core/src
       INTEREGO_TSX: ${{ github.workspace }}/node_modules/.bin/tsx
       I2IDLX_REASONER_JAR: ${{ github.workspace }}/applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
-      I2IDLX_BUILT_DATE: '2026-10-14'
-      I2IDLX_MODIFIED: '2026-10-14'
-      I2IDLX_NOW: '2026-10-14T00:00:00+00:00'
+      I2IDLX_BUILT_DATE: '2026-10-08'
+      I2IDLX_MODIFIED: '2026-10-13'
+      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
       I2IDLX_HERMIT: '1'
       PYTHONHASHSEED: '0'
       TZ: UTC
