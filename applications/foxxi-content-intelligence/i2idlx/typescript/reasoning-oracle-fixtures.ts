@@ -6,9 +6,10 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import type { Store } from 'n3';
-import { closure, objects, termKey, RDF, RDFS, OWL, XSD } from './reasoning.js';
+import { DataFactory, type Store } from 'n3';
+import { closure, objects, has, termKey, RDF, RDFS, OWL, XSD } from './reasoning.js';
 import { parseWithLiteralDatatypes, oracleLiteralDatatypes } from './literal-datatypes.js';
+const ERRNS='http://www.daml.org/2002/03/agents/agent-ont#';
 
 interface Summary {
   input: number; closed: number; errorReportTriples: number;
@@ -58,7 +59,8 @@ const schemaPredicates=new Set([RDFS+'subClassOf',RDFS+'subPropertyOf',OWL+'equi
 function summarize(input:Store,result:ReturnType<typeof closure>):Summary {
   const literals=[...new Map([...input].filter(q=>q.object.termType==='Literal').map(q=>[termKey(q.object),q.object])).values()];
   return {
-    input:input.size,closed:result.graph.size,errorReportTriples:0,
+    input:input.size,closed:result.graph.size,errorReportTriples:[...result.graph].filter(q=>
+      has(result.graph,q.subject,RDF+'type',DataFactory.namedNode(ERRNS+'ErrorMessage'))&&((q.predicate.value===RDF+'type'&&q.object.value===ERRNS+'ErrorMessage')||q.predicate.value===ERRNS+'error')).length,
     literalTypes:literals.map(l=>({value:l.value,language:l.termType==='Literal'?l.language.toLowerCase():'',
       types:objects(result.graph,l,RDF+'type').map(o=>o.value).sort()}))
       .sort((a,b)=>a.value<b.value?-1:a.value>b.value?1:a.language.localeCompare(b.language)),
@@ -67,10 +69,11 @@ function summarize(input:Store,result:ReturnType<typeof closure>):Summary {
     errors:result.errors,
   };
 }
-function difference(native:Summary,oracle:Summary):string|undefined {
+function difference(native:Summary,oracle:Summary,strictMetadata=false):string|undefined {
+  if(strictMetadata) {try{assert.deepEqual(native,oracle);return undefined;}catch(error){return String(error);}}
   try{
-    // OWL-RL appends error-report RDF after inference; native returns those
-    // same errors separately. Keep/report raw sizes, compare inference only.
+    // Default RDF/JS mode returns errors separately. Its inference comparison
+    // reports raw sizes; source-compatible mode above requires exact metadata.
     const {closed:nativeClosed,errorReportTriples:nativeReports,...nativeFacts}=native;
     const {closed:oracleClosed,errorReportTriples:oracleReports,...oracleFacts}=oracle;
     assert.deepEqual({...nativeFacts,closed:nativeClosed-nativeReports},{...oracleFacts,closed:oracleClosed-oracleReports});
@@ -89,7 +92,7 @@ for(const [name,body]of Object.entries(fixtures)) {
   let compatibility:Receipt['compatibility'];
   try {
     const result=summarize(input,closure(input,{datatypeOrigins:oracleLiteralDatatypes(input)}));
-    const compatibleDifference=difference(result,oracle);
+    const compatibleDifference=difference(result,oracle,true);
     compatibility={status:compatibleDifference?'different':'matched',native:result,...(compatibleDifference?{difference:compatibleDifference}:{})};
   } catch(error) {
     const expectedRefusal=name==='plain and explicit string with the same spelling'&&/unambiguous source datatype provenance/.test(String(error));
@@ -98,7 +101,7 @@ for(const [name,body]of Object.entries(fixtures)) {
   receipt.push({fixture:name,equal:defaultDifference===undefined,oracle,native,...(defaultDifference?{difference:defaultDifference}:{}),compatibility});
 }
 process.stdout.write('I2IDLX_REASONING_ORACLE_FIXTURES='+JSON.stringify({
-  oracle:{rdflib:'7.1.4',owlrl:'7.1.4'},comparison:{closed:'inference graph before separately represented error-report metadata',errors:'exact messages; no normalization'},fixtures:receipt,
+  oracle:{rdflib:'7.1.4',owlrl:'7.1.4'},comparison:{closed:'default inference graph separately reports metadata; compatible graph includes exact raw metadata counts',errors:'exact messages; no normalization'},fixtures:receipt,
 })+'\n');
 if(receipt.some(r=>r.compatibility.status==='different'||(r.compatibility.status==='refused'&&!r.compatibility.expectedRefusal)))
   process.exitCode=1;

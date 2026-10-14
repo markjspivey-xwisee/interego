@@ -249,6 +249,8 @@ import { signedActPayload } from './signed-act.js';
 import { loadRequestObservers } from './request-observers.js';
 import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
+import { selectDelegationSubject, cacheDelegationSubject, equivalentDelegationSubjects, canAutoRegisterPrincipal } from './delegation-subject.js';
+import { verifyPrincipalDelegation } from './principal-delegation.js';
 import { INVOKE_AFFORDANCE_OUTPUT, loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
 import { protectResourcePublication } from './resource-publication.js';
 import { readClientSigningKeys } from './client-signing-keys.js';
@@ -297,7 +299,6 @@ import {
   readAgentRegistry,
   writeDelegationCredential,
   readDelegationCredential,
-  verifyAgentDelegation,
   buildVerifyAgentEnvelope,
   fetchPodDirectory,
   publishPodDirectory,
@@ -1932,9 +1933,15 @@ interface DelegationAuthority {
   readonly basis: 'signed-chain' | 'registry-only' | 'none';
   /** Why the signed chain was not the basis, verbatim from the chain walk. */
   readonly chainReason: string | null;
+  /** Original registry/credential subject used to evaluate the authenticated principal. */
+  readonly registeredAgentId: string;
+  /** Legacy alias grants are never memoized across owner updates. */
+  readonly cacheable: boolean;
 }
 
 async function resolveDelegationAuthority(agentId: string, podUrl: string): Promise<DelegationAuthority> {
+  let subject = selectDelegationSubject(agentId, [], IDENTITY_URL);
+  let delegationAgentId = agentId;
   let scope: string | undefined;
   let valid = false;
   let basis: DelegationAuthority['basis'] = 'none';
@@ -1943,22 +1950,26 @@ async function resolveDelegationAuthority(agentId: string, podUrl: string): Prom
     // Prefer the more-recently-verified value: walk the signed chain (the relay always
     // has a verifier — see delegationVerifier above) so the scope we read is the one the
     // owner cryptographically attested to.
-    const verified = await verifyAgentDelegation(
+    const verified = await verifyPrincipalDelegation(
       agentId as IRI,
       podUrl,
-      { fetch: solidFetch, verifier: delegationVerifier },
+      { identityBaseUrl: IDENTITY_URL, fetch: solidFetch, verifier: delegationVerifier },
     );
+    subject = verified.delegationSubject;
+    delegationAgentId = subject.registered;
     valid = verified.valid;
     scope = verified.scope;
     if (valid) {
       basis = 'signed-chain';
     } else {
       chainReason = verified.reason ?? 'signed delegation chain did not anchor to the pod owner';
-      const registryOnly = await verifyAgentDelegation(
+      const registryOnly = await verifyPrincipalDelegation(
         agentId as IRI,
         podUrl,
-        { fetch: solidFetch },
+        { identityBaseUrl: IDENTITY_URL, fetch: solidFetch },
       );
+      subject = registryOnly.delegationSubject;
+      delegationAgentId = subject.registered;
       valid = registryOnly.valid;
       scope = registryOnly.scope ?? scope;
       if (valid) basis = 'registry-only';
@@ -1974,6 +1985,8 @@ async function resolveDelegationAuthority(agentId: string, podUrl: string): Prom
     writeEligible: valid && WRITE_ELIGIBLE_SCOPES.has(resolvedScope),
     basis,
     chainReason,
+    registeredAgentId: delegationAgentId,
+    cacheable: cacheDelegationSubject(valid, subject),
   };
 }
 
@@ -1998,15 +2011,17 @@ async function runScopeGate(
   const authority = await resolveDelegationAuthority(agentId, podUrl);
   const valid = authority.enforced;
   const resolvedScope = authority.scope;
-  if (agentScopeCache.size >= SCOPE_CACHE_MAX) {
-    const oldestKey = agentScopeCache.keys().next().value;
-    if (oldestKey !== undefined) agentScopeCache.delete(oldestKey);
+  if (authority.cacheable) {
+    if (agentScopeCache.size >= SCOPE_CACHE_MAX) {
+      const oldestKey = agentScopeCache.keys().next().value;
+      if (oldestKey !== undefined) agentScopeCache.delete(oldestKey);
+    }
+    agentScopeCache.set(key, {
+      scope: resolvedScope,
+      valid,
+      expiresAt: Date.now() + SCOPE_CACHE_TTL_MS,
+    });
   }
-  agentScopeCache.set(key, {
-    scope: resolvedScope,
-    valid,
-    expiresAt: Date.now() + SCOPE_CACHE_TTL_MS,
-  });
 
   if (valid && WRITE_ELIGIBLE_SCOPES.has(resolvedScope)) return { allowed: true };
   return {
@@ -2572,7 +2587,8 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       if (!profile) {
         profile = createOwnerProfile(ownerWebId as IRI, args.owner_name as string | undefined);
       }
-      const me = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked);
+      const registrationSubject = selectDelegationSubject(agentId, profile.authorizedAgents, IDENTITY_URL);
+      const me = profile.authorizedAgents.find(a => a.agentId === registrationSubject.registered && !a.revoked);
       let registeredOk = false;
       // R2a — SELF-GRANT GATE. The auto-register below hands the caller ReadWrite
       // plus a relay-signed delegation VC on `podUrl`, and it runs ~180 lines BEFORE
@@ -2583,10 +2599,11 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       // genuinely delegated agent (shared-commons demos) keeps working — it simply
       // can no longer mint its own delegation on the way in.
       const selfGrantOk = !(await requireOwnPod(args, podUrl, 'publish_context:self-grant'));
-      if (!me && !selfGrantOk) {
-        log(`[SECURITY] publish_context: refused self-grant of ReadWrite on ${podUrl} — not the caller's pod; falling through to the scope gate`);
+      const maySelfRegister = canAutoRegisterPrincipal(selfGrantOk, registrationSubject);
+      if (!me && !maySelfRegister) {
+        log(`[SECURITY] publish_context: refused self-grant of ReadWrite on ${podUrl} — not an absent principal on the caller's own pod; falling through to the scope gate`);
       }
-      if (!me && selfGrantOk) {
+      if (!me && maySelfRegister) {
         // Auto-register: this agent authenticated against identity server (so
         // the OAuth token proves key-possession). Safe to add to the pod's
         // authorized-agent list automatically.
@@ -2623,7 +2640,10 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         relayProfileCache.delete(podUrl);
         registeredOk = true;
         await credentialWrite;
-      } else if (me.encryptionPublicKey !== encryptionKeyToRecord(undefined, me.encryptionPublicKey, agentId)) {
+      } else if (me && me.agentId !== agentId) {
+        // Consume a legacy alias grant without rewriting its subject, scope, credential or key.
+        registeredOk = true;
+      } else if (me && me.encryptionPublicKey !== encryptionKeyToRecord(undefined, me.encryptionPublicKey, agentId)) {
         const updated = {
           ...profile,
           authorizedAgents: Object.freeze(
@@ -2637,7 +2657,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
         relayProfileCache.delete(podUrl);
         registeredOk = true;
-      } else {
+      } else if (me) {
         registeredOk = true;
       }
       if (registeredOk) {
@@ -2727,10 +2747,10 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       let chainVerified = false;
       if (requestedCompliance) {
         try {
-          const verifyResult = await verifyAgentDelegation(
+          const verifyResult = await verifyPrincipalDelegation(
             agentId as IRI,
             podUrl,
-            { fetch: solidFetch, verifier: delegationVerifier },
+            { identityBaseUrl: IDENTITY_URL, fetch: solidFetch, verifier: delegationVerifier },
           );
           chainVerified = verifyResult.valid && verifyResult.trustLevel === 'CryptographicallyVerified';
           if (!chainVerified) {
@@ -4797,11 +4817,11 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
           // verdict can never turn out to be about two different pods.
           const inferredPodUrl = servingPodRoot ?? undefined;
           if (inferredPodUrl) {
-            const chainResult = await verifyAgentDelegation(
+            const chainResult = await verifyPrincipalDelegation(
               parsedProof.issuer,
               inferredPodUrl,
               // caller-derived pod URL (R4): screen every redirect hop
-              { fetch: guardedInvokeFetch, verifier: delegationVerifier },
+              { identityBaseUrl: IDENTITY_URL, fetch: guardedInvokeFetch, verifier: delegationVerifier },
             );
             if (chainResult.valid && chainResult.trustLevel === 'CryptographicallyVerified') {
               effective = 'CryptographicallyVerified';
@@ -6094,10 +6114,10 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
   // is fetched, its proof is checked against the owner's wallet key,
   // and any sub-delegation chain is walked to the pod owner before a
   // `CryptographicallyVerified` label is returned.
-  const result = await verifyAgentDelegation(
+  const result = await verifyPrincipalDelegation(
     (args.agent_id as string) as IRI,
     podUrl,
-    { fetch: solidFetch, verifier: delegationVerifier },
+    { identityBaseUrl: IDENTITY_URL, fetch: solidFetch, verifier: delegationVerifier },
   );
   // ★ AND WHAT THE RELAY WILL ACTUALLY DO, from the same resolution the publish gate runs.
   // `verified` above answers "does the signed chain anchor?" — callers read it as "does this
@@ -6137,12 +6157,14 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
   const signing = await (async (): Promise<Record<string, unknown>> => {
     try {
       const relayAnchor = (await ensureRelayComplianceWallet()).wallet.address;
-      const vc = await readDelegationCredential(podUrl, (args.agent_id as string) as IRI, { fetch: solidFetch })
+      const credentialAgentId = result.delegationSubject.registered as IRI;
+      const vc = await readDelegationCredential(podUrl, credentialAgentId, { fetch: solidFetch })
         .catch(() => null);
       const credentialAnchor = vc?.proof?.signerAddress;
       const matches = !!credentialAnchor && credentialAnchor.toLowerCase() === relayAnchor.toLowerCase();
       return {
         relayAnchor,
+        credentialAgentId,
         credentialAnchor: credentialAnchor ?? null,
         canSignDelegatedRequests: matches,
         note: !credentialAnchor
@@ -9500,10 +9522,15 @@ async function handleRevokeAgent(args: ToolArgs): Promise<string> {
   { const denied = await requireOwnPod(args, podUrl, 'revoke_agent'); if (denied) return denied; }
   let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
   if (!profile) return JSON.stringify({ error: 'No registry found' });
-  profile = removeAuthorizedAgent(profile, (args.agent_id as string) as IRI);
+  const revokedSubjects = equivalentDelegationSubjects(String(args.agent_id), profile.authorizedAgents, IDENTITY_URL);
+  for (const target of revokedSubjects) profile = removeAuthorizedAgent(profile, target as IRI);
   await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
   relayProfileCache.delete(podUrl);
-  return JSON.stringify({ revoked: true, agent: args.agent_id });
+  for (const target of revokedSubjects) {
+    agentScopeCache.delete(`${podUrl}|${target}`);
+    agentRegistrationCache.delete(`${podUrl}|${target}`);
+  }
+  return JSON.stringify({ revoked: true, agent: args.agent_id, revokedSubjects });
 }
 
 // ── Federation: subscription management ─────────────────────
@@ -15985,14 +16012,20 @@ app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
       res.status(403).json({ error: `Agent registry owner ${profile.webId} does not match token user's WebID` });
       return;
     }
-    const found = profile.authorizedAgents.find(a => a.agentId === agentIri && !a.revoked);
+    const revokedSubjects = equivalentDelegationSubjects(agentIri, profile.authorizedAgents, IDENTITY_URL);
+    const found = profile.authorizedAgents.find(a => revokedSubjects.includes(a.agentId) && !a.revoked);
     if (!found) {
       res.status(404).json({ error: `Agent ${agentIri} not present (or already revoked) in this pod's registry` });
       return;
     }
-    const updated = removeAuthorizedAgent(profile, agentIri);
+    let updated = profile;
+    for (const target of revokedSubjects) updated = removeAuthorizedAgent(updated, target as IRI);
     await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
     relayProfileCache.delete(podUrl);
+    for (const target of revokedSubjects) {
+      agentScopeCache.delete(`${podUrl}|${target}`);
+      agentRegistrationCache.delete(`${podUrl}|${target}`);
+    }
     const remaining = updated.authorizedAgents.filter(a => !a.revoked).length;
 
     // Emit a SOC 2 access-change descriptor — every agent revocation
@@ -16021,6 +16054,7 @@ app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
     res.json({
       revoked: true,
       agentIri,
+      revokedSubjects,
       remaining,
       ...(auditEvent ? { audit: auditEvent } : {}),
       ...(auditWarning ? { auditWarning } : {}),

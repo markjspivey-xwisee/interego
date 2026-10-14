@@ -8,3 +8,5 @@ benchmarks/LongMemEval
 benchmarks/locomo
 .claude
 relay-agent-key-prod.json
+# The native I2IDL-X builder restores these byte-pinned inputs; local caches must not enter bridge-base.
+applications/foxxi-content-intelligence/i2idlx/.cache

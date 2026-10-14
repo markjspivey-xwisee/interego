@@ -148,6 +148,10 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
   progress('reasoning:owlrl', 'start', { inputTriples: data.size, maxRounds: options.maxRounds ?? 1000, maxTriples: options.maxTriples ?? 2000000 });
   const g = union(data), errors = new Set<string>(), unsupported = new Set<string>();
   const oracleCompatible=options.datatypeOrigins!==undefined;
+  // Compatibility is verified for the pinned build and supported fixtures.
+  // RDFLib appends multiple additional Nothing errors in graph iteration order;
+  // native keeps sorted errors, and strict parity checks retain that limitation.
+  const oracleZeroReports=new Set<string>(),layerNothingErrors=new Set<string>();
   const T = RDF+'type', SC = RDFS+'subClassOf', SP = RDFS+'subPropertyOf', SA = OWL+'sameAs';
   // N3 invalidates its cached size on insertion; reading it for every
   // inferred quad rescans the whole store. This store is mutated only here
@@ -180,6 +184,14 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
     usedDt.add(dt); add(l,T,nn(dt));
     const ok=validLexical(l);
     if (ok === false) errors.add("Lexical value of the literal '" + l.value + "' does not match its datatype (" + dt + ')');
+    // owlrl 7.1.4's alternate double/float converter rejects IEEE zero.
+    // The retained layer filters that message from errors but leaves its
+    // post-saturation ERRNS RDF in the graph. Reproduce only that footprint
+    // in the explicit source-compatible analysis; ordinary zero stays valid.
+    if(oracleCompatible&&ok===true&&(dt===XSD+'double'||dt===XSD+'float')&&Number(l.value.trim())===0) {
+      const lexical=Object.is(Number(l.value.trim()),-0)?'-0.0':'0.0';
+      oracleZeroReports.add("Lexical value of the literal '"+lexical+"' does not match its datatype ("+dt+')');
+    }
     if (ok === null) unsupported.add('Lexical validator unavailable: '+dt);
     for (const parent of subsumptions[dt.slice(XSD.length)] ?? []) { add(l,T,nn(XSD+parent)); usedDt.add(XSD+parent); }
   }
@@ -340,7 +352,11 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
     }
     if(p===SA && (has(g,s,OWL+'differentFrom',o)||has(g,o,OWL+'differentFrom',s)))
       errors.add("'sameAs' and 'differentFrom' cannot be used on the same subject-object pair: ("+s.value+', '+o.value+')');
-    if(p===T && o.value===OWL+'Nothing') errors.add(s.value+' is owl:Nothing');
+    if(p===T && o.value===OWL+'Nothing') {
+      const layerMessage=s.value+' is owl:Nothing';
+      errors.add(layerMessage);layerNothingErrors.add(layerMessage);
+      if(oracleCompatible)errors.add(s.value+" is defined of type 'Nothing'");
+    }
     if(p===T && [OWL+'AllDisjointClasses',OWL+'AllDisjointProperties',OWL+'AllDifferent'].includes(o.value)) {
       for(const head of [...objects(g,s,OWL+'members'),...objects(g,s,OWL+'distinctMembers')]) {
         const items=rdfList(g,head);
@@ -369,7 +385,26 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
       }
   }
   // Generalized blank-node predicate triples may participate in rules; never publish them.
-  for(const q of [...g]) if(q.predicate.termType!=='NamedNode') g.removeQuad(q);
+  // Keep saturation's peak guards intact, then count the actual post-process
+  // removals before inserting reports, matching Python's post_process order.
+  for(const q of [...g]) if(q.predicate.termType!=='NamedNode') {g.removeQuad(q);tripleCount--;}
+  if(oracleCompatible) {
+    // Closure.py appends two report triples per distinct OWL-RL message only
+    // after rule saturation. These nodes must never enter the inference loop.
+    // layer.py's additional owl:Nothing strings have no OWL-RL report node.
+    const reports=new Set([...errors].filter(message=>!layerNothingErrors.has(message)));
+    for(const message of oracleZeroReports)reports.add(message);
+    const ERRNS='http://www.daml.org/2002/03/agents/agent-ont#';
+    for(const message of [...reports].sort()) {
+      let node=DataFactory.blankNode();
+      while(g.countQuads(node,null,null,null)||g.countQuads(null,node,null,null)||g.countQuads(null,null,node,null))
+        node=DataFactory.blankNode();
+      // Use the same exact novel-insertion counter and maxTriples guard as
+      // every other quad; this is real metadata, never a count adjustment.
+      add(node,T,nn(ERRNS+'ErrorMessage'));
+      add(node,ERRNS+'error',literal(message));
+    }
+  }
   progress('reasoning:owlrl', 'end', { rounds, triples: g.size, errors: errors.size, seconds: (Date.now() - closureStarted) / 1000 });
   return { graph:g,errors:[...errors].sort(),rounds,coverage:{mode:oracleCompatible?'native-owlrl-oracle-compatible':'native-owlrl-rdfjs',unsupported:[...unsupported].sort(),completeDatatypeEntailment:false} };
 }

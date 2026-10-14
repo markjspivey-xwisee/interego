@@ -7,6 +7,8 @@ on:
     paths:
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-parity-probe.ts'
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-probe-input*'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-probe-reports*'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-footprint*'
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning.ts'
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/literal-datatypes.ts'
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/rdf.ts'
@@ -66,8 +68,9 @@ jobs:
       - name: Verify private normalization and the actual independent literal conversion
         timeout-minutes: 1
         run: |
-          npx tsx --test "$I2IDLX_ROOT/typescript/reasoning-probe-input.test.ts"
+          npx tsx --test "$I2IDLX_ROOT/typescript/reasoning-probe-input.test.ts" "$I2IDLX_ROOT/typescript/reasoning-probe-reports.test.ts" "$I2IDLX_ROOT/typescript/reasoning-footprint.test.ts"
           npx tsx "$I2IDLX_ROOT/typescript/reasoning-probe-input-fixtures.ts"
+          npx tsx "$I2IDLX_ROOT/typescript/reasoning-footprint-fixtures.ts" "$I2IDLX_ROOT"
       - name: Cache only retained pinned input bytes
         uses: actions/cache@v4
         with:

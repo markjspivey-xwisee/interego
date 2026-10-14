@@ -61,31 +61,40 @@ jobs:
             const expectedPr = context.payload.pull_request?.number;
             if (!id) {
               if (!expectedSha) throw new Error('Select a completed native or golden workflow run ID.');
-              const listing = await github.rest.actions.listWorkflowRunsForRepo({
-                owner, repo, head_sha: expectedSha, event: 'pull_request', per_page: 100
-              });
-              const runs = listing.data.workflow_runs.filter(run => run.head_sha === expectedSha);
-              const nativeRuns = runs.filter(run => run.name === 'I2IDL-X bounded native diagnostic');
-              const goldenRuns = runs.filter(run => run.name === 'I2IDL-X complete golden parity');
-              const eligible = [
-                ...nativeRuns.filter(run => run.status === 'completed' && run.conclusion === 'success'),
-                ...goldenRuns.filter(run => run.status === 'completed')
-              ];
+              // Only automatic PR selection waits. Explicit IDs and workflow_run
+              // events still require their named build to be eligible immediately.
+              const waitForPr = Boolean(context.payload.pull_request);
+              const deadline = Date.now() + (waitForPr ? 8 * 60 * 1000 : 0);
               let selected;
-              for (const candidate of eligible) {
-                const prefix = candidate.name === 'I2IDL-X bounded native diagnostic' ?
-                  'i2idlx-native-diagnostic-' : 'i2idlx-golden-parity-';
-                const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({
-                  owner, repo, run_id: candidate.id, per_page: 100
+              for (;;) {
+                const listing = await github.rest.actions.listWorkflowRunsForRepo({
+                  owner, repo, head_sha: expectedSha, event: 'pull_request', per_page: 100
                 });
-                if (artifacts.artifacts.some(artifact => artifact.name === prefix + candidate.id && !artifact.expired)) {
-                  selected = candidate;
-                  break;
+                const runs = listing.data.workflow_runs.filter(run => run.head_sha === expectedSha);
+                const eligible = [
+                  ...runs.filter(run => run.name === 'I2IDL-X bounded native diagnostic' &&
+                    run.status === 'completed' && run.conclusion === 'success'),
+                  ...runs.filter(run => run.name === 'I2IDL-X complete golden parity' && run.status === 'completed')
+                ];
+                for (const candidate of eligible) {
+                  const prefix = candidate.name === 'I2IDL-X bounded native diagnostic' ?
+                    'i2idlx-native-diagnostic-' : 'i2idlx-golden-parity-';
+                  const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({
+                    owner, repo, run_id: candidate.id, per_page: 100
+                  });
+                  if (artifacts.artifacts.some(artifact => artifact.name === prefix + candidate.id && !artifact.expired)) {
+                    selected = candidate;
+                    break;
+                  }
                 }
+                if (selected) break;
+                const remaining = deadline - Date.now();
+                if (!waitForPr || remaining <= 0) throw new Error('No completed native or golden outputs are available for this exact head within the bounded wait. Retry only this UI job after native outputs are uploaded.');
+                const delay = Math.min(30 * 1000, remaining);
+                core.info('Waiting for completed outputs from source ' + expectedSha +
+                  '; ' + Math.ceil(remaining / 1000) + ' seconds remain. Rechecking in ' + Math.ceil(delay / 1000) + ' seconds.');
+                await new Promise(resolve => setTimeout(resolve, delay));
               }
-              selected ||= nativeRuns.find(run => run.status !== 'completed') ||
-                goldenRuns.find(run => run.status !== 'completed');
-              if (!selected) throw new Error('No completed native or golden outputs are available for this exact head. Retry only this UI job after native outputs are uploaded.');
               id = selected.id;
             }
             if (!/^[0-9]+$/.test(String(id))) throw new Error('A real build workflow run ID is required.');

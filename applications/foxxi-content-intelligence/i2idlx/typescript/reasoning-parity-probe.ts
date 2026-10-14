@@ -15,6 +15,7 @@ import { generate } from './generate.js';
 import { parseWithLiteralDatatypes, addQuadsWithLiteralDatatypes, oracleLiteralDatatypes } from './literal-datatypes.js';
 import { closure, union, termKey } from './reasoning.js';
 import { safeIri } from './rdf.js';
+import { matchFreshReportNodes } from './reasoning-probe-reports.js';
 import { sourceLiteralRecords, applyOracleLiteralNormalizations, type OracleLiteralNormalization } from './reasoning-probe-input.js';
 
 const pythonProgram=String.raw`
@@ -108,14 +109,18 @@ export async function probeReasoning(root=DEFAULT_ROOT):Promise<void> {
     process.exitCode=1;return;
   }
   const started=Date.now(),native=closure(analysisInput,{datatypeOrigins:normalized.datatypeOrigins});
-  const nativeKeys=new Set([...native.graph].map(q=>tripleKey([q.subject,q.predicate,q.object]))),oracleKeys=new Set(oracle.keys);
-  const missing=oracle.keys.filter(k=>!nativeKeys.has(k)),extra=[...nativeKeys].filter(k=>!oracleKeys.has(k)).sort();
+  const rawNativeKeys=[...native.graph].map(q=>tripleKey([q.subject,q.predicate,q.object])),rawNative=new Set(rawNativeKeys),rawOracle=new Set(oracle.keys);
+  const rawDifference={missing:oracle.keys.filter(key=>!rawNative.has(key)).map(key=>JSON.parse(key)),
+    extra:rawNativeKeys.filter(key=>!rawOracle.has(key)).sort().map(key=>JSON.parse(key))};
+  await writeFile(join(output,'raw-closed-difference.json'),JSON.stringify(rawDifference,null,2)+'\n');
+  const matched=matchFreshReportNodes(rawNativeKeys,oracle.keys,labels),nativeKeys=new Set(matched.native),oracleKeys=new Set(matched.python);
+  const missing=matched.python.filter(k=>!nativeKeys.has(k)),extra=[...nativeKeys].filter(k=>!oracleKeys.has(k)).sort();
   const report={sourceInput:input.size,input:analysisInput.size,changedLiteralForms:normalized.changedLiteralForms,python:{closed:oracle.closed,errors:oracle.errors,seconds:oracle.seconds},
     native:{closed:native.graph.size,errors:native.errors,seconds:(Date.now()-started)/1000},
-    missing:missing.map(k=>JSON.parse(k)),extra:extra.map(k=>JSON.parse(k))};
+    diagnosticNodePairs:matched.pairs,missing:missing.map(k=>JSON.parse(k)),extra:extra.map(k=>JSON.parse(k))};
   await writeFile(join(output,'reasoning-difference.json'),JSON.stringify(report,null,2)+'\n');
   process.stdout.write('I2IDLX_REASONING_SHARED_INPUT_DIFF='+JSON.stringify({...report,missing:report.missing.slice(0,80),extra:report.extra.slice(0,80)})+'\n');
-  if(missing.length||extra.length||JSON.stringify(oracle.errors)!==JSON.stringify(native.errors))
+  if(oracle.closed!==native.graph.size||missing.length||extra.length||JSON.stringify(oracle.errors)!==JSON.stringify(native.errors))
     process.exitCode=1;
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href)await probeReasoning(process.argv[2]);
