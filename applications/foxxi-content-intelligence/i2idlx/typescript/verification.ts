@@ -8,7 +8,7 @@ import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 import type {BuildResult} from './generate.js';
 import {reconcile,KIND_CODES} from './history.js';
-import {closure,objects,subjects,has,union,rdfList,RDF,RDFS,OWL,XSD,termKey,reasonerJar,hermit,wideningRisks} from './reasoning.js';
+import {closure,objects,subjects,has,union,rdfList,RDF,RDFS,OWL,termKey,reasonerJar,hermit,wideningRisks} from './reasoning.js';
 import {shaclValidate,shaclRules} from './validation.js';
 
 const {namedNode:nn,quad}=DataFactory;
@@ -131,12 +131,12 @@ export async function validateBuild(build:BuildResult,options:{skipHermit?:boole
   check(eventCount===changeCount,'all '+eventCount+' fact-level history events are preserved');
   check(['concept-added','definition-revised','source-revised','relationship-added','membership-added','evidence-reclassified','external-mapping-added'].every(k=>KIND_CODES.includes(k)),'all roadmap history event types have a change kind');
   const fx=cfg.foxxiNs,archive=process.env.FOXXI_NS_ARCHIVE??(isAbsolute(fx.archive)?fx.archive:resolve(root,fx.archive));
-  const foxxiGraphs:Store[]=[],fxBytes=new Map<string,Uint8Array>();
+  const foxxiGraphs:Store[]=[];
   let archiveSums=new Map<string,string>();
   try{archiveSums=new Map((await readFile(resolve(archive,'SHA256SUMS'),'utf8')).split(/\r?\n/).filter(Boolean).map(s=>{const [h,...p]=s.trim().split(/\s+/);return [p.join(' '),h!];}));}
   catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
   for(const module of fx.modules) {
-    const file=resolve(archive,module,fx.version+'.ttl'),bytes=await readFile(file);fxBytes.set(module,bytes);
+    const file=resolve(archive,module,fx.version+'.ttl'),bytes=await readFile(file);
     const graph=parse(bytes.toString('utf8'),pathToFileURL(file).href);foxxiGraphs.push(graph);
     check(sha(bytes)===fx.sha256[module]&&(!archiveSums.size||archiveSums.get(module+'/'+fx.version+'.ttl')===sha(bytes)),module+' released ontology is byte-for-byte pinned');
     check(setEq([...graph.getQuads(null,nn(OWL+'versionIRI'),null,null)].map(q=>q.object.value),[fx.base+'/'+module+'/'+fx.version]),module+' declares pinned version IRI');

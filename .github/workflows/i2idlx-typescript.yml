@@ -64,3 +64,19 @@ jobs:
           python3 -I "$ROOT/typescript/history-parity.py" "$I2IDL_CLONE" public/glossary.jsonld .cache/python-history.json
           npx tsx "$ROOT/typescript/history-parity.ts" "$I2IDL_CLONE" public/glossary.jsonld .cache/typescript-history.json
           node --input-type=module -e "import fs from 'node:fs'; import assert from 'node:assert/strict'; assert.deepEqual(JSON.parse(fs.readFileSync('.cache/typescript-history.json','utf8')), JSON.parse(fs.readFileSync('.cache/python-history.json','utf8'))); process.stdout.write('Every history snapshot, event and reconciliation matches\\n');"
+
+  decorations:
+    name: Freeze all five decoration publication inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      - run: npm run build
+      - run: npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/decoration-snapshot.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: decoration-snapshot
+          path: applications/foxxi-content-intelligence/i2idlx/dist-ts/decoration-snapshot.json

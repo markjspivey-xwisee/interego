@@ -12,6 +12,7 @@ import { loadConfig } from './config.js';
 import * as hist from './history.js';
 import * as SEMM from './semantic.js';
 import { safeIri } from './rdf.js';
+import { cw } from './generate.js';
 
 // JSON input is verified at the projection boundary; its values may be heterogeneous.
 type Value = ReturnType<typeof JSON.parse>;
@@ -324,8 +325,8 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
       ro: null, de: null, ix: null, xr: null, co: [], in: inputs, cls: get(op, 'classification'), auth: (op['hydra:expectsHeader'] || []).some((h: Row) => h['hydra:headerName'] === 'Authorization' && h['hydra:required']) };
   }
   check(nFx === 139 && Object.keys(actions).length - nFx === 51, nFx + ' bridge affordances and ' + (Object.keys(actions).length - nFx) + ' relay operations');
-  const enactments: Row[] = [...enact.source.matchAll(/^en:([A-Za-z0-9_.-]+) a i2x:Enactment/gm)].map(m => {
-    const s = EN + m[1]!; return { id: m[1]!, c: local(str(enact.value(s, NS + 'enactedConcept')), CONCEPTS), a: str(enact.value(s, NS + 'viaAction')),
+  const enactments: Row[] = enact.subjects(RDF + 'type', NS + 'Enactment').map(s => {
+    return { id: local(str(s), EN), c: local(str(enact.value(s, NS + 'enactedConcept')), CONCEPTS), a: str(enact.value(s, NS + 'viaAction')),
       r: local(str(enact.value(s, NS + 'enactmentRole')), NS + 'role-'), cf: Number(str(enact.value(s, NS + 'confidence'))), w: enact.text(s, NS + 'rationale'),
       s: local(str(enact.value(s, NS + 'reviewStatus')), NS + 'status-'), m: local(str(enact.value(s, NS + 'mappingMethod')), NS + 'method-') };
   });
@@ -337,19 +338,28 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   const inherited = deco.pairs(NS + 'inheritedEnactedBy').map(([s, o]) => { const c = local(str(s), CONCEPTS), a = str(o); return { c, a, via: ancestorsOf(c).find(anc => direct.has(JSON.stringify([anc, a]))) || null }; })
     .sort((a, b) => a.c < b.c ? -1 : a.c > b.c ? 1 : a.a < b.a ? -1 : a.a > b.a ? 1 : 0);
   check(inherited.length === 7 && inherited.every(r => r.via), '7 inherited enactments, each traced to the broader concept that enacts it');
-  const roleCaps = [...enact.source.matchAll(/^i2idl:([A-Za-z0-9-]+) i2x:roleCapability (fxa|rla):([A-Za-z0-9_-]+) \.\s+#\s*(.*)$/gm)].map(m => ({
-    c: m[1]!, a: ACTION_ROOT + (m[2]! === 'fxa' ? 'foxxi/' : 'relay/') + m[3]!, note: m[4]!.trim(),
-  }));
+  // The descriptive notes were Turtle comments in the Python projection. Preserve
+  // their declarative source wording and prove every row is present in the RDF graph.
+  const roleCaps: Row[] = [];
+  for (const [c, key, confidence, why] of cw.ROLE_CAPABILITIES) roleCaps.push({ c, a: ACTION_ROOT + key, note: confidence.toFixed(2) + ' — ' + why });
+  const foxxiSnapshot: Row[] = JSON.parse(readFileSync(join(EV, 'foxxi-affordances.json'), 'utf8'));
+  const foxxiByKey: Row = Object.fromEntries(foxxiSnapshot.filter(r => r.action).map(r => [r.action.split('/ns/iep/action/').pop(), r]));
+  for (const [tag, [c]] of Object.entries(cw.ROLE_TAGS)) {
+    for (const key of Object.keys(foxxiByKey).filter(k => foxxiByKey[k].title.startsWith(tag)).sort()) {
+      roleCaps.push({ c, a: ACTION_ROOT + key, note: 'derived: ' + tag + ' in manifest title' });
+    }
+  }
+  check(roleCaps.every(r => enact.objects(CONCEPTS + r.c, NS + 'roleCapability').some(o => str(o) === r.a)), 'every role capability note describes a triple in the generated graph');
   check(roleCaps.length === 26 && roleCaps.every(r => r.a in actions), '26 role capabilities, all live actions');
   const mappings: Row[] = [], adoptedOf = new Map<string, string>(); let nSuperseded = 0;
-  for (const m of maps.source.matchAll(/^mp:([A-Za-z0-9_.-]+) a i2x:MappingProposal/gm)) {
-    const s = MP + m[1]!, status = str(maps.value(s, NS + 'reviewStatus'));
+  for (const s of maps.subjects(RDF + 'type', NS + 'MappingProposal')) {
+    const id = local(str(s), MP), status = str(maps.value(s, NS + 'reviewStatus'));
     if (status === NS + 'status-superseded') { nSuperseded++; continue; }
     const c = local(str(maps.value(s, NS + 'proposedSubject')), CONCEPTS), obj = str(maps.value(s, NS + 'proposedObject'));
-    if (status === NS + 'status-adopted') { adoptedOf.set(JSON.stringify([c, obj]), m[1]!); continue; }
+    if (status === NS + 'status-adopted') { adoptedOf.set(JSON.stringify([c, obj]), id); continue; }
     const term = extTerms[obj] || {}, vocab = VOCABS.find(([ns]) => obj.startsWith(ns));
     if (!vocab) throw new Error('Unknown mapping target vocabulary: ' + obj);
-    const rec: Row = { id: m[1]!, c, p: str(maps.value(s, NS + 'proposedPredicate')).split('#').pop(), o: obj, v: vocab[1], ol: get(term, 'label'), od: term.definition ? term.definition.replace(/\[\[([^\]]+)\]\]/g, '$1') : term.definition ?? null,
+    const rec: Row = { id, c, p: str(maps.value(s, NS + 'proposedPredicate')).split('#').pop(), o: obj, v: vocab[1], ol: get(term, 'label'), od: term.definition ? term.definition.replace(/\[\[([^\]]+)\]\]/g, '$1') : term.definition ?? null,
       cf: Number(str(maps.value(s, NS + 'confidence'))), w: maps.text(s, NS + 'rationale'), s: local(status, NS + 'status-'), m: local(str(maps.value(s, NS + 'mappingMethod')), NS + 'method-') };
     const cited = maps.value(s, NS + 'citedIn');
     if (cited) { rec.ci = str(cited); rec.pg = str(maps.value(s, RDFS + 'seeAlso')); rec.oa = term.alt || []; if (term.noteKind) rec.on = term.noteKind; }
@@ -438,9 +448,7 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   }
   check(unescoGroups.filter(g => g.only).length === 3, unescoGroups.length + ' UNESCO microthesaurus citations; 3 concepts cite only a group');
   const unescoMeta = { scheme: unesco.scheme, fetchedAt: unesco.fetchedAt, groups: unescoGroups };
-  const listing = /iep:affordance(.*?);\s*\n\s*rdfs:seeAlso/su.exec(cat.source)?.[1];
-  if (!listing) throw new Error('Catalog affordance listing not found');
-  const order = [...listing.matchAll(/cat:([A-Za-z0-9_-]+)/g)].map(m => m[1]!);
+  const order = cat.objects(IRI.catalog, IEP + 'affordance').map(n => local(str(n), CAT));
   const shapeProps = (shape: Term): Row[] => cat.objects(shape, SH + 'property').map(p => ({
     n: cat.text(p, SH + 'name') || str(cat.value(p, SH + 'path')).split('#').pop(), req: Number(str(cat.value(p, SH + 'minCount') || { value: '0', termType: 'Literal' })) >= 1,
     c: cat.text(p, SH + 'description'), def: cat.text(p, SH + 'defaultValue'), pat: cat.text(p, SH + 'pattern'), max: Number(str(cat.value(p, SH + 'maxLength') || { value: '0', termType: 'Literal' })) || null,
@@ -461,11 +469,11 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   const samples: Row = { 'concept-neighborhood': { concept: 'learning-record-store-lrs' }, 'concept-search': { text: 'record store' }, 'definition-evidence': { concept: 'data-privacy' },
     'collection-members': { collection: 'curated/competency-and-assessment' }, 'field-intersection': { fieldA: 'field/learning-engineering', fieldB: 'field/learning-sciences' },
     'concepts-by-type': { type: 'type/standard' }, 'multi-field-concepts': {}, 'provenance-profile': {}, 'release-check': { version: release }, classify: {}, 'concept-referents': { concept: 'formative-assessment' } };
-  const queries = [...cat.source.matchAll(/^cat:(q-[A-Za-z0-9-]+) a i2x:StoredQuery/gm)].map(m => {
-    const s = CAT + m[1]!, sparql = str(cat.value(s, NS + 'sparql')), name = m[1]!.slice(2);
+  const queries = cat.subjects(RDF + 'type', NS + 'StoredQuery').map(s => {
+    const id = local(str(s), CAT), sparql = str(cat.value(s, NS + 'sparql')), name = id.slice(2);
     const params = uniq(cat.objects(s, NS + 'parameter').map(str)).sort((a, b) => sparql.indexOf('$' + a) - sparql.indexOf('$' + b));
     const over = sort(cat.objects(s, NS + 'runsOver').map(o => str(o).split('#').pop()!)), q: Row = {
-      id: m[1]!, name, label: cat.text(s, RDFS + 'label'), desc: cat.text(s, DCT + 'description'), form: str(cat.value(s, NS + 'queryForm')), sparql, params, sample: samples[name],
+      id, name, label: cat.text(s, RDFS + 'label'), desc: cat.text(s, DCT + 'description'), form: str(cat.value(s, NS + 'queryForm')), sparql, params, sample: samples[name],
     }; if (over.length) q.over = over; return q;
   });
   check(queries.length === 11 && queries.filter(q => q.over).length === 2, '11 stored queries, 2 client-side over semantic-layer ports');

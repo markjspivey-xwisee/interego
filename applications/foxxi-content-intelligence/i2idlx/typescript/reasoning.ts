@@ -159,7 +159,7 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
   const topTypes=['anyURI','base64Binary','boolean','dateTime','decimal','double','float','hexBinary','string'].map(x=>XSD+x)
     .concat([RDF+'PlainLiteral',RDF+'XMLLiteral']);
   for (let i=0;i<topTypes.length;i++) for(let j=i+1;j<topTypes.length;j++) {
-    if (topTypes[i]!===XSD+'string' && topTypes[j]!===RDF+'PlainLiteral') continue;
+    if (topTypes[i]! ===XSD+'string' && topTypes[j]! ===RDF+'PlainLiteral') continue;
     if (usedDt.has(topTypes[i]!) && usedDt.has(topTypes[j]!)) add(nn(topTypes[i]!),OWL+'disjointWith',nn(topTypes[j]!));
   }
   if (options.strictDatatypes && unsupported.size) throw new Error([...unsupported].join('; '));
@@ -289,7 +289,7 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
         }
         if(a.datatype.value===XSD+'double'||a.datatype.value===XSD+'float') {
           const number=(v:string)=>v==='INF'?Infinity:v==='-INF'?-Infinity:Number(v);
-          const av=number(a.value),bv=number(b.value);return av===bv||(Number.isNaN(av)&&Number.isNaN(bv));
+          const av=a.datatype.value===XSD+'float'?Math.fround(number(a.value)):number(a.value),bv=b.datatype.value===XSD+'float'?Math.fround(number(b.value)):number(b.value);return av===bv||(Number.isNaN(av)&&Number.isNaN(bv));
         }
         if(a.datatype.value===XSD+'string'||a.datatype.value===RDF+'langString')return a.value===b.value&&a.language.toLowerCase()===b.language.toLowerCase();
         return null;
