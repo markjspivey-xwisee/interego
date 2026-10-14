@@ -6,6 +6,8 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { refreshEvidence } from './refresh-evidence.js';
 import type { BuildConfig } from './config.js';
+import { parseTurtle } from './rdf.js';
+import { publicationReceiptMetadata } from './publication-record.js';
 
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 async function fixture(): Promise<{ root: string; cfg: BuildConfig; clean: () => Promise<void> }> {
@@ -91,4 +93,64 @@ test('a bad RDF download prevents every evidence snapshot replacement in the bat
   assert.equal(await readFile(join(evidence, 'foxxi-manifest.ttl'), 'utf8'), 'retained manifest');
   assert.equal(await readFile(join(evidence, 'relay-operations.json'), 'utf8'), '{"retained":true}');
   assert.deepEqual((await readdir(evidence)).sort(), ['foxxi-manifest.ttl', 'relay-operations.json']);
+});
+
+const receiptUrl='https://example.org/context-graphs/receipt.ttl';
+const receiptGraph=(body:string)=>parseTurtle(
+  '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> . '+
+  '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> . '+body,receiptUrl);
+test('publication receipts read modal and temporal facets plus the linked authorship proof', () => {
+  const graph=receiptGraph('<> iep:describes <https://example.org/ns/i2idlx>; '+
+    'iep:hasFacet [a iep:SemioticFacet;iep:modalStatus iep:Asserted], '+
+    '[a iep:TemporalFacet;iep:validFrom "2026-10-13T20:30:00Z"^^xsd:dateTime]; '+
+    'iep:authorshipProof [a iep:SignedAuthorship;iep:contentHash "sha256:pinned";iep:signerAddress "0x123"]; '+
+    'iep:supersedes <https://example.org/context-graphs/prior.ttl> .');
+  assert.deepEqual(publicationReceiptMetadata(graph,'i2idlx',receiptUrl),{
+    graph:'i2idlx',graphIri:'https://example.org/ns/i2idlx',descriptor:receiptUrl,
+    modalStatus:'Asserted',validFrom:'2026-10-13T20:30:00Z',
+    contentHash:'sha256:pinned',signer:'0x123',supersedes:['https://example.org/context-graphs/prior.ttl'],
+  });
+});
+test('publication receipts continue to accept metadata directly on the descriptor', () => {
+  const graph=receiptGraph('<> iep:describes <https://example.org/ns/i2idlx>; '+
+    'iep:modalStatus iep:Hypothetical;iep:contentHash "sha256:flat";iep:signerAddress "0x456" .');
+  const row=publicationReceiptMetadata(graph,'i2idlx',receiptUrl);
+  assert.equal(row.modalStatus,'Hypothetical');
+  assert.equal(row.contentHash,'sha256:flat');
+  assert.equal(row.signer,'0x456');
+});
+test('unrelated RDF nodes cannot supply missing descriptor receipt metadata', () => {
+  const graph=receiptGraph('<> iep:describes <https://example.org/ns/i2idlx> . '+
+    '<https://example.org/unrelated> iep:modalStatus iep:Asserted; '+
+    'iep:validFrom "2026-10-13";iep:contentHash "unrelated";iep:signerAddress "0xbad" .');
+  const row=publicationReceiptMetadata(graph,'i2idlx',receiptUrl);
+  assert.equal(row.modalStatus,null);
+  assert.equal(row.validFrom,null);
+  assert.equal(row.contentHash,null);
+  assert.equal(row.signer,null);
+});
+test('conflicting values across linked authorship proofs are refused', () => {
+  const graph=receiptGraph('<> iep:describes <https://example.org/ns/i2idlx>; '+
+    'iep:authorshipProof [iep:contentHash "first"],[iep:contentHash "different"] .');
+  assert.throws(()=>publicationReceiptMetadata(graph,'i2idlx',receiptUrl),/multiple values.*contentHash/);
+});
+
+test('legacy document-linked proofs bind to the distinct URN descriptor subject', () => {
+  const graph=receiptGraph('<urn:iep:test:123> iep:describes <https://example.org/ns/i2idlx>; '+
+    'iep:hasFacet [a iep:SemioticFacet;iep:modalStatus iep:Asserted] . '+
+    '<> iep:authorshipProof [a iep:SignedAuthorship;iep:descriptorId <urn:iep:test:123>; '+
+    'iep:contentHash "sha256:legacy";iep:signerAddress "0x789"] .');
+  const row=publicationReceiptMetadata(graph,'i2idlx',receiptUrl);
+  assert.equal(row.graphIri,'https://example.org/ns/i2idlx');
+  assert.equal(row.modalStatus,'Asserted');
+  assert.equal(row.contentHash,'sha256:legacy');
+  assert.equal(row.signer,'0x789');
+});
+test('a document-linked proof for another descriptor cannot supply receipt metadata', () => {
+  const graph=receiptGraph('<urn:iep:test:123> iep:describes <https://example.org/ns/i2idlx> . '+
+    '<> iep:authorshipProof [iep:descriptorId <urn:iep:other:456>; '+
+    'iep:contentHash "wrong-descriptor";iep:signerAddress "0xbad"] .');
+  const row=publicationReceiptMetadata(graph,'i2idlx',receiptUrl);
+  assert.equal(row.contentHash,null);
+  assert.equal(row.signer,null);
 });

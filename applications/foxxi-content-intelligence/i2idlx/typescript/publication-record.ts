@@ -15,10 +15,36 @@ export interface PublicationReceipt {
   contentHash:string|null;signer:string|null;supersedes:string[];
 }
 export interface PublicationRecord {owner:string;graphs:PublicationReceipt[];superseded:Record<string,string[]>;problems:string[]}
-function one(graph:Store,subject:Term,predicate:string):string|null {
-  const objects=values(graph,subject,predicate),terms=new Map(objects.map(t=>[t.termType+':'+t.value+':'+(t.termType==='Literal'?t.language:'')+':'+(t.termType==='Literal'?t.datatype.value:''),t.value] as const));
+function one(graph:Store,subject:Term,predicate:string,linked:readonly Term[]=[]):string|null {
+  const scope=[subject,...linked];
+  const objects=scope.flatMap(node=>values(graph,node,predicate)),terms=new Map(objects.map(t=>[t.termType+':'+t.value+':'+(t.termType==='Literal'?t.language:'')+':'+(t.termType==='Literal'?t.datatype.value:''),t.value] as const));
   if(terms.size>1)throw Error('Descriptor has multiple values for '+predicate);
   return [...terms.values()][0]??null;
+}
+/** Read only metadata attached to this descriptor, its facets and authorship proof. */
+export function publicationReceiptMetadata(graph:Store,slug:string,url:string,documentUrl=url):PublicationReceipt {
+  const row:PublicationReceipt={graph:slug,graphIri:null,descriptor:url,modalStatus:null,validFrom:null,contentHash:null,signer:null,supersedes:[]};
+  const candidates=graph.getQuads(null,IEP+'describes',null,null);
+  const subjects=new Map(candidates.map(q=>[q.subject.termType+':'+q.subject.value,q.subject] as const));
+  if(subjects.size!==1)throw Error('Receipt must contain exactly one descriptor subject');
+  const subject=[...subjects.values()][0]!;
+  const facets=values(graph,subject,IEP+'hasFacet');
+  const descriptorProofs=values(graph,subject,IEP+'authorshipProof');
+  // Legacy receipts use a URN descriptor subject and attach the proof to <>.
+  // Admit that document-linked proof only when it names this descriptor.
+  const documentProofs=values(graph,documentUrl,IEP+'authorshipProof').filter(proof=>{
+    const ids=values(graph,proof,IEP+'descriptorId');
+    return ids.length===1&&ids[0]!.equals(subject);
+  });
+  const proofs=[...descriptorProofs,...documentProofs];
+  row.graphIri=one(graph,subject,IEP+'describes');
+  const modal=one(graph,subject,IEP+'modalStatus',facets);
+  row.modalStatus=modal?.split('#').pop()||null;
+  row.validFrom=one(graph,subject,IEP+'validFrom',facets);
+  row.contentHash=one(graph,subject,IEP+'contentHash',proofs);
+  row.signer=one(graph,subject,IEP+'signerAddress',proofs);
+  row.supersedes=[...new Set(values(graph,subject,IEP+'supersedes').map(t=>t.value))].sort();
+  return row;
 }
 export async function publicationRecord(root=DEFAULT_ROOT,options:{outputDir?:string;write?:boolean;fetcher?:FetchDocument}={}):Promise<PublicationRecord> {
   const {plan,outputDir}=loadPublicationPlan(root,options.outputDir),fetcher=options.fetcher||fetchDocument;
@@ -26,7 +52,7 @@ export async function publicationRecord(root=DEFAULT_ROOT,options:{outputDir?:st
   if(!pubs.descriptors||typeof pubs.descriptors!=='object'||Array.isArray(pubs.descriptors))throw Error('publications.json requires explicit descriptor URLs');
   const expected=new Map(plan.graphs.map(g=>[g.graph_iri.split('/').pop()!,g] as const)),record:PublicationReceipt[]=[],problems:string[]=[];
   for(const [slug,url]of Object.entries(pubs.descriptors)) {
-    const row:PublicationReceipt={graph:slug,graphIri:null,descriptor:url,modalStatus:null,validFrom:null,contentHash:null,signer:null,supersedes:[]};
+    let row:PublicationReceipt={graph:slug,graphIri:null,descriptor:url,modalStatus:null,validFrom:null,contentHash:null,signer:null,supersedes:[]};
     const planRow=expected.get(slug);
     if(!planRow)problems.push(slug+': not in the publish plan');
     try {
@@ -34,17 +60,7 @@ export async function publicationRecord(root=DEFAULT_ROOT,options:{outputDir?:st
       const response=await fetcher(url,'text/turtle','i2idlx-record/1.0');
       if(response.status!==200)throw Error('Descriptor HTTP '+response.status);
       if(!['text/turtle','application/x-turtle'].includes(response.contentType))throw Error('Descriptor media type '+response.contentType);
-      const graph=parseTurtle(response.body,response.url),candidates=graph.getQuads(null,IEP+'describes',null,null);
-      const subjects=new Map(candidates.map(q=>[q.subject.termType+':'+q.subject.value,q.subject] as const));
-      if(subjects.size!==1)throw Error('Receipt must contain exactly one descriptor subject');
-      const subject=[...subjects.values()][0]!;
-      row.graphIri=one(graph,subject,IEP+'describes');
-      const modal=one(graph,subject,IEP+'modalStatus');
-      row.modalStatus=modal?.split('#').pop()||null;
-      row.validFrom=one(graph,subject,IEP+'validFrom');
-      row.contentHash=one(graph,subject,IEP+'contentHash');
-      row.signer=one(graph,subject,IEP+'signerAddress');
-      row.supersedes=[...new Set(values(graph,subject,IEP+'supersedes').map(t=>t.value))].sort();
+      row=publicationReceiptMetadata(parseTurtle(response.body,response.url),slug,url,response.url);
       if(planRow&&row.graphIri!==planRow.graph_iri)problems.push(slug+': descriptor describes '+row.graphIri+', plan says '+planRow.graph_iri);
       if(planRow&&row.modalStatus!==planRow.modal_status)problems.push(slug+': descriptor modal status '+row.modalStatus+', plan says '+planRow.modal_status);
       if(!row.contentHash)problems.push(slug+': no signed content hash');

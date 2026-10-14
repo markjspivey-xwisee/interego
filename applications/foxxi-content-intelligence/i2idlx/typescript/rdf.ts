@@ -3,17 +3,15 @@
  * The public dataset/term types are the installed N3 and RDF/JS types used by
  * Comunica and the native reasoner. Output goes through Foxxi's shared Graph.
  */
-import { createRequire } from 'node:module';
 import { turtleIriRef } from '@interego/core';
 import { Store, Parser, Writer, DataFactory } from 'n3';
 import { QueryEngine } from '@comunica/query-sparql';
 import type { Term, Quad, NamedNode, BlankNode, Literal } from '@rdfjs/types';
+import { parseWithLiteralDatatypes, parseJsonLdWithLiteralDatatypes, retainLiteralDatatypes } from './literal-datatypes.js';
 import { Graph, iri, lang, typed, str, toTurtle, toJsonLd, toNTriples,
   type Term as KitTerm, type Subject as KitSubject } from '../../src/ns/rdf.js';
 export { Store, Parser, Writer, DataFactory };
 export type { Term, Quad };
-const require=createRequire(import.meta.url);
-const jsonld=require('jsonld') as {toRDF(input:unknown,options:Record<string,unknown>):Promise<string>};
 export const nn=DataFactory.namedNode;
 export const literal=DataFactory.literal;
 export const RDF='http://www.w3.org/1999/02/22-rdf-syntax-ns#';
@@ -26,11 +24,12 @@ export const PROV='http://www.w3.org/ns/prov#';
 export const SH='http://www.w3.org/ns/shacl#';
 export const GS='https://glossarystudio.app/ns/';
 export function parseTurtle(text:string,base?:string):Store {
-  return new Store(new Parser({format:'text/turtle',...(base?{baseIRI:base}:{})}).parse(text));
+  return parseWithLiteralDatatypes(text,'Turtle',base).graph;
 }
 export function union(...stores:Store[]):Store {
   const out=new Store();
   for(const graph of stores)out.addQuads(graph.getQuads(null,null,null,null));
+  retainLiteralDatatypes(out,...stores);
   return out;
 }
 export function values(graph:Store,subject:Term|string,predicate:Term|string):Term[] {
@@ -59,8 +58,7 @@ export function longLit(text:string):string {
   return '"""' + text.replaceAll('\\','\\\\') + '"""';
 }
 export async function parseJsonLd(doc:unknown,base='https://id.i2idl.org/'):Promise<Store> {
-  const nquads=await jsonld.toRDF(doc,{format:'application/n-quads',base});
-  return new Store(new Parser({format:'N-Quads'}).parse(nquads));
+  return (await parseJsonLdWithLiteralDatatypes(doc,base)).graph;
 }
 /** Preserve blank-node identities while adapting a plain RDF graph to Foxxi. */
 export function toKitGraph(store:Store):Graph {

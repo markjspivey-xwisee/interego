@@ -137,6 +137,9 @@ export async function checkParity(root = DEFAULT_ROOT, options: GoldenOptions = 
     await writeFile(join(output, 'input-fingerprints.json'), JSON.stringify(before, null, 2) + '\n');
     if (!options.compareOnly) {
       await command(python, ['-u', '-I', join(root, 'build.py')], root, env, join(output, 'python-build.log'));
+      const measuredOracle = await json(join(baseline, 'semantic-layer.json'));
+      assert.ok(measuredOracle !== null && typeof measuredOracle === 'object' && !Array.isArray(measuredOracle));
+      process.stdout.write('I2IDLX_PYTHON_REASONING_ORACLE=' + JSON.stringify({ owlrl: measuredOracle.owlrl, clash: measuredOracle.clash, disjointCheck: measuredOracle.disjointCheck }) + '\n');
       await command(python, ['-I', join(root, 'tools', 'publication_record.py'), root], root, env, join(output, 'python-publications.log'));
       // Rendering needs a walkthrough file; execute the independent existing
       // read-only oracle walk rather than copying a native report into it.

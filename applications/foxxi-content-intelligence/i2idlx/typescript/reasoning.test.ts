@@ -223,3 +223,47 @@ describe('native SHACL Core and TripleRule',()=>{
     await expect(shaclValidate(graph(' :x a :Thing . '),shapes)).rejects.toThrow(/Unsupported SHACL feature/);
   });
 });
+
+describe('schema shortcuts are explicit pinned-oracle compatibility only',()=>{
+  it('retains normal RDF/JS class-cycle reflexivity and nontrivial entailments in the compatible analysis',()=>{
+    const input=graph(' :A rdfs:subClassOf :B . :B rdfs:subClassOf :A . :item a :A . ');
+    const ordinary=closure(input).graph,compatible=closure(input,{datatypeOrigins:new Map()}).graph;
+    for(const [a,b]of [['A','B'],['B','A']]) {
+      expect(has(ordinary,nn('urn:test:'+a),RDFS+'subClassOf',nn('urn:test:'+a))).toBe(true);
+      expect(has(compatible,nn('urn:test:'+a),RDFS+'subClassOf',nn('urn:test:'+b))).toBe(true);
+      expect(has(compatible,nn('urn:test:'+a),OWL+'equivalentClass',nn('urn:test:'+b))).toBe(true);
+      expect(has(compatible,nn('urn:test:'+a),RDFS+'subClassOf',nn('urn:test:'+a))).toBe(false);
+      expect(has(compatible,nn('urn:test:'+a),OWL+'equivalentClass',nn('urn:test:'+a))).toBe(false);
+    }
+    expect(typed(compatible,'item','B')).toBe(true);
+  });
+  it('retains normal RDF/JS property-cycle reflexivity and every nontrivial property/data consequence',()=>{
+    const input=graph(' :p rdfs:subPropertyOf :q . :q rdfs:subPropertyOf :p . :x :p :y . ');
+    const ordinary=closure(input).graph,compatible=closure(input,{datatypeOrigins:new Map()}).graph;
+    for(const [a,b]of [['p','q'],['q','p']]) {
+      expect(has(ordinary,nn('urn:test:'+a),RDFS+'subPropertyOf',nn('urn:test:'+a))).toBe(true);
+      expect(has(compatible,nn('urn:test:'+a),RDFS+'subPropertyOf',nn('urn:test:'+b))).toBe(true);
+      expect(has(compatible,nn('urn:test:'+a),OWL+'equivalentProperty',nn('urn:test:'+b))).toBe(true);
+      expect(has(compatible,nn('urn:test:'+a),RDFS+'subPropertyOf',nn('urn:test:'+a))).toBe(false);
+      expect(has(compatible,nn('urn:test:'+a),OWL+'equivalentProperty',nn('urn:test:'+a))).toBe(false);
+    }
+    expect(has(compatible,nn('urn:test:x'),'urn:test:q',nn('urn:test:y'))).toBe(true);
+  });
+  it('preserves declared class/property reflexivity while matching bare-reflexive oracle shortcuts',()=>{
+    const input=graph(' :Class a owl:Class . :ObjectProperty a owl:ObjectProperty . :DataProperty a owl:DatatypeProperty . '+
+      ' :BareClass owl:equivalentClass :BareClass . :BareProperty owl:equivalentProperty :BareProperty . '+
+      ' :SelfProperty rdfs:subPropertyOf :SelfProperty . ');
+    const ordinary=closure(input).graph,compatible=closure(input,{datatypeOrigins:new Map()}).graph;
+    expect(has(compatible,nn('urn:test:Class'),RDFS+'subClassOf',nn('urn:test:Class'))).toBe(true);
+    expect(has(compatible,nn('urn:test:Class'),OWL+'equivalentClass',nn('urn:test:Class'))).toBe(true);
+    for(const p of ['ObjectProperty','DataProperty']) {
+      expect(has(compatible,nn('urn:test:'+p),RDFS+'subPropertyOf',nn('urn:test:'+p))).toBe(true);
+      expect(has(compatible,nn('urn:test:'+p),OWL+'equivalentProperty',nn('urn:test:'+p))).toBe(true);
+    }
+    expect(has(ordinary,nn('urn:test:BareClass'),RDFS+'subClassOf',nn('urn:test:BareClass'))).toBe(true);
+    expect(has(ordinary,nn('urn:test:BareProperty'),RDFS+'subPropertyOf',nn('urn:test:BareProperty'))).toBe(true);
+    expect(has(compatible,nn('urn:test:BareClass'),RDFS+'subClassOf',nn('urn:test:BareClass'))).toBe(false);
+    expect(has(compatible,nn('urn:test:BareProperty'),RDFS+'subPropertyOf',nn('urn:test:BareProperty'))).toBe(false);
+    expect(has(compatible,nn('urn:test:SelfProperty'),OWL+'equivalentProperty',nn('urn:test:SelfProperty'))).toBe(false);
+  });
+});

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseTurtle, RDF, RDFS, OWL } from './rdf.js';
 import { parseSnapshot, referenced_terms, upwardModule } from './refresh-upper.js';
-import { upperSnapshotsPresent } from './verification.js';
+import { upperSnapshotsPresent, type UpperSnapshotSource } from './verification.js';
 
 test('upward modules follow intersection parents and property ranges but keep filler axioms without importing filler ontologies', () => {
   const graph = parseTurtle(String.raw`
@@ -71,4 +71,10 @@ test('verification accepts empty missing-seed arrays and still rejects actual mi
   assert.equal(upperSnapshotsPresent([...present, {
     key: 'iao', missing: ['http://purl.obolibrary.org/obo/IAO_0000010'],
   }]), false);
+});
+
+test('verification refuses malformed missing-seed metadata instead of treating it as an empty list', () => {
+  for (const missing of [true, false, null, 'missing', '', 0, {}, { length: 0 }]) {
+    assert.equal(upperSnapshotsPresent([{ key: 'invalid', missing }] as unknown as UpperSnapshotSource[]), false);
+  }
 });

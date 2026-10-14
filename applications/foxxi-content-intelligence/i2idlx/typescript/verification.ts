@@ -1,5 +1,6 @@
 /** Fresh native build verification; Python is never imported or invoked. */
-import {Store,Parser,DataFactory} from 'n3';
+import {Store,DataFactory} from 'n3';
+import {parseWithLiteralDatatypes,addQuadsWithLiteralDatatypes,oracleLiteralDatatypes} from './literal-datatypes.js';
 import type {Term,Literal} from '@rdfjs/types';
 import {QueryEngine} from '@comunica/query-sparql';
 import {readFile,readdir,mkdir,writeFile} from 'node:fs/promises';
@@ -51,9 +52,9 @@ export interface UpperSnapshotSource { key:string; missing?:string[]; sha256?:st
 export function upperSnapshotsPresent(sources:readonly UpperSnapshotSource[]):boolean {
   // The retained manifest records missing semantic seed IRIs as an array.
   // Empty arrays are truthy in JavaScript, unlike the Python oracle.
-  return sources.every(source=>(source.missing?.length??0)===0);
+  return sources.every(source=>source.missing===undefined||(Array.isArray(source.missing)&&source.missing.length===0));
 }
-const parse=(s:string,baseIRI?:string)=>new Store(new Parser({format:'Turtle',baseIRI}).parse(s));
+const parse=(s:string,baseIRI?:string)=>parseWithLiteralDatatypes(s,'Turtle',baseIRI).graph;
 const setEq=(a:Iterable<string>,b:Iterable<string>)=>JSON.stringify([...new Set(a)].sort())===JSON.stringify([...new Set(b)].sort());
 const unique=(nodes:Term[])=>[...new Map(nodes.map(n=>[termKey(n),n])).values()];
 const value=(g:Store,s:Term,p:string)=>objects(g,s,p)[0]?.value;
@@ -149,10 +150,10 @@ export async function validateBuild(build:BuildResult,options:{skipHermit?:boole
   }
   check(setEq(Object.keys(fx.sha256),fx.modules),'Foxxi pins exactly the released modules');
   const upper=new Store();
-  for(const file of (await readdir(resolve(root,'evidence/upper'))).filter(f=>f.endsWith('.ttl')).sort())for(const q of await loadTurtle(resolve(root,'evidence/upper',file)))upper.addQuad(q);
+  for(const file of (await readdir(resolve(root,'evidence/upper'))).filter(f=>f.endsWith('.ttl')).sort())addQuadsWithLiteralDatatypes(upper,await loadTurtle(resolve(root,'evidence/upper',file)));
   for(const file of ['xapi-ontology.ttl','xapi-profile-ontology.ttl','iep.ttl','interego-interego.ttl','interego-hypragent.ttl','interego-hyprcat.ttl','interego-harness.ttl'])
-    for(const q of await loadTurtle(resolve(root,'evidence',file)))upper.addQuad(q);
-  for(const g of foxxiGraphs)for(const q of g)upper.addQuad(q);
+    addQuadsWithLiteralDatatypes(upper,await loadTurtle(resolve(root,'evidence',file)));
+  for(const g of foxxiGraphs)addQuadsWithLiteralDatatypes(upper,g);
   const peers=JSON.parse(await readFile(resolve(root,'evidence/peer-terms.json'),'utf8')) as {terms:Record<string,{label?:string}>};
   const knownTerms=new Set([...upper].filter(q=>q.subject.termType==='NamedNode').map(q=>q.subject.value).concat(Object.keys(peers.terms)));
   const ownTerms=new Set([...onto].filter(q=>q.subject.termType==='NamedNode').map(q=>q.subject.value));
@@ -178,7 +179,7 @@ export async function validateBuild(build:BuildResult,options:{skipHermit?:boole
   const bridges=layer.classBridges(metadata.mappingClassTargets).length;
   const sample=await loadTurtle(resolve(root,'examples/industry-context.ttl')),clash=await loadTurtle(resolve(root,'examples/industry-context-clash.ttl')),deployment=await loadTurtle(resolve(root,'examples/foxxi-deployment.ttl'));
   const reasonIn=union(upper,onto,alignments,referents,gl,enact,mappings,releases,changes,sample,deployment);
-  const start=Date.now(),reasoned=closure(reasonIn),rlSeconds=(Date.now()-start)/1000,closed=reasoned.graph;
+  const start=Date.now(),reasoned=closure(reasonIn,{datatypeOrigins:oracleLiteralDatatypes(reasonIn)}),rlSeconds=(Date.now()-start)/1000,closed=reasoned.graph;
   check(reasoned.errors.length===0,'native OWL RL closure is consistent ('+reasonIn.size+' → '+closed.size+' triples)');
   check(reasoned.coverage.unsupported.length===0,'every encountered literal lexical validator is supported'+(reasoned.coverage.unsupported.length?' — '+reasoned.coverage.unsupported.join('; '):''));
   const pfx=Object.entries(layer.prefixes).sort((a,b)=>b[1].length-a[1].length);
@@ -210,7 +211,7 @@ export async function validateBuild(build:BuildResult,options:{skipHermit?:boole
   const disagree=explicit.filter(n=>!setEq(refTypes(ruled,n),refTypes(closed,n)));
   const nRuleTypes=explicit.reduce((n,s)=>n+refTypes(ruled,s).length,0);
   check(explicit.length>0&&disagree.length===0,'SHACL-AF referent rules agree with OWL RL on '+explicit.length+' explicitly classified resources');
-  const clashReasoned=closure(union(upper,onto,alignments,referents,clash));
+  const clashIn=union(upper,onto,alignments,referents,clash),clashReasoned=closure(clashIn,{datatypeOrigins:oracleLiteralDatatypes(clashIn)});
   const clashBy=[...new Set(([['BFO','obo/BFO_'],['DUL','dul/DUL.owl'],['gUFO','nemo/gufo']] as const).filter(([,ns])=>clashReasoned.errors.some(e=>e.includes(ns))).map(([k])=>k))].sort();
   check(clashBy.length===3,'assessment/person sample clash is rejected in BFO, DUL and gUFO');
   const hermitResults:Record<string,Record<string,unknown>>={},widening:{risks:string[];properties:number}={risks:[],properties:0};
@@ -250,7 +251,7 @@ export async function validateBuild(build:BuildResult,options:{skipHermit?:boole
   }
   const pairsIn=union(upper,onto,alignments),PAIR='urn:i2idlx:pair:';
   for(let i=0;i<ids.length;i++)for(let j=i+1;j<ids.length;j++){const x=nn(PAIR+ids[i]!+'--'+ids[j]!);pairsIn.addQuad(quad(x,nn(RDF+'type'),catClasses[ids[i]!]!));pairsIn.addQuad(quad(x,nn(RDF+'type'),catClasses[ids[j]!]!));}
-  const pairStart=Date.now(),pairResult=closure(pairsIn),pairSeconds=(Date.now()-pairStart)/1000,rlDisjoint:Record<string,Set<string>>={},odd:string[]=[];
+  const pairStart=Date.now(),pairResult=closure(pairsIn,{datatypeOrigins:oracleLiteralDatatypes(pairsIn)}),pairSeconds=(Date.now()-pairStart)/1000,rlDisjoint:Record<string,Set<string>>={},odd:string[]=[];
   for(const e of pairResult.errors){const m=/^Disjoint classes (\S+) and (\S+) have a common individual urn:i2idlx:pair:(\S+)$/.exec(e);if(m){const k=m[3]!.replace('--','|');rlDisjoint[k]??=new Set();rlDisjoint[k].add(vocabOf(m[1]!));}else odd.push(e);}
   const same=setEq(Object.keys(rlDisjoint),Object.keys(disjoint))&&Object.entries(rlDisjoint).every(([k,v])=>setEq(v,Object.keys(disjoint[k]??{})));
   check(same&&odd.length===0,'all '+(ids.length*(ids.length-1)/2)+' category pairs are checked independently against the disjointness table');

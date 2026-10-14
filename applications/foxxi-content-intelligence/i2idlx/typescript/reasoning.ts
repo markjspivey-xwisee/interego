@@ -17,6 +17,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { progress, progressEnabled } from './progress.js';
+import { retainLiteralDatatypes } from './literal-datatypes.js';
 
 const { namedNode: nn, literal, quad } = DataFactory;
 export const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
@@ -37,6 +38,7 @@ export function has(g: Store, s: Term, p: string | Term, o: Term): boolean {
 export function union(...graphs: Store[]): Store {
   const out = new Store();
   for (const g of graphs) for (const q of g) out.addQuad(quad(q.subject, q.predicate, q.object));
+  retainLiteralDatatypes(out,...graphs);
   return out;
 }
 export function rdfList(g: Store, head: Term): Term[] {
@@ -139,12 +141,13 @@ export function validLexical(l: Literal): boolean | null {
 
 export interface ClosureResult {
   graph: Store; errors: string[]; rounds: number;
-  coverage: { mode: 'native-owlrl-oracle-compatible'; unsupported: string[]; completeDatatypeEntailment: false };
+  coverage: { mode: 'native-owlrl-oracle-compatible' | 'native-owlrl-rdfjs'; unsupported: string[]; completeDatatypeEntailment: false };
 }
-export function closure(data: Store, options: { maxRounds?: number; maxTriples?: number; strictDatatypes?: boolean } = {}): ClosureResult {
+export function closure(data: Store, options: { maxRounds?: number; maxTriples?: number; strictDatatypes?: boolean; datatypeOrigins?: ReadonlyMap<string,string|null> } = {}): ClosureResult {
   const closureStarted = Date.now(), tracing = progressEnabled();
   progress('reasoning:owlrl', 'start', { inputTriples: data.size, maxRounds: options.maxRounds ?? 1000, maxTriples: options.maxTriples ?? 2000000 });
   const g = union(data), errors = new Set<string>(), unsupported = new Set<string>();
+  const oracleCompatible=options.datatypeOrigins!==undefined;
   const T = RDF+'type', SC = RDFS+'subClassOf', SP = RDFS+'subPropertyOf', SA = OWL+'sameAs';
   // N3 invalidates its cached size on insertion; reading it for every
   // inferred quad rescans the whole store. This store is mutated only here
@@ -166,7 +169,15 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
   for (const d of rlDatatypes) add(nn(d),T,nn(RDFS+'Datatype'));
   const usedDt = new Set<string>();
   for (const q of [...g]) if (q.object.termType === 'Literal' && rlDatatypes.has(q.object.datatype.value)) {
-    const l=q.object, dt=l.datatype.value; usedDt.add(dt); add(l,T,nn(dt));
+    const l=q.object, dt=l.datatype.value;
+    if(options.datatypeOrigins) {
+      const key=termKey(l);
+      if(!options.datatypeOrigins.has(key))throw new Error('Missing source literal datatype provenance: '+key);
+      const original=options.datatypeOrigins.get(key);
+      if(original===null)continue; // RDFLib simple/language literals have no datatype.
+      if(original!==dt)throw new Error('Source literal datatype differs from its RDF term: '+key);
+    }
+    usedDt.add(dt); add(l,T,nn(dt));
     const ok=validLexical(l);
     if (ok === false) errors.add("Lexical value of the literal '" + l.value + "' does not match its datatype (" + dt + ')');
     if (ok === null) unsupported.add('Lexical validator unavailable: '+dt);
@@ -217,16 +228,21 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
       }
       if(pv===SC) {
         for(const n of subjects(g,T,s)) add(n,T,o);
-        for(const z of objects(g,o,SC)) add(s,SC,z);
+        // Only the pinned-oracle mode follows its reflexive-edge shortcut.
+        // Default RDF/JS saturation retains the normal transitive consequence.
+        if(!oracleCompatible||!s.equals(o)) for(const z of objects(g,o,SC))
+          if(!oracleCompatible||!s.equals(z)) add(s,SC,z);
         if(has(g,o,SC,s)) add(s,OWL+'equivalentClass',o);
       }
-      if(pv===OWL+'equivalentClass') { add(s,SC,o); add(o,SC,s); }
+      if(pv===OWL+'equivalentClass'&&(!oracleCompatible||!s.equals(o))) { add(s,SC,o); add(o,SC,s); }
       if(pv===SP) {
         for(const t of g.getQuads(null,s as Quad['predicate'],null,null)) add(t.subject,o,t.object);
-        for(const z of objects(g,o,SP)) add(s,SP,z);
-        if(has(g,o,SP,s)) add(s,OWL+'equivalentProperty',o);
+        if(!oracleCompatible||!s.equals(o)) {
+          for(const z of objects(g,o,SP)) if(!oracleCompatible||!s.equals(z)) add(s,SP,z);
+          if(has(g,o,SP,s)) add(s,OWL+'equivalentProperty',o);
+        }
       }
-      if(pv===OWL+'equivalentProperty') { add(s,SP,o); add(o,SP,s); }
+      if(pv===OWL+'equivalentProperty'&&(!oracleCompatible||!s.equals(o))) { add(s,SP,o); add(o,SP,s); }
       if(pv===RDFS+'domain'||pv===RDFS+'range') {
         for(const t of g.getQuads(null,s as Quad['predicate'],null,null)) add(pv===RDFS+'domain'?t.subject:t.object,T,o);
         for(const c of objects(g,o,SC)) add(s,p,c);
@@ -355,7 +371,7 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
   // Generalized blank-node predicate triples may participate in rules; never publish them.
   for(const q of [...g]) if(q.predicate.termType!=='NamedNode') g.removeQuad(q);
   progress('reasoning:owlrl', 'end', { rounds, triples: g.size, errors: errors.size, seconds: (Date.now() - closureStarted) / 1000 });
-  return { graph:g,errors:[...errors].sort(),rounds,coverage:{mode:'native-owlrl-oracle-compatible',unsupported:[...unsupported].sort(),completeDatatypeEntailment:false} };
+  return { graph:g,errors:[...errors].sort(),rounds,coverage:{mode:oracleCompatible?'native-owlrl-oracle-compatible':'native-owlrl-rdfjs',unsupported:[...unsupported].sort(),completeDatatypeEntailment:false} };
 }
 
 export function rdfsClosure(data: Store): Store {

@@ -86,9 +86,9 @@ jobs:
           test "$(git -C "$I2IDL_CLONE" rev-parse --is-shallow-repository)" = false
           timeout --signal=TERM --kill-after=15s 180s npx --no-install tsx "$I2IDLX_ROOT/typescript/prepare-build-inputs.ts" "$I2IDLX_ROOT"
           sha256sum "$I2IDLX_ROOT/evidence/xapi-ontology.ttl" "$I2IDLX_ROOT/evidence/xapi-profile-ontology.ttl" "$I2IDLX_ROOT/evidence/xapi-snapshots.json" > "$I2IDLX_DIAGNOSTIC/xapi-input-sha256.txt"
-      - name: Check exact counter thresholds and unchanged closure results
+      - name: Check counter, retained-input and publication regressions
         timeout-minutes: 2
-        run: npx --no-install tsx --test "$I2IDLX_ROOT/typescript/reasoning.test.ts"
+        run: npx --no-install tsx --test "$I2IDLX_ROOT/typescript/reasoning.test.ts" "$I2IDLX_ROOT/typescript/refresh-upper.test.ts" "$I2IDLX_ROOT/typescript/refresh-evidence.test.ts" "$I2IDLX_ROOT/typescript/literal-datatypes.test.ts"
       - name: Measure the bounded N3 insertion counter benchmark
         timeout-minutes: 2
         run: |
