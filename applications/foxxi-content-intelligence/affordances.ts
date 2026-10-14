@@ -132,6 +132,52 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       { name: 'owner_encryption_key', type: 'string', required: true, description: 'Required for ALL shared/private document writes: owner-held canonical base64 X25519 public key, bound by this exact author signature. Obtain from owned signing context, never an unsigned pod document.' },
     ],
   },
+  {
+    action: 'urn:iep:action:foxxi:i2idlx-ask' as IRI,
+    toolName: 'foxxi.i2idlx_ask', title: 'Ask I2IDL-X using your connected AI client',
+    description: 'Return a bounded public glossary/semantic context packet and the workbench Ask instructions for YOUR connected AI/MCP client to answer with its own model. This read-only operation does not sample, answer, store the question, access team/private pod data or incur project model charges. Accepts plain arguments or the arguments inside a relay-signed envelope; no identity claim is made by this public operation.',
+    method: 'POST', targetTemplate: '{base}/i2idlx/api/ask', externallyRouted: true,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputs: [
+      { name: 'question', type: 'string', required: true, description: 'Question for your client to answer, nonempty and at most 4000 UTF-8 bytes. It is returned as task data, never a server model instruction.' },
+      { name: 'concept_ids', type: 'array', required: false, description: 'At most 14 existing canonical glossary ids to include. Unknown ids are refused; lexical retrieval fills remaining bounded context.' },
+    ],
+    outputs: {
+      description: 'An instructions-only task packet: execution=client-required, no server sampling/writes, original question, shared Ask rules, up to 14 public concept entries with release/commit/rights, relevant semantic categories and catalog controls, and followable task links. The connected client must produce the answer and cite entries; this response contains no answer or completion claim. Missing public build returns503; oversized input/context is refused.',
+      properties: {
+        task: { type: 'string', enum: ['ask'] }, execution: { type: 'string', enum: ['client-required'] }, status: { type: 'string', enum: ['instructions-only'] },
+        sampling_performed: { type: 'boolean' }, writes_performed: { type: 'boolean' },
+        request: { type: 'object', properties: { question: { type: 'string' } } }, instructions: { type: 'string' },
+        context: { type: 'object', additionalProperties: true },
+        _affordances: { type: 'array', items: { type: 'object', properties: { action: { type: 'string' }, href: { type: 'string' }, method: { type: 'string' } } } },
+        error: { type: 'string' }, code: { type: 'string' },
+      },
+    },
+  },
+  {
+    action: 'urn:iep:action:foxxi:i2idlx-orchestrate' as IRI,
+    toolName: 'foxxi.i2idlx_orchestrate', title: 'Run the I2IDL-X eight-role recipe in your AI client',
+    description: 'Return bounded public context plus the existing eight-role/twelve-step Interpretant workflow for YOUR connected AI/MCP client to execute with its own model. The server creates no run/agents/gate/staging and never samples or publishes. Browser sandbox method names are source descriptors, not MCP operations. Clients must discover current real controls, report unperformed checks and get human authorization before external writes.',
+    method: 'POST', targetTemplate: '{base}/i2idlx/api/orchestrate', externallyRouted: true,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    inputs: [
+      { name: 'example', type: 'boolean', required: false, description: 'Set true to use the explicitly fictional Kestrel Point brief/inventory from the existing walkthrough. Do not also supply brief or records.' },
+      { name: 'brief', type: 'string', required: false, description: 'Required unless example=true: your nonempty brief, at most 6000 UTF-8 bytes. The client adapts scenario-specific wording only when your inventory supports it.' },
+      { name: 'records', type: 'array', required: false, description: 'Required unless example=true: 1..20 unique {id,title,description,sourceTypes?} entries; UTF-8 maxima120/400/2400 bytes and at most10 source type names of200 bytes each. No arbitrary paths/URLs/model keys.' },
+      { name: 'concept_ids', type: 'array', required: false, description: 'At most14 existing canonical ids for selected public glossary context.' },
+    ],
+    outputs: {
+      description: 'An instructions-only task packet: execution=client-required, sampling/writes=false, supplied brief/inventory or labelled fictional example, bounded public release/context, actual eight role charters and twelve dependency steps from scenario.js, source browser method names, and explicit pending human authorization before external writes. Limits are two parallel roles and six tool rounds per step. There is no server run, result, ratification, staging or publication claim.',
+      properties: {
+        task: { type: 'string', enum: ['orchestrate'] }, execution: { type: 'string', enum: ['client-required'] }, status: { type: 'string', enum: ['instructions-only'] },
+        sampling_performed: { type: 'boolean' }, writes_performed: { type: 'boolean' },
+        request: { type: 'object', additionalProperties: true }, instructions: { type: 'string' }, context: { type: 'object', additionalProperties: true },
+        workflow: { type: 'object', properties: { source: { type: 'string' }, roles: { type: 'array' }, steps: { type: 'array' }, maxParallelRoles: { type: 'number' }, maxToolRoundsPerStep: { type: 'number' }, gate: { type: 'string' } } },
+        _affordances: { type: 'array', items: { type: 'object', properties: { action: { type: 'string' }, href: { type: 'string' }, method: { type: 'string' } } } },
+        error: { type: 'string' }, code: { type: 'string' },
+      },
+    },
+  },
   ...telemetryAffordances,
   ...privatePerformanceAffordances,
   // ── The door to the LRS ────────────────────────────────────────────────────

@@ -12526,6 +12526,7 @@ attachWorkbenchRoutes(app, {
   encryptionKeypair: () => workbenchEncryptionKeypair(process.env.FOXXI_BRIDGE_PRIVATE_KEY),
   siteDirectory: process.env.FOXXI_I2IDLX_SITE_DIR || undefined,
   distDirectory: process.env.FOXXI_I2IDLX_DIST_DIR || undefined,
+  appDataFile: process.env.FOXXI_I2IDLX_APP_DATA_FILE || undefined,
 });
 
 // Terminal JSON error handler: a malformed request body makes body-parser throw a SyntaxError

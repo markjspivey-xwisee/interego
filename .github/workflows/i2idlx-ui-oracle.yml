@@ -1,0 +1,137 @@
+name: I2IDL-X browser and original client oracles
+
+# Reuse computed golden outputs; no ontology generation, reasoning, publishing,
+# deployment or real-user pod writes happen in this bounded UI workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      golden_run_id:
+        description: Completed golden workflow run containing generated native artifacts
+        required: true
+        type: string
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/i2idlx-ui-oracle.yml'
+      - 'tools/i2idlx-cache-ui-assets.ts'
+      - 'tools/i2idlx-hosted-visitor-smoke.py'
+  workflow_run:
+    workflows: ['I2IDL-X complete golden parity']
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: i2idlx-ui-${{ github.event.pull_request.number || github.event.workflow_run.id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: Original client oracles and hosted visitor render
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      INTEREGO_CORE_SRC: ${{ github.workspace }}/packages/core/src
+      INTEREGO_TSX: ${{ github.workspace }}/node_modules/.bin/tsx
+      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
+      PYTHONHASHSEED: '0'
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.ref }}
+      - uses: actions/setup-node@v6
+        with: { node-version: '22', cache: npm }
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12' }
+      - name: Locate the already computed golden artifact
+        id: golden
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Initial migration run; retry only this UI job once its artifact exists.
+          GOLDEN_RUN_ID: ${{ inputs.golden_run_id || github.event.workflow_run.id || '38609005369' }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const id = process.env.GOLDEN_RUN_ID;
+          if (!/^[0-9]+$/.test(id || '')) throw new Error('A real golden workflow run ID is required.');
+          const origin = 'https://api.github.com/repos/' + process.env.GITHUB_REPOSITORY;
+          const headers = { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + process.env.GH_TOKEN };
+          const get = async path => { const r = await fetch(origin + path, { headers }); if (!r.ok) throw new Error('GitHub HTTP ' + r.status); return r.json(); };
+          const run = await get('/actions/runs/' + id);
+          if (run.name !== 'I2IDL-X complete golden parity') throw new Error('Selected run is not the recorded golden workflow.');
+          const listing = await get('/actions/runs/' + id + '/artifacts?per_page=100');
+          const artifact = listing.artifacts.find(a => a.name === 'i2idlx-golden-parity-' + id && !a.expired);
+          if (!artifact) throw new Error('Golden outputs are not available yet. Retry only this UI job after run ' + id + ' uploads its outputs; do not restart the golden build.');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_id=' + id + '\nartifact_name=' + artifact.name + '\n');
+          process.stdout.write('Using actual golden artifact ' + artifact.id + ' from ' + run.head_sha + '\n');
+          JS
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.golden.outputs.run_id }}
+          name: ${{ steps.golden.outputs.artifact_name }}
+          path: applications/foxxi-content-intelligence/i2idlx
+      - name: Require generated native data and graph inputs
+        run: |
+          test -s "$I2IDLX_ROOT/app/build-ts/data.json"
+          test -s "$I2IDLX_ROOT/dist-ts/semantic-layer.json"
+          test -s "$I2IDLX_ROOT/dist-ts/published.json"
+      - name: Install locked client and independent browser oracle dependencies
+        run: |
+          npm ci
+          npm run build
+          npm ci --prefix "$I2IDLX_ROOT/app"
+          python3 -m pip install 'pyshacl==0.30.1' 'rdflib==7.1.4' 'playwright==1.56.0'
+          python3 -m playwright install --with-deps chromium
+      - name: Read the pinned canonical history for app extraction only
+        run: |
+          mkdir -p .cache
+          git clone https://github.com/blakeplock/i2idl-linked-data "$I2IDL_CLONE"
+          git -C "$I2IDL_CLONE" checkout --detach 9f865995d879165d8fa49422915a5e53d2ecebf9
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 9f865995d879165d8fa49422915a5e53d2ecebf9
+      - name: Rebundle current app using existing golden graph and reasoning outputs
+        run: |
+          npx tsx "$I2IDLX_ROOT/typescript/build-app.ts" "$I2IDLX_ROOT" --dist "$I2IDLX_ROOT/dist-ts" --out "$I2IDLX_ROOT/app/build-ts" --site "$I2IDLX_ROOT/site-ts"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const root = process.env.I2IDLX_ROOT;
+          // Original oracles expect these names. Every copied byte is a native
+          // output; all replacements remain inside this disposable runner.
+          fs.cpSync(path.join(root, 'dist-ts'), path.join(root, 'dist'), { recursive: true });
+          fs.cpSync(path.join(root, 'app', 'build-ts'), path.join(root, 'app', 'build'), { recursive: true });
+          fs.cpSync(path.join(root, 'site-ts'), path.join(root, 'site'), { recursive: true });
+          fs.mkdirSync(path.join(root, '.cache', 'ui-oracle-shots'), { recursive: true });
+          JS
+      - name: Cache only the scripts and fonts named by the generated page
+        run: npx tsx tools/i2idlx-cache-ui-assets.ts "$I2IDLX_ROOT/site/app.html" "$I2IDLX_ROOT/.cache/ui-oracle-assets"
+      - name: Unchanged desktop, mobile, export and workspace smoke oracle
+        run: python3 -I "$I2IDLX_ROOT/tools/smoke_app.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" --shots "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Original control, SPARQL, classification and exported-record cross-check
+        run: python3 -I "$I2IDLX_ROOT/tools/check_app_logic.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Replay original orchestration trace and validate every staged write
+        run: python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT"
+      - name: Hosted path without credentials or model capabilities
+        run: python3 -I tools/i2idlx-hosted-visitor-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Retain real browser screenshots and exported record evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2idlx-ui-oracle-${{ github.run_id }}
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/.cache/ui-oracle-shots
+            applications/foxxi-content-intelligence/i2idlx/.cache/ui-oracle-assets/receipt.json
+            applications/foxxi-content-intelligence/i2idlx/app/build/check.cjs
+            applications/foxxi-content-intelligence/i2idlx/app/build/orc-check.cjs
+            applications/foxxi-content-intelligence/i2idlx/app/build/data.json
+            applications/foxxi-content-intelligence/i2idlx/site/app.html

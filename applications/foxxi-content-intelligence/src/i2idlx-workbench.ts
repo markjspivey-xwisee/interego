@@ -13,6 +13,7 @@ import {
 } from '@interego/core';
 import { readDelegationCredential, verifyAgentDelegation } from '@interego/solid';
 import type { VerifyPrivateCaller } from './private-performance-auth.js';
+import { attachClientTaskRoutes } from './i2idlx-client-tasks.js';
 
 export class WorkbenchError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -39,6 +40,8 @@ export interface WorkbenchConfig {
   verifyAuthor?: (actor: string, signer: string, pod: string) => Promise<boolean>;
   siteDirectory?: string;
   distDirectory?: string;
+  /** Optional generated public-data file; never derived from a request input. */
+  appDataFile?: string;
 }
 const MAX_STORED_ENVELOPE_BYTES = 6_000_000;
 const hex = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -310,6 +313,7 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
     if (auth.payload.i2idlx_operation !== operation || auth.payload.bridge_audience !== base) throw new WorkbenchError('Signed request is not bound to this operation and workbench.', 403);
     return auth;
   };
+  attachClientTaskRoutes(app, { baseUrl: base, appDataFile: config.appDataFile });
   app.get('/i2idlx/challenge', (_req, res) => {
     for (const [nonce, expires] of challenges) if (expires <= Date.now()) challenges.delete(nonce);
     if (challenges.size >= 4096) { res.status(429).json({ error: 'Too many pending sign-in challenges.' }); return; }
@@ -319,13 +323,15 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
     reply(res, { nonce, expires_at: new Date(expires).toISOString(), audience: base });
   });
   app.get('/i2idlx/capabilities', (_req, res) => reply(res, {
-    audience: base, shared: !!config.sharedPodUrl && config.participantIds.length > 0 && !!config.encryptionKeypair(), ai: { project_paid: false, subscription: 'client MCP sampling adapter', api_key: 'client memory only' },
-    connection: 'Connect Interego in your AI client, or connect a browser wallet with an existing pod.',
+    audience: base, shared: !!config.sharedPodUrl && config.participantIds.length > 0 && !!config.encryptionKeypair(), ai: { project_paid: false, subscription: 'connected MCP client executes advertised Ask/Orchestrate task packets; browser sampling requires an explicit host adapter', api_key: 'client memory only' },
+    connection: 'Connect Interego in your AI client, discover I2IDL-X Ask/Orchestrate, then follow their advertised actions and execute returned instructions with your own model. Browser pod identity is a separate optional connection.',
     _affordances: [
       { action: 'urn:iep:action:foxxi:i2idlx-challenge', href: base + '/i2idlx/challenge', method: 'GET' },
       { action: 'urn:iep:action:foxxi:i2idlx-session', href: base + '/i2idlx/api/session', method: 'POST' },
       { action: 'urn:iep:action:foxxi:i2idlx-read', href: base + '/i2idlx/api/read', method: 'POST' },
       { action: 'urn:iep:action:foxxi:i2idlx-write', href: base + '/i2idlx/api/write', method: 'POST' },
+      { action: 'urn:iep:action:foxxi:i2idlx-ask', href: base + '/i2idlx/api/ask', method: 'POST' },
+      { action: 'urn:iep:action:foxxi:i2idlx-orchestrate', href: base + '/i2idlx/api/orchestrate', method: 'POST' },
     ],
   }));
   app.post('/i2idlx/api/session', async (req, res) => {

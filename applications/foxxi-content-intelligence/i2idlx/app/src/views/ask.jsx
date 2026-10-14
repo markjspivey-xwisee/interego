@@ -2,6 +2,7 @@
 // paths, capabilities, team notes) and cites every term as [[concept-id]]. Runs on the viewer's own account.
 import { C, META, byId, kindById, typeById, fieldById, SOURCES, ACTIONS, roleById, enactByConcept, mapsByConcept, inhByConcept, shortestPaths, relationBetween, conceptsByAction, systemLabel, COLLECTIONS } from "../data.js";
 import { search } from "../search.js";
+import { askInstructions } from "../ask-rules.js";
 import { useCaps } from "../caps.js";
 import { Icon } from "../icons.jsx";
 import { useUI, Seg } from "../ui.jsx";
@@ -30,18 +31,7 @@ function full(c, notes) {
   };
 }
 
-const RULES = (ctx) => `You are the glossary assistant inside Interpretant, a workbench for the ${META.scheme.title} (release ${META.release}, ${C.length} approved concepts), decorated with I2IDL-X: Interego and Foxxi capability links ("enactments") and crosswalks to other vocabularies.
-
-How to answer:
-- Ground every statement about a term in the glossary. Look terms up with the tools before you define, compare or recommend them; quote or closely paraphrase I2IDL's definitions and never invent one.
-- Cite each glossary term you discuss inline as [[concept-id]] using ids from the tools or the index below, e.g. [[learning-record-store-lrs]]. The page turns these into links.
-- I2IDL definitions, editorial notes and relations are asserted by I2IDL. I2IDL-X capability links and crosswalks are AI-drafted and Hypothetical until reviewers ratify them; say so when you rely on them.
-- If the glossary has no entry for something, say so plainly, then answer from general knowledge and label it as such.
-- Write for a practitioner: short paragraphs or bullets, no preamble, no sign-off.
-${ctx ? `\nThe person is looking at: ${ctx}.` : ""}
-
-Index of all ${C.length} terms (id: label):
-${INDEX}`;
+const RULES = (ctx) => askInstructions({ schemeTitle: META.scheme.title, release: META.release, conceptCount: C.length, context: ctx, index: INDEX });
 
 function retrieval(question, ctxIds) {
   // used when this viewer can't run page tools: put the likely-relevant entries in the prompt
@@ -180,7 +170,7 @@ export function Ask({ engine }) {
     return (
       <div className="page" style={{ maxWidth: 720 }}>
         <div className="empty"><Icon name="sparkle" /><div><b>Ask isn't available here</b></div>
-          <div className="small">Use Connect to attach Interego through your AI client, or add your own API key. Browsing, exports and local packs work without a model.</div></div>
+          <div className="small">Use Connect for the real MCP-client Ask workflow. Running Ask inside this page requires an explicit host sampling adapter or your own API key. Browsing, exports and local packs work without a model.</div></div>
       </div>
     );
   }

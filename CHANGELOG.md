@@ -1,8 +1,12 @@
 # Changelog
 
-## 2026-10-14 — I2IDL-X: native TypeScript build migration and parity checks
+## 2026-10-14 — I2IDL-X: native build, pod-backed workbench and client tasks
 
-The native migration adds graph generation through the Foxxi RDF graph kit, semantic-layer declarations, release-history derivation, OWL and SHACL validation modules, and pinned upper-vocabulary refresh. RDF canonicalization checks graph identity independently of serialization and blank-node labels. Dedicated CI compiles the native modules, exercises reasoning and history fixtures, and compares every upstream history snapshot and event with the retained Python oracle. The migration remains opt-in until full build and application parity pass; the existing Python build and the published graphs are retained.
+The opt-in TypeScript build generates all ten graphs through the Foxxi RDF kit, derives the complete pinned release history, refreshes hash-checked upper inputs and evidence, and rebuilds decorations, publication records, worked examples, the reference site and the workbench. Native OWL RL and SHACL checks run beside the unchanged, byte-pinned Java HermiT jar. Independent Python and RDF canonicalization oracles check history, complete builds, application data and the ten live graphs under fixed publication stamps. The existing Python build remains until complete parity is established.
+
+The Foxxi bridge serves the workbench and reference page. Optional Interego capabilities keep the page usable without a connection; signed sessions bind callers to their derived identity, pod writes use ETag conflict checks and verified readback, private packs and stars use each viewer's own pod, and encrypted shared state admits configured readers and editors. Delegated authors must match independently configured pod-owner anchors. Account changes clear cached shared state, and absent configuration refuses durable writes. Keys stay with the user and the project supplies no model or budget. Read-only Ask and orchestration tasks give connected AI clients public context and instructions to execute with their own subscription; browser sampling remains conditional on a real host adapter or the user's personal key.
+
+The hosted app derives share links from its current origin while preserving the old Claude artifact. Configuration and README publication links change only after the Railway page is verified live. Focused tests cover RDF identity, signed owner binding, replay and authorization failures, encrypted document limits, refresh rollback and safe share URLs. Generated agent skills reflect the advertised controls. Publication and deployment remain separate operations.
 
 ## 2026-10-14 — Foxxi decorations: canonical Interego IRIs with bridge controls
 

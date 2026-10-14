@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, appendFileSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -18,6 +18,7 @@ import { canonicalRdf, compareRdfFiles } from './parity.js';
 import { refreshEvidence } from './refresh-evidence.js';
 import { refreshUpper } from './refresh-upper.js';
 import { verifyPublished } from './verify-published.js';
+import { progress, progressStage } from './progress.js';
 
 export const UPSTREAM_COMMIT = '9f865995d879165d8fa49422915a5e53d2ecebf9';
 const FIXED_NOW = '2026-10-13T20:30:00+00:00';
@@ -30,21 +31,27 @@ interface RdfResult { graph: string; file: string; isomorphic: boolean; expected
 
 async function command(executable: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv, logFile: string): Promise<string> {
   await mkdir(dirname(logFile), { recursive: true });
-  const lines: Buffer[] = [];
+  await writeFile(logFile, '');
+  const stage = 'command:' + logFile.slice(logFile.lastIndexOf('/') + 1), started = Date.now();
+  progress(stage, 'start', { executable, args });
   let output = '';
+  const heartbeat = setInterval(() => progress(stage, 'heartbeat', { seconds: (Date.now() - started) / 1000 }), 30000);
+  heartbeat.unref();
   await new Promise<void>((resolvePromise, reject) => {
     const child = spawn(executable, [...args], { cwd, env, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    progress(stage, 'spawn', { childPid: child.pid });
     const chunk = (data: Buffer): void => {
-      lines.push(data); output += data.toString('utf8'); process.stdout.write(data);
+      appendFileSync(logFile, data); output += data.toString('utf8'); process.stdout.write(data);
     };
     child.stdout.on('data', chunk);
     child.stderr.on('data', chunk);
-    child.once('error', reject);
+    child.once('error', error => { progress(stage, 'error', { error: String(error) }); reject(error); });
     child.once('close', code => {
+      progress(stage, 'exit', { code, seconds: (Date.now() - started) / 1000 });
       if (code === 0) resolvePromise();
       else reject(new Error(executable + ' ' + args.join(' ') + ' failed with exit code ' + code));
     });
-  }).finally(async () => { await writeFile(logFile, Buffer.concat(lines)); });
+  }).finally(() => { clearInterval(heartbeat); });
   return output;
 }
 function normalizeTiming(value: Json, path = ''): Json {
@@ -94,18 +101,18 @@ async function sourceInputs(root: string): Promise<Record<string, string>> {
 }
 async function prepareInputs(root: string): Promise<void> {
   // Immutable upper publisher bytes are restored only when their pins still match.
-  await refreshUpper(root);
+  await progressStage('inputs:upper', () => refreshUpper(root));
   const cfg = loadConfig(root), snapshots = join(root, '.cache', 'golden-inputs');
   // The original xAPI endpoints expose no versioned URL in config. Fetch their
   // absent snapshots once, record hashes, and share those exact bytes across both
   // engines. Keep the committed Foxxi/relay/app snapshots and their old seeds.
   const missing = ['xapi-ontology.ttl', 'xapi-profile-ontology.ttl'].filter(file => !existsSync(join(root, 'evidence', file)));
   if (missing.length) {
-    await refreshEvidence(root, { mode: 'base', outputDir: snapshots });
+    await progressStage('inputs:xapi-base', () => refreshEvidence(root, { mode: 'base', outputDir: snapshots }));
     for (const file of missing) await copyFile(join(snapshots, file), join(root, 'evidence', file));
   }
   const reasoner = cfg.reasoner.jar;
-  if (!existsSync(reasoner)) await refreshEvidence(root, { mode: 'reasoner', reasonerFile: reasoner });
+  if (!existsSync(reasoner)) await progressStage('inputs:reasoner', () => refreshEvidence(root, { mode: 'reasoner', reasonerFile: reasoner }));
   assert.equal(createHash('sha256').update(await readFile(reasoner)).digest('hex'), cfg.reasoner.sha256, 'ROBOT jar differs from its recorded pin');
 }
 function fixedEnvironment(cfg: BuildConfig): NodeJS.ProcessEnv {
@@ -131,6 +138,8 @@ export async function checkParity(root = DEFAULT_ROOT, options: GoldenOptions = 
   // Native code reads process.env, while the independent Python oracle receives
   // the same immutable environment through spawn.
   Object.assign(process.env, env);
+  process.env.I2IDLX_PROGRESS_FILE = join(output, 'stage-progress.jsonl');
+  progress('golden', 'start', { root, fixedNow: FIXED_NOW });
   for (const key of Object.keys(process.env)) if (key.startsWith('I2IDLX_NOW_')) delete process.env[key];
   delete process.env.I2IDLX_ALLOW_UNPUBLISHED;
   const rdf: RdfResult[] = [], failures: string[] = [];
@@ -140,24 +149,24 @@ export async function checkParity(root = DEFAULT_ROOT, options: GoldenOptions = 
     assert.equal(head, UPSTREAM_COMMIT, 'upstream HEAD is not the full pinned commit');
     const shallow = (await command('git', ['rev-parse', '--is-shallow-repository'], cfg.i2idl.localClone, env, join(output, 'upstream-history.log'))).trim();
     assert.equal(shallow, 'false', 'full upstream history is required to derive releases and fact-level changes');
-    if (options.prepareInputs) await prepareInputs(root);
+    if (options.prepareInputs) await progressStage('inputs:all', () => prepareInputs(root));
     const before = await sourceInputs(root);
     await writeFile(join(output, 'input-fingerprints.json'), JSON.stringify(before, null, 2) + '\n');
     if (!options.compareOnly) {
-      await command(python, ['-I', join(root, 'build.py')], root, env, join(output, 'python-build.log'));
+      await command(python, ['-u', '-I', join(root, 'build.py')], root, env, join(output, 'python-build.log'));
       await command(python, ['-I', join(root, 'tools', 'publication_record.py'), root], root, env, join(output, 'python-publications.log'));
       // Rendering needs a walkthrough file; execute the independent existing
       // read-only oracle walk rather than copying a native report into it.
       await command(python, ['-I', join(root, 'tools', 'agent_walk.py'), root], root, env, join(output, 'python-walk.log'));
       await command(python, ['-I', join(root, 'tools', 'build_app.py'), root], root, env, join(output, 'python-app.log'));
       await command(python, ['-I', join(root, 'tools', 'build_site.py'), root], root, env, join(output, 'python-site.log'));
-      await buildNative(root, { outputDir: native, appDir: nativeApp, siteDir: nativeSite, skipHermit: false });
+      await progressStage('native:complete-build', () => buildNative(root, { outputDir: native, appDir: nativeApp, siteDir: nativeSite, skipHermit: false }));
     }
     assert.deepEqual(await sourceInputs(root), before, 'builds altered their shared input evidence');
     for (const key of [...GRAPH_KEYS, 'decorations']) {
       const slug = cfg.slugs[key];
       if (!slug) throw new Error('No graph slug for ' + key);
-      const file = slug + '.ttl', comparison = await compareRdfFiles(join(baseline, file), join(native, file), cfg.relayNsRoot + '/' + cfg.owner + '/' + slug);
+      const file = slug + '.ttl', comparison = await progressStage('compare:rdf:' + key, () => compareRdfFiles(join(baseline, file), join(native, file), cfg.relayNsRoot + '/' + cfg.owner + '/' + slug));
       rdf.push({ graph: key, file, ...comparison });
       process.stdout.write((comparison.isomorphic ? 'PASS ' : 'FAIL ') + key + ' RDF isomorphism ' + comparison.expectedHash + ' / ' + comparison.actualHash + '\n');
       if (!comparison.isomorphic) {
@@ -186,7 +195,7 @@ export async function checkParity(root = DEFAULT_ROOT, options: GoldenOptions = 
     assert.deepEqual(verification.failures, [], 'native full verification reported failed gates');
     const semantic = await json(join(native, 'semantic-layer.json'));
     assert.ok(semantic !== null && typeof semantic === 'object' && !Array.isArray(semantic) && semantic.hermit && Object.keys(semantic.hermit).length > 0, 'HermiT returned no fresh results');
-    const published = await verifyPublished(root, { outputDir: native });
+    const published = await progressStage('compare:live-representations', () => verifyPublished(root, { outputDir: native }));
     report.liveRepresentations = published;
     if (published.graphs.length !== GRAPH_KEYS.length) failures.push('live publication verification checked ' + published.graphs.length + ', expected all ten graphs');
     if (!published.ok) failures.push('native outputs differ from live negotiated publications: ' + published.failed.join(', '));
@@ -195,9 +204,11 @@ export async function checkParity(root = DEFAULT_ROOT, options: GoldenOptions = 
     if (failures.length) throw new Error('Golden parity failed:\n' + failures.join('\n'));
     process.stdout.write('PASS all ten publishable graphs, local decorations, fresh semantics, verified publication receipts and workbench data match the independent complete Python build; all ten live Turtle/JSON-LD graphs match and HyperMarkdown resolves.\n');
   } catch (error) {
+    progress('golden', 'error', { error: String(error) });
     report.status = 'failed'; report.error = String(error);
     throw error;
   } finally {
+    progress('golden', 'end', { status: report.status });
     await writeFile(join(output, 'parity-report.json'), JSON.stringify(report, null, 2) + '\n');
     for (const key of Object.keys(process.env)) if (!(key in originalEnv)) delete process.env[key];
     Object.assign(process.env, originalEnv);

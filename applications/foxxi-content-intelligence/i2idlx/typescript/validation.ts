@@ -8,6 +8,7 @@
  * This implements the graph's Core constraints, not SHACL-SPARQL/SHACL-JS.
  */
 import {Store,DataFactory} from 'n3';
+import { progress } from './progress.js';
 import type {Term,Quad} from '@rdfjs/types';
 import {RDF,RDFS,XSD,termKey,objects,subjects,has,union,rdfList,rdfsClosure,validLexical} from './reasoning.js';
 
@@ -239,6 +240,8 @@ function reportFor(results:ValidationResult[]):ValidationReport {
   return {conforms,results,report,graph:report,text:'Validation Report\nConforms: '+conforms+'\n'+results.map(r=>'Constraint Violation: '+r.component+'; Focus Node: '+r.focusNode.value+'; '+r.message).join('\n')};
 }
 export async function shaclValidate(data:Store,shapes:Store,options:ValidationOptions={}):Promise<ValidationReport> {
+  const started = Date.now();
+  progress('validation:shacl', 'start', { dataTriples: data.size, shapeTriples: shapes.size, inference: options.inference ?? 'none' });
   ensureSupported(shapes);
   const merged=union(data,...(options.ontology?[options.ontology]:[])),graph=options.inference==='rdfs'?rdfsClosure(merged):merged;
   const validator=new CoreValidator(graph,shapes),results:ValidationResult[]=[];
@@ -246,7 +249,9 @@ export async function shaclValidate(data:Store,shapes:Store,options:ValidationOp
     ...[...shapes].filter(q=>[SH+'targetClass',SH+'targetNode',SH+'targetSubjectsOf',SH+'targetObjectsOf'].includes(q.predicate.value)).map(q=>q.subject),
     ...subjects(shapes,RDF+'type',nn(SH+'NodeShape')).filter(s=>has(shapes,s,RDF+'type',nn(RDFS+'Class')))
   ]);
+  progress('validation:shacl', 'targets', { roots: roots.length, inferredTriples: graph.size });
   for(const s of roots)for(const n of targets(graph,shapes,s))results.push(...validator.validate(n,s));
+  progress('validation:shacl', 'end', { results: results.length, seconds: (Date.now() - started) / 1000 });
   return reportFor(results);
 }
 export function conformsToShape(data:Store,shapes:Store,focus:Term,shape:Term):boolean {
@@ -262,6 +267,8 @@ function nodeExpression(data:Store,shapes:Store,focus:Term,expression:Term):Term
   throw new Error('Unsupported SHACL-AF node expression '+expression.value);
 }
 export function shaclRules(data:Store,shapes:Store,options:{maxRounds?:number;maxTriples?:number}={}):Store {
+  const started = Date.now();
+  progress('validation:shacl-af', 'start', { dataTriples: data.size, shapeTriples: shapes.size });
   ensureSupported(shapes);
   const g=union(data);
   const allRules=[...shapes.getQuads(null,nn(SH+'rule'),null,null)].map(q=>{
@@ -271,6 +278,8 @@ export function shaclRules(data:Store,shapes:Store,options:{maxRounds?:number;ma
   let changed=true,round=0;
   while(changed) {
     if(++round>(options.maxRounds??1000))throw new Error('SHACL-AF rules did not reach a fixed point');
+    const beforeTriples = g.size;
+    progress('validation:shacl-af', 'round-start', { round, rules: allRules.length, triples: g.size });
     changed=false;
     for(const {shape,rule} of allRules) {
       if(truth(shapes,shape,'deactivated')||truth(shapes,rule,'deactivated'))continue;
@@ -284,6 +293,8 @@ export function shaclRules(data:Store,shapes:Store,options:{maxRounds?:number;ma
           if(g.size>(options.maxTriples??2000000))throw new Error('SHACL-AF rule triple limit exceeded');
         }
     }
+    progress('validation:shacl-af', 'round-end', { round, triples: g.size, addedTriples: g.size - beforeTriples });
   }
+  progress('validation:shacl-af', 'end', { rounds: round, triples: g.size, seconds: (Date.now() - started) / 1000 });
   return g;
 }

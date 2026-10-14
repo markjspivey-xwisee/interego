@@ -17,6 +17,7 @@ import { checkAppData } from './check-app-data.js';
 import { buildSite } from './build-site.js';
 import { publicationRecord } from './publication-record.js';
 import { agentWalk } from './agent-walk.js';
+import { progressStage } from './progress.js';
 
 const { namedNode: nn, literal, quad } = DataFactory;
 const RDF='http://www.w3.org/1999/02/22-rdf-syntax-ns#';
@@ -68,25 +69,25 @@ async function workedExamples(build: BuildResult): Promise<string[]> {
 }
 export async function buildNative(root=DEFAULT_ROOT,options:NativeBuildOptions={}):Promise<{build:BuildResult;verification:BuildVerification}> {
   root=resolve(root);
-  const build=await generate(root,{outputDir:resolve(options.outputDir??join(root,'dist-ts'))});
-  const verification=await validateBuild(build,{skipHermit:options.skipHermit});
-  const decorations=await materializeDecorations(build,verification.inferred);
+  const build=await progressStage('native:generate',()=>generate(root,{outputDir:resolve(options.outputDir??join(root,'dist-ts'))}));
+  const verification=await progressStage('native:validate',()=>validateBuild(build,{skipHermit:options.skipHermit}));
+  const decorations=await progressStage('native:decorations',()=>materializeDecorations(build,verification.inferred));
   if(decorations.affordances!==5*build.concepts.size||decorations.inherited.size===0)throw new Error('Per-concept decorations are incomplete');
-  const decorationShapes=await shaclValidate(decorations.graph,build.graphs.shapes!,{ontology:build.graphs.ontology!,inference:'rdfs'});
+  const decorationShapes=await progressStage('native:decorations-shacl',()=>shaclValidate(decorations.graph,build.graphs.shapes!,{ontology:build.graphs.ontology!,inference:'rdfs'}));
   if(!decorationShapes.conforms)throw new Error('Materialized decorations fail SHACL: '+decorationShapes.text);
   writeDecorations(build,decorations);
-  const examples=await workedExamples(build);
+  const examples=await progressStage('native:worked-examples',()=>workedExamples(build));
   const report=verification.report+'\n## Worked examples\n'+examples.join('\n')+'\n\n- PASS — materialized '+decorations.affordances+' per-concept affordances\n';
   await writeFile(join(build.outputDir,'verification-report.md'),report);
   if(!options.graphsOnly) {
     const appDir=resolve(options.appDir??join(root,'app','build-ts'));
     const siteDir=resolve(options.siteDir??join(root,'site-ts'));
-    const receipts=await publicationRecord(root,{outputDir:build.outputDir});
+    const receipts=await progressStage('native:publication-receipts',()=>publicationRecord(root,{outputDir:build.outputDir}));
     if(receipts.problems.length)throw new Error('Publication receipts failed: '+receipts.problems.join('; '));
-    await agentWalk(root,{distDir:build.outputDir,live:false});
-    await buildApp(root,{distDir:build.outputDir,outputDir:appDir,siteDir,now:process.env.I2IDLX_NOW});
+    await progressStage('native:agent-walk',()=>agentWalk(root,{distDir:build.outputDir,live:false}));
+    await progressStage('native:build-app',()=>buildApp(root,{distDir:build.outputDir,outputDir:appDir,siteDir,now:process.env.I2IDLX_NOW}));
     checkAppData(join(appDir,'data.json'));
-    await buildSite(root,{distDir:build.outputDir,outputDir:siteDir,appDir,workbenchUrl:options.workbenchUrl});
+    await progressStage('native:build-site',()=>buildSite(root,{distDir:build.outputDir,outputDir:siteDir,appDir,workbenchUrl:options.workbenchUrl}));
   }
   return {build,verification};
 }

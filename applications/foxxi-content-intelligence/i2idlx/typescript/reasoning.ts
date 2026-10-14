@@ -16,6 +16,7 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
+import { progress, progressEnabled } from './progress.js';
 
 const { namedNode: nn, literal, quad } = DataFactory;
 export const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
@@ -141,6 +142,8 @@ export interface ClosureResult {
   coverage: { mode: 'native-owlrl-oracle-compatible'; unsupported: string[]; completeDatatypeEntailment: false };
 }
 export function closure(data: Store, options: { maxRounds?: number; maxTriples?: number; strictDatatypes?: boolean } = {}): ClosureResult {
+  const closureStarted = Date.now(), tracing = progressEnabled();
+  progress('reasoning:owlrl', 'start', { inputTriples: data.size, maxRounds: options.maxRounds ?? 1000, maxTriples: options.maxTriples ?? 2000000 });
   const g = union(data), errors = new Set<string>(), unsupported = new Set<string>();
   const T = RDF+'type', SC = RDFS+'subClassOf', SP = RDFS+'subPropertyOf', SA = OWL+'sameAs';
   let changed = false;
@@ -176,7 +179,11 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
   do {
     changed=false; rounds++;
     if(rounds>(options.maxRounds??1000)) throw new Error('OWL saturation did not reach a fixed point; no partial result accepted');
+    const roundStarted = Date.now(), beforeTriples = g.size;
+    progress('reasoning:owlrl', 'round-start', { round: rounds, triples: beforeTriples });
+    let scanned = 0;
     for (const q of [...g]) {
+      if (tracing && ++scanned % 50000 === 0) progress('reasoning:owlrl', 'round-scan', { round: rounds, scanned, triples: g.size, seconds: (Date.now() - roundStarted) / 1000 });
       const s:Term=q.subject as Term,p:Term=q.predicate as Term,o:Term=q.object as Term,pv=p.value;
       for (const n of [s,p,o]) add(n,SA,n);
       if (pv===SA && !s.equals(o)) {
@@ -273,7 +280,9 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
           if(props.every(pp=>objects(g,members[i]!,pp).some(v=>has(g,members[j]!,pp,v)))) add(members[i]!,SA,members[j]!);
       }
     }
+    progress('reasoning:owlrl', 'round-end', { round: rounds, triples: g.size, addedTriples: g.size - beforeTriples, seconds: (Date.now() - roundStarted) / 1000 });
   } while(changed);
+  progress('reasoning:owlrl', 'contradictions-start', { rounds, triples: g.size });
   // Contradictions are checked only after saturation, never treated as a reason to stop early.
   const errorDisjoint=(a:Term,b:Term) => {
     for(const x of subjects(g,T,a)) if(typed(x,b)) errors.add('Disjoint classes '+a.value+' and '+b.value+' have a common individual '+x.value);
@@ -341,14 +350,19 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
   }
   // Generalized blank-node predicate triples may participate in rules; never publish them.
   for(const q of [...g]) if(q.predicate.termType!=='NamedNode') g.removeQuad(q);
+  progress('reasoning:owlrl', 'end', { rounds, triples: g.size, errors: errors.size, seconds: (Date.now() - closureStarted) / 1000 });
   return { graph:g,errors:[...errors].sort(),rounds,coverage:{mode:'native-owlrl-oracle-compatible',unsupported:[...unsupported].sort(),completeDatatypeEntailment:false} };
 }
 
 export function rdfsClosure(data: Store): Store {
+  const started = Date.now(); let rounds = 0;
+  progress('reasoning:rdfs', 'start', { inputTriples: data.size });
   const g=union(data);
   let changed=true;
   const add=(s:Term,p:string,o:Term)=>{if(!has(g,s,p,o)){g.addQuad(quad(s as Quad['subject'],nn(p),o as Quad['object']));changed=true;}};
   while(changed) {
+    rounds++; const beforeTriples = g.size;
+    progress('reasoning:rdfs', 'round-start', { round: rounds, triples: g.size });
     changed=false;
     for(const q of [...g]) {
       if(q.predicate.value===RDFS+'subClassOf') {
@@ -362,7 +376,9 @@ export function rdfsClosure(data: Store): Store {
       if(q.predicate.value===RDFS+'domain'||q.predicate.value===RDFS+'range')
         for(const t of g.getQuads(null,q.subject as Quad['predicate'],null,null)) add(q.predicate.value===RDFS+'domain'?t.subject:t.object,RDF+'type',q.object);
     }
+    progress('reasoning:rdfs', 'round-end', { round: rounds, triples: g.size, addedTriples: g.size - beforeTriples });
   }
+  progress('reasoning:rdfs', 'end', { rounds, triples: g.size, seconds: (Date.now() - started) / 1000 });
   return g;
 }
 
@@ -444,6 +460,7 @@ export async function reasonerJar(config:{jar:string;sha256:string;url?:string})
 }
 export interface HermitResult {consistent:boolean|null;seconds:number;detail:string}
 export async function hermit(g:Store,workdir:string,jar:string,memoryMb=3000,timeoutSeconds=900):Promise<HermitResult> {
+  progress('reasoning:hermit', 'prepare', { workdir, inputTriples: g.size, memoryMb, timeoutSeconds });
   const risks=wideningRisks(g);
   if(risks.risks.length) throw new Error('Unsafe DL widening: '+risks.risks.slice(0,3).join('; '));
   const bytes=await readFile(jar);
@@ -455,13 +472,15 @@ export async function hermit(g:Store,workdir:string,jar:string,memoryMb=3000,tim
   const start=Date.now(),java=process.env.I2IDLX_JAVA??'java';
   return new Promise((res,rej)=>{
     const child=spawn(java,['-Xmx'+memoryMb+'M','-cp',resolve(jar),'org.semanticweb.HermiT.cli.CommandLine','-k',pathToFileURL(file).href],{windowsHide:true,stdio:['ignore','pipe','pipe']});
+    progress('reasoning:hermit', 'spawn', { workdir, childPid: child.pid, dlTriples: dl.size, timeoutSeconds });
     let output='',expired=false,finished=false;
-    const timer=setTimeout(()=>{expired=true;child.kill('SIGKILL');},timeoutSeconds*1000);
+    const timer=setTimeout(()=>{progress('reasoning:hermit', 'timeout', { workdir, childPid: child.pid, timeoutSeconds });expired=true;child.kill('SIGKILL');},timeoutSeconds*1000);
     child.stdout.on('data',b=>{output+=b.toString();});child.stderr.on('data',b=>{output+=b.toString();});
     child.on('error',e=>{if(!finished){finished=true;clearTimeout(timer);rej(e);}});
     child.on('close',code=>{
       if(finished)return;finished=true;clearTimeout(timer);
       const seconds=(Date.now()-start)/1000;
+      progress('reasoning:hermit', 'exit', { workdir, code, expired, seconds, outputBytes: Buffer.byteLength(output) });
       if(expired)res({consistent:null,seconds,detail:'no answer within '+timeoutSeconds+' s'});
       else if(output.includes('InconsistentOntologyException'))res({consistent:false,seconds,detail:'inconsistent'});
       else if(code===0&&output.includes('owl#Thing is satisfiable'))res({consistent:true,seconds,detail:'consistent'});

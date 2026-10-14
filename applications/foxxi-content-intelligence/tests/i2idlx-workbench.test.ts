@@ -237,6 +237,7 @@ describe('I2IDL-X live route contract (local fixture only)', () => {
     try {
       const capabilities = await (await fetch(local + '/i2idlx/capabilities')).json();
       expect(capabilities.ai.project_paid).toBe(false);
+      expect(capabilities._affordances.map((a: { action: string }) => a.action)).toEqual(expect.arrayContaining(['urn:iep:action:foxxi:i2idlx-ask', 'urn:iep:action:foxxi:i2idlx-orchestrate']));
       const challenge = await (await fetch(local + '/i2idlx/challenge')).json();
       const signed = await sign(alice, { i2idlx_operation: 'session', bridge_audience: base, nonce: challenge.nonce, user_id: 'victim', canEdit: true });
       const call = () => fetch(local + '/i2idlx/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(signed) });
