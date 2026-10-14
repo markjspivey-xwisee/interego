@@ -146,12 +146,16 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
   progress('reasoning:owlrl', 'start', { inputTriples: data.size, maxRounds: options.maxRounds ?? 1000, maxTriples: options.maxTriples ?? 2000000 });
   const g = union(data), errors = new Set<string>(), unsupported = new Set<string>();
   const T = RDF+'type', SC = RDFS+'subClassOf', SP = RDFS+'subPropertyOf', SA = OWL+'sameAs';
+  // N3 invalidates its cached size on insertion; reading it for every
+  // inferred quad rescans the whole store. This store is mutated only here
+  // until final output cleanup, so count each novel successful insertion.
+  let tripleCount = g.size;
   let changed = false;
   const add = (s: Term, p: Term|string, o: Term) => {
     const pred = typeof p === 'string' ? nn(p) : p;
     if (!has(g,s,pred,o)) {
-      g.addQuad(quad(s as Quad['subject'], pred as Quad['predicate'], o as Quad['object'])); changed = true;
-      if (g.size > (options.maxTriples ?? 2000000)) throw new Error('OWL saturation triple limit exceeded; no partial result accepted');
+      g.addQuad(quad(s as Quad['subject'], pred as Quad['predicate'], o as Quad['object'])); tripleCount++; changed = true;
+      if (tripleCount > (options.maxTriples ?? 2000000)) throw new Error('OWL saturation triple limit exceeded; no partial result accepted');
     }
   };
   const typed = (n: Term, c: string|Term) => has(g,n,T,typeof c === 'string'?nn(c):c);
@@ -179,11 +183,11 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
   do {
     changed=false; rounds++;
     if(rounds>(options.maxRounds??1000)) throw new Error('OWL saturation did not reach a fixed point; no partial result accepted');
-    const roundStarted = Date.now(), beforeTriples = g.size;
+    const roundStarted = Date.now(), beforeTriples = tripleCount;
     progress('reasoning:owlrl', 'round-start', { round: rounds, triples: beforeTriples });
     let scanned = 0;
     for (const q of [...g]) {
-      if (tracing && ++scanned % 50000 === 0) progress('reasoning:owlrl', 'round-scan', { round: rounds, scanned, triples: g.size, seconds: (Date.now() - roundStarted) / 1000 });
+      if (tracing && ++scanned % 50000 === 0) progress('reasoning:owlrl', 'round-scan', { round: rounds, scanned, triples: tripleCount, seconds: (Date.now() - roundStarted) / 1000 });
       const s:Term=q.subject as Term,p:Term=q.predicate as Term,o:Term=q.object as Term,pv=p.value;
       for (const n of [s,p,o]) add(n,SA,n);
       if (pv===SA && !s.equals(o)) {
@@ -280,9 +284,9 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
           if(props.every(pp=>objects(g,members[i]!,pp).some(v=>has(g,members[j]!,pp,v)))) add(members[i]!,SA,members[j]!);
       }
     }
-    progress('reasoning:owlrl', 'round-end', { round: rounds, triples: g.size, addedTriples: g.size - beforeTriples, seconds: (Date.now() - roundStarted) / 1000 });
+    progress('reasoning:owlrl', 'round-end', { round: rounds, triples: tripleCount, addedTriples: tripleCount - beforeTriples, seconds: (Date.now() - roundStarted) / 1000 });
   } while(changed);
-  progress('reasoning:owlrl', 'contradictions-start', { rounds, triples: g.size });
+  progress('reasoning:owlrl', 'contradictions-start', { rounds, triples: tripleCount });
   // Contradictions are checked only after saturation, never treated as a reason to stop early.
   const errorDisjoint=(a:Term,b:Term) => {
     for(const x of subjects(g,T,a)) if(typed(x,b)) errors.add('Disjoint classes '+a.value+' and '+b.value+' have a common individual '+x.value);

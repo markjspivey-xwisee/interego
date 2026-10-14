@@ -13,13 +13,14 @@ function expect(actual:unknown) {
   };
 }
 import {Store,Parser,DataFactory} from 'n3';
-import {closure,dlReady,wideningRisks,RDF,RDFS,OWL,XSD,has,rdfList} from './reasoning.js';
+import {closure,dlReady,wideningRisks,RDF,RDFS,OWL,XSD,has,rdfList,termKey} from './reasoning.js';
 import {shaclValidate,shaclRules} from './validation.js';
 
 const {namedNode:nn}=DataFactory;
 const prefixes='@prefix : <urn:test:> . @prefix rdf: <'+RDF+'> . @prefix rdfs: <'+RDFS+'> . @prefix owl: <'+OWL+'> . @prefix xsd: <'+XSD+'> . @prefix sh: <http://www.w3.org/ns/shacl#> . ';
 const graph=(body:string)=>new Store(new Parser().parse(prefixes+body));
 const typed=(g:Store,n:string,c:string)=>has(g,nn('urn:test:'+n),RDF+'type',nn('urn:test:'+c));
+const quadKeys=(g:Store)=>[...g].map(q=>[q.subject,q.predicate,q.object,q.graph].map(termKey).join('|')).sort();
 
 describe('native OWL RL saturation',()=>{
   it('classifies a referent through nested hasValue/someValuesFrom restrictions and class bridges',()=>{
@@ -86,6 +87,33 @@ describe('native OWL RL saturation',()=>{
   it('keeps non-equivalent multiple list values malformed',()=>{
     const malformed=graph(' :list rdf:first :A,:B;rdf:rest rdf:nil . ');
     expect(()=>rdfList(malformed,nn('urn:test:list'))).toThrow(/non-equivalent/);
+  });
+  it('accepts the exact triple limit and rejects one less without changing entailments',()=>{
+    const input=graph(' :A rdfs:subClassOf :B . :B rdfs:subClassOf :C . :x a :A . '+
+      ' :p a owl:TransitiveProperty . :x :p :y . :y :p :z . :x :score "7"^^xsd:integer . ');
+    const baseline=closure(input), limit=baseline.graph.size;
+    const bounded=closure(input,{maxTriples:limit});
+    assert.deepEqual(quadKeys(bounded.graph),quadKeys(baseline.graph));
+    assert.deepEqual(bounded.errors,baseline.errors);
+    assert.deepEqual(bounded.coverage,baseline.coverage);
+    assert.equal(bounded.rounds,baseline.rounds);
+    assert.equal(typed(bounded.graph,'x','C'),true);
+    assert.equal(has(bounded.graph,nn('urn:test:x'),'urn:test:p',nn('urn:test:z')),true);
+    assert.throws(()=>closure(input,{maxTriples:limit-1}),/OWL saturation triple limit exceeded/);
+    // A fixed point repeatedly proposes existing quads; they must not count twice.
+    const repeated=closure(baseline.graph,{maxTriples:limit});
+    assert.deepEqual(quadKeys(repeated.graph),quadKeys(baseline.graph));
+    assert.deepEqual(repeated.errors,baseline.errors);
+  });
+  it('counts the union after collapsing identical quads from different input graphs',()=>{
+    const input=graph(' :x a :A . :A rdfs:subClassOf :B . ');
+    const baseline=closure(input), limit=baseline.graph.size;
+    const named=DataFactory.namedNode('urn:test:source');
+    for(const q of [...input])input.addQuad(DataFactory.quad(q.subject,q.predicate,q.object,named));
+    assert.equal(input.size,4);
+    const result=closure(input,{maxTriples:limit});
+    assert.deepEqual(quadKeys(result.graph),quadKeys(baseline.graph));
+    assert.throws(()=>closure(input,{maxTriples:limit-1}),/OWL saturation triple limit exceeded/);
   });
   it('fails closed on cyclic RDF lists and saturation resource limits',()=>{
     const bad=graph(' :l rdf:first :p; rdf:rest :l . :chain owl:propertyChainAxiom :l . ');
@@ -168,6 +196,27 @@ describe('native SHACL Core and TripleRule',()=>{
     const expanded=shaclRules(graph(' :x a :Initial . :m a :Proposal;:subject :a;:predicate :mapped;:object :b;:status :proposed . '),shapes);
     expect(typed(expanded,'x','Final')).toBe(true);
     expect(has(expanded,nn('urn:test:a'),'urn:test:mapped',nn('urn:test:b'))).toBe(false);
+  });
+  it('enforces the exact TripleRule limit across novel and duplicate fixed-point output',()=>{
+    const shapes=graph(' :A a sh:NodeShape;sh:targetClass :Initial;sh:rule '+
+      ' [a sh:TripleRule;sh:subject sh:this;sh:predicate rdf:type;sh:object :Intermediate] . '+
+      ' :B a sh:NodeShape;sh:targetClass :Intermediate;sh:rule '+
+      ' [a sh:TripleRule;sh:subject sh:this;sh:predicate rdf:type;sh:object :Final] . ');
+    const input=graph(' :x a :Initial . '), baseline=shaclRules(input,shapes);
+    assert.equal(baseline.size,3);
+    const bounded=shaclRules(input,shapes,{maxTriples:3});
+    assert.deepEqual(quadKeys(bounded),quadKeys(baseline));
+    assert.throws(()=>shaclRules(input,shapes,{maxTriples:2}),/SHACL-AF rule triple limit exceeded/);
+    const repeated=shaclRules(baseline,shapes,{maxTriples:3});
+    assert.deepEqual(quadKeys(repeated),quadKeys(baseline));
+    assert.equal(input.size,1);
+  });
+  it('retains the TripleRule limit check when a candidate already exists',()=>{
+    const shapes=graph(' :S a sh:NodeShape;sh:targetClass :Initial;sh:rule '+
+      ' [a sh:TripleRule;sh:subject sh:this;sh:predicate rdf:type;sh:object :Existing] . ');
+    const input=graph(' :x a :Initial,:Existing . ');
+    assert.deepEqual(quadKeys(shaclRules(input,shapes,{maxTriples:2})),quadKeys(input));
+    assert.throws(()=>shaclRules(input,shapes,{maxTriples:1}),/SHACL-AF rule triple limit exceeded/);
   });
   it('rejects unsupported SHACL features instead of returning a green partial report',async()=>{
     const shapes=graph(' :S a sh:NodeShape;sh:targetNode :x;sh:sparql [sh:select "SELECT ?this WHERE {}"] . ');

@@ -1,0 +1,142 @@
+name: I2IDL-X bounded native diagnostic
+
+# Diagnostic evidence only. Complete Python/native golden parity remains a separate gate.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/i2idlx/**'
+      - 'applications/foxxi-content-intelligence/src/**'
+      - 'packages/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.base.json'
+      - '.github/workflows/i2idlx-native-diagnostic.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: i2idlx-native-diagnostic-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    name: Bounded complete native build and counter benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      INTEREGO_CORE_SRC: ${{ github.workspace }}/packages/core/src
+      INTEREGO_TSX: ${{ github.workspace }}/node_modules/.bin/tsx
+      I2IDLX_REASONER_JAR: ${{ github.workspace }}/applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
+      I2IDLX_DIAGNOSTIC: ${{ github.workspace }}/applications/foxxi-content-intelligence/i2idlx/.cache/native-diagnostic
+      I2IDLX_PROGRESS_FILE: ${{ github.workspace }}/applications/foxxi-content-intelligence/i2idlx/.cache/native-diagnostic/progress.jsonl
+      I2IDLX_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      I2IDLX_BUILT_DATE: '2026-10-08'
+      I2IDLX_MODIFIED: '2026-10-13'
+      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
+      I2IDLX_HERMIT: '1'
+      TZ: UTC
+    steps:
+      - name: Start the diagnostic deadline before checkout
+        run: echo "DIAGNOSTIC_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Create the diagnostic receipt
+        run: |
+          mkdir -p "$I2IDLX_DIAGNOSTIC"
+          printf '{"headSha":"%s","runId":"%s","nativeLimitSeconds":600,"jobLimitMinutes":25}\n' "$I2IDLX_HEAD_SHA" "$GITHUB_RUN_ID" > "$I2IDLX_DIAGNOSTIC/run.json"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install locked native dependencies and build substrate packages
+        timeout-minutes: 6
+        run: |
+          npm ci
+          npm run build
+          npm ci --prefix "$I2IDLX_ROOT/app"
+      - name: Compile native build, tests, and benchmark modules
+        timeout-minutes: 2
+        run: npx --no-install tsc --noEmit -p "$I2IDLX_ROOT/tsconfig.native.json"
+      - name: Cache only byte-pinned upper inputs and the pinned ROBOT jar
+        uses: actions/cache@v4
+        with:
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/.cache/upper
+            applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
+          key: i2idlx-golden-pins-${{ hashFiles('applications/foxxi-content-intelligence/i2idlx/evidence/upper/manifest.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/refresh-upper-data.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/semantic-data.json', 'applications/foxxi-content-intelligence/i2idlx/config.json') }}
+      - name: Verify the exact canonical source and retained inputs
+        timeout-minutes: 8
+        run: |
+          timeout --signal=TERM --kill-after=15s 240s npx --no-install tsx "$I2IDLX_ROOT/typescript/prepare-source.ts" "$I2IDLX_ROOT" "$I2IDL_CLONE"
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 9f865995d879165d8fa49422915a5e53d2ecebf9
+          test "$(git -C "$I2IDL_CLONE" rev-parse --is-shallow-repository)" = false
+          timeout --signal=TERM --kill-after=15s 180s npx --no-install tsx "$I2IDLX_ROOT/typescript/prepare-build-inputs.ts" "$I2IDLX_ROOT"
+          sha256sum "$I2IDLX_ROOT/evidence/xapi-ontology.ttl" "$I2IDLX_ROOT/evidence/xapi-profile-ontology.ttl" "$I2IDLX_ROOT/evidence/xapi-snapshots.json" > "$I2IDLX_DIAGNOSTIC/xapi-input-sha256.txt"
+      - name: Check exact counter thresholds and unchanged closure results
+        timeout-minutes: 2
+        run: npx --no-install tsx --test "$I2IDLX_ROOT/typescript/reasoning.test.ts"
+      - name: Measure the bounded N3 insertion counter benchmark
+        timeout-minutes: 2
+        run: |
+          /usr/bin/time -v -o "$I2IDLX_DIAGNOSTIC/counter-benchmark-time.txt" timeout --signal=TERM --kill-after=10s 90s npx --no-install tsx "$I2IDLX_ROOT/typescript/reasoning-counter-benchmark.ts" | tee "$I2IDLX_DIAGNOSTIC/counter-benchmark.jsonl"
+      - name: Run the complete native build with Java within ten minutes
+        timeout-minutes: 11
+        run: |
+          # Preserve two minutes for evidence even if prerequisites used most of the job.
+          elapsed=$(( $(date +%s) - DIAGNOSTIC_START_EPOCH ))
+          budget=$(( 1380 - elapsed ))
+          if (( budget > 600 )); then budget=600; fi
+          if (( budget < 30 )); then
+            printf '{"headSha":"%s","exitCode":124,"reason":"setup exhausted the diagnostic budget","budgetSeconds":%s}\n' "$I2IDLX_HEAD_SHA" "$budget" > "$I2IDLX_DIAGNOSTIC/native-outcome.json"
+            exit 124
+          fi
+          set +e
+          /usr/bin/time -v -o "$I2IDLX_DIAGNOSTIC/native-time.txt" timeout --signal=TERM --kill-after=20s "${budget}s" npx --no-install tsx "$I2IDLX_ROOT/typescript/build.ts" "$I2IDLX_ROOT" --out "$I2IDLX_DIAGNOSTIC/dist-native" --app-out "$I2IDLX_DIAGNOSTIC/app-native" --site-out "$I2IDLX_DIAGNOSTIC/site-native" 2>&1 | tee "$I2IDLX_DIAGNOSTIC/native-build.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          printf '{"headSha":"%s","exitCode":%s,"budgetSeconds":%s}\n' "$I2IDLX_HEAD_SHA" "$status" "$budget" > "$I2IDLX_DIAGNOSTIC/native-outcome.json"
+          exit "$status"
+      - name: Emit timing and progress evidence, including on timeout
+        if: always()
+        run: |
+          for file in run.json xapi-input-sha256.txt counter-benchmark-time.txt counter-benchmark.jsonl native-time.txt native-outcome.json; do
+            if test -f "$I2IDLX_DIAGNOSTIC/$file"; then
+              echo "::group::$file"
+              cat "$I2IDLX_DIAGNOSTIC/$file"
+              echo "::endgroup::"
+            fi
+          done
+          if test -f "$I2IDLX_PROGRESS_FILE"; then
+            echo "::group::Last native progress events"
+            tail -n 100 "$I2IDLX_PROGRESS_FILE"
+            echo "::endgroup::"
+          fi
+          echo "This bounded diagnostic does not establish complete Python/native golden parity." >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain native diagnostic evidence and any generated outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: i2idlx-native-diagnostic-${{ github.run_id }}
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            applications/foxxi-content-intelligence/i2idlx/.cache/native-diagnostic
+            applications/foxxi-content-intelligence/i2idlx/.cache/golden-inputs
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-profile-ontology.ttl
+            applications/foxxi-content-intelligence/i2idlx/evidence/xapi-snapshots.json

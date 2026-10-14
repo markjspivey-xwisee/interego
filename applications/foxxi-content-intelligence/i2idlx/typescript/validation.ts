@@ -271,6 +271,8 @@ export function shaclRules(data:Store,shapes:Store,options:{maxRounds?:number;ma
   progress('validation:shacl-af', 'start', { dataTriples: data.size, shapeTriples: shapes.size });
   ensureSupported(shapes);
   const g=union(data);
+  // Keep the guard exact without rescanning N3's indexes after every add.
+  let tripleCount=g.size;
   const allRules=[...shapes.getQuads(null,nn(SH+'rule'),null,null)].map(q=>{
     if(!has(shapes,q.object,RDF+'type',nn(SH+'TripleRule')))throw new Error('Only sh:TripleRule is supported');
     return {shape:q.subject,rule:q.object,order:Number(one(shapes,q.object,SH+'order')?.value??0)};
@@ -278,8 +280,8 @@ export function shaclRules(data:Store,shapes:Store,options:{maxRounds?:number;ma
   let changed=true,round=0;
   while(changed) {
     if(++round>(options.maxRounds??1000))throw new Error('SHACL-AF rules did not reach a fixed point');
-    const beforeTriples = g.size;
-    progress('validation:shacl-af', 'round-start', { round, rules: allRules.length, triples: g.size });
+    const beforeTriples = tripleCount;
+    progress('validation:shacl-af', 'round-start', { round, rules: allRules.length, triples: tripleCount });
     changed=false;
     for(const {shape,rule} of allRules) {
       if(truth(shapes,shape,'deactivated')||truth(shapes,rule,'deactivated'))continue;
@@ -289,12 +291,12 @@ export function shaclRules(data:Store,shapes:Store,options:{maxRounds?:number;ma
       for(const focus of targets(g,shapes,shape))if(objects(shapes,rule,SH+'condition').every(c=>validator.validate(focus,c).length===0))
         for(const ss of nodeExpression(g,shapes,focus,s))for(const pp of nodeExpression(g,shapes,focus,p))for(const oo of nodeExpression(g,shapes,focus,o)) {
           if(!['NamedNode','BlankNode'].includes(ss.termType)||pp.termType!=='NamedNode')throw new Error('TripleRule produced an invalid RDF subject or predicate');
-          if(!has(g,ss,pp,oo)){g.addQuad(quad(ss as Quad['subject'],pp as Quad['predicate'],oo as Quad['object']));changed=true;}
-          if(g.size>(options.maxTriples??2000000))throw new Error('SHACL-AF rule triple limit exceeded');
+          if(!has(g,ss,pp,oo)){g.addQuad(quad(ss as Quad['subject'],pp as Quad['predicate'],oo as Quad['object']));tripleCount++;changed=true;}
+          if(tripleCount>(options.maxTriples??2000000))throw new Error('SHACL-AF rule triple limit exceeded');
         }
     }
-    progress('validation:shacl-af', 'round-end', { round, triples: g.size, addedTriples: g.size - beforeTriples });
+    progress('validation:shacl-af', 'round-end', { round, triples: tripleCount, addedTriples: tripleCount - beforeTriples });
   }
-  progress('validation:shacl-af', 'end', { rounds: round, triples: g.size, seconds: (Date.now() - started) / 1000 });
+  progress('validation:shacl-af', 'end', { rounds: round, triples: tripleCount, seconds: (Date.now() - started) / 1000 });
   return g;
 }
