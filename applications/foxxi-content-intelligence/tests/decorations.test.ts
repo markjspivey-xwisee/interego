@@ -12,7 +12,7 @@ import type { AddressInfo } from 'node:net';
 import { readdirSync, readFileSync } from 'node:fs';
 import { DECORATIONS } from '../src/decorations/index.js';
 import {
-  bindControls, catalogGraph, checkDecoration, expandTemplate, notAffiliated, proposalsGraph, proposalsSssom, templateVariables, turtleOf,
+  bindControls, canonicalDecorationBase, catalogGraph, checkDecoration, decorationIri, decorationView, proposalsIri, expandTemplate, notAffiliated, proposalsGraph, proposalsSssom, templateVariables, turtleOf,
 } from '../src/decorations/kit.js';
 import { attachDecorationRoutes } from '../src/decorations/routes.js';
 import { parseTurtle } from '../src/ns/rdf.js';
@@ -264,5 +264,63 @@ describe('the bridge serves the decorations', () => {
     expect((await bind({ decoration: 'lrs-x', values: { endpoint: 'http://lrs.example.com' } })).status).toBe(400);
     expect((await bind({ decoration: 'lrs-x', values: { endpoint: 7 } })).status).toBe(400);
     expect((await bind({ decoration: 'nope' })).status).toBe(400);
+  });
+});
+
+
+describe('canonical identities on Interego with bridge controls', () => {
+  const CANONICAL = 'https://relay.example/ns/owner';
+
+  it.each(ALL.map(d => [d.id, d] as const))('%s changes only document identity; every control still uses its serving bridge', (_id, spec) => {
+    const oldDoc = decorationIri(BASE, spec.id);
+    const oldProposals = proposalsIri(BASE, spec.id);
+    const doc = decorationIri(BASE, spec.id, CANONICAL);
+    const proposals = proposalsIri(BASE, spec.id, CANONICAL);
+    expect(doc).toBe(`${CANONICAL}/${spec.id}`);
+    expect(proposals).toBe(`${CANONICAL}/${spec.id}-proposals`);
+    const normalize = (value: string): string => value.startsWith(proposals) ? oldProposals + value.slice(proposals.length)
+      : value.startsWith(doc) ? oldDoc + value.slice(doc.length) : value;
+    for (const make of [catalogGraph, proposalsGraph]) {
+      const canonical = make(spec, BASE, CANONICAL).triples.map(t => ({
+        s: { ...t.s, value: normalize(t.s.value) }, p: t.p,
+        o: t.o.termType === 'NamedNode' ? { ...t.o, value: normalize(t.o.value) } : t.o,
+      }));
+      expect(canonical).toEqual(make(spec, BASE).triples);
+    }
+    const view = decorationView(spec, BASE, CANONICAL);
+    expect(view).toMatchObject({ iri: doc, documents: { catalog: doc, proposals, sssom: proposals + '.sssom.tsv' } });
+    expect(proposalsSssom(spec, BASE, CANONICAL)).toContain(`#mapping_set_id: "${proposals}.sssom.tsv"`);
+  });
+
+  it('normalizes a trailing slash and rejects unsafe canonical bases before serving', () => {
+    expect(canonicalDecorationBase(CANONICAL + '/')).toBe(CANONICAL);
+    for (const invalid of ['http://relay.example/ns/u', 'https://me:key@relay.example/ns/u', CANONICAL + '?x=y', CANONICAL + '#x', 'not a url']) {
+      expect(() => canonicalDecorationBase(invalid)).toThrow();
+    }
+  });
+
+  it('links the bridge representations to their canonical identity over HTTP', async () => {
+    const sharedExpress = createRequire(new URL('../../_shared/vertical-bridge/index.ts', import.meta.url))('express') as { (): Express; json(o: object): never };
+    const app = sharedExpress();
+    app.use(sharedExpress.json({ limit: '50mb' }));
+    const server = createServer(app);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    attachDecorationRoutes(app, { baseUrl: base, canonicalBase: CANONICAL });
+    try {
+      const r = await fetch(base + '/decorations/lti-x');
+      expect(r.headers.get('link')).toBe(`<${CANONICAL}/lti-x>; rel="canonical"`);
+      const graph = parseTurtle(await r.text());
+      expect(graph.triples.some(t => t.s.value === CANONICAL + '/lti-x#control-tool-keys' && t.p.value === HYDRA + 'target' && t.o.value === base + '/lti/.well-known/jwks.json')).toBe(true);
+      const ld = await fetch(base + '/decorations/lti-x/proposals', { headers: { Accept: 'application/ld+json' } });
+      expect(ld.headers.get('link')).toBe(`<${CANONICAL}/lti-x-proposals>; rel="canonical"`);
+      expect(await ld.json()).toHaveProperty('@graph');
+      const tsv = await fetch(base + '/decorations/lti-x/proposals.sssom.tsv');
+      expect(tsv.headers.get('link')).toBe(`<${CANONICAL}/lti-x-proposals.sssom.tsv>; rel="canonical"`);
+      const listing = await (await fetch(base + '/decorations')).json() as { decorations: Array<{ catalog: string }> };
+      expect(listing.decorations[0]?.catalog).toBe(CANONICAL + '/lrs-x');
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
 });

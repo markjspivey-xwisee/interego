@@ -91,9 +91,21 @@ so a missing mapping reads as a term I2IDL lacks, not one nobody looked for.
 - On a local bridge, every document was served in each media type, and LRS-X was bound to the
   bridge's own LRS. The bound `about` control answered with the LRS's versions and extensions.
 
-## 5. What is not done
+## 5. Canonical identity and publication
 
-- The decorations are served by the bridge, not published as signed descriptors on a pod as I2IDL-X
-  is. Publishing is public and cannot be undone, so it waits for a decision to publish.
+The kit accepts an optional canonical base independently of the serving bridge's base. With
+`https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc` it mints catalogs as `<base>/<id>`
+and proposals as `<base>/<id>-proposals`. The catalog, proposal graph, SSSOM and JSON view use
+those same identities. Controls over `{+bridge}` still use the serving bridge; instance bindings
+still belong to the caller. Omitting the canonical base preserves all existing document output.
+
+Set `FOXXI_DECORATION_CANONICAL_BASE` on the Foxxi bridge after the signed publications are
+verified. The bridge then serves the same canonical RDF and links every representation to its
+canonical identity with an HTTP `Link: <IRI>; rel="canonical"` header. The catalog and proposals
+must be published separately: catalog Asserted, proposals Hypothetical, both public and signed.
+Publication requires verified write delegation on the target pod. Public publication cannot be undone.
+The code adds this prerequisite; it does not claim that publication has happened.
+
+## 6. Remaining work
 - Proposals have no review workflow here yet; I2IDL-X's votes and ratification are the model for one.
 - I2IDL-X's own build stays in Python. Porting it onto the kit is separate work.

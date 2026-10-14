@@ -12506,7 +12506,10 @@ attachGuidanceServing(app, '/guidance', FOXXI_GUIDANCE, { base: bridgeBaseUrl, a
 // Decorations of systems Foxxi does not control (src/decorations): LRS-X, LMS-X, LTI-X, LER-X and
 // TLA-X, each a catalog of controls and a set of Hypothetical proposals, served as linked data, with
 // an instance decoration's controls bound to a caller's own LRS or LMS on request.
-attachDecorationRoutes(app, { baseUrl: bridgeBaseUrl });
+attachDecorationRoutes(app, {
+  baseUrl: bridgeBaseUrl,
+  canonicalBase: process.env.FOXXI_DECORATION_CANONICAL_BASE,
+});
 
 // Terminal JSON error handler: a malformed request body makes body-parser throw a SyntaxError
 // whose default Express rendering leaks the stack trace + absolute /app/node_modules server paths
