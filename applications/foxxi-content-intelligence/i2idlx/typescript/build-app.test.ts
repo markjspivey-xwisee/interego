@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { shareUrlBootstrap } from './build-app.js';
+import { shareUrlBootstrap, orderedMappingIds } from './build-app.js';
 import { canonicalizeNeighborhoodTargets } from './decorations.js';
 import { originVocabularyDeclarations } from './build-site.js';
 import { construct, parseTurtle, nn, PROV } from './rdf.js';
@@ -73,4 +73,19 @@ test('reference vocabulary declarations include origin groups before their linke
     assert.equal(graph.getQuads(nn(ns+'origin-'+id),nn('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),nn('http://www.w3.org/2004/02/skos/core#Concept'),null).length,1);
   }
   assert.ok(source.indexOf('origin-x ')<source.indexOf('origin-derived '));
+});
+
+test('mapping review order follows declarations and retains replacement metadata on its own subject', () => {
+  const ns='https://example.org/mappings#',type='https://example.org/MappingProposal';
+  const graph=parseTurtle('<'+ns+'m-a-replacement> a <'+type+'>; '+
+    '<http://purl.org/dc/terms/replaces> <'+ns+'m-z-base> . '+
+    '<'+ns+'m-z-base> a <'+type+'> .');
+  const actual=graph.getQuads(null,nn('http://www.w3.org/1999/02/22-rdf-syntax-ns#type'),nn(type),null).map(q=>q.subject.value.slice(ns.length));
+  const declared=['m-z-base','m-a-replacement'];
+  const ordered=orderedMappingIds(actual,declared);
+  assert.deepEqual(ordered,declared);
+  assert.equal(graph.getQuads(nn(ns+ordered[0]),nn('http://purl.org/dc/terms/replaces'),null,null).length,0);
+  assert.equal(graph.getQuads(nn(ns+ordered[1]),nn('http://purl.org/dc/terms/replaces'),null,null)[0]!.object.value,ns+'m-z-base');
+  assert.throws(()=>orderedMappingIds(actual.slice(1),declared),/subjects differ/);
+  assert.throws(()=>orderedMappingIds([...actual,'m-unexpected'],declared),/subjects differ/);
 });

@@ -107,7 +107,7 @@ test('publication receipts read modal and temporal facets plus the linked author
     'iep:supersedes <https://example.org/context-graphs/prior.ttl> .');
   assert.deepEqual(publicationReceiptMetadata(graph,'i2idlx',receiptUrl),{
     graph:'i2idlx',graphIri:'https://example.org/ns/i2idlx',descriptor:receiptUrl,
-    modalStatus:'Asserted',validFrom:'2026-10-13T20:30:00Z',
+    modalStatus:'Asserted',validFrom:'2026-10-13T20:30:00+00:00',
     contentHash:'sha256:pinned',signer:'0x123',supersedes:['https://example.org/context-graphs/prior.ttl'],
   });
 });
@@ -153,4 +153,43 @@ test('a document-linked proof for another descriptor cannot supply receipt metad
   const row=publicationReceiptMetadata(graph,'i2idlx',receiptUrl);
   assert.equal(row.contentHash,null);
   assert.equal(row.signer,null);
+});
+
+test('publication receipt datetime values match the independent RDFLib microsecond and offset spelling', () => {
+  // Expected values follow pinned RDFLib 7.1.4 / Python 3.12 datetime.isoformat,
+  // including the actual signed receipt that failed complete golden parity.
+  const cases=[
+    ['2026-10-13T21:48:39.179Z','2026-10-13T21:48:39.179000+00:00'],
+    ['2026-10-13T21:48:39.1+00:00','2026-10-13T21:48:39.100000+00:00'],
+    ['2026-10-13T21:48:39.1234569+05:30','2026-10-13T21:48:39.123456+05:30'],
+    ['2026-10-13T21:48:39.000000Z','2026-10-13T21:48:39+00:00'],
+    ['2026-10-13T21:48:39-00:00','2026-10-13T21:48:39+00:00'],
+    ['2026-10-13T21:48:39-07:00','2026-10-13T21:48:39-07:00'],
+    ['2024-02-29T21:48:39.12','2024-02-29T21:48:39.120000'],
+    ['2026-10-13T21:48:39.0000001Z','2026-10-13T21:48:39+00:00'],
+  ] as const;
+  for(const [lexical,expected]of cases){
+    const graph=receiptGraph('<> iep:describes <https://example.org/ns/i2idlx>; '+
+      'iep:hasFacet [a iep:TemporalFacet;iep:validFrom '+JSON.stringify(lexical)+'^^xsd:dateTime] .');
+    const row=publicationReceiptMetadata(graph,'i2idlx',receiptUrl);
+    assert.equal(row.validFrom,expected,lexical);
+    assert.equal(graph.getQuads(null,'https://markjspivey-xwisee.github.io/interego/ns/iep#validFrom',null,null)[0]!.object.value,lexical,'signed RDF lexical form remains unchanged');
+  }
+});
+test('publication receipt datetime formatting retains invalid and untyped lexical values', () => {
+  for(const lexical of ['2025-02-29T12:00:00Z','2026-04-31T12:00:00Z','0000-01-01T12:00:00Z','2026-10-13T24:00:00Z','2026-10-13T12:00:60Z','2026-10-13T12:00:00+24:00','2026-10-13T12:00:00+00:60','unparseable']){
+    const graph=receiptGraph('<> iep:describes <https://example.org/ns/i2idlx>; iep:validFrom '+JSON.stringify(lexical)+'^^xsd:dateTime .');
+    assert.equal(publicationReceiptMetadata(graph,'i2idlx',receiptUrl).validFrom,lexical);
+  }
+  const lexical='2026-10-13T21:48:39.179Z';
+  for(const suffix of ['', '@en', '^^xsd:string']){
+    const graph=receiptGraph('<> iep:describes <https://example.org/ns/i2idlx>; iep:validFrom '+JSON.stringify(lexical)+suffix+' .');
+    assert.equal(publicationReceiptMetadata(graph,'i2idlx',receiptUrl).validFrom,lexical);
+  }
+});
+test('equivalent datetime spellings cannot hide conflicting receipt values', () => {
+  const graph=receiptGraph('<> iep:describes <https://example.org/ns/i2idlx>; '+
+    'iep:validFrom "2026-10-13T21:48:39.179Z"^^xsd:dateTime; '+
+    'iep:hasFacet [iep:validFrom "2026-10-13T21:48:39.179000+00:00"^^xsd:dateTime] .');
+  assert.throws(()=>publicationReceiptMetadata(graph,'i2idlx',receiptUrl),/multiple values.*validFrom/);
 });

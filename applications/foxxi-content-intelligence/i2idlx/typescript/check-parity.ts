@@ -53,14 +53,16 @@ async function command(executable: string, args: readonly string[], cwd: string,
   }).finally(() => { clearInterval(heartbeat); });
   return output;
 }
-function normalizeTiming(value: Json, path = ''): Json {
-  if (path === 'owlrl.seconds' || path === 'disjointCheck.seconds' || /^hermit\.[^.]+\.(?:sample|clash)\.seconds$/u.test(path)) {
-    assert.equal(typeof value, 'number', 'only a measured numeric duration can be omitted at ' + path);
+export function normalizeTiming(value: Json, path: readonly string[] = []): Json {
+  const duration = (path.length === 2 && path[1] === 'seconds' && ['owlrl', 'disjointCheck'].includes(path[0]!)) ||
+    (path.length === 4 && path[0] === 'hermit' && ['sample', 'clash'].includes(path[2]!) && path[3] === 'seconds');
+  if (duration) {
+    assert.equal(typeof value, 'number', 'only a measured numeric duration can be omitted at ' + path.join('.'));
     return '<measured duration>';
   }
-  if (Array.isArray(value)) return value.map((v, i) => normalizeTiming(v, path + '[' + i + ']'));
+  if (Array.isArray(value)) return value.map((v, i) => normalizeTiming(v, [...path, String(i)]));
   if (value !== null && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k =>
-    [k, normalizeTiming(value[k]!, path ? path + '.' + k : k)]));
+    [k, normalizeTiming(value[k]!, [...path, k])]));
   return value;
 }
 function difference(expected: Json, actual: Json, path = '$'): string | null {

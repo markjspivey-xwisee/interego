@@ -12,7 +12,7 @@ import { loadConfig } from './config.js';
 import * as hist from './history.js';
 import * as SEMM from './semantic.js';
 import { safeIri } from './rdf.js';
-import { cw } from './generate.js';
+import { cw, mappingIds } from './generate.js';
 
 // JSON input is verified at the projection boundary; its values may be heterogeneous.
 type Value = ReturnType<typeof JSON.parse>;
@@ -175,6 +175,14 @@ export function shareUrlBootstrap(archivedUrl: string): string {
   return 'window.__ARCHIVED_APP_URL__ = ' + archived + '; window.__APP_URL__ = window.claude ? window.__ARCHIVED_APP_URL__ : new URL("/i2idlx/", window.location.href).href;';
 }
 export interface BuildAppOptions { distDir?: string; outputDir?: string; siteDir?: string; dataOnly?: boolean; now?: string; }
+/** Preserve authored review order independently of the RDF serializer's subject order. */
+export function orderedMappingIds(actualIds:readonly string[],declaredIds:readonly string[]=mappingIds()):string[] {
+  const actual=new Set(actualIds),declared=new Set(declaredIds);
+  if(actual.size!==actualIds.length||declared.size!==declaredIds.length||
+    actual.size!==declared.size||[...actual].some(id=>!declared.has(id)))
+    throw new Error('Mapping proposal subjects differ from the declared mapping records');
+  return [...declaredIds];
+}
 export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.url)), '..'), options: BuildAppOptions = {}): Promise<Row> {
   root = resolve(root);
   const cfg = loadConfig(root) as Row;
@@ -364,8 +372,9 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   check(roleCaps.every(r => enact.objects(CONCEPTS + r.c, NS + 'roleCapability').some(o => str(o) === r.a)), 'every role capability note describes a triple in the generated graph');
   check(roleCaps.length === 26 && roleCaps.every(r => r.a in actions), '26 role capabilities, all live actions');
   const mappings: Row[] = [], adoptedOf = new Map<string, string>(); let nSuperseded = 0;
-  for (const s of maps.subjects(RDF + 'type', NS + 'MappingProposal')) {
-    const id = local(str(s), MP), status = str(maps.value(s, NS + 'reviewStatus'));
+  const mappingOrder=orderedMappingIds(maps.subjects(RDF+'type',NS+'MappingProposal').map(subject=>local(str(subject),MP)));
+  for (const id of mappingOrder) {
+    const s=nn(MP+id),status=str(maps.value(s,NS+'reviewStatus'));
     if (status === NS + 'status-superseded') { nSuperseded++; continue; }
     const c = local(str(maps.value(s, NS + 'proposedSubject')), CONCEPTS), obj = str(maps.value(s, NS + 'proposedObject'));
     if (status === NS + 'status-adopted') { adoptedOf.set(JSON.stringify([c, obj]), id); continue; }

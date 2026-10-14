@@ -15,11 +15,34 @@ export interface PublicationReceipt {
   contentHash:string|null;signer:string|null;supersedes:string[];
 }
 export interface PublicationRecord {owner:string;graphs:PublicationReceipt[];superseded:Record<string,string[]>;problems:string[]}
-function one(graph:Store,subject:Term,predicate:string,linked:readonly Term[]=[]):string|null {
+/**
+ * Match standard xsd:dateTime receipt spellings to the pinned RDFLib/Python
+ * value, without changing signed RDF.
+ * RDFLib 7.1.4 parses xsd:dateTime with datetime.fromisoformat on Python 3.12
+ * and serializes the value with datetime.isoformat: preserve the offset,
+ * render UTC as +00:00, and use six microsecond digits only when nonzero.
+ * Unparseable literals retain their lexical form, as RDFLib does.
+ */
+function receiptDateTime(term:Term):string {
+  if(term.termType!=='Literal'||term.datatype.value!=='http://www.w3.org/2001/XMLSchema#dateTime')return term.value;
+  const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})?$/.exec(term.value);
+  if(!m)return term.value;
+  const year=Number(m[1]),month=Number(m[2]),day=Number(m[3]),hour=Number(m[4]),minute=Number(m[5]),second=Number(m[6]);
+  const leap=year%4===0&&(year%100!==0||year%400===0),days=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+  if(year<1||month<1||month>12||day<1||day>(days[month-1]??0)||hour>23||minute>59||second>59)return term.value;
+  const zone=m[8]??'';
+  if(zone&&zone!=='Z'&&(Number(zone.slice(1,3))>23||Number(zone.slice(4,6))>59))return term.value;
+  const fraction=(m[7]??'').slice(0,6).padEnd(6,'0');
+  const micros=fraction==='000000'?'':'.'+fraction;
+  const offset=zone==='Z'||zone==='-00:00'?'+00:00':zone;
+  return m[1]+'-'+m[2]+'-'+m[3]+'T'+m[4]+':'+m[5]+':'+m[6]+micros+offset;
+}
+function one(graph:Store,subject:Term,predicate:string,linked:readonly Term[]=[],format:(term:Term)=>string=term=>term.value):string|null {
   const scope=[subject,...linked];
-  const objects=scope.flatMap(node=>values(graph,node,predicate)),terms=new Map(objects.map(t=>[t.termType+':'+t.value+':'+(t.termType==='Literal'?t.language:'')+':'+(t.termType==='Literal'?t.datatype.value:''),t.value] as const));
+  const objects=scope.flatMap(node=>values(graph,node,predicate)),terms=new Map(objects.map(t=>[t.termType+':'+t.value+':'+(t.termType==='Literal'?t.language:'')+':'+(t.termType==='Literal'?t.datatype.value:''),t] as const));
   if(terms.size>1)throw Error('Descriptor has multiple values for '+predicate);
-  return [...terms.values()][0]??null;
+  const term=[...terms.values()][0];
+  return term?format(term):null;
 }
 /** Read only metadata attached to this descriptor, its facets and authorship proof. */
 export function publicationReceiptMetadata(graph:Store,slug:string,url:string,documentUrl=url):PublicationReceipt {
@@ -40,7 +63,7 @@ export function publicationReceiptMetadata(graph:Store,slug:string,url:string,do
   row.graphIri=one(graph,subject,IEP+'describes');
   const modal=one(graph,subject,IEP+'modalStatus',facets);
   row.modalStatus=modal?.split('#').pop()||null;
-  row.validFrom=one(graph,subject,IEP+'validFrom',facets);
+  row.validFrom=one(graph,subject,IEP+'validFrom',facets,receiptDateTime);
   row.contentHash=one(graph,subject,IEP+'contentHash',proofs);
   row.signer=one(graph,subject,IEP+'signerAddress',proofs);
   row.supersedes=[...new Set(values(graph,subject,IEP+'supersedes').map(t=>t.value))].sort();

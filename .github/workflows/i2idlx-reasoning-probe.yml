@@ -6,6 +6,7 @@ on:
     branches: [master]
     paths:
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-parity-probe.ts'
+      - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning-probe-input*'
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning.ts'
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/literal-datatypes.ts'
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/rdf.ts'
@@ -62,6 +63,11 @@ jobs:
       - name: Compile the native diagnostic
         timeout-minutes: 2
         run: npx tsc --noEmit -p "$I2IDLX_ROOT/tsconfig.native.json"
+      - name: Verify private normalization and the actual independent literal conversion
+        timeout-minutes: 1
+        run: |
+          npx tsx --test "$I2IDLX_ROOT/typescript/reasoning-probe-input.test.ts"
+          npx tsx "$I2IDLX_ROOT/typescript/reasoning-probe-input-fixtures.ts"
       - name: Cache only retained pinned input bytes
         uses: actions/cache@v4
         with:
