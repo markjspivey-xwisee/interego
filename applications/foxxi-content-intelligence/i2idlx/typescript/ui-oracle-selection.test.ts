@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 
 // Execute the actual Actions source, rather than a second selector implementation.
 const workflow=readFileSync(new URL('../../../../.github/workflows/i2idlx-ui-oracle.yml',import.meta.url),'utf8');
-const block=/          script: \|\n((?:            .*\n)+)/.exec(workflow);
+const block=/ {10}script: \|\n((?: {12}.*\n)+)/.exec(workflow);
 assert.ok(block,'the UI workflow must retain its github-script selection block');
 const script=block[1]!.split('\n').map(line=>line.slice(12)).join('\n');
 const AsyncFunction=Object.getPrototypeOf(async()=>{}).constructor as new (...args:string[]) => (...args:unknown[])=>Promise<void>;
@@ -137,7 +137,7 @@ test('explicit manual IDs require eligible completed output immediately and neve
 });
 
 test('workflow_run cannot attribute unrelated producer outputs to the default-branch commit',async()=>{
-  assert.doesNotMatch(workflow,/^  workflow_run:\s*$/m,'automatic producer events are not a UI trigger');
+  assert.doesNotMatch(workflow,/^ {2}workflow_run:\s*$/m,'automatic producer events are not a UI trigger');
   const h=fixture({
     eventName:'workflow_run',
     payload:{workflow_run:native({head_sha:'unrelated-dependency-head',pull_requests:[]})},
@@ -149,9 +149,9 @@ test('workflow_run cannot attribute unrelated producer outputs to the default-br
 
 test('PR browser checks cover every native/golden dependency and concrete workbench inputs',()=>{
   const paths=(source:string)=>{
-    const block=/^    paths:\n((?:      - '[^']+'\n)+)/m.exec(source);
+    const block=/^ {4}paths:\n((?: {6}- '[^']+'\n)+)/m.exec(source);
     assert.ok(block,'producer and browser workflows must declare PR path dependencies');
-    return [...block[1]!.matchAll(/^      - '([^']+)'$/gm)].map(match=>match[1]!);
+    return [...block[1]!.matchAll(/^ {6}- '([^']+)'$/gm)].map(match=>match[1]!);
   };
   const uiPaths=paths(workflow);
   for(const producer of ['i2idlx-native-diagnostic.yml','i2idlx-golden-parity.yml']){
