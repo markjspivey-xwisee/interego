@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Re-fetch the live snapshots build.py checks the crosswalk against.
+# With --reasoner, fetch the pinned reasoner jar instead (see below).
 #
 # Foxxi's ontologies are not fetched here: the build reads one released version of each (config.json foxxiNs), from
 # Foxxi's archive of released files, which never change (src/layer.py foxxi_ns). Inside the Interego repository that is
@@ -25,6 +26,21 @@ if [ "${1:-}" = "--foxxi" ]; then
   (cd "$F" && sha256sum -c --quiet SHA256SUMS) || { echo "a fetched module is not the release config.json pins; $D left as it was" >&2; exit 1; }
   mkdir -p "$D" && cp -R "$F"/. "$D"/
   echo "Foxxi $V fetched into $D and checked against config.json; build with FOXXI_NS_ARCHIVE=$D"
+  exit 0
+fi
+if [ "${1:-}" = "--reasoner" ]; then
+  # The reasoner the build runs HermiT from (config.json reasoner), fetched from its release and checked against the
+  # SHA-256 config.json pins. It is not redistributed with I2IDL-X. I2IDLX_REASONER_JAR puts it somewhere else.
+  read -r URL SHA JAR < <(python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1]))["reasoner"]; print(r["url"], r["sha256"], r["jar"])' "$ROOT/config.json")
+  DEST="${I2IDLX_REASONER_JAR:-$ROOT/$JAR}"
+  mkdir -p "$(dirname "$DEST")"
+  J="$(mktemp "$(dirname "$DEST")/.reasoner.XXXXXX")"
+  trap 'rm -f "$J"' EXIT
+  curl -sSfL -o "$J" "$URL"
+  echo "$SHA  $J" | sha256sum -c --quiet || { echo "the fetched jar is not the one config.json pins; nothing written" >&2; exit 1; }
+  mv "$J" "$DEST" && chmod 644 "$DEST"
+  trap - EXIT
+  echo "reasoner fetched into $DEST and checked against config.json"
   exit 0
 fi
 T="$(mktemp -d)"

@@ -33,7 +33,8 @@ LIVE = "--live" in sys.argv
 
 cfg = json.loads((ROOT / "config.json").read_text())
 # Machine-specific paths: an environment variable wins; a relative path is read from the package root.
-for _keys, _env in ((("i2idl", "localClone"), "I2IDL_CLONE"), (("interegoCoreSrc",), "INTEREGO_CORE_SRC"), (("tsx",), "INTEREGO_TSX")):
+for _keys, _env in ((("i2idl", "localClone"), "I2IDL_CLONE"), (("interegoCoreSrc",), "INTEREGO_CORE_SRC"), (("tsx",), "INTEREGO_TSX"),
+                    (("reasoner", "jar"), "I2IDLX_REASONER_JAR")):
     _holder = cfg
     for _k in _keys[:-1]:
         _holder = _holder[_k]
@@ -1176,6 +1177,12 @@ check(len(clash_by) == 3, f"a thing classified as both a formative assessment an
 # HermiT (OWL 2 DL) per upper ontology: complete consistency checking where OWL 2 RL is sound but incomplete.
 hermit_results, widening = {}, {}
 if os.environ.get("I2IDLX_HERMIT", "1") == "1":
+    try:  # the pinned reasoner (config.json reasoner), checked against its SHA-256
+        reasoner_jar, reasoner_error = layer_mod.reasoner_jar(cfg["reasoner"]), None
+    except Exception as exc:
+        reasoner_jar, reasoner_error = None, str(exc)
+    check(reasoner_error is None, f"the reasoner is the pinned {cfg['reasoner']['name']} (SHA-256 {cfg['reasoner']['sha256'][:12]}…)"
+          + (f" — {reasoner_error}" if reasoner_error else ""))
     groups = {"BFO 2020 · IAO · CCO": ["bfo", "iao", "cco"], "gist": ["gist"], "DUL": ["dul"], "gUFO": ["gufo"],
               "PROV-O · schema.org · peers": ["prov", "schema", "org", "dct", "dcat", "lrmi", "esco", "elm", "asn"]}
     for gname, files in groups.items():
@@ -1192,7 +1199,9 @@ if os.environ.get("I2IDLX_HERMIT", "1") == "1":
             widening.setdefault("risks", []).extend(f"{gname} {which}: {r}" for r in risks)
             widening["properties"] = max(widening.get("properties", 0), n_widened)
             try:
-                ok, secs, detail = layer_mod.hermit(g_in, DIST / ".reasoning" / f"{gname.split()[0].lower()}-{which}")
+                if reasoner_jar is None:
+                    raise RuntimeError(reasoner_error)
+                ok, secs, detail = layer_mod.hermit(g_in, DIST / ".reasoning" / f"{gname.split()[0].lower()}-{which}", reasoner_jar)
                 hermit_results.setdefault(gname, {})[which] = {"consistent": ok, "seconds": round(secs, 1), "detail": detail,
                                                                 "triples": len(g_in)}
             except Exception as exc:  # Java missing or HermiT refused the input
@@ -1201,7 +1210,7 @@ if os.environ.get("I2IDLX_HERMIT", "1") == "1":
           "no class expression uses them, HermiT reads none of their values, and no literal it makes plain is a property's value" + (f" — {widening['risks'][:3]}" if widening.get("risks") else ""))
     for gname, r in hermit_results.items():
         s = r.get("sample", {})
-        check(s.get("consistent") is True, f"HermiT (OWL 2 DL): {gname} + Foxxi's ontologies + I2IDL's release + I2IDL-X + the sample organization and Foxxi deployment is consistent "
+        check(s.get("consistent") is True, f"HermiT 1.4.5 (OWL 2 DL): {gname} + Foxxi's ontologies + I2IDL's release + I2IDL-X + the sample organization and Foxxi deployment is consistent "
               f"({s.get('triples', 0):,} triples, {s.get('seconds', '?')} s)" + (f" — {s.get('error') or s.get('detail')}" if s.get("consistent") is not True else ""))
     clash_dl = sorted(g for g, r in hermit_results.items() if r.get("clash", {}).get("consistent") is False)
     clash_rl = {"BFO 2020 · IAO · CCO": "BFO", "DUL": "DUL", "gUFO": "gUFO"}
@@ -1304,7 +1313,7 @@ semantic_summary = {
     "terms": len(used_terms), "byVocabulary": by_vocab, "categories": n_by_cat, "byBasis": {"type": len(assign) - n_def, "definition": n_def},
     "bridges": n_bridge, "owlrl": {"input": len(reason_in), "closed": len(closed), "seconds": round(rl_secs, 1), "errors": rl_errors},
     "records": record_summary, "conceptLevel": concept_level, "sample": sample_types, "expected": EXPECT,
-    "clash": {"owlrl": clash_errors, "rejectedBy": clash_by}, "hermit": hermit_results,
+    "clash": {"owlrl": clash_errors, "rejectedBy": clash_by}, "hermit": hermit_results, "reasoner": cfg["reasoner"]["name"],
     "rules": {"count": len(ref_rules), "explicit": len(explicit), "typings": n_rule_types, "agree": not disagree},
     "disjoint": disjoint, "disjointCheck": {"pairs": len(cat_ids) * (len(cat_ids) - 1) // 2, "seconds": round(pair_secs, 1), "agree": same and not odd},
     "labels": term_labels,

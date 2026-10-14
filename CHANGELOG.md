@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-13 — I2IDL-X: the build reasons with HermiT 1.4.5
+
+The I2IDL-X build's OWL 2 DL consistency checks now run on HermiT 1.4.5 (OWL API 4.5), not the HermiT 1.3.8 bundled with owlready2. The jar comes from ROBOT's 1.9.11 release, pinned in `config.json` with its SHA-256. `tools/refresh-evidence.sh --reasoner` fetches it, and the build checks the hash on every run.
+
+1.3.8 needed three rewrites of its input; 1.4.5 needs two:
+- **Dropped: `rdf:langString`.** 1.4.5 reads it, so language-tagged literals, and datatype unions that include it, reach it as written.
+- **Dropped: datatype definitions written out.** 1.3.8 reported an inconsistency when a datatype defined as `xsd:decimal` ⊔ `xsd:double` sat beside a string datatype, so each named definition used to be written out. 1.4.5 does not report it, so definitions stay as written.
+- **Kept: datatypes outside the OWL 2 datatype map.** 1.4.5 still refuses them, and gUFO uses `xsd:date`.
+- **Kept: `xsd:pattern`.** 1.4.5 still compiles patterns with dk.brics. With Foxxi's patterns intact, the gist group ran for more than eight minutes without an answer.
+
+The two kept rewrites still widen data ranges, and they still pass the check that this hides nothing. They now widen 17 properties' data ranges instead of 26. Every group gives the same answer as before: the sample is consistent under all five, and the category clash is rejected under BFO, DUL and gUFO. The DUL group takes about 140 seconds instead of 50. The pinned rebuild produces the published graphs byte for byte, and owlready2 is no longer needed.
+
 ## 2026-10-13 — Publishing: prefix names by the Turtle grammar's own ranges
 
 The hyphen fix ("payload prefix names with hyphens are hoisted too", below) matched prefix names with Unicode categories (`\p{L}`), and Codex's review pointed out that Turtle's `PN_CHARS_BASE` is a list of code-point ranges, not a category. A name with a zero-width non-joiner inside (U+200C, which Persian and Indic words use) or one starting with a superscript such as `⁰x:` still stayed inside the graph block and failed strict parsing, while `ª:`, which the grammar excludes, was taken for a name. `wrapAsTriG` now reads the name loosely and accepts a line as a prefix directive only when the name passes `isPnPrefix`, which checks the grammar's `PN_CHARS_BASE` and `PN_CHARS` ranges by code point. A line whose name the grammar refuses is not Turtle, and stays where the caller wrote it. The new test in `tests/solid.test.ts` publishes eight names, among them ZWNJ, a superscript, a middle dot, a combining mark and an astral character, and parses the stored document with N3.js. It fails on the previous emitter.

@@ -327,7 +327,6 @@ OWL2_DATATYPES = {f"http://www.w3.org/2001/XMLSchema#{d}" for d in (
     "http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral", "http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral",
     "http://www.w3.org/2000/01/rdf-schema#Literal"}
 DATA_RANGE_PREDICATES = {OWL.allValuesFrom, OWL.someValuesFrom, OWL.onDataRange, RDFS.range, OWL.onDatatype}
-LANG_STRING = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString"
 
 
 def _pattern_restrictions(g: Graph) -> dict:
@@ -360,13 +359,15 @@ STRUCTURE = {RDF.first} | {URIRef(XSD_NS + f) for f in ("length minLength maxLen
 
 
 def _off_map(o) -> bool:
-    """A datatype dl_ready widens to rdfs:Literal: an XML Schema datatype or rdf:langString outside the OWL 2 map."""
-    return isinstance(o, URIRef) and (str(o).startswith(XSD_NS) or str(o) == LANG_STRING) and str(o) not in OWL2_DATATYPES
+    """A datatype dl_ready widens to rdfs:Literal: an XML Schema datatype outside the OWL 2 datatype map, which HermiT
+    refuses (it supports all and only the datatypes of the map; xsd:date, which gUFO uses, is not one)."""
+    return isinstance(o, URIRef) and str(o).startswith(XSD_NS) and str(o) not in OWL2_DATATYPES
 
 
 def _rewrites_literal(o) -> bool:
-    """A literal dl_ready makes plain: language-tagged, or typed outside the OWL 2 datatype map."""
-    return isinstance(o, Literal) and (bool(o.language) or (o.datatype is not None and str(o.datatype) not in OWL2_DATATYPES))
+    """A literal dl_ready makes plain: one typed outside the OWL 2 datatype map. A language-tagged literal stays as it
+    is: rdf:langString, which RDF 1.1 added, is read by the OWL API under HermiT 1.4.5."""
+    return isinstance(o, Literal) and not o.language and o.datatype is not None and str(o.datatype) not in OWL2_DATATYPES
 
 
 def _blank_closure(g: Graph, node) -> set:
@@ -380,56 +381,15 @@ def _blank_closure(g: Graph, node) -> set:
     return seen
 
 
-def _expand_datatype_definitions(g: Graph) -> Graph:
-    """A copy in which each named datatype defined by one data range (owl:equivalentClass) is replaced, wherever it is
-    used as a data range, by its own copy of that range, and the definition is dropped. A datatype definition only
-    names a data range, so the models are the same. HermiT 1.3.8 as bundled with owlready2 (OWL API 3.4) misreads
-    some definitions: given I2IDL-X's ontology and I2IDL's glossary, Foxxi's xAPI Number or SCORM Real (xsd:decimal ⊔
-    xsd:double) defined beside a datatype that is xsd:string here (a pattern-restricted one, see dl_ready) makes it
-    report an inconsistency, which a new name for a data range cannot cause, and HermiT 1.4.5 finds that same input
-    consistent. A datatype that a restriction is built on, or that has more than one definition, keeps them."""
-    defined = {}
-    for dt in set(g.subjects(RDF.type, RDFS.Datatype)):
-        ranges = list(g.objects(dt, OWL.equivalentClass))
-        if isinstance(dt, URIRef) and len(ranges) == 1 and (None, OWL.onDatatype, dt) not in g:
-            defined[dt] = ranges[0]
-    if not defined:
-        return g
-    hidden = set().union(*(_blank_closure(g, r) for r in defined.values()))
-    for ax in set(g.subjects(OWL.annotatedProperty, OWL.equivalentClass)):  # an annotation on a dropped definition
-        if g.value(ax, OWL.annotatedSource) in defined:
-            hidden |= _blank_closure(g, ax) | {ax}
-    out = Graph()
-
-    def use(r, through=()):
-        if r in defined:
-            if r in through:
-                raise ValueError(f"cyclic datatype definition through {r}")
-            return use(defined[r], through + (r,))
-        if not isinstance(r, BNode):
-            return r
-        fresh = {n: BNode() for n in _blank_closure(g, r)}
-        for n, b in fresh.items():
-            for p, o in g.predicate_objects(n):
-                out.add((b, p, fresh[o] if o in fresh else use(o, through) if p in DATA_RANGE_USES else o))
-        return fresh[r]
-
-    for s, p, o in g:
-        if s in hidden or (s in defined and p == OWL.equivalentClass):
-            continue
-        out.add((s, p, use(o) if p in DATA_RANGE_USES and o in defined else o))
-    return out
-
-
 def dl_ready(g: Graph) -> Graph:
     """A copy a DL reasoner (HermiT) accepts. Annotations and data values on named resources are dropped (they do
-    not bear on consistency of the class axioms); values on blank nodes stay. A named datatype's definition takes its
-    place wherever it is used (_expand_datatype_definitions), which keeps the same models. Two rewrites widen instead:
-    datatypes outside the OWL 2 datatype map become rdfs:Literal, and literals typed with one, or tagged with a
-    language, become plain; and a datatype restricted by patterns alone becomes its base datatype, since HermiT's
-    regular expressions are not XML Schema's. widening_risks says where that could hide an inconsistency, and the
-    build requires it to find nothing. owl:imports are dropped so the reasoner never fetches."""
-    g = _expand_datatype_definitions(g)
+    not bear on consistency of the class axioms); values on blank nodes stay. Two rewrites widen: XML Schema
+    datatypes outside the OWL 2 datatype map become rdfs:Literal, and literals typed with one become plain; and a
+    datatype restricted by patterns alone becomes its base datatype. HermiT compiles a pattern into an automaton
+    with dk.brics, whose regular expressions are not XML Schema's, and with Foxxi's patterns intact the gist group
+    ran for more than eight minutes without an answer (seven seconds widened). widening_risks says where that could
+    hide an inconsistency, and the build requires it to find nothing. owl:imports are dropped so the reasoner never
+    fetches."""
     out = Graph()
     patterned = _pattern_restrictions(g)
     pattern_nodes = {n for _, nodes in patterned.values() for n in nodes}
@@ -444,8 +404,7 @@ def dl_ready(g: Graph) -> Graph:
             if _rewrites_literal(o):
                 o = Literal(str(o))
         elif (p in DATA_RANGE_PREDICATES or p == RDF.first) and _off_map(o):
-            # rdf:first: a member of a datatype union (Foxxi's xAPI names are xsd:string ⊔ rdf:langString), widened the
-            # same way, since the OWL API under HermiT reads rdf:langString, which RDF 1.1 added, as an error datatype
+            # rdf:first: a member of a datatype union, widened the same way
             o = RDFS.Literal
         out.add((s, p, o))
     return out
@@ -462,7 +421,6 @@ def widening_risks(g: Graph) -> tuple[list[str], int]:
     such values can merge under a functional property. A named datatype that keeps its definitions has them rewritten
     too, so a range that names one counts as widened when they do. Keys bind named individuals only, whose values
     dl_ready drops. An empty list means the widenings hide nothing."""
-    g = _expand_datatype_definitions(g)
     patterned = _pattern_restrictions(g)
 
     def widened(r, through=frozenset()) -> bool:
@@ -490,7 +448,7 @@ def widening_risks(g: Graph) -> tuple[list[str], int]:
     widened_props |= {p for r, p in on_property.items() if any(f is not None and widened(f) for f in (g.value(r, q) for q in fillers))}
     w = with_subproperties(widened_props)
     # Any property but an annotation property: a literal made plain can break a range or a restriction, and can
-    # merge two values ("x"@en and "x"@fr) under a functional property.
+    # merge two values under a functional property.
     annotations = set(g.subjects(RDF.type, OWL.AnnotationProperty)) | ANNOTATION_BUILTINS
     risks = [f"a class expression uses {p}, whose data range is widened" for p in sorted(w & set(on_property.values()))]
     if OWL.topDataProperty in on_property.values():
@@ -504,20 +462,38 @@ def widening_risks(g: Graph) -> tuple[list[str], int]:
     return risks, len(widened_props)
 
 
-def hermit(g: Graph, workdir: pathlib.Path, memory_mb: int = 3000, timeout: int = 600) -> tuple[bool | None, float, str]:
-    """OWL 2 DL consistency with HermiT (the copy bundled with owlready2), run as HermiT's own command line with
-    -k: is owl:Thing satisfiable? That is the consistency question, without classifying or realizing everything
-    (which takes minutes on DOLCE-UltraLite and adds nothing to it). Returns (consistent, seconds, detail);
-    consistent is None when HermiT could not answer within the timeout."""
+def reasoner_jar(reasoner: dict) -> pathlib.Path:
+    """The pinned reasoner's jar (config.json reasoner; I2IDLX_REASONER_JAR names another copy), checked against its
+    SHA-256. It is not redistributed with I2IDL-X: tools/refresh-evidence.sh --reasoner fetches it from its release."""
+    import hashlib
+    path = pathlib.Path(reasoner["jar"])
+    if not path.is_file():
+        raise FileNotFoundError(f"{path} is missing: run tools/refresh-evidence.sh --reasoner to fetch {reasoner['url']}")
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    if h.hexdigest() != reasoner["sha256"]:
+        raise ValueError(f"{path} has SHA-256 {h.hexdigest()}, not the pinned {reasoner['sha256']}")
+    return path
+
+
+def hermit(g: Graph, workdir: pathlib.Path, jar: pathlib.Path, memory_mb: int = 3000,
+           timeout: int = 900) -> tuple[bool | None, float, str]:
+    """OWL 2 DL consistency with HermiT 1.4.5 (from the pinned jar, see reasoner_jar), run as HermiT's own command
+    line with -k: is owl:Thing satisfiable? That is the consistency question, without classifying or realizing
+    everything (which takes minutes on DOLCE-UltraLite and adds nothing to it). Returns (consistent, seconds,
+    detail); consistent is None when HermiT could not answer within the timeout."""
+    import shutil
     import subprocess
     import time
-    import owlready2
+    java = shutil.which("java")
+    if java is None:
+        raise RuntimeError("HermiT needs a Java runtime (11 or later) on PATH")
     workdir.mkdir(parents=True, exist_ok=True)
     path = workdir / "reasoning-input.nt"
     dl_ready(g).serialize(path, format="nt", encoding="utf-8")
-    hdir = pathlib.Path(owlready2.__file__).parent / "hermit"
-    cmd = [owlready2.JAVA_EXE, f"-Xmx{memory_mb}M", "-cp", f"{hdir}:{hdir / 'HermiT.jar'}",
-           "org.semanticweb.HermiT.cli.CommandLine", "-k", path.resolve().as_uri()]
+    cmd = [java, f"-Xmx{memory_mb}M", "-cp", str(jar), "org.semanticweb.HermiT.cli.CommandLine", "-k", path.resolve().as_uri()]
     t0 = time.time()
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
