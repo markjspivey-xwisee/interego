@@ -1,0 +1,57 @@
+name: Cancel the exact obsolete I2IDL-X run
+
+# One-time narrow cleanup: no checkout, code execution, or generalized run cancellation.
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/i2idlx-cancel-obsolete-run.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  cancel-obsolete:
+    if: github.repository == 'markjspivey-xwisee/interego' && github.event.pull_request.number == 621 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'codex/i2idlx-typescript-rewrite'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Verify and cancel only the superseded pre-fix golden run
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = 'markjspivey-xwisee';
+            const repo = 'interego';
+            const run_id = 38619826516;
+            const obsolete = '21528ba5241e1becaac66f773175dc2dce84e61f';
+            const branch = 'codex/i2idlx-typescript-rewrite';
+            const eventHead = context.payload.pull_request.head.sha;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: 621 });
+            if (pr.state !== 'open' || pr.number !== 621 ||
+                pr.head.repo?.full_name !== owner + '/' + repo ||
+                pr.head.ref !== branch || pr.head.sha !== eventHead ||
+                eventHead === obsolete) {
+              throw new Error('Current PR identity/head does not authorize this obsolete-run cleanup.');
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id });
+            if (run.id !== run_id || run.repository?.full_name !== owner + '/' + repo ||
+                run.head_repository?.full_name !== owner + '/' + repo ||
+                run.event !== 'pull_request' || run.head_branch !== branch ||
+                run.head_sha !== obsolete ||
+                run.path !== '.github/workflows/i2idlx-golden-parity.yml' ||
+                !run.pull_requests.some(item => item.number === 621)) {
+              throw new Error('Exact obsolete run identity check failed; no run was cancelled.');
+            }
+            if (run.status === 'completed') {
+              core.info('The exact obsolete run already completed; nothing to cancel.');
+              return;
+            }
+            if (!['queued', 'in_progress', 'pending', 'waiting', 'requested'].includes(run.status)) {
+              throw new Error('Unexpected exact-run status; no run was cancelled.');
+            }
+            await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id });
+            core.info('Cancelled only verified obsolete golden run ' + run_id + ' at ' + obsolete + '.');
