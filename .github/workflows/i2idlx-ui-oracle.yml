@@ -15,20 +15,25 @@ on:
         type: string
   pull_request:
     branches: [master]
+    # Every native/golden input must start this exact-head PR check too.
     paths:
+      - 'applications/foxxi-content-intelligence/i2idlx/**'
+      - 'applications/foxxi-content-intelligence/src/**'
+      - 'packages/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.base.json'
+      - '.github/workflows/i2idlx-native-diagnostic.yml'
+      - '.github/workflows/i2idlx-golden-parity.yml'
       - '.github/workflows/i2idlx-ui-oracle.yml'
-      - 'applications/foxxi-content-intelligence/i2idlx/typescript/cache-ui-assets.ts'
       - 'tools/i2idlx-hosted-visitor-smoke.py'
-  workflow_run:
-    workflows: ['I2IDL-X complete golden parity', 'I2IDL-X bounded native diagnostic']
-    types: [completed]
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: i2idlx-ui-${{ github.event.pull_request.number || github.event.workflow_run.id || github.ref }}
+  group: i2idlx-ui-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -50,19 +55,22 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
+            if (!['pull_request', 'workflow_dispatch'].includes(context.eventName)) {
+              throw new Error('Unsupported UI oracle event: ' + context.eventName + '. Use pull_request or workflow_dispatch.');
+            }
             const { owner, repo } = context.repo;
             const repository = owner + '/' + repo;
             const inputs = context.payload.inputs || {};
             const nativeId = inputs.native_run_id?.trim();
             const goldenId = inputs.golden_run_id?.trim();
             if (nativeId && goldenId) throw new Error('Select one native or golden run, not both.');
-            let id = nativeId || goldenId || context.payload.workflow_run?.id;
-            const expectedSha = context.payload.pull_request?.head.sha || context.payload.workflow_run?.head_sha;
+            let id = nativeId || goldenId;
+            const expectedSha = context.payload.pull_request?.head.sha;
             const expectedPr = context.payload.pull_request?.number;
             if (!id) {
               if (!expectedSha) throw new Error('Select a completed native or golden workflow run ID.');
-              // Only automatic PR selection waits. Explicit IDs and workflow_run
-              // events still require their named build to be eligible immediately.
+              // Only automatic PR selection waits. Explicit manual IDs require
+              // their named build to be eligible immediately.
               const waitForPr = Boolean(context.payload.pull_request);
               const deadline = Date.now() + (waitForPr ? 8 * 60 * 1000 : 0);
               let selected;
