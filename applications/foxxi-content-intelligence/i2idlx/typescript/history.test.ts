@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   snapshot, pairs, memberships, evidence, mappings, associations, diff, changed_fields,
-  releases, touched, totals, reconcile, KINDS, KIND_CODES, pyRepr, pyTupleRepr, compareText,
+  releases, touched, totals, reconcile, KINDS, KIND_CODES, pyRepr, pyTupleRepr, pyEventRepr, compareText,
   type JsonObject, type Release,
 } from './history.js';
 
@@ -75,6 +75,7 @@ test('Python repr and Unicode ordering preserve history event identity', () => {
   assert.equal(pyRepr('\n\t\r\u00a0'), "'\\n\\t\\r\\xa0'");
   assert.equal(pyTupleRepr(['c:a', null, "O'Brien\n", 0]), "('c:a', None, \"O'Brien\\n\", 0)");
   assert.equal(pyRepr({ kind: 'concept-added', concept: 'c:a' }), "{'kind': 'concept-added', 'concept': 'c:a'}");
+  assert.equal(pyEventRepr({ kind: 'source-revised', fields: { title: ['before', 'after'] } }), "{'kind': 'source-revised', 'fields': {'title': ('before', 'after')}}");
   assert.ok(compareText('\u{10000}', '\uffff') > 0);
 });
 test('git history selects the final commit for each first-seen version', () => {

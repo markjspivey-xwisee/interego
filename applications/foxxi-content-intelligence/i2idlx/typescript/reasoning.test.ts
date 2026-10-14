@@ -79,6 +79,10 @@ describe('native OWL RL saturation',()=>{
     const equal=closure(graph(' :flag a owl:FunctionalProperty . :x :flag "true"^^xsd:boolean,"1"^^xsd:boolean . '));
     expect(equal.errors).toEqual([]);
   });
+  it('keeps non-equivalent multiple list values malformed',()=>{
+    const malformed=graph(' :list rdf:first :A,:B;rdf:rest rdf:nil . ');
+    expect(()=>rdfList(malformed,nn('urn:test:list'))).toThrow(/non-equivalent/);
+  });
   it('fails closed on cyclic RDF lists and saturation resource limits',()=>{
     const bad=graph(' :l rdf:first :p; rdf:rest :l . :chain owl:propertyChainAxiom :l . ');
     expect(()=>rdfList(bad,nn('urn:test:l'))).toThrow(/Cyclic/);

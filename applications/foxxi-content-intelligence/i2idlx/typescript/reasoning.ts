@@ -45,8 +45,17 @@ export function rdfList(g: Store, head: Term): Term[] {
     if (seen.has(termKey(n))) throw new Error('Cyclic RDF list at ' + n.value);
     seen.add(termKey(n));
     const first = objects(g, n, RDF + 'first'), rest = objects(g, n, RDF + 'rest');
-    if (first.length !== 1 || rest.length !== 1) throw new Error('Malformed RDF list at ' + n.value);
-    out.push(first[0]!); n = rest[0]!;
+    const pickEquivalent=(values:Term[],predicate:string):Term=>{
+      if(!values.length)throw new Error('Malformed RDF list at '+n.value);
+      const ordered=[...values].sort((a,b)=>termKey(a)<termKey(b)?-1:termKey(a)>termKey(b)?1:0),chosen=ordered[0]!;
+      // Equality replacement may add a second RDF spelling for the same
+      // list member/rest cell. That is one semantic value, not a malformed
+      // list. Unrelated competing values remain an error.
+      if(!ordered.every(v=>v.equals(chosen)||has(g,v,OWL+'sameAs',chosen)||has(g,chosen,OWL+'sameAs',v)))
+        throw new Error('Malformed RDF list at '+n.value+' (non-equivalent '+predicate+' values)');
+      return chosen;
+    };
+    out.push(pickEquivalent(first,RDF+'first')); n=pickEquivalent(rest,RDF+'rest');
   }
   return out;
 }
@@ -168,7 +177,7 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
     changed=false; rounds++;
     if(rounds>(options.maxRounds??1000)) throw new Error('OWL saturation did not reach a fixed point; no partial result accepted');
     for (const q of [...g]) {
-      const s:Term=q.subject,p:Term=q.predicate,o:Term=q.object,pv=p.value;
+      const s:Term=q.subject as Term,p:Term=q.predicate as Term,o:Term=q.object as Term,pv=p.value;
       for (const n of [s,p,o]) add(n,SA,n);
       if (pv===SA && !s.equals(o)) {
         add(o,SA,s);
@@ -270,7 +279,7 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
     for(const x of subjects(g,T,a)) if(typed(x,b)) errors.add('Disjoint classes '+a.value+' and '+b.value+' have a common individual '+x.value);
   };
   for(const q of g) {
-    const s:Term=q.subject,p=q.predicate.value,o:Term=q.object;
+    const s:Term=q.subject as Term,p=q.predicate.value,o:Term=q.object as Term;
     if(p===OWL+'disjointWith') errorDisjoint(s,o);
     if(p===OWL+'complementOf') for(const x of subjects(g,T,s)) if(typed(x,o))
       errors.add('Violation of complementarity for classes '+s.value+' and '+o.value+' on element '+x.value);

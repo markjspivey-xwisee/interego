@@ -368,7 +368,7 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
     mappings.push(rec);
   }
   const openOf = new Map(mappings.map(m => [JSON.stringify([m.c, m.o]), [m.id, m.p]]));
-  for (const c of concepts) { c.xm = c.xm.map(([p, t]: string[]) => [p, t, extTerms[t]?.label ?? null, adoptedOf.get(JSON.stringify([c.id, t])) ?? null, openOf.get(JSON.stringify([c.id, t])) ?? null]); if (!c.xm.length) delete c.xm; }
+  for (const c of concepts) { c.xm = c.xm.map(([p, t]: [string, string]) => [p, t, extTerms[t]?.label ?? null, adoptedOf.get(JSON.stringify([c.id, t])) ?? null, openOf.get(JSON.stringify([c.id, t])) ?? null]); if (!c.xm.length) delete c.xm; }
   const nOwn = concepts.reduce((n, c) => n + (c.xm?.length || 0), 0), nUnesco = mappings.filter(m => m.v === 'UNESCO Thesaurus').length;
   check(nOwn > 0 && concepts.every(c => (c.xm || []).every((x: Value[]) => x[3] || x[4] == null || x[4][1] !== x[0])) && adoptedOf.size === concepts.reduce((n, c) => n + (c.xm || []).filter((x: Value[]) => x[3]).length, 0), nOwn + " of I2IDL's own crosswalks on the concepts that carry them; " + adoptedOf.size + ' adopt a proposal');
   check(mappings.length + adoptedOf.size === 73 && mappings.every(m => m.c in cidx), mappings.length + ' open mapping proposals on concepts in the release');
@@ -395,7 +395,7 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   const changeKinds = hist.KINDS.map(([id, label, def]) => ({ id, label, def }));
   for (let i = 0; i < releases.length; i++) {
     const tally = countBy(hrels[i].events, 'kind');
-    releases[i]!.ch = Object.fromEntries(hist.KIND_CODES.filter((k: string) => tally[k]).map((k: string) => [k, tally[k]])); releases[i].nch = hrels[i].events.length;
+    releases[i]!.ch = Object.fromEntries(hist.KIND_CODES.filter((k: string) => tally[k]).map((k: string) => [k, tally[k]])); releases[i]!.nch = hrels[i].events.length;
   }
   const baseline = new Set(mapKeys(hrels[0].snap.concepts).map(c => local(c, CONCEPTS)));
   for (const c of concepts) c.h0 = baseline.has(c.id) ? 1 : 0;
@@ -607,11 +607,11 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   const inlineJs = (s: string): string => s.replace(/<\/script/g, '<\\/script');
   const cdn = ['https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js'];
   const fonts = 'https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Red+Hat+Display:wght@500;700;800&family=Red+Hat+Mono:wght@400;500&family=Red+Hat+Text:wght@400;500;600;700&display=swap';
-  const page = '<title>Interpretant Glossary Workbench</title>\n<meta name="description" content="A workbench for the I2IDL Digital Learning Glossary (' + release + '), decorated with the Interego and Foxxi layer I2IDL-X.">\n' +
+  const page = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>Interpretant Glossary Workbench</title>\n<meta name="description" content="A workbench for the I2IDL Digital Learning Glossary (' + release + '), decorated with the Interego and Foxxi layer I2IDL-X.">\n' +
     '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="' + fonts + '">\n<style>\n' + readFileSync(join(APP, 'src', 'styles.css'), 'utf8') +
-    '\n</style>\n<div id="root"><noscript><p style="padding:24px;font-family:system-ui">Interpretant needs JavaScript. The glossary itself is at <a href="https://www.i2idl.org/glossary">i2idl.org/glossary</a>.</p></noscript></div>\n' +
+    '\n</style>\n</head>\n<body>\n<div id="root"><noscript><p style="padding:24px;font-family:system-ui">Interpretant needs JavaScript. The glossary itself is at <a href="https://www.i2idl.org/glossary">i2idl.org/glossary</a>.</p></noscript></div>\n' +
     '<script type="application/json" id="i2-data">' + inlineJson(data) + '</script>\n<script>window.__APP_URL__ = ' + inlineJson(cfg.appArtifactUrl || '') + ';</script>\n' +
-    cdn.map(u => '<script src="' + u + '" crossorigin="anonymous"></script>\n').join('') + '<script>\n' + inlineJs(readFileSync(bundle, 'utf8')) + '\n</script>\n';
+    cdn.map(u => '<script src="' + u + '" crossorigin="anonymous"></script>\n').join('') + '<script>\n' + inlineJs(readFileSync(bundle, 'utf8')) + '\n</script>\n</body>\n</html>\n';
   mkdirSync(SITE, { recursive: true }); writeFileSync(join(SITE, 'app.html'), page);
   check(Buffer.byteLength(page) < 16000000, 'workbench HTML is below the 16 MB artifact limit');
   if (failures.length) throw new Error(failures.join('\n'));

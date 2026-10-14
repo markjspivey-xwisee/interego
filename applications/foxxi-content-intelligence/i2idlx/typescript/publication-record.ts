@@ -16,7 +16,7 @@ export interface PublicationReceipt {
 }
 export interface PublicationRecord {owner:string;graphs:PublicationReceipt[];superseded:Record<string,string[]>;problems:string[]}
 function one(graph:Store,subject:Term,predicate:string):string|null {
-  const objects=values(graph,subject,predicate),terms=new Map(objects.map(t=>[t.termType+':'+t.value+':'+(t.language||'')+':'+(t.datatype?.value||''),t.value] as const));
+  const objects=values(graph,subject,predicate),terms=new Map(objects.map(t=>[t.termType+':'+t.value+':'+(t.termType==='Literal'?t.language:'')+':'+(t.termType==='Literal'?t.datatype.value:''),t.value] as const));
   if(terms.size>1)throw Error('Descriptor has multiple values for '+predicate);
   return [...terms.values()][0]??null;
 }

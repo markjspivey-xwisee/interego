@@ -114,7 +114,7 @@ export async function generate(root = DEFAULT_ROOT, options: {outputDir?: string
   }
   const deprecated = new Set<string>();
   for (const g of Object.values(foxxiGraphs)) for(const q of g.getQuads(null,OWL+'deprecated',null,null)) {
-    if(q.object.datatype?.value === XSD+'boolean' && ['true','1'].includes(q.object.value)) deprecated.add(q.subject.value);
+    if(q.object.termType === 'Literal' && q.object.datatype.value === XSD+'boolean' && ['true','1'].includes(q.object.value)) deprecated.add(q.subject.value);
   }
   const changeKinds = 'i2x:ChangeKinds skos:hasTopConcept ' + history.KIND_CODES.map(c=>'i2x:change-'+c).join(' , ') + ' .\n' +
     history.KINDS.map(([code,label,definition])=>`i2x:change-${code} a skos:Concept ; skos:inScheme i2x:ChangeKinds ; skos:topConceptOf i2x:ChangeKinds ;\n    skos:prefLabel ${lit(label)}@en ; skos:definition ${lit(definition)}@en .`).join('\n');
@@ -309,7 +309,7 @@ export async function generate(root = DEFAULT_ROOT, options: {outputDir?: string
     const mine=[...groups.values()].filter(g=>g.release===r.version),n=r.events.length;
     const note=n?'':' ;\n    rdfs:comment '+lit('No change to the published graph; the version label moved with other repository changes.')+'@en';
     changeLines.push(`ch:${vslug(r.version)} a i2x:ReleaseChange ;\n    rdfs:label ${lit(r.previous+' → '+r.version)}@en ;\n    prov:used ${safeIri(REL+r.previous)} ; prov:generated ${safeIri(REL+r.version)} ;\n    prov:endedAtTime "${r.date}"^^xsd:dateTime ;\n    i2x:changeCount ${n}${note} .\n`);
-    mine.sort((a,b)=>history.KIND_CODES.indexOf(a.kind)-history.KIND_CODES.indexOf(b.kind)||compare(history.pyRepr(a.events[0]),history.pyRepr(b.events[0])));
+    mine.sort((a,b)=>history.KIND_CODES.indexOf(a.kind)-history.KIND_CODES.indexOf(b.kind)||compare(history.pyEventRepr(a.events[0]!),history.pyEventRepr(b.events[0]!)));
     for(const group of mine) {
       const e0=group.events[0]!,kind=group.kind,parts=[kind],lines=[
         '    i2x:partOfChange ch:'+vslug(r.version)+' ; i2x:changeKind i2x:change-'+kind,

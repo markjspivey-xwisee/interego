@@ -5,7 +5,8 @@ import { Parser, Store, DataFactory } from 'n3';
 import type { Term, NamedNode, BlankNode } from '@rdfjs/types';
 import * as semantic from './semantic.js';
 import { parseJsonLd } from './rdf.js';
-import { compareText } from './history.js';
+import { cw } from './generate.js';
+import { compareText, KINDS as CHANGE_KINDS } from './history.js';
 
 const { namedNode } = DataFactory;
 type Subject = NamedNode | BlankNode;
@@ -82,7 +83,7 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
   const NS=IRI.ontology!+'#',CAT=IRI.catalog!+'#',EN=IRI.enactments!+'#',MP=IRI.mappings!+'#';
   const prefixes=Object.entries({
     i2x:NS,cat:CAT,en:EN,mp:MP,i2idl:'https://id.i2idl.org/concepts/','i2idl-type':'https://id.i2idl.org/collections/type/',
-    'i2idl-field':'https://id.i2idl.org/collections/field/',gs:GSNS,iep:IEP,ieh:IEH,ie:'https://markjspivey-xwisee.github.io/interego/ns/interego#',
+    'i2idl-field':'https://id.i2idl.org/collections/field/',gs:GSNS,'iep':IEP,ieh:IEH,ie:'https://markjspivey-xwisee.github.io/interego/ns/interego#',
     hyprcat:'https://markjspivey-xwisee.github.io/interego/ns/hyprcat#',hypragent:HYPRAGENT,foxxi:'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#',
     ler:'https://foxxi-bridge.interego.xwisee.com/ns/ieee-ler#',tla:'https://foxxi-bridge.interego.xwisee.com/ns/adl-tla#',
     'foxxi-xapi':'https://foxxi-bridge.interego.xwisee.com/ns/xapi#','foxxi-scorm-cam':'https://foxxi-bridge.interego.xwisee.com/ns/scorm-cam#',
@@ -111,8 +112,8 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
     if(os(g,n,RDF+'type').some(t=>t.value===OWL+'Restriction')){const p=value(g,n,OWL+'onProperty');
       for(const[kw,pred]of[['value','hasValue'],['some','someValuesFrom'],['only','allValuesFrom']]){const v=value(g,n,OWL+pred);if(v)return'('+term(p)+' '+kw+' '+expr(g,v)+')';}}return'…';
   };
-  const load=(k:string):[Store,string]=>{const s=readFileSync(join(DIST,SLUG[k]!+'.ttl'),'utf8');return[new Store(new Parser({format:'text/turtle'}).parse(s)),s];};
-  const[onto,ontoSrc]=load('ontology'),[cat,catSrc]=load('catalog'),[enact,enactSrc]=load('enactments'),[maps,mapsSrc]=load('mappings');
+  const load=(k:string):[Store,string]=>{const s=readFileSync(join(DIST,SLUG[k]!+'.ttl'),'utf8');return[new Store(new Parser({format:'text/turtle',baseIRI:IRI[k]}).parse(s)),s];};
+  const[onto]=load('ontology'),[cat]=load('catalog'),[enact]=load('enactments'),[maps]=load('mappings');
   const[rels]=load('releases'),[chg]=load('changes'),[refs]=load('referents');load('alignments');
   const sem=readJson<ReasoningRecord>(join(DIST,'semantic-layer.json')),pub=readJson<{graphs:PublishedGraph[]}>(join(DIST,'published.json'));
   readJson<unknown>(join(DIST,'publish-plan.json'));
@@ -125,7 +126,11 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
   const actionName=(iri:string):string=>iri.startsWith(ACTION_ROOT)?iri.slice(ACTION_ROOT.length):qname(iri);
   const actionLink=(n:Term|string|undefined):string=>{const iri=typeof n==='string'?n:lexical(n),a=anchor(iri);return a?'<a class="qn" href="#'+esc(a)+'">'+esc(a)+'</a>':ext(iri,esc(actionName(iri)),'qn');};
   const sections:[string,string][]=[],sectionOf=new Map<string,string>(),order:string[]=[];let current:string|undefined;
-  for(const line of ontoSrc.split(/\r?\n/)){const s=/^#\s+([A-Z])\.\s+(.+?)\s*$/.exec(line);if(s){current=s[1];sections.push([current!,s[2]!.replace(/\.$/,'')]);continue;}
+  const ontologySource=readFileSync(join(ROOT,'src','i2idlx.ttl.tmpl'),'utf8')
+    .replace('{{CHANGE_KINDS}}',CHANGE_KINDS.map(([code])=>'i2x:change-'+code+' a skos:Concept .').join('\n'))
+    .replace('{{ORIGINS}}',readJson<{origins:{id:string}[]}>(join(ROOT,'src','origins.json')).origins.map(o=>'i2x:origin-'+o.id+' a skos:Concept .').join('\n'))
+    .replace('{{REFERENT_CATEGORIES}}',semantic.CATEGORIES.map(c=>'i2x:'+c.cls+' a owl:Class .\ni2x:category-'+c.id+' a skos:Concept .').join('\n'));
+  for(const line of ontologySource.split(/\r?\n/)){const s=/^#\s+([A-Z])\.\s+(.+?)\s*$/.exec(line);if(s){current=s[1];sections.push([current!,s[2]!.replace(/\.$/,'')]);continue;}
     const m=/^(i2x|gs):([A-Za-z0-9_-]+)[\s;.]/.exec(line);if(m&&current){const iri=(m[1]==='i2x'?NS:GSNS)+m[2];if(!sectionOf.has(iri)){sectionOf.set(iri,m[1]==='gs'?'H':current);order.push(iri);}}}
   for(const iri of order)if(iri.startsWith(GSNS))declaredGs.add(iri);
   const bySlug=new Map(pub.graphs.map(r=>[r.graph,r])),graphRows:string[]=[];
@@ -143,8 +148,9 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
     '<td class="num">'+number(decoN)+' controls</td><td colspan="2" class="muted">In the package ('+decoMb.toFixed(1)+
     ' MB). Not published: an agent can derive it from the catalog templates.</td></tr>');
 
-  const listing=/iep:affordance(.*?);\s*\n\s*rdfs:seeAlso/s.exec(catSrc)?.[1];if(!listing)throw new Error('Catalog has no affordance listing');
-  const controls=matches(listing,/cat:([A-Za-z0-9_-]+)/g),groups=['Reads on the live glossary','Semantic layer (graphs on Interego)','Per-concept templates','Governed writes through Interego','Foxxi capabilities','Human-routed'];
+  const controls=os(cat,namedNode(IRI.catalog!),IEP+'affordance').map(n=>n.value.slice(CAT.length));
+  if(controls.length===0)throw new Error('Catalog has no affordance listing');
+  const groups=['Reads on the live glossary','Semantic layer (graphs on Interego)','Per-concept templates','Governed writes through Interego','Foxxi capabilities','Human-routed'];
   const grouped=new Map(groups.map(g=>[g,[] as string[]]));let nFollowable=0,nTemplates=0;
   for(const local of controls){const s=namedNode(CAT+local),action=value(cat,s,IEP+'action');
     const method=value(cat,s,HYDRA+'method')?.value??'POST',target=value(cat,s,HYDRA+'target'),tmplNode=value(cat,s,NS+'targetTemplate');
@@ -168,7 +174,7 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
     'release-check':{version:JSON.stringify(cfg.i2idl.release)},classify:{},'concept-referents':{concept:'<https://id.i2idl.org/concepts/formative-assessment>'},
   };
   const queryCards:string[]=[];
-  for(const local of matches(catSrc,/^cat:(q-[A-Za-z0-9-]+) a i2x:StoredQuery/gm)){
+  for(const local of subjects(cat,RDF+'type',namedNode(NS+'StoredQuery')).map(s=>s.value.slice(CAT.length)).sort(compareText)){
     const name=local.slice(2),s=namedNode(CAT+local),sparql=lexical(value(cat,s,NS+'sparql'));
     const params=[...new Set(os(cat,s,NS+'parameter').map(p=>p.value))].sort((a,b)=>sparql.indexOf('$'+a)-sparql.indexOf('$'+b));
     let bound=sparql;if(!samples[name])throw new Error('No sample bindings for query '+name);
@@ -218,16 +224,23 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
     vocabHtml.push('<div class="vocab-section" data-letter="'+letter+'"><h3><span class="letter">'+letter+'</span> '+esc(title)+'</h3>'+extra+arts.join('')+'</div>');}
 
   const enactRows:string[]=[],rolesSeen=new Map<string,number>(),roleCaps=new Map<string,[string,string][]>();
-  for(const local of matches(enactSrc,/^en:([A-Za-z0-9_.-]+) a i2x:Enactment/gm)){
+  for(const local of subjects(enact,RDF+'type',namedNode(NS+'Enactment')).map(s=>s.value.slice(EN.length)).sort(compareText)){
     const s=namedNode(EN+local),concept=value(enact,s,NS+'enactedConcept'),action=value(enact,s,NS+'viaAction'),role=value(enact,s,NS+'enactmentRole');
     const roleLabel=text(onto,role,SKOS+'prefLabel')??qname(lexical(role));add(rolesSeen,roleLabel);
     const conf=Number(value(enact,s,NS+'confidence')?.value),rationale=text(enact,s,NS+'rationale')??'';
     const search=(conceptLabel(lexical(concept))+' '+actionName(lexical(action))+' '+roleLabel+' '+rationale).toLowerCase();
     enactRows.push('<tr data-role="'+esc(roleLabel)+'" data-search="'+esc(search)+'"><td>'+conceptLink(concept)+'</td><td>'+esc(roleLabel)+
       '</td><td>'+actionLink(action)+'</td><td class="num">'+conf.toFixed(2)+'</td><td class="small">'+esc(rationale)+'</td></tr>');}
-  for(const m of enactSrc.matchAll(/^i2idl:([A-Za-z0-9-]+) i2x:roleCapability (fxa|rla):([A-Za-z0-9_-]+) \.\s+#\s*(.*)$/gm)){
-    const concept='https://id.i2idl.org/concepts/'+m[1];if(!roleCaps.has(concept))roleCaps.set(concept,[]);
-    roleCaps.get(concept)!.push([ACTION_ROOT+(m[2]==='fxa'?'foxxi/':'relay/')+m[3],m[4]!]);}
+  const roleNotes=new Map<string,string>(),foxxiRows=readJson<{action:string;title:string}[]>(join(ROOT,'evidence','foxxi-affordances.json'));
+  for(const[cid,akey,conf,why]of cw.ROLE_CAPABILITIES)roleNotes.set(JSON.stringify(['https://id.i2idl.org/concepts/'+cid,ACTION_ROOT+akey]),conf.toFixed(2)+' — '+why);
+  const foxxiByKey=new Map(foxxiRows.map(row=>[row.action.split('/ns/iep/action/').at(-1)!,row]));
+  for(const[tag,[cid]]of Object.entries(cw.ROLE_TAGS)){
+    const keys=[...foxxiByKey.keys()].filter(k=>foxxiByKey.get(k)!.title.startsWith(tag)).sort(compareText);
+    for(const key of keys)roleNotes.set(JSON.stringify(['https://id.i2idl.org/concepts/'+cid,ACTION_ROOT+key]),'derived: '+tag+' in manifest title');
+  }
+  for(const q of enact.getQuads(null,namedNode(NS+'roleCapability'),null,null)){
+    const concept=q.subject.value;if(!roleCaps.has(concept))roleCaps.set(concept,[]);
+    roleCaps.get(concept)!.push([q.object.value,roleNotes.get(JSON.stringify([concept,q.object.value]))??'Declared role capability']);}
   const roleHtml=[...roleCaps].map(([concept,acts])=>{
     const chips=acts.map(([a,n])=>'<span class="cap" title="'+esc(n)+'">'+actionLink(a)+'</span>').join(' ');
     return'<div class="role"><div class="cell-title">'+conceptLink(concept)+' <span class="muted">'+acts.length+'</span></div>'+chips+
@@ -235,7 +248,7 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
   const nRoleCaps=[...roleCaps.values()].reduce((n,x)=>n+x.length,0);
   const mapRows:string[]=[],vocabCounts=new Map<string,number>(),methodCounts=new Map<string,number>(),proposalOf=new Map<string,[string,string,string]>();
   let nSuperseded=0;
-  for(const local of matches(mapsSrc,/^mp:([A-Za-z0-9_.-]+) a i2x:MappingProposal/gm)){
+  for(const local of subjects(maps,RDF+'type',namedNode(NS+'MappingProposal')).map(s=>s.value.slice(MP.length)).sort(compareText)){
     const s=namedNode(MP+local),subj=value(maps,s,NS+'proposedSubject'),pred=value(maps,s,NS+'proposedPredicate'),obj=value(maps,s,NS+'proposedObject');
     const status=lexical(value(maps,s,NS+'reviewStatus')).split('-').at(-1)!;
     if(status!=='superseded')proposalOf.set(JSON.stringify([lexical(subj),lexical(obj)]),[local,lexical(pred).split('#').at(-1)!,status]);
@@ -346,6 +359,14 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
       steps.push(['Follow the semantic-layer ports and run q-classify locally: '+semWalk[1]+' typings of a sample organization',portCodes.sort(compareText).at(-1)??'?']);}
     walkChain.push(...steps.map(([t,c])=>'<li><span class="status s'+c[0]+'">'+esc(c)+'</span> '+esc(t)+'</li>'));}
 
+  if(!walkChain.length&&/^Mode: \*\*local\*\*/m.test(walk)){
+    const rows=/Local stored query executed: \*\*(\d+) rows\*\*/.exec(walk)?.[1]??'?';
+    const triples=/Local neighborhood query executed: \*\*(\d+) triples\*\*/.exec(walk)?.[1]??'?';
+    const typings=/Result: \*\*(\d+) typings\*\*/.exec(walk)?.[1]??'?';
+    walkChain.push('<li>Local pinned catalog parsed</li>','<li>Local stored search: '+esc(rows)+' rows</li>',
+      '<li>Local neighborhood: '+esc(triples)+' triples</li>','<li>Local sample classification: '+esc(typings)+' typings</li>',
+      '<li>Live HTTP requests were not executed in this build</li>');
+  }
   const release=cfg.i2idl.release,commitShort=/commit \x60([0-9a-f]+)\x60/.exec(report)?.[1]?.slice(0,7)??'';
   const searchQ=lexical(value(cat,namedNode(CAT+'q-concept-search'),NS+'sparql')).replace(/\$text/g,'"record store"').trimEnd();
   const actExample=JSON.stringify({descriptor_url:IRI.catalog,action_iri:NS+'act-query-glossary-post',payload:searchQ},null,2);
@@ -353,7 +374,7 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
   const followExample=JSON.stringify({descriptor_url:cfg.foxxiManifest,action_iri:ACTION_ROOT+'foxxi/discover-lrs',payload:{}},null,2);
   const curlExample="curl -H 'Accept: text/turtle' "+IRI.catalog+"\n\ncurl -X POST "+ENDPOINT+" \\\n  -H 'Content-Type: application/sparql-query' \\\n  --data-binary @query.rq";
   const jsonld={
-    '@context':{dcat:DCAT,dct:DCT,prov:PROV,iep:IEP},'@type':'dcat:Catalog','dct:title':'I2IDL-X',
+    '@context':{dcat:DCAT,dct:DCT,prov:PROV,'iep':IEP},'@type':'dcat:Catalog','dct:title':'I2IDL-X',
     'dct:description':'Interego/Foxxi agentic superset of the I2IDL Digital Learning Glossary.','dct:creator':'Mark Spivey (Foxxi Mediums Inc.)',
     'dct:license':{'@id':'https://creativecommons.org/licenses/by/4.0/'},'prov:wasDerivedFrom':{'@id':'https://id.i2idl.org/scheme'},
     'dcat:dataset':DISPLAY.map(([key,title])=>({

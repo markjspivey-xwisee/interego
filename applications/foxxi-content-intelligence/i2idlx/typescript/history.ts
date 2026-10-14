@@ -119,6 +119,16 @@ export function pyRepr(value: unknown): string {
 export function pyTupleRepr(tuple: readonly unknown[]): string {
   return '(' + tuple.map(pyRepr).join(', ') + (tuple.length === 1 ? ',' : '') + ')';
 }
+/** Event fields are Python tuples, while other JSON arrays remain Python lists. */
+export function pyEventRepr(event: HistoryEvent): string {
+  return '{' + Object.entries(event).map(([key, value]) => {
+    const repr = key === 'fields' && value != null
+      ? '{' + Object.entries(value as Record<string, [JsonValue, JsonValue]>)
+          .map(([property, pair]) => pyRepr(property) + ': ' + pyTupleRepr(pair)).join(', ') + '}'
+      : pyRepr(value);
+    return pyRepr(key) + ': ' + repr;
+  }).join(', ') + '}';
+}
 function encode(tuple: readonly JsonValue[]): string { return JSON.stringify(tuple); }
 function decode(key: string): JsonValue[] { return JSON.parse(key) as JsonValue[]; }
 function tupleCompare(a: string, b: string): number {
