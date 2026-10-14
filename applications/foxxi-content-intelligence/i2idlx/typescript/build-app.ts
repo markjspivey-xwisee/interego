@@ -304,7 +304,13 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
       resolve: CONCEPTS + c.id + '.ttl', 'resolve-json': CONCEPTS + c.id + '.jsonld',
     }, got: Row = {};
     for (const a of deco.objects(CONCEPTS + c.id, IEP + 'affordance')) got[str(a).split('--')[1]!] = str(deco.value(a, HYDRA + 'target'));
-    if (Object.keys(got).length !== Object.keys(want).length || Object.entries(want).some(([k, v]) => got[k] !== v)) bad++;
+    if (Object.keys(got).length !== Object.keys(want).length || Object.entries(want).some(([k, v]) => got[k] !== v)) {
+      bad++;
+      if(bad<=2)process.stdout.write('control mismatch '+JSON.stringify({
+        concept:c.id,gotKeys:Object.keys(got).sort(),
+        controls:Object.fromEntries(Object.entries(want).filter(([key,value])=>got[key]!==value).map(([key,value])=>[key,{got:got[key]??null,want:value}])),
+      })+'\n');
+    }
   }
   check(bad === 0, "the client's control recipe reproduces all " + (concepts.length * 5) + ' decorated targets exactly');
   const actions: Row = {};

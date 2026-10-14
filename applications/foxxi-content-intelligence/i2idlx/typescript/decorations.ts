@@ -9,9 +9,32 @@ import { Store, union, construct, RDF, OWL, DCT, PROV, RDFS, nn, literal, serial
 import { type BuildResult, CONCEPT_BASE, IEP, HYDRA, ACTION_ROOT } from './generate.js';
 
 export interface DecorationResult {graph: Store; inherited: Store; affordances: number; turtle: string; file: string}
+/**
+ * Comunica's installed ENCODE_FOR_URI actor uses encodeURI, leaving separators
+ * such as # unescaped. Canonicalize only the declared neighborhood parameter
+ * to the SPARQL/XPath percent-encoding required by the retained client oracle.
+ */
+export function canonicalizeNeighborhoodTargets(graph:Store,queryNode:string):void {
+  const prefix='https://id.i2idl.org/sparql?query=';
+  for(const source of graph.getQuads(null,nn(PROV+'wasDerivedFrom'),nn(queryNode),null)) {
+    const targets=graph.getQuads(source.subject,nn(HYDRA+'target'),null,null);
+    if(targets.length!==1||targets[0]!.object.termType!=='NamedNode')
+      throw new Error('Neighborhood control must have exactly one IRI target: '+source.subject.value);
+    const target=targets[0]!,iri=target.object.value;
+    if(!iri.startsWith(prefix))throw new Error('Unexpected neighborhood target: '+iri);
+    const parameter=decodeURIComponent(iri.slice(prefix.length));
+    const encoded=encodeURIComponent(parameter).replace(/[!'()*]/g,c=>'%'+c.charCodeAt(0).toString(16).toUpperCase());
+    const canonical=prefix+encoded;
+    if(canonical!==iri) {
+      graph.removeQuad(target);
+      graph.addQuad(source.subject,nn(HYDRA+'target'),nn(canonical),target.graph);
+    }
+  }
+}
 export async function materializeDecorations(build: BuildResult, inferred: Store): Promise<DecorationResult> {
   const text=readFileSync(join(build.root,'src','queries','build','decorations.rq'),'utf8');
   const graph=await construct(build.render(text),union(build.glossary,build.graphs.catalog!));
+  canonicalizeNeighborhoodTargets(graph,build.IRI.catalog+'#q-concept-neighborhood');
   for(const q of inferred.getQuads(null,null,null,null)) {
     if([RDF+'type',build.NS+'editorialModality'].includes(q.predicate.value) &&
       (q.subject.value.startsWith(CONCEPT_BASE)||q.subject.value.startsWith('https://id.i2idl.org/definitions/')))graph.addQuad(q);
