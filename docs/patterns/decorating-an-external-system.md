@@ -33,9 +33,11 @@ publishes it, and puts everything it adds beside that record, labelled by origin
 ### 1. Refer by the system's identifiers, pinned to a release
 
 To follow this pattern, a decoration MUST name the external system's things by the system's own
-identifiers, and MUST record which release of the external record it was computed from, by
-version and by a content hash where the system offers no version. Each graph's Provenance facet
-names that release (`prov:wasDerivedFrom`).
+identifiers, and MUST record which release of the external record it was computed from: by the
+release's version, or by a content hash of the record where the system publishes no version. The
+context descriptor of each graph names that release in its Provenance facet
+(`prov:wasDerivedFrom`, consistent with any top-level mirror of it: `spec/architecture.md` §6.5c),
+so a reader sees it in the cleartext descriptor layer (§5.2.1) without opening the graph.
 
 A decoration SHOULD NOT restate the external record as its own. Where it must carry external text
 (for a reader that cannot dereference the system), it carries it verbatim, attributed, and only
