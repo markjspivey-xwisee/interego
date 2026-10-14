@@ -13,7 +13,8 @@
  * push receiver) are NOT capabilities and are explicitly allowlisted below.
  *
  * This script (Node, no deps):
- *   1. regex-extracts every app.(post|get|put)('/agent/...') path from server.ts;
+ *   1. regex-extracts every app.(post|get|put)('/agent/...') path from server.ts (and the route
+ *      modules it mounts: scorm-artifacts.ts, scorm-dispatch.ts, the telemetry setup routes);
  *   2. extracts every affordance targetTemplate '/agent/...' path from
  *      affordances.ts;
  *   3. FAILS (exit 1) if any /agent/* capability route is neither covered by an
@@ -110,7 +111,7 @@ function normalizePath(p) {
 const allowSet = new Set(ALLOWLIST.map(normalizePath));
 
 // ── 1. Routes declared in server.ts ──────────────────────────────────────────
-const serverSrc = [SERVER, resolve(ROOT, 'applications/foxxi-content-intelligence/src/scorm-artifacts.ts'), resolve(ROOT, 'applications/llm-telemetry/client-setup-routes.ts')].map(path => readFileSync(path, 'utf8')).join('\n');
+const serverSrc = [SERVER, resolve(ROOT, 'applications/foxxi-content-intelligence/src/scorm-artifacts.ts'), resolve(ROOT, 'applications/foxxi-content-intelligence/src/scorm-dispatch.ts'), resolve(ROOT, 'applications/llm-telemetry/client-setup-routes.ts')].map(path => readFileSync(path, 'utf8')).join('\n');
 // app.post('/agent/...'   app.get("/agent/..."   app.put('/agent/...')
 const routeRe = /\bapp\.(post|get|put)\(\s*['"`](\/agent\/[^'"`]*)['"`]/g;
 const routes = new Map(); // normalizedPath → { raw, methods:Set }

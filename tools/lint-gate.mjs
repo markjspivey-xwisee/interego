@@ -257,7 +257,12 @@ const UNLINTED_FRONTIER = {
   //    workbench (i2idlx/app/src), the workbench's Orchestrate view and the recording harness
   //    (i2idlx/app/src/orc, i2idlx/app/tools) — used the slack and took the root past it. All of
   //    them lint clean (`npx eslint applications/foxxi-content-intelligence/i2idlx`: 0 problems).
-  applications: { errors: 1452, files: 721 },
+  //
+  //    721 -> 763 files (2026-10-14), errors not raised: the verticals' work since that pin used
+  //    the slack, and Foxxi's dispatch and course ask (src/scorm-dispatch.ts, src/course-ask.ts,
+  //    src/i2idl-glossary.ts, their three tests and the glossary fixture) took the root past it.
+  //    All seven lint clean.
+  applications: { errors: 1452, files: 763 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },

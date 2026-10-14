@@ -1646,6 +1646,107 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       required: ['ok'],
     },
   },
+
+  {
+    action: 'urn:iep:action:foxxi:scorm-course-ask' as IRI,
+    toolName: 'foxxi.scorm_course_ask',
+    title: 'Ask an authored course a question',
+    description: 'Ask a question about a course authored on this bridge. The answer is assembled, not generated: the I2IDL Digital Learning Glossary terms the question names (found by I2IDL-X\'s surface forms), what I2IDL says each means, where the course covers it, and the course sections whose words overlap the question. Every field says whose it is: definitions and sources are I2IDL\'s; the provenance wording ("Direct source definition" / "I2IDL synthesis supported by source evidence") and reuse class are I2IDL-X · derived; referent categories and enactments are I2IDL-X · proposed (Hypothetical). A definition whose direct sources do not allow commercial reuse is not quoted, and I2IDL\'s card is linked instead. No model is called, and an assessment\'s questions are never read. Read-only; no signature needed.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/scorm/ask',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Ask a course', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'course_id', type: 'string', required: true, description: 'The authored course\'s id.' },
+      { name: 'question', type: 'string', required: true, description: 'The question, up to 500 characters.' },
+      { name: 'author_did', type: 'string', required: false, description: 'The author\'s DID, when the course is not yet known to this bridge.' },
+    ],
+    appliesTo: { collections: ['courses'] },
+    outputs: {
+      description: 'The answer and its grounding. 400 without course_id or question; 404 when no such course; 429 when rate-limited.',
+      properties: {
+        kind: { type: 'string', description: '"course-answer".' },
+        answer: { type: 'string', description: 'The assembled answer, in sentences.' },
+        grounding: { type: 'string', description: 'glossary-and-course | glossary | course | none.' },
+        concepts: { type: 'array', description: 'Each I2IDL term the question names: iri, card, label, definition (or definitionWithheld), provenance, reuse, sources, inCourse, and i2idlx { referent, enactments } (Hypothetical).', items: { type: 'object', additionalProperties: true } },
+        sections: { type: 'array', description: 'Up to three course sections that bear on the question, each with a snippet.', items: { type: 'object', additionalProperties: true } },
+        courseTerms: { type: 'array', description: 'I2IDL terms the course uses, for a next question.', items: { type: 'object', additionalProperties: true } },
+        attribution: { type: 'object', description: 'The glossary release and its rights statement; the I2IDL-X graphs read.', additionalProperties: true },
+      },
+      required: ['kind', 'answer'],
+    },
+  },
+
+  {
+    action: 'urn:iep:action:foxxi:scorm-dispatch-signed' as IRI,
+    toolName: 'foxxi.scorm_dispatch',
+    title: 'Dispatch a course to another LMS (SCORM 2004 or 1.2 stub)',
+    description: 'As a course\'s author, make a dispatch: a stub package another organization\'s LMS imports like any SCORM package. The stub holds no content and no answers; its one SCO opens the course on this bridge in a frame, the SCORM engine sequences and grades it, and the stub reports score, completion, success, each answered question and the time spent through that LMS\'s own SCORM API. That LMS keeps the learner\'s record: the bridge is not told who the learner is, and counts only launches, completions and passes for you. A learner who closes the course mid-way resumes it. Optional expires_at and launch_limit bound the dispatch; foxxi.scorm_dispatch_revoke withdraws it, and every copy of the stub stops launching. Externally routed: sign_request the args, then POST the envelope.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/scorm/dispatch',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Dispatch a course', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, title?, expires_at? (ISO 8601, in the future), launch_limit? (whole number ≥ 1) }).' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['courses'] },
+    outputs: {
+      description: 'The dispatch, 201. 400 on a bad expires_at or launch_limit; 403 when you are not the course\'s author; 404 when no such course; 401 on auth failure; 429 when rate-limited.',
+      properties: {
+        kind: { type: 'string', description: '"scorm-dispatch".' },
+        dispatch: { type: 'object', description: '{ id, courseId, title, owner, createdAt, expiresAt?, launchLimit?, state, usage { launches, completed, passed }, packages { "2004", "1.2" }, ask }.', additionalProperties: true },
+        note: { type: 'string' },
+      },
+      required: ['kind', 'dispatch'],
+    },
+  },
+
+  {
+    action: 'urn:iep:action:foxxi:scorm-dispatch-revoke-signed' as IRI,
+    toolName: 'foxxi.scorm_dispatch_revoke',
+    title: 'Withdraw a course dispatch',
+    description: 'Withdraw one of your dispatches. Every copy of its stub then answers that the course was withdrawn; attempts already under way may finish. Externally routed: sign_request the args, then POST the envelope.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/scorm/dispatch/revoke',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Withdraw a dispatch', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, dispatch_id }).' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['courses'] },
+    outputs: {
+      description: 'The withdrawn dispatch. 404 when no such dispatch of yours; 401 on auth failure.',
+      properties: { kind: { type: 'string' }, dispatch: { type: 'object', additionalProperties: true }, note: { type: 'string' } },
+      required: ['kind', 'dispatch'],
+    },
+  },
+
+  {
+    action: 'urn:iep:action:foxxi:scorm-dispatches-signed' as IRI,
+    toolName: 'foxxi.scorm_dispatches',
+    title: 'List your course dispatches and their usage',
+    description: 'Your dispatches, optionally for one course: each one\'s state (live, revoked, expired, exhausted), its launch, completion and pass counts, and its package links. Externally routed: sign_request the args, then POST the envelope.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/scorm/dispatches',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'List dispatches', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id? }).' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['courses'] },
+    outputs: {
+      description: 'Your dispatches. 401 on auth failure.',
+      properties: { kind: { type: 'string' }, owner: { type: 'string' }, count: { type: 'integer' }, dispatches: { type: 'array', items: { type: 'object', additionalProperties: true } } },
+      required: ['kind', 'dispatches'],
+    },
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────

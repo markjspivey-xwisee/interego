@@ -158,9 +158,10 @@ describe("an attempt's outcome is in the learner's record, or it says so and kee
 
   it('builds the statements once, when the attempt ends, and keeps those same ones on every later step', () => {
     const adv = fn('async function advanceScormPlay(');
-    expect(adv).toMatch(/if \(play\.ended\) \{\n\s+if \(!play\.ended\.recorded\) await recordScormCompletion\(play, play\.ended\);\n\s+return endedStep\(play\.ended\);\n\s+\}/);
+    // A dispatched attempt (keptBy 'launching-lms') is the launching LMS's to record: the bridge keeps nothing of it.
+    expect(adv).toMatch(/if \(play\.ended\) \{\n\s+if \(!play\.ended\.recorded && play\.keptBy !== 'launching-lms'\) await recordScormCompletion\(play, play\.ended\);\n\s+return endedStep\(play\.ended\);\n\s+\}/);
     expect(adv.indexOf('if (play.ended) {')).toBeLessThan(adv.indexOf('const cur = play.seq.current;'));
-    expect(adv).toMatch(/play\.ended = \{ statements: scormCompletionStatements\(play, course, passed, score\), [^\n]*\};\n\s+await recordScormCompletion\(play, play\.ended\);\n\s+return endedStep\(play\.ended\);/);
+    expect(adv).toMatch(/play\.ended = \{ statements: scormCompletionStatements\(play, course, passed, score\), [^\n]*\};\n(?:\s+\/\/[^\n]*\n)?\s+if \(play\.keptBy !== 'launching-lms'\) await recordScormCompletion\(play, play\.ended\);\n\s+return endedStep\(play\.ended\);/);
     expect(server.match(/scormCompletionStatements\(/g)).toHaveLength(2);
   });
 

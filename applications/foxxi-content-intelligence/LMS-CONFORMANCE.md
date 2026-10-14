@@ -68,6 +68,7 @@ authenticates to the LRS with the issued token.
 | Hosting uploaded packages: kept by sha-256 on the tenant pod, each document served in its own sandbox (`Content-Security-Policy: sandbox` without `allow-same-origin`, so no second origin is needed), the runtime put into each document, and played as a cmi5 course through the signed launch. Single-document SCOs run; frames that script each other do not, since every document is its own opaque origin | **Implemented** | `src/scorm-hosting.ts` |
 | LOM metadata + sequencing-rule extraction (audit trail) | **Implemented** | `src/lom-sequencing.ts` |
 | **SCORM 2004 Sequencing & Navigation — runtime enforcement**: activity tree, control modes (choice/choiceExit/flow/forwardOnly), the Flow + Choice subprocesses, pre/post-condition rules, limit conditions (attemptLimit), the Rollup process (measure / objective-satisfied incl. satisfiedByMeasure / completion; default + custom rules), objective maps | **Implemented** | `src/scorm-sequencing.ts`; `POST /scorm/sequencing/session` · `.../navigate` · `.../commit` · `GET .../:id`; verified by `tools/lms-conformance-smoke.ts` |
+| **Dispatch** — a course authored on the bridge, played inside another organization's LMS: a stub package (SCORM 2004 4th Edition or SCORM 1.2) holding no content frames the course on the bridge; the SCORM engine sequences and grades it; the stub reports score, completion, success, an interaction per answered question and session time through that LMS's own API, keeps the attempt in `suspend_data` so it resumes, and passes the course's mastery score in the manifest. The LMS keeps the learner's record (the stub never sends the bridge the learner's id); the author sees launches, completions and passes, and can withdraw a dispatch, let it expire or cap its launches, which stops every copy of the stub | **Implemented** | `src/scorm-dispatch.ts`; `foxxi.scorm_dispatch` / `_revoke` / `foxxi.scorm_dispatches`; `tests/scorm-dispatch.test.ts` (both API versions against a fake LMS, and the routes over HTTP); played through both versions in Chromium inside a fake LMS on a second origin |
 
 Foxxi now genuinely **enforces** SCORM 2004 sequencing — `lom-sequencing.ts`
 makes the rules auditable, `scorm-sequencing.ts` is the runtime that
@@ -86,11 +87,14 @@ selection/randomization controls.
 | LTI Platform role — Foxxi as its own LMS: OIDC authorization issuing an ES256 `id_token` by `form_post` (published JWKS and OpenID configuration), a `client_credentials` token endpoint that verifies the Tool's signed JWT assertion, AGS line items, results and score publish, and each learner's own gradebook row | **Implemented** for launching the bridge's own Tool | `src/lti-platform.ts`; `/lti/platform/*`, `POST /agent/lti/launch`, `POST /agent/lti/gradebook` |
 | Tool: a launch from Foxxi's own LMS opens the course in the SCORM engine, for the learner the LMS vouches for; the outcome goes to their record and the grade to the LMS gradebook over AGS | **Implemented** | `onResourceLaunch` in `src/lti13.ts`; `/lti/play/:id` in `bridge/server.ts`; `src/lti-player.ts` |
 | The LMS launching Tools other than the bridge's own (a Tool registry) | **Roadmap** | the Platform registers one Tool |
-| A course launched from an external LMS played in the SCORM engine | **Roadmap** | such a launch still hands a signed ticket to the dashboard: only Foxxi's own LMS checked the learner's signature, so only its launches name a pod to record to |
+| A course launched from an external LMS played in the SCORM engine: a registered platform's resource link that names a course (custom `foxxi_course_id`) plays in the engine as the account that platform signed for (its issuer and `sub`); the outcome is kept in the Tool's LRS under that account, and the grade goes to that platform's gradebook over AGS (an `https` line item). The learner has no pod here, so no lattice holds the outcome, and a `foxxi_learner_pod` claim from another platform is not read. A launch that names no course keeps the dashboard hand-off | **Implemented** | `startLtiPlay` in `bridge/server.ts`; `tests/lti-player.test.ts`; launched from a second Platform on its own origin against a local bridge |
 
 An external LMS (Canvas, Moodle, Blackboard, Open edX) can launch Foxxi
 as a Tool today — resource-link launch, deep-link content selection,
-roster sync, and grade passback all close end-to-end. All three LTI
+roster sync, and grade passback all close end-to-end. A resource link that
+names a course plays it in the SCORM engine, and the grade goes back over AGS.
+The other direction is dispatch (section 3): the LMS imports a stub and
+Foxxi plays the course inside it. All three LTI
 Advantage services are verified by `tools/lms-conformance-smoke.ts`.
 
 Foxxi is also its own LMS. A signed learner, a person through their relay
