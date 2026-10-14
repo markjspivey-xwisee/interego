@@ -259,9 +259,21 @@ export const DECORATION_PREFIXES: Prefixes = Object.freeze({
   sssom: 'https://w3id.org/sssom/',
 });
 
-/** Where a decoration's documents dereference. */
-export const decorationIri = (baseUrl: string, id: DecorationId): string => `${baseUrl.replace(/\/$/, '')}/decorations/${id}`;
-export const proposalsIri = (baseUrl: string, id: DecorationId): string => `${decorationIri(baseUrl, id)}/proposals`;
+/** Stable document identity can live on a pod while controls still use the serving bridge. */
+export function canonicalDecorationBase(value: string): string {
+  const url = new URL(value);
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+    throw new Error('canonical decoration base must be an https URL without credentials, query or fragment');
+  }
+  return url.href.replace(/\/+$/, '');
+}
+
+/** Without a canonical base, preserve the original bridge document identities. */
+export const decorationIri = (baseUrl: string, id: DecorationId, canonicalBase?: string): string =>
+  canonicalBase === undefined ? `${baseUrl.replace(/\/$/, '')}/decorations/${id}` : `${canonicalDecorationBase(canonicalBase)}/${id}`;
+export const proposalsIri = (baseUrl: string, id: DecorationId, canonicalBase?: string): string =>
+  canonicalBase === undefined ? `${decorationIri(baseUrl, id)}/proposals` : `${decorationIri(baseUrl, id, canonicalBase)}-proposals`;
+
 /** A Foxxi action IRI as the relay dereferences it. */
 export const actionIri = (urn: string): string => `https://relay.interego.xwisee.com/ns/iep/action/foxxi/${urn.split(':').pop()}`;
 
@@ -285,14 +297,14 @@ function header(g: Graph, doc: string, spec: DecorationSpec, title: string, desc
  * Each part is a SKOS concept in the decoration's scheme; each control is an affordance-bearing
  * distribution (iep:Affordance, hydra:Operation, dcat:Distribution) with an IRI template.
  */
-export function catalogGraph(spec: DecorationSpec, baseUrl: string): Graph {
+export function catalogGraph(spec: DecorationSpec, baseUrl: string, canonicalBase?: string): Graph {
   const g = new Graph();
-  const doc = decorationIri(baseUrl, spec.id);
+  const doc = decorationIri(baseUrl, spec.id, canonicalBase);
   const D = header(g, doc, spec, spec.title, spec.summary);
   g.add(D, iri(RDF + 'type'), iri(DCAT + 'Catalog'));
   g.add(D, iri(RDF + 'type'), iri(HYPRCAT + 'FederatedCatalog'));
   g.add(D, iri(RDF + 'type'), iri(SKOS + 'ConceptScheme'));
-  g.add(D, iri(RDFS + 'seeAlso'), iri(proposalsIri(baseUrl, spec.id)));
+  g.add(D, iri(RDFS + 'seeAlso'), iri(proposalsIri(baseUrl, spec.id, canonicalBase)));
   const sys = spec.decorates;
   g.add(D, iri(DCT + 'source'), en(`${sys.specification.title}${sys.specification.version ? `, ${sys.specification.version}` : ''}, by ${sys.publisher}${sys.specification.rights ? ` (${sys.specification.rights})` : ''}`));
   for (const [name, b] of Object.entries(sys.bindings ?? {})) g.add(D, iri(RDFS + 'comment'), en(`Bind {${name}}: ${b.description} For example ${b.example}.`));
@@ -348,10 +360,10 @@ export function catalogGraph(spec: DecorationSpec, baseUrl: string): Graph {
  * The proposals: alignments as SKOS mapping triples, each annotated with its rationale, enactments
  * as the Foxxi action a part is enacted through, and gaps. All Hypothetical.
  */
-export function proposalsGraph(spec: DecorationSpec, baseUrl: string): Graph {
+export function proposalsGraph(spec: DecorationSpec, baseUrl: string, canonicalBase?: string): Graph {
   const g = new Graph();
-  const doc = decorationIri(baseUrl, spec.id);
-  const D = header(g, proposalsIri(baseUrl, spec.id), spec, `${spec.title} — proposals`,
+  const doc = decorationIri(baseUrl, spec.id, canonicalBase);
+  const D = header(g, proposalsIri(baseUrl, spec.id, canonicalBase), spec, `${spec.title} — proposals`,
     `Proposals ${spec.title} makes about the parts of ${spec.decorates.name}: alignments to other vocabularies and the Foxxi capabilities that enact each part. Hypothetical: none is settled until reviewers ratify it, and none is a statement by ${spec.decorates.publisher}.`);
   g.add(D, iri(RDF + 'type'), iri(DCAT + 'Dataset'));
   g.add(D, iri(PROV + 'wasDerivedFrom'), iri(doc));
@@ -388,8 +400,8 @@ export function turtleOf(g: Graph, spec: DecorationSpec, what: 'catalog' | 'prop
 export const jsonLdOf = (g: Graph): Record<string, unknown> => toJsonLd(g, DECORATION_PREFIXES);
 
 /** The proposals as an SSSOM/TSV mapping set (SSSOM 1.0), one row an alignment. */
-export function proposalsSssom(spec: DecorationSpec, baseUrl: string): string {
-  const doc = decorationIri(baseUrl, spec.id);
+export function proposalsSssom(spec: DecorationSpec, baseUrl: string, canonicalBase?: string): string {
+  const doc = decorationIri(baseUrl, spec.id, canonicalBase);
   const curie = (v: string): string => {
     for (const [p, ns] of Object.entries({ ...DECORATION_PREFIXES, [spec.id]: `${doc}#` }).sort((a, b) => b[1].length - a[1].length)) {
       if (v.startsWith(ns) && v.length > ns.length) return `${p}:${v.slice(ns.length)}`;
@@ -407,7 +419,7 @@ export function proposalsSssom(spec: DecorationSpec, baseUrl: string): string {
   const y = (s: string): string => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   const lines = [
     '#curie_map:', ...curieMap.map(([p, ns]) => `#  ${p}: ${y(ns)}`),
-    `#mapping_set_id: ${y(`${proposalsIri(baseUrl, spec.id)}.sssom.tsv`)}`,
+    `#mapping_set_id: ${y(`${proposalsIri(baseUrl, spec.id, canonicalBase)}.sssom.tsv`)}`,
     `#mapping_set_version: ${y(spec.version)}`,
     `#mapping_set_title: ${y(`${spec.title} — proposed alignments`)}`,
     `#mapping_set_description: ${y(`Alignments ${spec.title} proposes for the parts of ${spec.decorates.name}. Hypothetical until reviewers ratify them; a part with no counterpart in a vocabulary that was looked in is listed against sssom:NoTermFound.`)}`,
@@ -421,13 +433,13 @@ export function proposalsSssom(spec: DecorationSpec, baseUrl: string): string {
 }
 
 /** What an agent reads: the decoration as JSON, every part with its controls and its proposals. */
-export function decorationView(spec: DecorationSpec, baseUrl: string): Record<string, unknown> {
-  const doc = decorationIri(baseUrl, spec.id);
+export function decorationView(spec: DecorationSpec, baseUrl: string, canonicalBase?: string): Record<string, unknown> {
+  const doc = decorationIri(baseUrl, spec.id, canonicalBase);
   return {
     kind: 'decoration', id: spec.id, title: spec.title, version: spec.version, summary: spec.summary, iri: doc,
     decorates: spec.decorates, notAffiliated: notAffiliated(spec),
     origins: { catalog: originOf(spec).catalog, proposals: `${originOf(spec).proposals} (Hypothetical)` },
-    documents: { catalog: doc, proposals: proposalsIri(baseUrl, spec.id), sssom: `${proposalsIri(baseUrl, spec.id)}.sssom.tsv` },
+    documents: { catalog: doc, proposals: proposalsIri(baseUrl, spec.id, canonicalBase), sssom: `${proposalsIri(baseUrl, spec.id, canonicalBase)}.sssom.tsv` },
     parts: spec.parts.map(p => ({
       ...p, iri: `${doc}#${p.id}`,
       controls: spec.controls.filter(c => c.part === p.id),

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-14 — Foxxi decorations: canonical Interego IRIs with bridge controls
+
+The decorator kit can mint catalog and proposal identities under an Interego namespace base while filling service controls from the serving bridge. The bridge uses the same optional canonical base for Turtle, JSON-LD, JSON, HTML and SSSOM, and links document representations to their canonical IRIs. Omitting the option preserves the ten existing graph outputs byte for byte. Tests compare all five decorations after identity normalization and exercise the canonical links and bridge targets over HTTP. Publication and deployment are separate operations.
+
 ## 2026-10-14 — Foxxi dispatch: a launch that does not start leaves no trace
 
 Codex's review of #618 found two more gaps in launch reservation, now closed. A launch whose attempt threw on starting was never given back, so it could use up a capped dispatch until the next restart. It is now given back whether the attempt refuses to start or throws. And a reserved launch moved the dispatch's last-launch time even when its attempt never started. That time is now set only once the attempt starts. Both tests fail against the merged code.

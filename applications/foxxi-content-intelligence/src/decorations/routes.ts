@@ -14,15 +14,15 @@ import { htmlEscape, page } from '../lti-player.js';
 import { negotiate } from '../ns/rdf.js';
 import { DECORATIONS, decorationById } from './index.js';
 import {
-  bindControls, catalogGraph, decorationIri, decorationView, jsonLdOf, notAffiliated, originOf, proposalsGraph, proposalsIri, proposalsSssom, turtleOf,
+  bindControls, canonicalDecorationBase, catalogGraph, decorationIri, decorationView, jsonLdOf, notAffiliated, originOf, proposalsGraph, proposalsIri, proposalsSssom, turtleOf,
   type DecorationSpec,
 } from './kit.js';
 
 const CATALOG_OFFERS = ['text/turtle', 'application/ld+json', 'application/json', 'text/html'] as const;
 const PROPOSAL_OFFERS = ['text/turtle', 'application/ld+json', 'text/tab-separated-values'] as const;
 
-function renderHtml(spec: DecorationSpec, base: string): string {
-  const doc = decorationIri(base, spec.id);
+function renderHtml(spec: DecorationSpec, base: string, canonicalBase?: string): string {
+  const doc = decorationIri(base, spec.id, canonicalBase);
   const parts = spec.parts.map(p => {
     const controls = spec.controls.filter(c => c.part === p.id)
       .map(c => `<li><code>${htmlEscape(c.method)} ${htmlEscape(c.target.replace('{+bridge}', base))}</code> — ${htmlEscape(c.title)}${c.auth ? `<br><span class="muted">${htmlEscape(c.auth)}</span>` : ''}</li>`).join('');
@@ -37,14 +37,18 @@ ${controls ? `<ul>${controls}</ul>` : ''}${proposed.length ? `<p class="muted">P
   }).join('');
   const inner = `<h1>${htmlEscape(spec.title)}</h1><p>${htmlEscape(spec.summary)}</p>
 <p class="muted">${htmlEscape(notAffiliated(spec))}</p>
-<p>Turtle and JSON-LD at <code>${htmlEscape(doc)}</code>; proposals at <a href="${htmlEscape(proposalsIri(base, spec.id))}">${htmlEscape(proposalsIri(base, spec.id))}</a>.</p>${parts}`;
+<p>Turtle and JSON-LD at <code>${htmlEscape(doc)}</code>; proposals at <a href="${htmlEscape(proposalsIri(base, spec.id, canonicalBase))}">${htmlEscape(proposalsIri(base, spec.id, canonicalBase))}</a>.</p>${parts}`;
   return page(`${spec.title} · Foxxi decoration`, `Foxxi decorations · ${originOf(spec).catalog}`, inner);
 }
 
-export function attachDecorationRoutes(app: Express, opts: { baseUrl: string }): void {
+export function attachDecorationRoutes(app: Express, opts: { baseUrl: string; canonicalBase?: string }): void {
   const base = opts.baseUrl.replace(/\/$/, '');
+  const canonicalBase = opts.canonicalBase === undefined ? undefined : canonicalDecorationBase(opts.canonicalBase);
+  const link = (res: Response, iri: string): void => {
+    if (canonicalBase !== undefined) res.setHeader('Link', `<${iri}>; rel="canonical"`);
+  };
   const open = (res: Response): void => { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Vary', 'Accept'); };
-  const notFound = (res: Response): void => { res.status(404).json({ error: 'no such decoration', decorations: Object.keys(DECORATIONS).map(id => decorationIri(base, id as keyof typeof DECORATIONS)) }); };
+  const notFound = (res: Response): void => { res.status(404).json({ error: 'no such decoration', decorations: Object.keys(DECORATIONS).map(id => decorationIri(base, id as keyof typeof DECORATIONS, canonicalBase)) }); };
 
   app.get('/decorations', (_req, res) => {
     open(res);
@@ -53,7 +57,7 @@ export function attachDecorationRoutes(app: Express, opts: { baseUrl: string }):
       note: 'Each decorates a system Foxxi does not control, keeping the system\'s record apart from what Foxxi adds (the catalog) and proposes (Hypothetical). The pattern: docs/patterns/decorating-an-external-system.md in the Interego repository.',
       decorations: Object.values(DECORATIONS).map(d => ({
         id: d.id, title: d.title, version: d.version, summary: d.summary, decorates: d.decorates.name, kind: d.decorates.kind,
-        catalog: decorationIri(base, d.id), proposals: proposalsIri(base, d.id),
+        catalog: decorationIri(base, d.id, canonicalBase), proposals: proposalsIri(base, d.id, canonicalBase),
         ...(d.decorates.bindings ? { bindings: Object.keys(d.decorates.bindings) } : {}),
       })),
     });
@@ -63,17 +67,19 @@ export function attachDecorationRoutes(app: Express, opts: { baseUrl: string }):
     const spec = decorationById(String(req.params.id));
     if (!spec) { notFound(res); return; }
     open(res);
-    res.type('text/tab-separated-values').send(proposalsSssom(spec, base));
+    link(res, `${proposalsIri(base, spec.id, canonicalBase)}.sssom.tsv`);
+    res.type('text/tab-separated-values').send(proposalsSssom(spec, base, canonicalBase));
   });
 
   app.get('/decorations/:id/proposals', (req: Request, res: Response) => {
     const spec = decorationById(String(req.params.id));
     if (!spec) { notFound(res); return; }
     open(res);
+    link(res, proposalsIri(base, spec.id, canonicalBase));
     const type = negotiate(req.headers.accept ?? '*/*', PROPOSAL_OFFERS);
     if (!type) { res.status(406).json({ error: 'not acceptable', offers: PROPOSAL_OFFERS }); return; }
-    if (type === 'text/tab-separated-values') { res.type(type).send(proposalsSssom(spec, base)); return; }
-    const g = proposalsGraph(spec, base);
+    if (type === 'text/tab-separated-values') { res.type(type).send(proposalsSssom(spec, base, canonicalBase)); return; }
+    const g = proposalsGraph(spec, base, canonicalBase);
     if (type === 'application/ld+json') { res.type(type).send(JSON.stringify(jsonLdOf(g), null, 2)); return; }
     res.type('text/turtle').send(turtleOf(g, spec, 'proposals'));
   });
@@ -82,11 +88,12 @@ export function attachDecorationRoutes(app: Express, opts: { baseUrl: string }):
     const spec = decorationById(String(req.params.id));
     if (!spec) { notFound(res); return; }
     open(res);
+    link(res, decorationIri(base, spec.id, canonicalBase));
     const type = negotiate(req.headers.accept ?? '*/*', CATALOG_OFFERS);
     if (!type) { res.status(406).json({ error: 'not acceptable', offers: CATALOG_OFFERS }); return; }
-    if (type === 'application/json') { res.json(decorationView(spec, base)); return; }
-    if (type === 'text/html') { res.type('html').send(renderHtml(spec, base)); return; }
-    const g = catalogGraph(spec, base);
+    if (type === 'application/json') { res.json(decorationView(spec, base, canonicalBase)); return; }
+    if (type === 'text/html') { res.type('html').send(renderHtml(spec, base, canonicalBase)); return; }
+    const g = catalogGraph(spec, base, canonicalBase);
     if (type === 'application/ld+json') { res.type(type).send(JSON.stringify(jsonLdOf(g), null, 2)); return; }
     res.type('text/turtle').send(turtleOf(g, spec, 'catalog'));
   });
@@ -95,13 +102,13 @@ export function attachDecorationRoutes(app: Express, opts: { baseUrl: string }):
     const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
     const spec = typeof body.decoration === 'string' ? decorationById(body.decoration) : undefined;
     if (!spec) { res.status(400).json({ error: 'decoration must name one of the decorations', decorations: Object.keys(DECORATIONS) }); return; }
-    if (!spec.decorates.bindings) { res.status(400).json({ error: `${spec.title} decorates a ${spec.decorates.kind}, not an instance: its controls need no binding`, catalog: decorationIri(base, spec.id) }); return; }
+    if (!spec.decorates.bindings) { res.status(400).json({ error: `${spec.title} decorates a ${spec.decorates.kind}, not an instance: its controls need no binding`, catalog: decorationIri(base, spec.id, canonicalBase) }); return; }
     const values = body.values && typeof body.values === 'object' && !Array.isArray(body.values) ? body.values as Record<string, unknown> : {};
     if (Object.values(values).some(v => typeof v !== 'string')) { res.status(400).json({ error: 'every value must be a URL string' }); return; }
     const bound = bindControls(spec, values as Record<string, string>, base);
     if (!bound.ok) { res.status(400).json({ error: bound.error }); return; }
     res.json({
-      kind: 'bound-decoration', decoration: spec.id, title: spec.title, catalog: decorationIri(base, spec.id), values,
+      kind: 'bound-decoration', decoration: spec.id, title: spec.title, catalog: decorationIri(base, spec.id, canonicalBase), values,
       controls: bound.controls,
       unbound: Object.keys(spec.decorates.bindings).filter(k => !(k in values)),
       note: `The controls whose variables you gave, with the query variables left for each call. Nothing was fetched: the bridge only filled the templates. ${notAffiliated(spec)}`,
