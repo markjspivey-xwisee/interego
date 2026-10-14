@@ -1,0 +1,222 @@
+{
+  "before": {
+    "@graph": [
+      {
+        "@id": "scheme",
+        "@type": "skos:ConceptScheme",
+        "gs:publicationVersion": "0.1"
+      },
+      {
+        "@id": "c:a",
+        "@type": "skos:Concept",
+        "skos:prefLabel": "Old label",
+        "skos:altLabel": [
+          "gone",
+          "kept"
+        ],
+        "skos:definition": {
+          "en": "Old definition"
+        },
+        "gs:editorialExplanation": "Old explanation",
+        "gs:typeCollection": {
+          "@id": "col:old"
+        },
+        "gs:fieldCollection": "field:old",
+        "gs:editorialStatus": "draft",
+        "skos:related": "c:z",
+        "skos:broader": "c:b",
+        "gs:activeDefinition": "def:a",
+        "skos:exactMatch": [
+          "ext:withdrawn",
+          "ext:changed"
+        ],
+        "gs:externalOntologyAssociations": [
+          {
+            "gs:target": "ext:remove",
+            "gs:associationType": "related",
+            "gs:reviewStatus": "proposed"
+          },
+          {
+            "gs:target": "ext:revise",
+            "gs:associationType": "close",
+            "gs:reviewStatus": "proposed",
+            "gs:note": "old"
+          }
+        ]
+      },
+      {
+        "@id": "c:z",
+        "@type": "skos:Concept",
+        "skos:related": "c:a"
+      },
+      {
+        "@id": "c:b",
+        "@type": "skos:Concept",
+        "skos:narrower": "c:a"
+      },
+      {
+        "@id": "c:removed",
+        "@type": "skos:Concept"
+      },
+      {
+        "@id": "def:a",
+        "gs:evidence": [
+          {
+            "dcterms:source": "src:revise",
+            "gs:citationDetail": "duplicate",
+            "gs:evidenceRelation": "supporting"
+          },
+          {
+            "dcterms:source": "src:revise",
+            "gs:citationDetail": "duplicate"
+          },
+          {
+            "gs:citationDetail": "null source",
+            "gs:evidenceRelation": "direct"
+          },
+          {
+            "dcterms:source": "src:remove",
+            "gs:citationDetail": "removed",
+            "gs:evidenceRelation": "direct"
+          }
+        ]
+      },
+      {
+        "@id": "col:revise",
+        "@type": "skos:Collection",
+        "skos:prefLabel": "Old collection",
+        "skos:member": [
+          "c:a",
+          "c:z"
+        ]
+      },
+      {
+        "@id": "col:remove",
+        "@type": "skos:Collection",
+        "skos:member": "c:a"
+      },
+      {
+        "@id": "src:revise",
+        "@type": "dcterms:BibliographicResource",
+        "dcterms:title": "Old source",
+        "rights": "withdrawn"
+      },
+      {
+        "@id": "src:remove",
+        "@type": "dcterms:BibliographicResource"
+      }
+    ]
+  },
+  "after": {
+    "@graph": [
+      {
+        "@id": "scheme",
+        "@type": [
+          "skos:ConceptScheme"
+        ],
+        "gs:publicationVersion": "0.2"
+      },
+      {
+        "@id": "c:a",
+        "@type": "skos:Concept",
+        "skos:prefLabel": "New label",
+        "skos:altLabel": [
+          "added",
+          "kept"
+        ],
+        "skos:definition": {
+          "en": "New definition"
+        },
+        "gs:editorialExplanation": "New explanation",
+        "gs:typeCollection": "col:new",
+        "gs:fieldCollection": {
+          "@id": "field:new"
+        },
+        "gs:editorialStatus": "reviewed",
+        "skos:related": "c:added",
+        "skos:broader": "c:added",
+        "gs:activeDefinition": {
+          "@id": "def:a"
+        },
+        "skos:closeMatch": "ext:changed",
+        "skos:relatedMatch": "ext:new",
+        "gs:externalOntologyAssociations": [
+          {
+            "gs:target": {
+              "@id": "ext:add"
+            },
+            "gs:associationType": "broad",
+            "gs:reviewStatus": "proposed"
+          },
+          {
+            "gs:target": "ext:revise",
+            "gs:associationType": "close",
+            "gs:reviewStatus": "reviewed",
+            "gs:note": "new"
+          }
+        ]
+      },
+      {
+        "@id": "c:z",
+        "@type": "skos:Concept"
+      },
+      {
+        "@id": "c:b",
+        "@type": "skos:Concept"
+      },
+      {
+        "@id": "c:added",
+        "@type": "skos:Concept",
+        "skos:related": "c:a",
+        "skos:narrower": "c:a"
+      },
+      {
+        "@id": "def:a",
+        "gs:evidence": [
+          {
+            "dcterms:source": "src:revise",
+            "gs:citationDetail": "duplicate",
+            "gs:evidenceRelation": "direct"
+          },
+          {
+            "dcterms:source": "src:revise",
+            "gs:citationDetail": "duplicate",
+            "gs:evidenceRelation": "supporting"
+          },
+          {
+            "gs:citationDetail": "null source"
+          },
+          {
+            "dcterms:source": "src:add",
+            "gs:citationDetail": "O'Brien\ncitation",
+            "gs:evidenceRelation": "direct"
+          }
+        ]
+      },
+      {
+        "@id": "col:revise",
+        "@type": "skos:Collection",
+        "skos:prefLabel": "New collection",
+        "skos:member": [
+          "c:a",
+          "c:added"
+        ]
+      },
+      {
+        "@id": "col:add",
+        "@type": "skos:Collection",
+        "skos:member": "c:a"
+      },
+      {
+        "@id": "src:revise",
+        "@type": "dcterms:BibliographicResource",
+        "dcterms:title": "New source",
+        "url": "https://example.invalid/new"
+      },
+      {
+        "@id": "src:add",
+        "@type": "dcterms:BibliographicResource"
+      }
+    ]
+  }
+}

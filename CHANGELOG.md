@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-14 — I2IDL-X: native TypeScript build migration and parity checks
+
+The native migration adds graph generation through the Foxxi RDF graph kit, semantic-layer declarations, release-history derivation, OWL and SHACL validation modules, and pinned upper-vocabulary refresh. RDF canonicalization checks graph identity independently of serialization and blank-node labels. Dedicated CI compiles the native modules, exercises reasoning and history fixtures, and compares every upstream history snapshot and event with the retained Python oracle. The migration remains opt-in until full build and application parity pass; the existing Python build and the published graphs are retained.
+
 ## 2026-10-14 — Foxxi decorations: canonical Interego IRIs with bridge controls
 
 The decorator kit can mint catalog and proposal identities under an Interego namespace base while filling service controls from the serving bridge. The bridge uses the same optional canonical base for Turtle, JSON-LD, JSON, HTML and SSSOM, and links document representations to their canonical IRIs. Omitting the option preserves the ten existing graph outputs byte for byte. Tests compare all five decorations after identity normalization and exercise the canonical links and bridge targets over HTTP. Publication and deployment are separate operations.

@@ -1,0 +1,215 @@
+{
+  "SOURCES": [
+    {
+      "key": "bfo",
+      "prefixes": [
+        "obo:BFO_"
+      ],
+      "whole": true,
+      "format": "turtle",
+      "license": "CC BY 4.0",
+      "version": "BFO 2020 (ISO/IEC 21838-2:2021), BFO-ontology/BFO-2020 commit bd1fb61",
+      "url": "https://raw.githubusercontent.com/BFO-ontology/BFO-2020/bd1fb61c5fa4e358fc9690f0d214b1ac63fae594/21838-2/owl/bfo-core.ttl"
+    },
+    {
+      "key": "iao",
+      "prefixes": [
+        "obo:IAO_"
+      ],
+      "format": "xml",
+      "license": "CC BY 4.0",
+      "exclude": [
+        "http://purl.obolibrary.org/obo/BFO_"
+      ],
+      "version": "IAO 2026-03-30",
+      "url": "http://purl.obolibrary.org/obo/iao/2026-03-30/iao.owl"
+    },
+    {
+      "key": "cco",
+      "prefixes": [
+        "cco:"
+      ],
+      "format": "turtle",
+      "license": "BSD 3-Clause",
+      "exclude": [
+        "http://purl.obolibrary.org/obo/BFO_"
+      ],
+      "version": "CCO 2 merged, CommonCoreOntologies commit be13b74 (2026-08-13)",
+      "url": "https://raw.githubusercontent.com/CommonCoreOntology/CommonCoreOntologies/be13b74cccf85617739c5288f9fdac805437386c/src/cco-merged/CommonCoreOntologiesMerged.ttl"
+    },
+    {
+      "key": "gist",
+      "prefixes": [
+        "gist:"
+      ],
+      "whole": true,
+      "format": "turtle",
+      "license": "CC BY 4.0",
+      "version": "gist 14.1.0",
+      "url": "https://raw.githubusercontent.com/semanticarts/gist/v14.1.0/ontologies/gistCore.ttl"
+    },
+    {
+      "key": "dul",
+      "prefixes": [
+        "dul:"
+      ],
+      "whole": true,
+      "format": "turtle",
+      "license": "CC BY 4.0",
+      "version": "DOLCE+DnS Ultralite (as served)",
+      "url": "http://www.ontologydesignpatterns.org/ont/dul/DUL.owl"
+    },
+    {
+      "key": "gufo",
+      "prefixes": [
+        "gufo:"
+      ],
+      "whole": true,
+      "format": "turtle",
+      "license": "CC BY 4.0",
+      "version": "gUFO 1.0.0",
+      "url": "https://purl.org/nemo/gufo",
+      "accept": "text/turtle"
+    },
+    {
+      "key": "prov",
+      "prefixes": [
+        "prov:"
+      ],
+      "whole": true,
+      "format": "turtle",
+      "license": "W3C Document License",
+      "version": "PROV-O (W3C Recommendation 2013-04-30)",
+      "url": "https://www.w3.org/ns/prov-o",
+      "accept": "text/turtle"
+    },
+    {
+      "key": "schema",
+      "prefixes": [
+        "schema:"
+      ],
+      "format": "turtle",
+      "license": "CC BY-SA 3.0",
+      "version": "schema.org 30.1",
+      "url": "https://raw.githubusercontent.com/schemaorg/schemaorg/v30.1/data/releases/30.1/schemaorg-current-https.ttl"
+    },
+    {
+      "key": "org",
+      "prefixes": [
+        "org:"
+      ],
+      "whole": true,
+      "format": "turtle",
+      "license": "W3C Document License",
+      "version": "W3C Organization Ontology (2014-01-16)",
+      "url": "https://www.w3.org/ns/org",
+      "accept": "text/turtle"
+    },
+    {
+      "key": "dct",
+      "prefixes": [
+        "dct:"
+      ],
+      "format": "turtle",
+      "license": "CC BY 4.0",
+      "version": "DCMI Metadata Terms (as served)",
+      "url": "https://www.dublincore.org/specifications/dublin-core/dcmi-terms/dublin_core_terms.ttl"
+    },
+    {
+      "key": "dcat",
+      "prefixes": [
+        "dcat:"
+      ],
+      "format": "turtle",
+      "license": "W3C Software and Document License",
+      "version": "DCAT 3 (as served)",
+      "url": "https://www.w3.org/ns/dcat.ttl"
+    },
+    {
+      "key": "lrmi",
+      "prefixes": [
+        "lrmi:"
+      ],
+      "whole": true,
+      "format": "turtle",
+      "license": "CC BY 4.0",
+      "version": "LRMI DCMI terms (as served)",
+      "url": "https://purl.org/dcx/lrmi-terms/",
+      "accept": "text/turtle"
+    },
+    {
+      "key": "esco",
+      "prefixes": [
+        "esco:"
+      ],
+      "format": "xml",
+      "license": "European Commission reuse policy (see ESCO)",
+      "version": "ESCO model (as served)",
+      "englishOnly": true,
+      "url": "https://data.europa.eu/esco/model",
+      "accept": "application/rdf+xml"
+    },
+    {
+      "key": "elm",
+      "prefixes": [
+        "elm:"
+      ],
+      "format": "xml",
+      "license": "European Commission reuse policy (see Europass)",
+      "version": "European Learning Model 3 (as served)",
+      "englishOnly": true,
+      "url": "http://data.europa.eu/snb/model/elm",
+      "accept": "application/rdf+xml"
+    },
+    {
+      "key": "asn",
+      "prefixes": [
+        "asn:"
+      ],
+      "format": "xml",
+      "license": "CC BY 4.0 (University of Washington)",
+      "version": "ASN core schema (as served)",
+      "url": "http://purl.org/ASN/schema/core/",
+      "accept": "application/rdf+xml"
+    }
+  ],
+  "INTEREGO": {
+    "interego": "https://markjspivey-xwisee.github.io/interego/ns/interego.ttl",
+    "hypragent": "https://markjspivey-xwisee.github.io/interego/ns/hypragent.ttl",
+    "hyprcat": "https://markjspivey-xwisee.github.io/interego/ns/hyprcat.ttl",
+    "harness": "https://markjspivey-xwisee.github.io/interego/ns/harness.ttl"
+  },
+  "CONTEXTS": [
+    {
+      "prefix": "ob3",
+      "url": "https://purl.imsglobal.org/spec/ob/v3p0/context-3.0.3.json",
+      "title": "Open Badges 3.0 JSON-LD context"
+    },
+    {
+      "prefix": "case",
+      "url": "https://purl.imsglobal.org/spec/case/v1p0/context/imscasev1p0_context_v1p0.jsonld",
+      "title": "CASE 1.0 JSON-LD context"
+    }
+  ],
+  "CTDL_INDEX": {
+    "checked": "2026-10-09",
+    "source": {
+      "ceterms": "https://purl.org/ctdl/terms",
+      "ceasn": "https://purl.org/ctdlasn/terms"
+    },
+    "terms": {
+      "ceterms:Credential": null,
+      "ceterms:Occupation": null,
+      "ceterms:Course": null,
+      "ceterms:LearningProgram": null,
+      "ceterms:AssessmentProfile": null,
+      "ceterms:CredentialOrganization": null,
+      "ceterms:WorkRole": "Collection of tasks and competencies that embody a particular function in one or more jobs.",
+      "ceterms:Task": "Specific activity, typically related to performing a function or achieving a goal.",
+      "ceterms:LearningOpportunity": "Structured and unstructured learning and development opportunities based in direct experience, formal and informal study…",
+      "ceterms:Pathway": "Resource composed of a structured set of PathwayComponents defining points along a route to fulfillment of a goal or objective.",
+      "ceasn:Competency": null,
+      "ceasn:CompetencyFramework": null
+    }
+  }
+}
