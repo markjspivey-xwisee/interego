@@ -12522,6 +12522,7 @@ attachWorkbenchRoutes(app, {
   ownerAnchors: workbenchOwnerAnchors(process.env.FOXXI_I2IDLX_OWNER_ANCHORS),
   verifyCaller: verifyPrivatePerformanceCaller,
   ownPod: privatePerformancePod,
+  canonicalPod: canonicalPublicPodUrl,
   fetch: guardedFetchFn(globalThis.fetch) as typeof fetch,
   encryptionKeypair: () => workbenchEncryptionKeypair(process.env.FOXXI_BRIDGE_PRIVATE_KEY),
   siteDirectory: process.env.FOXXI_I2IDLX_SITE_DIR || undefined,

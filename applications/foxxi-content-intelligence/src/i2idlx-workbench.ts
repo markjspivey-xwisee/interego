@@ -34,6 +34,8 @@ export interface WorkbenchConfig {
   ownerAnchors?: Readonly<Record<string, string>>;
   verifyCaller: VerifyPrivateCaller;
   ownPod: (actor: string) => string;
+  /** Deployment-owned exact store aliases only; request data never supplies this mapping. */
+  canonicalPod?: (pod: string) => string;
   fetch: typeof fetch;
   encryptionKeypair: () => EncryptionKeyPair | null;
   /** Injection seam for deterministic tests; production rechecks on-pod delegation. */
@@ -174,7 +176,8 @@ export class WorkbenchDocuments {
     const vc = await readDelegationCredential(pod, actor as IRI, { fetch: snapshotFetch as never });
     return !!vc?.proof?.signerAddress && vc.proof.signerAddress.toLowerCase() === expectedOwner.toLowerCase() && vc.credentialSubject.id === actor &&
       (vc.credentialSubject.scope ?? []).includes('discover') && (!write || (vc.credentialSubject.scope ?? []).includes('publish')) &&
-      vc.credentialSubject.pod.replace(/\/+$/, '') === pod.replace(/\/+$/, '');
+      (this.config.canonicalPod?.(vc.credentialSubject.pod) ?? vc.credentialSubject.pod).replace(/\/+$/, '') ===
+      (this.config.canonicalPod?.(pod) ?? pod).replace(/\/+$/, '');
   }
   async assertAuthor(body: unknown, caller: string, write = false): Promise<Envelope> {
     const proof = proofOf(body);

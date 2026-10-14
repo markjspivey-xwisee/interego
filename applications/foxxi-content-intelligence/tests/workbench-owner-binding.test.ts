@@ -17,18 +17,19 @@ const sha=(s:string)=>createHash('sha256').update(s).digest('hex');
 const signer=(wallet:ethers.HDNodeWallet):DelegationSigner=>async payload=>({
   signature:await wallet.signMessage(payload),signerAddress:wallet.address,verificationMethod:('did:ethr:'+wallet.address)as IRI,
 });
-async function fixture(mode:'valid'|'race'|'forged') {
+async function fixture(mode:'valid'|'race'|'forged',options:{credentialPod?:string;canonicalPod?:(pod:string)=>string;ownerWebId?:IRI}={}) {
   const ownerWallet=ethers.Wallet.createRandom(),attackerWallet=ethers.Wallet.createRandom();
-  const owner=createOwnerProfile(('did:ethr:'+ownerWallet.address)as IRI,'Owner',[]);
+  const owner=createOwnerProfile(options.ownerWebId??('did:ethr:'+ownerWallet.address)as IRI,'Owner',[]);
   const agent:AuthorizedAgentData={agentId:ACTOR as IRI,delegatedBy:owner.webId,scope:'ReadWrite',validFrom:'2020-01-01T00:00:00Z'};
   const profile={...owner,authorizedAgents:[agent]};
-  const validVc=await createSignedDelegationCredential(profile,mode==='race'?{...agent,scope:'ReadOnly'}:agent,POD as IRI,signer(ownerWallet));
+  const credentialPod=(options.credentialPod??POD)as IRI;
+  const validVc=await createSignedDelegationCredential(profile,mode==='race'?{...agent,scope:'ReadOnly'}:agent,credentialPod,signer(ownerWallet));
   // The persistent forgery claims the real owner while using an attacker
   // proof. The race returns a genuine ReadOnly VC first, then changes its
   // signed scope without updating the proof. Neither is owner authorization.
   const forgedVc=mode==='race'
     ? {...validVc,credentialSubject:{...validVc.credentialSubject,scope:['discover','publish','subscribe']}}
-    : await createSignedDelegationCredential(profile,agent,POD as IRI,signer(attackerWallet));
+    : await createSignedDelegationCredential(profile,agent,credentialPod,signer(attackerWallet));
   const path='ballots/'+OWNER_ID,document={v:{}};
   const ownerKey=deriveEncryptionKeyPair(ownerWallet.privateKey,'owner-workbench-test');
   const bridgeKey=deriveEncryptionKeyPair(ethers.Wallet.createRandom().privateKey,'bridge-workbench-test');
@@ -43,6 +44,7 @@ async function fixture(mode:'valid'|'race'|'forged') {
     baseUrl:BASE,sharedPodUrl:SHARED,participantIds:[OWNER_ID],editorDids:[],
     ownerAnchors:{[OWNER_ID]:ownerWallet.address},
     ownPod:actor=>{assert.equal(actor,ACTOR);return POD;},
+    canonicalPod:options.canonicalPod,
     verifyCaller:async()=>({ok:false,status:401,error:'Unused on historical reads'}),
     fetch:(async (input,init)=>{
       const url=typeof input==='string'?input:input instanceof URL?input.href:input.url;
@@ -76,6 +78,48 @@ describe('workbench delegated author trust',()=>{
   it('rejects a consistently attacker-signed VC that merely claims the legitimate owner issuer',async()=>{
     const f=await fixture('forged');
     await assert.rejects(f.docs.read(f.path,ACTOR),e=>e instanceof WorkbenchError&&e.status===503);
+  });
+});
+
+const INTERNAL_STORE='http://css.railway.internal:3456';
+const INTERNAL_OWNER_POD=INTERNAL_STORE+'/'+OWNER_ID+'/';
+const OWNER_WEBID=('https://identity.example/users/'+OWNER_ID+'/profile#me')as IRI;
+// The deployment owns this two-origin map. Preserve path/query/fragment and
+// leave every foreign origin untouched, as canonicalPublicPodUrl does.
+const canonicalStorePod=(pod:string)=>{
+  const url=new URL(pod),publicOrigin=new URL(POD).origin;
+  if(url.origin!==INTERNAL_STORE&&url.origin!==publicOrigin)return pod;
+  return publicOrigin+url.pathname+url.search+url.hash;
+};
+describe('workbench deployment store aliases',()=>{
+  it('accepts the actual relay-issued internal pod spelling without rewriting its signed credential',async()=>{
+    const f=await fixture('valid',{credentialPod:INTERNAL_OWNER_POD,canonicalPod:canonicalStorePod,ownerWebId:OWNER_WEBID});
+    const read=await f.docs.read(f.path,ACTOR);
+    assert.equal(read.exists,true);assert.deepEqual(read.data,f.document);
+    // The signed VC must serve verification and pod/scope checks unchanged.
+    assert.equal(f.reads(),1);
+  });
+  it('refuses an internal credential without a deployment-owned alias map',async()=>{
+    const f=await fixture('valid',{credentialPod:INTERNAL_OWNER_POD,ownerWebId:OWNER_WEBID});
+    await assert.rejects(f.docs.read(f.path,ACTOR),e=>e instanceof WorkbenchError&&e.status===503);
+  });
+  it('does not turn the shared account or another own account into this author account',async()=>{
+    for(const credentialPod of [INTERNAL_STORE+'/u-pk-badcafe12345/',INTERNAL_STORE+'/'+new URL(SHARED).pathname.split('/').filter(Boolean)[0]+'/']){
+      const f=await fixture('valid',{credentialPod,canonicalPod:canonicalStorePod,ownerWebId:OWNER_WEBID});
+      await assert.rejects(f.docs.read(f.path,ACTOR),e=>e instanceof WorkbenchError&&e.status===503);
+    }
+  });
+  it('rejects matching account suffixes on foreign hosts and query/path steering',async()=>{
+    for(const credentialPod of [
+      'https://foreign.example/'+OWNER_ID+'/',
+      'http://css.railway.internal.attacker.example:3456/'+OWNER_ID+'/',
+      INTERNAL_OWNER_POD+'another/',
+      INTERNAL_OWNER_POD+'?other=account',
+      INTERNAL_OWNER_POD+'#other',
+    ]){
+      const f=await fixture('valid',{credentialPod,canonicalPod:canonicalStorePod,ownerWebId:OWNER_WEBID});
+      await assert.rejects(f.docs.read(f.path,ACTOR),e=>e instanceof WorkbenchError&&e.status===503);
+    }
   });
 });
 
