@@ -10,6 +10,7 @@
  * Binding is string work: the bridge contacts nothing it is given.
  */
 import type { Express, Request, Response } from 'express';
+import { turtleIriRef } from '@interego/core';
 import { htmlEscape, page } from '../lti-player.js';
 import { negotiate } from '../ns/rdf.js';
 import { DECORATIONS, decorationById } from './index.js';
@@ -45,7 +46,11 @@ export function attachDecorationRoutes(app: Express, opts: { baseUrl: string; ca
   const base = opts.baseUrl.replace(/\/$/, '');
   const canonicalBase = opts.canonicalBase === undefined ? undefined : canonicalDecorationBase(opts.canonicalBase);
   const link = (res: Response, iri: string): void => {
-    if (canonicalBase !== undefined) res.setHeader('Link', `<${iri}>; rel="canonical"`);
+    if (canonicalBase !== undefined) {
+      const target = turtleIriRef(iri);
+      if (target === null) throw new Error('canonical decoration identity is not serializable');
+      res.setHeader('Link', `${target}; rel="canonical"`);
+    }
   };
   const open = (res: Response): void => { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Vary', 'Accept'); };
   const notFound = (res: Response): void => { res.status(404).json({ error: 'no such decoration', decorations: Object.keys(DECORATIONS).map(id => decorationIri(base, id as keyof typeof DECORATIONS, canonicalBase)) }); };
