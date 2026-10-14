@@ -47,6 +47,12 @@ const VOCAB_OF:[string,string][]=[
  ['http://www.ontologydesignpatterns.org/ont/dul/DUL.owl#','DUL'],['http://purl.org/nemo/gufo#','gUFO'],
  ['http://www.w3.org/ns/prov#','PROV-O'],['https://schema.org/','schema.org'],
 ];
+export interface UpperSnapshotSource { key:string; missing?:string[]; sha256?:string }
+export function upperSnapshotsPresent(sources:readonly UpperSnapshotSource[]):boolean {
+  // The retained manifest records missing semantic seed IRIs as an array.
+  // Empty arrays are truthy in JavaScript, unlike the Python oracle.
+  return sources.every(source=>(source.missing?.length??0)===0);
+}
 const parse=(s:string,baseIRI?:string)=>new Store(new Parser({format:'Turtle',baseIRI}).parse(s));
 const setEq=(a:Iterable<string>,b:Iterable<string>)=>JSON.stringify([...new Set(a)].sort())===JSON.stringify([...new Set(b)].sort());
 const unique=(nodes:Term[])=>[...new Map(nodes.map(n=>[termKey(n),n])).values()];
@@ -159,8 +165,8 @@ export async function validateBuild(build:BuildResult,options:{skipHermit?:boole
   const unknown=[...usedTerms].filter(t=>!knownTerms.has(layer.expand(t))&&!ownTerms.has(layer.expand(t))&&!t.startsWith('gs:'));
   check(unknown.length===0,'all '+usedTerms.size+' aligned terms exist in publisher snapshots'+(unknown.length?' — '+unknown.slice(0,8).join(', '):''));
   const byVocabulary:Record<string,number>={};for(const t of usedTerms)byVocabulary[t.split(':')[0]!]=(byVocabulary[t.split(':')[0]!]??0)+1;
-  const upperManifest=JSON.parse(await readFile(resolve(root,'evidence/upper/manifest.json'),'utf8')) as {sources:{key:string;missing?:boolean;sha256?:string}[]};
-  check(upperManifest.sources.every(s=>!s.missing),'every upper-ontology snapshot is present');
+  const upperManifest=JSON.parse(await readFile(resolve(root,'evidence/upper/manifest.json'),'utf8')) as {sources:UpperSnapshotSource[]};
+  check(upperSnapshotsPresent(upperManifest.sources),'every upper-ontology snapshot is present');
   const assignment=layer.assignments(),assignmentEntries=Object.entries(assignment);
   const categoryIds=new Set(sem.CATEGORIES.map(c=>c.id));
   check(setEq(Object.keys(assignment),Object.keys(build.conceptIds))&&assignmentEntries.every(([,a])=>categoryIds.has(a[0])),'every concept has exactly one known referent category');

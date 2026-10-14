@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseTurtle, RDF, RDFS, OWL } from './rdf.js';
 import { parseSnapshot, referenced_terms, upwardModule } from './refresh-upper.js';
+import { upperSnapshotsPresent } from './verification.js';
 
 test('upward modules follow intersection parents and property ranges but keep filler axioms without importing filler ontologies', () => {
   const graph = parseTurtle(String.raw`
@@ -62,4 +63,12 @@ test('semantic-data migration retains the published set of 196 referenced terms'
   assert.ok(terms.has('obo:BFO_0000015'));
   assert.ok(terms.has('ler:CompetencyDefinition'));
   assert.ok(!terms.has('i2x:isClassifiedBy'));
+});
+
+test('verification accepts empty missing-seed arrays and still rejects actual missing terms', () => {
+  const present = [{ key: 'bfo', missing: [] }, { key: 'interego-interego' }];
+  assert.equal(upperSnapshotsPresent(present), true);
+  assert.equal(upperSnapshotsPresent([...present, {
+    key: 'iao', missing: ['http://purl.obolibrary.org/obo/IAO_0000010'],
+  }]), false);
 });

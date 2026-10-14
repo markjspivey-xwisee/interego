@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: i2idlx-golden-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   golden:
@@ -62,6 +62,13 @@ jobs:
         run: python3 -m pip install 'pyshacl==0.30.1' 'owlrl==7.1.4' 'rdflib==7.1.4'
       - name: Compile native build and parity modules
         run: npx tsc --noEmit -p "$I2IDLX_ROOT/tsconfig.native.json"
+      - name: Diagnose small closures against the independent Python reasoner
+        # This diagnostic exposes differences; complete build parity below stays mandatory.
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p "$I2IDLX_ROOT/.cache"
+          npx tsx "$I2IDLX_ROOT/typescript/reasoning-oracle-fixtures.ts" | tee "$I2IDLX_ROOT/.cache/reasoning-oracle-fixtures.jsonl"
       - name: Check out the full upstream history at its exact commit
         run: |
           mkdir -p .cache
@@ -88,6 +95,7 @@ jobs:
           retention-days: 14
           path: |
             applications/foxxi-content-intelligence/i2idlx/.cache/golden-parity
+            applications/foxxi-content-intelligence/i2idlx/.cache/reasoning-oracle-fixtures.jsonl
             applications/foxxi-content-intelligence/i2idlx/.cache/golden-inputs
             applications/foxxi-content-intelligence/i2idlx/evidence/xapi-ontology.ttl
             applications/foxxi-content-intelligence/i2idlx/evidence/xapi-profile-ontology.ttl

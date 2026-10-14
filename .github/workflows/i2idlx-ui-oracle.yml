@@ -1,13 +1,17 @@
 name: I2IDL-X browser and original client oracles
 
-# Reuse computed golden outputs; no ontology generation, reasoning, publishing,
+# Reuse completed native or golden outputs; no ontology generation, reasoning, publishing,
 # deployment or real-user pod writes happen in this bounded UI workflow.
 on:
   workflow_dispatch:
     inputs:
+      native_run_id:
+        description: Successful bounded native diagnostic run containing complete native outputs
+        required: false
+        type: string
       golden_run_id:
-        description: Completed golden workflow run containing generated native artifacts
-        required: true
+        description: Completed golden workflow run containing complete native outputs
+        required: false
         type: string
   pull_request:
     branches: [master]
@@ -16,7 +20,7 @@ on:
       - 'applications/foxxi-content-intelligence/i2idlx/typescript/cache-ui-assets.ts'
       - 'tools/i2idlx-hosted-visitor-smoke.py'
   workflow_run:
-    workflows: ['I2IDL-X complete golden parity']
+    workflows: ['I2IDL-X complete golden parity', 'I2IDL-X bounded native diagnostic']
     types: [completed]
 
 permissions:
@@ -41,43 +45,129 @@ jobs:
       PYTHONHASHSEED: '0'
       TZ: UTC
     steps:
+      - name: Locate completed outputs from the exact source head
+        id: source
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const repository = owner + '/' + repo;
+            const inputs = context.payload.inputs || {};
+            const nativeId = inputs.native_run_id?.trim();
+            const goldenId = inputs.golden_run_id?.trim();
+            if (nativeId && goldenId) throw new Error('Select one native or golden run, not both.');
+            let id = nativeId || goldenId || context.payload.workflow_run?.id;
+            const expectedSha = context.payload.pull_request?.head.sha || context.payload.workflow_run?.head_sha;
+            const expectedPr = context.payload.pull_request?.number;
+            if (!id) {
+              if (!expectedSha) throw new Error('Select a completed native or golden workflow run ID.');
+              const listing = await github.rest.actions.listWorkflowRunsForRepo({
+                owner, repo, head_sha: expectedSha, event: 'pull_request', per_page: 100
+              });
+              const runs = listing.data.workflow_runs.filter(run => run.head_sha === expectedSha);
+              const nativeRuns = runs.filter(run => run.name === 'I2IDL-X bounded native diagnostic');
+              const goldenRuns = runs.filter(run => run.name === 'I2IDL-X complete golden parity');
+              const eligible = [
+                ...nativeRuns.filter(run => run.status === 'completed' && run.conclusion === 'success'),
+                ...goldenRuns.filter(run => run.status === 'completed')
+              ];
+              let selected;
+              for (const candidate of eligible) {
+                const prefix = candidate.name === 'I2IDL-X bounded native diagnostic' ?
+                  'i2idlx-native-diagnostic-' : 'i2idlx-golden-parity-';
+                const { data: artifacts } = await github.rest.actions.listWorkflowRunArtifacts({
+                  owner, repo, run_id: candidate.id, per_page: 100
+                });
+                if (artifacts.artifacts.some(artifact => artifact.name === prefix + candidate.id && !artifact.expired)) {
+                  selected = candidate;
+                  break;
+                }
+              }
+              selected ||= nativeRuns.find(run => run.status !== 'completed') ||
+                goldenRuns.find(run => run.status !== 'completed');
+              if (!selected) throw new Error('No completed native or golden outputs are available for this exact head. Retry only this UI job after native outputs are uploaded.');
+              id = selected.id;
+            }
+            if (!/^[0-9]+$/.test(String(id))) throw new Error('A real build workflow run ID is required.');
+            const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(id) });
+            const native = run.name === 'I2IDL-X bounded native diagnostic';
+            const golden = run.name === 'I2IDL-X complete golden parity';
+            const expectedPath = native ? '.github/workflows/i2idlx-native-diagnostic.yml' : '.github/workflows/i2idlx-golden-parity.yml';
+            if ((!native && !golden) || run.path !== expectedPath ||
+                run.repository?.full_name !== repository || run.head_repository?.full_name !== repository ||
+                (expectedSha && run.head_sha !== expectedSha) ||
+                (expectedPr && !run.pull_requests.some(pr => pr.number === expectedPr))) {
+              throw new Error('Selected build run does not belong to the expected repository, workflow and source head.');
+            }
+            if ((nativeId && !native) || (goldenId && !golden)) throw new Error('The selected input names a different build workflow.');
+            if (run.status !== 'completed' || (native && run.conclusion !== 'success')) {
+              throw new Error('The selected build has no complete eligible outputs yet. Retry only this UI job after its artifact upload; do not restart ontology generation.');
+            }
+            const name = (native ? 'i2idlx-native-diagnostic-' : 'i2idlx-golden-parity-') + id;
+            const { data: listing } = await github.rest.actions.listWorkflowRunArtifacts({ owner, repo, run_id: Number(id), per_page: 100 });
+            const artifact = listing.artifacts.find(item => item.name === name && !item.expired);
+            if (!artifact) throw new Error('The selected run has no retained generated outputs. Retry only this UI job after artifact upload.');
+            core.setOutput('run_id', String(id));
+            core.setOutput('artifact_name', artifact.name);
+            core.setOutput('artifact_id', String(artifact.id));
+            core.setOutput('head_sha', run.head_sha);
+            core.setOutput('kind', native ? 'native-diagnostic' : 'golden');
+            core.setOutput('conclusion', run.conclusion || '');
+            core.info('Using actual ' + artifact.name + ' from source ' + run.head_sha + '. UI evidence does not establish complete golden parity.');
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.ref }}
+          ref: ${{ steps.source.outputs.head_sha }}
       - uses: actions/setup-node@v6
         with: { node-version: '22', cache: npm }
       - uses: actions/setup-python@v6
         with: { python-version: '3.12' }
-      - name: Locate the already computed golden artifact
-        id: golden
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # Initial migration run; retry only this UI job once its artifact exists.
-          GOLDEN_RUN_ID: ${{ inputs.golden_run_id || github.event.workflow_run.id || '38609005369' }}
-        run: |
-          node --input-type=module <<'JS'
-          import fs from 'node:fs';
-          const id = process.env.GOLDEN_RUN_ID;
-          if (!/^[0-9]+$/.test(id || '')) throw new Error('A real golden workflow run ID is required.');
-          const origin = 'https://api.github.com/repos/' + process.env.GITHUB_REPOSITORY;
-          const headers = { Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + process.env.GH_TOKEN };
-          const get = async path => { const r = await fetch(origin + path, { headers }); if (!r.ok) throw new Error('GitHub HTTP ' + r.status); return r.json(); };
-          const run = await get('/actions/runs/' + id);
-          if (run.name !== 'I2IDL-X complete golden parity') throw new Error('Selected run is not the recorded golden workflow.');
-          const listing = await get('/actions/runs/' + id + '/artifacts?per_page=100');
-          const artifact = listing.artifacts.find(a => a.name === 'i2idlx-golden-parity-' + id && !a.expired);
-          if (!artifact) throw new Error('Golden outputs are not available yet. Retry only this UI job after run ' + id + ' uploads its outputs; do not restart the golden build.');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'run_id=' + id + '\nartifact_name=' + artifact.name + '\n');
-          process.stdout.write('Using actual golden artifact ' + artifact.id + ' from ' + run.head_sha + '\n');
-          JS
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ steps.golden.outputs.run_id }}
-          name: ${{ steps.golden.outputs.artifact_name }}
+          run-id: ${{ steps.source.outputs.run_id }}
+          name: ${{ steps.source.outputs.artifact_name }}
           path: applications/foxxi-content-intelligence/i2idlx
+      - name: Verify diagnostic completion and normalize existing native output paths
+        env:
+          BUILD_KIND: ${{ steps.source.outputs.kind }}
+          BUILD_RUN_ID: ${{ steps.source.outputs.run_id }}
+          BUILD_HEAD_SHA: ${{ steps.source.outputs.head_sha }}
+          BUILD_ARTIFACT_ID: ${{ steps.source.outputs.artifact_id }}
+          BUILD_CONCLUSION: ${{ steps.source.outputs.conclusion }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const root = process.env.I2IDLX_ROOT;
+          if (process.env.BUILD_KIND === 'native-diagnostic') {
+            const diagnostic = path.join(root, '.cache', 'native-diagnostic');
+            const run = JSON.parse(fs.readFileSync(path.join(diagnostic, 'run.json'), 'utf8'));
+            const outcome = JSON.parse(fs.readFileSync(path.join(diagnostic, 'native-outcome.json'), 'utf8'));
+            assert.equal(run.headSha, process.env.BUILD_HEAD_SHA, 'native receipt source head differs');
+            assert.equal(run.runId, process.env.BUILD_RUN_ID, 'native receipt run differs');
+            assert.equal(outcome.headSha, process.env.BUILD_HEAD_SHA, 'native outcome source head differs');
+            assert.equal(outcome.exitCode, 0, 'bounded native build did not finish successfully');
+            for (const file of ['dist-native/semantic-layer.json', 'dist-native/published.json',
+              'dist-native/verification-report.md', 'app-native/data.json', 'site-native/app.html']) {
+              assert.ok(fs.statSync(path.join(diagnostic, file)).size > 0, 'missing complete native output: ' + file);
+            }
+            for (const [source, target] of [['dist-native', 'dist-ts'], ['app-native', 'app/build-ts'], ['site-native', 'site-ts']]) {
+              fs.cpSync(path.join(diagnostic, source), path.join(root, target), { recursive: true });
+            }
+          }
+          const evidence = path.join(root, '.cache', 'ui-oracle-shots');
+          fs.mkdirSync(evidence, { recursive: true });
+          fs.writeFileSync(path.join(evidence, 'source-build.json'), JSON.stringify({
+            kind: process.env.BUILD_KIND, runId: process.env.BUILD_RUN_ID,
+            artifactId: process.env.BUILD_ARTIFACT_ID, headSha: process.env.BUILD_HEAD_SHA,
+            buildConclusion: process.env.BUILD_CONCLUSION,
+            scope: 'Original client and hosted visitor oracles against completed native outputs; complete Python/native golden parity is a separate gate.'
+          }, null, 2) + '\n');
+          JS
+          echo "UI and original client oracles consume completed native outputs. Complete Python/native golden parity remains a separate gate." >> "$GITHUB_STEP_SUMMARY"
       - name: Require generated native data and graph inputs
         run: |
           test -s "$I2IDLX_ROOT/app/build-ts/data.json"
@@ -96,7 +186,7 @@ jobs:
           git clone https://github.com/blakeplock/i2idl-linked-data "$I2IDL_CLONE"
           git -C "$I2IDL_CLONE" checkout --detach 9f865995d879165d8fa49422915a5e53d2ecebf9
           test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 9f865995d879165d8fa49422915a5e53d2ecebf9
-      - name: Rebundle current app using existing golden graph and reasoning outputs
+      - name: Rebundle current app using existing native graph and reasoning outputs
         run: |
           npx tsx "$I2IDLX_ROOT/typescript/build-app.ts" "$I2IDLX_ROOT" --dist "$I2IDLX_ROOT/dist-ts" --out "$I2IDLX_ROOT/app/build-ts" --site "$I2IDLX_ROOT/site-ts"
           node --input-type=module <<'JS'
