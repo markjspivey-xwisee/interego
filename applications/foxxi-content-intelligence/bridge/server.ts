@@ -449,6 +449,7 @@ import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage
 import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, registryWriter, type DispatchEngine } from '../src/scorm-dispatch.js';
 import { glossaryLoader } from '../src/i2idl-glossary.js';
 import { askCourse } from '../src/course-ask.js';
+import { attachDecorationRoutes } from '../src/decorations/routes.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import {
   attachScormSequencingRoutes, parseManifest, createSession, processNavigation,
@@ -12501,6 +12502,11 @@ const FOXXI_GUIDANCE: FoxxiGuidedEntry[] = [
   { action: 'urn:iep:action:foxxi:extend-standards', toolName: 'foxxi.extend_standards', guidance: EXTEND_STANDARDS_GUIDANCE },
 ];
 attachGuidanceServing(app, '/guidance', FOXXI_GUIDANCE, { base: bridgeBaseUrl, affordances: activeAffordances });
+
+// Decorations of systems Foxxi does not control (src/decorations): LRS-X, LMS-X, LTI-X, LER-X and
+// TLA-X, each a catalog of controls and a set of Hypothetical proposals, served as linked data, with
+// an instance decoration's controls bound to a caller's own LRS or LMS on request.
+attachDecorationRoutes(app, { baseUrl: bridgeBaseUrl });
 
 // Terminal JSON error handler: a malformed request body makes body-parser throw a SyntaxError
 // whose default Express rendering leaks the stack trace + absolute /app/node_modules server paths

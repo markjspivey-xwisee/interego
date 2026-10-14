@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 61 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 62 affordances.
 
 ## `foxxi.record_private_performance_outcome`
 
@@ -937,4 +937,19 @@ Your dispatches, optionally for one course: each one's state (live, revoked, exp
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id? }). |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.bind_decoration`
+
+**Bind a decoration's controls to your own LRS or LMS**
+
+LRS-X decorates any xAPI 2.0 Learning Record Store, and LMS-X any LMS that speaks LTI 1.3 Advantage and OneRoster 1.2: each is a catalog of controls (one per resource or service, with the headers and scope it asks for) and a set of Hypothetical proposals tying each part to the I2IDL glossary and to the Foxxi capabilities that enact it. Give the decoration and your instance's URLs (LRS-X: endpoint; LMS-X: configuration, jwks, lineitems, lineitem, memberships, oneroster), and get the controls with them filled in. The bridge fetches nothing; it only fills the templates. The catalogs are at {base}/decorations/<id> (Turtle, JSON-LD, JSON or HTML) and the proposals at {base}/decorations/<id>/proposals. Each decoration is independent work, not affiliated with or endorsed by the publisher of what it decorates.
+
+- Action: `urn:iep:action:foxxi:bind-decoration`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/decorations/bind` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `decoration` | string | yes | lrs-x or lms-x (lti-x, ler-x and tla-x decorate specifications and an architecture, and need no binding). |
+| `values` | object | yes | Each binding variable to an https URL of your instance, e.g. { "endpoint": "https://lrs.example.com/xapi" }. |
 
