@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-14 — Relay delegation checks share identity aliases through publication and readback
+
+A canonical identity-server DID now uses an existing grant recorded under that configured identity service's legacy agent slug throughout scope checks, compliance publication, signed descriptor readback and `verify_agent`. Verification fetches and checks the credential under its original subject; canonical descriptor attribution, the authorship signature and the credential's signed payload remain unchanged. A same-suffix DID from another authority cannot acquire the legacy slug's grant, and ambiguous aliases are refused; and exact canonical rows take precedence, including narrower or expired grants. Authorship signature validity and current delegation trust remain separate checks.
+
+Own-pod provisioning recognizes an existing alias and cannot replace its scope ceiling with a new ReadWrite row. Alias grants and invalid results are not cached. An explicit owner revocation removes all known equivalent representations and invalidates their cache entries, including after registry serialization drops revoked rows. Existing signed-chain verification, its pod-owner anchoring requirements and the registry-only scope fallback remain unchanged; alias resolution does not turn unsigned registry authority into cryptographic trust. Real secp256k1 signature regressions cover the legacy credential and canonical authorship round trip, tampering, narrowing, expiration and owner revocation. Publication or live grant changes are separate operations.
+
 ## 2026-10-14 — Foxxi decorations: canonical Interego IRIs with bridge controls
 
 The decorator kit can mint catalog and proposal identities under an Interego namespace base while filling service controls from the serving bridge. The bridge uses the same optional canonical base for Turtle, JSON-LD, JSON, HTML and SSSOM, and links document representations to their canonical IRIs. Omitting the option preserves the ten existing graph outputs byte for byte. Tests compare all five decorations after identity normalization and exercise the canonical links and bridge targets over HTTP. Publication and deployment are separate operations.

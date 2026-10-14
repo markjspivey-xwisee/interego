@@ -411,7 +411,8 @@ for (const tool of ['register_agent', 'revoke_agent', 'publish_directory', 'rebu
 }
 check('publish_context restricts the SELF-GRANT (not the publish) to the own pod',
   /requireOwnPod\(args, podUrl, 'publish_context:self-grant'\)/.test(SERVER)
-  && /if \(!me && selfGrantOk\)/.test(SERVER));
+  && /const maySelfRegister = canAutoRegisterPrincipal\(selfGrantOk, registrationSubject\)/.test(SERVER_CODE)
+  && /if \(!me && maySelfRegister\)/.test(SERVER_CODE));
 check('set_reachability derives its pod from callerOwnPod, not selfPodUrl',
   /const podUrl = await callerOwnPod\(args\);/.test(SERVER));
 // ★★ THE ESCAPE HATCH IS GONE, NOT "OFF BY DEFAULT". This used to assert that
@@ -518,6 +519,35 @@ check('both /tool unwrap sites (auth + signed-read) call the helper on req.body'
   unwrapReqBody.length === 2, `found ${unwrapReqBody.length}`);
 check('the /messages auth site calls the helper on args',
   /unwrapSignedPayloadInto\(args\)/.test(SERVER_CODE));
+
+console.log('\nIdentity aliases stay connected across publication, readback and both revocation transports');
+const aliasPublishBody = topLevelFunctionBody(SERVER_CODE, 'async function handlePublishContext(');
+const aliasDescriptorBody = topLevelFunctionBody(SERVER_CODE, 'async function handleGetDescriptor(');
+const aliasVerifyBody = topLevelFunctionBody(SERVER_CODE, 'async function handleVerifyAgent(');
+const aliasRevokeBody = topLevelFunctionBody(SERVER_CODE, 'async function handleRevokeAgent(');
+const restRevokeAt = SERVER_CODE.indexOf("app.post('/agents/:agentIri/revoke'");
+const restRevokeEnd = SERVER_CODE.indexOf("app.post('/x402/set-price'", restRevokeAt);
+const aliasRestRevoke = restRevokeAt < 0 || restRevokeEnd < 0 ? '' : SERVER_CODE.slice(restRevokeAt, restRevokeEnd);
+check('compliance trust checks the same principal-to-original-subject verifier as scope',
+  /verifyPrincipalDelegation\(\s*agentId as IRI,\s*podUrl,\s*\{ identityBaseUrl: IDENTITY_URL, fetch: solidFetch, verifier: delegationVerifier \}/.test(aliasPublishBody));
+check('signed descriptor readback uses alias resolution and retains guarded fetch',
+  /verifyPrincipalDelegation\(\s*parsedProof\.issuer,\s*inferredPodUrl,\s*\{\s*identityBaseUrl:\s*IDENTITY_URL,\s*fetch:\s*guardedInvokeFetch,\s*verifier:\s*delegationVerifier\s*\}\s*,?\s*\)/.test(aliasDescriptorBody));
+check('verify_agent signing diagnostics read the credential subject actually verified',
+  /const credentialAgentId = result\.delegationSubject\.registered as IRI/.test(aliasVerifyBody)
+  && /readDelegationCredential\(podUrl, credentialAgentId/.test(aliasVerifyBody));
+check('MCP revocation removes equivalent subjects and invalidates both caches',
+  /equivalentDelegationSubjects/.test(aliasRevokeBody)
+  && /for \(const target of revokedSubjects\) profile = removeAuthorizedAgent/.test(aliasRevokeBody)
+  && /agentScopeCache\.delete/.test(aliasRevokeBody) && /agentRegistrationCache\.delete/.test(aliasRevokeBody));
+check('REST revocation uses the same equivalent-subject removal and both cache invalidations',
+  /equivalentDelegationSubjects\(agentIri, profile\.authorizedAgents, IDENTITY_URL\)/.test(aliasRestRevoke)
+  && /revokedSubjects\.includes\(a\.agentId\)/.test(aliasRestRevoke)
+  && /for \(const target of revokedSubjects\) updated = removeAuthorizedAgent/.test(aliasRestRevoke)
+  && /agentScopeCache\.delete/.test(aliasRestRevoke) && /agentRegistrationCache\.delete/.test(aliasRestRevoke));
+check('REST alias revocation retains both owner identity and OAuth write-scope gates',
+  /hasWriteOauthScope\(authInfo\.scopes\)/.test(aliasRestRevoke)
+  && /profile\.webId !== tokenOwnerWebId/.test(aliasRestRevoke)
+  && /const podUrl = [^\n]*CSS_URL[^\n]*tokenUserId/.test(aliasRestRevoke));
 
 if (failures > 0) {
   console.error(`\n${failures} assertion(s) failed\n`);
