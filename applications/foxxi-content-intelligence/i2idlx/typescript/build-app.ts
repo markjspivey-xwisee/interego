@@ -631,7 +631,7 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   const page = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1">\n<title>Interpretant Glossary Workbench</title>\n<meta name="description" content="A workbench for the I2IDL Digital Learning Glossary (' + release + '), decorated with the Interego and Foxxi layer I2IDL-X.">\n' +
     '<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="' + fonts + '">\n<style>\n' + readFileSync(join(APP, 'src', 'styles.css'), 'utf8') +
     '\n</style>\n</head>\n<body>\n<div id="root"><noscript><p style="padding:24px;font-family:system-ui">Interpretant needs JavaScript. The glossary itself is at <a href="https://www.i2idl.org/glossary">i2idl.org/glossary</a>.</p></noscript></div>\n' +
-    '<script type="application/json" id="i2-data">' + inlineJson(data) + '</script>\n<script>' + shareUrlBootstrap(cfg.appArtifactUrl || '') + '</script>\n' +
+    '<script type="application/json" id="i2-data">' + inlineJson(data) + '</script>\n<script>' + shareUrlBootstrap(cfg.archivedAppArtifactUrl || cfg.appArtifactUrl || '') + '</script>\n' +
     cdn.map(u => '<script src="' + u + '" crossorigin="anonymous"></script>\n').join('') + '<script>\n' + inlineJs(readFileSync(bundle, 'utf8')) + '\n</script>\n</body>\n</html>\n';
   mkdirSync(SITE, { recursive: true }); writeFileSync(join(SITE, 'app.html'), page);
   check(Buffer.byteLength(page) < 16000000, 'workbench HTML is below the 16 MB artifact limit');

@@ -61,9 +61,10 @@ npm run i2idlx:walk -- applications/foxxi-content-intelligence/i2idlx --live
 ```
 
 A normal build's walkthrough records local query results. The explicit `--live`
-walk records read-only HTTP execution. The native Foxxi hosting path is prepared;
-its actual deployment and route responses require separate verification. The
-current Claude artifact URL and public graph IRIs remain unchanged. See
+walk records read-only HTTP execution. The native [workbench](https://foxxi-bridge.interego.xwisee.com/i2idlx/)
+and [reference page](https://foxxi-bridge.interego.xwisee.com/i2idlx/reference) are hosted by the existing Foxxi bridge.
+The [original Claude artifact](https://claude.ai/artifact/Finrenoq17CtZMBYXo4bNC) remains a separate archive;
+the canonical public graph IRIs stay on Interego. See
 [WORKBENCH-HOSTING.md](WORKBENCH-HOSTING.md) for the configured routes and optional
 connections.
 
@@ -103,7 +104,7 @@ All ten publishable graphs have stable public IRIs. `npm run i2idlx:verify-publi
 
 Owner and slugs are one line each in `config.json`; the build re-mints every IRI from them. `dist-ts/publish-plan.json` lists the exact publish calls in order (shapes first, because later publishes pass it as `conforms_to_shapes`). Public is required for `/ns` dereference and there is no unpublish.
 
-`site-ts/index.html` is the native reference page generated from the same graphs (`typescript/build-site.ts`): graphs with live links, what's whose, what I2IDL-X adds for I2IDL, agent usage, the semantic layer, controls, stored queries, the vocabulary, enactments, mappings, releases, change history and the build checks. The current published reference remains the existing Claude artifact, with its package files beside it. The native bridge hosting path is prepared but has not yet been verified live; the canonical graph IRIs stay on Interego.
+`site-ts/index.html` is the native reference page generated from the same graphs (`typescript/build-site.ts`): graphs with live links, what's whose, what I2IDL-X adds for I2IDL, agent usage, the semantic layer, controls, stored queries, the vocabulary, enactments, mappings, releases, change history and the build checks. The [hosted reference page](https://foxxi-bridge.interego.xwisee.com/i2idlx/reference) links to the workbench and public build outputs. The canonical graph IRIs stay on Interego.
 
 ## The semantic layer
 
@@ -184,7 +185,7 @@ The same paths run through the Interego connector itself: `invoke_affordance` on
 
 ## Interpretant — the workbench
 
-`site-ts/app.html` is the native build of **Interpretant**, a working app over the glossary and these graphs. The currently published workbench remains the separate Claude artifact (private until its owner shares it; `appArtifactUrl` in `config.json`), whose URL is unchanged. Native Foxxi hosting is prepared and still requires live deployment verification. The native page is built from the same pinned sources by `typescript/build-app.ts`, which re-checks what it derives: kinds and definition provenance against the rules' output, all 1,985 decorated control targets against the client's own recipe, every enactment action against the live manifests, and the semantic layer against the published graphs and the build's reasoning record.
+`site-ts/app.html` is the native build of **Interpretant**, a working app over the glossary and these graphs. The [hosted workbench](https://foxxi-bridge.interego.xwisee.com/i2idlx/) is the `appArtifactUrl` in `config.json`. The separate [Claude artifact](https://claude.ai/artifact/Finrenoq17CtZMBYXo4bNC) retains its original access rules and URL as `archivedAppArtifactUrl`. The native page is built from the same pinned sources by `typescript/build-app.ts`, which re-checks what it derives: kinds and definition provenance against the rules' output, all 1,985 decorated control targets against the client's own recipe, every enactment action against the live manifests, and the semantic layer against the published graphs and the build's reasoning record.
 
 Every zone carries its origin label, and an **I2IDL only / + I2IDL-X** lens hides every layer to show the glossary exactly as I2IDL publishes it.
 
@@ -196,7 +197,7 @@ Every zone carries its origin label, and an **I2IDL only / + I2IDL-X** lens hide
 - **Insights**, an **Agent console** (published graphs, every port with its input shape, the stored queries runnable on the embedded release and live, the capability directory, an agent brief), and **Ask**, which uses the viewer's connected model to read the release through page tools and cites terms as `[[concept-id]]`.
 - **Orchestrate** — a split screen. On the left, the recorded team of eight Claude agents (Conductor, Scout, Lexicographer, Ontologist, Crosswalker, a standards and a practice reviewer, Curator) onboards a fictional clinical academy's learning inventory into the semantic layer: swimlanes for the plan, the transcript of their messages, handoffs and tool calls, the context graph they build, the staged writes, and the run as provenance (`ieh:AgentTurn`, `ieh:AgentAction`). On the right, the workbench itself, in its own frame and route, driven by their calls; a cursor in the acting agent's color shows where each one lands. The agents act only through this page's tools (`app/src/orc/world.js`) and the catalog controls the Scout inspected. Everything happens in a sandbox: their proposals, votes and pack never reach the shared queue, and the governed writes are staged as the exact `publish_context` calls the ports declare until you approve them; the page sends nothing. **Watch** replays a recorded run (`examples/orchestra/kestrel-point-run.json`), re-running every call; **Run it live** runs the same eight-role recipe through the viewer's connected model or personal API-key fallback, one call per step.
 
-The existing Claude artifact keeps its own database and access rules. The prepared native Foxxi host uses configured existing Interego pods for shared team records and private workspaces, as described in [WORKBENCH-HOSTING.md](WORKBENCH-HOSTING.md). Signed-out visitors get the read-only app. Browser model features require an explicit connected sampler or the viewer's own API-key fallback; the server supplies no paid model endpoint.
+The archived Claude artifact keeps its own database and access rules. The native Foxxi host uses configured existing Interego pods for shared team records and private workspaces, as described in [WORKBENCH-HOSTING.md](WORKBENCH-HOSTING.md). Signed-out visitors get the read-only app. Shared and private saves remain unavailable until the connected browser supplies an established owner-held X25519 encryption key covered by the author's genuine signature. An Interego connection or an advertised DID public key alone does not provide that browser key. Browser model features require an explicit connected sampler or the viewer's own API-key fallback; the server supplies no paid model endpoint.
 
 The canonical native build above generates the app and reference page. The original
 Python client oracles remain unchanged and run against those native outputs in the

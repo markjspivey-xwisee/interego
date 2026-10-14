@@ -7,7 +7,7 @@ export interface BuildConfig {
   foxxiManifest: string;
   foxxiNs: {version: string; base: string; archive: string; modules: string[]; sha256: Record<string, string>};
   reasoner: {name: string; url: string; sha256: string; jar: string};
-  version: string; interegoCoreSrc: string; tsx: string; appArtifactUrl?: string;
+  version: string; interegoCoreSrc: string; tsx: string; appArtifactUrl?: string; archivedAppArtifactUrl?: string;
 }
 export const DEFAULT_ROOT = fileURLToPath(new URL('../', import.meta.url));
 export function loadConfig(root = DEFAULT_ROOT): BuildConfig {

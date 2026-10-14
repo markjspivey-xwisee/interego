@@ -44,5 +44,6 @@
  "version": "0.5.0",
  "interegoCoreSrc": "../../../packages/core/src",
  "tsx": "../../../node_modules/.bin/tsx",
- "appArtifactUrl": "https://claude.ai/artifact/Finrenoq17CtZMBYXo4bNC"
+ "appArtifactUrl": "https://foxxi-bridge.interego.xwisee.com/i2idlx/",
+ "archivedAppArtifactUrl": "https://claude.ai/artifact/Finrenoq17CtZMBYXo4bNC"
 }

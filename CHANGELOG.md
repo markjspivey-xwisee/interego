@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-14 — I2IDL-X hosted application and reference links
+
+The application link now points to the verified Foxxi-hosted I2IDL-X workbench, with a direct link to its generated reference. The existing Claude artifact remains an explicit archive and the native bootstrap retains that archived fallback. Durable shared and private saves require an established browser-held encryption key; hosted browsing and connected-client task delivery do not depend on a project-paid model key.
+
 ## 2026-10-14 — I2IDL-X browser evidence follows the requested source head
 
 The browser oracle now runs only for pull requests or an explicit manual selection. Its redundant producer-completion trigger used GitHub's default-branch workflow context while selecting a different producer commit, so browser failures against an unrelated dependency-update run were attributed to the release commit and blocked deployment. Unsupported events are refused before any GitHub API call.
