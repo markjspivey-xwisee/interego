@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-13 — I2IDL-X: the build reasons with HermiT 1.4.5
+
+The I2IDL-X build's OWL 2 DL consistency checks now run on HermiT 1.4.5 (OWL API 4.5), not the HermiT 1.3.8 bundled with owlready2. The jar comes from ROBOT's 1.9.11 release, pinned in `config.json` with its SHA-256. `tools/refresh-evidence.sh --reasoner` fetches it, and the build checks the hash on every run.
+
+1.3.8 needed three rewrites of its input; 1.4.5 needs two:
+- **Dropped: `rdf:langString`.** 1.4.5 reads it, so language-tagged literals, and datatype unions that include it, reach it as written.
+- **Dropped: datatype definitions written out.** 1.3.8 reported an inconsistency when a datatype defined as `xsd:decimal` ⊔ `xsd:double` sat beside a string datatype, so each named definition used to be written out. 1.4.5 does not report it, so definitions stay as written.
+- **Kept: datatypes outside the OWL 2 datatype map.** 1.4.5 still refuses them, and gUFO uses `xsd:date`.
+- **Kept: `xsd:pattern`.** 1.4.5 still compiles patterns with dk.brics. With Foxxi's patterns intact, the gist group ran for more than eight minutes without an answer.
+
+The two kept rewrites still widen data ranges, and they still pass the check that this hides nothing. They now widen 17 properties' data ranges instead of 26. Every group gives the same answer as before: the sample is consistent under all five, and the category clash is rejected under BFO, DUL and gUFO. The DUL group takes about 140 seconds instead of 50. The pinned rebuild produces the published graphs byte for byte, and owlready2 is no longer needed.
+
 ## 2026-10-13 — css-gate: only the operator writes a pod's sign-in record
 
 A pod's `auth-methods.jsonld` holds the passkeys, wallets and DIDs the identity server signs that account in with. After the earlier gate fix, its owner could still write it through the gate with their own bearer. That meant a stolen bearer, or an OAuth token a client holds, could add an attacker's own passkey, wallet or DID. The identity server would then keep signing that credential in after the bearer expired. The identity server is the record's only writer, and it writes over the private network, not through the gate. So the gate now refuses a user bearer that would write the record: a PUT, PATCH or DELETE of it or of its `.acl` and `.meta` resources, and a POST that names it as the new resource's `Slug`. Only the operator bearer passes. Reads of those auxiliary resources are now limited to the owner, as reads of the record already were. Everything else in the pod is written as before, and credentials are changed through the identity server's endpoints. `/healthz` reports `privateDocumentWriters: "operator"`.

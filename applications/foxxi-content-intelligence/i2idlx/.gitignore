@@ -11,3 +11,5 @@ evidence/xapi-ontology.ttl
 evidence/xapi-profile-ontology.ttl
 # and snapshots of this repository's own namespace files (the same files as docs/ns/).
 evidence/interego-*.ttl
+# The pinned reasoner jar, fetched by tools/refresh-evidence.sh --reasoner (config.json reasoner).
+.cache/

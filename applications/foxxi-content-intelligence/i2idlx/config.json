@@ -35,6 +35,12 @@
    "adl-tla": "f9bf6e2ab5c0e3948f2bb17366c9108e2148b7814c6ed0fe17bcdf26af15cbd9"
   }
  },
+ "reasoner": {
+  "name": "HermiT 1.4.5.456 (OWL API 4.5.29), as bundled in ROBOT 1.9.11",
+  "url": "https://github.com/ontodev/robot/releases/download/v1.9.11/robot.jar",
+  "sha256": "53cd275c8e4c0dad1fc2c1c34174876795cd7d6b6926e1444adcbb0cb3c7ab26",
+  "jar": ".cache/robot-1.9.11.jar"
+ },
  "version": "0.5.0",
  "interegoCoreSrc": "../../../packages/core/src",
  "tsx": "../../../node_modules/.bin/tsx",
