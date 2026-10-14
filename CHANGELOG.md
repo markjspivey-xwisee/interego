@@ -1,8 +1,10 @@
 # Changelog
 
-## 2026-10-14 — Relay scope checks honor verified identity aliases
+## 2026-10-14 — Relay delegation checks share identity aliases through publication and readback
 
-A session using its canonical identity-server DID can use an existing grant recorded under that same identity service's legacy agent slug. The signed credential is verified under its original subject, and descriptor attribution remains canonical. Exact DID grants take precedence even when revoked or narrowed; foreign hosts, ambiguous aliases and unsigned authority do not gain access. Alias grants and invalid results are reread on every request so owner revocation and scope changes remain visible.
+A canonical identity-server DID now uses an existing grant recorded under that configured identity service's legacy agent slug throughout scope checks, compliance publication, signed descriptor readback and `verify_agent`. Verification fetches and checks the credential under its original subject; canonical descriptor attribution, the authorship signature and the credential's signed payload remain unchanged. A same-suffix DID from another authority cannot acquire the legacy slug's grant, and ambiguous aliases are refused; and exact canonical rows take precedence, including narrower or expired grants. Authorship signature validity and current delegation trust remain separate checks.
+
+Own-pod provisioning recognizes an existing alias and cannot replace its scope ceiling with a new ReadWrite row. Alias grants and invalid results are not cached. An explicit owner revocation removes all known equivalent representations and invalidates their cache entries, including after registry serialization drops revoked rows. Existing signed-chain verification, its pod-owner anchoring requirements and the registry-only scope fallback remain unchanged; alias resolution does not turn unsigned registry authority into cryptographic trust. Real secp256k1 signature regressions cover the legacy credential and canonical authorship round trip, tampering, narrowing, expiration and owner revocation. Publication or live grant changes are separate operations.
 
 ## 2026-10-14 — Foxxi decorations: canonical Interego IRIs with bridge controls
 

@@ -34,3 +34,30 @@ export function selectDelegationSubject(
 export function cacheDelegationSubject(valid:boolean,subject:DelegationSubject):boolean {
   return valid&&subject.basis==='exact';
 }
+
+/**
+ * An explicit OWNER revocation targets a principal, including its known local
+ * and canonical spellings. Revoked rows disappear from serialized registries;
+ * removing only a canonical row must not revive a remaining legacy alias.
+ * Other DID authorities are never equated by their suffix.
+ */
+export function equivalentDelegationSubjects(
+  presented:string,
+  entries:readonly {readonly agentId:string}[],
+  identityBaseUrl:string,
+):string[] {
+  const canonical=(value:string):string|undefined=>{
+    if(/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value))return value;
+    if(/^[A-Za-z0-9._~-]+$/.test(value))return canonicalSessionActorId(value,identityBaseUrl);
+    return undefined;
+  };
+  const principal=canonical(presented);
+  const targets=[presented,...(principal?[principal]:[])];
+  if(principal)for(const row of entries)if(canonical(row.agentId)===principal)targets.push(row.agentId);
+  return [...new Set(targets)];
+}
+
+/** A proven owner may provision an absent principal, never overwrite an existing alias ceiling. */
+export function canAutoRegisterPrincipal(ownerAuthorized:boolean,subject:DelegationSubject):boolean {
+  return ownerAuthorized&&subject.basis==='missing';
+}
