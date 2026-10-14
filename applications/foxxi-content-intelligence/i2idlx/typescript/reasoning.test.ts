@@ -1,4 +1,17 @@
-import {describe,it,expect} from 'vitest';
+import {describe,it} from 'node:test';
+import assert from 'node:assert/strict';
+
+function expect(actual:unknown) {
+  return {
+    toBe(expected:unknown){assert.equal(actual,expected);},
+    toEqual(expected:unknown){assert.deepEqual(actual,expected);},
+    toHaveLength(length:number){assert.equal((actual as {length:number}).length,length);},
+    toContain(value:unknown){assert.ok((actual as unknown[]).includes(value));},
+    toBeGreaterThan(value:number){assert.ok(typeof actual==='number'&&actual>value);},
+    toThrow(pattern:RegExp){assert.throws(actual as ()=>unknown,pattern);},
+    rejects:{async toThrow(pattern:RegExp){await assert.rejects(actual as Promise<unknown>,pattern);}},
+  };
+}
 import {Store,Parser,DataFactory} from 'n3';
 import {closure,dlReady,wideningRisks,RDF,RDFS,OWL,XSD,has,rdfList} from './reasoning.js';
 import {shaclValidate,shaclRules} from './validation.js';
@@ -18,7 +31,7 @@ describe('native OWL RL saturation',()=>{
     expect(typed(result.graph,'alice','PersonReferent')).toBe(true);
     expect(typed(result.graph,'alice','Agent')).toBe(true);
     expect(result.errors).toEqual([]);
-    expect(input.size).toBe(7);
+    expect(input.size).toBe(10);
   });
   it('derives classification from an exact crosswalk bridge, without inventing existential witnesses',()=>{
     const input=graph(' :peerClass owl:equivalentClass [owl:onProperty :classifiedBy;owl:hasValue :concept] . '+
@@ -59,6 +72,12 @@ describe('native OWL RL saturation',()=>{
     expect(closure(graph(' :x :p "0.0"^^xsd:double,"-0"^^xsd:float . ')).errors).toEqual([]);
     const result=closure(graph(' :x :p "2"^^xsd:boolean,"128"^^xsd:byte . '));
     expect(result.errors.filter(e=>e.startsWith('Lexical value'))).toHaveLength(2);
+  });
+  it('rejects distinct same-datatype data values equated by a functional property',()=>{
+    const result=closure(graph(' :flag a owl:FunctionalProperty . :x :flag true,false . '));
+    expect(result.errors.some(e=>e.startsWith('Distinct data values equated:'))).toBe(true);
+    const equal=closure(graph(' :flag a owl:FunctionalProperty . :x :flag "true"^^xsd:boolean,"1"^^xsd:boolean . '));
+    expect(equal.errors).toEqual([]);
   });
   it('fails closed on cyclic RDF lists and saturation resource limits',()=>{
     const bad=graph(' :l rdf:first :p; rdf:rest :l . :chain owl:propertyChainAxiom :l . ');

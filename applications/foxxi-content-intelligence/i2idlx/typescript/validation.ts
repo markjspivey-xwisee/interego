@@ -49,7 +49,10 @@ function countValue(g:Store,s:Term,p:string):number|undefined {
   return Number(n.value);
 }
 function truth(g:Store,s:Term,p:string):boolean {
-  const n=one(g,s,SH+p);return n?.termType==='Literal'&&['true','1'].includes(n.value);
+  const n=one(g,s,SH+p);if(!n)return false;
+  if(n.termType!=='Literal'||n.datatype.value!==XSD+'boolean'||!['true','false','1','0'].includes(n.value))
+    throw new Error('Invalid SHACL boolean '+p+' on '+s.value);
+  return ['true','1'].includes(n.value);
 }
 function nodeKind(n:Term,k:string):boolean {
   const type=n.termType;
@@ -69,7 +72,7 @@ function compare(a:Term,b:Term):number|null {
     if(!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(a.value)||!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(b.value)) {
       const x=Number(a.value),y=Number(b.value);return Number.isFinite(x)&&Number.isFinite(y)?Math.sign(x-y):null;
     }
-    const decimal=(v:string):[bigint,number]=>{const [i,f='']=v.replace(/^\+/,'').split('.');return [BigInt((i===''?'0':i==='-'?'-0':i)+f),f.length];};
+    const decimal=(v:string):[bigint,number]=>{const [i='0',f='']=v.replace(/^\+/,'').split('.');return [BigInt((i===''?'0':i==='-'?'-0':i)+f),f.length];};
     const [x,sx]=decimal(a.value),[y,sy]=decimal(b.value),scale=Math.max(sx,sy);
     const xx=x*10n**BigInt(scale-sx),yy=y*10n**BigInt(scale-sy);return xx===yy?0:xx<yy?-1:1;
   }
@@ -169,7 +172,7 @@ class CoreValidator {
     const pattern=one(this.shapes,shape,SH+'pattern'),flags=one(this.shapes,shape,SH+'flags')?.value??'';
     let regex:RegExp|undefined;
     if(pattern) {
-      if(/[xq]/.test(flags)||/\\[iIcC]|\\p\{Is|-\[/.test(pattern.value))throw new Error('Unsupported XPath regex in SHACL pattern '+pattern.value);
+      if(/[^ims]/.test(flags)||/\\[iIcC]|\\p\{Is|-\[/.test(pattern.value))throw new Error('Unsupported XPath regex in SHACL pattern '+pattern.value);
       regex=new RegExp(pattern.value,flags);
     }
     const minLen=countValue(this.shapes,shape,'minLength'),maxLen=countValue(this.shapes,shape,'maxLength');
@@ -194,7 +197,7 @@ class CoreValidator {
       if(ranges&&(v.termType!=='Literal'||!v.language||!ranges.some(r=>r==='*'||v.language.toLowerCase()===r||v.language.toLowerCase().startsWith(r+'-'))))emit('LanguageIn','Language tag is outside allowed ranges',v);
       for(const name of ['minInclusive','maxInclusive','minExclusive','maxExclusive']) {
         const bound=one(this.shapes,shape,SH+name);if(!bound)continue;const c=compare(v,bound);
-        if(c===null||(name==='minInclusive'&&c<0)||(name==='maxInclusive'&&c>0)||(name==='minExclusive'&&c<=0)||(name==='maxExclusive'&&c>=0))emit(name[0].toUpperCase()+name.slice(1),'Value violates bound '+name,v);
+        if(c===null||(name==='minInclusive'&&c<0)||(name==='maxInclusive'&&c>0)||(name==='minExclusive'&&c<=0)||(name==='maxExclusive'&&c>=0))emit(name.charAt(0).toUpperCase()+name.slice(1),'Value violates bound '+name,v);
       }
       for(const name of ['lessThan','lessThanOrEquals']) {
         const other=one(this.shapes,shape,SH+name);if(!other)continue;
@@ -205,7 +208,7 @@ class CoreValidator {
       for(const op of ['and','or','xone']) {
         const head=one(this.shapes,shape,SH+op);if(!head)continue;
         const members=rdfList(this.shapes,head),count=members.filter(s=>passes(v,s)).length;
-        if((op==='and'&&count!==members.length)||(op==='or'&&count===0)||(op==='xone'&&count!==1))emit(op[0].toUpperCase()+op.slice(1),'Logical constraint '+op+' fails',v);
+        if((op==='and'&&count!==members.length)||(op==='or'&&count===0)||(op==='xone'&&count!==1))emit(op.charAt(0).toUpperCase()+op.slice(1),'Logical constraint '+op+' fails',v);
       }
     }
     if(truth(this.shapes,shape,'closed')) {
@@ -213,7 +216,10 @@ class CoreValidator {
       const ignored=one(this.shapes,shape,SH+'ignoredProperties');if(ignored)for(const p of rdfList(this.shapes,ignored))allowedPreds.add(termKey(p));
       for(const v of values)for(const q of this.data.getQuads(v as Quad['subject'],null,null,null))if(!allowedPreds.has(termKey(q.predicate)))emit('Closed','Predicate is not allowed by closed shape',q.object);
     }
-    for(const ps of objects(this.shapes,shape,SH+'property'))for(const v of values)out.push(...this.validate(v,ps,next));
+    for(const ps of objects(this.shapes,shape,SH+'property')) {
+      if(!one(this.shapes,ps,SH+'path'))throw new Error('Property shape lacks sh:path: '+ps.value);
+      for(const v of values)out.push(...this.validate(v,ps,next));
+    }
     return out;
   }
 }
@@ -236,8 +242,10 @@ export async function shaclValidate(data:Store,shapes:Store,options:ValidationOp
   ensureSupported(shapes);
   const merged=union(data,...(options.ontology?[options.ontology]:[])),graph=options.inference==='rdfs'?rdfsClosure(merged):merged;
   const validator=new CoreValidator(graph,shapes),results:ValidationResult[]=[];
-  const roots=dedup([...shapes].filter(q=>[SH+'targetClass',SH+'targetNode',SH+'targetSubjectsOf',SH+'targetObjectsOf'].includes(q.predicate.value)).map(q=>q.subject)
-    .concat(subjects(shapes,RDF+'type',nn(SH+'NodeShape')).filter(s=>has(shapes,s,RDF+'type',nn(RDFS+'Class')))));
+  const roots=dedup([
+    ...[...shapes].filter(q=>[SH+'targetClass',SH+'targetNode',SH+'targetSubjectsOf',SH+'targetObjectsOf'].includes(q.predicate.value)).map(q=>q.subject),
+    ...subjects(shapes,RDF+'type',nn(SH+'NodeShape')).filter(s=>has(shapes,s,RDF+'type',nn(RDFS+'Class')))
+  ]);
   for(const s of roots)for(const n of targets(graph,shapes,s))results.push(...validator.validate(n,s));
   return reportFor(results);
 }

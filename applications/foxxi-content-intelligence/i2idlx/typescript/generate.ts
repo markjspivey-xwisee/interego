@@ -190,7 +190,7 @@ export async function generate(root = DEFAULT_ROOT, options: {outputDir?: string
   }
   const catalogTtl=render(template('i2idlx-catalog.ttl.tmpl').replace('{{STORED_QUERIES}}',storedBlocks.join('\n')).replace('{{LIMITS_DOC}}',limitsDoc||'README.md'));
   const prefixes: Record<string,string>={i2x:NS,en:IRI.enactments+'#',mp:IRI.mappings+'#',i2idl:CONCEPT_BASE,
-    fxa:ACTION_ROOT+'foxxi/',rla:ACTION_ROOT+'relay/',iep:IEP,skos:SKOS,dct:DCT,prov:PROV,owl:OWL,rdfs:RDFS,xsd:XSD};
+    fxa:ACTION_ROOT+'foxxi/',rla:ACTION_ROOT+'relay/','iep': IEP,skos:SKOS,dct:DCT,prov:PROV,owl:OWL,rdfs:RDFS,xsd:XSD};
   const headerPrefixes=Object.entries(prefixes).map(([p,n])=>'@prefix '+p+': '+safeIri(n)+' .').join('\n')+'\n';
   const header=(key:string,extra:Record<string,string>={}):string=>renderTokens(headers[key]!,{
     ...tokens,...Object.fromEntries(Object.entries(IRI).map(([k,v])=>[k.toUpperCase(),v])),

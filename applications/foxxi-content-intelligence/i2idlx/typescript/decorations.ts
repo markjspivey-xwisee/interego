@@ -33,7 +33,7 @@ export async function materializeDecorations(build: BuildResult, inferred: Store
   graph.addQuad(decor,nn(DCT+'title'),literal('I2IDL-X decorations (materialized)','en'));
   graph.addQuad(decor,nn(PROV+'wasDerivedFrom'),nn(build.IRI.catalog!));
   graph.addQuad(decor,nn(PROV+'wasDerivedFrom'),nn('https://github.com/blakeplock/i2idl-linked-data/blob/'+build.metadata.commit+'/public/glossary.jsonld'));
-  const prefixes={i2x:build.NS,cat:build.IRI.catalog+'#',dec:build.IRI.decorations+'#',iep:IEP,
+  const prefixes={i2x:build.NS,cat:build.IRI.catalog+'#',dec:build.IRI.decorations+'#','iep': IEP,
     ieh:'https://markjspivey-xwisee.github.io/interego/ns/harness#',hydra:HYDRA,
     dcat:'http://www.w3.org/ns/dcat#',prov:PROV,i2idl:CONCEPT_BASE,fxa:ACTION_ROOT+'foxxi/',rla:ACTION_ROOT+'relay/',
     rdf:RDF,owl:OWL,dct:DCT,rdfs:RDFS};

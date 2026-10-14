@@ -46,7 +46,7 @@ export function rdfList(g: Store, head: Term): Term[] {
     seen.add(termKey(n));
     const first = objects(g, n, RDF + 'first'), rest = objects(g, n, RDF + 'rest');
     if (first.length !== 1 || rest.length !== 1) throw new Error('Malformed RDF list at ' + n.value);
-    out.push(first[0]); n = rest[0];
+    out.push(first[0]!); n = rest[0]!;
   }
   return out;
 }
@@ -84,7 +84,7 @@ export function validLexical(l: Literal): boolean | null {
   if (!dt.startsWith(XSD)) return null;
   if (local in integerBounds) {
     if (!/^[+-]?\d+$/.test(v.trim())) return false;
-    const n = BigInt(v.trim()), [lo, hi] = integerBounds[local];
+    const n = BigInt(v.trim()), [lo, hi] = integerBounds[local]!;
     return (lo === null || n >= lo) && (hi === null || n <= hi);
   }
   if (local === 'decimal') return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(v.trim());
@@ -111,7 +111,7 @@ export function validLexical(l: Literal): boolean | null {
       if (Math.abs(year) > 9999) return null;
       if (year === 0 || mo < 1 || mo > 12 || day < 1) return false;
       const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-      if (day > [31,leap?29:28,31,30,31,30,31,31,30,31,30,31][mo-1]) return false;
+      if (day > [31,leap?29:28,31,30,31,30,31,31,30,31,30,31][mo-1]!) return false;
     }
     if (local !== 'date') {
       const offset = local === 'time' ? 0 : 3, hour = Number(m[1+offset]), min = Number(m[2+offset]), sec = Number(m[3+offset]);
@@ -159,8 +159,8 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
   const topTypes=['anyURI','base64Binary','boolean','dateTime','decimal','double','float','hexBinary','string'].map(x=>XSD+x)
     .concat([RDF+'PlainLiteral',RDF+'XMLLiteral']);
   for (let i=0;i<topTypes.length;i++) for(let j=i+1;j<topTypes.length;j++) {
-    if (topTypes[i]===XSD+'string' && topTypes[j]===RDF+'PlainLiteral') continue;
-    if (usedDt.has(topTypes[i]) && usedDt.has(topTypes[j])) add(nn(topTypes[i]),OWL+'disjointWith',nn(topTypes[j]));
+    if (topTypes[i]!===XSD+'string' && topTypes[j]!===RDF+'PlainLiteral') continue;
+    if (usedDt.has(topTypes[i]!) && usedDt.has(topTypes[j]!)) add(nn(topTypes[i]!),OWL+'disjointWith',nn(topTypes[j]!));
   }
   if (options.strictDatatypes && unsupported.size) throw new Error([...unsupported].join('; '));
   let rounds=0;
@@ -193,7 +193,7 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
           }
         }
         if(subsumptions[o.value.slice(XSD.length)] && o.value.startsWith(XSD))
-          for(const d of subsumptions[o.value.slice(XSD.length)]) add(s,T,nn(XSD+d));
+          for(const d of subsumptions[o.value.slice(XSD.length)]!) add(s,T,nn(XSD+d));
       }
       if(pv===SC) {
         for(const n of subjects(g,T,s)) add(n,T,o);
@@ -228,7 +228,7 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
         const classes=rdfList(g,o);
         if(pv===OWL+'intersectionOf') {
           for(const c of classes) add(s,SC,c);
-          if(classes.length) for(const x of subjects(g,T,classes[0])) if(classes.every(c=>typed(x,c))) add(x,T,s);
+          if(classes.length) for(const x of subjects(g,T,classes[0]!)) if(classes.every(c=>typed(x,c))) add(x,T,s);
         } else for(const c of classes) add(c,SC,s);
       }
       if(pv===OWL+'oneOf') for(const n of rdfList(g,o)) add(n,T,s);
@@ -261,7 +261,7 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
       if(pv===OWL+'hasKey') {
         const props=rdfList(g,o), members=subjects(g,T,s);
         if(props.length) for(let i=0;i<members.length;i++) for(let j=i+1;j<members.length;j++)
-          if(props.every(pp=>objects(g,members[i],pp).some(v=>has(g,members[j],pp,v)))) add(members[i],SA,members[j]);
+          if(props.every(pp=>objects(g,members[i]!,pp).some(v=>has(g,members[j]!,pp,v)))) add(members[i]!,SA,members[j]!);
       }
     }
   } while(changed);
@@ -274,6 +274,32 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
     if(p===OWL+'disjointWith') errorDisjoint(s,o);
     if(p===OWL+'complementOf') for(const x of subjects(g,T,s)) if(typed(x,o))
       errors.add('Violation of complementarity for classes '+s.value+' and '+o.value+' on element '+x.value);
+    if(p===SA && s.termType==='Literal' && o.termType==='Literal' && !s.equals(o)) {
+      // A functional data property can equate different RDF terms. Missing
+      // datatype value semantics matters here, so never call such a result
+      // verified merely because lexical forms are individually valid.
+      const knownEqual=(a:Literal,b:Literal):boolean|null=>{
+        if(a.datatype.value!==b.datatype.value)return null;
+        const dt=a.datatype.value.slice(XSD.length);
+        if(a.datatype.value===XSD+'boolean')return ['true','1'].includes(a.value)===['true','1'].includes(b.value);
+        if(a.datatype.value.startsWith(XSD)&&dt in integerBounds)return BigInt(a.value)===BigInt(b.value);
+        if(a.datatype.value===XSD+'decimal'){
+          const norm=(v:string)=>{const negative=v.startsWith('-'),parts=v.replace(/^[+-]/,'').split('.'),i=(parts[0]||'0').replace(/^0+(?=\d)/,''),f=(parts[1]||'').replace(/0+$/,'');return (negative&&(i!=='0'||f)?'-':'')+i+(f?'.'+f:'');};
+          return norm(a.value)===norm(b.value);
+        }
+        if(a.datatype.value===XSD+'double'||a.datatype.value===XSD+'float') {
+          const number=(v:string)=>v==='INF'?Infinity:v==='-INF'?-Infinity:Number(v);
+          const av=number(a.value),bv=number(b.value);return av===bv||(Number.isNaN(av)&&Number.isNaN(bv));
+        }
+        if(a.datatype.value===XSD+'string'||a.datatype.value===RDF+'langString')return a.value===b.value&&a.language.toLowerCase()===b.language.toLowerCase();
+        return null;
+      };
+      if(validLexical(s)!==false&&validLexical(o)!==false){
+        const equal=knownEqual(s,o);
+        if(equal===false)errors.add('Distinct data values equated: '+s.value+' and '+o.value+' ('+s.datatype.value+')');
+        if(equal===null)unsupported.add('Datatype value equality required for '+s.datatype.value+' and '+o.datatype.value);
+      }
+    }
     if(p===SA && (has(g,s,OWL+'differentFrom',o)||has(g,o,OWL+'differentFrom',s)))
       errors.add("'sameAs' and 'differentFrom' cannot be used on the same subject-object pair: ("+s.value+', '+o.value+')');
     if(p===T && o.value===OWL+'Nothing') errors.add(s.value+' is owl:Nothing');
@@ -281,10 +307,10 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
       for(const head of [...objects(g,s,OWL+'members'),...objects(g,s,OWL+'distinctMembers')]) {
         const items=rdfList(g,head);
         for(let i=0;i<items.length;i++) for(let j=i+1;j<items.length;j++) {
-          if(o.value===OWL+'AllDisjointClasses') errorDisjoint(items[i],items[j]);
-          if(o.value===OWL+'AllDifferent'&&has(g,items[i],SA,items[j])) errors.add("'sameAs' and 'AllDifferent' cannot be used on the same subject-object pair: ("+items[i].value+', '+items[j].value+')');
-          if(o.value===OWL+'AllDisjointProperties') for(const t of g.getQuads(null,items[i] as Quad['predicate'],null,null))
-            if(has(g,t.subject,items[j],t.object)) errors.add('Disjoint properties in an AllDisjointProperties: '+items[i].value+', '+items[j].value);
+          if(o.value===OWL+'AllDisjointClasses') errorDisjoint(items[i]!,items[j]!);
+          if(o.value===OWL+'AllDifferent'&&has(g,items[i]!,SA,items[j]!)) errors.add("'sameAs' and 'AllDifferent' cannot be used on the same subject-object pair: ("+items[i]!.value+', '+items[j]!.value+')');
+          if(o.value===OWL+'AllDisjointProperties') for(const t of g.getQuads(null,items[i]! as Quad['predicate'],null,null))
+            if(has(g,t.subject,items[j]!,t.object)) errors.add('Disjoint properties in an AllDisjointProperties: '+items[i]!.value+', '+items[j]!.value);
         }
       }
     }
@@ -298,7 +324,7 @@ export function closure(data: Store, options: { maxRounds?: number; maxTriples?:
     if(p===OWL+'sourceIndividual') for(const pp of objects(g,s,OWL+'assertionProperty'))
       for(const v of [...objects(g,s,OWL+'targetIndividual'),...objects(g,s,OWL+'targetValue')])
         if(has(g,o,pp,v)) errors.add('Negative property assertion violated for: ('+o.value+', '+pp.value+', '+v.value+')');
-    if((p===OWL+'maxCardinality'||p===OWL+'maxQualifiedCardinality')&&o.value==='0')
+    if((p===OWL+'maxCardinality'||p===OWL+'maxQualifiedCardinality')&&o.termType==='Literal'&&Number(o.value)===0)
       for(const pp of objects(g,s,OWL+'onProperty')) for(const u of subjects(g,T,s)) for(const v of objects(g,u,pp)) {
         const cs=p===OWL+'maxQualifiedCardinality'?objects(g,s,OWL+'onClass'):[nn(OWL+'Thing')];
         if(cs.some(c=>c.value===OWL+'Thing'||typed(v,c))) errors.add('Erroneous usage of maximum cardinality with '+s.value+' and '+v.value);
@@ -346,8 +372,8 @@ export function patternRestrictions(g:Store): Map<string,{node:Term;base:Term;no
     const bases=objects(g,q.subject,OWL+'onDatatype'),facets=rdfList(g,q.object);
     if(bases.length===1&&facets.length&&facets.every(f=>g.getQuads(f as Quad['subject'],null,null,null).every(t=>t.predicate.value===XSD+'pattern'))) {
       const nodes=new Set([termKey(q.subject),...facets.map(termKey)]);let cell:Term=q.object;
-      while(!cell.equals(nn(RDF+'nil'))){nodes.add(termKey(cell));cell=objects(g,cell,RDF+'rest')[0];}
-      out.set(termKey(q.subject),{node:q.subject,base:bases[0],nodes});
+      while(!cell.equals(nn(RDF+'nil'))){nodes.add(termKey(cell));cell=objects(g,cell,RDF+'rest')[0]!;}
+      out.set(termKey(q.subject),{node:q.subject,base:bases[0]!,nodes});
     }
   }
   return out;

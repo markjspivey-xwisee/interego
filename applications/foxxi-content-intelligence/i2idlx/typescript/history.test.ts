@@ -103,7 +103,7 @@ test('git history selects the final commit for each first-seen version', () => {
     assert.equal(rels.length, 2);
     assert.equal(rels[0]!.commits, 2);
     assert.equal(rels[0]!.commit, finalFirst);
-    assert.equal(rels[0]!.date, '2026-01-02T00:00:00+00:00');
+    assert.equal(rels[0]!.date, git(['show', '--no-patch', '--format=%cI', finalFirst]));
     assert.equal(rels[1]!.commit, finalSecond);
     assert.equal(rels[1]!.previous, '0.1');
     assert.equal(rels[0]!.previous, null);
