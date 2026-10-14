@@ -14,7 +14,8 @@
  *                            EXCEPT the identity server's own record in
  *                            each pod (PRIVATE_POD_DOCUMENTS below), which
  *                            is read like a write: by its owner or the
- *                            operator only
+ *                            operator only, and written by the operator
+ *                            only
  *   POST / PUT / PATCH / DELETE  →  require Authorization: Bearer; one
  *                                   of two acceptable bearer types:
  *
@@ -185,8 +186,23 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
  * server reads it from CSS directly over the private network, not through this gate; a user
  * audits their own through the identity server's `GET /auth-methods/me`. So it is read here as a
  * write is: by the pod's owner or by the operator.
+ *
+ * ★ AND ONLY THE OPERATOR WRITES IT. The identity server is its only writer, and it writes over
+ * the private network too (enrolment, passkey removal, account deletion), never through this
+ * gate. A user bearer writing its own record here was the one way to change it that no sign-in
+ * stands behind: a stolen bearer, or an OAuth token a client holds, could add the thief's own
+ * passkey, wallet or DID, and the identity server would sign that credential in for as long as
+ * the record keeps it, long after the bearer expired. Writes to it, to its `.acl` / `.meta`
+ * auxiliary resources, and a POST that names it as the Slug of the new resource are the
+ * operator's alone. A user changes their credentials through the identity server's endpoints.
  */
 const PRIVATE_POD_DOCUMENTS = new Set(['auth-methods.jsonld']);
+
+/** A pod document name that is one of PRIVATE_POD_DOCUMENTS or one of its auxiliary resources. */
+function isPrivateDocumentName(name) {
+  const lower = String(name).toLowerCase();
+  return PRIVATE_POD_DOCUMENTS.has(lower) || PRIVATE_POD_DOCUMENTS.has(lower.replace(/\.(acl|meta)$/, ''));
+}
 
 // ── CORS allowlist ─────────────────────────────────────────────────
 //
@@ -724,7 +740,19 @@ function podPath(upstreamUrl) {
  * cased or its separators spelled; null when it names none.
  */
 function privateDocumentPod({ parts }) {
-  return parts.length === 2 && PRIVATE_POD_DOCUMENTS.has(parts[1].toLowerCase()) ? parts[0] : null;
+  return parts.length === 2 && isPrivateDocumentName(parts[1]) ? parts[0] : null;
+}
+
+/**
+ * The pod whose private document a POST would create by naming it in its `Slug` header: CSS takes
+ * the Slug as the new resource's name when it is free. Read as leniently as the path is, so any
+ * segment of the Slug that names one counts.
+ */
+function slugPrivateDocumentPod({ parts }, method, slug) {
+  if (method !== 'POST' || parts.length !== 1 || typeof slug !== 'string' || !slug) return null;
+  let decoded = slug;
+  try { decoded = decodeURIComponent(slug); } catch { /* keep it as sent */ }
+  return decoded.split(/[\\/]+/).some((s) => s && isPrivateDocumentName(s.trim())) ? parts[0] : null;
 }
 
 /**
@@ -836,6 +864,7 @@ const server = createServer(async (req, res) => {
         : {}),
       gating: 'writes, and reads of each pod\'s private documents',
       privateDocuments: [...PRIVATE_POD_DOCUMENTS],
+      privateDocumentWriters: 'operator',
       upstream: CSS_INTERNAL_URL,
       perUserBearers: Boolean(IDENTITY_URL) || Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
       identityVerify: Boolean(IDENTITY_URL),
@@ -865,6 +894,10 @@ const server = createServer(async (req, res) => {
   const isWrite = WRITE_METHODS.has(method);
   // A read of a pod's private document is authorized as a write to that pod is.
   const privatePod = isWrite ? null : privateDocumentPod(target);
+  // A write that would change or create a pod's private document: the operator's alone.
+  const privateWrite = isWrite
+    ? (privateDocumentPod(target) ?? slugPrivateDocumentPod(target, method, req.headers['slug']))
+    : null;
 
   // Write-method gate, and the owner-only read of a private pod document.
   if (isWrite || privatePod) {
@@ -911,6 +944,15 @@ const server = createServer(async (req, res) => {
         return;
       }
       const userId = verified.userId;
+      if (privateWrite) {
+        // The identity server writes this record over the private network; no user bearer does.
+        res.writeHead(403, { 'Content-Type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({
+          error: 'sign-in record is not writable with a user bearer',
+          detail: `this ${method} would change pod "${privateWrite}"'s sign-in record (${[...PRIVATE_POD_DOCUMENTS].join(', ')}), which only the identity server writes; credentials are changed through the identity server's endpoints`,
+        }));
+        return;
+      }
       if (isWrite && target.encodedSeparator) {
         // A `%2F` or `%5C` inside a segment: which pod CSS writes to would depend on whether it
         // decodes them first. No Interego client names a resource that way.
@@ -1092,5 +1134,5 @@ if (process.env.CSS_GATE_AUTOSTART !== '0') server.listen(PORT, () => {
   } else {
     console.log(`[css-gate]   • per-user bearers DISABLED (neither IDENTITY_URL nor RELAY_VERIFY_URL+SECRET set)`);
   }
-  console.log(`[css-gate] read methods (GET/HEAD/OPTIONS) pass through anonymously, except /<pod>/{${[...PRIVATE_POD_DOCUMENTS].join(',')}} (owner or operator bearer)`);
+  console.log(`[css-gate] read methods (GET/HEAD/OPTIONS) pass through anonymously, except /<pod>/{${[...PRIVATE_POD_DOCUMENTS].join(',')}} (owner or operator bearer); writes to those are the operator's alone`);
 });
