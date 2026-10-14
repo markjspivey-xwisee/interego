@@ -6157,12 +6157,14 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
   const signing = await (async (): Promise<Record<string, unknown>> => {
     try {
       const relayAnchor = (await ensureRelayComplianceWallet()).wallet.address;
-      const vc = await readDelegationCredential(podUrl, (args.agent_id as string) as IRI, { fetch: solidFetch })
+      const credentialAgentId = result.delegationSubject.registered as IRI;
+      const vc = await readDelegationCredential(podUrl, credentialAgentId, { fetch: solidFetch })
         .catch(() => null);
       const credentialAnchor = vc?.proof?.signerAddress;
       const matches = !!credentialAnchor && credentialAnchor.toLowerCase() === relayAnchor.toLowerCase();
       return {
         relayAnchor,
+        credentialAgentId,
         credentialAnchor: credentialAnchor ?? null,
         canSignDelegatedRequests: matches,
         note: !credentialAnchor
@@ -16010,14 +16012,20 @@ app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
       res.status(403).json({ error: `Agent registry owner ${profile.webId} does not match token user's WebID` });
       return;
     }
-    const found = profile.authorizedAgents.find(a => a.agentId === agentIri && !a.revoked);
+    const revokedSubjects = equivalentDelegationSubjects(agentIri, profile.authorizedAgents, IDENTITY_URL);
+    const found = profile.authorizedAgents.find(a => revokedSubjects.includes(a.agentId) && !a.revoked);
     if (!found) {
       res.status(404).json({ error: `Agent ${agentIri} not present (or already revoked) in this pod's registry` });
       return;
     }
-    const updated = removeAuthorizedAgent(profile, agentIri);
+    let updated = profile;
+    for (const target of revokedSubjects) updated = removeAuthorizedAgent(updated, target as IRI);
     await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
     relayProfileCache.delete(podUrl);
+    for (const target of revokedSubjects) {
+      agentScopeCache.delete(`${podUrl}|${target}`);
+      agentRegistrationCache.delete(`${podUrl}|${target}`);
+    }
     const remaining = updated.authorizedAgents.filter(a => !a.revoked).length;
 
     // Emit a SOC 2 access-change descriptor — every agent revocation
@@ -16046,6 +16054,7 @@ app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
     res.json({
       revoked: true,
       agentIri,
+      revokedSubjects,
       remaining,
       ...(auditEvent ? { audit: auditEvent } : {}),
       ...(auditWarning ? { auditWarning } : {}),
