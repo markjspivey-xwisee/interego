@@ -531,7 +531,7 @@ const aliasRestRevoke = restRevokeAt < 0 || restRevokeEnd < 0 ? '' : SERVER_CODE
 check('compliance trust checks the same principal-to-original-subject verifier as scope',
   /verifyPrincipalDelegation\(\s*agentId as IRI,\s*podUrl,\s*\{ identityBaseUrl: IDENTITY_URL, fetch: solidFetch, verifier: delegationVerifier \}/.test(aliasPublishBody));
 check('signed descriptor readback uses alias resolution and retains guarded fetch',
-  /verifyPrincipalDelegation\(\s*parsedProof\.issuer,\s*inferredPodUrl,[\s\S]{0,150}fetch: guardedInvokeFetch, verifier: delegationVerifier/.test(aliasDescriptorBody));
+  /verifyPrincipalDelegation\(\s*parsedProof\.issuer,\s*inferredPodUrl,\s*\{\s*identityBaseUrl:\s*IDENTITY_URL,\s*fetch:\s*guardedInvokeFetch,\s*verifier:\s*delegationVerifier\s*\}\s*,?\s*\)/.test(aliasDescriptorBody));
 check('verify_agent signing diagnostics read the credential subject actually verified',
   /const credentialAgentId = result\.delegationSubject\.registered as IRI/.test(aliasVerifyBody)
   && /readDelegationCredential\(podUrl, credentialAgentId/.test(aliasVerifyBody));
