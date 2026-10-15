@@ -97,7 +97,7 @@ jobs:
           import { createHash } from 'node:crypto';
           import { buildSkills } from './tools/build-skills.ts';
           const files = await buildSkills(process.cwd());
-          for (const path of ['docs/skills/foxxi/SKILL.md', 'docs/skills/foxxi/reference.md', 'docs/skills/README.md']) {
+          for (const path of ['docs/skills/foxxi/SKILL.md', 'docs/skills/foxxi/reference.md', 'docs/skills/foxxi-admin/SKILL.md', 'docs/skills/foxxi-admin/reference.md', 'docs/skills/README.md']) {
             const content = files.get(path);
             if (content == null) throw new Error('Missing generated document: ' + path);
             process.stdout.write('I2IDLX_GENERATED_DOC ' + JSON.stringify({ path, content, sha256: createHash('sha256').update(content).digest('hex') }) + '\n');

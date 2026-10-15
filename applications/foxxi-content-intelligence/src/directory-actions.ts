@@ -27,6 +27,8 @@ export interface ActionAuthority {
 }
 export interface ConfiguredLms {
   id: string;
+  /** Exact canonical own pod whose verified owner may use these server-held credentials. */
+  ownerPod: string;
   product: string;
   instance: string;
   /** Exact operator-configured authenticated JSON API GET, never caller-selected. */
@@ -142,11 +144,14 @@ export function configuredLmsFromEnv(raw: string | undefined): readonly Configur
     const id = text(entry.id, 'connector id', 80);
     if (!/^[a-zA-Z0-9_-]+$/.test(id) || ids.has(id)) throw new Error('LMS connector ids must be unique safe identifiers');
     ids.add(id);
+    const ownerPod = new URL(text(entry.ownerPod, 'ownerPod'));
+    if (ownerPod.protocol !== 'https:' || ownerPod.username || ownerPod.password || ownerPod.search || ownerPod.hash
+      || !/^\/[A-Za-z0-9_-]+\/$/.test(ownerPod.pathname) || ownerPod.href !== entry.ownerPod) throw new Error('LMS credentials require an exact canonical HTTPS own pod binding');
     const instance = new URL(text(entry.instance, 'instance')), probe = new URL(text(entry.probeUrl, 'probeUrl'));
     if (instance.protocol !== 'https:' || probe.protocol !== 'https:' || instance.origin !== probe.origin
       || instance.username || instance.password || instance.search || instance.hash
       || probe.username || probe.password || probe.hash) throw new Error('LMS probes require the configured HTTPS instance origin');
-    return { id, product: text(entry.product, 'product', 100), instance: instance.href, probeUrl: probe.href,
+    return { id, ownerPod: ownerPod.href, product: text(entry.product, 'product', 100), instance: instance.href, probeUrl: probe.href,
       authorization: text(entry.authorization, 'authorization', 8192), authMethod: text(entry.authMethod, 'authMethod', 100),
       identityPath: (() => {
         if (!Array.isArray(entry.identityPath) || !entry.identityPath.length || entry.identityPath.length > 8 || entry.identityPath.some(k => typeof k !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(k))) throw new Error('LMS identityPath must identify a bounded account field');
@@ -334,7 +339,9 @@ export class DirectoryActions {
   private async connect(auth: ActionAuthority, proof: { _signed_payload: string; _signature: string }) {
     this.encryption(auth);
     const id = text(auth.payload.connector_id, 'connector_id', 80);
-    const configured = this.config.configuredLms?.().find(c => c.id === id);
+    let configured: ConfiguredLms | undefined;
+    try { configured = this.config.configuredLms?.().find(c => c.id === id); }
+    catch { throw new DirectoryActionError('Operator LMS connector configuration is invalid or unavailable', 503); }
     if (!configured) throw new DirectoryActionError('Connector is not configured. The operator must configure FOXXI_LMS_CONNECTORS with an exact HTTPS API probe and server-held authorization.', 503);
     for (const [field, actual] of [['product', configured.product], ['instance', configured.instance], ['auth_method', configured.authMethod]] as const) {
       if (auth.payload[field] !== actual) throw new DirectoryActionError(field + ' must match the operator-configured connector');
@@ -342,7 +349,10 @@ export class DirectoryActions {
     // Reject all caller credential/target overrides, including otherwise plausible aliases.
     if (['authorization', 'api_key', 'password', 'probe_url', 'probeUrl', 'credential'].some(k => k in auth.payload)) throw new DirectoryActionError('LMS credentials and probe targets are operator-configured, never request-supplied');
     if (auth.payload.sync_frequency && auth.payload.sync_frequency !== 'manual') throw new DirectoryActionError('This connector performs authenticated verification only; sync_frequency must be manual');
-    const validated = configuredLmsFromEnv(JSON.stringify([configured]))[0]!;
+    let validated: ConfiguredLms;
+    try { validated = configuredLmsFromEnv(JSON.stringify([configured]))[0]!; }
+    catch { throw new DirectoryActionError('Operator LMS connector configuration requires an exact canonical HTTPS own pod and authenticated probe binding', 503); }
+    if (auth.pod !== validated.ownerPod) throw new DirectoryActionError('This configured LMS connector is not authorized for the authenticated own pod', 403);
     await assertSafeFetchTarget(validated.probeUrl);
     const f = guardedFetchFn(this.config.fetch);
     const res = await f(validated.probeUrl, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(10000),

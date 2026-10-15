@@ -570,6 +570,22 @@ console.log('\n2. driven: no caller of the helper can be pointed at a foreign or
     const defaulted = await callTool('discover_context', 'token-sender', { limit: 1 });
     check('discover_context defaults to the authenticated caller pod on REST',
       defaulted['pod'] === cssUrl + SENDER + '/' && Array.isArray(defaulted['entries']));
+    for (const selector of ['pod_url', 'pod_name', 'podUrl']) {
+      for (const value of [42, false, null, {}, [], '', '   ']) {
+        const before = pod.requests.length;
+        const malformed = await callTool('discover_context', 'token-sender', { [selector]: value, limit: 1 });
+        const invalid = malformed['invalid'] as Array<Record<string, unknown>> | undefined;
+        // seedRelease42 starts independently after listen and can overlap this window.
+        // Its exact /amep/state/ subtree is already named as startup traffic in section3.
+        // Every other request must remain absent, including any caller-pod default read.
+        const attempted = pod.requests.slice(before).filter(request => !request.decoded.includes('/amep/state/'));
+        check('malformed ' + selector + ' is refused before a session default or pod fetch: ' + JSON.stringify(value),
+          malformed['error'] === 'invalid_required_argument' && malformed['code'] === 400
+          && invalid?.some(item => item['name'] === selector) === true
+          && attempted.length === 0,
+          JSON.stringify(attempted));
+      }
+    }
     const conflicted = await callTool('discover_context', 'token-sender',
       { pod_name: VICTIM, pod_url: cssUrl + SENDER + '/', limit: 1 });
     check('discover_context still refuses conflicting selectors',

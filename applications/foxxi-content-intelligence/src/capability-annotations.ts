@@ -989,7 +989,7 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
     ],
     "notes": [
       "Not invoked: creates genuine course/activity/pod state",
-      "Source returns ok:true with optional sharedLattice and durable pod URL; do not interpret the URL alone as verified persistence when composition is absent",
+      "Success requires the actual awaited sharedLattice.persisted receipt. Missing or failed persistence returns 503 with any available receipt and a warning to inspect the pod before retrying; parsed content alone is not a saved course.",
       "Source and test inspection at 74475d4a0220abc6f7d3e8134258d0908d1607a9; this audit did not execute the authenticated/stateful contract."
     ]
   },
@@ -1159,7 +1159,7 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
     "authorization": "owner",
     "requires": [
       "Fresh target-owner signed request with owner-held encryption key",
-      "Exact operator-configured connector identity, HTTPS endpoint and server-side credentials",
+      "Exact operator-configured connector identity, HTTPS endpoint and server-side credentials, bound by operator configuration to the authenticated own pod",
       "Successful bounded identity probe and encrypted pod write/readback"
     ],
     "notes": [
@@ -1259,7 +1259,7 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
     ],
     "notes": [
       "Generic handler instrumentation may record an operation observation separately from the requested result.",
-      "Aggregates only request.coverage. Does not discover catalog coverage or apply the removed category/concept filters. Supplied records are not independently verified."
+      "Aggregates only request.coverage. Does not discover catalog coverage or apply the removed category/concept filters. Supplied records are not independently verified. Bounds: 1000 unique concept records, 1000 references per list, 10000 total references and 2048 characters per string."
     ]
   },
   "foxxi.publish_concept_map": {

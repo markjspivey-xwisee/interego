@@ -140,7 +140,21 @@ with sync_playwright() as playwright:
         page.wait_for_function("document.querySelector('[data-action-iri=\"" + client_action["iri"] + "\"]').textContent.includes('Client task prepared')")
         assert "Your connected AI client must perform the model work." in client.inner_text()
         page.screenshot(path=str(shots / ("directory-controls-" + str(width) + ".png")), full_page=False)
-        assert not page.evaluate("document.documentElement.scrollWidth > innerWidth + 1"), "directory must fit the viewport"
+        bounds = page.evaluate("""() => {
+            const rect = (element) => { const r = element.getBoundingClientRect(); return {left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width), scrollWidth: element.scrollWidth, clientWidth: element.clientWidth}; };
+            const overflow = document.documentElement.scrollWidth > innerWidth + 1;
+            return {overflow, viewport: innerWidth, root: rect(document.documentElement), body: rect(document.body), directory: rect(document.querySelector('#directory')),
+                offenders: overflow ? [...document.querySelectorAll('.ag *')].filter((element) => {
+                    const r = element.getBoundingClientRect();
+                    return r.width > 0 && (r.right > innerWidth + 1 || r.left < -1);
+                }).map((element) => ({tag: element.tagName, id: element.id, class: element.className, ...rect(element),
+                    display: getComputedStyle(element).display, overflowX: getComputedStyle(element).overflowX,
+                    parent: element.parentElement && {tag: element.parentElement.tagName, class: element.parentElement.className, ...rect(element.parentElement)},
+                    text: element.textContent.slice(0, 120)})).slice(0, 24) : []};
+        }""")
+        if bounds["overflow"]:
+            print("DIRECTORY_OVERFLOW_DIAGNOSTIC=" + json.dumps(bounds, separators=(",", ":")), flush=True)
+        assert not bounds["overflow"], "directory must fit the viewport"
         context.close()
         print("PASS directory browser fixture", width, "live refresh, typed request, real result rendering, protected preparation, credential refusal, client task label")
     context = browser.new_context()

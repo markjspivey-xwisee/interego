@@ -238,8 +238,8 @@ jobs:
           import pathlib
           import os
           shots = pathlib.Path(os.environ["I2IDLX_ROOT"]) / ".cache" / "ui-oracle-shots"
-          for width in (1440, 420):
-              image = shots / ("hosted-home-" + str(width) + ".png")
+          for prefix, width in (("hosted-home-", 1440), ("hosted-home-", 420), ("directory-controls-", 1440), ("directory-controls-", 420)):
+              image = shots / (prefix + str(width) + ".png")
               if not image.is_file():
                   print("Public home render not available yet:", image.name)
                   continue

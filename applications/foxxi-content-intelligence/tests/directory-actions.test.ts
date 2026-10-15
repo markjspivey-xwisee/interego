@@ -29,7 +29,7 @@ const course = {
   prereq_edges: [{ from: 'one', to: 'two', confidence: 1 }],
 };
 const connector = {
-  id: 'fixture-lms', product: 'Fictional LMS', instance: 'https://fictional-lms.example/', probeUrl: 'https://fictional-lms.example/api/me',
+  id: 'fixture-lms', ownerPod: pod, product: 'Fictional LMS', instance: 'https://fictional-lms.example/', probeUrl: 'https://fictional-lms.example/api/me',
   authorization: 'Bearer fictional-test-secret-never-persist', authMethod: 'Bearer',
   identityPath: ['account', 'id'], expectedIdentity: 'fictional-account',
 };
@@ -222,6 +222,35 @@ describe('implemented directory actions have authenticated real effects', () => 
     expect(JSON.stringify([...f.files.values()])).not.toContain(connector.authorization);
     expect(JSON.stringify(result)).not.toContain(connector.authorization);
   });
+  it('does not let another genuinely verified own-pod principal use the configured LMS credentials', async () => {
+    const f = fixture(), bobActor = 'did:ethr:' + bob.address;
+    const bobPod = 'https://fictional-pod.example/eth-' + bob.address.toLowerCase().slice(2, 14) + '/';
+    const actions = new DirectoryActions({
+      ...f.config,
+      authorize: makeDirectoryActionAuthorizer({
+        audience,
+        verifyCaller: async envelope => {
+          const r = recoverSignedRequest(envelope);
+          if (!r.ok) return { ok: false, status: 401, error: 'Signature did not verify' };
+          if (r.signer !== bob.address || r.agentId !== bobActor) return { ok: false, status: 403, error: 'Wrong fixture owner' };
+          return { ok: true, callerDid: bobActor, payload: r.payload };
+        },
+        ownPod: () => bobPod, samePod: (a, b) => a === b,
+      }),
+    });
+    const signed = await sign(bob, 'connect_lms', { owner_encryption_key: generateKeyPair().publicKey,
+      connector_id: connector.id, product: connector.product, instance: connector.instance, auth_method: connector.authMethod });
+    expect(await actions.run('connect_lms', signed)).toMatchObject({ kind: 'refusal', 'iep:refusalStatus': 403, published: false });
+    expect(f.requests).toEqual([]);
+  });
+  it('refuses a connector configuration missing the verified owner binding as operator setup, before probe or writes', async () => {
+    const f = fixture();
+    const actions = new DirectoryActions({ ...f.config, configuredLms: () => [{ ...connector, ownerPod: '' }] });
+    const signed = await sign(alice, 'connect_lms', { owner_encryption_key: f.owner.publicKey,
+      connector_id: connector.id, product: connector.product, instance: connector.instance, auth_method: connector.authMethod });
+    expect(await actions.run('connect_lms', signed)).toMatchObject({ kind: 'refusal', 'iep:refusalStatus': 503, published: false });
+    expect(f.requests).toEqual([]);
+  });
   it.each(['badStatus', 'wrongIdentity'] as const)('LMS %s cannot produce a success or a pod write', async failure => {
     const f = fixture(); f[failure]();
     expect(await f.call('connect_lms', { connector_id: connector.id, product: connector.product, instance: connector.instance, auth_method: connector.authMethod })).toMatchObject({ kind: 'refusal', 'iep:refusalStatus': 502, published: false });
@@ -242,6 +271,9 @@ describe('implemented directory actions have authenticated real effects', () => 
   });
   it('rejects unsafe operator connector configuration and duplicate ids', () => {
     for (const p of [
+      { ...connector, ownerPod: '' },
+      { ...connector, ownerPod: 'http://fictional-pod.example/owner/' },
+      { ...connector, ownerPod: 'https://fictional-pod.example/owner/?target=another' },
       { ...connector, probeUrl: 'https://evil.example/api/me' },
       { ...connector, probeUrl: 'http://fictional-lms.example/api/me' },
       { ...connector, instance: 'https://name:password@fictional-lms.example/' },

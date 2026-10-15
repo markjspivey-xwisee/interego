@@ -22,6 +22,13 @@ const javascript = ts.transpileModule(server.slice(first, next), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
 }).outputText;
 
+function onlyReply(replies: readonly Reply[]): Reply {
+  expect(replies).toHaveLength(1);
+  const reply = replies[0];
+  if (!reply) throw new Error('The HTTP handler returned no response.');
+  return reply;
+}
+
 function route(compose: () => Promise<Receipt | null>) {
   const replies: Reply[] = [];
   let code = 200, handler: Handler | undefined;
@@ -88,7 +95,7 @@ describe('SCORM author response follows actual pod persistence', () => {
       ok: false, code: 'persistence-unconfirmed', manifestValid: true,
       authoredStatementId: 'fixture-authored-statement', sharedLattice: receipt,
     }) }]);
-    expect(h.replies[0].body).not.toHaveProperty('durable');
+    expect(onlyReply(h.replies).body).not.toHaveProperty('durable');
   });
 
   it('does not turn an absent composition receipt into success or a durable destination', async () => {
@@ -97,8 +104,8 @@ describe('SCORM author response follows actual pod persistence', () => {
     expect(h.replies[0]).toEqual({ status: 503, body: expect.objectContaining({
       ok: false, code: 'persistence-unconfirmed', manifestValid: true,
     }) });
-    expect(h.replies[0].body).not.toHaveProperty('durable');
-    expect(h.replies[0].body).not.toHaveProperty('sharedLattice');
+    expect(onlyReply(h.replies).body).not.toHaveProperty('durable');
+    expect(onlyReply(h.replies).body).not.toHaveProperty('sharedLattice');
   });
 
   it('acknowledges a confirmed composition and preserves its real receipt', async () => {

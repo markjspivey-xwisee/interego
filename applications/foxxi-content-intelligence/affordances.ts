@@ -1989,7 +1989,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:foxxi:connect-lms' as IRI,
     toolName: 'foxxi.connect_lms',
     title: 'Verify and record an operator-configured LMS connection',
-    description: 'As the authenticated pod owner, verify an exact operator-configured LMS account through a bounded authenticated HTTPS JSON API probe, then store a non-secret encrypted connection artifact with verified readback. Connector ID, product, instance and auth method must match FOXXI_LMS_CONNECTORS. Credentials stay server-side. No caller-selected probe, OAuth enrollment, scheduled synchronization or data import is performed; sync_frequency supports manual only. Sign the complete inner action payload.',
+    description: 'As the authenticated pod owner, verify an exact operator-configured LMS account through a bounded authenticated HTTPS JSON API probe, then store a non-secret encrypted connection artifact with verified readback. Connector ID, product, instance and auth method must match FOXXI_LMS_CONNECTORS. The operator connector must be configured for this authenticated own pod; owning another pod does not authorize its credentials. Credentials stay server-side. No caller-selected probe, OAuth enrollment, scheduled synchronization or data import is performed; sync_frequency supports manual only. Sign the complete inner action payload.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/connect_lms',
     annotations: { title: 'Verify a configured LMS connection', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -2038,7 +2038,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     targetTemplate: '{base}/foxxi/coverage_query',
     annotations: { title: 'Aggregate supplied concept coverage', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: 'coverage', type: 'array', required: true, description: 'Supplied records: {concept:string,taughtIn:string[],mentionedIn:string[]}[]. Empty array means explicitly no supplied records; this operation never reads a catalog.' },
+      { name: 'coverage', type: 'array', required: true, description: 'Supplied records: {concept:string,taughtIn:string[],mentionedIn:string[]}[]. Empty array means explicitly no supplied records; this operation never reads a catalog. Maximum 1000 unique concepts, 1000 references per list and 10000 total references; strings are bounded to 2048 characters.' },
       { name: 'tenant_pod_url', type: 'string', required: true, description: 'Tenant pod URL.' },
       { name: 'privacy_mode', type: 'string', required: false, description: 'One of: abac | merkle-attested-opt-in (v2, default) | zk-distribution (v3 histogram).' },
       { name: 'epsilon', type: 'number', required: false, description: 'DP ε budget for zk-distribution mode.' },

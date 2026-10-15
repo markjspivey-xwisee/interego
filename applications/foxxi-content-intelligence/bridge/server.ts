@@ -461,6 +461,7 @@ import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.
 import { DirectoryActions, DirectoryActionError, makeDirectoryActionAuthorizer, configuredLmsFromEnv } from '../src/directory-actions.js';
 import { attachCapabilityDirectoryRoutes } from '../src/i2idlx-capability-runner.js';
 import { FOXXI_CAPABILITY_ANNOTATIONS } from '../src/capability-annotations.js';
+import { validateCoverageQueryInput } from '../src/coverage-query-input.js';
 import type { PrivateAuthResult } from '../src/private-performance-auth.js';
 import { attachPerformanceRoutes, offerFromWork, WORK_OFFER_WINDOW, type WorkOffer } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
@@ -3160,7 +3161,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   },
 
   'foxxi.coverage_query': async (args) => {
-    if (!Array.isArray(args.coverage)) return invalidArguments('coverage must be an explicit array of caller-supplied coverage records; this operation does not discover learner records.');
+    const reason = validateCoverageQueryInput(args);
+    if (reason) return invalidArguments(reason);
     const config = configOrThrow(args);
     const q: CoverageQueryArgs = {
       config,

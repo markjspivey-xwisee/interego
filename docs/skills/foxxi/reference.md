@@ -310,19 +310,17 @@ Your row of the gradebook in Foxxi's own LMS, signed by your wallet or by an age
 
 ## `foxxi.consume_lesson`
 
-**Consume a lesson + emit consumption descriptor**
+**Load a published lesson or record your signed progress report**
 
-Stream-load a Foxxi-parsed lesson's structural stratum (slides, audio, transcripts) for consumption, and emit an fxa:ConsumptionEvent descriptor + an xAPI Statement (via the lrs-adapter) for each slide the learner advances past. Composes with the iep:TemporalFacet so consumption is timeboxed; composes with iep:TrustFacet so partial completion is recorded as Hypothetical, full as Asserted.
+Load the actual authorized published course slides in source order. Default load mode does not record consumption. record-progress stores only your signed self-report for existing slide IDs, encrypted to you and the bridge, with exact readback; it remains Hypothetical and never asserts completion, mastery, achievement or creates xAPI statements. Sign the complete inner action payload with sign_request; only signature-covered fields are used. No arbitrary LRS endpoint or credentials are accepted.
 
 - Action: `urn:iep:action:foxxi:consume-lesson`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/consume_lesson`
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `course_iri` | string | yes | IRI of the course (federation_iri_base/course_id). |
-| `learner_did` | string | yes | Consuming learner DID. |
-| `lrs_endpoint` | string | no | Optional xAPI LRS endpoint to forward Statements to (composes with the lrs-adapter projector). If omitted, Statements are emitted as descriptors only. |
-| `lrs_auth_header` | string | no | Authorization header for the LRS when provided. |
+| `_signed_payload` | string | yes | Use the actual _signed_payload returned by sign_request. Its complete inner payload must satisfy {"type":"object","properties":{"action":{"type":"string","const":"foxxi.consume_lesson"},"tenant_pod_url":{"type":"string","description":"Optional corroboration of the authenticated own pod; cannot select another pod."},"course_iri":{"type":"string","description":"Exact published CoursePackageBundle federation_iri_base plus #package."},"learner_did":{"type":"string","description":"Optional; must equal verified caller."},"mode":{"type":"string","enum":["load","record-progress"],"default":"load"},"advanced_slide_ids":{"type":"array","items":{"type":"string"},"uniqueItems":true,"minItems":1,"maxItems":10000},"owner_encryption_key":{"type":"string","description":"Signature-bound canonical base64 X25519 public key held by the owner; never an unsigned discovered key."},"bridge_audience":{"type":"string","description":"Exact current bridge origin, without a trailing slash; derive it from this manifest authority, never a caller-selected different service."}},"required":["action","bridge_audience","course_iri"],"allOf":[{"if":{"properties":{"mode":{"const":"record-progress"}},"required":["mode"]},"then":{"required":["advanced_slide_ids","owner_encryption_key"]}}]}. sign_request binds authenticated agent_id and timestamp. Put every action field inside this signed payload; unsigned outer fields provide no authority. Standard sign_request ECDSA envelopes only; browser _session grant envelopes are refused on these durable-proof actions. |
+| `_signature` | string | yes | The real signature returned by sign_request over that exact inner payload; never a placeholder. |
 
 ## `foxxi.ask_course_question`
 

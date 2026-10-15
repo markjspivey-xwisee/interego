@@ -389,3 +389,31 @@ export function requiredArgsRefusal(
       + 'help; fix the argument.',
   };
 }
+
+
+/**
+ * Optional discovery selectors must be omitted or usable, never silently defaulted.
+ * This is checked before transport identity defaults can overwrite falsy wire values,
+ * and again at the handler before resolving a subject. podUrl is the resolver's legacy
+ * alias; accepting it does not make a mistyped alias an instruction to read "my pod".
+ */
+export function discoverySelectorRefusal(args: Record<string, unknown>): RequiredArgsRefusal | null {
+  const invalid: InvalidArg[] = [];
+  for (const name of ['pod_url', 'pod_name', 'podUrl']) {
+    const value = args[name];
+    if (value === undefined) continue;
+    if (typeof value === 'string' && value.trim().length > 0) continue;
+    invalid.push({ name, expected: 'a non-empty string', received: describeValue(value) });
+  }
+  if (invalid.length === 0) return null;
+  return {
+    error: 'invalid_required_argument',
+    code: 400,
+    retryable: false,
+    missing: [],
+    invalid,
+    message: 'discover_context requires each supplied pod selector to be a non-empty string. '
+      + invalid.map(item => item.name + ' arrived as ' + item.received + '.').join(' ')
+      + ' Omit the selectors to use the authenticated caller pod; malformed selectors never select it.',
+  };
+}

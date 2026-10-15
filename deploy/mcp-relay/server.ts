@@ -400,7 +400,7 @@ import {
 import { resolveInteropPrincipal } from './interop-principal.js';
 import { NotificationLog } from './notification-log.js';
 import { POD_STATUS_ENTRY_BUDGET_BYTES, podStatusEntryPage } from './pod-status-page.js';
-import { ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
+import { discoverySelectorRefusal, ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
 import { turtleIriArgs } from './turtle-iri-args.js';
 import { parseSealedPayload, type SealedPayload } from './sealed-payload.js';
 import {
@@ -4453,6 +4453,8 @@ async function handlePgslDecide(args: ToolArgs): Promise<string> {
 }
 
 async function handleDiscoverContext(args: ToolArgs): Promise<string> {
+  const selectorRefusal = discoverySelectorRefusal(args);
+  if (selectorRefusal) return JSON.stringify(selectorRefusal);
   // `pod_name` was accepted by the wire, injected by three of the four dispatchers, and
   // read by nothing here — so `discover_context { pod_name: "<not yours>" }` listed the
   // caller's own descriptors and the response named no pod, exactly the unattributable
@@ -12877,6 +12879,11 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // pod-selector markers to that constant would then have left this transport — the
     // one the original defect was measured on — accepting a forged marker.
     stripReservedWireFields(args);
+    const selectorRefusal = name === 'discover_context' ? discoverySelectorRefusal(args) : null;
+    if (selectorRefusal) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify(selectorRefusal) }],
+        structuredContent: { ...selectorRefusal }, isError: true };
+    }
     // Inject identity from auth context so the authenticated user's default
     // pod / agent / WebID fill in when the caller doesn't specify them.
     // Applies to ALL tools, not just writes — lets reads like get_pod_status
@@ -16151,6 +16158,12 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     return;
   }
 
+  const selectorRefusal = toolName === 'discover_context' ? discoverySelectorRefusal(req.body ?? {}) : null;
+  if (selectorRefusal) {
+    res.type('application/ld+json').send(decorateRelayShimText(toolName, JSON.stringify(selectorRefusal)));
+    return;
+  }
+
   // Auth check for write operations. Two paths accepted: OAuth bearer
   // (browser-mediated, the claude.ai/ChatGPT connector flow) OR an
   // ECDSA signed-request envelope (headless-agent flow — see
@@ -16287,6 +16300,11 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // recovered DID is then bound so a signed read still defaults to the caller's own pod.
     // POD_NAME_INJECTED is set AFTER the strip so the legitimate marker survives.
     unwrapSignedPayloadInto(req.body);
+    const signedSelectorRefusal = toolName === 'discover_context' ? discoverySelectorRefusal(req.body) : null;
+    if (signedSelectorRefusal) {
+      res.type('application/ld+json').send(decorateRelayShimText(toolName, JSON.stringify(signedSelectorRefusal)));
+      return;
+    }
     if (sig.authenticated && sig.recoveredDid) {
       req.body.agent_id = sig.recoveredDid;
       // Derived from the DID itself rather than a hand-sliced address — same shared fact as the
@@ -16301,7 +16319,7 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // ordinary REST bearer entirely. Bind it only for this defaulting read; never
     // auto-register a card or create a pod as a consequence of reading.
     const auth = await verifyBearerToken(req.headers.authorization);
-    if (auth.authenticated) injectRestVerifiedIdentity(req.body, auth, false);
+    if (auth.authenticated) injectRestVerifiedIdentity(req.body ??= {}, auth, false);
   }
 
   try {
@@ -16600,6 +16618,13 @@ app.post('/messages', messagesLimiter, async (req, res) => {
     }
 
     const args: Record<string, unknown> = { ...(params?.arguments ?? {}) };
+    const selectorRefusal = toolName === 'discover_context' ? discoverySelectorRefusal(args) : null;
+    if (selectorRefusal) {
+      res.json({ jsonrpc: '2.0', id, result: {
+        content: [{ type: 'text', text: JSON.stringify(selectorRefusal) }], structuredContent: selectorRefusal,
+      } });
+      return;
+    }
     if (AUTH_REQUIRED_TOOLS.has(toolName)) {
       // Same dual-path auth as /tool/:name: OAuth bearer OR ECDSA
       // signed-request envelope. See verifySignedRequest for the
