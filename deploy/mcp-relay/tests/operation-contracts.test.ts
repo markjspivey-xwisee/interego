@@ -16,7 +16,8 @@
  *
  * Run from deploy/mcp-relay/:  npx tsx tests/operation-contracts.test.ts
  */
-import { contractDocument, operationActionUrl, operationContract } from '../operation-contracts.js';
+import { contractDocument, operationActionUrl, operationContract, operationsCatalogTurtle } from '../operation-contracts.js';
+import { findSubjectsOfType, parseTrig, readIriValue, readStringValue } from '@interego/core';
 
 let pass = 0;
 let fail = 0;
@@ -90,6 +91,45 @@ const BOTH = { inputSchema: { type: 'object', properties: { a: { type: 'string' 
   ok('no doubled slash in expects', !String(c.expects).includes('//.well-known'), String(c.expects));
   ok('no doubled slash in action', !operationActionUrl(`${BASE}/`, 'mint').includes('//ns/'),
     operationActionUrl(`${BASE}/`, 'mint'));
+}
+
+
+// The Turtle projection preserves identity and escapes prose without changing the JSON source.
+{
+  const member = {
+    '@id': 'urn:iep:operation:example',
+    action: operationActionUrl(BASE, 'example'),
+    target: BASE + '/tool/example',
+    method: 'POST',
+    title: 'A "quoted" title\nwith a new line',
+    description: 'A backslash \\ and a tab\tremain data.',
+    expects: operationContract(BASE, 'example', BOTH).expects!,
+  };
+  const catalog = {
+    '@id': BASE + '/.well-known/operations',
+    'dct:identifier': 'sha256:unchanged',
+    'hydra:member': [member],
+  };
+  const original = JSON.stringify(catalog);
+  const doc = parseTrig(operationsCatalogTurtle(catalog));
+  const operation = findSubjectsOfType(doc, 'https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance')[0];
+  ok('Turtle projection leaves the JSON catalog untouched', JSON.stringify(catalog) === original);
+  ok('Turtle operation keeps its action and target', operation !== undefined
+    && readIriValue(operation, 'https://markjspivey-xwisee.github.io/interego/ns/iep#action') === member.action
+    && readIriValue(operation, 'http://www.w3.org/ns/hydra/core#target') === member.target);
+  ok('Turtle projection round trips quoted and multiline titles', operation !== undefined
+    && readStringValue(operation, 'http://www.w3.org/ns/hydra/core#title') === member.title);
+  ok('Turtle projection round trips escaped prose', operation !== undefined
+    && readStringValue(operation, 'http://purl.org/dc/terms/description') === member.description);
+  ok('an absent output schema remains absent in Turtle', operation !== undefined
+    && readIriValue(operation, 'http://www.w3.org/ns/hydra/core#returns') === undefined);
+  ok('an empty catalog contains no invented affordance',
+    findSubjectsOfType(parseTrig(operationsCatalogTurtle({ ...catalog, 'hydra:member': [] })),
+      'https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance').length === 0);
+  let refused = false;
+  try { operationsCatalogTurtle({ ...catalog, '@id': 'https://bad.example/> injected' }); }
+  catch { refused = true; }
+  ok('unusable catalog IRIs are refused instead of interpolated into Turtle', refused);
 }
 
 console.log(`operation-contracts: ${pass} passed, ${fail} failed`);

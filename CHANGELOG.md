@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-15 — Live capability directory and workbench examples
+
+The I2IDL-X directory now reads current Foxxi and Relay contracts, including the twelve operations absent from its embedded snapshot. Typed inputs, editable examples and returned evidence distinguish a live execution from input validation or a task packet for a connected AI client. Protected writes remain in that client’s authenticated flow; credentials are refused by the public example runner.
+
+The four advertised stub operations now load real lessons, verify configured LMS connections, and publish encrypted concept maps or caller-reported compliance artifacts with readback checks. They require a verified own-pod identity and signature-bound owner encryption key for writes. Loading a lesson does not assert completion, an LMS probe does not schedule synchronization, and reported events do not establish regulatory compliance. Capability descriptions now match actual computation and document-building behavior. LRS discovery explicitly exposes this deployment’s transient in-memory storage.
+
 ## 2026-10-14 — I2IDL-X hosted application and reference links
 
 The application link now points to the verified Foxxi-hosted I2IDL-X workbench, with a direct link to its generated reference. The existing Claude artifact remains an explicit archive and the native bootstrap retains that archived fallback. Durable shared and private saves require an established browser-held encryption key; hosted browsing and connected-client task delivery do not depend on a project-paid model key.

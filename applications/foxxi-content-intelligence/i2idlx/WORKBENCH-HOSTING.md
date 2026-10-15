@@ -80,3 +80,16 @@ As an optional fallback, a user can enter their own OpenAI API key and model nam
 These tests use generated test wallets and an in-memory HTTP pod double. They are software verification fixtures, not evidence of a live Interego write or deployed Railway behavior. Use `railway.toml` from the repository root and configure `railway.env.example` on the existing bridge service; these files create no service, database or new paid model connection by themselves.
 
 Run the repository build/typecheck and targeted test module in CI, then verify production build identity and actual route responses after a separately authorized deployment.
+
+
+## Trying capabilities in the hosted workbench
+
+Open [Capability directory](https://foxxi-bridge.interego.xwisee.com/i2idlx/#agents-directory) and refresh the live inventory. The hosted directory reads the deployment's Foxxi contracts and Relay's advertised operations and input schemas; an unavailable source is shown as partial, and the embedded build snapshot remains explicitly unverified.
+
+Expand an operation, choose **Load example**, edit its typed fields or JSON, and use **Run live example** where offered. The result shows the actual target response, HTTP status, timestamp and duration. Good starting points are LRS discovery, intervention methods, decoration binding and Relay descriptor composition. LRS discovery reports the current deployment's storage mode; the present in-memory LRS is transient and loses records on restart.
+
+**Validate inputs** checks supported declared input constraints without invoking the operation. Protected operations provide a prepared call for an authenticated Interego client and display the required identity, permissions, data and configuration. **Prepare client task** returns real grounded instructions for the connected AI client; it does not execute a model or complete the workflow. A listed operation or a schema-valid request is not execution evidence.
+
+Do not paste API keys, passwords, private keys, seeds, bearer headers or signed envelopes into this public runner. Its fixed client placeholders support contract checks; the connected client supplies real credentials through its existing identity or key provider. Explicit public examples perform no primary pod/lattice writes or project-paid model calls; ordinary access logs and operational service telemetry may still be recorded.
+
+The four formerly unimplemented actions use authenticated own-pod access. Lesson loading does not certify consumption or completion. Progress claims and reported compliance events remain Hypothetical and are encrypted with a signature-bound owner key. Concept-map publication reads the real on-pod course package and verifies encrypted publication readback. LMS verification requires an operator-configured HTTPS account probe; it does not schedule synchronization. These operations cannot write without the required owner-held encryption key and deployment configuration.

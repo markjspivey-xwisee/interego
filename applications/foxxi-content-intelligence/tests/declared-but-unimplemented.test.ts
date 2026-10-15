@@ -1,29 +1,7 @@
 /**
- * A declared capability that is not implemented must say so in its result.
- *
- * ★ WHY. Five handlers returned a success-shaped body for work they never did. Four
- * still do; foxxi.explore_concept_map now reads the on-pod fxa:CoursePackageBundle:
- *
- *     foxxi.explore_concept_map         -> { concepts: [], edges: [], note: 'stub: …' }  (CLOSED)
- *     foxxi.consume_lesson              -> { consumed: false, note: 'stub: …' }
- *     foxxi.connect_lms                 -> { note: 'stub: …' }
- *     foxxi.publish_concept_map         -> { note: 'stub: …' }
- *     foxxi.publish_compliance_evidence -> { note: 'stub: …' }
- *
- * All HTTP 200, none carrying an `error`, so a caller checking for failure the normal
- * way saw success. explore_concept_map was probed live in four configurations —
- * unauthenticated, signed, against a real ingested course, and by course_id — and
- * returned the identical empty graph every time. A consumer reads that as "this course
- * has no concepts", which is a different and wrong answer.
- *
- * The two `publish_*` names are the sharp end. A caller has every reason to believe a
- * write happened, and for publish_compliance_evidence that belief is the kind an audit
- * later rests on.
- *
- * Keeping them declared is fine — the affordance is real planned work and a manifest
- * that says what is coming is useful. Answering as though the work happened is not.
- * Same rule as the refused-statement fix: never report success for something that did
- * not occur.
+ * Advertised directory operations must have implementations and answer through their authenticated
+ * production adapter. Behavioral tests in directory-actions.test.ts exercise ECDSA proof, source
+ * hydration, encryption, actual Solid transport/readback and honest reported-event semantics.
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -35,76 +13,28 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const server = readFileSync(join(ROOT, 'bridge', 'server.ts'), 'utf8');
 const ALL = [...foxxiAffordances, ...foxxiAdminAffordances];
 
-describe('a declared-but-unimplemented capability answers honestly', () => {
-  it('no handler returns a success-shaped stub body', () => {
-    // The exact marker the five stubs shared. Its absence is the invariant.
+describe('declared directory capabilities are implemented honestly', () => {
+  it('does not retain any named notImplemented stubs or success-shaped stub bodies', () => {
+    expect(server).not.toMatch(/return notImplemented\(/);
     expect(server).not.toMatch(/note: 'stub: bridge handler not yet wired/);
   });
-
-  // ★ THIS WAS A COUNT, AND THE COUNT RATCHETED AGAINST THE WORK. It asserted
-  // `notImplemented(` call sites `.toBeGreaterThanOrEqual(5)` over exactly five stubs,
-  // so implementing ANY ONE dropped the count to 4 and turned this suite red. The
-  // honesty fix had made the stub state load-bearing in CI: the correct change failed
-  // and the incorrect one passed. A count also cannot say WHICH tool regressed.
-  //
-  // Named instead. Shrinking this list is how an implementation lands; a tool that
-  // quietly reverts to a stub without being added back still fails, via the second
-  // assertion below.
-  const STILL_STUBBED = [
-    'foxxi.connect_lms',
-    'foxxi.consume_lesson',
-    'foxxi.publish_compliance_evidence',
-    'foxxi.publish_concept_map',
-  ] as const;
-
-  it('every still-stubbed tool answers through the honest helper', () => {
-    for (const tool of STILL_STUBBED) {
-      expect(server, `${tool} must answer via notImplemented()`)
-        .toMatch(new RegExp(`return notImplemented\\('${tool.replace('.', '\\.')}'`));
-    }
-  });
-
-  it('nothing answers through notImplemented() without being listed as stubbed', () => {
-    // The direction a count could not check, in BOTH senses: a newly-added stub that
-    // was never declared here, and an implemented tool left stale in the list.
-    const named = [...server.matchAll(/return notImplemented\('([^']+)'/g)].map(m => m[1]).sort();
-    expect(named).toEqual([...STILL_STUBBED].sort());
-  });
-
-  it('explore_concept_map reads the pod instead of answering with an empty graph', () => {
-    // The one this increment closed — pinned by name so a revert to the stub is
-    // reported as itself and not as "a count changed".
-    const idx = server.indexOf(`'foxxi.explore_concept_map': async`);
+  it.each(['consume_lesson', 'connect_lms', 'publish_concept_map', 'publish_compliance_evidence'])('%s reaches the authenticated production implementation', tool => {
+    const idx = server.indexOf("'foxxi." + tool + "': async");
     expect(idx).toBeGreaterThan(-1);
-    // Bounded by the NEXT handler key, not by a character count: a fixed window silently
-    // slid off the end of this body when the handler grew a comment, so the assertion
-    // failed for a reason that had nothing to do with the behaviour it guards.
-    const after = server.indexOf(`\n  'foxxi.`, idx + 1);
-    expect(after, 'could not find the end of the handler').toBeGreaterThan(idx);
+    const after = server.indexOf("\n  'foxxi.", idx + 1);
+    expect(after).toBeGreaterThan(idx);
+    const body = server.slice(idx, after);
+    expect(body).toContain("directoryActions.run('" + tool + "'");
+    expect(body).not.toMatch(/notImplemented\(/);
+  });
+  it('explore_concept_map continues to read the actual pod package', () => {
+    const idx = server.indexOf("'foxxi.explore_concept_map': async");
+    expect(idx).toBeGreaterThan(-1);
+    const after = server.indexOf("\n  'foxxi.", idx + 1);
     const body = server.slice(idx, after);
     expect(body).toMatch(/autoFetchCourse\(/);
     expect(body).toMatch(/buildConceptNavGraph\(/);
-    expect(body, 'it must not have gone back to notImplemented').not.toMatch(/notImplemented\(/);
   });
-
-  it('the helper produces an error a caller can branch on', () => {
-    const fn = server.slice(server.indexOf('function notImplemented'), server.indexOf('function notImplemented') + 700);
-    expect(fn).toMatch(/error:/);
-    expect(fn).toMatch(/implemented: false/);
-    expect(fn, 'the message must say nothing happened, not merely that it is a stub')
-      .toMatch(/nothing was read, written or emitted/i);
-  });
-
-  it('the write-shaped stubs say plainly that nothing was written', () => {
-    for (const tool of ['foxxi.publish_concept_map', 'foxxi.publish_compliance_evidence']) {
-      const idx = server.indexOf(`'${tool}'`);
-      expect(idx, `${tool} handler not found`).toBeGreaterThan(-1);
-      const body = server.slice(idx, idx + 900);
-      expect(body, `${tool} must not let a caller believe a write happened`)
-        .toMatch(/NOTHING WAS PUBLISHED|NO COMPLIANCE EVIDENCE WAS RECORDED/);
-    }
-  });
-
   // ── Descriptions must not promise behaviour that is not wired ────────────
   //
   // Two were tested directly rather than read: derive_adaptive_policy claimed

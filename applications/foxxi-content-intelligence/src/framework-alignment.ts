@@ -115,6 +115,10 @@ export function resolveAlignment(args: {
       };
     }
     for (const edge of args.alignments) {
+      // A prerequisite, ordering or broader/narrower relation does not assert
+      // interchangeable competence. Only the advertised alignment relations can
+      // satisfy this reachability check.
+      if (edge.associationType !== 'isAlignedTo' && edge.associationType !== 'isEquivalentTo') continue;
       if (edge.originNode.uri === node) {
         queue.push({ node: edge.destinationNode.uri, chain: [...chain, edge] });
       } else if (edge.destinationNode.uri === node && (edge.associationType === 'isAlignedTo' || edge.associationType === 'isEquivalentTo')) {

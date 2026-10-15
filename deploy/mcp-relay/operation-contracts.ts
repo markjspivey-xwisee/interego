@@ -37,6 +37,8 @@
  * a client a shapes graph will answer, so the client goes and looks.
  */
 
+import { escapeTurtleLiteral, turtleIriRef } from '@interego/core';
+
 /** A tool's published JSON Schemas, as `TOOL_SCHEMAS` carries them. */
 export interface OperationSchemas {
   readonly inputSchema?: unknown;
@@ -103,4 +105,76 @@ export function contractDocument(
     title: `${name} — ${kind === 'input' ? 'request body' : 'response'}`,
     ...(schema as Record<string, unknown>),
   };
+}
+
+
+/** The same operation fields the JSON catalog publishes, projected without renaming them. */
+export interface CatalogOperation {
+  readonly '@id': string;
+  readonly action: string;
+  readonly target: string;
+  readonly method: string;
+  readonly title: string;
+  readonly description: string;
+  readonly expects?: string;
+  readonly returns?: string;
+  readonly 'hydra:expectsHeader'?: readonly Readonly<{
+    'hydra:headerName': string;
+    'hydra:required': boolean;
+  }>[];
+}
+
+export interface OperationsCatalog {
+  readonly '@id': string;
+  readonly 'dct:identifier': string;
+  readonly 'hydra:member': readonly CatalogOperation[];
+}
+
+/**
+ * A Turtle/TriG projection for the substrate's actual affordance follower.
+ *
+ * followAffordance requests Turtle/TriG and parses those formats. Returning JSON-LD to
+ * that request made this relay's own operations catalog impossible to follow, even
+ * though its targets worked directly. Project the SAME members and contracts here;
+ * JSON and JSON-LD keep their existing representation and identifier.
+ */
+export function operationsCatalogTurtle(catalog: OperationsCatalog): string {
+  const iri = (value: string): string => {
+    const term = turtleIriRef(value);
+    if (!term) throw new TypeError('operations catalog contains an unusable IRI');
+    return term;
+  };
+  const literal = (value: string): string => '"' + escapeTurtleLiteral(value) + '"';
+  const members = catalog['hydra:member'];
+  const lines = [
+    '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .',
+    '@prefix hydra: <http://www.w3.org/ns/hydra/core#> .',
+    '@prefix dct: <http://purl.org/dc/terms/> .',
+    '',
+  ];
+  const root = [
+    'a hydra:Collection, <urn:iep:type:OperationsCatalog>',
+    'dct:identifier ' + literal(catalog['dct:identifier']),
+    'hydra:totalItems ' + String(members.length),
+  ];
+  if (members.length > 0) root.push('hydra:member ' + members.map(member => iri(member['@id'])).join(', '));
+  lines.push(iri(catalog['@id']) + '\n    ' + root.join(' ;\n    ') + ' .', '');
+  for (const member of members) {
+    const properties = [
+      'a iep:Affordance, hydra:Operation',
+      'iep:action ' + iri(member.action),
+      'hydra:target ' + iri(member.target),
+      'hydra:method ' + literal(member.method),
+      'hydra:title ' + literal(member.title),
+      'dct:description ' + literal(member.description),
+    ];
+    if (member.expects) properties.push('hydra:expects ' + iri(member.expects));
+    if (member.returns) properties.push('hydra:returns ' + iri(member.returns));
+    for (const header of member['hydra:expectsHeader'] ?? []) {
+      properties.push('hydra:expectsHeader [ hydra:headerName ' + literal(header['hydra:headerName'])
+        + ' ; hydra:required ' + String(header['hydra:required']) + ' ]');
+    }
+    lines.push(iri(member['@id']) + '\n    ' + properties.join(' ;\n    ') + ' .', '');
+  }
+  return lines.join('\n');
 }

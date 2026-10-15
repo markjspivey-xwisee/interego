@@ -458,6 +458,9 @@ import {
 } from '../src/scorm-sequencing.js';
 import { resolveAgentEncryptionKey } from '@interego/solid';
 import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
+import { DirectoryActions, DirectoryActionError, makeDirectoryActionAuthorizer, configuredLmsFromEnv } from '../src/directory-actions.js';
+import { attachCapabilityDirectoryRoutes } from '../src/i2idlx-capability-runner.js';
+import { FOXXI_CAPABILITY_ANNOTATIONS } from '../src/capability-annotations.js';
 import type { PrivateAuthResult } from '../src/private-performance-auth.js';
 import { attachPerformanceRoutes, offerFromWork, WORK_OFFER_WINDOW, type WorkOffer } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
@@ -2395,47 +2398,6 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
 
 // ── Handlers ───────────────────────────────────────────────────────────
 
-/**
- * A capability that is declared but not implemented must SAY SO in its result.
- *
- * ★ Five handlers returned a success-shaped body for work they never did. FOUR still
- * do — `foxxi.explore_concept_map` is now implemented (it reads the on-pod
- * fxa:CoursePackageBundle via autoFetchCourse + buildConceptNavGraph):
- *
- *     foxxi.consume_lesson             -> { consumed: false, note: 'stub: …' }
- *     foxxi.connect_lms                -> { note: 'stub: …' }
- *     foxxi.publish_concept_map        -> { note: 'stub: …' }
- *     foxxi.publish_compliance_evidence-> { note: 'stub: …' }
- *
- * All HTTP 200, none with an `error`. A caller checking for failure the normal way
- * saw success. `explore_concept_map` was probed live in four configurations —
- * unauthenticated, signed, with a real ingested course, and by course_id — and
- * returned the identical empty graph every time; a consumer would read that as "this
- * course has no concepts" rather than "this endpoint does nothing".
- *
- * The two `publish_*` names are the sharp end: a caller has every reason to believe a
- * write happened, and for publish_compliance_evidence that belief is exactly the kind
- * an audit later rests on.
- *
- * Same rule as the refused-statement fix: do not report success for something that
- * did not happen. These stay declared — the affordance is real future work and the
- * manifest says what is coming — but they answer honestly, and `implemented: false`
- * gives a caller something to branch on rather than a shape to misread.
- */
-function notImplemented(tool: string, detail: string): Record<string, unknown> {
-  return {
-    // 501. This bridge PUBLISHES the affordance and cannot run it; that is a defect in the
-    // deployment, never something the caller can fix by changing arguments. At 200 it was
-    // indistinguishable from success — the exact shape of "advertise only what you can run",
-    // stated in HTTP.
-    kind: 'refusal' as const,
-    'iep:refusalStatus': 501,
-    'iep:refusalReason': 'the affordance is declared by this deployment but has no implementation behind it',
-    error: `${tool} is declared but not implemented — nothing was read, written or emitted`,
-    implemented: false,
-    detail,
-  };
-}
 
 /**
  * What KIND of subject is this — decided by the subject, never by the reader.
@@ -2844,6 +2806,30 @@ async function judgeAutonomy(podUrl: string, entries: readonly EntityEntry[], ju
   const decision = autonomyDecision(policy, standingOf(judge, kind, snapshot, latest));
   return iri ? { ...decision, policyIri: iri } : decision;
 }
+// Existing own-pod identity and delegation gates authorize these work products.
+// A request cannot select a different tenant or substitute unsigned course content.
+const directoryActions = new DirectoryActions({
+  authorize: makeDirectoryActionAuthorizer({
+    audience: bridgeBaseUrl,
+    verifyCaller: verifyPrivatePerformanceCaller,
+    ownPod: privatePerformancePod,
+    samePod: (a, b) => a !== undefined && samePod(canonicalPublicPodUrl(a), canonicalPublicPodUrl(b)),
+  }),
+  course: async (authority, courseIri) => {
+    const id = courseIdFrom({ course_iri: courseIri });
+    if (!id) throw new DirectoryActionError('course_iri must identify an ingested course package');
+    return await fetchCoursePackage(id, {
+      podUrl: authority.pod,
+      authoritativeSource: sourceForPod(authority.pod),
+      adminKeyPair,
+      fetch: guardedFetchFn(globalThis.fetch) as typeof fetch,
+    }) as FoxxiAgenticPayload;
+  },
+  fetch: guardedFetchFn(globalThis.fetch) as typeof fetch,
+  encryptionKeypair: () => workbenchEncryptionKeypair(process.env.FOXXI_BRIDGE_PRIVATE_KEY),
+  configuredLms: () => configuredLmsFromEnv(process.env.FOXXI_LMS_CONNECTORS),
+});
+
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   // ── Emergent standards-extension (agp layer re-integrated) ──────────
   // Afforded by the agentic-performance layer composing Foxxi's standards;
@@ -2897,10 +2883,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     return { ...result, accessDecision: trace };
   },
 
-  'foxxi.consume_lesson': async (args) => {
-    // Real implementation streams the parsed lesson + emits xAPI via lrs-adapter.
-    return notImplemented('foxxi.consume_lesson', 'Wiring composes applications/lrs-adapter/ to stream the parsed lesson and emit xAPI.');
-  },
+  'foxxi.consume_lesson': async (args) => directoryActions.run('consume_lesson', args),
 
   'foxxi.ask_course_question': async (args) => {
     if (!args.course_content) {
@@ -3122,11 +3105,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     return publishAuthoringPolicy({ policy, config });
   },
 
-  'foxxi.connect_lms': async (args) => {
-    // Skeleton: composes with src/connectors/ in the real wiring.
-    void args;
-    return notImplemented('foxxi.connect_lms', 'Wiring composes src/connectors/ for the upstream LMS.');
-  },
+  'foxxi.connect_lms': async (args) => directoryActions.run('connect_lms', args),
 
   'foxxi.assign_audience': async (args) => {
     // Unwrap a PoP envelope FIRST so course_iri / audience_tag / tenant_pod_url
@@ -3181,10 +3160,11 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
   },
 
   'foxxi.coverage_query': async (args) => {
+    if (!Array.isArray(args.coverage)) return invalidArguments('coverage must be an explicit array of caller-supplied coverage records; this operation does not discover learner records.');
     const config = configOrThrow(args);
     const q: CoverageQueryArgs = {
       config,
-      coverage: (args.coverage as CoverageQueryArgs['coverage']) ?? [],
+      coverage: args.coverage as CoverageQueryArgs['coverage'],
       privacyMode: args.privacy_mode as CoverageQueryArgs['privacyMode'],
       epsilon: args.epsilon as number | undefined,
       distributionEdges: args.distribution_edges
@@ -3197,17 +3177,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     return coverageQuery(q);
   },
 
-  'foxxi.publish_concept_map': async (args) => {
-    // Skeleton: would re-publish the fxk: stratum graph with explicit share_with.
-    void args;
-    return notImplemented('foxxi.publish_concept_map', 'Wiring re-publishes the fxk: stratum graph with an explicit share_with. NOTHING WAS PUBLISHED.');
-  },
+  'foxxi.publish_concept_map': async (args) => directoryActions.run('publish_concept_map', args),
 
-  'foxxi.publish_compliance_evidence': async (args) => {
-    // Skeleton: composes with integrations/compliance-overlay/ + src/ops/.
-    void args;
-    return notImplemented('foxxi.publish_compliance_evidence', 'Wiring composes integrations/compliance-overlay/ via recordAgentAction. NO COMPLIANCE EVIDENCE WAS RECORDED — do not treat a call to this as an audit artifact.');
-  },
+  'foxxi.publish_compliance_evidence': async (args) => directoryActions.run('publish_compliance_evidence', args),
 
   // ── Credentialing (ADL TLA / IEEE LERS / 1EdTech CLR 2.0) ────────────
 
@@ -11940,6 +11912,15 @@ app.post('/agent/scorm/author', async (req, res) => {
       content: course as unknown as Record<string, unknown>,
       contentType: 'foxxi:Course', projections: ['rdf', 'vc', 'activity'],
     });
+    if (sharedLattice?.persisted !== true) {
+      res.status(503).json({
+        ok: false, code: 'persistence-unconfirmed',
+        error: 'The course was parsed, but its own-pod persistence was not confirmed. Check the pod before retrying the same course id.',
+        authoredBy: auth.callerDid, courseId: course.courseId, manifestValid: true, courseIri: courseIriUrl,
+        ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}),
+      });
+      return;
+    }
     sendActionResult(req, res, { ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, courseIri: courseIriUrl, ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) }, bridgeBaseUrl, 'Course authored', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_launch'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
@@ -12528,6 +12509,14 @@ attachWorkbenchRoutes(app, {
   siteDirectory: process.env.FOXXI_I2IDLX_SITE_DIR || undefined,
   distDirectory: process.env.FOXXI_I2IDLX_DIST_DIR || undefined,
   appDataFile: process.env.FOXXI_I2IDLX_APP_DATA_FILE || undefined,
+});
+
+attachCapabilityDirectoryRoutes(app, {
+  baseUrl: bridgeBaseUrl,
+  foxxiAffordances: activeAffordances,
+  fetch: guardedFetchFn(globalThis.fetch) as typeof fetch,
+  build: process.env.INTEREGO_BUILD_SHA,
+  annotations: FOXXI_CAPABILITY_ANNOTATIONS,
 });
 
 // Terminal JSON error handler: a malformed request body makes body-parser throw a SyntaxError

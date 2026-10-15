@@ -1,16 +1,17 @@
 // Agent console: the HyprCat catalog on Interego, the published graphs, stored queries you can try here
 // and run live, and the Foxxi / Interego capability directory with what each action enacts.
-import { META, PORTS, ACTIONS, byId, conceptsByAction, roleById, systemLabel, COLLECTIONS } from "../data.js";
+import { META, PORTS, byId } from "../data.js";
 import { Icon } from "../icons.jsx";
 import { ConceptChip, CodeBlock, CopyBtn, MethodTag, ModalChip, Seg, useUI } from "../ui.jsx";
 import { ConceptPicker } from "../picker.jsx";
 import { QUERIES, bind, runLocal, defaults, COLLECTION_OPTIONS, PARAM_KIND } from "../queries.js";
 import { actQuery, curlQuery, liveGet, pretty } from "../lib.js";
-import { cx, plural, useStored, go } from "../util.js";
+import { plural, useStored } from "../util.js";
 
 import { OriginStrip } from "../origin.jsx";
 import { curieOf } from "../semantic.js";
-const { useState, useMemo, useEffect } = React;
+import { Directory } from "./directory.jsx";
+const { useState, useEffect } = React;
 
 const SEMANTIC_PORTS = new Set(["port-vocabulary", "port-alignments", "port-referents"]);
 const GROUP_OF = (p) => (p.routed ? "Human-routed" : SEMANTIC_PORTS.has(p.id) ? "Semantic layer (graphs on Interego)" : p.action.includes("/action/foxxi/") ? "Foxxi capabilities" : p.tpl ? "Per-concept templates" : !p.ro ? "Governed writes through Interego" : "Reads on the live glossary");
@@ -206,62 +207,6 @@ function Result({ res }) {
         </table>
       </div>
     </div>
-  );
-}
-
-function Directory({ route }) {
-  const [q, setQ] = useState("");
-  const [sys, setSys] = useStored("ag.sys", "linked");
-  const all = useMemo(() => Object.entries(ACTIONS).map(([iri, a]) => ({ iri, ...a, enacts: conceptsByAction.get(iri) || [] })), []);
-  const list = all.filter((a) => (sys === "linked" ? a.enacts.length : sys === "all" ? true : a.sys === sys))
-    .filter((a) => !q.trim() || (a.t + " " + a.n + " " + (a.d || "")).toLowerCase().includes(q.trim().toLowerCase()))
-    .sort((a, b) => b.enacts.length - a.enacts.length || (a.t || a.n).localeCompare(b.t || b.n));
-  const counts = { linked: all.filter((a) => a.enacts.length).length, foxxi: all.filter((a) => a.sys === "foxxi").length, relay: all.filter((a) => a.sys === "relay").length, all: all.length };
-  return (
-    <section id="directory" className="stack">
-      <div className="sec-h"><h2>Capability directory</h2><span className="meta">Foxxi bridge and Interego relay actions, read live from their manifests at build time</span></div>
-      <div className="row wrap">
-        <Seg label="Which actions" value={sys} onChange={setSys} options={[{ v: "linked", l: `Enact a term · ${counts.linked}` }, { v: "foxxi", l: `Foxxi · ${counts.foxxi}` }, { v: "relay", l: `Interego relay · ${counts.relay}` }, { v: "all", l: `All · ${counts.all}` }]} />
-        <span className="spacer" />
-        <input className="input" style={{ width: 240 }} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter actions…" />
-      </div>
-      <div className="actions-dir">{list.map((a) => <ActionRow key={a.iri} a={a} />)}</div>
-    </section>
-  );
-}
-
-function ActionRow({ a }) {
-  const id = "act-" + a.sys + "." + a.n;
-  const args = Object.fromEntries((a.in || []).filter((x) => x.req).map((x) => [x.n, `<${x.n}>`]));
-  // relay operations are the Interego connector's own tools; bridge actions are followed with act
-  const call = a.sys === "relay" ? `${a.n} ${pretty(args)}` : pretty({ descriptor_url: META.foxxiManifest, action_iri: a.iri, payload: args });
-  return (
-    <details className="port" id={id}>
-      <summary>
-        <MethodTag m={a.m} />
-        <span className="pt">{a.t || a.n}</span>
-        <span className="row" style={{ gap: 6 }}>{a.enacts.length ? <span className="tag post">enacts {a.enacts.length}</span> : null}<span className="tag">{systemLabel(a.sys)}</span><Icon name="down" /></span>
-        <span className="pu">{a.n} · {a.u}</span>
-      </summary>
-      <div className="pb">
-        {a.d ? <p className="small">{a.d}</p> : null}
-        {a.enacts.length ? (
-          <div className="stack" style={{ gap: 4 }}>
-            <b className="small">Enacts</b>
-            <div className="chips">{a.enacts.map((e) => <span key={e.c + e.how} className="row" style={{ gap: 4 }}><span className="tiny muted">{e.how === "role" ? "role capability of" : roleById.get(e.how).label}</span><ConceptChip id={e.c} /></span>)}</div>
-          </div>
-        ) : null}
-        <dl className="kv">
-          <dt>Action</dt><dd><code className="iri">{a.iri}</code></dd>
-          <dt>Target</dt><dd><code className="iri">{a.u}</code></dd>
-          {a.ro != null ? <><dt>Hints</dt><dd>{a.ro ? "read-only" : "writes"}{a.de ? " · destructive" : ""}{a.ix ? " · idempotent" : ""}{a.xr ? " · externally routed" : ""}</dd></> : null}
-          {a.auth ? <><dt>Auth</dt><dd>Authorization header required</dd></> : null}
-          {a.co && a.co.length ? <><dt>Applies to</dt><dd>{a.co.join(", ")}</dd></> : null}
-        </dl>
-        {a.in && a.in.length ? <div className="inputs">{a.in.map((x) => <div className="in" key={x.n}><code>{x.n}{x.req ? <span className="req"> *</span> : null}</code><span className="muted">{x.c || ""}</span></div>)}</div> : <div className="small muted">No input.</div>}
-        <CodeBlock title={a.sys === "relay" ? "Interego tool call" : "Through Interego (act)"} code={call} />
-      </div>
-    </details>
   );
 }
 

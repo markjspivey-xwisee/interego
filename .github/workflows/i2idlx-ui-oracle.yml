@@ -227,6 +227,8 @@ jobs:
         run: python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT"
       - name: Hosted path without credentials or model capabilities
         run: python3 -I tools/i2idlx-hosted-visitor-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: Capability directory typed inputs, results, freshness and credential boundary
+        run: python3 -I "$I2IDLX_ROOT/tools/check_capability_directory.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Export actual public home renders for visual inspection
         if: always()
         run: |

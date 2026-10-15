@@ -170,7 +170,8 @@ export interface RequiredArgsRefusal {
  *
  * ★ THIS IS DELIBERATELY NOT "every `required` field in every inputSchema".
  *
- * 34 tools declare `required`; this table lists 19. The others were measured too and left
+ * The table lists 18 tools. discover_context instead resolves its optional pod selectors
+ * through resolvePodSubject, which refuses a missing subject before any fetch. The others were measured too and left
  * alone, because they already answer the caller immediately and in words:
  *
  *   remember, record_trajectory_step, notify_agent, render_hmd, publish_node,
@@ -232,7 +233,8 @@ export const ENFORCED_REQUIRED_ARGS: Readonly<Record<string, readonly RequiredAr
   ],
   decompose: [{ name: 'iri', kind: 'string' }],
   // Pod / federation reads and control-plane mutators.
-  discover_context: [{ name: 'pod_url', kind: 'string' }],
+  // discover_context resolves pod_url, pod_name or the authenticated session through
+  // resolvePodSubject. Requiring one spelling here hid the other two before that resolver.
   get_descriptor: [{ name: 'url', kind: 'string' }],
   subscribe_to_pod: [{ name: 'pod_url', kind: 'string' }],
   unsubscribe_from_pod: [{ name: 'pod_url', kind: 'string' }],

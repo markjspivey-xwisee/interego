@@ -994,3 +994,13 @@ button.og-n:hover { border-color: var(--accent); }
   .orc-title h1 { font-size: 18px; }
   .orc-dots, .orc-wb-bar > .tiny { display: none; }
 }
+
+/* Live directory controls remain usable with long operation names on narrow screens. */
+#directory .seg { flex-wrap: wrap; max-width: 100%; }
+#directory .sec-h, #directory .cb-bar { flex-wrap: wrap; }
+#directory .port > summary > .row { flex-wrap: wrap; justify-content: flex-end; max-width: 300px; }
+@media (max-width: 600px) {
+  #directory .port > summary { grid-template-columns: auto minmax(0, 1fr); }
+  #directory .port > summary > .row { grid-column: 1 / -1; justify-content: flex-start; max-width: 100%; }
+  #directory .port .pu { grid-column: 1 / -1; }
+}
