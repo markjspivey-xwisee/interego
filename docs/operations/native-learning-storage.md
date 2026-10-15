@@ -47,6 +47,23 @@ application SQL database as native merely because its interface has been renamed
   owner-held keys and existing write authority. No generated boot keys, role
   fabrication, public snapshot fallback or fallback to volatile storage.
 
+## HTTP authority and receipts
+
+The public native service uses the existing css-gate authority boundary. CSS's
+allow-all internal configuration is not an independent authorization mechanism;
+production must not expose a route that bypasses that boundary. The gateway
+checks existing writer credentials and pod scope, strips verified opaque gate
+credentials before CSS authentication, and preserves private-document policy.
+No new operator role or production credential is created by this implementation.
+
+Non-preflight OPTIONS forwards native capability evidence from CSS. Browser CORS
+preflight remains local. Native commit acknowledgments alone receive a bounded,
+validated target mapping from the actual internal storage IRI to the configured
+public resource IRI; storageResource and storagePath retain the original engine
+targets. Ordinary and encrypted application bodies remain unchanged. The native
+recovery fixture includes the actual gateway and CSS with distinct origins,
+rather than substituting an authentication shim.
+
 ## Current interface scope
 
 The initial adapter uses an explicitly configured private native service scope,
