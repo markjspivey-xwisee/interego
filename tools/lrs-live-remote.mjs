@@ -21,8 +21,8 @@ async function closeStartedInspector() {
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('cleanup-timeout')), 1500);
     ws.addEventListener('open', () => ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{
-      // Only the Node builtin inspector is imported. Application modules and data are untouched.
-      expression:"setTimeout(() => import('node:inspector').then(m => m.close()), 25); true",
+      // The Node 22 builtin accessor avoids dynamic import callbacks inside CDP evaluation.
+      expression:"setTimeout(() => { try { process.getBuiltinModule('node:inspector').close(); } catch {} }, 25); true",
       returnByValue:true, silent:true
     }})), {once:true});
     ws.addEventListener('message', e => { const m=JSON.parse(e.data); if(m.id===1){clearTimeout(timer);ws.close();resolve();} });
@@ -31,7 +31,9 @@ async function closeStartedInspector() {
   for (let i=0;i<30;i++) {
     await delay(100);
     try { await targets(); } catch (error) {
-      if(error.message==='inspector-target-refused') throw error;
+      if(error.cause?.code!=='ECONNREFUSED') throw error;
+      const health=await fetch('http://127.0.0.1:6080/health',{signal:AbortSignal.timeout(2000),redirect:'error'});
+      if(!health.ok) throw new Error('application-health-failed');
       closed = true; return;
     }
   }

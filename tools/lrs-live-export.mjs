@@ -253,6 +253,8 @@ export async function captureLiveMaps({ inspectorPort = 9229, aboutPort = 6080,
       if (typeof raw !== 'string') fail('snapshot-result-invalid');
       if (Buffer.byteLength(raw) > 64 * 1024 * 1024) fail('snapshot-byte-limit');
     } finally { clearTimeout(pauseTimeout); }
+    // Remove the one-shot breakpoint while paused, so another About request cannot re-pause us.
+    await inspector.call('Debugger.removeBreakpoint', { breakpointId: breakpoint }); breakpoint = undefined;
     // Resume before validation, encryption or any file operations.
     await inspector.call('Debugger.resume'); paused = false;
     pauseMs = performance.now() - pauseStarted; clearTimeout(watchdog);
@@ -261,8 +263,8 @@ export async function captureLiveMaps({ inspectorPort = 9229, aboutPort = 6080,
     return { raw, counts, pauseMs, targetSourceSha256: sha(scriptSource), sourceSuffix, sourceProof };
   } finally {
     clearTimeout(watchdog);
-    if (paused) { try { await inspector.call('Debugger.resume', {}, 1000); } catch { /* disconnect below also removes debugger */ } }
     if (breakpoint) { try { await inspector.call('Debugger.removeBreakpoint', { breakpointId: breakpoint }, 1000); } catch { /* disconnect removes breakpoint */ } }
+    if (paused) { try { await inspector.call('Debugger.resume', {}, 1000); } catch { /* disconnect below also removes debugger */ } }
     try { await inspector.call('Debugger.disable', {}, 1000); } catch { /* best effort; no record writes */ }
     inspector.handlers.delete(listener); inspector.close();
     if (trigger) await trigger;
