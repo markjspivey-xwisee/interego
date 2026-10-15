@@ -319,6 +319,7 @@ describe.runIf(!!url)('PostgreSQL LRS real-engine durability', () => {
     const commitReached = new Promise<void>(resolve => { sawCommit = resolve; });
     let sawSecondLock!: () => void;
     const secondLockReached = new Promise<void>(resolve => { sawSecondLock = resolve; });
+    let secondPid: number | undefined;
     const firstWrapper: LrsPgPool = {
       query: (sql, values) => firstPool.query(sql, values), end: () => firstPool.end(),
       async connect() {
@@ -335,6 +336,7 @@ describe.runIf(!!url)('PostgreSQL LRS real-engine durability', () => {
       query: (sql, values) => secondPool.query(sql, values), end: () => secondPool.end(),
       async connect() {
         const client = await secondPool.connect();
+        secondPid = (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
         return {
           query<R = Record<string, unknown>>(sql: string, values?: readonly unknown[]) {
             const pending = client.query<R>(sql, values);
@@ -349,13 +351,28 @@ describe.runIf(!!url)('PostgreSQL LRS real-engine durability', () => {
     let pendingFirst: Promise<void> | undefined;
     let pendingSecond: Promise<void> | undefined;
     try {
+      // Schema setup needs table locks. Finish both independent pools' setup
+      // before intentionally holding a write transaction open; otherwise the
+      // second pool waits in DDL instead of reaching the lock under test.
+      await firstDb.ready();
+      await secondDb.ready();
       pendingFirst = firstDb.forTenant(tenant).put(record(4));
-      await commitReached;
+      await Promise.race([commitReached, pendingFirst.then(() => { throw new Error('first write completed without reaching its commit barrier'); })]);
       let secondSettled = false;
       pendingSecond = secondDb.forTenant(tenant).put(record(5)).then(() => { secondSettled = true; });
-      await secondLockReached;
-      // This is a real server wait while the first transaction holds its lock.
-      await db.query('SELECT pg_sleep(0.05)', []);
+      await Promise.race([secondLockReached, pendingSecond.then(() => { throw new Error('second write completed without reaching its lock barrier'); })]);
+      // Verify the PostgreSQL server actually reports an ungranted advisory
+      // lock for the second connection, rather than inferring it from timing.
+      let waiting = false;
+      for (let attempt = 0; attempt < 50; attempt++) {
+        const locks = await db.query<{ waiting: boolean }>(`SELECT EXISTS (
+          SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted
+        ) AS waiting`, [secondPid]);
+        waiting = locks.rows[0]!.waiting;
+        if (waiting) break;
+        await db.query('SELECT pg_sleep(0.02)', []);
+      }
+      expect(waiting).toBe(true);
       expect(secondSettled).toBe(false);
       const page = await store.query({ ascending: true, limit: 1 });
       expect(page.statements.map(item => item.id)).toEqual([record(1).id]);

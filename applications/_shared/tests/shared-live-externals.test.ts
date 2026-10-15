@@ -797,12 +797,40 @@ describe('the registry names every shared live external, by rule rather than by 
     }
   });
 
+  it('accounts for the required isolated PostgreSQL LRS fixture and its active backend selector', () => {
+    const lrs = SHARED_LIVE_EXTERNALS.find(e => e.id === 'foxxi-lrs-postgres');
+    expect(lrs, 'the durable LRS fixture is a shared external, not a dormant imported read').toBeDefined();
+    const consumers = [
+      'applications/foxxi-content-intelligence/tests/postgres-lrs-store.test.ts',
+      'applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts',
+    ];
+    for (const name of ['TEST_PG_URL', 'REQUIRE_LRS_PG_TESTS']) {
+      expect((ENV_READERS.get(name) ?? []).slice().sort()).toEqual(consumers.slice().sort());
+      expect(lrs!.armedBy).toContain(name);
+      expect(SHARED_ONLY_THROUGH_IMPORTED_CODE.map(e => e.name)).not.toContain(name);
+    }
+    expect(lrs!.touchedBy.slice().sort()).toEqual(consumers.slice().sort());
+    const workflows = TRACKED.filter(f => f.startsWith('.github/'));
+    const measured = workflows.filter(f => lrs!.armedBy.some(name => setsVar(read(f), name)));
+    expect(measured).toEqual(['.github/workflows/bridge-typecheck.yml']);
+    expect(lrs!.armedInCi).toEqual(measured);
+    for (const name of ['TEST_PG_URL', 'REQUIRE_LRS_PG_TESTS']) {
+      expect(setsVar(read(measured[0]!), name)).toBe(true);
+    }
+    // The selector is now read through a typed default-parameter alias; it is
+    // deliberately set by a fixture. Neither fact is a claim of a dormant URL.
+    expect(read('applications/foxxi-content-intelligence/src/statement-store.ts'))
+      .toMatch(/configuredLrsBackend\(env: NodeJS\.ProcessEnv = process\.env\)/);
+    expect(setsEnvName(read('applications/foxxi-content-intelligence/tests/lrs-acknowledges-commits.test.ts'), 'FOXXI_LRS_BACKEND')).toBe(true);
+    expect(SHARED_ONLY_THROUGH_IMPORTED_CODE.map(e => e.name)).not.toContain('FOXXI_LRS_BACKEND');
+  });
+
   it('measures the dormancy the live-addressing names rest on', () => {
     // ★★ THE CLAIMS IN THAT LIST THAT ARE NOT ABOUT A CONSTANT. FOXXI_TENANT_POD_URL and
     // FOXXI_AUTHORITATIVE_SOURCE name a real pod that pod-snapshot-publisher writes to with
     // globalThis.fetch; RELAY_PGSL_PG_CONNSTR names a real PostgreSQL that engagement-store
-    // opens; FOXXI_LRS_BACKEND can name an LRS to forward to and FOXXI_XAPI_PROFILE_URL a
-    // profile to fetch. Each dial is guarded on the value being present, so what makes them dormant is
+    // opens; FOXXI_XAPI_PROFILE_URL can name a profile to fetch. Each dial is guarded on
+    // the value being present, so what makes them dormant is
     // that NOTHING SUPPLIES ONE — and that is a fact about this tree, re-measured here over
     // every scannable file and every workflow rather than restated from the entry's prose.
     //
@@ -810,7 +838,7 @@ describe('the registry names every shared live external, by rule rather than by 
     // `process.env["RELAY_PGSL_PG_CONNSTR"] = "postgres://…"` reds this, naming the file and
     // the variable. The file was untracked, which is the case `--others --exclude-standard` in
     // `scannableFiles` exists for — armed on a branch before anything is committed.
-    const LIVE_ADDRESSING = ['FOXXI_TENANT_POD_URL', 'FOXXI_AUTHORITATIVE_SOURCE', 'RELAY_PGSL_PG_CONNSTR', 'FOXXI_LRS_BACKEND', 'FOXXI_XAPI_PROFILE_URL', 'FOXXI_FEDERATION_PODS'];
+    const LIVE_ADDRESSING = ['FOXXI_TENANT_POD_URL', 'FOXXI_AUTHORITATIVE_SOURCE', 'RELAY_PGSL_PG_CONNSTR', 'FOXXI_XAPI_PROFILE_URL', 'FOXXI_FEDERATION_PODS'];
     for (const n of LIVE_ADDRESSING) {
       expect(
         SHARED_ONLY_THROUGH_IMPORTED_CODE.map(e => e.name),

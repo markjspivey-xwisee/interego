@@ -57,7 +57,11 @@ describe('the LRS primary cannot silently become volatile', () => {
   it('starts the listener only after primary readiness and never registers public snapshots for PG documents', () => {
     const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
     const lrs = readFileSync(new URL('../src/xapi-lrs.ts', import.meta.url), 'utf8');
-    expect(server.indexOf('await readyStatementStore();')).toBeLessThan(server.indexOf('app.listen(PORT'));
+    const readyAt = server.indexOf('await readyStatementStore();');
+    const listenAt = server.search(/app\.listen\s*\(\s*PORT/);
+    expect(readyAt).toBeGreaterThanOrEqual(0);
+    expect(listenAt).toBeGreaterThanOrEqual(0);
+    expect(readyAt).toBeLessThan(listenAt);
     expect(lrs).not.toContain('FOXXI_LRS_MEMORY_TENANT_PREFIXES');
     expect(lrs).toContain("if (configuredLrsBackend() !== 'postgres') {\n  registerXapiDocsSnapshot");
   });
