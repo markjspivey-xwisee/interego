@@ -162,13 +162,16 @@ describe('native Interego xAPI artifact adapter', () => {
     expect(answers.map(answer => answer.records)).toEqual([[winner], [winner]]);
     expect(await right.get(first.id)).toEqual(winner);
     const statementKey = leftDb.key('alice', 'statement', first.id), queryKey = leftDb.queryKey('alice', winner!);
-    const originalArtifact = storage.head.records.get(statementKey);
-    expect(originalArtifact).toBeDefined(); expect(storage.head.records.get(queryKey)).toEqual(originalArtifact);
+    const originalArtifact = storage.head.records.get(statementKey), originalQueryArtifact = storage.head.records.get(queryKey);
+    expect(originalArtifact).toBeDefined(); expect(originalQueryArtifact).toBeDefined();
+    // Each index entry has its own encrypted reference, bound to the same canonical source.
+    expect(originalQueryArtifact?.plaintextDigest).toBe(originalArtifact?.plaintextDigest);
+    expect(originalQueryArtifact?.topUri).toBe(originalArtifact?.topUri);
     const later = structuredClone(first); later.statement.timestamp = '2026-10-16T10:00:00.000Z';
     const replay = await right.putWithAttachments(later, new Map());
     expect(replay.records).toEqual([winner]); expect(replay.inserted).toEqual([]);
     expect(storage.head.records.get(statementKey)).toEqual(originalArtifact);
-    expect(storage.head.records.get(queryKey)).toEqual(originalArtifact);
+    expect(storage.head.records.get(queryKey)).toEqual(originalQueryArtifact);
   });
   it('keeps explicit or unknown timestamp provenance strict and never upgrades it on replay', async () => {
     const cases: Array<[boolean | undefined, boolean | undefined]> = [[undefined, true], [false, true], [true, undefined], [true, false], [false, false]];
