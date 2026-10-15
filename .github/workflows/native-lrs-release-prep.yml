@@ -1,0 +1,36 @@
+name: Prepare native Interego LRS release images
+on:
+  push:
+    branches: [codex/native-lrs-release-prep-20261015]
+    paths: [.github/workflows/native-lrs-release-prep.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: Require unchanged runtime sources from verified native candidate
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          const baseline = '88aec11320e594ae1180a9be27c0aeefc5a6d910';
+          const changed = execFileSync('git', ['diff', '--name-only', baseline, 'HEAD'], {encoding:'utf8'}).trim().split('\n').filter(Boolean);
+          const allowed = '.github/workflows/native-lrs-release-prep.yml';
+          if (changed.some(path => path !== allowed)) throw new Error('Runtime source differs from the verified native candidate');
+          console.log('Runtime tree unchanged from verified native candidate ' + baseline);
+          NODE
+  images:
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [interego-css-pgsl, interego-css-gate, interego-foxxi-bridge]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-ghcr.yml
+    with:
+      image: ${{ matrix.image }}
+    secrets: inherit
