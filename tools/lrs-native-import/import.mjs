@@ -88,14 +88,14 @@ function decryptEnvelope(envelope, seed, info, schema) {
     fail('archive-authentication-failed');
   } finally { key.fill(0); }
 }
-export function decryptSnapshot(encoded, seed) {
+export function decryptSnapshot(encoded, seed, options = {}) {
   if (Buffer.byteLength(encoded) > 100 * 1024 * 1024) fail('archive-byte-limit');
   let envelope;
   try { envelope = JSON.parse(encoded); } catch { fail('invalid-encrypted-envelope'); }
   const clear = decryptEnvelope(envelope, seed, SNAPSHOT_INFO, 'interego-encrypted-live-lrs-v1');
   try {
     if (!iso(envelope.header.createdAt) || !HASH.test(envelope.header.targetSourceSha256 ?? '')) fail('archive-source-metadata-missing');
-    const raw = clear.toString('utf8'), snapshot = JSON.parse(raw), plan = validateSnapshot(snapshot);
+    const raw = clear.toString('utf8'), snapshot = JSON.parse(raw), plan = validateSnapshot(snapshot, options);
     return { snapshot, ...plan, sourceDigest: sha(clear), archiveDigest: sha(encoded),
       provenanceTime: envelope.header.createdAt, targetSourceSha256: envelope.header.targetSourceSha256 };
   } catch (error) { if (error instanceof ImportRefusal) throw error; fail('invalid-source-snapshot'); }
@@ -105,8 +105,76 @@ function voidTarget(statement) {
   return statement?.verb?.id === 'http://adlnet.gov/expapi/verbs/voided' && statement?.object?.objectType === 'StatementRef'
     && typeof statement.object.id === 'string' ? statement.object.id : null;
 }
-export function validateSnapshot(snapshot) {
+/** Counts value kinds only: no identities, contents, property names or credential material. */
+function inspectValue(value, counts, depth = 0, location = 'root') {
+  if (depth > 50) fail('invalid-source-value-depth');
+  if (value === undefined) { counts[location === 'array' ? 'undefinedArrayElements' : location === 'object' ? 'undefinedObjectProperties' : 'undefinedRootValues']++; return; }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) counts.nonFiniteNumbers++;
+    if (Object.is(value, -0)) counts.negativeZeroNumbers++;
+    return;
+  }
+  if (value === null || ['string', 'boolean'].includes(typeof value) || Buffer.isBuffer(value)) return;
+  if (Array.isArray(value)) { for (const item of value) inspectValue(item, counts, depth + 1, 'array'); return; }
+  if (plainObject(value)) {
+    if (Object.getPrototypeOf(value) === null) counts.nullPrototypeObjects++;
+    for (const child of Object.values(value)) inspectValue(child, counts, depth + 1, 'object');
+    return;
+  }
+  counts.otherUnsupportedValues++;
+}
+function projectUndefinedProperties(value, stats) {
+  if (Buffer.isBuffer(value)) return Buffer.from(value);
+  if (Array.isArray(value)) return value.map(child => projectUndefinedProperties(child, stats));
+  if (plainObject(value)) {
+    const projected = {};
+    for (const key of Object.keys(value)) {
+      if (value[key] === undefined) { stats.omitted++; continue; }
+      Object.defineProperty(projected, key, { value: projectUndefinedProperties(value[key], stats), enumerable: true, writable: true, configurable: true });
+    }
+    return projected;
+  }
+  return value;
+}
+function prepareSourceProjection(snapshot, options) {
+  const counts = { undefinedObjectProperties: 0, undefinedArrayElements: 0, undefinedRootValues: 0,
+    nonFiniteNumbers: 0, negativeZeroNumbers: 0, nullPrototypeObjects: 0, otherUnsupportedValues: 0 };
+  const taggedRows = [];
+  for (const kind of KINDS) if (!Array.isArray(snapshot[kind])) fail('invalid-resource-partition');
+  for (const partition of snapshot.statements) for (const pair of Array.isArray(partition?.records) ? partition.records : []) {
+    if (Array.isArray(pair) && pair.length === 2) taggedRows.push([partition.tenant, 'statement', pair[0], pair[1]]);
+  }
+  for (const kind of KINDS) for (const part of snapshot[kind]) if (Array.isArray(part) && Array.isArray(part[1])) {
+    for (const pair of part[1]) if (Array.isArray(pair) && pair.length === 2) taggedRows.push([part[0], kind, pair[0], pair[1]]);
+  }
+  const decoded = taggedRows.map(([tenant, kind, key, tagged]) => ({ tenant, kind, key, tagged, value: decodeTagged(tagged) }));
+  for (const row of decoded) inspectValue(row.value, counts);
+  const diagnostics = { nonJsonKindCounts: counts };
+  const unsupported = Object.entries(counts).some(([kind, count]) => kind !== 'undefinedObjectProperties' && count > 0);
+  const omission = options.omitLegacyUndefinedProperties === true;
+  if (unsupported || (!omission && counts.undefinedObjectProperties)) {
+    throw Object.assign(new ImportRefusal(unsupported ? 'unsupported-legacy-value-cannot-project' : 'native-value-would-lose-source-fidelity'), { diagnostics });
+  }
+  const projected = new WeakMap(), wireHashes = [];
+  let omitted = 0, affected = 0;
+  for (const row of decoded) {
+    const stats = { omitted: 0 };
+    const native = omission ? projectUndefinedProperties(row.value, stats) : row.value;
+    // JSON wire fidelity is a required assertion, never an inferred property of this projection.
+    const sourceWire = JSON.stringify(row.value), nativeWire = JSON.stringify(native);
+    if (sourceWire !== nativeWire) throw Object.assign(new ImportRefusal('legacy-property-projection-changed-wire-json'), { diagnostics });
+    projected.set(row.tagged, native); omitted += stats.omitted; if (stats.omitted) affected++;
+    wireHashes.push([row.tenant, row.kind, row.key, sha(sourceWire)]);
+  }
+  return { decoded: node => projected.has(node) ? projected.get(node) : decodeTagged(node), diagnostics,
+    report: { projectPolicy: omission ? 'omit-legacy-undefined-own-object-properties/1' : 'strict-native-fidelity/1',
+      undefinedPropertiesOmitted: omitted, recordsAffected: affected,
+      wireJsonUnchanged: true, projectionWireJsonSha256: sha(JSON.stringify(wireHashes)),
+      rawArchiveUnchanged: true, taggedObjectIdentityPreserved: omitted === 0 } };
+}
+export function validateSnapshot(snapshot, options = {}) {
   if (!plainObject(snapshot) || snapshot.schema !== 'interego-live-lrs-map-snapshot-v1' || !Array.isArray(snapshot.statements)) fail('invalid-source-snapshot');
+  const projection = prepareSourceProjection(snapshot, options);
   const records = [], docs = [], attachments = [], tenants = new Set(), identities = new Set(), statementIndex = new Map();
   const counts = { statementTenants: snapshot.statements.length, tenantPartitions: 0, statements: 0, voidedStatements: 0,
     stateDocuments: 0, activityProfiles: 0, agentProfiles: 0, attachments: 0, attachmentBytes: 0 };
@@ -122,7 +190,7 @@ export function validateSnapshot(snapshot) {
     statementTenants.add(partition.tenant); tenants.add(partition.tenant);
     for (const pair of partition.records) {
       if (!Array.isArray(pair) || pair.length !== 2) fail('invalid-source-record');
-      const [key, encoded] = pair, original = decodeTagged(encoded);
+      const [key, encoded] = pair, original = projection.decoded(encoded);
       addIdentity(partition.tenant, 'statement', key);
       if (!plainObject(original) || original.id !== key || !plainObject(original.statement) || original.statement.id !== key
         || !iso(original.stored) || original.statement.stored !== original.stored || typeof original.voided !== 'boolean'
@@ -150,7 +218,7 @@ export function validateSnapshot(snapshot) {
       const [tenant, entries] = part; tenants.add(tenant); partitionTenants.add(tenant);
       for (const pair of entries) {
         if (!Array.isArray(pair) || pair.length !== 2) fail('invalid-source-record');
-        const [key, encoded] = pair, value = decodeTagged(encoded);
+        const [key, encoded] = pair, value = projection.decoded(encoded);
         addIdentity(tenant, kind, key);
         if (kind === 'attachments') {
           if (!HASH.test(key) || !plainObject(value) || !Buffer.isBuffer(value.data) || !string(value.contentType, 200) || sha(value.data) !== key
@@ -172,7 +240,8 @@ export function validateSnapshot(snapshot) {
   const primaryCount = records.length + docs.length + attachments.length + voids.length + tenants.size;
   if (primaryCount > MAX_PRIMARY) fail('primary-import-exceeds-atomic-bound');
   if (records.length > MAX_ALIAS) fail('query-projection-exceeds-atomic-bound');
-  return { records, docs, attachments, voids, tenants: [...tenants].sort(), counts, primaryCount };
+  return { records, docs, attachments, voids, tenants: [...tenants].sort(), counts, primaryCount,
+    sourceProjection: projection.report, sourceDiagnostics: projection.diagnostics };
 }
 function decodeNative(encoded) {
   if (!Array.isArray(encoded) || encoded.length !== 2) fail('native-roundtrip-failed');
@@ -215,7 +284,7 @@ export function buildNativePlan(database, input, runtime) {
   const planDigest = sha(JSON.stringify([...primary, ...queries].map(change =>
     [change.key, nativeArtifactHash(change.artifact, runtime)]).sort(([a], [b]) => a.localeCompare(b))));
   const bindings = { sourceDigest: input.sourceDigest, archiveDigest: input.archiveDigest, provenanceTime: input.provenanceTime,
-    targetSourceSha256: input.targetSourceSha256, owner: database.owner, planDigest };
+    targetSourceSha256: input.targetSourceSha256, owner: database.owner, planDigest, sourceProjection: input.sourceProjection };
   return { primary, queries, expected, bindings, source: input };
 }
 function nativeArtifactHash(artifact, runtime) {
@@ -256,6 +325,7 @@ export async function verifyPlan(database, plan, head, runtime, aliases = true) 
     sourceDigest: plan.source.sourceDigest, archiveDigest: plan.source.archiveDigest,
     exactStatementWireBodies: true, exactStoredAuthorityAndVoidFlags: true, exactOpaqueCollectionKeys: true,
     exactDocumentMetadataAndBytes: true, restoredRecordSetSha256: plan.bindings.planDigest,
+    ...plan.source.sourceProjection, ...plan.source.sourceDiagnostics,
     fixedHead: head.reference, cutoverReady: aliases, sourceAsOfOnly: true };
 }
 /** All primary records publish in ONE CAS; aliases are derived and require their own pre-serving CAS. */
@@ -291,7 +361,8 @@ export async function executeImport(database, plan, runtime, { apply = false, ch
   }
   if (!apply) return { dryRun: true, applied: false, primaryChanges: plan.primary.length, derivedQueryChanges: plan.queries.length,
     needsPrimaryCommit: !primaryPresent, needsDerivedCommit: true, cutoverReady: false,
-    ...plan.source.counts, sourceDigest: plan.source.sourceDigest, archiveDigest: plan.source.archiveDigest, checkpoint: state };
+    ...plan.source.counts, ...plan.source.sourceProjection, ...plan.source.sourceDiagnostics,
+    sourceDigest: plan.source.sourceDigest, archiveDigest: plan.source.archiveDigest, checkpoint: state };
   // Encrypted bindings and planned operation IDs were persisted before any write.
   let primaryHead;
   if (primaryPresent) {
@@ -344,12 +415,12 @@ async function writePrivateAtomic(path, data) {
   const directory = await open(dirname(path), 'r'); try { await directory.sync(); } finally { await directory.close(); }
 }
 export function parseArguments(args) {
-  const allowed = new Set(['--archive', '--checkpoint', '--runtime', '--apply', '--expect-source-sha', '--offline']);
+  const allowed = new Set(['--archive', '--checkpoint', '--runtime', '--apply', '--expect-source-sha', '--offline', '--omit-legacy-undefined-properties']);
   const result = new Map();
   for (let i = 0; i < args.length; i++) {
     const key = args[i];
     if (!allowed.has(key) || result.has(key)) fail('unknown-or-duplicate-cli-argument');
-    if (['--apply', '--offline'].includes(key)) result.set(key, true);
+    if (['--apply', '--offline', '--omit-legacy-undefined-properties'].includes(key)) result.set(key, true);
     else {
       if (!args[i + 1] || args[i + 1].startsWith('--')) fail('missing-cli-argument-value');
       result.set(key, args[++i]);
@@ -366,12 +437,13 @@ async function main() {
   const args = parseArguments(process.argv.slice(2)), flag = name => args.get(name) === true, get = name => args.get(name);
   const archivePath = get('--archive'); if (!archivePath) fail('archive-required');
   const seed = process.env.FOXXI_ADMIN_KEY_SEED;
-  const source = decryptSnapshot(await readFile(resolve(archivePath), 'utf8'), seed);
+  const source = decryptSnapshot(await readFile(resolve(archivePath), 'utf8'), seed,
+    { omitLegacyUndefinedProperties: flag('--omit-legacy-undefined-properties') });
   if (get('--expect-source-sha') && get('--expect-source-sha') !== source.targetSourceSha256) fail('source-script-mismatch');
   if (flag('--offline')) {
     if (flag('--apply')) fail('offline-cannot-apply');
     console.log(JSON.stringify({ dryRun: true, offline: true, archiveValidationOnly: true, nativeRepresentabilityChecked: false,
-      ...source.counts, primaryChanges: source.primaryCount,
+      ...source.counts, ...source.sourceProjection, ...source.sourceDiagnostics, primaryChanges: source.primaryCount,
       sourceDigest: source.sourceDigest, archiveDigest: source.archiveDigest, cutoverReady: false })); return;
   }
   const runtimePath = resolve(get('--runtime') || resolve(dirname(new URL(import.meta.url).pathname), 'runtime.mjs'));
@@ -391,6 +463,7 @@ async function main() {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => {
   console.error(JSON.stringify({ ok: false, code: error instanceof ImportRefusal ? error.code : 'native-maintenance-operation-failed',
+    ...(error instanceof ImportRefusal && error.diagnostics ? error.diagnostics : {}),
     cutoverReady: false, instruction: 'Keep the replacement unserved; retain the encrypted archive and checkpoint.' }));
   process.exitCode = 1;
 });

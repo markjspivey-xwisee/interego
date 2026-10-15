@@ -52,6 +52,8 @@ test('default path retains publication+directory requirement; explicit flag neve
   assert.ok(calls > 0);
   assert.deepEqual(parseWrapperArguments(['--establish-operator-pin', '--archive', '/private/source.json', '--apply']),
     { establishOperatorPin: true, childArguments: ['--archive', '/private/source.json', '--apply'] });
+  assert.deepEqual(parseWrapperArguments(['--establish-operator-pin', '--omit-legacy-undefined-properties', '--archive', '/private/source.json']),
+    { establishOperatorPin: true, childArguments: ['--omit-legacy-undefined-properties', '--archive', '/private/source.json'] });
   assert.throws(() => parseWrapperArguments(['--establish-operator-pin', '--establish-operator-pin']), /duplicate-operator-pin-mode/);
 });
 
