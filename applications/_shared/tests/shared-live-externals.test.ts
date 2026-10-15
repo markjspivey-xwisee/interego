@@ -797,28 +797,34 @@ describe('the registry names every shared live external, by rule rather than by 
     }
   });
 
-  it('accounts for the required isolated PostgreSQL LRS fixture and its active backend selector', () => {
-    const lrs = SHARED_LIVE_EXTERNALS.find(e => e.id === 'foxxi-lrs-postgres');
-    expect(lrs, 'the durable LRS fixture is a shared external, not a dormant imported read').toBeDefined();
-    const consumers = [
-      'applications/foxxi-content-intelligence/tests/postgres-lrs-store.test.ts',
+  it('accounts for the required native CSS/PGSL LRS fixture and its active backend selector', () => {
+    const lrs = SHARED_LIVE_EXTERNALS.find(e => e.id === 'foxxi-lrs-native-css-pgsl');
+    expect(lrs, 'the durable native LRS fixture is a shared external, not a dormant imported read').toBeDefined();
+    const appConsumers = [
+      'applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts',
       'applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts',
     ];
-    for (const name of ['TEST_PG_URL', 'REQUIRE_LRS_PG_TESTS']) {
-      expect((ENV_READERS.get(name) ?? []).slice().sort()).toEqual(consumers.slice().sort());
+    const consumers = [...appConsumers, 'tests/pgsl-store-native-commit.test.ts'];
+    for (const name of ['TEST_NATIVE_POD_URL', 'TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL', 'REQUIRE_LRS_NATIVE_TESTS']) {
+      const readers = name === 'TEST_NATIVE_PG_URL' || name === 'REQUIRE_LRS_NATIVE_TESTS' ? consumers : appConsumers;
+      expect((ENV_READERS.get(name) ?? []).slice().sort()).toEqual(readers.slice().sort());
       expect(lrs!.armedBy).toContain(name);
       expect(SHARED_ONLY_THROUGH_IMPORTED_CODE.map(e => e.name)).not.toContain(name);
     }
+    expect((ENV_READERS.get('TEST_NATIVE_CAPABILITY') ?? []).slice().sort()).toEqual(appConsumers.slice().sort());
+    expect(SHARED_BUT_NOT_LIVE.map(e => e.name)).toContain('TEST_NATIVE_CAPABILITY');
     expect(lrs!.touchedBy.slice().sort()).toEqual(consumers.slice().sort());
     const workflows = TRACKED.filter(f => f.startsWith('.github/'));
     const measured = workflows.filter(f => lrs!.armedBy.some(name => setsVar(read(f), name)));
     expect(measured).toEqual(['.github/workflows/bridge-typecheck.yml']);
     expect(lrs!.armedInCi).toEqual(measured);
-    for (const name of ['TEST_PG_URL', 'REQUIRE_LRS_PG_TESTS']) {
+    // CI starts real CSS over the isolated PGSL engine. The optional external-pod retarget
+    // is intentionally not supplied there; it cannot stand in for a restartable fixture.
+    for (const name of ['TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL', 'REQUIRE_LRS_NATIVE_TESTS']) {
       expect(setsVar(read(measured[0]!), name)).toBe(true);
     }
-    // The selector is now read through a typed default-parameter alias; it is
-    // deliberately set by a fixture. Neither fact is a claim of a dormant URL.
+    // The selector is read through the existing typed environment alias and deliberately set
+    // by a fixture. Neither fact is a claim that a dormant native pod URL was configured.
     expect(read('applications/foxxi-content-intelligence/src/statement-store.ts'))
       .toMatch(/configuredLrsBackend\(env: NodeJS\.ProcessEnv = process\.env\)/);
     expect(setsEnvName(read('applications/foxxi-content-intelligence/tests/lrs-acknowledges-commits.test.ts'), 'FOXXI_LRS_BACKEND')).toBe(true);

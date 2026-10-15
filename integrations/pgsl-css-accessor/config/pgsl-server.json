@@ -3,16 +3,16 @@
     "CSS server whose STORAGE BACKEND is the PGSL lattice (foundation-first Stage 5).",
     "This IS the live interego-css config (it replaced the former file-backed",
     "examples/multi-agent/css-config.json, which is now legacy):",
-    "same import set — initialize-root + location/root (single root storage), allow-all",
+    "same import set - initialize-root + location/root (single root storage), allow-all",
     "authorization (content privacy is Interego client-side JWE, NOT ACLs), websockets",
-    "notifications, memory resource-locker, suffix identifiers — with ONE change: the file",
+    "notifications, memory resource-locker, suffix identifiers - with ONE change: the file",
     "backend (css:config/storage/backend/file.json) is replaced by the PGSL accessor, which",
     "re-platforms storage off the incoherent AzureFile SMB volume onto managed Postgres. That",
     "removes the STORAGE blocker to CSS multi-replica but does NOT unlock it: see",
     "pgsl-server-redis.json for the locker-level blocker (RedisLocker clears the whole shared",
     "lock namespace on every replica boot AND shutdown) that still pins CSS to one replica.",
     "The Postgres connection string is read from PGSL_PG_CONNSTR by the factory, so no secret",
-    "lives in this file. NOTE: componentsjs-generator is BUILD-TIME ONLY — it must not be present",
+    "lives in this file. NOTE: componentsjs-generator is BUILD-TIME ONLY - it must not be present",
     "in the runtime node_modules (its newer @comunica/componentsjs collide with CSS's); the",
     "Dockerfile prunes it (and tsx/typescript) from the runtime stage."
   ],
@@ -53,6 +53,41 @@
     "css:config/util/variables/default.json"
   ],
   "@graph": [
+    {
+      "@id": "urn:solid-server:default:MetadataWriter_Mapped",
+      "@type": "MappedMetadataWriter",
+      "headerMap": [
+        { "MappedMetadataWriter:_headerMap_key": "urn:npm:solid:community-server:http:location", "MappedMetadataWriter:_headerMap_value": "Location" },
+        { "MappedMetadataWriter:_headerMap_key": "http://www.w3.org/2011/http-headers#interego-revision", "MappedMetadataWriter:_headerMap_value": "Interego-Revision" },
+        { "MappedMetadataWriter:_headerMap_key": "http://www.w3.org/2011/http-headers#interego-body-digest", "MappedMetadataWriter:_headerMap_value": "Interego-Body-Digest" },
+        { "MappedMetadataWriter:_headerMap_key": "http://www.w3.org/2011/http-headers#accept-put", "MappedMetadataWriter:_headerMap_value": "Accept-Put" }
+      ]
+    },
+    {
+      "@id": "urn:solid-server:default:ETagHandler",
+      "@type": "NativeETagHandler"
+    },
+    {
+      "@id": "urn:solid-server:default:ParallelMiddleware",
+      "@type": "ParallelHandler",
+      "handlers": [
+        { "@id": "urn:solid-server:default:Middleware_Header" },
+        { "@type": "NativeCapabilityHeaders" }
+      ]
+    },
+    {
+      "@id": "urn:solid-server:default:OperationHandler",
+      "@type": "WaterfallHandler",
+      "handlers": [
+        { "@type": "NativeGetOperationHandler", "store": { "@id": "urn:solid-server:default:ResourceStore" }, "eTagHandler": { "@id": "urn:solid-server:default:ETagHandler" } },
+        { "@type": "PostOperationHandler", "store": { "@id": "urn:solid-server:default:ResourceStore" } },
+        { "@type": "NativePutOperationHandler", "store": { "@id": "urn:solid-server:default:ResourceStore" }, "metadataStrategy": { "@id": "urn:solid-server:default:MetadataStrategy" } },
+        { "@type": "DeleteOperationHandler", "store": { "@id": "urn:solid-server:default:ResourceStore" } },
+        { "@type": "HeadOperationHandler", "store": { "@id": "urn:solid-server:default:ResourceStore" }, "eTagHandler": { "@id": "urn:solid-server:default:ETagHandler" } },
+        { "@type": "PatchOperationHandler", "store": { "@id": "urn:solid-server:default:ResourceStore" } },
+        { "@type": "StaticThrowHandler", "error": { "@type": "MethodNotAllowedHttpError" } }
+      ]
+    },
     {
       "comment": "Same DataAccessorBasedStore as the file backend, but with the PGSL accessor.",
       "@id": "urn:solid-server:default:ResourceStore_Backend",

@@ -15,7 +15,8 @@
  * adapter over this same seam.
  */
 
-import type { FdbLike } from './fdb-like.js';
+import type { FdbLike, FdbTxn } from './fdb-like.js';
+import { createHash, randomUUID } from 'node:crypto';
 import { nodeAddrFromUrn, urnFromNodeAddr } from './addressing.js';
 import {
   aaAtomAddrBytes,
@@ -44,6 +45,10 @@ import {
 } from './keyspace.js';
 import { decodeJson, decodeNode, encodeJson, encodeNode, type StoredNode } from './node.js';
 import type { AtomAccessAttributes } from './attributes.js';
+import {
+  assertExpectedResourceRevision, resourceCollection, resourceRevision, NativeResourceManagedError,
+  type NativeResourceRecord, type NativeResourceHead, type NativeResourceCommitResult,
+} from './resource.js';
 
 const EMPTY = new Uint8Array(0);
 const enc = new TextEncoder();
@@ -52,6 +57,14 @@ const dec = new TextDecoder();
 export interface PutResult { created: boolean; }
 export interface PutManyResult { created: number; dedup: number; }
 export interface ComposeResult { created: number; dedup: number; topUri: string; }
+class ResourceWriteRace extends Error {}
+// Provenance is edge/context metadata; immutable node content must agree even
+// when the same bytes are projected with a different media type or attribution.
+function nodeContentIdentity(node: StoredNode): string {
+  return JSON.stringify([node.uri, node.kind, node.level, node.value ?? null, node.items ?? [],
+    node.kind === 'fragment' ? node.height ?? Math.max(0, node.level - 1) : null,
+    node.left ?? null, node.right ?? null]);
+}
 
 export class PgslStore {
   constructor(private readonly fdb: FdbLike) {}
@@ -94,8 +107,14 @@ export class PgslStore {
     opts: { pod: string; resource: string },
   ): Promise<ComposeResult> {
     if (slice.length === 0) throw new Error('compose: empty slice');
-    const top = slice.reduce((a, b) => (b.level >= a.level ? b : a));
-    return this.fdb.transact(async (txn) => {
+    return this.fdb.transact(txn => this.composeInTransaction(txn, slice, opts));
+  }
+
+  /** Shared composition so a native head and its canonical slice use one transaction. */
+  private async composeInTransaction(
+    txn: FdbTxn, slice: readonly StoredNode[], opts: { pod: string; resource: string }, topUri?: string,
+  ): Promise<ComposeResult> {
+    const top = topUri ?? slice.reduce((a, b) => (b.level >= a.level ? b : a)).uri;
       let created = 0;
       let dedup = 0;
       for (const node of slice) {
@@ -124,10 +143,137 @@ export class PgslStore {
           if (node.right) txn.set(rgtKey(nodeAddrFromUrn(node.right).hash, addr.hash), EMPTY);
         }
       }
-      txn.set(ovKey(opts.pod, opts.resource), enc.encode(top.uri));
-      txn.set(ovrKey(nodeAddrFromUrn(top.uri).hash, opts.pod, opts.resource), EMPTY);
-      return { created, dedup, topUri: top.uri };
+
+    txn.set(ovKey(opts.pod, opts.resource), enc.encode(top));
+    txn.set(ovrKey(nodeAddrFromUrn(top).hash, opts.pod, opts.resource), EMPTY);
+    return { created, dedup, topUri: top };
+  }
+
+  /** One native resource head with a token derived from those same stored bytes. */
+  async resourceHead(pod: string, path: string): Promise<NativeResourceHead | null> {
+    return this.fdb.transact(async txn => {
+      const bytes = await txn.get(cpKey(resourceCollection(pod), path));
+      return bytes === undefined ? null : {
+        record: decodeJson<NativeResourceRecord>(bytes), revision: resourceRevision(pod, path, bytes),
+      };
     });
+  }
+
+  /**
+   * Atomically commit the native head, canonical nodes, structural indexes and
+   * both overlay directions. The receipt describes this write, never a later
+   * HEAD request. Uses only the existing native transaction and keyspace.
+   */
+  async commitResource(
+    slice: readonly StoredNode[],
+    options: { pod: string; resource: string; record: NativeResourceRecord; expectedRevision: string | null; legacy?: boolean },
+  ): Promise<NativeResourceCommitResult> {
+    assertExpectedResourceRevision(options.expectedRevision);
+    const { pod, resource: path } = options;
+    const record: NativeResourceRecord = { ...options.record, commitNonce: randomUUID() };
+    if (options.legacy) delete record.nativeManaged;
+    else record.nativeManaged = true;
+    if (!record.bodyDigest || !/^sha256:[a-f0-9]{64}$/.test(record.bodyDigest)
+      || !Number.isSafeInteger(record.size) || record.size < 0
+      || !Number.isFinite(record.updatedAt) || typeof record.contentType !== 'string' || !record.contentType) {
+      throw new Error('native resource commit requires valid representation metadata');
+    }
+    const bytes = encodeJson(record);
+    const revision = resourceRevision(pod, path, bytes);
+    const key = cpKey(resourceCollection(pod), path);
+    try {
+      return await this.fdb.transact(async txn => {
+        const previous = await txn.get(key);
+        if (options.legacy && previous !== undefined && decodeJson<NativeResourceRecord>(previous).nativeManaged) {
+          throw new NativeResourceManagedError();
+        }
+        const observed = previous === undefined ? null : resourceRevision(pod, path, previous);
+        if (observed !== options.expectedRevision) return { status: 'conflict' as const, revision: observed };
+        // Restate the expectation in the write: SELECT then SET is not a CAS
+        // under READ COMMITTED. Failure must abort all related writes.
+        if (!await txn.compareAndSet(key, previous ?? null, bytes)) throw new ResourceWriteRace();
+        const available = new Map<string, StoredNode>();
+        for (const node of slice) {
+          const duplicate = available.get(node.uri);
+          if (duplicate && nodeContentIdentity(duplicate) !== nodeContentIdentity(node)) {
+            throw new Error('native resource contains conflicting canonical node content');
+          }
+          available.set(node.uri, node);
+        }
+        const resolved = new Map<string, StoredNode>();
+        const resolve = async (uri: string): Promise<StoredNode> => {
+          const cached = resolved.get(uri);
+          if (cached) return cached;
+          const local = available.get(uri);
+          const stored = await txn.get(nodeKey(nodeAddrFromUrn(uri)));
+          if (stored === undefined) {
+            if (!local) throw new Error('native resource head references an unavailable canonical node');
+            resolved.set(uri, local);
+            return local;
+          }
+          const node = decodeNode(stored);
+          if (node.uri !== uri || (local && nodeContentIdentity(local) !== nodeContentIdentity(node))) {
+            throw new Error('native resource references conflicting canonical node content');
+          }
+          resolved.set(uri, node);
+          return node;
+        };
+        await resolve(record.topUri);
+        await resolve(record.opaqueUri);
+        for (const node of slice) {
+          await resolve(node.uri);
+          for (const ref of [...(node.items ?? []), ...(node.left ? [node.left] : []), ...(node.right ? [node.right] : [])]) await resolve(ref);
+        }
+        const digest = createHash('sha256');
+        let size = 0;
+        for (const uri of record.chunkUris?.length ? record.chunkUris : [record.opaqueUri]) {
+          const node = await resolve(uri);
+          if (node.kind !== 'atom' || typeof node.value !== 'string') throw new Error('native representation is not an opaque byte atom');
+          const chunk = Buffer.from(node.value, 'base64');
+          size += chunk.byteLength;
+          digest.update(chunk);
+        }
+        if (size !== record.size || `sha256:${digest.digest('hex')}` !== record.bodyDigest) {
+          throw new Error('native representation bytes do not match the committed metadata');
+        }
+        const oldTop = await txn.get(ovKey(pod, path));
+        if (oldTop !== undefined && dec.decode(oldTop) !== record.topUri) {
+          txn.clear(ovrKey(nodeAddrFromUrn(dec.decode(oldTop)).hash, pod, path));
+        }
+        await this.composeInTransaction(txn, slice, { pod, resource: path }, record.topUri);
+        return { status: 'committed' as const, pod, path, revision,
+          topUri: record.topUri, opaqueUri: record.opaqueUri, bodyDigest: record.bodyDigest!,
+          contentType: record.contentType, updatedAt: record.updatedAt, size: record.size };
+      });
+    } catch (error) {
+      if (!(error instanceof ResourceWriteRace)) throw error;
+      return { status: 'conflict', revision: (await this.resourceHead(pod, path))?.revision ?? null };
+    }
+  }
+
+  /** Legacy deletion is atomic with its overlay and cannot erase a managed head. */
+  async deleteLegacyResource(pod: string, path: string): Promise<boolean> {
+    const key = cpKey(resourceCollection(pod), path);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        return await this.fdb.transact(async txn => {
+          const previous = await txn.get(key);
+          if (previous === undefined) return false;
+          if (decodeJson<NativeResourceRecord>(previous).nativeManaged) throw new NativeResourceManagedError();
+          // Acquire the exact row predicate before clearing. On engines with
+          // READ COMMITTED, get+clear alone can otherwise erase a later commit.
+          if (!await txn.compareAndSet(key, previous, previous)) throw new ResourceWriteRace();
+          txn.clear(key);
+          const top = await txn.get(ovKey(pod, path));
+          txn.clear(ovKey(pod, path));
+          if (top !== undefined) txn.clear(ovrKey(nodeAddrFromUrn(dec.decode(top)).hash, pod, path));
+          return true;
+        });
+      } catch (error) {
+        if (!(error instanceof ResourceWriteRace)) throw error;
+      }
+    }
+    throw new Error('native resource changed repeatedly during legacy delete');
   }
 
   /** Point read of a node by its content-address URN. */

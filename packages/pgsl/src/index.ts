@@ -3,6 +3,7 @@
 // when consumers `import '@interego/core'` (or, post-split,
 // `import '@interego/pgsl'`).
 import './kernel-adapter.js';
+export * from './native-commit-store.js';
 export { pgslLatticeAdapter, resetKernelPGSL, getKernelPGSL } from './kernel-adapter.js';
 export * from './types.js';
 export {

@@ -338,20 +338,21 @@ jobs:
         run: npx vitest run ${{ matrix.part.files }}
 
   durable-lrs:
-    name: "Durable LRS: real PostgreSQL commit and recovery"
+    name: "Durable LRS: native Interego commit and recovery"
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     services:
       postgres:
+        # Existing Interego PGSL substrate engine; Foxxi has no SQL connection.
         image: postgres:16
         env:
           POSTGRES_USER: foxxi_test
           POSTGRES_PASSWORD: isolated_fixture_only
-          POSTGRES_DB: foxxi_lrs_test
+          POSTGRES_DB: native_interego_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U foxxi_test -d foxxi_lrs_test"
+          --health-cmd "pg_isready -U foxxi_test -d native_interego_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
@@ -372,8 +373,37 @@ jobs:
       - name: Build @interego/* packages
         if: steps.dist.outputs.cache-hit != 'true'
         run: npm run build
-      - name: Require committed statements, attachments, documents and restart recovery
+      # CSS must be outside the monorepo: its Components.js major differs from
+      # the root's generator dependencies. This is the existing deploy shape.
+      - name: Assemble isolated native CSS runtime
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/native-lrs-css"
+          mkdir -p "$APP/packages/pgsl-store" "$APP/integrations/pgsl-css-accessor"
+          cp -r packages/pgsl-store/dist "$APP/packages/pgsl-store/dist"
+          cp packages/pgsl-store/package.json "$APP/packages/pgsl-store/package.json"
+          for item in src config test package.json package-lock.json tsconfig.json; do
+            cp -r "integrations/pgsl-css-accessor/$item" "$APP/integrations/pgsl-css-accessor/$item"
+          done
+          PG_VERSION="$(node -p "JSON.parse(require('fs').readFileSync('package-lock.json','utf8')).packages['node_modules/pg'].version")"
+          printf '{"name":"native-interego-fixture","private":true}\n' > "$APP/package.json"
+          npm install --prefix "$APP" --ignore-scripts --no-save "pg@$PG_VERSION"
+      - name: Build native CSS components
+        working-directory: ${{ runner.temp }}/native-lrs-css/integrations/pgsl-css-accessor
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          # Generator is build-time only; matches the production runtime.
+          rm -rf node_modules/componentsjs-generator
+      - name: Native CSS atomic commit and version contract on persistent engine
+        working-directory: ${{ runner.temp }}/native-lrs-css/integrations/pgsl-css-accessor
         env:
-          REQUIRE_LRS_PG_TESTS: '1'
-          TEST_PG_URL: postgresql://foxxi_test:isolated_fixture_only@127.0.0.1:5432/foxxi_lrs_test
-        run: npx vitest run applications/foxxi-content-intelligence/tests/postgres-lrs-store.test.ts applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts
+          PGSL_PG_CONNSTR: postgresql://foxxi_test:isolated_fixture_only@127.0.0.1:5432/native_interego_test
+        run: npx tsx test/native-commit.it.ts
+      - name: Require native records, concurrency and storage process recovery
+        env:
+          REQUIRE_LRS_NATIVE_TESTS: '1'
+          TEST_NATIVE_CSS_ROOT: ${{ runner.temp }}/native-lrs-css/integrations/pgsl-css-accessor
+          TEST_NATIVE_PG_URL: postgresql://foxxi_test:isolated_fixture_only@127.0.0.1:5432/native_interego_test
+        run: npx vitest run tests/pgsl-store-native-commit.test.ts tests/native-commit-store.test.ts applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts

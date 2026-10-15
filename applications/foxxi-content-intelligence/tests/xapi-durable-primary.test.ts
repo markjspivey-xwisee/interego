@@ -1,14 +1,25 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { mintSessionToken } from '../src/auth.js';
-import { PostgresLrsDatabase } from '../src/postgres-lrs-store.js';
+import { deriveEncryptionKeyPair, type IRI } from '@interego/core';
+import { NATIVE_CSS_FIXTURE_CAPABILITY, startNativeCssFixture, type NativeCssFixture } from './support/native-css-fixture.js';
 
-const connectionString = process.env.TEST_PG_URL;
-if (!connectionString && process.env.REQUIRE_LRS_PG_TESTS === '1') throw new Error('TEST_PG_URL is required for durable HTTP primary tests');
-const key = 'synthetic-postgres-lrs-test-stable-key-0000000000001';
+const fixtureInputs = Boolean(process.env.TEST_NATIVE_CSS_ROOT && process.env.TEST_NATIVE_PG_URL);
+const optionalPod = process.env.TEST_NATIVE_POD_URL;
+if (process.env.REQUIRE_LRS_NATIVE_TESTS === '1' && !fixtureInputs) throw new Error('Required native HTTP tests need TEST_NATIVE_CSS_ROOT and TEST_NATIVE_PG_URL for actual CSS/engine recovery');
+const nativeEnabled = fixtureInputs || Boolean(optionalPod);
+const owner = 'did:web:synthetic-native-lrs.test:service' as IRI;
+const privateKey = '0x' + '11'.repeat(32), ownerPublicKey = deriveEncryptionKeyPair(privateKey, owner).publicKey;
+const scopeId = randomUUID();
+let fixture: NativeCssFixture | undefined, pod = optionalPod;
+const originalPod = process.env.TEST_NATIVE_POD_URL;
+beforeAll(async () => {
+  fixture = fixtureInputs ? await startNativeCssFixture() : undefined;
+  if (fixture) { pod = fixture.podUrl; process.env.TEST_NATIVE_POD_URL = pod; }
+}, 60000);
 const alice = `lens:durable-http-alice-${randomUUID()}`;
 const bob = `lens:durable-http-bob-${randomUUID()}`;
 interface Message { event?: string; port?: number; id?: number; kind?: string; }
@@ -23,11 +34,16 @@ function message(child: ChildProcess, predicate: (value: Message) => boolean): P
     child.on('message', onMessage); child.once('exit', onExit);
   });
 }
-async function start(backend: 'postgres' | 'memory' = 'postgres'): Promise<{ child: ChildProcess; base: string }> {
+async function start(backend: 'interego' | 'memory' = 'interego'): Promise<{ child: ChildProcess; base: string }> {
   const child = fork(fileURLToPath(new URL('./support/durable-lrs-http-child.ts', import.meta.url)), [], {
     execArgv: ['--import', 'tsx'], silent: true,
-    env: { ...process.env, NODE_ENV: 'test', FOXXI_LRS_BACKEND: backend, FOXXI_LRS_POSTGRES_URL: backend === 'postgres' ? connectionString : '', DATABASE_URL: '',
-      FOXXI_LRS_ENCRYPTION_KEY: key, LRS_TEST_ALICE: alice, LRS_TEST_BOB: bob },
+    env: { ...process.env, NODE_ENV: 'test', FOXXI_LRS_BACKEND: backend,
+      FOXXI_LRS_NATIVE_POD_URL: pod, FOXXI_LRS_NATIVE_OWNER: owner, FOXXI_LRS_NATIVE_PRIVATE_KEY: privateKey,
+      FOXXI_LRS_NATIVE_OWNER_PUBLIC_KEY: ownerPublicKey,
+      FOXXI_LRS_NATIVE_CAPABILITY: fixture ? NATIVE_CSS_FIXTURE_CAPABILITY : process.env.TEST_NATIVE_CAPABILITY,
+      FOXXI_LRS_NATIVE_HEAD_URL: pod ? new URL('foxxi/lrs/native/http-' + scopeId + '/head', pod).href : undefined,
+      FOXXI_LRS_NATIVE_ARTIFACT_CONTAINER: pod ? new URL('foxxi/lrs/native/http-' + scopeId + '/artifacts/', pod).href : undefined,
+      LRS_TEST_ALICE: alice, LRS_TEST_BOB: bob },
   });
   children.add(child);
   // Drain output without copying statements, keys or DB connection details into test reports.
@@ -54,10 +70,8 @@ const agentProfile = address('/xapi/agents/profile', { agent: JSON.stringify({ m
 
 afterAll(async () => {
   for (const child of children) await kill(child);
-  if (connectionString) {
-    const db = new PostgresLrsDatabase({ connectionString, encryptionKey: key, allowClear: true });
-    try { await db.forTenant(alice).clear(); await db.forTenant(bob).clear(); } finally { await db.close(); }
-  }
+  await fixture?.stop();
+  if (originalPod === undefined) delete process.env.TEST_NATIVE_POD_URL; else process.env.TEST_NATIVE_POD_URL = originalPod;
 });
 
 describe('the real subprocess forwards rejected xAPI promises to its error handler', () => {
@@ -80,7 +94,7 @@ describe('the real subprocess forwards rejected xAPI promises to its error handl
   });
 });
 
-describe.skipIf(!connectionString)('the HTTP LRS acknowledges its durable primary', () => {
+describe.skipIf(!nativeEnabled)('the HTTP LRS acknowledges its native Interego primary', () => {
   it('keeps a multipart statement, binary State and both profiles through process death, with tenant isolation and ETags', async () => {
     let app = await start();
     const stmt = statement();
@@ -99,6 +113,7 @@ describe.skipIf(!connectionString)('the HTTP LRS acknowledges its durable primar
     const etag = stateResponse.headers.get('etag')!;
     for (const path of [activityProfile, agentProfile]) expect((await fetch(`${app.base}${path}`, { method: 'PUT', headers: headers(), body: '{"saved":true}' })).status).toBe(204);
     await kill(app.child); // No graceful snapshot or flush can rescue a volatile acknowledgement.
+    if (fixture) await fixture.restart();
     app = await start();
     // Enumerate before any tenant read: a restarted process has no populated TenantPartition.
     const adminToken = await mintSessionToken({ userId: 'durable-admin', webId: 'https://pod.test/durable-admin/profile/card#me', seed: 'durable-http-admin-synthetic-seed' });
@@ -115,7 +130,7 @@ describe.skipIf(!connectionString)('the HTTP LRS acknowledges its durable primar
     expect((await fetch(`${app.base}${state}`, { headers: { ...headers(), 'If-None-Match': etag } })).status).toBe(304);
     expect((await fetch(`${app.base}${state}`, { headers: headers('bob') })).status).toBe(404);
     for (const path of [activityProfile, agentProfile]) expect(await (await fetch(`${app.base}${path}`, { headers: headers() })).json()).toEqual({ saved: true });
-    // Concurrent JSON POSTs merge under a database lock, preserving both accepted updates.
+    // Concurrent JSON POSTs merge under native head CAS, preserving both accepted updates.
     const merges = await Promise.all(['left', 'right'].map(field => fetch(`${app.base}${activityProfile}`, { method: 'POST', headers: headers(), body: JSON.stringify({ [field]: true }) })));
     expect(merges.map(response => response.status)).toEqual([204, 204]);
     expect(await (await fetch(`${app.base}${activityProfile}`, { headers: headers() })).json()).toEqual({ saved: true, left: true, right: true });
@@ -127,12 +142,13 @@ describe.skipIf(!connectionString)('the HTTP LRS acknowledges its durable primar
     const voiding = { ...statement(), verb: { id: 'http://adlnet.gov/expapi/verbs/voided' }, object: { objectType: 'StatementRef', id: stmt.id } };
     expect((await fetch(`${app.base}/xapi/statements`, { method: 'POST', headers: headers(), body: JSON.stringify(voiding) })).status).toBe(200);
     await kill(app.child);
+    if (fixture) await fixture.restart();
     app = await start();
     expect((await fetch(`${app.base}/xapi/statements?statementId=${stmt.id}`, { headers: headers() })).status).toBe(404);
     expect((await fetch(`${app.base}/xapi/statements?voidedStatementId=${stmt.id}`, { headers: headers() })).status).toBe(200);
     expect((await fetch(`${app.base}${state}`, { headers: headers() })).status).toBe(404);
     await kill(app.child);
-  }, 60_000);
+  }, 120_000);
 
   it('does not send an ID or document success while the primary write is pending, and refuses write failure', async () => {
     const app = await start();
@@ -177,5 +193,22 @@ describe.skipIf(!connectionString)('the HTTP LRS acknowledges its durable primar
       expect(retry.status).toBe(200); expect(await retry.json()).toMatchObject({ launchDataStaged: true });
     } finally { await kill(app.child); }
   });
+
+  it('resolves independent HTTP writers through native CAS and rejects a conflicting batch without a partial keep', async () => {
+    const left = await start(), right = await start();
+    try {
+      const shared = statement(), other = { ...shared, object: { id: 'https://example.test/other-course' } };
+      const answers = await Promise.all([
+        fetch(left.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(shared) }),
+        fetch(right.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(other) }),
+      ]);
+      expect(answers.map(response => response.status).sort()).toEqual([200, 409]);
+      const held = await (await fetch(left.base + '/xapi/statements?statementId=' + shared.id, { headers: headers() })).json() as { object: { id: string } };
+      const newRecord = statement(), conflict = { ...shared, object: { id: held.object.id + '/conflict' } };
+      const rejected = await fetch(right.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify([newRecord, conflict]) });
+      expect(rejected.status).toBe(409);
+      expect((await fetch(left.base + '/xapi/statements?statementId=' + newRecord.id, { headers: headers() })).status).toBe(404);
+    } finally { await kill(left.child); await kill(right.child); }
+  }, 120000);
 
 });

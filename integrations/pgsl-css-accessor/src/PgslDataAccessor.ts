@@ -1,5 +1,5 @@
 /**
- * PgslDataAccessor — a Community Solid Server storage backend backed by the PGSL
+ * PgslDataAccessor - a Community Solid Server storage backend backed by the PGSL
  * store. It implements CSS's 8-method `DataAccessor` contract over `LdpStore`, so
  * a running CSS serves LDP/WebID/WAC/etc. UNCHANGED while its storage is the PGSL
  * lattice on Postgres/FoundationDB. Everything Solid stays above this seam.
@@ -34,6 +34,8 @@ import {
   CONTENT_TYPE_TERM,
   SOLID_META,
   toNamedTerm,
+  PreconditionFailedHttpError,
+  ConflictHttpError,
   type DataAccessor,
   type Representation,
   type ResourceIdentifier,
@@ -41,9 +43,24 @@ import {
 } from '@solid/community-server';
 // pgsl-store: built dist modules (no @interego/* runtime deps on this path).
 import { LdpStore } from '../../../packages/pgsl-store/dist/ldp.js';
+import {
+  isNativeCommitMediaType, NATIVE_REVISION_PREDICATE, NATIVE_BODY_DIGEST_PREDICATE,
+  nativeSnapshot, readNativeCommitCommand, requireNativeCommitScope, setNativeCommitReceipt,
+} from './NativeCommit.js';
 
 const CONTAINER_MARKER_CT = 'internal/container';
 const NQUADS = 'application/n-quads';
+
+/** Protected native heads may only change through the condition-bound native command. */
+async function guardNativeHead<T>(operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); }
+  catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'NATIVE_RESOURCE_MANAGED') {
+      throw new ConflictHttpError('This resource requires a native conditional commit');
+    }
+    throw error;
+  }
+}
 
 export class PgslDataAccessor implements DataAccessor {
   constructor(
@@ -57,10 +74,15 @@ export class PgslDataAccessor implements DataAccessor {
   }
 
   async getData(identifier: ResourceIdentifier): Promise<Guarded<Readable>> {
+    const snapshot = await nativeSnapshot(this.ldp, this.pod, identifier.path);
+    if (snapshot !== undefined) {
+      if (!snapshot || snapshot.contentType === CONTAINER_MARKER_CT) throw new NotFoundHttpError();
+      return guardStream(Readable.from([Buffer.from(snapshot.bytes)], { objectMode: false }));
+    }
     const st = await this.ldp.stat(this.pod, identifier.path);
     if (!st || st.contentType === CONTAINER_MARKER_CT) throw new NotFoundHttpError();
     // BYTE-mode stream of Buffers (large blobs never materialize whole). Mapping to
-    // Buffer + objectMode:false is required — a bare Readable.from(gen) over
+    // Buffer + objectMode:false is required - a bare Readable.from(gen) over
     // Uint8Arrays yields an OBJECT-mode stream, so byte consumers (readableToString)
     // read the numeric array text ("123,34,...") instead of the actual bytes.
     const src = this.ldp.readStream(this.pod, identifier.path);
@@ -84,15 +106,18 @@ export class PgslDataAccessor implements DataAccessor {
       if (st) md.set(DC.terms.modified, new Date(st.updatedAt).toISOString());
       return md;
     }
-    const st = await this.ldp.stat(this.pod, identifier.path);
+    const snapshot = await nativeSnapshot(this.ldp, this.pod, identifier.path);
+    const st = snapshot === undefined ? await this.ldp.stat(this.pod, identifier.path) : snapshot;
     if (!st || st.contentType === CONTAINER_MARKER_CT) throw new NotFoundHttpError();
     const md = await this.baseMetadata(identifier, st.meta);
     this.setContentType(md, st.contentType);
     md.add(RDF.terms.type, LDP.terms.Resource);
     md.set(POSIX.terms.size, `${st.size}`);
-    // dc:modified -> CSS's BasicETagHandler emits an ETag ("<mtime>-<ct>") so
-    // If-Match/If-None-Match optimistic concurrency (the manifest CAS) works.
+    // Last-Modified remains a date; NativeETagHandler uses the actual committed revision.
     md.set(DC.terms.modified, new Date(st.updatedAt).toISOString());
+    // Always overwrite replayed caller metadata with the actual committed native version.
+    md.set(toNamedTerm(NATIVE_REVISION_PREDICATE), st.revision);
+    if (st.bodyDigest) md.set(toNamedTerm(NATIVE_BODY_DIGEST_PREDICATE), st.bodyDigest);
     return md;
   }
 
@@ -126,42 +151,52 @@ export class PgslDataAccessor implements DataAccessor {
     metadata: RepresentationMetadata,
   ): Promise<void> {
     const contentType = this.fullContentType(metadata) ?? 'application/octet-stream';
+    if (isNativeCommitMediaType(contentType)) {
+      const { command, bytes } = await readNativeCommitCommand(data);
+      requireNativeCommitScope(identifier.path, command);
+      const receipt = await this.ldp.commitResource(this.pod, identifier.path, bytes, command.contentType, {
+        expectedRevision: command.expectedRevision,
+      });
+      if (receipt.status === 'conflict') throw new PreconditionFailedHttpError('Native resource revision changed');
+      setNativeCommitReceipt(identifier.path, command, bytes, receipt);
+      return;
+    }
     const meta = await this.extractMeta(metadata);
     if (this.ldp.hasCodec(contentType)) {
       // RDF must be drained whole for the codec ingest (RDF resources are small).
       const chunks: Buffer[] = [];
       for await (const chunk of data) chunks.push(Buffer.from(chunk));
-      await this.ldp.writeResource(this.pod, identifier.path, new Uint8Array(Buffer.concat(chunks)), contentType, {}, meta);
+      await guardNativeHead(() => this.ldp.writeResource(this.pod, identifier.path, new Uint8Array(Buffer.concat(chunks)), contentType, {}, meta));
     } else {
       // Non-RDF: chunked stream (a large blob never materializes whole).
-      await this.ldp.writeStream(this.pod, identifier.path, data, contentType, meta);
+      await guardNativeHead(() => this.ldp.writeStream(this.pod, identifier.path, data, contentType, meta));
     }
   }
 
   async writeContainer(identifier: ResourceIdentifier, metadata: RepresentationMetadata): Promise<void> {
     // Marker for existence + persist any non-derived container metadata (pim:Storage on the root).
     const meta = await this.extractMeta(metadata);
-    await this.ldp.writeResource(this.pod, identifier.path, new Uint8Array(0), CONTAINER_MARKER_CT, {}, meta);
+    await guardNativeHead(() => this.ldp.writeResource(this.pod, identifier.path, new Uint8Array(0), CONTAINER_MARKER_CT, {}, meta));
   }
 
   async writeMetadata(identifier: ResourceIdentifier, metadata: RepresentationMetadata): Promise<void> {
     const ct = identifier.path.endsWith('/') ? CONTAINER_MARKER_CT : this.fullContentType(metadata);
     const meta = await this.extractMeta(metadata);
-    await this.ldp.setMeta(this.pod, identifier.path, meta, ct);
+    await guardNativeHead(() => this.ldp.setMeta(this.pod, identifier.path, meta, ct));
   }
 
   async deleteResource(identifier: ResourceIdentifier): Promise<void> {
-    const existed = await this.ldp.deleteResource(this.pod, identifier.path);
+    const existed = await guardNativeHead(() => this.ldp.deleteResource(this.pod, identifier.path));
     if (!existed) throw new NotFoundHttpError();
   }
 
-  // ── helpers ──
+  // �� helpers ��
 
   /** Base metadata = a fresh object re-hydrated with any persisted non-derived quads. */
   private async baseMetadata(identifier: ResourceIdentifier, meta?: string): Promise<RepresentationMetadata> {
     const md = new RepresentationMetadata(identifier);
     if (meta) {
-      // N-Quads auto-detects (TriG-family) — no explicit format needed.
+      // N-Quads auto-detects (TriG-family) - no explicit format needed.
       const quads = await parseQuads(guardStream(Readable.from([meta])));
       md.addQuads(quads);
     }
@@ -190,6 +225,8 @@ export class PgslDataAccessor implements DataAccessor {
     metadata.removeAll(DC.terms.modified);
     metadata.removeAll(POSIX.terms.size);
     metadata.removeAll(CONTENT_TYPE_TERM); // content-type is stored on the record
+    metadata.removeAll(toNamedTerm(NATIVE_REVISION_PREDICATE));
+    metadata.removeAll(toNamedTerm(NATIVE_BODY_DIGEST_PREDICATE));
     // Response-only metadata (ldp:contains, WAC-Allow, ...) must never persist.
     const quads = metadata
       .quads()

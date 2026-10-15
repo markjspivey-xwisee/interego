@@ -3,16 +3,15 @@
  *
  * Foxxi-as-LRS doesn't lock you into in-memory storage. The
  * `StatementStore` interface is the swap-point — ship in-memory for
- * demo / dev, file-backed JSON-lines for low-volume production, and
+ * demo / dev, file-backed JSON-lines for development replay, and
  * the "primary-forward" variant that treats an external LRS (SCORM
  * Cloud / Watershed / Yet Analytics / Veracity / Learning Locker) as
  * the source of truth and Foxxi as the read-through cache.
  *
- * Deployed bridges use FOXXI_LRS_BACKEND=postgres with FOXXI_LRS_POSTGRES_URL
- * (or DATABASE_URL) and a stable FOXXI_LRS_ENCRYPTION_KEY (or bridge private key).
- * PostgreSQL holds tenant-isolated encrypted statements, attachments and documents.
- * Memory is available only outside deployed environments for development/tests;
- * legacy file/forward/pod statement backends do not provide durable document storage.
+ * Deployed bridges use FOXXI_LRS_BACKEND=interego. Complete encrypted
+ * native PGSL artifacts hold statements, attachments, State/Profile documents
+ * and durable tenant membership under awaited atomic commits.
+ * Memory and legacy stores are explicit development/test options only.
  *
  * Per-store guarantees regardless of backend:
  *   - get-by-id returns the exact stored object
@@ -34,7 +33,9 @@ import {
   withTransientRetry,
 } from '@interego/solid';
 import { PodStatementStore } from './pod-statement-store.js';
-import { PostgresLrsDatabase } from './postgres-lrs-store.js';
+import { deriveEncryptionKeyPair, type IRI } from '@interego/core';
+import { NativeCommitStore } from '@interego/pgsl';
+import { NativeInteregoLrsDatabase } from './native-lrs-store.js';
 
 export interface StoredStatement {
   id: string;
@@ -548,47 +549,86 @@ export function isProductionLrsEnvironment(env: NodeJS.ProcessEnv = process.env)
   return env.NODE_ENV === 'production' || Boolean(env.RAILWAY_ENVIRONMENT_NAME || env.RAILWAY_ENVIRONMENT_ID || env.RAILWAY_SERVICE_ID);
 }
 export function configuredLrsBackend(env: NodeJS.ProcessEnv = process.env): string {
-  return env.FOXXI_LRS_BACKEND || ((env.FOXXI_LRS_POSTGRES_URL || env.DATABASE_URL) ? 'postgres' : 'memory');
+  return env.FOXXI_LRS_BACKEND || (env.FOXXI_LRS_NATIVE_POD_URL || isProductionLrsEnvironment(env) ? 'interego' : 'memory');
+}
+function nativeConfiguration(env: NodeJS.ProcessEnv) {
+  const pod = env.FOXXI_LRS_NATIVE_POD_URL, owner = env.FOXXI_LRS_NATIVE_OWNER;
+  const capability = env.FOXXI_LRS_NATIVE_CAPABILITY;
+  const privateKey = env.FOXXI_LRS_NATIVE_PRIVATE_KEY || env.FOXXI_BRIDGE_PRIVATE_KEY;
+  const ownerPublicKey = env.FOXXI_LRS_NATIVE_OWNER_PUBLIC_KEY;
+  if (!pod || !owner || !capability || !privateKey || !ownerPublicKey) throw new Error('Interego LRS requires a native pod, owner, explicit capability, stable private key and pinned owner encryption public key');
+  if (!/^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$/.test(owner) || owner.length > 4096) throw new Error('invalid native LRS owner');
+  if (!/^(?:0x)?[a-fA-F0-9]{64}$/.test(privateKey)) throw new Error('native LRS requires an existing stable wallet private key');
+  const publicBytes = Buffer.from(ownerPublicKey, 'base64');
+  if (publicBytes.length !== 32 || publicBytes.toString('base64') !== ownerPublicKey) throw new Error('native LRS owner encryption key must be pinned canonical 32-byte base64');
+  if (capability.length > 16384 || /[\r\n\u0000]/.test(capability)) throw new Error('invalid native LRS capability');
+  const podUrl = new URL(pod);
+  const checkedUrl = (value: string, container = false): string => {
+    const url = new URL(value);
+    if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && !isProductionLrsEnvironment(env) && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
+      || url.username || url.password || url.hash || url.search || /%2e|%2f|%5c/i.test(url.pathname)
+      || url.origin !== podUrl.origin || !url.pathname.startsWith(podUrl.pathname) || (container && !url.pathname.endsWith('/'))) throw new Error('native LRS resources must stay inside their configured pod');
+    return url.href;
+  };
+  if (!podUrl.pathname.endsWith('/')) throw new Error('native LRS pod URL must end in /');
+  const scope = { pod: checkedUrl(pod, true), owner: owner as IRI,
+    headUrl: checkedUrl(env.FOXXI_LRS_NATIVE_HEAD_URL || new URL('foxxi/lrs/native/head', pod).href),
+    artifactContainer: checkedUrl(env.FOXXI_LRS_NATIVE_ARTIFACT_CONTAINER || new URL('foxxi/lrs/native/artifacts/', pod).href, true) };
+  return { scope, capability, privateKey, ownerPublicKey };
 }
 export function assertLrsPrimaryConfiguration(env: NodeJS.ProcessEnv = process.env): void {
   const spec = configuredLrsBackend(env);
-  if (isProductionLrsEnvironment(env) && spec !== 'postgres') {
-    throw new Error('deployed LRS requires FOXXI_LRS_BACKEND=postgres; volatile primary storage is disabled');
-  }
-  if (spec === 'postgres') {
-    if (!(env.FOXXI_LRS_POSTGRES_URL || env.DATABASE_URL)) throw new Error('PostgreSQL LRS requires FOXXI_LRS_POSTGRES_URL or DATABASE_URL');
-    const key = env.FOXXI_LRS_ENCRYPTION_KEY || env.FOXXI_BRIDGE_PRIVATE_KEY;
-    if (!key || Buffer.byteLength(key, 'utf8') < 32) throw new Error('PostgreSQL LRS requires a stable encryption key of at least 32 bytes');
-  }
+  if (isProductionLrsEnvironment(env) && spec !== 'interego') throw new Error('deployed LRS requires FOXXI_LRS_BACKEND=interego; all primary storage must use native Interego');
+  if (spec === 'postgres') throw new Error('standalone PostgreSQL is not an LRS primary; configure native Interego storage');
+  if (spec === 'interego') nativeConfiguration(env);
 }
-let postgresDatabase: PostgresLrsDatabase | undefined;
-/** Initialize before accepting HTTP requests; a database failure never selects memory. */
+let nativeDatabase: NativeInteregoLrsDatabase | undefined;
+/** Authenticated transport is constrained to the configured native pod, including reads. */
+export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = process.env): NativeInteregoLrsDatabase {
+  const config = nativeConfiguration(env), originalFetch = globalThis.fetch.bind(globalThis);
+  const senderKeyPair = deriveEncryptionKeyPair(config.privateKey, config.scope.owner);
+  const pod = new URL(config.scope.pod);
+  const transport: typeof globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : undefined;
+    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+    if (url.origin !== pod.origin || !url.pathname.startsWith(pod.pathname) || url.username || url.password || url.hash || url.search || /%2e|%2f|%5c/i.test(url.pathname)) throw new Error('native LRS transport left its authorized pod scope');
+    const headers = new Headers(init?.headers ?? request?.headers);
+    headers.set('Authorization', 'Bearer ' + config.capability);
+    return originalFetch(input, { ...init, headers, method: init?.method ?? request?.method ?? 'GET',
+      redirect: 'manual', signal: init?.signal ?? AbortSignal.timeout(15000) });
+  };
+  const client = new NativeCommitStore({ scope: config.scope, fetch: transport, senderKeyPair,
+    ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
+  return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
+    scopeIdentity: JSON.stringify(config.scope),
+    cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner) });
+}
+function createNativeCursorSecret(privateKey: string, owner: string): Uint8Array {
+  // A domain-separated stable MAC key; no random restart key and no unsigned pod key lookup.
+  return Buffer.from(deriveEncryptionKeyPair(privateKey, 'urn:foxxi:native-lrs:cursor:' + owner).secretKey, 'base64');
+}
+/** Await discovery + a real native no-op CAS before accepting HTTP. Never selects another backend on failure. */
 export async function readyStatementStore(): Promise<void> {
   assertLrsPrimaryConfiguration();
-  if (configuredLrsBackend() === 'postgres') {
-    createStatementStore('postgres');
-    await postgresDatabase!.ready();
+  if (configuredLrsBackend() === 'interego') {
+    createStatementStore('interego');
+    await nativeDatabase!.ready();
   }
 }
-
 /** Persistent tenant enumeration includes dormant tenants after a process restart. */
 export async function listPersistentStatementTenants(): Promise<string[]> {
-  if (configuredLrsBackend() !== 'postgres') throw new Error('persistent tenant enumeration requires PostgreSQL');
-  createStatementStore('postgres');
-  return postgresDatabase!.listTenants();
+  if (configuredLrsBackend() !== 'interego') throw new Error('persistent tenant enumeration requires native Interego');
+  createStatementStore('interego');
+  return nativeDatabase!.listTenants();
 }
-
 export function createStatementStore(spec: string = configuredLrsBackend(), tenant = 'default'): StatementStore {
   assertLrsPrimaryConfiguration();
-  if (isProductionLrsEnvironment() && spec !== 'postgres') throw new Error('deployed LRS cannot override its durable primary');
-  if (spec === 'postgres') {
-    if (!postgresDatabase) {
-      const connectionString = process.env.FOXXI_LRS_POSTGRES_URL || process.env.DATABASE_URL || '';
-      const encryptionKey = process.env.FOXXI_LRS_ENCRYPTION_KEY || process.env.FOXXI_BRIDGE_PRIVATE_KEY || '';
-      postgresDatabase = new PostgresLrsDatabase({ connectionString, encryptionKey });
-    }
-    return postgresDatabase.forTenant(tenant);
+  if (isProductionLrsEnvironment() && spec !== 'interego') throw new Error('deployed LRS cannot override its native Interego primary');
+  if (spec === 'interego') {
+    nativeDatabase ??= createConfiguredNativeLrsDatabase();
+    return nativeDatabase.forTenant(tenant);
   }
+  if (spec === 'postgres') throw new Error('standalone PostgreSQL is not an LRS primary; configure native Interego storage');
   if (!spec || spec === 'memory') return new InMemoryStatementStore();
   if (spec.startsWith('file:')) return new FileStatementStore(spec.slice(5));
   if (spec.startsWith('forward:')) {
@@ -613,7 +653,7 @@ export function createStatementStore(spec: string = configuredLrsBackend(), tena
     const containerPath = spec.startsWith('pod:') ? spec.slice('pod:'.length) : 'foxxi/lrs/';
     return new PodStatementStore({ podUrl, authoritativeSource: authoritativeSource as unknown as never, containerPath });
   }
-  throw new Error(`unknown FOXXI_LRS_BACKEND; accepted: postgres | memory (development/test) | file:<dir> | forward:<endpoint>||<user>||<password>[||<version>] | pod[:container-path]`);
+  throw new Error(`unknown FOXXI_LRS_BACKEND; accepted: interego | memory (development/test) | file:<dir> | forward:<endpoint>||<user>||<password>[||<version>] | pod[:container-path]`);
 }
 
 export { randomUUID };

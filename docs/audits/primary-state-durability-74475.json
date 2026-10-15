@@ -492,4 +492,3 @@
     "Short-lived auth state and reproducible views can remain in memory; acknowledged primary data needs durable persistence/recovery."
   ]
 }
-

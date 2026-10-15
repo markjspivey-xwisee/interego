@@ -5,7 +5,7 @@ import { attachCmi5LmsRoutes } from '../../src/cmi5-lms.js';
 import { attachXapiAdminRoutes } from '../../src/xapi-admin.js';
 import { deriveUserWallet } from '../../src/auth.js';
 import { InMemoryStatementStore, readyStatementStore } from '../../src/statement-store.js';
-import { PostgresLrsStore } from '../../src/postgres-lrs-store.js';
+import { NativeInteregoLrsStore } from '../../src/native-lrs-store.js';
 import type { TenantId } from '../../src/tenant-context.js';
 import type { IRI } from '@interego/core';
 
@@ -16,7 +16,7 @@ async function beforeWrite(kind: 'statement' | 'resource'): Promise<void> {
   if (current !== kind && current !== `fail-${kind}`) return;
   gate = undefined;
   process.send?.({ event: 'entered', kind });
-  if (current.startsWith('fail-')) throw new Error('private database failure: do not disclose');
+  if (current.startsWith('fail-')) throw new Error('private native storage failure: do not disclose');
   await new Promise<void>(resolve => { release = resolve; });
 }
 const memoryPut = InMemoryStatementStore.prototype.put;
@@ -24,13 +24,13 @@ InMemoryStatementStore.prototype.put = async function (record) {
   await beforeWrite('statement');
   await memoryPut.call(this, record);
 };
-const put = PostgresLrsStore.prototype.putWithAttachments;
-PostgresLrsStore.prototype.putWithAttachments = async function (...args) {
+const put = NativeInteregoLrsStore.prototype.putBatchWithAttachments;
+NativeInteregoLrsStore.prototype.putBatchWithAttachments = async function (...args) {
   await beforeWrite('statement');
-  await put.apply(this, args);
+  return put.apply(this, args);
 };
-const update = PostgresLrsStore.prototype.updateResource;
-PostgresLrsStore.prototype.updateResource = async function <T, R>(kind: string, id: string, mutate: (current: T | null) => { value: T | null; result: R }): Promise<R> {
+const update = NativeInteregoLrsStore.prototype.updateResource;
+NativeInteregoLrsStore.prototype.updateResource = async function <T, R>(kind: string, id: string, mutate: (current: T | null) => { value: T | null; result: R }): Promise<R> {
   await beforeWrite('resource');
   const bound = update.bind(this) as typeof update;
   return bound<T, R>(kind, id, mutate);

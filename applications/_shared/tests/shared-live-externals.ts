@@ -434,35 +434,58 @@ const TYPESAFE: SharedLiveExternal = {
 };
 
 /**
- * A real, isolated PostgreSQL primary supplied by the durable-LRS CI job. Both suites use
- * synthetic records and one stable fixture key, but share the service's schema and connection
- * budget. The HTTP suite also starts separate bridge processes and kills them after accepted
- * writes, so its external dependency is not made in-process by its loopback HTTP listener.
+ * Native Interego CSS backed by its existing PGSL engine, exercised by both durable-LRS
+ * application suites and a direct engine suite. The application suites start their own CSS
+ * subprocesses through native-css-fixture.ts; the engine service and connection budget are
+ * shared by all three. Foxxi reaches CSS over HTTP and owns no SQL schema or database connection.
  *
- * TEST_PG_URL arms and retargets the database. REQUIRE_LRS_PG_TESTS does not supply an address:
- * it makes an absent URL a failure, preventing the required CI job from passing as skipped.
+ * TEST_NATIVE_CSS_ROOT plus TEST_NATIVE_PG_URL configure that real subprocess. An explicitly
+ * supplied TEST_NATIVE_POD_URL selects an external native pod instead. REQUIRE_LRS_NATIVE_TESTS
+ * supplies neither an address nor a server: it makes missing fixture prerequisites a failure,
+ * so the required CI job cannot pass by silently skipping its external checks.
  */
-const FOXXI_LRS_POSTGRES: SharedLiveExternal = {
-  id: 'foxxi-lrs-postgres',
-  address: 'the isolated PostgreSQL database at TEST_PG_URL; bridge-typecheck.yml provisions '
-    + 'PostgreSQL 16 on runner loopback with synthetic fixture credentials',
-  contention: 'one database and schema shared by the store and HTTP recovery suites, including '
-    + 'the HTTP suite\'s child processes; tenant IDs isolate records, while schema setup and '
-    + 'the server\'s connection budget remain shared',
-  armedBy: ['TEST_PG_URL', 'REQUIRE_LRS_PG_TESTS'],
+const FOXXI_LRS_NATIVE: SharedLiveExternal = {
+  id: 'foxxi-lrs-native-css-pgsl',
+  address: 'the isolated native PGSL engine at TEST_NATIVE_PG_URL, reached directly by the core '
+    + 'suite and through application-owned CSS subprocesses from TEST_NATIVE_CSS_ROOT; optional '
+    + 'TEST_NATIVE_POD_URL retargets only the application suites',
+  contention: 'the direct engine suite and separate CSS children share one isolated PGSL service '
+    + 'and its connection budget. The HTTP recovery suite also kills bridge children, then reads '
+    + 'through native CSS again; loopback listeners do not make these dependencies in-process',
+  armedBy: ['TEST_NATIVE_POD_URL', 'TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL', 'REQUIRE_LRS_NATIVE_TESTS'],
   offSwitch: [],
-  retargetedBy: ['TEST_PG_URL'],
-  switchExceptions: [],
+  retargetedBy: ['TEST_NATIVE_POD_URL', 'TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL'],
+  switchExceptions: [
+    {
+      name: 'TEST_NATIVE_CSS_ROOT',
+      module: 'tests/pgsl-store-native-commit.test.ts',
+      why: 'This suite opens the existing PGSL engine directly and does not launch CSS. The '
+        + 'CSS package directory belongs to the two application fixtures, not this engine caller.',
+    },
+    {
+      name: 'TEST_NATIVE_POD_URL',
+      module: 'tests/pgsl-store-native-commit.test.ts',
+      why: 'This suite tests native engine transactions directly through TEST_NATIVE_PG_URL. '
+        + 'It neither selects nor dials an external CSS pod, so the application pod retarget is irrelevant.',
+    },
+  ],
   armedInCi: ['.github/workflows/bridge-typecheck.yml'],
   touchedBy: [
-    'applications/foxxi-content-intelligence/tests/postgres-lrs-store.test.ts',
+    'applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts',
     'applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts',
+    'tests/pgsl-store-native-commit.test.ts',
   ],
-  fingerprints: [envRead('TEST_PG_URL'), envRead('REQUIRE_LRS_PG_TESTS')],
+  fingerprints: [
+    helperImport('native-css-fixture'),
+    envRead('TEST_NATIVE_POD_URL'),
+    envRead('TEST_NATIVE_CSS_ROOT'),
+    envRead('TEST_NATIVE_PG_URL'),
+    envRead('REQUIRE_LRS_NATIVE_TESTS'),
+  ],
 };
 
 export const SHARED_LIVE_EXTERNALS: readonly SharedLiveExternal[] =
-  [POD, LRSQL, SCORM_CLOUD, PUBLIC_RELAY, TYPESAFE, FOXXI_LRS_POSTGRES];
+  [POD, LRSQL, SCORM_CLOUD, PUBLIC_RELAY, TYPESAFE, FOXXI_LRS_NATIVE];
 
 /**
  * The scan's roots, mirroring `vitest.config.ts`'s `include`. `deploy/` is deliberately out: no
@@ -477,11 +500,15 @@ export const COLLECTED_ROOTS: readonly string[] = ['tests', 'applications', 'int
  * waved through. Adding a line is a decision; the test refuses to let it be an omission.
  */
 export const SHARED_BUT_NOT_LIVE: readonly { readonly name: string; readonly why: string }[] = [
-  // Empty: the multiply read test-tree configuration for the real PostgreSQL fixture belongs
-  // to its external entry above. The remaining shared names below are reached through imported
-  // production code. This list stays for the different case: a name two or more modules read
-  // IN THE TEST TREE that addresses nothing outside the process. The unchanged census measures
-  // the distinction instead of relying on a fixed count written into this comment.
+  // Native fixture addresses and activation gates belong to their external entry above. This
+  // optional test credential names neither a destination nor a gate: only an explicitly supplied
+  // TEST_NATIVE_POD_URL selects the external target, and the local fixture uses its own constant.
+  {
+    name: 'TEST_NATIVE_CAPABILITY',
+    why: 'An optional authorization value for the explicitly retargeted test pod. It supplies '
+      + 'neither an address nor the CSS/PGSL prerequisites and cannot activate a suite by itself. '
+      + 'The isolated CI fixture uses its own synthetic capability rather than this variable.',
+  },
   //
   // The single candidate that once looked like it needed a line — FOXXI_WALLET_SEED — is read
   // in the TEST TREE by exactly ONE module, `applications/foxxi-content-intelligence/tests/
@@ -512,18 +539,18 @@ export const SHARED_BUT_NOT_LIVE: readonly { readonly name: string; readonly why
  * `RELAY_PGSL_PG_CONNSTR` names a real PostgreSQL that `engagement-store.ts` opens, and
  * `FOXXI_XAPI_PROFILE_URL` can name a profile document to fetch. The dormant addresses remain
  * here because nothing in the test tree or workflows supplies them, and each dial is guarded
- * by configuration being present. The dedicated LRS PostgreSQL fixture above is different:
- * two suites explicitly read TEST_PG_URL, and a required CI job supplies its isolated service.
- * Production PostgreSQL URL spellings below are reached through imported statement-store.ts;
- * setting the backend selector alone does not supply a database address. A configuration test
- * temporarily sets synthetic production-style values only to assert that a memory override is
- * refused before a database is constructed.
+ * by configuration being present. The native CSS/PGSL LRS fixture above is different: two
+ * suites explicitly read its test configuration and a required CI job supplies the real CSS
+ * runtime and isolated substrate. Foxxi itself dials the native pod rather than opening SQL;
+ * production configuration read sites below are retained only while the measured import
+ * closure actually reaches them. A backend selector is not by itself a destination.
  *
- * FOXXI_LRS_BACKEND is no longer an entry in this census: statement-store.ts now reads it from
- * an injected `env` parameter defaulting to process.env, which is the alias limitation stated
- * in the header. It selects a backend rather than supplying an address. The removed per-tenant
- * memory allowlist/prefix names have no production read sites either. Do not retain dead
- * imported-code entries or invent direct reads to make the census describe the old source.
+ * FOXXI_LRS_BACKEND and the native pod/owner/capability/key/path settings are read from the
+ * injected `env` parameter in statement-store.ts, defaulting to process.env. This is the alias
+ * limitation stated in the header: their absence from this census is not proof that the native
+ * storage dependency is absent. The live application and engine suites explicitly configure
+ * the native CSS/PGSL fixture above. The old standalone SQL URL/encryption-key read sites have been removed; do
+ * not retain dead imported-code entries or invent direct reads to describe the old source.
  *
  * What that leaves is worth saying plainly rather than filing away: an operator who exports
  * `FOXXI_TENANT_POD_URL` and `FOXXI_AUTHORITATIVE_SOURCE` in their shell configures a live pod
@@ -720,41 +747,6 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
     readIn: 'applications/foxxi-content-intelligence/src/foundation-shared-lattice.ts',
     why: 'the backoff ceiling in milliseconds, defaulted to 600_000 at module scope. Same read '
       + 'site and same argument as the base above.',
-  },
-  {
-    name: 'FOXXI_LRS_POSTGRES_URL',
-    readIn: 'applications/foxxi-content-intelligence/src/statement-store.ts',
-    why: 'GENUINELY A LIVE ADDRESS: the preferred production PostgreSQL connection string. '
-      + 'Collected modules share the imported factory read, but neither PostgreSQL suite reads '
-      + 'this name for its test target: both read TEST_PG_URL, registered above. The HTTP child '
-      + 'receives that isolated fixture URL under this production spelling. The configuration '
-      + 'unit test sets an unused synthetic URL only while asserting that a deployed memory '
-      + 'override throws before constructing a database; no production credential is supplied.',
-  },
-  {
-    name: 'DATABASE_URL',
-    readIn: 'applications/foxxi-content-intelligence/src/statement-store.ts',
-    why: 'GENUINELY A LIVE ADDRESS: the fallback production PostgreSQL connection string, '
-      + 'shared through imports of the LRS factory. The fixture suites take their actual target '
-      + 'from TEST_PG_URL rather than this name. Configuration assertions pass a synthetic '
-      + 'DATABASE_URL as an ordinary injected object property and do not construct or dial '
-      + 'that database. An ambient operator value can still arm imported production code.',
-  },
-  {
-    name: 'FOXXI_LRS_ENCRYPTION_KEY',
-    readIn: 'applications/foxxi-content-intelligence/src/statement-store.ts',
-    why: 'the stable secret from which the PostgreSQL LRS derives authenticated payload and '
-      + 'opaque index keys. It selects encryption material, not a network destination. Both '
-      + 'real PostgreSQL suites use the same explicit synthetic fixture key; the HTTP child '
-      + 'receives that value under this production spelling, and no production key is required.',
-  },
-  {
-    name: 'FOXXI_BRIDGE_PRIVATE_KEY',
-    readIn: 'applications/foxxi-content-intelligence/src/statement-store.ts',
-    why: 'the existing bridge secret accepted as the fallback stable LRS encryption seed when '
-      + 'FOXXI_LRS_ENCRYPTION_KEY is absent. It is key material, not an address. Configuration '
-      + 'tests supply a synthetic string to the injected environment object; the PostgreSQL '
-      + 'fixture uses its dedicated synthetic LRS key instead of any production bridge key.',
   },
   {
     name: 'FOXXI_LRS_MEMORY_MAX_STATEMENTS',

@@ -1,10 +1,10 @@
 # Changelog
 
-## 2026-10-15 — Durable primary LRS storage and preservation hold
+## 2026-10-15 — Native Interego LRS commits and preservation hold
 
-Foxxi now has an encrypted PostgreSQL primary for tenant-separated statements, voids, attachment bytes and State/Profile documents. HTTP success and internal emission await commits; database failures do not select memory. A persistent tenant registry supports inventory after restart, and key verification refuses an accidentally changed encryption key rather than presenting empty history. Deployed bridges refuse volatile primary storage, including the former lens-tenant overrides. The desired Railway configuration references the existing database.
+Foxxi's replacement primary uses Interego's native encrypted, content-addressed PGSL records. The separately proposed PostgreSQL LRS is rejected in accordance with the owner's existing storage requirement; Foxxi carries no SQL driver, connection or application tables. Native conditional commits publish the statement, attachment bytes, void relationships, State/Profile documents and tenant registry through one authoritative head. xAPI remains the interface and rebuildable query projection. The existing Interego substrate's PostgreSQL engine remains an explicit infrastructure dependency.
 
-The old process remains on hold until its in-memory records are preserved or their specified loss is knowingly accepted. A read-only inventory of the existing Basic-credential scope found no records in that scope and does not classify or back up the 779 process-wide resident statements. Source and log evidence distinguish pod-derived event candidates from verified primary records; no subtraction of those counts establishes the remaining risk. Real PostgreSQL recovery tests are part of the existing Bridge Typecheck workflow. The operations note and bounded source audit document remaining non-LRS primary-state gaps without claiming whole-system durability.
+Writes await native receipts; missing authority, changed keys, corrupt closures and storage failures do not select memory. Native storage tests require the actual CSS/PGSL engine path, independent writers and storage-process recovery. The old process remains on hold until its resident records are inventoried, privately preserved and restored in isolation, or the owner knowingly accepts specific losses. The 779 resident statement count and 776 projector candidates do not identify record kinds or prove that only three need preservation. No production backend change, restart or complete backup is claimed. The operations decision and bounded source audit record the remaining system-wide durability work.
 
 ## 2026-10-15 — Live capability directory and workbench examples
 

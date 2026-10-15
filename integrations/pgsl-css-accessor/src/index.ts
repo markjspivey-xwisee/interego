@@ -1,5 +1,5 @@
 /**
- * pgsl-css-accessor — a Community Solid Server storage backend that serves the
+ * pgsl-css-accessor - a Community Solid Server storage backend that serves the
  * W3C Solid/LDP surface out of the PGSL lattice (foundation-first Stage 5).
  *
  * Exports:
@@ -9,8 +9,11 @@
  *    from a connection string (or PGSL_PG_CONNSTR), for use in a CSS config.
  *
  * componentsjs-generator scans this export to emit dist/components/*.jsonld.
- * Only the factory is exported here (its constructor takes plain strings, so the
- * generator maps it cleanly); PgslDataAccessor is imported by its own module
- * path where needed and is not a Components.js entry point.
+ * The factory and native protocol handlers are Components.js entry points;
+ * PgslDataAccessor itself is imported by its own module path.
  */
 export { PgslDataAccessorFactory } from './PgslDataAccessorFactory.js';
+export { NativeETagHandler } from './NativeETagHandler.js';
+export { NativePutOperationHandler } from './NativePutOperationHandler.js';
+export { NativeGetOperationHandler } from './NativeGetOperationHandler.js';
+export { NativeCapabilityHeaders } from './NativeCapabilityHeaders.js';

@@ -1,76 +1,84 @@
 # LRS durability and preservation
 
-## Rollout is held
+## Architecture and rollout holds
 
-Do not restart the current Foxxi process, merge a change that automatically deploys it,
-or apply the desired PostgreSQL configuration before resolving preservation of the old store.
-The dependency manifest and shared lockfile also participate in other image scopes. Inspect
-the actual deployment plan before release and preserve primary state and keys for every
-affected service; this is not permission to restart the rest of the fleet.
-At 2026-10-15 05:18 UTC the live `/xapi/about` reported 779 process-wide RAM-resident xAPI statements.
-This is an event-record count, not a verified count of unrecoverable primary records.
+Foxxi's canonical learning records must persist through native Interego/PGSL
+contracts. A separate PostgreSQL LRS primary is rejected. The binding decision,
+atomic commit requirements and existing substrate engine dependency are recorded
+in [native-learning-storage.md](native-learning-storage.md).
 
-The mesh logs repeatedly derived 776 event candidates from three pods across three agents.
-`projected` counts candidates, and `landed` counts successful new writes: these logs cannot prove
-the composition of the 779 stored records or establish that only three need preservation.
-The old `lens:` namespaces also accepted HTTP writes, so a tenant name is not a durability proof.
+Do not restart the current Foxxi process, merge a change that automatically deploys
+it, or activate a replacement before resolving preservation of the old store.
+Shared packages and lockfiles also affect other images: recompute the actual
+deployment scope before release and preserve primary records and keys for every
+affected service.
 
-An isolated read-only inventory used only the existing configured Basic credentials. Its one
-authorized scope was empty. Other runtime-created scopes, voided targets, document state and
-attachment bytes were not inspected. No complete backup was made. Full inventory requires a
-genuine configured operator session; Interego agent delegation does not replace that authority.
+At 2026-10-15 05:55 UTC the live `/xapi/about` reported 779 process-wide RAM-resident
+xAPI statements. This is an event-record count, not a verified count of
+unrecoverable primary records. Mesh logs derived 776 event candidates from three
+pods across three agents; candidates and newly landed writes do not identify the
+composition of the 779 records. Do not subtract these counts to infer losses.
+The old `lens:` namespaces also accepted HTTP writes.
 
-## Durable primary configuration
+A read-only inventory using existing configured Basic credentials found its one
+authorized scope empty. Other runtime-created scopes, voided targets, document
+state and attachment bytes were not inspected. No complete backup was made.
+Full inventory requires genuine configured operator authority; Interego agent
+delegation does not replace that authority. Website inspection is authorized,
+but the attempted interactive browser connection was blocked by the execution
+environment's network policy. A public HTML response is not an operator session.
 
-The desired Railway preset selects `FOXXI_LRS_BACKEND=postgres` and references the existing
-`postgres.DATABASE_URL` through `FOXXI_LRS_POSTGRES_URL`. This preset is not a claim that the
-live environment has changed. Its PostgreSQL service already has a persistent volume.
+## Native primary requirements
 
-The backend requires a stable `FOXXI_LRS_ENCRYPTION_KEY`, or the existing
-`FOXXI_BRIDGE_PRIVATE_KEY` as its fallback. Never generate that key at boot. Both database
-backups and the original key are needed for recovery. An encrypted key-verification sentinel
-refuses a changed key instead of silently presenting an empty database. Key rotation requires
-an explicit re-encryption migration.
+The replacement requires `FOXXI_LRS_BACKEND=interego` and must not carry a Foxxi
+database connection. Native pod, owner scope, existing capability and stable
+private key must be explicitly configured and verified before startup. The
+historical Azure-to-Railway migration manifest is a frozen snapshot, not current
+configuration; its old memory setting must not be used to configure this release.
+No live configuration has been changed.
 
-All tenants, including projected lenses, use the same durable policy. Statements, void markers,
-attachment bytes, State documents, activity profiles and agent profiles have encrypted,
-tenant-bound database records. Tenant names and logical resource identifiers are encrypted or
-keyed indexes. Private documents are not published through the old public snapshot mechanism.
-Successful writes await commit. Database errors do not switch the primary to memory.
+Successful writes await a verified native commit receipt. Statements, attachments,
+void relationships, State documents, activity and agent profiles and the durable
+tenant registry share the same native transaction policy. Tenant registration
+occurs with its first committed data; merely reading a tenant must not register
+it. Queries are rebuildable views of canonical native records.
 
-Deployed environments refuse a volatile primary or a legacy statement-only backend that leaves
-documents and attachments volatile. Development and test memory stores are explicitly separate.
+Private records remain encrypted to the intended owner. Stable key custody and
+the underlying substrate's recovery are both required. An unreadable existing
+head, missing capability or storage failure must stop startup or the operation,
+without treating it as an empty store or switching to RAM or a public snapshot.
+Explicit development/test memory fixtures are separate from production storage.
 
 ## Preservation and migration requirements
 
-1. Obtain a complete, authorized export from the still-running old process, including exact
-   tenant identities, full stored statement envelopes, voided records and voiding relationships,
-   document bytes and metadata, and attachment bytes. Ordinary xAPI statement paging and the
-   projected admin feed alone are not complete exports.
-2. Encrypt the backup under an operator-held key in durable storage. Verify record and byte
-   counts and test restoration in isolation. An HTTP 200 or an export filename is not a receipt
-   of complete preservation.
-3. Reconcile writes made after the export and establish an explicit cutover boundary. Keep the
-   old service available until coverage is established or the owner knowingly accepts specified
-   losses. A volume attachment or backend setting must not be used as the first preservation step:
-   either can restart the old process before its RAM has been copied.
-4. Apply durable connection configuration, deploy the exact reviewed image, and import the
-   verified data without replacing identities, changing roles or fabricating learning evidence.
-5. Verify counts and encrypted readback, then restart the new process and repeat authenticated
-   reads for statements, voids, attachments, State/Profile documents and tenant discovery.
+1. Obtain a complete authorized export from the still-running old process,
+   including tenant identities, exact stored statement envelopes, voided records
+   and voiding relationships, document bytes and metadata and attachment bytes.
+   Ordinary statement paging and the projected admin feed are incomplete exports.
+2. Encrypt the backup with an operator-held key in durable storage. Verify record
+   and byte counts and demonstrate restoration in isolation. A response status,
+   export filename or count-only report is not proof of preservation.
+3. Reconcile writes after the export and establish a cutover boundary. Keep the
+   old process running until coverage is established or the owner knowingly
+   accepts specific losses. Attaching storage or changing a backend can restart
+   the process before its RAM has been preserved.
+4. Only after both holds are resolved, apply reviewed native configuration and
+   deploy the exact reviewed image. Import preserved records without replacing
+   identities, changing roles or fabricating learning evidence.
+5. Verify counts, encrypted native readback, attachments, voids, documents and
+   tenant discovery. Restart the replacement process in isolation and repeat
+   authenticated reads before declaring recovery verified.
 
-The existing process exposes no complete checkpoint endpoint. No current-tool-path backup is
-claimed; operator access and complete live export remain an explicit rollout requirement.
+The current process exposes no complete checkpoint endpoint. Importing its module
+in a second process creates different empty Maps. No current-tool-path full
+backup or production recovery is claimed.
 
-## Verification and remaining scope
+## Remaining scope
 
-The Bridge Typecheck workflow includes an isolated PostgreSQL 16 service and requires the real
-store and HTTP recovery suites with `REQUIRE_LRS_PG_TESTS=1`. These exercise committed writes,
-tenant isolation, process restart, binary resources, conditional documents, concurrency and
-failure behavior. They do not use production credentials or establish preservation of live data.
-
-The bounded source audit in `docs/audits/primary-state-durability-74475.json` tracks other
-primary-state gaps, including SCORM attempts, native agent work, pending forwarding,
-OAuth persistence and identity key custody. This LRS change does not claim to repair all of
-those systems. Rebuildable caches and expiring authentication challenges may use RAM;
-acknowledged primary records and durable keys need verified persistence and recovery.
+The bounded source audit in `docs/audits/primary-state-durability-74475.json` tracks
+other primary-state gaps, including SCORM attempts, native agent workflows,
+pending forwarding, OAuth persistence and identity key custody. The LRS change
+does not repair every audited system. The detailed service map and preservation
+limits remain in [primary-state-rollout-hold.md](primary-state-rollout-hold.md).
+Rebuildable caches and expiring authentication challenges may use RAM;
+acknowledged primary records and durable keys require persistence and recovery.

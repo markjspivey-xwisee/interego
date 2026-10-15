@@ -1,12 +1,12 @@
 # Primary-state rollout hold
 
-Source review dated 2026-10-15. Audit source baseline and observed Foxxi image: `74475d4a0220abc6f7d3e8134258d0908d1607a9`. Other services have distinct observed pins; their source findings are not claims of exact live behavior. Reviewed release candidate: `7bb0deeeddce94dc22c58982bb903d1b5dc18207`. The following test, registry and documentation corrections are not intended to change the deployment scope. Neither this document nor passing tests verifies production recovery or authorizes record deletion.
+Source review dated 2026-10-15. Audit source baseline and observed Foxxi image: `74475d4a0220abc6f7d3e8134258d0908d1607a9`. Other services have distinct observed pins; their source findings are not claims of exact live behavior. The former separate-SQL candidate, including `ef75de585cc82c64f2a81bea5c1d8b5dcf104573`, is rejected as the final architecture. Its native replacement must follow [native-learning-storage.md](native-learning-storage.md). The scope below was measured for the earlier candidate and must be recomputed for the final native source against current image pins. Neither this document nor passing tests verifies production recovery or authorizes record deletion.
 
 **Keep the rollout held. Do not restart the old processes that may hold the only copy of primary records before preservation coverage is established.** A new durable backend protects subsequent writes; it cannot recover records erased by the restart that activates it. Attaching storage or changing configuration can itself redeploy a service.
 
 ## Exact affected service scope
 
-The existing deployment-scope tool, using actual live image pins, reported these **12** affected services. This is broader than Foxxi alone; identity and acme-id are **not** affected by this candidate.
+For the earlier candidate, the existing deployment-scope tool and observed live image pins reported these **12** affected services. Identity and acme-id were outside that measured candidate. Changes to shared native storage require a fresh scope calculation; this historical list is not a deployment allowlist for the replacement.
 
 | Services | Bounded source finding and release consequence |
 |---|---|

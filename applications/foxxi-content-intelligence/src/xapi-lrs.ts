@@ -40,7 +40,7 @@
  *   GET|PUT|POST|DELETE|HEAD /xapi/activities/profile
  *   GET|PUT|POST|DELETE|HEAD /xapi/agents/profile
  *
- * Deployed primary storage is encrypted PostgreSQL for statements, attachment
+ * Deployed primary storage is native encrypted Interego PGSL for statements, attachment
  * bytes and State/Profile documents. Success follows the primary commit.
  * Memory storage is an explicit development/test option only.
  */
@@ -49,7 +49,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { randomUUID, createHash } from 'node:crypto';
 import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adapter/src/pod-publisher.js';
 import { createStatementStore, InMemoryStatementStore, configuredLrsBackend, assertLrsPrimaryConfiguration, listPersistentStatementTenants, ConflictError, matchesFilter, decodeCursor, type StatementStore, type StoredStatement } from './statement-store.js';
-import { PostgresLrsStore } from './postgres-lrs-store.js';
+import { NativeInteregoLrsStore, type AppliedNativeVoid } from './native-lrs-store.js';
 import { validateStatement, validateAgentObject, utcTimestamp } from './xapi-validate.js';
 import { TenantPartition, DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import {
@@ -255,9 +255,9 @@ export async function clearStatementStore(tenant: TenantId = DEFAULT_TENANT): Pr
 export function getStatementStore(tenant: TenantId = DEFAULT_TENANT): StatementStore {
   return statementStores.for(tenant);
 }
-/** Durable tenant registry in PG mode; process-local partitions only in development memory mode. */
+/** Durable tenant registry in native Interego mode; process-local partitions only in development memory mode. */
 export async function statementStoreTenants(): Promise<TenantId[]> {
-  return configuredLrsBackend() === 'postgres' ? listPersistentStatementTenants() : statementStores.tenants();
+  return configuredLrsBackend() === 'interego' ? listPersistentStatementTenants() : statementStores.tenants();
 }
 
 // ── In-memory document stores (state + profile), tenant-partitioned ──
@@ -329,12 +329,12 @@ async function hydrateXapiDocsFromPod(): Promise<void> {
   if (snap.activityProfile) restore(activityProfileStores, snap.activityProfile);
   if (snap.agentProfile) restore(agentProfileStores, snap.agentProfile);
 }
-// PG is authoritative; never hydrate unverified public snapshots into it or publish private docs.
-if (configuredLrsBackend() !== 'postgres') {
+// Native Interego is authoritative; never hydrate unverified public snapshots into it or publish private docs.
+if (configuredLrsBackend() !== 'interego') {
   registerXapiDocsSnapshot({ surface: 'xapi-docs', typeIri: XAPI_SNAP_TYPES.XapiDocs, collect: collectXapiDocsSnapshot });
   void hydrateXapiDocsFromPod();
 }
-const xapiDocsPodDirty = (): void => { if (configuredLrsBackend() !== 'postgres') markXapiDocsDirty('xapi-docs'); };
+const xapiDocsPodDirty = (): void => { if (configuredLrsBackend() !== 'interego') markXapiDocsDirty('xapi-docs'); };
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -798,6 +798,31 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   const store = statementStores.for(tenantOf(req));
   const ids: string[] = [];
   const authority = { homePage: config.selfBaseUrl, name: 'foxxi-lrs' };
+  if (store instanceof NativeInteregoLrsStore) {
+    const records = batch.map(stmt => {
+      const statement = ensureStatementFields(stmt, authority);
+      return { id: statement.id as string, statement, stored: statement.stored as string, voided: false };
+    });
+    const attachments = new Map<string, { data: Buffer; contentType: string }>();
+    for (const sha of collectAttachmentHashes(batch)) {
+      const part = multipartParts?.get(sha);
+      if (part) attachments.set(sha, { data: part.body, contentType: part.headers['content-type'] ?? 'application/octet-stream' });
+    }
+    let applied: AppliedNativeVoid[];
+    try { applied = await store.putBatchWithAttachments(records, attachments, boundRegistration(req)); }
+    catch (err) {
+      if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
+      throw err;
+    }
+    for (const item of applied) await notifyVoidApplied(item.target, item.voidingStatementId, tenantOf(req), config);
+    for (const record of records) {
+      await notifyStatementStored(record.statement, tenantOf(req), config);
+      recordInboundIfForwarded(req, record.statement);
+      forwardToTargets(config.ownerTenantOfStatement?.(record.statement) ?? tenantOf(req), record.statement).catch(() => undefined);
+    }
+    res.status(200).json(records.map(record => record.id));
+    return;
+  }
   for (const stmt of batch) {
     const enriched = ensureStatementFields(stmt, authority);
     const id = enriched.id as string;
@@ -885,20 +910,20 @@ function collectAttachmentHashes(batch: Record<string, unknown>[]): Set<string> 
   return out;
 }
 
-/** A statement and all supplied attachment bytes are committed together by the PG primary. */
-async function putStatementWithAttachments(store: StatementStore, tenant: TenantId, record: StoredStatement, parts: Map<string, MultipartPart> | null): Promise<void> {
+/** A statement, attachments and guarded void edge commit together through native Interego. */
+async function putStatementWithAttachments(store: StatementStore, tenant: TenantId, record: StoredStatement, parts: Map<string, MultipartPart> | null, registration?: string): Promise<AppliedNativeVoid[] | null> {
   const attachments = new Map<string, { data: Buffer; contentType: string }>();
   for (const sha of collectAttachmentHashes([record.statement])) {
     const part = parts?.get(sha);
     if (part) attachments.set(sha, { data: part.body, contentType: part.headers['content-type'] ?? 'application/octet-stream' });
   }
-  if (store instanceof PostgresLrsStore) {
-    await store.putWithAttachments(record, attachments);
-    return;
+  if (store instanceof NativeInteregoLrsStore) {
+    return store.putWithAttachments(record, attachments, registration);
   }
   await store.put(record);
   const target = attachmentStores.for(tenant);
   for (const [sha, attachment] of attachments) cappedMapSet(target, sha, attachment);
+  return null;
 }
 
 /**
@@ -996,14 +1021,17 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   (stmt as Record<string, unknown>).id = statementId;
   const store = statementStores.for(tenantOf(req));
   const enriched = ensureStatementFields(stmt, { homePage: config.selfBaseUrl, name: 'foxxi-lrs' });
+  let applied: AppliedNativeVoid[] | null;
   try {
-    await putStatementWithAttachments(store, tenantOf(req), { id: statementId, statement: enriched, stored: enriched.stored as string, voided: false }, multipartParts);
+    applied = await putStatementWithAttachments(store, tenantOf(req), { id: statementId, statement: enriched, stored: enriched.stored as string, voided: false }, multipartParts, boundRegistration(req));
   } catch (err) {
     if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
     throw err;
   }
   // Voided only once the voiding statement itself is taken: one refused as a conflict voids nothing.
-  await applyVoiding(enriched, statementId, store, boundRegistration(req), r => notifyVoidApplied(r, statementId, tenantOf(req), config));
+  if (applied) {
+    for (const item of applied) await notifyVoidApplied(item.target, item.voidingStatementId, tenantOf(req), config);
+  } else await applyVoiding(enriched, statementId, store, boundRegistration(req), r => notifyVoidApplied(r, statementId, tenantOf(req), config));
   await notifyStatementStored(enriched, tenantOf(req), config);
   recordInboundIfForwarded(req, enriched);
   forwardToTargets(config.ownerTenantOfStatement?.(enriched) ?? tenantOf(req), enriched).catch(() => undefined);
@@ -1181,7 +1209,7 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
   const wantAttachments = (req.query.attachments as string | undefined) === 'true';
   const tenant = tenantOf(req);
   const store = statementStores.for(tenant);
-  const attachment = (sha: string) => store instanceof PostgresLrsStore ? store.getAttachment(sha) : Promise.resolve(attachmentStores.for(tenant).get(sha));
+  const attachment = (sha: string) => store instanceof NativeInteregoLrsStore ? store.getAttachment(sha) : Promise.resolve(attachmentStores.for(tenant).get(sha));
 
   if (statementId !== undefined) {
     if (!isUuid(statementId)) { res.status(400).json({ error: 'statementId must be a UUID' }); return; }
@@ -1355,7 +1383,7 @@ interface DocumentStore {
 }
 function documentStore(tenant: TenantId, kind: DocKind): DocumentStore {
   const primary = statementStores.for(tenant);
-  if (primary instanceof PostgresLrsStore) return {
+  if (primary instanceof NativeInteregoLrsStore) return {
     get: key => primary.getResource<StoredDoc>(kind, key),
     list: () => primary.listResources<StoredDoc>(kind),
     update: (key, change) => primary.updateResource(kind, key, change),
