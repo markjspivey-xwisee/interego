@@ -90,8 +90,9 @@ function decodeValue(encoded: unknown): unknown {
   }));
   throw new Error('invalid native LRS value');
 }
-function immutableBody(statement: Record<string, unknown>): string {
-  const body = { ...statement }; delete body.stored; delete body.authority;
+function immutableBody(record: StoredStatement, ignoreAssignedTimestamp: boolean): string {
+  const body = { ...record.statement }; delete body.stored; delete body.authority;
+  if (ignoreAssignedTimestamp) delete body.timestamp;
   return stableJson(body);
 }
 const voidTarget = (s: Record<string, unknown>): string | null => {
@@ -101,7 +102,8 @@ const voidTarget = (s: Record<string, unknown>): string | null => {
 function checkedStatement(value: StoredStatement, id: string): StoredStatement {
   if (!value || value.id !== id || value.statement?.id !== id || typeof value.stored !== 'string'
     || !Number.isFinite(Date.parse(value.stored)) || new Date(value.stored).toISOString() !== value.stored
-    || value.statement.stored !== value.stored || value.voided !== false || value.voidingStatementId !== undefined) throw new Error('invalid immutable native LRS statement');
+    || value.statement.stored !== value.stored || value.voided !== false || value.voidingStatementId !== undefined
+    || (value.timestampAssignedByLrs !== undefined && typeof value.timestampAssignedByLrs !== 'boolean')) throw new Error('invalid immutable native LRS statement');
   return value;
 }
 
@@ -258,7 +260,10 @@ export class NativeInteregoLrsStore implements StatementStore {
       const kept: StoredStatement[] = [], inserted: StoredStatement[] = [];
       for (const row of records) {
         const prior = await tx.read<StoredStatement>(this.tenant, 'statement', row.id);
-        if (prior && immutableBody(prior.statement) !== immutableBody(row.statement)) throw new ConflictError('statement id ' + row.id + ' already stored with different content');
+        // Only trusted provenance on BOTH immutable input records permits a regenerated timestamp.
+        // Missing/explicit provenance stays strict, and an accepted retry never rewrites the original.
+        const ignoreAssignedTimestamp = prior?.timestampAssignedByLrs === true && row.timestampAssignedByLrs === true;
+        if (prior && immutableBody(prior, ignoreAssignedTimestamp) !== immutableBody(row, ignoreAssignedTimestamp)) throw new ConflictError('statement id ' + row.id + ' already stored with different content');
         kept.push(prior ? checkedStatement(prior, row.id) : row);
         if (!prior) {
           inserted.push(row);

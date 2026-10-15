@@ -43,6 +43,8 @@ export interface StoredStatement {
   stored: string;
   voided: boolean;
   voidingStatementId?: string;
+  /** Internal ingestion provenance, stored outside the xAPI statement and never accepted from its JSON. */
+  timestampAssignedByLrs?: boolean;
 }
 
 export interface QueryFilter {

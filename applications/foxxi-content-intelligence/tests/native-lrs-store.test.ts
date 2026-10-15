@@ -138,6 +138,58 @@ describe('native Interego xAPI artifact adapter', () => {
     expect(await store.get(first.id)).toEqual(first);
     expect(await store.count()).toBe(1);
   });
+  it('resolves concurrent generated-timestamp retries using durable provenance and keeps the original artifact', async () => {
+    const storage = primary(), leftClient = new TestNativeClient(storage), rightClient = new TestNativeClient(storage);
+    const leftDb = database(leftClient), rightDb = database(rightClient), left = leftDb.forTenant('alice'), right = rightDb.forTenant('alice');
+    await Promise.all([leftDb.ready(), rightDb.ready()]);
+    let arrived = 0, bothEntered!: () => void, release!: () => void;
+    const both = new Promise<void>(resolve => { bothEntered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const pause = async (request: NativeCommitRequest): Promise<void> => {
+      if (!request.changes.length || ++arrived > 2) return;
+      if (arrived === 2) bothEntered();
+      await gate;
+    };
+    leftClient.beforeCommit = pause; rightClient.beforeCommit = pause;
+    const first = record(); first.timestampAssignedByLrs = true; first.statement.timestamp = '2026-10-15T10:00:00.000Z';
+    const competing = structuredClone(first); competing.stored = '2026-10-15T10:00:01.000Z';
+    competing.statement.stored = competing.stored; competing.statement.timestamp = competing.stored;
+    const pending = [left.putWithAttachments(first, new Map()), right.putWithAttachments(competing, new Map())];
+    await both; release();
+    const answers = await Promise.all(pending), winner = answers.find(answer => answer.inserted.length)?.records[0];
+    expect(winner).toBeDefined();
+    expect(answers.map(answer => answer.inserted.length).sort()).toEqual([0, 1]);
+    expect(answers.map(answer => answer.records)).toEqual([[winner], [winner]]);
+    expect(await right.get(first.id)).toEqual(winner);
+    const statementKey = leftDb.key('alice', 'statement', first.id), queryKey = leftDb.queryKey('alice', winner!);
+    const originalArtifact = storage.head.records.get(statementKey);
+    expect(originalArtifact).toBeDefined(); expect(storage.head.records.get(queryKey)).toEqual(originalArtifact);
+    const later = structuredClone(first); later.statement.timestamp = '2026-10-16T10:00:00.000Z';
+    const replay = await right.putWithAttachments(later, new Map());
+    expect(replay.records).toEqual([winner]); expect(replay.inserted).toEqual([]);
+    expect(storage.head.records.get(statementKey)).toEqual(originalArtifact);
+    expect(storage.head.records.get(queryKey)).toEqual(originalArtifact);
+  });
+  it('keeps explicit or unknown timestamp provenance strict and never upgrades it on replay', async () => {
+    const cases: Array<[boolean | undefined, boolean | undefined]> = [[undefined, true], [false, true], [true, undefined], [true, false], [false, false]];
+    for (const [originalFlag, incomingFlag] of cases) {
+      const client = new TestNativeClient(), db = database(client), store = db.forTenant('alice'), first = record();
+      first.statement.timestamp = '2026-10-15T10:00:00.000Z';
+      if (originalFlag !== undefined) first.timestampAssignedByLrs = originalFlag;
+      await store.put(first);
+      const artifact = client.storage.head.records.get(db.key('alice', 'statement', first.id));
+      const same = structuredClone(first); delete same.timestampAssignedByLrs;
+      if (incomingFlag !== undefined) same.timestampAssignedByLrs = incomingFlag;
+      const replay = await store.putWithAttachments(same, new Map());
+      expect(replay.records).toEqual([first]); expect(replay.inserted).toEqual([]);
+      expect(await store.get(first.id)).toEqual(first);
+      expect(client.storage.head.records.get(db.key('alice', 'statement', first.id))).toEqual(artifact);
+      const changed = structuredClone(same); changed.statement.timestamp = '2026-10-16T10:00:00.000Z';
+      await expect(store.put(changed)).rejects.toBeInstanceOf(ConflictError);
+      expect(await store.get(first.id)).toEqual(first);
+      expect(client.storage.head.records.get(db.key('alice', 'statement', first.id))).toEqual(artifact);
+    }
+  });
   it('commits whole batches, attachment bytes and tenant membership or keeps none', async () => {
     const client = new TestNativeClient(), db = database(client), store = db.forTenant('alice'), bytes = Buffer.from([0, 1, 255, 13, 10]);
     const sha = createHash('sha256').update(bytes).digest('hex'), value = record();

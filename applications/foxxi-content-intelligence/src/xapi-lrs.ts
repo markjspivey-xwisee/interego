@@ -139,6 +139,7 @@ function internalRecord(stmt: Record<string, unknown>, emitter: string): StoredS
   // Author + structurally validate on the internal emission path too, exactly as
   // the inbound POST /xapi/statements path does — so an internally-stored statement
   // carries an LRS authority (§4.1.9) and is checked against the xAPI shape.
+  const timestampAssignedByLrs = typeof stmt.timestamp !== 'string';
   const enriched = ensureStatementFields(stmt, INTERNAL_LRS_AUTHORITY);
   const id = enriched.id as string;
   const errs = validateStatement(enriched);
@@ -150,7 +151,7 @@ function internalRecord(stmt: Record<string, unknown>, emitter: string): StoredS
     console.error(`[${emitter}] REJECTED non-conformant statement ${id} (not stored):`, errs.slice(0, 5).join('; '));
     return null;
   }
-  return { id, statement: enriched, stored: enriched.stored as string, voided: false };
+  return { id, statement: enriched, stored: enriched.stored as string, voided: false, timestampAssignedByLrs };
 }
 
 /**
@@ -800,8 +801,9 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   const authority = { homePage: config.selfBaseUrl, name: 'foxxi-lrs' };
   if (store instanceof NativeInteregoLrsStore) {
     const records = batch.map(stmt => {
+      const timestampAssignedByLrs = typeof stmt.timestamp !== 'string';
       const statement = ensureStatementFields(stmt, authority);
-      return { id: statement.id as string, statement, stored: statement.stored as string, voided: false };
+      return { id: statement.id as string, statement, stored: statement.stored as string, voided: false, timestampAssignedByLrs };
     });
     const attachments = new Map<string, { data: Buffer; contentType: string }>();
     for (const sha of collectAttachmentHashes(batch)) {
@@ -1020,10 +1022,11 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
 
   (stmt as Record<string, unknown>).id = statementId;
   const store = statementStores.for(tenantOf(req));
+  const timestampAssignedByLrs = typeof stmt.timestamp !== 'string';
   const enriched = ensureStatementFields(stmt, { homePage: config.selfBaseUrl, name: 'foxxi-lrs' });
   let applied: NativeStatementCommit | null;
   try {
-    applied = await putStatementWithAttachments(store, tenantOf(req), { id: statementId, statement: enriched, stored: enriched.stored as string, voided: false }, multipartParts, boundRegistration(req));
+    applied = await putStatementWithAttachments(store, tenantOf(req), { id: statementId, statement: enriched, stored: enriched.stored as string, voided: false, timestampAssignedByLrs }, multipartParts, boundRegistration(req));
   } catch (err) {
     if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
     throw err;

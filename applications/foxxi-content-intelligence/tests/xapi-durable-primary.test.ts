@@ -310,4 +310,44 @@ describe.skipIf(!nativeEnabled)('the HTTP LRS acknowledges its native Interego p
     } finally { await kill(app.child); }
   }, 120000);
 
+  it('replays omitted timestamps across POST, PUT and restart without rewriting envelopes or repeating effects', async () => {
+    let app = await start();
+    const inspect = async () => {
+      const id = ++sequence;
+      const result = message(app.child, value => value.event === 'callbacks' && value.id === id);
+      app.child.send({ command: 'callbacks', id }); return result;
+    };
+    const post = (row: Record<string, unknown>) => fetch(app.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(row) });
+    const put = (row: Record<string, unknown>) => fetch(app.base + '/xapi/statements?statementId=' + String(row.id), { method: 'PUT', headers: headers(), body: JSON.stringify(row) });
+    try {
+      const target = statement();
+      expect((await post(target)).status).toBe(200);
+      const first = await (await fetch(app.base + '/xapi/statements?statementId=' + target.id, { headers: headers() })).json() as Record<string, unknown>;
+      expect(typeof first.timestamp).toBe('string'); expect(first).not.toHaveProperty('timestampAssignedByLrs');
+      // Ensure a new enrichment would assign a different timestamp; the original remains canonical.
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect((await post(target)).status).toBe(200); expect((await put(target)).status).toBe(204);
+      const explicitChange = { ...target, timestamp: new Date(Date.parse(first.timestamp as string) + 60000).toISOString() };
+      expect((await post(explicitChange)).status).toBe(409);
+      // The internal flag is an unknown xAPI field, not a client-controlled provenance override.
+      expect((await post({ ...explicitChange, timestampAssignedByLrs: true })).status).toBe(400);
+      expect(await (await fetch(app.base + '/xapi/statements?statementId=' + target.id, { headers: headers() })).json()).toEqual(first);
+      const voiding = { ...statement(), verb: { id: 'http://adlnet.gov/expapi/verbs/voided' }, object: { objectType: 'StatementRef', id: target.id } };
+      expect((await post(voiding)).status).toBe(200);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect((await post(voiding)).status).toBe(200); expect((await put(voiding)).status).toBe(204);
+      const effects = await inspect();
+      expect(effects.callbacks).toHaveLength(2);
+      expect(effects.callbacks?.find(row => row.id === target.id)?.statement).toEqual(first);
+      for (const row of effects.callbacks ?? []) expect(row.statement).not.toHaveProperty('timestampAssignedByLrs');
+      expect(effects.voidCallbacks).toEqual([{ target: target.id, voidingId: voiding.id }]); expect(effects.forwardChecks).toBe(2);
+      await kill(app.child); app = await start();
+      expect((await post(target)).status).toBe(200); expect((await put(target)).status).toBe(204);
+      expect((await post(voiding)).status).toBe(200); expect((await put(voiding)).status).toBe(204);
+      const restarted = await inspect();
+      expect(restarted.callbacks).toEqual([]); expect(restarted.voidCallbacks).toEqual([]); expect(restarted.forwardChecks).toBe(0);
+      expect(await (await fetch(app.base + '/xapi/statements?voidedStatementId=' + target.id, { headers: headers() })).json()).toEqual(first);
+    } finally { await kill(app.child); }
+  }, 120000);
+
 });
