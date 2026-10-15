@@ -646,6 +646,7 @@ check(sum(1 for g in unesco_groups if g["only"]) == 3, f"{len(unesco_groups)} UN
 unesco_meta = {"scheme": unesco["scheme"], "fetchedAt": unesco["fetchedAt"], "groups": unesco_groups}
 
 # ── Catalog: ports, templates, stored queries, limits ──────────────────────────────────────────────
+cat_src = (DIST / f"{SLUG['catalog']}.ttl").read_text()
 order = [str(s).removeprefix(str(CAT)) for s in cat.objects(URIRef(IRI["catalog"]), IEP.affordance)]
 
 
