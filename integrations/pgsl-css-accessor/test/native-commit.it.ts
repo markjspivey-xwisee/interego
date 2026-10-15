@@ -178,13 +178,14 @@ function wire(worker: Worker, resource: string, method = 'GET', headers: Record<
   const kind = target.pathname === '/' ? 'root' : target.pathname.endsWith('-invalid.bin') ? 'invalid' : target.pathname.endsWith('-coherence.bin') ? 'coherence' : target.pathname.endsWith('-aba.bin') ? 'aba' : 'primary';
   const id = ++requestSequence;
   const label = `phase=${testPhase} request=${id} method=${method} target=${kind} workerPort=${worker.port}`;
+  const accept = headers.accept ? `${headers.accept}${headers.accept.includes('application/json') ? '' : ',application/json;q=0.1'}` : 'application/json,*/*;q=0.1';
   const trace = id <= 24;
   if (trace) console.log(`[native-http] start ${label}`);
   return new Promise((resolve, reject) => {
     const request = httpRequest({
       hostname: '127.0.0.1', port: worker.port, method,
       path: `${target.pathname}${target.search}`,
-      headers: { host: target.host, ...headers, ...(body ? { 'content-length': String(body.length) } : {}) },
+      headers: { host: target.host, ...headers, accept, ...(body ? { 'content-length': String(body.length) } : {}) },
     }, response => {
       if (trace) console.log(`[native-http] headers ${label} status=${response.statusCode ?? 0}`);
       const chunks: Buffer[] = [];
@@ -352,7 +353,7 @@ async function main(): Promise<void> {
     const left = await startWorker(baseUrl);
     const right = await startWorker(baseUrl);
     beginPhase('root-readiness');
-    for (const worker of [left, right]) assert.equal((await wire(worker, baseUrl, 'GET', { accept: 'text/turtle' })).status, 200);
+    for (const worker of [left, right]) assert.equal((await wire(worker, baseUrl, 'GET', { accept: 'application/json,text/turtle;q=0.9' })).status, 200);
     beginPhase('native-discovery');
     for (const worker of [left, right]) await expectNativeOptions(worker, invalidResource);
 
@@ -466,7 +467,13 @@ async function main(): Promise<void> {
 }
 
 async function workerMain(): Promise<void> {
-  const { AppRunner } = await import('@solid/community-server');
+  const { AppRunner, SafeErrorHandler } = await import('@solid/community-server');
+  const safeHandle = SafeErrorHandler.prototype.handle;
+  SafeErrorHandler.prototype.handle = async function(this: InstanceType<typeof SafeErrorHandler>, input: Parameters<typeof safeHandle>[0]) {
+    process.send?.({ event: 'operation-error', diagnostic: workerDiagnostic(input.error, 'css-http-error') });
+    if (input.error.cause) process.send?.({ event: 'operation-error', diagnostic: workerDiagnostic(input.error.cause, 'css-http-cause') });
+    return safeHandle.call(this, input);
+  };
   workerStage = 'instrument-native-errors';
   const { NativePutOperationHandler } = await import('../dist/NativePutOperationHandler.js');
   const nativeHandle = NativePutOperationHandler.prototype.handle;
@@ -474,6 +481,15 @@ async function workerMain(): Promise<void> {
     try { return await nativeHandle.call(this, input); }
     catch (error) {
       process.send?.({ event: 'operation-error', diagnostic: workerDiagnostic(error, 'native-put') });
+      throw error;
+    }
+  };
+  const { NativeGetOperationHandler } = await import('../dist/NativeGetOperationHandler.js');
+  const nativeGet = NativeGetOperationHandler.prototype.handle;
+  NativeGetOperationHandler.prototype.handle = async function(this: InstanceType<typeof NativeGetOperationHandler>, input: Parameters<typeof nativeGet>[0]) {
+    try { return await nativeGet.call(this, input); }
+    catch (error) {
+      process.send?.({ event: 'operation-error', diagnostic: workerDiagnostic(error, 'native-get') });
       throw error;
     }
   };
