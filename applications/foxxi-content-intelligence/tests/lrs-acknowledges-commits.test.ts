@@ -54,7 +54,10 @@ describe('the LRS primary cannot silently become volatile', () => {
     expect(configuredLrsBackend({ NODE_ENV: 'production', DATABASE_URL: 'postgres://unused.test/db' })).toBe('interego');
   });
   it('refuses a per-call memory override even when the configured deployed primary is native', () => {
-    for (const [key, value] of Object.entries(nativeConfiguration)) if (value !== undefined) vi.stubEnv(key, value);
+    vi.stubEnv('FOXXI_LRS_BACKEND', 'interego');
+    for (const [key, value] of Object.entries(nativeConfiguration)) {
+      if (key !== 'FOXXI_LRS_BACKEND' && value !== undefined) vi.stubEnv(key, value);
+    }
     try { expect(() => createStatementStore('memory', 'lens:alice')).toThrow(/cannot override/); }
     finally { vi.unstubAllEnvs(); }
   });

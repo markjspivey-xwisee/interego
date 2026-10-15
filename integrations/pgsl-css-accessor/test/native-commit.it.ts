@@ -29,6 +29,9 @@ const binaryType = 'application/octet-stream';
 const revisionPattern = /^sha256:[0-9a-f]{64}$/;
 const children = new Set<ChildProcess>();
 let sequence = 0;
+let requestSequence = 0;
+let testPhase = 'startup';
+function beginPhase(phase: string): void { testPhase = phase; console.log(`[native-http] phase=${phase}`); }
 
 interface WorkerDiagnostic { stage: string; name: string; code?: string; message: string; }
 let workerStage = 'import-css';
@@ -144,22 +147,52 @@ async function killWorker(worker: Worker): Promise<void> {
   children.delete(child);
 }
 
+/** Failure-only fixture metadata: no query text, parameters, learner data or connection credentials. */
+async function reportFixtureDatabaseWaits(): Promise<void> {
+  let client: { connect(): Promise<unknown>; query(sql: string): Promise<{ rows: unknown[] }>; end(): Promise<unknown> } | undefined;
+  try {
+    const { Client } = await import('pg');
+    client = new Client({ connectionString: process.env.PGSL_PG_CONNSTR, connectionTimeoutMillis: 2000, query_timeout: 2000 });
+    await client.connect();
+    const result = await client.query(`SELECT pid, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blocked_by,
+      CASE split_part(upper(ltrim(query)), ' ', 1)
+        WHEN 'SELECT' THEN 'SELECT' WHEN 'UPDATE' THEN 'UPDATE' WHEN 'INSERT' THEN 'INSERT'
+        WHEN 'DELETE' THEN 'DELETE' WHEN 'BEGIN' THEN 'BEGIN' WHEN 'COMMIT' THEN 'COMMIT'
+        WHEN 'ROLLBACK' THEN 'ROLLBACK' ELSE 'OTHER' END AS command
+      FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() ORDER BY pid LIMIT 24`);
+    console.error('[native-http] isolated-db-waits', JSON.stringify(result.rows));
+  } catch (error) {
+    console.error('[native-http] isolated-db-waits unavailable', JSON.stringify(workerDiagnostic(error, 'pg-wait-diagnostic')));
+  } finally { await client?.end().catch(() => undefined); }
+}
+
 /** Connect locally, preserving the resource URL CSS and both PG backends see. */
 function wire(worker: Worker, resource: string, method = 'GET', headers: Record<string, string> = {}, body?: Buffer): Promise<WireResponse> {
   const target = new URL(resource);
+  const kind = target.pathname === '/' ? 'root' : target.pathname.endsWith('-invalid.bin') ? 'invalid' : target.pathname.endsWith('-coherence.bin') ? 'coherence' : target.pathname.endsWith('-aba.bin') ? 'aba' : 'primary';
+  const id = ++requestSequence;
+  const label = `phase=${testPhase} request=${id} method=${method} target=${kind} workerPort=${worker.port}`;
+  const trace = id <= 24;
+  if (trace) console.log(`[native-http] start ${label}`);
   return new Promise((resolve, reject) => {
     const request = httpRequest({
       hostname: '127.0.0.1', port: worker.port, method,
       path: `${target.pathname}${target.search}`,
       headers: { host: target.host, ...headers, ...(body ? { 'content-length': String(body.length) } : {}) },
     }, response => {
+      if (trace) console.log(`[native-http] headers ${label} status=${response.statusCode ?? 0}`);
       const chunks: Buffer[] = [];
       response.on('data', chunk => chunks.push(Buffer.from(chunk)));
       response.once('error', reject);
-      response.once('end', () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) }));
+      response.once('end', () => {
+        const body = Buffer.concat(chunks);
+        if (trace) console.log(`[native-http] end ${label} bytes=${body.length}`);
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, body });
+      });
     });
-    request.setTimeout(30_000, () => request.destroy(new Error('CSS native-commit HTTP request timed out')));
+    request.setTimeout(30_000, () => request.destroy(new Error(`CSS native-commit HTTP request timed out: ${label}`)));
     request.once('error', reject);
+    if (trace) request.once('finish', () => console.log(`[native-http] sent ${label}`));
     request.end(body);
   });
 }
@@ -301,35 +334,44 @@ async function main(): Promise<void> {
   const bodyD = Buffer.from([0, 252, 4, 13, 10, 197, 68]);
 
   try {
+    beginPhase('start-workers');
     const left = await startWorker(baseUrl);
     const right = await startWorker(baseUrl);
+    beginPhase('root-readiness');
     for (const worker of [left, right]) assert.equal((await wire(worker, baseUrl, 'GET', { accept: 'text/turtle' })).status, 200);
+    beginPhase('native-discovery');
     for (const worker of [left, right]) await expectNativeOptions(worker, invalidResource);
 
+    beginPhase('reject-missing-condition');
     const missingHeader = await commit(left, invalidResource, null, bodyA, {});
     assert.ok(missingHeader.status >= 400 && missingHeader.status < 500, 'native create must refuse a missing If-None-Match condition');
     assert.equal((await wire(right, invalidResource)).status, 404, 'refused create must leave no resource on the other server');
 
     // Neither process shares a CSS lock. Exactly one absent-head CAS may commit.
+    beginPhase('create-race');
     const creates = await Promise.all([commit(left, resource, null, bodyA), commit(right, resource, null, bodyB)]);
     assert.deepEqual(creates.map(response => response.status).sort(), [200, 412], 'two independent native creators must produce one commit and one precondition failure');
     const createdBytes = creates[0]!.status === 200 ? bodyA : bodyB;
     const created = receipt(creates.find(response => response.status === 200)!, resource, null, createdBytes);
+    beginPhase('read-created');
     let etag = await read(left, resource, created, createdBytes);
     await read(right, resource, created, createdBytes, etag);
 
+    beginPhase('range-read');
     const partial = await wire(right, resource, 'GET', { accept: binaryType, range: 'bytes=0-1' });
     assert.equal(partial.status, 206);
     assert.deepEqual(partial.body, createdBytes.subarray(0, 2));
     assert.equal(partial.headers['interego-body-digest'], undefined, 'partial GET must not claim a full-body digest');
 
     // Ordinary Solid mutations cannot bypass a head that was enrolled in native CAS.
+    beginPhase('reject-ordinary-mutations');
     assert.equal((await wire(right, resource, 'PUT', { 'content-type': binaryType }, bodyD)).status, 409, 'ordinary PUT must not replace a native-managed head');
     assert.equal((await wire(left, resource, 'DELETE')).status, 409, 'ordinary DELETE must not erase a native-managed head');
     await read(right, resource, created, createdBytes, etag);
 
     // Both preconditions refer to the same current GET ETag, so this race cannot
     // pass merely because one writer sent an unsupported conditional syntax.
+    beginPhase('update-race');
     const updates = await Promise.all([
       commit(left, resource, created.revision, bodyC, { 'if-match': etag }),
       commit(right, resource, created.revision, bodyD, { 'if-match': etag }),
@@ -341,19 +383,23 @@ async function main(): Promise<void> {
     const oldEtag = etag;
     etag = await read(right, resource, updated, updatedBytes);
     await read(left, resource, updated, updatedBytes, etag);
+    beginPhase('stale-and-inconsistent');
     assert.equal((await commit(left, resource, created.revision, bodyA, { 'if-match': oldEtag })).status, 412, 'a stale GET ETag must not overwrite the winner');
     const mismatched = await commit(left, resource, created.revision, bodyA, { 'if-match': etag });
     assert.equal(mismatched.status, 400, 'body expectedRevision and current HTTP condition must agree');
     await read(right, resource, updated, updatedBytes, etag);
 
     // The wire contract allows either a quoted raw revision or the GET ETag.
+    beginPhase('raw-revision-update');
     const rawResponse = await commit(left, resource, updated.revision, bodyA);
     const raw = receipt(rawResponse, resource, updated.revision, bodyA);
     etag = await read(right, resource, raw, bodyA);
+    beginPhase('concurrent-get-coherence');
     const coherent = await concurrentReadCoherence(left, right, coherenceResource);
 
     // Pin Date.now INSIDE both real server processes. Equal content and clock
     // must not resurrect an earlier revision or let a stale ABA writer commit.
+    beginPhase('same-clock-aba');
     const fixedNow = Date.now();
     await Promise.all([setClock(left, fixedNow), setClock(right, fixedNow)]);
     const firstResponse = await commit(left, abaResource, null, bodyA);
@@ -378,8 +424,10 @@ async function main(): Promise<void> {
     await Promise.all([setClock(left, undefined), setClock(right, undefined)]);
 
     // No graceful stop or process-local flush can rescue these acknowledgements.
+    beginPhase('kill-and-recover');
     await Promise.all([killWorker(left), killWorker(right)]);
     const restarted = await startWorker(baseUrl);
+    beginPhase('cold-get-and-index');
     await read(restarted, resource, raw, bodyA, etag);
     await read(restarted, abaResource, identical, bodyA, identicalEtag);
     await read(restarted, coherenceResource, coherent.receipt, coherent.bytes, coherent.etag);
@@ -388,12 +436,16 @@ async function main(): Promise<void> {
     assert.ok(listing.body.toString('utf8').includes(`${prefix}.bin`), 'cold server container index must retain the committed resource');
     assert.ok(listing.body.toString('utf8').includes(`${prefix}-aba.bin`), 'cold server container index must retain the ABA resource');
     assert.ok(listing.body.toString('utf8').includes(`${prefix}-coherence.bin`), 'cold server container index must retain the concurrently read resource');
+    beginPhase('post-recovery-commit');
     const afterRestart = receipt(await commit(restarted, abaResource, identical.revision, bodyC, { 'if-match': identicalEtag }), abaResource, identical.revision, bodyC);
     await read(restarted, abaResource, afterRestart, bodyC);
 
     // Native-managed heads deliberately reject ordinary deletion. This isolated
     // CI database owns cleanup; random resource names prevent cross-run collisions.
     console.log('CSS native commit HTTP: exact-target OPTIONS, shared-PG multiwriter CAS, coherent GET metadata/bytes, same-clock ABA, and process-death recovery ALL PASS');
+  } catch (error) {
+    await reportFixtureDatabaseWaits();
+    throw error;
   } finally {
     for (const child of [...children]) await killWorker({ child, port: 0 });
   }
@@ -431,3 +483,4 @@ if (process.argv.includes('--native-commit-worker')) {
 } else {
   main().catch(error => { console.error('CSS native commit HTTP integration FAILED:', error); process.exitCode = 1; });
 }
+
