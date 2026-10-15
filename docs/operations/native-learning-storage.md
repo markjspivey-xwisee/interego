@@ -86,6 +86,13 @@ view. The adapter's 4,096-record payload scan bound does not bound that initial
 metadata traversal. Narrow native lookup/paging APIs and their consumption must
 be validated before claiming bounded work per query at large record counts.
 
+Native statement artifacts retain an internal flag when the LRS assigned the
+timestamp. It is outside the xAPI statement and is never accepted from HTTP JSON.
+A UUID replay may ignore a newly generated timestamp only when both immutable
+records explicitly carry that provenance. Explicit client timestamps and older
+unmarked artifacts remain strict. Accepted retries keep the first artifact,
+query pointer and original envelope, and do not repeat callbacks or void effects.
+
 Legacy ordinary-resource reads retain a separate stat-then-lazy-stream path. A
 concurrent deletion can leave that reader with an empty stream. Native version-
 bound reads use the captured native head and bytes instead. General legacy read
