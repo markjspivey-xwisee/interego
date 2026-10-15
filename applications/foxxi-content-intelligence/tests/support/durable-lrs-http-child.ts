@@ -1,9 +1,10 @@
 /** Isolated process fixture: real configured primary and HTTP routes, with explicit test-only failure gates. */
 import express from 'express';
 import { attachXapiLrsRoutes } from '../../src/xapi-lrs.js';
+import { attachCmi5LmsRoutes } from '../../src/cmi5-lms.js';
 import { attachXapiAdminRoutes } from '../../src/xapi-admin.js';
 import { deriveUserWallet } from '../../src/auth.js';
-import { readyStatementStore } from '../../src/statement-store.js';
+import { InMemoryStatementStore, readyStatementStore } from '../../src/statement-store.js';
 import { PostgresLrsStore } from '../../src/postgres-lrs-store.js';
 import type { TenantId } from '../../src/tenant-context.js';
 import type { IRI } from '@interego/core';
@@ -18,6 +19,11 @@ async function beforeWrite(kind: 'statement' | 'resource'): Promise<void> {
   if (current.startsWith('fail-')) throw new Error('private database failure: do not disclose');
   await new Promise<void>(resolve => { release = resolve; });
 }
+const memoryPut = InMemoryStatementStore.prototype.put;
+InMemoryStatementStore.prototype.put = async function (record) {
+  await beforeWrite('statement');
+  await memoryPut.call(this, record);
+};
 const put = PostgresLrsStore.prototype.putWithAttachments;
 PostgresLrsStore.prototype.putWithAttachments = async function (...args) {
   await beforeWrite('statement');
@@ -44,6 +50,12 @@ attachXapiLrsRoutes(app, {
 attachXapiAdminRoutes(app, {
   adminWebId: 'https://pod.test/durable-admin/profile/card#me', learningEngineerWebIds: new Set(),
   selfBaseUrl: 'https://durable.test', basicAuthPairs: '', forwardingTargets: '',
+  loadUsers: () => [{ user_id: 'durable-admin', web_id: 'https://pod.test/durable-admin/profile/card#me',
+    wallet_address: deriveUserWallet('durable-admin', 'durable-http-admin-synthetic-seed').address }],
+});
+attachCmi5LmsRoutes(app, {
+  authoritativeSource: 'https://durable.test', selfBaseUrl: 'https://durable.test',
+  adminWebId: 'https://pod.test/durable-admin/profile/card#me', learningEngineerWebIds: new Set(),
   loadUsers: () => [{ user_id: 'durable-admin', web_id: 'https://pod.test/durable-admin/profile/card#me',
     wallet_address: deriveUserWallet('durable-admin', 'durable-http-admin-synthetic-seed').address }],
 });

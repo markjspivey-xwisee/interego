@@ -23,10 +23,10 @@ function message(child: ChildProcess, predicate: (value: Message) => boolean): P
     child.on('message', onMessage); child.once('exit', onExit);
   });
 }
-async function start(): Promise<{ child: ChildProcess; base: string }> {
+async function start(backend: 'postgres' | 'memory' = 'postgres'): Promise<{ child: ChildProcess; base: string }> {
   const child = fork(fileURLToPath(new URL('./support/durable-lrs-http-child.ts', import.meta.url)), [], {
     execArgv: ['--import', 'tsx'], silent: true,
-    env: { ...process.env, NODE_ENV: 'test', FOXXI_LRS_BACKEND: 'postgres', FOXXI_LRS_POSTGRES_URL: connectionString,
+    env: { ...process.env, NODE_ENV: 'test', FOXXI_LRS_BACKEND: backend, FOXXI_LRS_POSTGRES_URL: backend === 'postgres' ? connectionString : '', DATABASE_URL: '',
       FOXXI_LRS_ENCRYPTION_KEY: key, LRS_TEST_ALICE: alice, LRS_TEST_BOB: bob },
   });
   children.add(child);
@@ -58,6 +58,26 @@ afterAll(async () => {
     const db = new PostgresLrsDatabase({ connectionString, encryptionKey: key, allowClear: true });
     try { await db.forTenant(alice).clear(); await db.forTenant(bob).clear(); } finally { await db.close(); }
   }
+});
+
+describe('the real subprocess forwards rejected xAPI promises to its error handler', () => {
+  it('returns sanitized 503 for POST and PUT write failures and keeps serving requests', async () => {
+    const app = await start('memory');
+    try {
+      for (const method of ['POST', 'PUT']) {
+        await command(app.child, 'fail-statement');
+        const id = randomUUID();
+        const target = `${app.base}/xapi/statements${method === 'PUT' ? `?statementId=${id}` : ''}`;
+        const response = await fetch(target, { method, headers: headers(), body: JSON.stringify(statement(id)) });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'LRS storage operation unavailable' });
+        expect((await fetch(`${app.base}/xapi/statements?statementId=${id}`, { headers: headers() })).status).toBe(404);
+      }
+      const healthy = statement();
+      const response = await fetch(`${app.base}/xapi/statements`, { method: 'POST', headers: headers(), body: JSON.stringify(healthy) });
+      expect(response.status).toBe(200); expect(await response.json()).toEqual([healthy.id]);
+    } finally { await kill(app.child); }
+  });
 });
 
 describe.skipIf(!connectionString)('the HTTP LRS acknowledges its durable primary', () => {
@@ -145,4 +165,17 @@ describe.skipIf(!connectionString)('the HTTP LRS acknowledges its durable primar
     }
     await kill(app.child);
   }, 60_000);
+  it('returns sanitized 503 when an authenticated cmi5 launch cannot commit its State, then remains usable', async () => {
+    const app = await start();
+    try {
+      const adminToken = await mintSessionToken({ userId: 'durable-admin', webId: 'https://pod.test/durable-admin/profile/card#me', seed: 'durable-http-admin-synthetic-seed' });
+      const query = new URLSearchParams({ au_id: 'https://durable.test/au/failure', au_url: 'https://durable.test/content/failure', learner: 'did:web:learner.test', tenant_pod_url: alice });
+      await command(app.child, 'fail-resource');
+      const failure = await fetch(`${app.base}/cmi5/launch?${query}`, { headers: { Authorization: `Bearer ${adminToken}` } });
+      expect(failure.status).toBe(503); expect(await failure.json()).toEqual({ error: 'LRS launch data storage is unavailable' });
+      const retry = await fetch(`${app.base}/cmi5/launch?${query}`, { headers: { Authorization: `Bearer ${adminToken}` } });
+      expect(retry.status).toBe(200); expect(await retry.json()).toMatchObject({ launchDataStaged: true });
+    } finally { await kill(app.child); }
+  });
+
 });

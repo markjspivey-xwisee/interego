@@ -729,7 +729,8 @@ export function attachCmi5LmsRoutes(app: Express, config: {
       courseId: courseId ?? course?.id,
     });
     // The LMS stages LaunchData itself (cmi5 §10); this route used to hand it back and ask the caller to.
-    await stageLaunchData(tenant, launch, auId);
+    try { await stageLaunchData(tenant, launch, auId); }
+    catch { res.status(503).json({ error: 'LRS launch data storage is unavailable' }); return; }
     res.status(200).json({
       ...launch,
       launchDataStaged: true,

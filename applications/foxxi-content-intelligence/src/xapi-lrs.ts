@@ -1634,6 +1634,13 @@ async function buildFoxxiXapiProfile(_config: XapiLrsConfig): Promise<Record<str
 
 // ── Route attachment ────────────────────────────────────────────────
 
+/** Express 4 ignores returned promises; explicitly forward failures under either major version. */
+function asyncXapiRoute(handle: (req: Request, res: Response) => Promise<void>) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    void handle(req, res).catch(next);
+  };
+}
+
 export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
   // Seed the default tenant's outbound forwarding registry from env so
   // existing FOXXI_LRS_FORWARDING_TARGETS deployments keep their targets;
@@ -1665,11 +1672,11 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
 
   // xAPI Profile Server — public (no auth) so other tools can discover
   // what vocabulary Foxxi emits. The profile's `id` IS this URL.
-  app.get('/xapi/profile', (_req, res) => { void (async () => {
+  app.get('/xapi/profile', asyncXapiRoute(async (_req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const doc = await buildFoxxiXapiProfile(config);
     res.type('application/ld+json').json(doc);
-  })(); });
+  }));
 
   for (const kind of ['templates', 'patterns', 'v'] as const) {
     app.get(`/xapi/profile/${kind}/:name`, (req, res) => {
@@ -1692,12 +1699,12 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
   }
 
   // Statements resource.
-  app.post('/xapi/statements', gate, rawMultipart, async (req, res) => { await handlePostStatements(req, res, config); });
-  app.put('/xapi/statements', gate, rawMultipart, async (req, res) => { await handlePutStatement(req, res, config); });
-  app.get('/xapi/statements', gate, async (req, res) => { await handleGetStatements(req, res); });
+  app.post('/xapi/statements', gate, rawMultipart, asyncXapiRoute((req, res) => handlePostStatements(req, res, config)));
+  app.put('/xapi/statements', gate, rawMultipart, asyncXapiRoute((req, res) => handlePutStatement(req, res, config)));
+  app.get('/xapi/statements', gate, asyncXapiRoute(handleGetStatements));
 
   // Activities + Agents inspection helpers.
-  app.get('/xapi/activities', gate, async (req, res) => {
+  app.get('/xapi/activities', gate, asyncXapiRoute(async (req, res) => {
     if (rejectUnknownParams(req, res, ['activityId'])) return;
     const id = req.query.activityId as string | undefined;
     if (!id) { res.status(400).json({ error: '"activityId" is a required parameter' }); return; }
@@ -1735,9 +1742,9 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
     }
     if (Object.keys(mergedDef).length > 0) merged.definition = mergedDef;
     res.status(200).json(merged);
-  });
+  }));
 
-  app.get('/xapi/agents', gate, async (req, res) => {
+  app.get('/xapi/agents', gate, asyncXapiRoute(async (req, res) => {
     if (rejectUnknownParams(req, res, ['agent'])) return;
     const agentJson = req.query.agent as string | undefined;
     if (!agentJson) { res.status(400).json({ error: '"agent" is a required parameter' }); return; }
@@ -1787,7 +1794,7 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
     if (openids.size) person.openid = [...openids];
     if (accounts.length) person.account = accounts;
     res.status(200).json(person);
-  });
+  }));
 
   // State + profile document resources — GET/PUT/POST/DELETE/HEAD.
   // Each resource's store is tenant-partitioned; the per-request store
@@ -1804,8 +1811,9 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
       if (rejectUnknownParams(req, res, allowed)) return;
       next();
     };
-    const handle = async (req: Request, res: Response): Promise<void> =>
-      handleDocResource(kind, documentStore(tenantOf(req), kind), req, res);
+    const handle = asyncXapiRoute(async (req, res) => {
+      await handleDocResource(kind, documentStore(tenantOf(req), kind), req, res);
+    });
     app.get(path, gate, paramGate, handle);
     app.head(path, gate, paramGate, handle);
     app.put(path, gate, paramGate, rawDoc, handle);
