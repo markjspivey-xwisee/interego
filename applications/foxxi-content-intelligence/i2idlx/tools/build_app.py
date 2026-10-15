@@ -646,9 +646,7 @@ check(sum(1 for g in unesco_groups if g["only"]) == 3, f"{len(unesco_groups)} UN
 unesco_meta = {"scheme": unesco["scheme"], "fetchedAt": unesco["fetchedAt"], "groups": unesco_groups}
 
 # ── Catalog: ports, templates, stored queries, limits ──────────────────────────────────────────────
-cat_src = (DIST / f"{SLUG['catalog']}.ttl").read_text()
-listing = re.search(r"iep:affordance(.*?);\s*\n\s*rdfs:seeAlso", cat_src, re.S).group(1)
-order = re.findall(r"cat:([A-Za-z0-9_-]+)", listing)
+order = [str(s).removeprefix(str(CAT)) for s in cat.objects(URIRef(IRI["catalog"]), IEP.affordance)]
 
 
 def shape_props(shape) -> list[dict]:
@@ -687,8 +685,10 @@ for name in order:
     if cap is not None:
         rec["cap"] = str(cap).rsplit("#", 1)[-1]
     ports.append(rec)
-check(len(ports) == 23 and {"port-change-history", "port-vocabulary", "port-alignments", "port-referents", "port-publish-classified"} <= {p["id"] for p in ports},
-      "23 catalog controls in catalog order, including the change history and the semantic layer")
+rest_ports = [p for p in ports if p["id"].startswith("port-rest-")]
+check(len(ports) == 32 and {"port-change-history", "port-vocabulary", "port-alignments", "port-referents", "port-publish-classified"} <= {p["id"] for p in ports}
+      and len(rest_ports) == 9 and all(p["m"] == "GET" and p["ro"] and not p["de"] for p in rest_ports),
+      "32 catalog controls in catalog order, including nine read-only REST operations")
 
 SAMPLES = {
     "concept-neighborhood": {"concept": "learning-record-store-lrs"},
