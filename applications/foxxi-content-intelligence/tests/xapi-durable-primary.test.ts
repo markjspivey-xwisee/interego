@@ -22,7 +22,7 @@ beforeAll(async () => {
 }, 60000);
 const alice = `lens:durable-http-alice-${randomUUID()}`;
 const bob = `lens:durable-http-bob-${randomUUID()}`;
-interface Message { event?: string; port?: number; id?: number; kind?: string; }
+interface Message { event?: string; port?: number; id?: number; kind?: string; callbacks?: Array<{ id: string; statement: Record<string, unknown> }>; voidCallbacks?: Array<{ target: string; voidingId: string }>; forwardChecks?: number; }
 let sequence = 0;
 const children = new Set<ChildProcess>();
 function message(child: ChildProcess, predicate: (value: Message) => boolean): Promise<Message> {
@@ -278,6 +278,35 @@ describe.skipIf(!nativeEnabled)('the HTTP LRS acknowledges its native Interego p
       expect(await (await fetch(app.base + scope, { headers: headers() })).json()).toEqual([stateId]);
       expect((await fetch(app.base + scope, { method: 'DELETE', headers: headers() })).status).toBe(204);
       expect((await fetch(app.base + stateAddress, { headers: headers() })).status).toBe(404);
+    } finally { await kill(app.child); }
+  }, 120000);
+
+  it('does not repeat learning callbacks or forwarding on exact UUID retries and always keeps the first envelope', async () => {
+    let app = await start();
+    const inspect = async () => {
+      const id = ++sequence;
+      const result = message(app.child, value => value.event === 'callbacks' && value.id === id);
+      app.child.send({ command: 'callbacks', id }); return result;
+    };
+    try {
+      const target = { ...statement(), timestamp: '2026-10-15T10:00:00.000Z' };
+      expect((await fetch(app.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(target) })).status).toBe(200);
+      const first = await (await fetch(app.base + '/xapi/statements?statementId=' + target.id, { headers: headers() })).json() as Record<string, unknown>;
+      const retry = { ...target, stored: '2099-01-01T00:00:00.000Z', authority: { objectType: 'Agent', account: { homePage: 'https://example.test', name: 'retry-authority-must-not-be-projected' } } };
+      expect((await fetch(app.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(retry) })).status).toBe(200);
+      expect((await fetch(app.base + '/xapi/statements?statementId=' + target.id, { method: 'PUT', headers: headers(), body: JSON.stringify(retry) })).status).toBe(204);
+      const voiding = { ...statement(), timestamp: '2026-10-15T10:00:01.000Z', verb: { id: 'http://adlnet.gov/expapi/verbs/voided' }, object: { objectType: 'StatementRef', id: target.id } };
+      for (let attempt = 0; attempt < 2; attempt++) expect((await fetch(app.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(voiding) })).status).toBe(200);
+      const effects = await inspect();
+      expect(effects.callbacks).toHaveLength(2);
+      expect(effects.callbacks?.find(row => row.id === target.id)?.statement).toEqual(first);
+      expect(effects.voidCallbacks).toEqual([{ target: target.id, voidingId: voiding.id }]);
+      expect(effects.forwardChecks).toBe(2);
+      expect(await (await fetch(app.base + '/xapi/statements?voidedStatementId=' + target.id, { headers: headers() })).json()).toEqual(first);
+      await kill(app.child); app = await start();
+      expect((await fetch(app.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(retry) })).status).toBe(200);
+      const afterRestart = await inspect();
+      expect(afterRestart.callbacks).toEqual([]); expect(afterRestart.voidCallbacks).toEqual([]); expect(afterRestart.forwardChecks).toBe(0);
     } finally { await kill(app.child); }
   }, 120000);
 

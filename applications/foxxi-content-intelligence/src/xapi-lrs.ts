@@ -49,7 +49,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { randomUUID, createHash } from 'node:crypto';
 import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adapter/src/pod-publisher.js';
 import { createStatementStore, InMemoryStatementStore, configuredLrsBackend, assertLrsPrimaryConfiguration, listPersistentStatementTenants, ConflictError, matchesFilter, decodeCursor, type StatementStore, type StoredStatement } from './statement-store.js';
-import { NativeInteregoLrsStore, type AppliedNativeVoid } from './native-lrs-store.js';
+import { NativeInteregoLrsStore, type NativeStatementCommit } from './native-lrs-store.js';
 import { validateStatement, validateAgentObject, utcTimestamp } from './xapi-validate.js';
 import { TenantPartition, DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import {
@@ -808,19 +808,19 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
       const part = multipartParts?.get(sha);
       if (part) attachments.set(sha, { data: part.body, contentType: part.headers['content-type'] ?? 'application/octet-stream' });
     }
-    let applied: AppliedNativeVoid[];
+    let applied: NativeStatementCommit;
     try { applied = await store.putBatchWithAttachments(records, attachments, boundRegistration(req)); }
     catch (err) {
       if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
       throw err;
     }
-    for (const item of applied) await notifyVoidApplied(item.target, item.voidingStatementId, tenantOf(req), config);
-    for (const record of records) {
+    for (const item of applied.appliedVoids) await notifyVoidApplied(item.target, item.voidingStatementId, tenantOf(req), config);
+    for (const record of applied.inserted) {
       await notifyStatementStored(record.statement, tenantOf(req), config);
       recordInboundIfForwarded(req, record.statement);
       forwardToTargets(config.ownerTenantOfStatement?.(record.statement) ?? tenantOf(req), record.statement).catch(() => undefined);
     }
-    res.status(200).json(records.map(record => record.id));
+    res.status(200).json(applied.records.map(record => record.id));
     return;
   }
   for (const stmt of batch) {
@@ -911,7 +911,7 @@ function collectAttachmentHashes(batch: Record<string, unknown>[]): Set<string> 
 }
 
 /** A statement, attachments and guarded void edge commit together through native Interego. */
-async function putStatementWithAttachments(store: StatementStore, tenant: TenantId, record: StoredStatement, parts: Map<string, MultipartPart> | null, registration?: string): Promise<AppliedNativeVoid[] | null> {
+async function putStatementWithAttachments(store: StatementStore, tenant: TenantId, record: StoredStatement, parts: Map<string, MultipartPart> | null, registration?: string): Promise<NativeStatementCommit | null> {
   const attachments = new Map<string, { data: Buffer; contentType: string }>();
   for (const sha of collectAttachmentHashes([record.statement])) {
     const part = parts?.get(sha);
@@ -1021,7 +1021,7 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   (stmt as Record<string, unknown>).id = statementId;
   const store = statementStores.for(tenantOf(req));
   const enriched = ensureStatementFields(stmt, { homePage: config.selfBaseUrl, name: 'foxxi-lrs' });
-  let applied: AppliedNativeVoid[] | null;
+  let applied: NativeStatementCommit | null;
   try {
     applied = await putStatementWithAttachments(store, tenantOf(req), { id: statementId, statement: enriched, stored: enriched.stored as string, voided: false }, multipartParts, boundRegistration(req));
   } catch (err) {
@@ -1030,11 +1030,13 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   }
   // Voided only once the voiding statement itself is taken: one refused as a conflict voids nothing.
   if (applied) {
-    for (const item of applied) await notifyVoidApplied(item.target, item.voidingStatementId, tenantOf(req), config);
+    for (const item of applied.appliedVoids) await notifyVoidApplied(item.target, item.voidingStatementId, tenantOf(req), config);
   } else await applyVoiding(enriched, statementId, store, boundRegistration(req), r => notifyVoidApplied(r, statementId, tenantOf(req), config));
-  await notifyStatementStored(enriched, tenantOf(req), config);
-  recordInboundIfForwarded(req, enriched);
-  forwardToTargets(config.ownerTenantOfStatement?.(enriched) ?? tenantOf(req), enriched).catch(() => undefined);
+  if (applied && applied.inserted.length === 0) { res.status(204).end(); return; }
+  const committed = applied?.inserted[0]?.statement ?? enriched;
+  await notifyStatementStored(committed, tenantOf(req), config);
+  recordInboundIfForwarded(req, committed);
+  forwardToTargets(config.ownerTenantOfStatement?.(committed) ?? tenantOf(req), committed).catch(() => undefined);
   res.status(204).end();
 }
 

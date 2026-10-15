@@ -130,7 +130,9 @@ describe('native Interego xAPI artifact adapter', () => {
     await store.put(first);
     const retry = structuredClone(first); retry.stored = '2026-10-15T10:01:00.000Z';
     retry.statement.stored = retry.stored; retry.statement.authority = { name: 'other authenticated LRS' };
-    await store.put(retry); expect(await store.get(first.id)).toEqual(first);
+    const replay = await store.putWithAttachments(retry, new Map());
+    expect(replay.records).toEqual([first]); expect(replay.inserted).toEqual([]); expect(replay.appliedVoids).toEqual([]);
+    expect(await store.get(first.id)).toEqual(first);
     const conflict = structuredClone(retry); conflict.statement.object = { id: 'https://example.test/other' };
     await expect(store.put(conflict)).rejects.toBeInstanceOf(ConflictError);
     expect(await store.get(first.id)).toEqual(first);
@@ -163,7 +165,10 @@ describe('native Interego xAPI artifact adapter', () => {
     await store.putWithAttachments(outside, new Map(), randomUUID());
     expect((await store.get(target.id))?.voided).toBe(false);
     const accepted = voider(target.id);
-    await store.putWithAttachments(accepted, new Map(), registration);
+    const acceptedCommit = await store.putWithAttachments(accepted, new Map(), registration);
+    expect(acceptedCommit.appliedVoids).toHaveLength(1);
+    const replayCommit = await store.putWithAttachments(accepted, new Map(), registration);
+    expect(replayCommit.inserted).toEqual([]); expect(replayCommit.appliedVoids).toEqual([]);
     expect((await store.get(target.id))?.voidingStatementId).toBe(accepted.id);
     expect(await store.markVoided(target.id, accepted.id, current => !current.voided)).toBe(false);
     expect(await store.markVoided(accepted.id, voider(accepted.id).id)).toBe(false);

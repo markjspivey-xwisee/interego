@@ -20,6 +20,16 @@ For the earlier candidate, the existing deployment-scope tool and observed live 
 | `dashboard` | Inspected server aggregates pod/relay discovery into a resident view. No sole primary record found in that bounded read; this is not a full durability proof. `examples/dashboard/server.ts:93,354,575`. |
 | `foxxi-microsite`, `foxxi-dashboard` | These images serve built frontend assets with nginx. No server-side primary record store found in the inspected Dockerfiles. Existing browser drafts/session keys are client state, not the contents of the nginx process. `deploy/Dockerfile.foxxi-microsite`, `deploy/Dockerfile.foxxi-dashboard`. |
 
+## Most recent native candidate scope
+
+A fresh read-only pin comparison at native candidate `ee2dcf094dce4889506a6c6bc30dbabb74a0ee7e`, using the unchanged deployment selector, selected **13 services**: `css-gate`, `css`, `foxxi-bridge`, `agp-bridge`, `relay`, `wsp-bridge`, `bridge`, `pgsl-browser`, `jev-harness-bridge`, `discord`, `dashboard`, `foxxi-microsite` and `foxxi-dashboard`. The preceding twelve-service map describes the earlier source findings; the native revision also changes `css-gate`.
+
+The inspected gate holds an expiring authentication cache, rather than a sole primary record store. Its addition does not remove the other services' preservation obligations. Native CSS changes affect canonical pod resources and metadata: confirm actual durable mode, backups, stable keys and restoration before replacement. No variable values or record payloads were read for this scope calculation.
+
+Foxxi's live variable-name metadata lacked four mandatory native authority settings: pod URL, owner, capability and pinned owner encryption public key. Its existing bridge key can provide the documented private-key fallback. Presence of names alone would not prove correct configuration or recovery. Apply reviewed native configuration only after preservation; a partially configured replacement must fail closed.
+
+The automatic parallel rollout does not establish CSS/gate-before-Foxxi ordering. Stage native protocol readiness and existing authority checks before replacing the Foxxi primary. Neither rollback nor a successful new readiness transaction can restore the old process's heap. Recompute this measured scope against fresh pins and the exact final release before any deployment.
+
 ## Mapping the 39-store audit
 
 Canonical inventory: [`../audits/primary-state-durability-74475.json`](../audits/primary-state-durability-74475.json). Its classifications describe source behavior and prerequisites, **not measured live record counts**. The LRS statement store itself was investigated separately and is not one of these 39 rows.

@@ -227,6 +227,7 @@ export class NativeInteregoLrsDatabase {
 }
 
 export interface AppliedNativeVoid { target: StoredStatement; voidingStatementId: string; }
+export interface NativeStatementCommit { records: StoredStatement[]; inserted: StoredStatement[]; appliedVoids: AppliedNativeVoid[]; }
 export class NativeInteregoLrsStore implements StatementStore {
   constructor(private readonly database: NativeInteregoLrsDatabase, private readonly tenant: string) {}
   private async getAt(head: NativeSnapshot, id: string): Promise<StoredStatement | null> {
@@ -240,12 +241,12 @@ export class NativeInteregoLrsStore implements StatementStore {
     return { ...record, voided: true, voidingStatementId: relation.voidingStatementId };
   }
   async put(record: StoredStatement): Promise<void> { await this.putWithAttachments(record, new Map()); }
-  async putWithAttachments(record: StoredStatement, attachments: ReadonlyMap<string, LrsAttachment>, registration?: string): Promise<AppliedNativeVoid[]> {
+  async putWithAttachments(record: StoredStatement, attachments: ReadonlyMap<string, LrsAttachment>, registration?: string): Promise<NativeStatementCommit> {
     return this.putBatchWithAttachments([record], attachments, registration);
   }
   /** Whole HTTP batch + exact envelopes + attachment bytes + guarded void edges share one native CAS. */
-  async putBatchWithAttachments(records: readonly StoredStatement[], attachments: ReadonlyMap<string, LrsAttachment>, registration?: string): Promise<AppliedNativeVoid[]> {
-    if (!records.length) { if (attachments.size) throw new Error('native LRS attachment commit requires a statement'); return []; }
+  async putBatchWithAttachments(records: readonly StoredStatement[], attachments: ReadonlyMap<string, LrsAttachment>, registration?: string): Promise<NativeStatementCommit> {
+    if (!records.length) { if (attachments.size) throw new Error('native LRS attachment commit requires a statement'); return { records: [], inserted: [], appliedVoids: [] }; }
     const ids = new Set<string>();
     for (const row of records) {
       checkedStatement(row, row.id);
@@ -254,10 +255,13 @@ export class NativeInteregoLrsStore implements StatementStore {
     }
     return this.database.transaction(async tx => {
       await tx.registerTenant(this.tenant);
+      const kept: StoredStatement[] = [], inserted: StoredStatement[] = [];
       for (const row of records) {
         const prior = await tx.read<StoredStatement>(this.tenant, 'statement', row.id);
         if (prior && immutableBody(prior.statement) !== immutableBody(row.statement)) throw new ConflictError('statement id ' + row.id + ' already stored with different content');
+        kept.push(prior ? checkedStatement(prior, row.id) : row);
         if (!prior) {
+          inserted.push(row);
           const artifact = tx.write(this.tenant, 'statement', row.id, row);
           const key = this.database.queryKey(this.tenant, row);
           tx.changes.set(key, { key, artifact });
@@ -274,14 +278,14 @@ export class NativeInteregoLrsStore implements StatementStore {
         } else tx.changes.set(key, { key, artifact: createNativeByteArtifact({ owner: this.database.owner, contentType: attachment.contentType, bytes: attachment.data }) });
       }
       const applied: AppliedNativeVoid[] = [];
-      for (const row of records) {
+      for (const row of inserted) {
         const id = voidTarget(row.statement); if (!id) continue;
         const target = await tx.read<StoredStatement>(this.tenant, 'statement', id);
         if (!target || voidTarget(target.statement) || (registration !== undefined && (target.statement.context as { registration?: string } | undefined)?.registration !== registration)) continue;
         tx.write(this.tenant, 'void', id, { target: id, voidingStatementId: row.id });
         applied.push({ target: { ...target, voided: true, voidingStatementId: row.id }, voidingStatementId: row.id });
       }
-      return applied;
+      return { records: kept, inserted, appliedVoids: applied };
     });
   }
   async get(id: string): Promise<StoredStatement | null> { await this.database.ready(); return this.getAt(await this.database.client.readHead(), id); }

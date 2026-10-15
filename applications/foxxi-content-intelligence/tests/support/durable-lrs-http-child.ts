@@ -9,6 +9,9 @@ import { NativeInteregoLrsStore } from '../../src/native-lrs-store.js';
 import type { TenantId } from '../../src/tenant-context.js';
 import type { IRI } from '@interego/core';
 
+const callbacks: Array<{ id: string; statement: Record<string, unknown> }> = [];
+const voidCallbacks: Array<{ target: string; voidingId: string }> = [];
+let forwardChecks = 0;
 let gate: 'statement' | 'resource' | 'fail-statement' | 'fail-resource' | undefined;
 let release: (() => void) | undefined;
 async function beforeWrite(kind: 'statement' | 'resource'): Promise<void> {
@@ -36,6 +39,7 @@ NativeInteregoLrsStore.prototype.updateResource = async function <T, R>(kind: st
   return bound<T, R>(kind, id, mutate);
 };
 process.on('message', (message: { command?: string; id?: number }) => {
+  if (message.command === 'callbacks') { process.send?.({ event: 'callbacks', id: message.id, callbacks, voidCallbacks, forwardChecks }); return; }
   if (message.command === 'release') { release?.(); release = undefined; }
   else if (['statement', 'resource', 'fail-statement', 'fail-resource'].includes(message.command ?? '')) gate = message.command as typeof gate;
   process.send?.({ event: 'configured', id: message.id });
@@ -44,6 +48,9 @@ await readyStatementStore();
 const app = express();
 app.use(express.json());
 attachXapiLrsRoutes(app, {
+  onStatementStored: statement => { callbacks.push({ id: String(statement.id), statement: structuredClone(statement) }); },
+  onVoidApplied: (target, voidingId) => { voidCallbacks.push({ target: target.id, voidingId }); },
+  ownerTenantOfStatement: () => { forwardChecks++; return null; },
   podUrl: '', tenantDid: 'did:web:durable.test' as IRI, basicAuthPairs: '', forwardingTargets: '', selfBaseUrl: 'https://durable.test',
   bearerRegistrationResolver: token => token.startsWith('alice-reg:') ? token.slice('alice-reg:'.length) : null,
   bearerTenantResolver: token => token === 'alice' || token.startsWith('alice-reg:') ? process.env.LRS_TEST_ALICE as TenantId : token === 'bob' ? process.env.LRS_TEST_BOB as TenantId : null,
