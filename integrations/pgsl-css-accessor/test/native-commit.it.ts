@@ -126,6 +126,12 @@ async function startWorker(baseUrl: string): Promise<Worker> {
     env: { ...process.env, NATIVE_COMMIT_TEST_PORT: String(port), NATIVE_COMMIT_TEST_BASE_URL: baseUrl },
   });
   children.add(child);
+  let errorReports = 0;
+  child.on('message', (message: WorkerMessage) => {
+    if (message.event === 'operation-error' && message.diagnostic && ++errorReports <= 24) {
+      console.error(`[native-http] worker-operation-error workerPort=${port}`, JSON.stringify(message.diagnostic));
+    }
+  });
   await waitMessage(child, message => message.event === 'ready');
   return { child, port };
 }
@@ -187,6 +193,14 @@ function wire(worker: Worker, resource: string, method = 'GET', headers: Record<
       response.once('end', () => {
         const body = Buffer.concat(chunks);
         if (trace) console.log(`[native-http] end ${label} bytes=${body.length}`);
+        if ((response.statusCode ?? 0) >= 500) {
+          let detail = 'Non-JSON error response';
+          try {
+            const parsed = JSON.parse(body.subarray(0, 4096).toString('utf8')) as { message?: unknown; error?: unknown };
+            detail = typeof parsed.message === 'string' ? parsed.message : typeof parsed.error === 'string' ? parsed.error : 'JSON error response without a public message';
+          } catch { /* Do not print arbitrary response bytes. */ }
+          console.error(`[native-http] response-error ${label}`, JSON.stringify(workerDiagnostic({ name: 'HttpResponse', code: `HTTP_${response.statusCode}`, message: detail }, 'response')));
+        }
         resolve({ status: response.statusCode ?? 0, headers: response.headers, body });
       });
     });
@@ -453,6 +467,16 @@ async function main(): Promise<void> {
 
 async function workerMain(): Promise<void> {
   const { AppRunner } = await import('@solid/community-server');
+  workerStage = 'instrument-native-errors';
+  const { NativePutOperationHandler } = await import('../dist/NativePutOperationHandler.js');
+  const nativeHandle = NativePutOperationHandler.prototype.handle;
+  NativePutOperationHandler.prototype.handle = async function(this: InstanceType<typeof NativePutOperationHandler>, input: Parameters<typeof nativeHandle>[0]) {
+    try { return await nativeHandle.call(this, input); }
+    catch (error) {
+      process.send?.({ event: 'operation-error', diagnostic: workerDiagnostic(error, 'native-put') });
+      throw error;
+    }
+  };
   const originalNow = Date.now;
   process.on('message', (message: WorkerMessage) => {
     if (message.command !== 'clock') return;
