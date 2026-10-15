@@ -83,6 +83,7 @@ interface IndexBranch { kind: 'branch'; children: Map<string, NativeArtifactRefe
 type IndexNode = IndexLeaf | IndexBranch;
 
 function digest(bytes: Uint8Array | string): string { return 'sha256:' + createHash('sha256').update(bytes).digest('hex'); }
+function compareStrings(a: string, b: string): number { return a < b ? -1 : a > b ? 1 : 0; }
 function hashKey(key: string): string { return createHash('sha256').update(key).digest('hex'); }
 function fail(message: string, status = 503): never { throw new NativeCommitError(message, status); }
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
@@ -151,12 +152,13 @@ export function validateNativeArtifact(artifact: NativeArtifact): NativeArtifact
       const hash = createHash('sha256').update('fragment:L' + node.level + ':' + node.items.join('|')).digest('hex').slice(0, 40);
       if (!nativeUri('fragment', hash, id)) fail('Native fragment content address mismatch.');
       for (const child of node.items) { if (typeof child !== 'string') fail('Invalid native child URI.'); visit(child, depth + 1); }
+      if (node.level === 1 && (node.height !== 1 || node.left !== undefined || node.right !== undefined)) fail('Native level-one fragment metadata is inconsistent.');
       if (node.level > 1) {
         if (!node.left || !node.right) fail('Native fragment lacks constituents.');
         visit(node.left, depth + 1); visit(node.right, depth + 1);
         const left = artifact.nodes.get(node.left), right = artifact.nodes.get(node.right);
         if (left?.kind !== 'Fragment' || right?.kind !== 'Fragment' || canonical(left.items) !== canonical(node.items.slice(0, -1))
-          || canonical(right.items) !== canonical(node.items.slice(1))) fail('Native fragment constituents do not match its content.');
+          || canonical(right.items) !== canonical(node.items.slice(1)) || node.height !== Math.max(left.height, right.height) + 1) fail('Native fragment constituents do not match its content.');
       }
     } else fail('Unknown native node kind.');
     active.delete(id); output.set(id, node);
@@ -166,7 +168,7 @@ export function validateNativeArtifact(artifact: NativeArtifact): NativeArtifact
 }
 function serializeArtifact(input: NativeArtifact): Uint8Array {
   const checked = validateNativeArtifact(input);
-  return Buffer.from(canonical({ topUri: checked.topUri, nodes: Object.fromEntries([...checked.nodes].sort(([a], [b]) => a.localeCompare(b))) }));
+  return Buffer.from(canonical({ topUri: checked.topUri, nodes: Object.fromEntries([...checked.nodes].sort(([a], [b]) => compareStrings(a, b))) }));
 }
 /** Exact bytes live in a typed canonical PGSL holon; there is no auxiliary byte database. */
 export function createNativeByteArtifact(input: { owner: IRI; contentType: string; bytes: Uint8Array; provenance?: NodeProvenance }): NativeArtifactInput {
@@ -351,7 +353,7 @@ export class NativeCommitStore implements NativeCommitClient {
   private async saveIndex(node: IndexNode): Promise<NativeArtifactReference> {
     const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
     const entries = node.kind === 'leaf' ? node.entries : node.children;
-    const rows = [...entries].sort(([a], [b]) => a.localeCompare(b)).map(([key, reference]) => this.referenceTuple(pgsl, ENTRY, key, reference));
+    const rows = [...entries].sort(([a], [b]) => compareStrings(a, b)).map(([key, reference]) => this.referenceTuple(pgsl, ENTRY, key, reference));
     const topUri = ingest(pgsl, [literal(pgsl, node.kind === 'leaf' ? LEAF : BRANCH), ...rows]);
     return this.persist({ pgsl, topUri });
   }
@@ -366,7 +368,7 @@ export class NativeCommitStore implements NativeCommitClient {
       groups.get(nibble)!.set(key, value);
     }
     const children = new Map<string, NativeArtifactReference>();
-    for (const [nibble, group] of [...groups].sort(([a], [b]) => a.localeCompare(b))) children.set(nibble, (await this.buildIndex(group, prefix + nibble))!);
+    for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) children.set(nibble, (await this.buildIndex(group, prefix + nibble))!);
     return this.saveIndex({ kind: 'branch', children });
   }
   private async updateIndex(root: NativeArtifactReference | null, changes: Map<string, NativeArtifactReference | null>, prefix = ''): Promise<NativeArtifactReference | null> {
@@ -382,7 +384,7 @@ export class NativeCommitStore implements NativeCommitClient {
       const nibble = hashKey(key)[prefix.length]!;
       if (!groups.has(nibble)) groups.set(nibble, new Map()); groups.get(nibble)!.set(key, value);
     }
-    for (const [nibble, group] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) {
       const child = await this.updateIndex(children.get(nibble) ?? null, group, prefix + nibble);
       if (child) children.set(nibble, child); else children.delete(nibble);
     }
@@ -475,7 +477,7 @@ export class NativeCommitStore implements NativeCommitClient {
   async commit(request: NativeCommitRequest): Promise<NativeCommitReceipt> {
     bounded(request.operationId, 200, 'operation ID');
     if (canonical(request.expected.scope) !== canonical(this.scope) || !Array.isArray(request.changes) || request.changes.length > 1000) fail('Native mutation scope or capacity is invalid.', 400);
-    const changes = [...request.changes].sort((a, b) => a.key.localeCompare(b.key)), keys = new Set<string>();
+    const changes = [...request.changes].sort((a, b) => compareStrings(a.key, b.key)), keys = new Set<string>();
     for (const change of changes) {
       bounded(change.key, 4096, 'record key'); if (keys.has(change.key)) fail('Native mutation repeats a record key.', 400); keys.add(change.key);
       if (change.artifact) validateNativeArtifact({ topUri: change.artifact.topUri, nodes: change.artifact.pgsl.nodes });

@@ -33,7 +33,7 @@ type ByteArtifact = ReturnType<typeof createNativeByteArtifact>;
 interface RecordEnvelope { format: string; tenant: string; kind: string; id: string; value: unknown; }
 interface NativeCursor {
   offset: number; q: CursorQuery; head: NativeSnapshotReference; after: string;
-  expires: number; proof?: string;
+  expires: number; authorizationRegistration: string | null; proof?: string;
 }
 const PREFIX = 'foxxi-lrs/v1/';
 const RECORD_TYPE = 'application/vnd.foxxi.lrs-record+json';
@@ -164,6 +164,8 @@ export class NativeInteregoLrsDatabase {
     if (envelope.format !== 'foxxi-native-lrs/1' || envelope.tenant !== tenant || envelope.kind !== kind
       || (id !== undefined && envelope.id !== id)) throw new Error('native LRS artifact/index binding failed');
     const decoded = decodeValue(envelope.value);
+    if (decoded === null || decoded === undefined) throw new Error('native LRS artifact contains an absent record');
+    if (kind === 'statement') checkedStatement(decoded as StoredStatement, envelope.id);
     const expectedKey = kind === 'statement' && key.startsWith(this.prefix(tenant) + 'query/')
       ? this.queryKey(tenant, checkedStatement(decoded as StoredStatement, envelope.id))
       : this.key(tenant, kind, envelope.id);
@@ -197,7 +199,10 @@ export class NativeInteregoLrsDatabase {
       try {
         await this.client.commit({ operationId: randomUUID(), expected: mutation.snapshot, changes: [...mutation.changes.values()] });
         return result;
-      } catch (error) { if (!(error instanceof NativeCommitConflictError) || attempt === 7) throw error; }
+      } catch (error) {
+        if (!(error instanceof NativeCommitConflictError)) throw error;
+        if (attempt === 7) throw new Error('native LRS commit contention limit reached');
+      }
     }
     throw new Error('native LRS commit contention limit reached');
   }
@@ -282,7 +287,7 @@ export class NativeInteregoLrsStore implements StatementStore {
   async get(id: string): Promise<StoredStatement | null> { await this.database.ready(); return this.getAt(await this.database.client.readHead(), id); }
   async markVoided(id: string, voidingStatementId: string, onlyIf?: (target: StoredStatement) => boolean): Promise<boolean> {
     return this.database.transaction(async tx => {
-      const target = await tx.read<StoredStatement>(this.tenant, 'statement', id);
+      const target = await this.getAt(tx.snapshot, id);
       const voider = await tx.read<StoredStatement>(this.tenant, 'statement', voidingStatementId);
       if (!target || !voider || voidTarget(voider.statement) !== id || voidTarget(target.statement) || (onlyIf && !onlyIf(target))) return false;
       await tx.registerTenant(this.tenant);
@@ -305,11 +310,12 @@ export class NativeInteregoLrsStore implements StatementStore {
     if (seen.size !== statements.size) throw new Error('native LRS query view incomplete; rebuild from native statement artifacts before serving');
     return rows;
   }
-  private cursor(token: string, query: CursorQuery): NativeCursor {
+  private cursor(token: string, query: CursorQuery, authorizationRegistration: string | null): NativeCursor {
     if (token.length > 16384 || !/^[A-Za-z0-9_-]+$/.test(token)) throw new InvalidLrsQueryError('invalid LRS continuation token');
     let value: NativeCursor;
     try { value = JSON.parse(Buffer.from(token, 'base64url').toString('utf8')) as NativeCursor; } catch { throw new InvalidLrsQueryError(); }
-    if (!value || Object.keys(value).some(k => !['offset', 'q', 'head', 'after', 'expires', 'proof'].includes(k))
+    if (!value || Object.keys(value).some(k => !['offset', 'q', 'head', 'after', 'expires', 'authorizationRegistration', 'proof'].includes(k))
+      || value.authorizationRegistration !== authorizationRegistration
       || !Number.isSafeInteger(value.offset) || value.offset < 0 || !Number.isSafeInteger(value.expires)
       || value.expires <= this.database.now() || value.expires > this.database.now() + CURSOR_LIFETIME
       || typeof value.after !== 'string' || value.after.length > 1024 || !value.after.startsWith(this.database.prefix(this.tenant) + 'query/')
@@ -323,12 +329,15 @@ export class NativeInteregoLrsStore implements StatementStore {
   async query(filter: QueryFilter): Promise<QueryResult> {
     await this.database.ready();
     const q = checkedQuery(cursorQueryOf(filter));
+    const authorizationRegistration = filter.authorizedRegistration ?? null;
+    if (authorizationRegistration !== null && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(authorizationRegistration)) throw new InvalidLrsQueryError();
     if (filter.statementId || filter.voidedStatementId) {
       if (filter.cursor || (filter.statementId && filter.voidedStatementId)) throw new InvalidLrsQueryError();
       const record = await this.get(filter.statementId ?? filter.voidedStatementId!);
-      return { statements: record && record.voided === !!filter.voidedStatementId ? [record] : [], more: null };
+      return { statements: record && record.voided === !!filter.voidedStatementId
+        && (authorizationRegistration === null || (record.statement.context as { registration?: string } | undefined)?.registration === authorizationRegistration) ? [record] : [], more: null };
     }
-    const cursor = filter.cursor === undefined ? null : this.cursor(filter.cursor, q);
+    const cursor = filter.cursor === undefined ? null : this.cursor(filter.cursor, q, authorizationRegistration);
     const head = cursor ? await this.database.client.readSnapshotAt(cursor.head) : await this.database.client.readHead();
     const index = this.queryEntries(head).sort((a, b) => (q.ascending ? a.stored.localeCompare(b.stored) : b.stored.localeCompare(a.stored)) || a.opaque.localeCompare(b.opaque));
     let start = 0;
@@ -340,11 +349,21 @@ export class NativeInteregoLrsStore implements StatementStore {
       const base = await this.database.readReference<StoredStatement>(head, row.key, this.tenant, 'statement');
       if (!base || this.database.queryKey(this.tenant, checkedStatement(base, base.id)) !== row.key) throw new Error('native LRS query timestamp binding failed');
       const record = await this.getAt(head, base.id);
-      if (record && !record.voided && matchesFilter(record, q)) statements.push(record);
+      if (!record || record.voided || (authorizationRegistration !== null
+        && (record.statement.context as { registration?: string } | undefined)?.registration !== authorizationRegistration)) continue;
+      let matches = matchesFilter(record, q);
+      const targetId = voidTarget(record.statement);
+      // Expansion belongs to this same immutable snapshot and result cursor.
+      // Registration authorization applies to the emitted voider as well as its target.
+      if (!matches && targetId) {
+        const target = await this.getAt(head, targetId);
+        matches = !!target?.voided && target.voidingStatementId === record.id && matchesFilter(target, q);
+      }
+      if (matches) statements.push(record);
     }
     if (next >= index.length) return { statements, more: null };
     if (!head.reference || next <= start) throw new Error('native LRS pagination requires a committed snapshot');
-    const body: NativeCursor = { offset: (cursor?.offset ?? 0) + statements.length, q, head: head.reference, after: index[next - 1]!.key, expires: cursor?.expires ?? this.database.now() + CURSOR_LIFETIME };
+    const body: NativeCursor = { offset: (cursor?.offset ?? 0) + statements.length, q, head: head.reference, after: index[next - 1]!.key, authorizationRegistration, expires: cursor?.expires ?? this.database.now() + CURSOR_LIFETIME };
     const signed = { ...body, proof: this.database.signature(this.tenant, body) };
     return { statements, more: encodeCursor(signed) };
   }

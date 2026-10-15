@@ -102,6 +102,11 @@ describe('native Interego xAPI artifact adapter', () => {
     await expect(store.put(record())).rejects.toThrow(/transport failure/);
     expect(await store.count()).toBe(0);
     expect(await db.listTenants()).toEqual([]);
+    let conflicts = 0;
+    client.beforeCommit = async request => { if (request.changes.length) { conflicts++; throw new NativeCommitConflictError(); } };
+    await expect(store.put(record())).rejects.toThrow('native LRS commit contention limit reached');
+    expect(conflicts).toBe(8);
+    expect(await store.count()).toBe(0);
   });
   it('acknowledges only after the native commit and registers the tenant in that same commit', async () => {
     const client = new TestNativeClient(), db = database(client), store = db.forTenant('alice');
@@ -160,6 +165,7 @@ describe('native Interego xAPI artifact adapter', () => {
     const accepted = voider(target.id);
     await store.putWithAttachments(accepted, new Map(), registration);
     expect((await store.get(target.id))?.voidingStatementId).toBe(accepted.id);
+    expect(await store.markVoided(target.id, accepted.id, current => !current.voided)).toBe(false);
     expect(await store.markVoided(accepted.id, voider(accepted.id).id)).toBe(false);
     expect((await store.query({})).statements.some(row => row.id === target.id)).toBe(false);
     expect((await store.query({ voidedStatementId: target.id })).statements[0]?.statement).toEqual(target.statement);
@@ -196,6 +202,35 @@ describe('native Interego xAPI artifact adapter', () => {
     await expect(restarted.query({ limit: 2, ascending: true, cursor: Buffer.from(JSON.stringify(raw)).toString('base64url') })).rejects.toBeInstanceOf(InvalidLrsQueryError);
     await expect(db.forTenant('bob').query({ limit: 2, ascending: true, cursor: first.more! })).rejects.toBeInstanceOf(InvalidLrsQueryError);
     await expect(restarted.query({ limit: 3, ascending: true, cursor: first.more! })).rejects.toBeInstanceOf(InvalidLrsQueryError);
+  });
+  it('pages every matching voider exactly once and never expands another registration into a restricted query', async () => {
+    const store = database(new TestNativeClient()).forTenant('alice');
+    const verb = 'https://example.test/verbs/void-query';
+    const targets = Array.from({ length: 3 }, () => { const row = record(undefined, '2026-10-15T09:00:00.000Z'); row.statement.verb = { id: verb }; return row; });
+    const voiders = targets.map(row => voider(row.id));
+    await store.putBatchWithAttachments(targets, new Map());
+    await store.putBatchWithAttachments(voiders, new Map());
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const result = await store.query({ verb, limit: 1, cursor });
+      expect(result.statements.length).toBeLessThanOrEqual(1);
+      seen.push(...result.statements.map(row => row.id));
+      if (!result.more) break;
+      cursor = result.more;
+    }
+    expect(seen.sort()).toEqual(voiders.map(row => row.id).sort());
+    expect(new Set(seen).size).toBe(3);
+    const regA = randomUUID(), regB = randomUUID(), target = record(undefined, undefined, regA), otherLaunch = voider(target.id);
+    target.statement.verb = { id: 'https://example.test/verbs/private-void-query' };
+    otherLaunch.statement.context = { registration: regB };
+    await store.put(target); await store.put(otherLaunch);
+    expect((await store.query({ verb: 'https://example.test/verbs/private-void-query', registration: regA })).statements.map(row => row.id)).toEqual([otherLaunch.id]);
+    expect((await store.query({ verb: 'https://example.test/verbs/private-void-query', registration: regA, authorizedRegistration: regA })).statements).toEqual([]);
+    const page = await store.query({ verb: 'https://example.test/verbs/private-void-query', registration: regA, limit: 1 });
+    expect(page.more).toBeTruthy();
+    await expect(store.query({ verb: 'https://example.test/verbs/private-void-query', registration: regA, limit: 1,
+      cursor: page.more!, authorizedRegistration: regA })).rejects.toBeInstanceOf(InvalidLrsQueryError);
   });
   it('rebuilds query entries from verified canonical statements and fails on tenant/index substitution', async () => {
     const client = new TestNativeClient(), db = database(client), store = db.forTenant('alice'), row = record();

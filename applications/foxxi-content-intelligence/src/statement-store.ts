@@ -52,6 +52,8 @@ export interface QueryFilter {
   verb?: string;
   activity?: string;
   registration?: string;
+  /** Trusted caller authorization boundary; never accepted as a request query parameter. */
+  authorizedRegistration?: string;
   since?: string;
   until?: string;
   ascending?: boolean;

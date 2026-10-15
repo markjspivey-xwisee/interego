@@ -12,8 +12,8 @@ export class NativeGetOperationHandler extends GetOperationHandler {
     return nativeReadScope.run({ resource: input.operation.target.path }, async () => {
       const response = await super.handle(input);
       const snapshot = await nativeReadScope.getStore()?.snapshot;
-      if (snapshot && response.metadata?.contentType === snapshot.contentType.split(';', 1)[0]?.trim()) {
-        // Converted RDF representations have different bytes and must not inherit the stored-body digest.
+      if (snapshot && response.statusCode === 200 && response.metadata?.contentType === snapshot.contentType.split(';', 1)[0]?.trim()) {
+        // Partial and converted representations must not inherit the full stored-body digest.
         response.metadata.set(toNamedTerm('http://www.w3.org/2011/http-headers#interego-revision'), snapshot.revision);
         response.metadata.set(toNamedTerm('http://www.w3.org/2011/http-headers#interego-body-digest'), snapshot.bodyDigest);
         response.metadata.set(toNamedTerm('http://www.w3.org/2011/http-headers#accept-put'), NATIVE_COMMIT_MEDIA_TYPE);

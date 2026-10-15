@@ -30,7 +30,24 @@ const revisionPattern = /^sha256:[0-9a-f]{64}$/;
 const children = new Set<ChildProcess>();
 let sequence = 0;
 
+interface WorkerDiagnostic { stage: string; name: string; code?: string; message: string; }
+let workerStage = 'import-css';
+
+/** Startup diagnostics are bounded test metadata; never forward stacks, URLs, credentials or payload tokens. */
+function workerDiagnostic(error: unknown, stage: string): WorkerDiagnostic {
+  const value = error && typeof error === 'object' ? error as { name?: unknown; code?: unknown; message?: unknown } : {};
+  const token = (item: unknown): string | undefined => typeof item === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(item) ? item : undefined;
+  const message = (typeof value.message === 'string' ? value.message : 'Worker startup failed without an Error message')
+    .slice(0, 4096)
+    .replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s\"'<>]+/g, '[url]')
+    .replace(/\b(password|passwd|pwd|secret|token|authorization|capability|private[_ -]?key|encryption[_ -]?key)\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)/gi, '$1=[redacted]')
+    .replace(/[A-Za-z0-9+\/_=-]{48,}/g, '[redacted-token]')
+    .split(/\r?\n/).filter(line => !/^\s*at\s/.test(line)).slice(0, 6).join(' | ').slice(0, 800);
+  return { stage: token(stage) ?? 'startup', name: token(value.name) ?? 'Error', ...(token(value.code) ? { code: token(value.code) } : {}), message };
+}
+
 interface WorkerMessage {
+  diagnostic?: WorkerDiagnostic;
   event?: string;
   id?: number;
   command?: string;
@@ -65,7 +82,11 @@ function waitMessage(child: ChildProcess, accepts: (message: WorkerMessage) => b
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => { cleanup(); reject(new Error('CSS native-commit worker did not acknowledge within 60 seconds')); }, 60_000);
     const onMessage = (message: WorkerMessage): void => {
-      if (message.event === 'failed') { cleanup(); reject(new Error('CSS native-commit worker failed; verify the isolated PG database and built CSS configuration')); }
+      if (message.event === 'failed') {
+        cleanup();
+        const detail = message.diagnostic;
+        reject(new Error(`CSS native-commit worker failed: ${detail ? `${detail.stage}: ${detail.name}${detail.code ? ` [${detail.code}]` : ''}: ${detail.message}` : 'startup diagnostic unavailable'}`));
+      }
       else if (accepts(message)) { cleanup(); resolve(message); }
     };
     const onExit = (): void => { cleanup(); reject(new Error('CSS native-commit worker exited before acknowledgement')); };
@@ -263,6 +284,10 @@ async function concurrentReadCoherence(left: Worker, right: Worker, resource: st
 async function main(): Promise<void> {
   assert.notEqual(process.env.PGSL_INMEM, '1', 'native multiwriter/restart proof requires real shared PostgreSQL; PGSL_INMEM is only a wiring smoke');
   assert.ok(process.env.PGSL_PG_CONNSTR, 'PGSL_PG_CONNSTR must point to the isolated integration-test PostgreSQL database');
+  const diagnosticProbe = workerDiagnostic(new Error('Found multiple types BasicETagHandler NativeETagHandler\npostgresql://fixture:fixture-password@localhost/example token=fixture-secret'), 'create-css');
+  assert.ok(diagnosticProbe.message.includes('BasicETagHandler'));
+  assert.ok(!/fixture-password|fixture-secret/.test(diagnosticProbe.message), 'startup diagnostics must redact fixture credentials');
+  assert.ok(diagnosticProbe.message.length <= 800);
   const canonicalPort = await freePort();
   const baseUrl = `http://127.0.0.1:${canonicalPort}/`;
   const prefix = `native-commit-${randomUUID()}`;
@@ -291,6 +316,16 @@ async function main(): Promise<void> {
     const createdBytes = creates[0]!.status === 200 ? bodyA : bodyB;
     const created = receipt(creates.find(response => response.status === 200)!, resource, null, createdBytes);
     let etag = await read(left, resource, created, createdBytes);
+    await read(right, resource, created, createdBytes, etag);
+
+    const partial = await wire(right, resource, 'GET', { accept: binaryType, range: 'bytes=0-1' });
+    assert.equal(partial.status, 206);
+    assert.deepEqual(partial.body, createdBytes.subarray(0, 2));
+    assert.equal(partial.headers['interego-body-digest'], undefined, 'partial GET must not claim a full-body digest');
+
+    // Ordinary Solid mutations cannot bypass a head that was enrolled in native CAS.
+    assert.equal((await wire(right, resource, 'PUT', { 'content-type': binaryType }, bodyD)).status, 409, 'ordinary PUT must not replace a native-managed head');
+    assert.equal((await wire(left, resource, 'DELETE')).status, 409, 'ordinary DELETE must not erase a native-managed head');
     await read(right, resource, created, createdBytes, etag);
 
     // Both preconditions refer to the same current GET ETag, so this race cannot
@@ -356,11 +391,8 @@ async function main(): Promise<void> {
     const afterRestart = receipt(await commit(restarted, abaResource, identical.revision, bodyC, { 'if-match': identicalEtag }), abaResource, identical.revision, bodyC);
     await read(restarted, abaResource, afterRestart, bodyC);
 
-    // Delete only this run's unique synthetic records through the same HTTP API.
-    for (const target of [resource, abaResource, coherenceResource]) {
-      const deleted = await wire(restarted, target, 'DELETE');
-      assert.ok(deleted.status >= 200 && deleted.status < 300, 'synthetic test resource cleanup must succeed');
-    }
+    // Native-managed heads deliberately reject ordinary deletion. This isolated
+    // CI database owns cleanup; random resource names prevent cross-run collisions.
     console.log('CSS native commit HTTP: exact-target OPTIONS, shared-PG multiwriter CAS, coherent GET metadata/bytes, same-clock ABA, and process-death recovery ALL PASS');
   } finally {
     for (const child of [...children]) await killWorker({ child, port: 0 });
@@ -375,20 +407,27 @@ async function workerMain(): Promise<void> {
     Date.now = typeof message.now === 'number' && Number.isFinite(message.now) ? () => message.now! : originalNow;
     process.send?.({ event: 'clock', id: message.id });
   });
+  workerStage = 'validate-worker-config';
   const port = Number(process.env.NATIVE_COMMIT_TEST_PORT);
   const baseUrl = process.env.NATIVE_COMMIT_TEST_BASE_URL;
   assert.ok(Number.isInteger(port) && port > 0 && baseUrl);
+  workerStage = 'create-css';
   const app = await new AppRunner().create({
     loaderProperties: { mainModulePath: pkgRoot, typeChecking: false },
     config: configPath,
     shorthand: { port, baseUrl, loggingLevel: 'error', rootFilePath: path.join(os.tmpdir(), `pgsl-native-${randomUUID()}`) },
   });
+  workerStage = 'start-css';
   await app.start();
   process.send?.({ event: 'ready' });
 }
 
 if (process.argv.includes('--native-commit-worker')) {
-  workerMain().catch(() => { process.send?.({ event: 'failed' }); process.exit(1); });
+  workerMain().catch(error => {
+    const diagnostic = workerDiagnostic(error, workerStage);
+    if (process.send && process.connected) process.send({ event: 'failed', diagnostic }, () => process.exit(1));
+    else process.exit(1);
+  });
 } else {
   main().catch(error => { console.error('CSS native commit HTTP integration FAILED:', error); process.exitCode = 1; });
 }

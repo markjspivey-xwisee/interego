@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { deriveEncryptionKeyPair, mintNodeId, type IRI } from '@interego/core';
 import {
   NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE,
@@ -150,6 +150,34 @@ describe('strict native encrypted PGSL commits', () => {
     await expect(client.commit({ operationId: 'forged', expected: await client.readHead(), changes: [{ key: 'forged', artifact: input }] }))
       .rejects.toThrow('content address');
     expect(transport.writes).toHaveLength(0);
+  });
+
+  it('validates fragment height and level-one constituent invariants', () => {
+    const input = artifact('canonical heights'), top = input.pgsl.nodes.get(input.topUri)!;
+    if (top.kind !== 'Fragment') throw new Error('fixture');
+    input.pgsl.nodes.set(top.uri, { ...top, height: top.height + 1 });
+    expect(() => validateNativeArtifact({ topUri: input.topUri, nodes: input.pgsl.nodes })).toThrow('constituents');
+    input.pgsl.nodes.set(top.uri, top);
+    const levelOne = [...input.pgsl.nodes.values()].find(node => node.kind === 'Fragment' && node.level === 1)!;
+    if (levelOne.kind !== 'Fragment') throw new Error('fixture');
+    input.pgsl.nodes.set(levelOne.uri, { ...levelOne, height: 2 });
+    expect(() => validateNativeArtifact({ topUri: input.topUri, nodes: input.pgsl.nodes })).toThrow('level-one');
+    input.pgsl.nodes.set(levelOne.uri, { ...levelOne, left: levelOne.uri });
+    expect(() => validateNativeArtifact({ topUri: input.topUri, nodes: input.pgsl.nodes })).toThrow('level-one');
+  });
+
+  it('orders Unicode record keys without locale-dependent comparison for replay identity', async () => {
+    const transport = new NativeTransport(), client = transport.client(), initial = await client.readHead();
+    const changes = ['z', 'ä', 'A', 'a', '😀', 'e\u0301', 'é'].map(key => ({ key, artifact: artifact(key) }));
+    const comparison = vi.spyOn(String.prototype, 'localeCompare').mockImplementation(() => { throw new Error('locale-sensitive comparison used'); });
+    let first: Awaited<ReturnType<NativeCommitStore['commit']>> | undefined;
+    let replay: Awaited<ReturnType<NativeCommitStore['commit']>> | undefined;
+    try {
+      first = await client.commit({ operationId: 'unicode', expected: initial, changes });
+      replay = await client.commit({ operationId: 'unicode', expected: initial, changes: [...changes].reverse() });
+    } finally { comparison.mockRestore(); }
+    expect(replay?.head).toEqual(first?.head); expect(replay?.replayed).toBe(true);
+    expect(transport.headWrites()).toBe(1);
   });
 
   it('requires the exact owner recipient set after a metadata-consistent ciphertext change', async () => {

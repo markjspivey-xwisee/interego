@@ -45,7 +45,8 @@ const app = express();
 app.use(express.json());
 attachXapiLrsRoutes(app, {
   podUrl: '', tenantDid: 'did:web:durable.test' as IRI, basicAuthPairs: '', forwardingTargets: '', selfBaseUrl: 'https://durable.test',
-  bearerTenantResolver: token => token === 'alice' ? process.env.LRS_TEST_ALICE as TenantId : token === 'bob' ? process.env.LRS_TEST_BOB as TenantId : null,
+  bearerRegistrationResolver: token => token.startsWith('alice-reg:') ? token.slice('alice-reg:'.length) : null,
+  bearerTenantResolver: token => token === 'alice' || token.startsWith('alice-reg:') ? process.env.LRS_TEST_ALICE as TenantId : token === 'bob' ? process.env.LRS_TEST_BOB as TenantId : null,
 });
 attachXapiAdminRoutes(app, {
   adminWebId: 'https://pod.test/durable-admin/profile/card#me', learningEngineerWebIds: new Set(),

@@ -211,4 +211,74 @@ describe.skipIf(!nativeEnabled)('the HTTP LRS acknowledges its native Interego p
     } finally { await kill(left.child); await kill(right.child); }
   }, 120000);
 
+  it('pages matching voiders at one immutable head and does not expose another launch registration', async () => {
+    const app = await start();
+    const paged = async (first: string, auth = headers()) => {
+      const ids: string[] = []; let next = first;
+      for (let page = 0; next && page < 20; page++) {
+        const response = await fetch(app.base + next, { headers: auth });
+        expect(response.status).toBe(200);
+        const result = await response.json() as { statements: Array<{ id: string }>; more: string };
+        expect(result.statements.length).toBeLessThanOrEqual(1);
+        ids.push(...result.statements.map(row => row.id)); next = result.more;
+      }
+      expect(next).toBe(''); return ids;
+    };
+    try {
+      const verb = 'https://example.test/verbs/paging-' + randomUUID();
+      const targets = Array.from({ length: 3 }, () => ({ ...statement(), verb: { id: verb } }));
+      const voiders = targets.map(target => ({ ...statement(), verb: { id: 'http://adlnet.gov/expapi/verbs/voided' }, object: { objectType: 'StatementRef', id: target.id } }));
+      for (const batch of [targets, voiders]) expect((await fetch(app.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(batch) })).status).toBe(200);
+      const ids = await paged('/xapi/statements?' + new URLSearchParams({ verb, limit: '1' }));
+      expect(ids.sort()).toEqual(voiders.map(row => row.id).sort()); expect(new Set(ids).size).toBe(3);
+      const regA = randomUUID(), regB = randomUUID(), privateVerb = 'https://example.test/verbs/private-' + randomUUID();
+      const target = { ...statement(), verb: { id: privateVerb }, context: { registration: regA } };
+      const other = { ...statement(), verb: { id: 'http://adlnet.gov/expapi/verbs/voided' }, object: { objectType: 'StatementRef', id: target.id }, context: { registration: regB } };
+      for (const row of [target, other]) expect((await fetch(app.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(row) })).status).toBe(200);
+      expect(await paged('/xapi/statements?' + new URLSearchParams({ verb: privateVerb, registration: regA, limit: '1' }))).toEqual([other.id]);
+      expect(await paged('/xapi/statements?' + new URLSearchParams({ verb: privateVerb, limit: '1' }), headers('alice-reg:' + regA))).toEqual([]);
+      expect((await fetch(app.base + '/xapi/statements?statementId=' + other.id, { headers: headers('alice-reg:' + regA) })).status).toBe(404);
+    } finally { await kill(app.child); }
+  }, 120000);
+  it('never injects a later voider into a continuation captured before the void', async () => {
+    const app = await start();
+    try {
+      const verb = 'https://example.test/verbs/head-bound-' + randomUUID();
+      const targets = Array.from({ length: 3 }, () => ({ ...statement(), verb: { id: verb } }));
+      expect((await fetch(app.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(targets) })).status).toBe(200);
+      const first = await (await fetch(app.base + '/xapi/statements?' + new URLSearchParams({ verb, limit: '2' }), { headers: headers() })).json() as { statements: Array<{ id: string }>; more: string };
+      expect(first.statements).toHaveLength(2); expect(first.more).toBeTruthy();
+      const remainder = targets.find(row => !first.statements.some(held => held.id === row.id))!;
+      const late = { ...statement(), verb: { id: 'http://adlnet.gov/expapi/verbs/voided' }, object: { objectType: 'StatementRef', id: remainder.id } };
+      expect((await fetch(app.base + '/xapi/statements', { method: 'POST', headers: headers(), body: JSON.stringify(late) })).status).toBe(200);
+      const next = await (await fetch(app.base + first.more, { headers: headers() })).json() as { statements: Array<{ id: string }>; more: string };
+      expect(next.statements.map(row => row.id)).toEqual([remainder.id]);
+      expect(next.more).toBe('');
+    } finally { await kill(app.child); }
+  }, 120000);
+  it('keeps delimiter-containing document addresses distinct and scopes list/delete by full tuples', async () => {
+    const app = await start();
+    try {
+      const base = 'https://example.test/tuple/' + randomUUID();
+      const left = address('/xapi/activities/profile', { activityId: base + '/a::b', profileId: 'c' });
+      const right = address('/xapi/activities/profile', { activityId: base + '/a', profileId: 'b::c' });
+      for (const [path, value] of [[left, 'left'], [right, 'right']] as const) {
+        expect((await fetch(app.base + path, { method: 'PUT', headers: headers(), body: JSON.stringify({ value }) })).status).toBe(204);
+        expect(await (await fetch(app.base + path, { headers: headers() })).json()).toEqual({ value });
+      }
+      const list = (activityId: string) => address('/xapi/activities/profile', { activityId });
+      expect(await (await fetch(app.base + list(base + '/a::b'), { headers: headers() })).json()).toEqual(['c']);
+      expect(await (await fetch(app.base + list(base + '/a'), { headers: headers() })).json()).toEqual(['b::c']);
+      expect((await fetch(app.base + left, { method: 'DELETE', headers: headers() })).status).toBe(204);
+      expect(await (await fetch(app.base + right, { headers: headers() })).json()).toEqual({ value: 'right' });
+      const agent = JSON.stringify({ mbox: 'mailto:tuple@example.test' }), stateId = 'with::delimiters', registration = randomUUID();
+      const stateAddress = address('/xapi/activities/state', { activityId: base, agent, stateId, registration });
+      expect((await fetch(app.base + stateAddress, { method: 'PUT', headers: headers(), body: '{"saved":true}' })).status).toBe(204);
+      const scope = address('/xapi/activities/state', { activityId: base, agent, registration });
+      expect(await (await fetch(app.base + scope, { headers: headers() })).json()).toEqual([stateId]);
+      expect((await fetch(app.base + scope, { method: 'DELETE', headers: headers() })).status).toBe(204);
+      expect((await fetch(app.base + stateAddress, { headers: headers() })).status).toBe(404);
+    } finally { await kill(app.child); }
+  }, 120000);
+
 });

@@ -396,6 +396,10 @@ jobs:
           npm run build
           # Generator is build-time only; matches the production runtime.
           rm -rf node_modules/componentsjs-generator
+      - name: Install and check existing gateway policy
+        run: |
+          npm ci --prefix deploy/css-gate
+          npm test --prefix deploy/css-gate
       - name: Native CSS atomic commit and version contract on persistent engine
         working-directory: ${{ runner.temp }}/native-lrs-css/integrations/pgsl-css-accessor
         env:

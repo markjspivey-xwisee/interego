@@ -200,7 +200,7 @@ describe('native PGSL resource commits', () => {
   });
 
   it('refuses corrupt or missing payload rather than returning absence or partial bytes', async () => {
-    const { ldp, store, fdb } = fixture();
+    const { ldp, fdb } = fixture();
     const receipt = await put(ldp, 'payload', null);
     await fdb.transact(async txn => { txn.clear(nodeKey(nodeAddrFromUrn(receipt.opaqueUri))); });
     await expect(ldp.readResource(POD, 'head')).rejects.toThrow(/unavailable/);

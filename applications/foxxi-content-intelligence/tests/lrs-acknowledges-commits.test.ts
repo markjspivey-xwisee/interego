@@ -5,10 +5,22 @@ import { once } from 'node:events';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { deriveUserWallet, mintSessionToken } from '../src/auth.js';
 import { readFileSync } from 'node:fs';
-import { assertLrsPrimaryConfiguration, createStatementStore, isProductionLrsEnvironment } from '../src/statement-store.js';
+import { assertLrsPrimaryConfiguration, configuredLrsBackend, createStatementStore, isProductionLrsEnvironment } from '../src/statement-store.js';
 import { getStatementStore } from '../src/xapi-lrs.js';
+import { deriveEncryptionKeyPair } from '@interego/core';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { buildCmi5Launch, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course } from '../src/cmi5-lms.js';
+
+const nativeOwner = 'did:web:synthetic-native-primary.test:service';
+const nativePrivateKey = '0x' + '22'.repeat(32);
+const nativeConfiguration: NodeJS.ProcessEnv = {
+  NODE_ENV: 'production', FOXXI_LRS_BACKEND: 'interego',
+  FOXXI_LRS_NATIVE_POD_URL: 'https://pod.test/synthetic-lrs/',
+  FOXXI_LRS_NATIVE_OWNER: nativeOwner,
+  FOXXI_LRS_NATIVE_CAPABILITY: 'synthetic-existing-native-capability-only',
+  FOXXI_LRS_NATIVE_PRIVATE_KEY: nativePrivateKey,
+  FOXXI_LRS_NATIVE_OWNER_PUBLIC_KEY: deriveEncryptionKeyPair(nativePrivateKey, nativeOwner).publicKey,
+};
 
 function deferred() {
   let resolve!: () => void;
@@ -21,17 +33,28 @@ describe('the LRS primary cannot silently become volatile', () => {
     { RAILWAY_ENVIRONMENT_ID: 'environment-id' }, { RAILWAY_SERVICE_ID: 'service-id' },
   ])('refuses a volatile primary on deployed infrastructure %j', env => {
     expect(isProductionLrsEnvironment(env)).toBe(true);
-    expect(() => assertLrsPrimaryConfiguration({ ...env, FOXXI_LRS_BACKEND: 'memory', FOXXI_LRS_MEMORY_TENANTS: 'default', FOXXI_LRS_MEMORY_TENANT_PREFIXES: 'lens:' })).toThrow(/requires.*postgres/);
-    expect(() => assertLrsPrimaryConfiguration({ ...env, FOXXI_LRS_BACKEND: 'file:/tmp/lrs' })).toThrow(/requires.*postgres/);
+    expect(() => assertLrsPrimaryConfiguration({ ...env, FOXXI_LRS_BACKEND: 'memory', FOXXI_LRS_MEMORY_TENANTS: 'default', FOXXI_LRS_MEMORY_TENANT_PREFIXES: 'lens:' })).toThrow(/requires.*interego/);
+    expect(() => assertLrsPrimaryConfiguration({ ...env, FOXXI_LRS_BACKEND: 'file:/tmp/lrs' })).toThrow(/requires.*interego/);
   });
-  it('requires a stable operator key and DB connection without disclosing their values', () => {
-    expect(() => assertLrsPrimaryConfiguration({ NODE_ENV: 'production', FOXXI_LRS_BACKEND: 'postgres' })).toThrow(/requires FOXXI_LRS_POSTGRES_URL/);
-    expect(() => assertLrsPrimaryConfiguration({ NODE_ENV: 'production', FOXXI_LRS_BACKEND: 'postgres', DATABASE_URL: 'postgres://private-credentials@db/test' })).toThrow(/stable encryption key/);
-    expect(() => assertLrsPrimaryConfiguration({ NODE_ENV: 'production', FOXXI_LRS_BACKEND: 'postgres', DATABASE_URL: 'postgres://private-credentials@db/test', FOXXI_BRIDGE_PRIVATE_KEY: 'a'.repeat(64) })).not.toThrow();
+  it('requires explicit native scope, capability and stable owner-held keys without disclosing values', () => {
+    for (const required of ['FOXXI_LRS_NATIVE_POD_URL', 'FOXXI_LRS_NATIVE_OWNER', 'FOXXI_LRS_NATIVE_CAPABILITY', 'FOXXI_LRS_NATIVE_PRIVATE_KEY', 'FOXXI_LRS_NATIVE_OWNER_PUBLIC_KEY']) {
+      const incomplete = { ...nativeConfiguration }; delete incomplete[required];
+      expect(() => assertLrsPrimaryConfiguration(incomplete)).toThrow(/requires a native pod/);
+    }
+    expect(() => assertLrsPrimaryConfiguration(nativeConfiguration)).not.toThrow();
+    expect(() => assertLrsPrimaryConfiguration({ ...nativeConfiguration, FOXXI_LRS_NATIVE_PRIVATE_KEY: 'synthetic-invalid-private-secret' })).toThrow(/stable wallet private key/);
+    expect(() => assertLrsPrimaryConfiguration({ ...nativeConfiguration, FOXXI_LRS_NATIVE_OWNER_PUBLIC_KEY: 'synthetic-invalid-owner-key' })).toThrow(/pinned canonical/);
+    try { assertLrsPrimaryConfiguration({ ...nativeConfiguration, FOXXI_LRS_NATIVE_POD_URL: undefined }); }
+    catch (error) {
+      const message = (error as Error).message;
+      expect(message).not.toContain(nativePrivateKey);
+      expect(message).not.toContain(nativeConfiguration.FOXXI_LRS_NATIVE_CAPABILITY);
+    }
+    expect(() => assertLrsPrimaryConfiguration({ NODE_ENV: 'test', FOXXI_LRS_BACKEND: 'postgres', DATABASE_URL: 'postgres://private-credentials@db/test' })).toThrow(/not an LRS primary/);
+    expect(configuredLrsBackend({ NODE_ENV: 'production', DATABASE_URL: 'postgres://unused.test/db' })).toBe('interego');
   });
-  it('refuses a per-call memory override even when the configured deployed primary is durable', () => {
-    vi.stubEnv('NODE_ENV', 'production'); vi.stubEnv('FOXXI_LRS_BACKEND', 'postgres');
-    vi.stubEnv('FOXXI_LRS_POSTGRES_URL', 'postgres://unused.test/db'); vi.stubEnv('FOXXI_LRS_ENCRYPTION_KEY', 'a'.repeat(64));
+  it('refuses a per-call memory override even when the configured deployed primary is native', () => {
+    for (const [key, value] of Object.entries(nativeConfiguration)) if (value !== undefined) vi.stubEnv(key, value);
     try { expect(() => createStatementStore('memory', 'lens:alice')).toThrow(/cannot override/); }
     finally { vi.unstubAllEnvs(); }
   });
@@ -54,7 +77,7 @@ describe('the LRS primary cannot silently become volatile', () => {
       expect(count).toHaveBeenCalled(); expect(list).not.toHaveBeenCalled();
     } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); list.mockRestore(); count.mockRestore(); }
   });
-  it('starts the listener only after primary readiness and never registers public snapshots for PG documents', () => {
+  it('starts the listener only after primary readiness and never registers public snapshots for native Interego documents', () => {
     const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
     const lrs = readFileSync(new URL('../src/xapi-lrs.ts', import.meta.url), 'utf8');
     const readyAt = server.indexOf('await readyStatementStore();');
@@ -63,7 +86,7 @@ describe('the LRS primary cannot silently become volatile', () => {
     expect(listenAt).toBeGreaterThanOrEqual(0);
     expect(readyAt).toBeLessThan(listenAt);
     expect(lrs).not.toContain('FOXXI_LRS_MEMORY_TENANT_PREFIXES');
-    expect(lrs).toContain("if (configuredLrsBackend() !== 'postgres') {\n  registerXapiDocsSnapshot");
+    expect(lrs).toContain("if (configuredLrsBackend() !== 'interego') {\n  registerXapiDocsSnapshot");
   });
 });
 describe('generated evidence is acknowledged after its primary write', () => {

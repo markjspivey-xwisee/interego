@@ -1273,6 +1273,7 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     verb: resumed ? resumed.verb : (req.query.verb as string | undefined),
     activity: resumed ? resumed.activity : (req.query.activity as string | undefined),
     registration: bound ?? askedRegistration,
+    authorizedRegistration: bound,
     since: resumed ? resumed.since : (req.query.since as string | undefined),
     until: resumed ? resumed.until : (req.query.until as string | undefined),
     ascending: resumed ? !!resumed.ascending : (req.query.ascending as string | undefined) === 'true',
@@ -1286,19 +1287,18 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
   // §2.1.4: a query that would match a voided Statement still surfaces
   // the Voiding Statement that voided it, so the requester sees the void.
   let recs = [...result.statements];
-  const includedIds = new Set(recs.map(r => r.id));
-  const all = await store.listAll();
-  for (const r of all) {
-    if (!r.voided || !r.voidingStatementId || !matchesFilter(r, filter)) continue;
-    if (includedIds.has(r.voidingStatementId)) continue;
-    const voiding = await store.get(r.voidingStatementId);
-    if (voiding) { recs.push(voiding); includedIds.add(voiding.id); }
-  }
-
-  // The `limit` parameter caps the *whole* result, including any Voiding
-  // Statements surfaced above.
-  if (filter.limit && filter.limit > 0 && recs.length > filter.limit) {
-    recs = recs.slice(0, filter.limit);
+  if (!(store instanceof NativeInteregoLrsStore)) {
+    const includedIds = new Set(recs.map(r => r.id));
+    const all = await store.listAll();
+    for (const r of all) {
+      if (!r.voided || !r.voidingStatementId || !matchesFilter(r, filter)) continue;
+      if (includedIds.has(r.voidingStatementId)) continue;
+      const voiding = await store.get(r.voidingStatementId);
+      if (voiding && (bound === undefined || registrationOfStatement(voiding.statement) === bound)) {
+        recs.push(voiding); includedIds.add(voiding.id);
+      }
+    }
+    if (filter.limit && filter.limit > 0 && recs.length > filter.limit) recs = recs.slice(0, filter.limit);
   }
 
   const moreUrl = result.more
@@ -1416,7 +1416,7 @@ class DocumentRefusal extends Error {
 
 
 function stateKey(activityId: string, agent: string, stateId: string, registration?: string): string {
-  return `${activityId}::${agent}::${stateId}::${registration ?? ''}`;
+  return JSON.stringify(['state', activityId, agent, stateId, registration ?? null]);
 }
 
 /** Where a State document lives: the parameters the State resource is addressed by. `agent` is the
@@ -1442,7 +1442,7 @@ export async function readStateDocument(tenant: TenantId, at: StateAddress): Pro
   return (await documentStore(tenant, 'state').get(stateKey(at.activityId, at.agent, at.stateId, at.registration)))?.content;
 }
 function profileKey(iri: string, profileId: string): string {
-  return `${iri}::${profileId}`;
+  return JSON.stringify(['profile', iri, profileId]);
 }
 
 /** Coerce the stored request body to a Buffer-or-object document value. */
@@ -1521,16 +1521,24 @@ async function handleDocResource(
   const key = kind === 'state'
     ? stateKey(q.activityId ?? '', q.agent ?? '', q.stateId ?? '', q.registration)
     : profileKey((kind === 'activityProfile' ? q.activityId : q.agent) ?? '', q.profileId ?? '');
-  // The scope a multi-document GET / bulk DELETE applies to — every key
-  // under it shares this prefix followed by "::<docId>...".
-  const scopePrefix = kind === 'state'
-    ? `${q.activityId ?? ''}::${q.agent ?? ''}`
-    : `${(kind === 'activityProfile' ? q.activityId : q.agent) ?? ''}`;
-  // ★ A State context is Activity + Agent, AND the registration when one is given (xAPI State
-  // Resource: multiple-document GET and DELETE). A State key ends in its registration, so the
-  // prefix alone let a DELETE for one registration erase every other launch's State of the same AU.
-  const inScope = (k: string): boolean => k.startsWith(`${scopePrefix}::`)
-    && (kind !== 'state' || q.registration === undefined || k.endsWith(`::${q.registration}`));
+  // Complete tuple boundaries distinguish IRIs and document IDs containing "::".
+  const addressParts = (storedKey: string): Array<string | null> | null => {
+    try {
+      const parts: unknown = JSON.parse(storedKey);
+      if (!Array.isArray(parts) || parts.some(part => part !== null && typeof part !== 'string')) return null;
+      if (kind === 'state') return parts.length === 5 && parts[0] === 'state'
+        && [1, 2, 3].every(i => typeof parts[i] === 'string') ? parts as Array<string | null> : null;
+      return parts.length === 3 && parts[0] === 'profile' && typeof parts[1] === 'string'
+        && typeof parts[2] === 'string' ? parts as string[] : null;
+    } catch { return null; }
+  };
+  const inScope = (storedKey: string): boolean => {
+    const parts = addressParts(storedKey);
+    if (!parts) return false;
+    return kind === 'state'
+      ? parts[1] === q.activityId && parts[2] === q.agent && (q.registration === undefined || parts[4] === q.registration)
+      : parts[1] === (kind === 'activityProfile' ? q.activityId : q.agent);
+  };
 
   // ── GET / HEAD ──────────────────────────────────────────────────
   if (method === 'GET') {
@@ -1540,7 +1548,7 @@ async function handleDocResource(
       const ids = (await resourceStore.list())
         .filter(([k]) => inScope(k))
         .filter(([, v]) => Number.isNaN(since) || Date.parse(v.updated) > since)
-        .map(([k]) => k.slice(scopePrefix.length + 2).split('::')[0]);
+        .map(([k]) => addressParts(k)![kind === 'state' ? 3 : 2]);
       res.status(200).json(ids);
       return;
     }
@@ -1856,7 +1864,7 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
     if (!req.path.startsWith('/xapi/')) { next(err); return; }
     if (res.headersSent) { next(err); return; }
     setXapiHeaders(res, negotiateVersion(req));
-    const isParse = err.type === 'entity.parse.failed' || err instanceof SyntaxError;
+    const isParse = err.type === 'entity.parse.failed' || (err instanceof SyntaxError && err.status === 400);
     res.status(isParse ? 400 : (err.status ?? 503)).json({
       error: isParse ? 'request body is not valid JSON' : 'LRS storage operation unavailable',
     });
