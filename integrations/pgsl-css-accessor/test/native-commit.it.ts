@@ -33,12 +33,12 @@ let requestSequence = 0;
 let testPhase = 'startup';
 function beginPhase(phase: string): void { testPhase = phase; console.log(`[native-http] phase=${phase}`); }
 
-interface WorkerDiagnostic { stage: string; name: string; code?: string; message: string; }
+interface WorkerDiagnostic { stage: string; name: string; code?: string; message: string; frames?: string[]; jsonParse?: true; }
 let workerStage = 'import-css';
 
 /** Startup diagnostics are bounded test metadata; never forward stacks, URLs, credentials or payload tokens. */
 function workerDiagnostic(error: unknown, stage: string): WorkerDiagnostic {
-  const value = error && typeof error === 'object' ? error as { name?: unknown; code?: unknown; message?: unknown } : {};
+  const value = error && typeof error === 'object' ? error as { name?: unknown; code?: unknown; message?: unknown; stack?: unknown } : {};
   const token = (item: unknown): string | undefined => typeof item === 'string' && /^[A-Za-z0-9_.-]{1,64}$/.test(item) ? item : undefined;
   const message = (typeof value.message === 'string' ? value.message : 'Worker startup failed without an Error message')
     .slice(0, 4096)
@@ -46,7 +46,11 @@ function workerDiagnostic(error: unknown, stage: string): WorkerDiagnostic {
     .replace(/\b(password|passwd|pwd|secret|token|authorization|capability|private[_ -]?key|encryption[_ -]?key)\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)/gi, '$1=[redacted]')
     .replace(/[A-Za-z0-9+\/_=-]{48,}/g, '[redacted-token]')
     .split(/\r?\n/).filter(line => !/^\s*at\s/.test(line)).slice(0, 6).join(' | ').slice(0, 800);
-  return { stage: token(stage) ?? 'startup', name: token(value.name) ?? 'Error', ...(token(value.code) ? { code: token(value.code) } : {}), message };
+  const stackLines = typeof value.stack === 'string' ? value.stack.split(/\r?\n/).filter(line => /^\s+at\s/.test(line)).slice(0, 12) : [];
+  const frames = stackLines.map(line => /[\\/]([A-Za-z0-9_.-]{1,80}:\d+:\d+)\)?\s*$/.exec(line)?.[1]).filter((frame): frame is string => !!frame).slice(0, 6);
+  const jsonParse = stackLines.some(line => /^\s+at\s+JSON\.parse\s/.test(line));
+  return { stage: token(stage) ?? 'startup', name: token(value.name) ?? 'Error', ...(token(value.code) ? { code: token(value.code) } : {}), message,
+    ...(frames.length ? { frames } : {}), ...(jsonParse ? { jsonParse: true as const } : {}) };
 }
 
 interface WorkerMessage {
