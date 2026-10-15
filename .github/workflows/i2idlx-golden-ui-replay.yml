@@ -1,0 +1,23 @@
+name: Replay exact-head UI oracles against successful golden outputs
+on:
+  push:
+    branches: [codex/i2idlx-golden-ui-replay-20261015]
+    paths: [.github/workflows/i2idlx-golden-ui-replay.yml]
+permissions:
+  contents: read
+  actions: write
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const {owner,repo}=context.repo;
+            const expected='a8f7fb64eb96e8b3a25a002748b5d034d7563b21';
+            const ref='codex/i2idlx-live-capability-workbench';
+            const {data:head}=await github.rest.git.getRef({owner,repo,ref:'heads/'+ref});
+            const {data:golden}=await github.rest.actions.getWorkflowRun({owner,repo,run_id:38804946067});
+            if(head.object.sha!==expected || golden.head_sha!==expected || golden.status!=='completed' || golden.conclusion!=='success') throw new Error('Exact-head successful golden output is required');
+            await github.rest.actions.createWorkflowDispatch({owner,repo,workflow_id:'i2idlx-ui-oracle.yml',ref,inputs:{golden_run_id:'38804946067'}});
+            core.info('Requested existing UI workflow against exact-head successful golden output; no source or production changes.');
