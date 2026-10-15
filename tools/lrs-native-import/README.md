@@ -1,0 +1,129 @@
+# Trusted native LRS import maintenance
+
+This isolated operator tool restores the authenticated tagged snapshot created by
+`lrs-inprocess-export/export.mjs`. It adds no runtime HTTP endpoint and changes no
+application source, role, credentials, capture consent, or learner achievement.
+
+`runtime.mjs` bundles the actual native Interego LRS/database and commit classes
+from source commit `88aec11320e594ae1180a9be27c0aeefc5a6d910`, plus their npm
+dependencies. It requires Node 22 or later and Node builtins only. The build
+manifest records source hashes and the bundle digest. The test client simulates
+native commit storage; unit tests do not establish physical production durability.
+
+## Execution inside the existing container
+
+Upload `import.mjs`, `run-in-container.mjs`, `runtime.mjs`, and the build manifest
+under a private maintenance directory in the existing Foxxi container. Keep the
+application process running. The wrapper inherits the existing container's
+environment and uses secrets internally; do not download or print its environment.
+It does not alter the running application's environment.
+
+The wrapper checks the configured pod and owner, compares the existing published
+tenant-admin encryption key with the key derived from the existing admin seed,
+and actually decrypts the existing encrypted tenant directory. Descriptor and
+decrypted graph attribution must match the configured owner. Every retrieval
+stays within the configured HTTPS pod and rejects redirects. It then maps the
+native settings for its maintenance child only, reusing the existing pod write
+capability and bridge private key. It never mints an identity or session token.
+
+First perform a dry run, which reads the destination and writes no native record:
+
+```bash
+node /app/maintenance/run-in-container.mjs \
+  --archive /app/lrs-live-output/lrs-live.encrypted.json \
+  --checkpoint /app/lrs-live-output/native-import.checkpoint.encrypted.json \
+  --expect-source-sha ACTUAL_TARGET_SCRIPT_SHA256_FROM_EXPORT_RECEIPT
+```
+
+Only after verifying preservation, authority, substrate durability, and the native
+protocol on CSS/gate, repeat the identical command with `--apply`. Both the
+archive and checkpoint must remain available privately. The native destination
+must be empty or contain this exact import, and **no replacement bridge or other
+native writer may run during import**. Withholding public traffic is insufficient
+because bridge startup and background tasks can write.
+
+The default native scope is the existing configured pod, owner and the adapter's
+`foxxi/lrs/native/head` plus `foxxi/lrs/native/artifacts/` paths. The wrapper refuses
+a conflicting existing native pod, owner, or public-key pin. Setting those
+maintenance child variables does not update Railway service configuration.
+
+## Atomic publication and recovery
+
+The tool validates and encodes every original before committing. One native CAS
+publishes all primary records: original statements, exact document keys/metadata
+and bytes, attachments, explicit void edges, and the union of tenant registries,
+including document-only and empty partitions. Native statement bases store
+`voided:false`; the original void flags and voiding ID reconstruct through the
+validated native relation. Statement JSON, `stored`, `authority` and timestamps
+remain unchanged. No HTTP enrichment, forwarding, cmi5 callbacks, or new evidence
+generation runs.
+
+The unchanged native commit limit is 1,000 changes. The importer refuses a source
+whose primary record set exceeds that bound. A 779-statement fixture with three
+documents, an attachment, a void edge and four tenant registrations produces 788
+primary changes. Its 779 rebuildable query aliases publish in a **second CAS**.
+The replacement must remain unserved until both phases and exact fixed-head
+readback complete. A failure after the first CAS leaves primary data committed
+and the checkpoint explicitly unready; it is not a completed restore.
+
+The tool writes and fsyncs an encrypted checkpoint before the first commit and
+after each phase. Its binding covers source/archive hashes, exact destination
+scope, deterministic native provenance, and every planned native key/artifact.
+Stable operation IDs and source-derived provenance support retries after lost
+acknowledgments. Re-running the same archive with the same checkpoint either
+finishes the interrupted phase or verifies the completed head without duplicating
+records. Altered originals, keys, scope, extra destination records, missing void
+targets, or changed destination heads fail closed.
+
+Keep the encrypted checkpoint and source archive together in durable private
+storage after each phase; a container-local file alone is not a durable backup.
+The checkpoint is encrypted under the existing admin seed using a separate HKDF
+domain. Output contains counts, hashes and native receipt/head metadata, with no
+record bodies or keys. `cutoverReady:true` describes this fixed imported head and
+snapshot only. It is not proof of final cutover or new-process recovery.
+
+## Limits and final cutover
+
+Native encoding intentionally rejects source values whose fidelity it cannot
+preserve, including undefined own properties, null-prototype values, negative
+zero and nonfinite numbers. Keep their exact originals in the encrypted archive;
+do not normalize them silently. Missing/orphan voiders fail restoration. A stored
+orphan attachment can be preserved; a statement requiring bytes absent from its
+tenant's attachment collection fails. Per-artifact native encrypted size limits
+still apply and may fail staging before the atomic primary head publishes.
+
+The old process can change after the export pause. **This tool does not apply
+changed-snapshot deltas or overwrite an existing import.** Establish a final old
+write boundary and reconcile any later statements, voids, attachments and mutable
+documents before routing canonical traffic or stopping the old process. A fresh
+changed archive must not be presented as an idempotent retry. Retaining the old
+process preserves a recovery opportunity, but is not an archive.
+
+After restoration, configure the replacement with the same verified native scope,
+keys and capability, then verify authenticated reads, documents, voids and binary
+resources after a replacement-process restart. Recheck the current head against
+the restored head and explicitly reconcile any later legitimate native writes.
+
+`node import.mjs --offline --archive PATH` performs genuinely offline archive
+validation using `FOXXI_ADMIN_KEY_SEED` already available in that process. It does
+not test native representability, authority, protocol or storage. The container
+wrapper always performs its custody reads before invoking the importer.
+
+## Rebuild and tests
+
+From this directory, with existing dependency installations available:
+
+```bash
+INTEREGO_SOURCE_ROOT=/path/to/exact88 \
+INTEREGO_DEPENDENCY_ROOT=/path/to/dependency-checkout \
+  node build-runtime.mjs
+node --test import.test.mjs
+```
+
+The fixture tests also read the adjacent `lrs-inprocess-export/export.mjs` to
+verify the actual exporter's authenticated encryption format. Eleven tests pass
+under Node 22.23.3, including the 779-record atomic import, exact public-native
+readback after a fresh database readiness cycle, lost acknowledgments in either
+phase, interrupted alias generation, strict source/scope/cursor changes,
+binary/JSON distinction, invalid voids, capacity refusal, archive/checkpoint
+tampering, concurrent head drift, and operator output-path collisions.
