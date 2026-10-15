@@ -125,3 +125,14 @@ test('local signing preparation preserves advertised action and audience and nev
   assert.equal(api.directoryRequestBody({iri:'urn:outer'},outer,'validate').includes('course_iri'),false,
     'local body is independent from generic runner envelopes');
 });
+
+test('actual telemetry usage counts remain visible while token credentials stay protected',()=>{
+  const usage={input_tokens:124,output_tokens:35,cached_input_tokens:80,total_tokens:159};
+  for(const field of Object.keys(usage))assert.equal(api.isCredentialField(field),false,field+' is a measurement, not a secret');
+  assert.deepEqual(api.redactCredentials({usage}),{usage});
+  assert.deepEqual(JSON.parse(api.directoryRequestBody({iri:'urn:usage'},{usage},'validate')).payload,{usage});
+  for(const field of ['token','access_token','refresh_token','session_token','caller_token','custom_token']){
+    assert.equal(api.isCredentialField(field),true,field);
+    assert.throws(()=>api.directoryRequestBody({iri:'urn:action'},{[field]:'RAW-TOKEN'},'validate'),/Raw credentials/);
+  }
+});

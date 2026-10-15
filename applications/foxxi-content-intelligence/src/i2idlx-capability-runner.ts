@@ -45,7 +45,7 @@ const MAX_INPUT = 64_000, MAX_OUTPUT = 2_000_000, CACHE_MS = 60_000;
 const CLIENT_VALUE = '<provided by your connected client>';
 const secretKey = (key: string) => {
   const name = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
-  return name === 'key' || /privatekey|privkey|password|passwd|mnemonic|seed|secret|apikey|authorization|authheader|bearer|token|signature|signedpayload/.test(name);
+  return name === 'key' || /privatekey|privkey|password|passwd|mnemonic|seed|secret|apikey|authorization|authheader|bearer|accesstoken|refreshtoken|sessiontoken|callertoken|token$|signature|signedpayload/.test(name);
 };
 const placeholder = (v: unknown) => v === CLIENT_VALUE;
 function carriesSecrets(v: unknown, allowPlaceholder: boolean): boolean {

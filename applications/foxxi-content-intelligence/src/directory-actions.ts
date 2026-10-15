@@ -58,9 +58,11 @@ export function makeDirectoryActionAuthorizer(config: {
   ownPod: (actor: string) => string;
   samePod: (a: string | undefined, b: string) => boolean;
 }): DirectoryActionConfig['authorize'] {
-  const audience = new URL(config.audience);
-  if (audience.origin !== config.audience || audience.username || audience.password || audience.protocol !== 'https:') throw new Error('Directory actions require an exact HTTPS deployment origin');
   return async (action, envelope) => {
+    let audience: URL;
+    try { audience = new URL(config.audience); }
+    catch { throw new DirectoryActionError('Directory actions require an exact HTTPS deployment origin; configure the bridge audience before use', 503); }
+    if (audience.origin !== config.audience || audience.username || audience.password || audience.protocol !== 'https:') throw new DirectoryActionError('Directory actions require an exact HTTPS deployment origin; configure the bridge audience before use', 503);
     const read = await config.verifyCaller(envelope, false);
     if (!read.ok) throw new DirectoryActionError(read.error, read.status);
     if (read.payload.bridge_audience !== config.audience) throw new DirectoryActionError('The signed bridge audience does not match this deployment', 403);
@@ -189,6 +191,7 @@ export class DirectoryActions {
   private encryption(auth: ActionAuthority): { recipients: string[]; senderKeyPair: EncryptionKeyPair } {
     const owner = ownerKeyBinding(auth.payload.owner_encryption_key), sender = this.config.encryptionKeypair();
     if (!owner || !sender) throw new DirectoryActionError('Author-signed owner_encryption_key and stable bridge encryption configuration are required; no plaintext or bridge-only fallback', 503);
+    if (owner === sender.publicKey) throw new DirectoryActionError('owner_encryption_key must be a distinct owner-held key; bridge-only storage is refused', 400);
     const shares = auth.payload.federation_share_with;
     const bindings = auth.payload.recipient_encryption_keys;
     if (shares !== undefined && (!Array.isArray(shares) || shares.length > 32 || shares.some(v => typeof v !== 'string'))) throw new DirectoryActionError('federation_share_with must be a bounded IRI array');

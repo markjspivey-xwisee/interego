@@ -67,21 +67,17 @@ Declare which authoring tools (Articulate Storyline, Adobe Captivate, Camtasia, 
 
 ## `foxxi.connect_lms`
 
-**[admin] Register an external LMS connector**
+**Verify and record an operator-configured LMS connection**
 
-Register an external LMS (Cornerstone OnDemand, Workday Learning, SAP SuccessFactors, etc.) as a content source. Composes with src/connectors/ — uses the existing OAuth 2.0 / Basic-auth / SCORM-Cloud-API flows where supported. The connector's sync schedule is recorded as a foxxi:LmsConnection descriptor on the tenant pod with the connector's auth_warning surfaced if the credentials need rotation.
+As the authenticated pod owner, verify an exact operator-configured LMS account through a bounded authenticated HTTPS JSON API probe, then store a non-secret encrypted connection artifact with verified readback. Connector ID, product, instance and auth method must match FOXXI_LMS_CONNECTORS. The operator connector must be configured for this authenticated own pod; owning another pod does not authorize its credentials. Credentials stay server-side. No caller-selected probe, OAuth enrollment, scheduled synchronization or data import is performed; sync_frequency supports manual only. Sign the complete inner action payload.
 
 - Action: `urn:iep:action:foxxi:connect-lms`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/connect_lms`
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `tenant_pod_url` | string | yes | Tenant pod URL. |
-| `connector_id` | string | yes | Stable connector ID (e.g., "cornerstone-prod"). |
-| `product` | string | yes | LMS product name (e.g., "Cornerstone OnDemand"). |
-| `instance` | string | yes | LMS instance URL or domain (e.g., "acme-training.csod.com"). |
-| `auth_method` | string | yes | Auth method (e.g., "OAuth 2.0 (corporate)", "Basic+API key"). |
-| `sync_frequency` | string | no | Human-readable sync frequency (default: "every 6 hours"). |
+| `_signed_payload` | string | yes | Use the actual _signed_payload returned by sign_request. Its complete inner payload must satisfy {"type":"object","properties":{"action":{"type":"string","const":"foxxi.connect_lms"},"tenant_pod_url":{"type":"string","description":"Optional corroboration of the authenticated own pod; cannot select another pod."},"connector_id":{"type":"string"},"product":{"type":"string"},"instance":{"type":"string","description":"Exact operator-configured HTTPS instance."},"auth_method":{"type":"string"},"sync_frequency":{"type":"string","enum":["manual"],"default":"manual"},"owner_encryption_key":{"type":"string","description":"Signature-bound canonical base64 X25519 public key held by the owner; never an unsigned discovered key."},"bridge_audience":{"type":"string","description":"Exact current bridge origin, without a trailing slash; derive it from this manifest authority, never a caller-selected different service."}},"required":["action","bridge_audience","connector_id","product","instance","auth_method","owner_encryption_key"]}. sign_request binds authenticated agent_id and timestamp. Put every action field inside this signed payload; unsigned outer fields provide no authority. Standard sign_request ECDSA envelopes only; browser _session grant envelopes are refused on these durable-proof actions. |
+| `_signature` | string | yes | The real signature returned by sign_request over that exact inner payload; never a placeholder. |
 
 ## `foxxi.assign_audience`
 
@@ -103,18 +99,17 @@ Bind a course to an audience group (by audience_tag) via a Foxxi assignment poli
 
 ## `foxxi.coverage_query`
 
-**[admin] Query concept coverage across the catalog**
+**Aggregate supplied concept-coverage records**
 
-Privacy-respecting coverage query: across the catalog, which concepts are taught vs only mentioned, by which courses, in which categories. Defaults to v2 merkle-attested-opt-in (count of courses per concept); v3 zk-distribution mode returns a histogram of coverage shape (concepts taught in 1 course / 2-5 / 6-10 / 10+) with per-bucket DP noise. Composes with the existing applications/_shared/aggregate-privacy/ ladder.
+Compute a privacy-preserving aggregate from the coverage records supplied in this request. Does not walk the tenant catalog, extract concepts or apply category/concept filters. Each record is {concept,taughtIn,mentionedIn}; v2 returns an attested aggregate of the record count and v3 a differentially private histogram of taughtIn counts. Caller-supplied coverage is not independently verified catalog evidence.
 
 - Action: `urn:iep:action:foxxi:coverage-query`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/coverage_query`
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
+| `coverage` | array | yes | Supplied records: {concept:string,taughtIn:string[],mentionedIn:string[]}[]. Empty array means explicitly no supplied records; this operation never reads a catalog. Maximum 1000 unique concepts, 1000 references per list and 10000 total references; strings are bounded to 2048 characters. |
 | `tenant_pod_url` | string | yes | Tenant pod URL. |
-| `category_filter` | string | no | Optional category filter (e.g., "Power Systems / Technical"). |
-| `concept_filter` | string | no | Optional concept label substring filter. |
 | `privacy_mode` | string | no | One of: abac \| merkle-attested-opt-in (v2, default) \| zk-distribution (v3 histogram). |
 | `epsilon` | number | no | DP ε budget for zk-distribution mode. |
 | `distribution_edges` | array | no | Bucket-edge boundaries (decimal-string bigints) for zk-distribution. |
@@ -122,35 +117,31 @@ Privacy-respecting coverage query: across the catalog, which concepts are taught
 
 ## `foxxi.publish_concept_map`
 
-**[admin] Publish a course's extracted concept map as a federated artifact**
+**Publish an encrypted map of an existing course's concepts**
 
-Publish the fxk: knowledge-stratum graph for a course as a federated pod artifact (using the federation_iri_base pattern from federation_payload.json). Lets peer tenants discover + cite concept nodes by IRI without re-ingesting the course content.
+As the authenticated pod owner, project the actual authorized published course into a SKOS ConceptScheme with its source labels and prerequisite relations, then publish to your own pod with encrypted exact RDF readback. No inline or invented course is accepted. Private by default; explicit federation recipients and their X25519 public keys must be covered by the same signature. The map is extracted content, not a validation, competency or mastery assertion.
 
 - Action: `urn:iep:action:foxxi:publish-concept-map`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/publish_concept_map`
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `tenant_pod_url` | string | yes | Tenant pod URL. |
-| `course_iri` | string | yes | Course IRI. |
-| `federation_share_with` | array | no | Optional list of peer-tenant DIDs the concept map is explicitly shared with (default: pod ACL). |
+| `_signed_payload` | string | yes | Use the actual _signed_payload returned by sign_request. Its complete inner payload must satisfy {"type":"object","properties":{"action":{"type":"string","const":"foxxi.publish_concept_map"},"tenant_pod_url":{"type":"string","description":"Optional corroboration of the authenticated own pod; cannot select another pod."},"course_iri":{"type":"string"},"owner_encryption_key":{"type":"string","description":"Signature-bound canonical base64 X25519 public key held by the owner; never an unsigned discovered key."},"federation_share_with":{"type":"array","items":{"type":"string"},"description":"Explicit recipient DIDs; each requires its bound public key."},"recipient_encryption_keys":{"type":"object","additionalProperties":{"type":"string"},"description":"DID to canonical base64 X25519 public key; all entries are signature covered."},"bridge_audience":{"type":"string","description":"Exact current bridge origin, without a trailing slash; derive it from this manifest authority, never a caller-selected different service."}},"required":["action","bridge_audience","course_iri","owner_encryption_key"]}. sign_request binds authenticated agent_id and timestamp. Put every action field inside this signed payload; unsigned outer fields provide no authority. Standard sign_request ECDSA envelopes only; browser _session grant envelopes are refused on these durable-proof actions. |
+| `_signature` | string | yes | The real signature returned by sign_request over that exact inner payload; never a placeholder. |
 
 ## `foxxi.publish_compliance_evidence`
 
-**[admin] Publish L&D compliance evidence (SOC 2 / EU AI Act / NIST RMF)**
+**Record an encrypted caller-reported compliance event**
 
-Emit an ops event (assignment/completion/exception/audit) wrapped via compliance-overlay so the L&D activity becomes a framework-cited descriptor. Composes integrations/compliance-overlay/ + src/ops/ — same path the substrate uses for its own SOC 2 evidence.
+Record your signature-bound assignment-created, completion, exception or audit-action report on your own pod, citing only controls in the selected published SOC 2, EU AI Act or NIST RMF control set. Stores the report encrypted to you and the bridge and verifies readback. Evidence remains Hypothetical authenticated caller report: independentlyVerified:false, complianceSatisfied:false and credentialIssued:false. No learning achievement or regulatory satisfaction is independently established.
 
 - Action: `urn:iep:action:foxxi:publish-compliance-evidence`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/publish_compliance_evidence`
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `tenant_pod_url` | string | yes | Tenant pod URL. |
-| `event_type` | string | yes | One of: assignment-created \| completion \| exception \| audit-action. |
-| `event_payload` | object | yes | Event payload (shape varies by event_type — assignment payload includes user_id + course_iri + due_at; completion payload includes user_id + course_iri + completed_at; etc.). |
-| `framework` | string | no | Compliance framework to cite (default: "soc2"; alternatives: "eu-ai-act", "nist-rmf"). |
-| `controls` | array | no | Optional explicit control IRIs (default: framework's default L&D controls). |
+| `_signed_payload` | string | yes | Use the actual _signed_payload returned by sign_request. Its complete inner payload must satisfy {"type":"object","properties":{"action":{"type":"string","const":"foxxi.publish_compliance_evidence"},"tenant_pod_url":{"type":"string","description":"Optional corroboration of the authenticated own pod; cannot select another pod."},"event_type":{"type":"string","enum":["assignment-created","completion","exception","audit-action"]},"event_payload":{"type":"object","description":"assignment-created:{user_id,course_iri,due_at}; completion:{user_id,course_iri,completed_at}; exception:{reason}; audit-action:{action}. Dates are ISO timestamps."},"framework":{"type":"string","enum":["soc2","eu-ai-act","nist-rmf"],"default":"soc2"},"controls":{"type":"array","items":{"type":"string"},"maxItems":100,"description":"IRIs in the selected published framework control set."},"owner_encryption_key":{"type":"string","description":"Signature-bound canonical base64 X25519 public key held by the owner; never an unsigned discovered key."},"bridge_audience":{"type":"string","description":"Exact current bridge origin, without a trailing slash; derive it from this manifest authority, never a caller-selected different service."}},"required":["action","bridge_audience","event_type","event_payload","owner_encryption_key"]}. sign_request binds authenticated agent_id and timestamp. Put every action field inside this signed payload; unsigned outer fields provide no authority. Standard sign_request ECDSA envelopes only; browser _session grant envelopes are refused on these durable-proof actions. |
+| `_signature` | string | yes | The real signature returned by sign_request over that exact inner payload; never a placeholder. |
 
 ## `foxxi.issue_completion_credential`
 
@@ -399,9 +390,9 @@ Project the tenant's fxk:SkillFramework + fxk:Skill (+ rcd:CompetencyDefinition 
 
 ## `foxxi.emit_cmi5_session`
 
-**Emit a cmi5-conformant xAPI session trace (launched → terminated)**
+**Build a cmi5 xAPI session trace**
 
-Build the full cmi5 statement trace (launched + initialized + completed + passed/failed + terminated, plus optional satisfied if moveOn rule fires) for a learner's AU session. Each statement carries the cmi5 context category, session ID, and registration UUID per the cmi5 specification. Caller can either fan-out to a connected LRS via the lrs-adapter or persist directly to the pod as fxa:LearningExperience descriptors.
+Build launched, initialized, completed, passed or failed, terminated and optional satisfied statement documents from supplied session values. Authenticated callers may name themselves; an admin may name another learner. This operation returns the trace only and does not launch an activity, send statements to an LRS or persist learner evidence. Supply measured values only; generated documents do not establish that the session happened.
 
 - Action: `urn:iep:action:foxxi:emit-cmi5-session`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/emit_cmi5_session`
@@ -539,9 +530,9 @@ Holder-facing competency proof. Composes the three BBS+ steps — issue (the bri
 
 ## `foxxi.launch_au_with_prereq_check`
 
-**Launch a cmi5 AU gated on a verified-credential prerequisite**
+**Check prerequisite credentials and build a cmi5 launch trace**
 
-Compose: walk the learner's pod for a credential satisfying the declared prereq (verify Data Integrity Proof, check achievement IRI + proficiency level + expiry + accepted issuers); if satisfied, emit the cmi5 launched + initialized statements; else return a structured prereq-failure report.
+Read the learner pod and check a prerequisite credential's signature, achievement, proficiency, validity and accepted issuer. If satisfied, return launched and initialized statement documents; otherwise return a prerequisite failure report. This operation does not create a launch URL or session, deliver an AU, or send the returned statements to an LRS. For a real hosted cmi5 launch use foxxi.cmi5_launch_signed.
 
 - Action: `urn:iep:action:foxxi:launch-au-with-prereq`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/launch_au_with_prereq_check`
@@ -559,9 +550,9 @@ Compose: walk the learner's pod for a credential satisfying the declared prereq 
 
 ## `foxxi.ai_assess_competency`
 
-**AI mentor signs a (Hypothetical) CompetencyAssertion VC**
+**Sign a supplied hypothetical competency assessment**
 
-AI agent reviews evidence (cited slide IDs, Q&A traces, performance results) and signs a CompetencyAssertion VC with its own did:key. Modal status: Hypothetical until a human countersigns via foxxi.countersign_assessment.
+Construct and sign a Hypothetical CompetencyAssertion VC from the supplied competency, evidence references, narrative and mentor seed. No AI model is called and no evidence content is reviewed or verified. The returned credential is not published and does not establish learner achievement or issuer authority.
 
 - Action: `urn:iep:action:foxxi:ai-assess-competency`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/ai_assess_competency`
@@ -576,9 +567,9 @@ AI agent reviews evidence (cited slide IDs, Q&A traces, performance results) and
 
 ## `foxxi.countersign_assessment`
 
-**[admin] Countersign an AI mentor's CompetencyAssertion → full OB3**
+**[admin] Sign a supplied assessment as an Open Badge document**
 
-Human admin reviews + countersigns the AI mentor's Hypothetical CompetencyAssertion. Result: a dual-issuer credential whose modal status is Asserted (= OB3-eligible). Both signatures are preserved on the descriptor for auditability.
+Construct and sign an OpenBadgeCredential document using the supplied assessment and human seed, preserving a reference to the original mentor signature. The route requires tenant admin authorization. It does not perform human review, independently verify the original evidence or publish a credential; its Asserted label is a requested document state, not an independent achievement finding.
 
 - Action: `urn:iep:action:foxxi:countersign-assessment`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/countersign_assessment`
@@ -606,9 +597,9 @@ Walk the learner's pod, pull every descriptor with a Provenance facet or dct:con
 
 ## `foxxi.declare_framework_alignment`
 
-**[admin] Declare an alignment between this tenant's competency and another tenant's**
+**[admin] Build a CASE alignment document**
 
-Publishes a fxa:CASEAlignment descriptor binding one of this tenant's fxk:Skill / rcd:CompetencyDefinition items to an item in a foreign tenant's framework. The alignment becomes a substrate-discoverable artifact + lifts into the next CASE 1.0 export as a CFAssociation.
+Build a CFAssociation document from the supplied competency IRIs, relation and rationale. Requires the configured tenant admin. Returns the alignment for review; this operation does not publish it to a pod, make it discoverable or add it to a later framework export.
 
 - Action: `urn:iep:action:foxxi:declare-framework-alignment`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/declare_framework_alignment`
@@ -627,7 +618,7 @@ Publishes a fxa:CASEAlignment descriptor binding one of this tenant's fxk:Skill 
 
 **Resolve whether a held competency satisfies a required competency via alignments**
 
-Given the held credential's competency IRI + a required competency IRI + the alignment graph, BFS over isAlignedTo / isEquivalentTo edges. Returns the alignment chain (could be 0 hops for direct match, N hops for transitive) so the verifier sees how the held credential satisfied the requirement.
+Compute reachability between two supplied competency IRIs over supplied isAlignedTo and isEquivalentTo edges; ordering, prerequisite, broader and narrower relations are ignored. Returns the connecting alignment chain or no match. Does not read or verify a held credential, its issuer, or the supplied alignment assertions.
 
 - Action: `urn:iep:action:foxxi:resolve-aligned-competency`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/resolve_aligned_competency`
@@ -752,9 +743,9 @@ Upload a SCORM / cmi5 .zip. Parsed IN-PROCESS on arrival — no queue, no extern
 
 ## `foxxi.derive_adaptive_policy`
 
-**[admin] Derive an adaptive-sequencing policy from cohort intelligence**
+**Build an advisory reinforcement policy**
 
-Takes the output of foxxi.cohort_concept_intelligence and derives a fxa:AdaptiveSequencingPolicy document naming the concepts a cohort is struggling with and the reinforcement each suggests. NOT ENFORCED: nothing currently consumes it — foxxi.launch_au_with_prereq_check returns the same decision with and without a policy supplied, verified by direct comparison. Treat the output as analysis to act on, not as a gate that acts on your behalf.
+Build an AdaptiveSequencingPolicy document from supplied cohort intelligence. NOT ENFORCED: the operation returns reinforcement suggestions only; it does not store the policy or change launch, progression or learner access. Questions touching a concept are a heuristic signal, not independently verified evidence of difficulty.
 
 - Action: `urn:iep:action:foxxi:derive-adaptive-policy`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/derive_adaptive_policy`
@@ -766,9 +757,9 @@ Takes the output of foxxi.cohort_concept_intelligence and derives a fxa:Adaptive
 
 ## `foxxi.schedule_spaced_repetition`
 
-**Schedule spaced-repetition reminders for a learner**
+**Compute a spaced-repetition reminder plan**
 
-Ebbinghaus 1/7/30-day intervals, with early-week reminders for concepts other concepts depend on (foundation signal).
+Compute reminder dates from supplied completion timestamps and prerequisite edges: 1, 7 and 30 days, plus an earlier foundation reminder when at least three concepts depend on one. Returns a date plan only. No reminder is scheduled, stored or delivered by this operation.
 
 - Action: `urn:iep:action:foxxi:schedule-spaced-repetition`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/schedule_spaced_repetition`
@@ -808,9 +799,9 @@ Walk N pod URLs, return every fxs:CourseCatalog / fxs:SkillFramework / fxa:CASEA
 
 ## `foxxi.register_tutor_agent`
 
-**Register an AI tutor agent in the marketplace**
+**Build an unpublished tutor profile**
 
-Builds a fxa:TutorAgentProfile descriptor from your specialties + contact endpoint. WRITES NOTHING: this route is unauthenticated pure-compute and echoes your arguments back shaped as a descriptor — verified live, your pod is untouched. agent_did is NOT bound to any signer, so the descriptor asserts whatever DID you pass; what binds it to you is PUBLISHING it to your own pod with publish_context, which is signed. Once published it is discoverable, and foxxi.find_tutor_for_competency will rank it — that ranking weighs countersigned assertions, not the self-rated level, because the self-rating is yours to choose.
+Build a TutorAgentProfile document from the supplied DID, specialties and contact endpoint. WRITES NOTHING. This pure document builder is unauthenticated: agent_did is NOT bound to any signer. Review the profile and separately publish it through an authorized signed pod operation if you want it to become discoverable. Ranking supplied profiles uses foxxi.find_tutor_for_competency.
 
 - Action: `urn:iep:action:foxxi:register-tutor-agent`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/register_tutor_agent`
@@ -826,9 +817,9 @@ Builds a fxa:TutorAgentProfile descriptor from your specialties + contact endpoi
 
 ## `foxxi.find_tutor_for_competency`
 
-**Search the tutor marketplace for a specific competency**
+**Rank supplied tutor profiles**
 
-Rank-search tutor candidates by competency match + number of independent human-countersigned competency assertions they've signed (a proxy for teaching quality).
+Rank the candidate_profiles supplied in this request by exact competency match, requested proficiency and caller-supplied countersign_counts. Does not discover a marketplace or fetch profiles, countersigns or reputation. Counts and self-ratings are inputs, not independently verified endorsements.
 
 - Action: `urn:iep:action:foxxi:find-tutor-for-competency`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/find_tutor_for_competency`

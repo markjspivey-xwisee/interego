@@ -2,7 +2,7 @@
 // Raw credentials belong to the connected client's key provider, never the generic runner.
 const clientPlaceholder = "<provided by your connected client>";
 const bearerPattern = /\bBearer\s+\S+/i;
-export function isCredentialField(name) { const normalized = String(name).replace(/[^a-z0-9]/gi, "").toLowerCase(); return normalized === "key" || /privatekey|privkey|password|passwd|mnemonic|seed|secret|apikey|authorization|authheader|bearer|token|signature|signedpayload/.test(normalized); }
+export function isCredentialField(name) { const normalized = String(name).replace(/[^a-z0-9]/gi, "").toLowerCase(); return normalized === "key" || /privatekey|privkey|password|passwd|mnemonic|seed|secret|apikey|authorization|authheader|bearer|accesstoken|refreshtoken|sessiontoken|callertoken|token$|signature|signedpayload/.test(normalized); }
 export function credentialPaths(value, path = "", allowPlaceholders = false) {
   if (typeof value === "string") return bearerPattern.test(value) || (!allowPlaceholders && value === clientPlaceholder) ? [path || "payload"] : [];
   if (!value || typeof value !== "object") return [];

@@ -80,6 +80,9 @@ function fixture() {
       verifyCaller: async envelope => {
         const r = recoverSignedRequest(envelope);
         if (!r.ok) return { ok: false, status: 401, error: 'Signature did not verify' };
+        // ECDSA recovery can return a DIFFERENT address for changed message bytes; it is
+        // authentication only when that recovered key also binds the claimed direct actor.
+        if (r.agentId !== 'did:ethr:' + r.signer) return { ok: false, status: 401, error: 'Recovered signing key does not authenticate the claimed fixture actor' };
         if (r.signer !== alice.address || r.agentId !== actor) return { ok: false, status: 403, error: 'Fixture principal does not own the target pod' };
         return { ok: true, callerDid: actor, payload: r.payload };
       },
@@ -101,6 +104,23 @@ function opened(f: ReturnType<typeof fixture>, result: Record<string, unknown>, 
   return openEncryptedEnvelope(JSON.parse(f.files.get(String(result.graphUrl))!.body), key)!;
 }
 describe('implemented directory actions have authenticated real effects', () => {
+  it('constructs for the ordinary local bridge origin but refuses protected use before authentication or effects', async () => {
+    const f = fixture(), verifyCaller = vi.fn(async () => ({ ok: true as const, callerDid: actor, payload: {} }));
+    const authorize = makeDirectoryActionAuthorizer({
+      audience: 'http://localhost:6080', verifyCaller, ownPod: () => pod, samePod: (a, b) => a === b,
+    });
+    const actions = new DirectoryActions({ ...f.config, authorize });
+    const signed = await sign(alice, 'connect_lms', { owner_encryption_key: f.owner.publicKey,
+      connector_id: connector.id, product: connector.product, instance: connector.instance, auth_method: connector.authMethod });
+    expect(await actions.run('connect_lms', signed)).toMatchObject({
+      kind: 'refusal', 'iep:refusalStatus': 503, published: false,
+      error: 'Directory actions require an exact HTTPS deployment origin; configure the bridge audience before use',
+    });
+    expect(verifyCaller).not.toHaveBeenCalled();
+    expect(f.requests).toEqual([]);
+    expect(f.files.size).toBe(0);
+  });
+
   it('binds the recovered action and own pod, and ignores unsigned outer steering', async () => {
     const f = fixture();
     const signed = await sign(alice, 'consume_lesson', { course_iri: courseIri });
@@ -186,6 +206,18 @@ describe('implemented directory actions have authenticated real effects', () => 
     expect(body).toContain('http://purl.org/dc/terms/requires');
     expect(body).toContain(courseIri);
     expect(openEncryptedEnvelope(JSON.parse(f.files.get(String(result.graphUrl))!.body), generateKeyPair())).toBeNull();
+  });
+  it.each(['consume_lesson', 'connect_lms', 'publish_concept_map', 'publish_compliance_evidence'] as const)('%s refuses the bridge public key in place of an owner-held key before any write or probe', async action => {
+    const f = fixture();
+    const payload = action === 'consume_lesson' ? { course_iri: courseIri, mode: 'record-progress', advanced_slide_ids: ['s1'] }
+      : action === 'publish_concept_map' ? { course_iri: courseIri }
+      : action === 'publish_compliance_evidence' ? { event_type: 'audit-action', event_payload: { action: 'Fictional isolated test only' } }
+      : { connector_id: connector.id, product: connector.product, instance: connector.instance, auth_method: connector.authMethod };
+    expect(await f.call(action, { ...payload, owner_encryption_key: f.bridge.publicKey })).toMatchObject({
+      kind: 'refusal', 'iep:refusalStatus': 400, published: false, error: 'owner_encryption_key must be a distinct owner-held key; bridge-only storage is refused',
+    });
+    expect(f.requests).toEqual([]);
+    expect(f.files.size).toBe(0);
   });
   it('refuses unsigned outer key injection, missing owner keys and unresolved recipients without a plaintext fallback', async () => {
     const f = fixture();

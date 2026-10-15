@@ -266,6 +266,24 @@ describe('current workbench capability directory and bounded examples', () => {
     } } });
   });
 
+  it('preserves actual telemetry token counts in examples and validation while keeping credential tokens client-owned', async () => {
+    const io = transport(), usage = { input_tokens: 120, output_tokens: 45, cached_input_tokens: 30 };
+    const payload = { events: [{ usage }] };
+    await withServer(async base => {
+      const data = await getDirectory(base), action = data.actions.find(a => a.n === 'llm_telemetry.ingest')!;
+      expect(action.example.payload).toEqual(payload);
+      const response = await run(base, action.iri, payload, 'validate');
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ executed: false, status: 'contract-valid', request: { payload }, evidence: { source: 'schema-only' } });
+      const before = io.calls.length;
+      for (const name of ['token', 'oauth_token', 'access_token', 'refreshToken', 'session_token_value', '__caller_token']) {
+        const blocked = await run(base, action.iri, { events: [{ [name]: 'SENSITIVE-CREDENTIAL' }] }, 'validate');
+        expect(blocked.status).toBe(400); expect(await blocked.text()).not.toContain('SENSITIVE-CREDENTIAL');
+      }
+      expect(io.calls.length).toBe(before); expect(io.calls.every(c => c.url.startsWith(ROOT))).toBe(true);
+    }, { fetch: io.fetcher, annotations: { 'llm_telemetry.ingest': { implementation: 'implemented', mode: 'write', authorization: 'signed', requires: [], notes: [], example: { arguments: payload, label: 'Illustrative measured usage values; not submitted' } } } });
+  });
+
 });
 describe('honest declared-input constraint checks', () => {
   it('checks nested required/types/enums/items/bounds and alternatives, not just presence of a payload', () => {

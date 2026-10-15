@@ -1006,3 +1006,10 @@ button.og-n:hover { border-color: var(--accent); }
   #directory .port > summary > .row { grid-column: 1 / -1; justify-content: flex-start; max-width: 100%; }
   #directory .port .pu { grid-column: 1 / -1; }
 }
+
+/* Hosted connection controls stay reachable when the mobile header needs two rows. */
+@media (max-width: 640px) {
+  .topbar { display: grid; grid-template-columns: auto minmax(0, 1fr); height: auto; min-height: var(--bar-h); gap: 8px 10px; padding: 8px 12px; }
+  .topbar .searchbtn { width: 100%; }
+  .topbar .tools { grid-column: 1 / -1; min-width: 0; width: 100%; margin-left: 0; flex-wrap: wrap; }
+}
