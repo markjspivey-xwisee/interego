@@ -1,0 +1,26 @@
+name: Deploy native LRS substrate in order
+on:
+  push:
+    branches: [codex/native-lrs-substrate-rollout-20261015]
+    paths: [.github/workflows/native-lrs-substrate-rollout.yml]
+permissions:
+  contents: read
+concurrency:
+  group: native-lrs-substrate-rollout-20261015
+  cancel-in-progress: false
+jobs:
+  css:
+    uses: markjspivey-xwisee/interego/.github/workflows/deploy-railway.yml@88aec11320e594ae1180a9be27c0aeefc5a6d910
+    with:
+      service: css
+      tag: 257abc3352a21c00ba78e2a5021d8bd37c5bef62
+      set_registry_credentials: false
+    secrets: inherit
+  gate:
+    needs: css
+    uses: markjspivey-xwisee/interego/.github/workflows/deploy-railway.yml@88aec11320e594ae1180a9be27c0aeefc5a6d910
+    with:
+      service: css-gate
+      tag: 257abc3352a21c00ba78e2a5021d8bd37c5bef62
+      set_registry_credentials: false
+    secrets: inherit
