@@ -1,0 +1,40 @@
+name: Preserve accessible legacy LRS records
+on:
+  push:
+    branches: [codex/lrs-preservation-20261015]
+    paths:
+      - tools/lrs-preservation.mjs
+      - tools/lrs-safe-inventory.mjs
+      - tests/lrs-preservation.test.mjs
+      - .github/workflows/lrs-preservation.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lrs-preservation-20261015
+  cancel-in-progress: false
+jobs:
+  preserve:
+    if: github.repository == 'markjspivey-xwisee/interego' && github.ref == 'refs/heads/codex/lrs-preservation-20261015'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test isolation, encryption and preservation coverage
+        run: node --test tests/lrs-preservation.test.mjs
+      - name: Collect and encrypt exact accessible response bytes
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: node tools/lrs-preservation.mjs
+      - name: Upload ciphertext and count-only summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: lrs-best-effort-preservation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            lrs-preservation-output/lrs-preservation.encrypted.json
+            lrs-preservation-output/lrs-preservation-summary.json
+          if-no-files-found: error
+          retention-days: 90
