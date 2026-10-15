@@ -27,6 +27,7 @@ class NativeTransport {
   readonly writes: Array<{ url: string; body: string }> = [];
   optionsAvailable = true;
   failStage = false;
+  loseStageAck = false;
   failHead = false;
   loseHeadAck = false;
   corruptHeadRead = false;
@@ -65,16 +66,17 @@ class NativeTransport {
     } else {
       expect(headers.get('If-Match')).toBe('"' + command.expectedRevision + '"'); expect(headers.get('If-None-Match')).toBeNull();
     }
+    if (url === scope.headUrl && this.beforeHead) {
+      const before = this.beforeHead; this.beforeHead = undefined; await before();
+    }
     const old = this.rows.get(url);
     if ((command.expectedRevision === null && old) || (command.expectedRevision !== null && old?.revision !== command.expectedRevision)) {
       return new Response(null, { status: 412 });
     }
     if ((url === scope.headUrl && this.failHead) || (url !== scope.headUrl && this.failStage)) return new Response(null, { status: 503 });
-    if (url === scope.headUrl && this.beforeHead) {
-      const before = this.beforeHead; this.beforeHead = undefined; await before();
-    }
     const revision = sha(url + ':' + (++this.sequence) + ':' + sha(bytes));
     this.rows.set(url, { bytes, revision }); this.writes.push({ url, body: bytes.toString('utf8') });
+    if (url !== scope.headUrl && this.loseStageAck) { this.loseStageAck = false; throw new Error('simulated lost immutable acknowledgement'); }
     const nativeUri = mintNodeId('atom', sha(bytes).slice(7, 47));
     const receipt: Record<string, unknown> = { version: 1, status: 'committed', expectedRevision: command.expectedRevision,
       resource: url, revision, bodyDigest: sha(bytes), contentType: 'application/json', pod: 'css', path: url,
@@ -129,7 +131,7 @@ describe('strict native encrypted PGSL commits', () => {
     expect([...read.bytes]).toEqual([...bytes]); expect(read.sha256).toBe(sha(bytes));
   });
 
-  it('refuses incomplete closure and forged content addresses before any writes', async () => {
+  it('refuses incomplete closure before any writes', async () => {
     const transport = new NativeTransport(), client = transport.client(), input = artifact('complete');
     const top = input.pgsl.nodes.get(input.topUri)!;
     expect(top.kind).toBe('Fragment');
@@ -138,6 +140,32 @@ describe('strict native encrypted PGSL commits', () => {
     expect(() => validateNativeArtifact({ topUri: input.topUri, nodes: input.pgsl.nodes })).toThrow();
     await expect(client.commit({ operationId: 'bad', expected: await client.readHead(), changes: [{ key: 'bad', artifact: input }] })).rejects.toThrow();
     expect(transport.writes).toHaveLength(0);
+  });
+
+  it('rejects forged atom content even when the supplied top URI is unchanged', async () => {
+    const transport = new NativeTransport(), client = transport.client(), input = artifact('original');
+    const atom = [...input.pgsl.nodes.values()].find(node => node.kind === 'Atom')!;
+    if (atom.kind !== 'Atom') throw new Error('fixture');
+    input.pgsl.nodes.set(atom.uri, { ...atom, value: 'changed without readdressing' });
+    await expect(client.commit({ operationId: 'forged', expected: await client.readHead(), changes: [{ key: 'forged', artifact: input }] }))
+      .rejects.toThrow('content address');
+    expect(transport.writes).toHaveLength(0);
+  });
+
+  it('requires the exact owner recipient set after a metadata-consistent ciphertext change', async () => {
+    const transport = new NativeTransport(); await put(transport, 'recipient');
+    const row = transport.rows.get(scope.headUrl)!;
+    const envelope = JSON.parse(Buffer.from(row.bytes).toString()) as { wrappedKeys: Array<{ recipientPublicKey: string }> };
+    envelope.wrappedKeys = envelope.wrappedKeys.filter(key => key.recipientPublicKey !== owner.publicKey);
+    transport.rows.set(scope.headUrl, { bytes: Buffer.from(JSON.stringify(envelope)), revision: sha('recipient-tamper') });
+    await expect(transport.client().readHead()).rejects.toThrow('recipient binding');
+  });
+
+  it('recovers an immutable write acknowledgement only through exact ciphertext readback', async () => {
+    const transport = new NativeTransport(); transport.loseStageAck = true;
+    const result = await put(transport, 'stage-recovery');
+    expect(result.operationId).toBe('stage-recovery');
+    expect(await textAt(transport, result.snapshot, 'statement:stage-recovery')).toBe('stage-recovery');
   });
 
   it('atomically publishes statement, attachment and registry with encrypted independently rooted closure', async () => {
@@ -178,6 +206,20 @@ describe('strict native encrypted PGSL commits', () => {
     await expect(client.commit({ operationId: 'stale', expected: stale, changes: [{ key: 'stale', artifact: artifact('x') }] }))
       .rejects.toBeInstanceOf(NativeCommitConflictError);
     expect(transport.writes.length).toBe(before);
+  });
+
+  it('publishes only the winning mutation when another writer wins the final CAS', async () => {
+    const transport = new NativeTransport(), client = transport.client(), initial = await client.readHead();
+    let release = (): void => {}; let entered = (): void => {};
+    const held = new Promise<void>(resolve => { release = resolve; }), atHead = new Promise<void>(resolve => { entered = resolve; });
+    transport.beforeHead = async () => { entered(); await held; };
+    const losing = client.commit({ operationId: 'loser', expected: initial, changes: [{ key: 'loser', artifact: artifact('loser') }] });
+    // Attach the rejection observer before releasing the simulated competing transaction.
+    const observed = expect(losing).rejects.toBeInstanceOf(NativeCommitConflictError);
+    await atHead; await put(transport, 'winner'); release(); await observed;
+    const head = await client.readHead();
+    expect(head.records.has('loser')).toBe(false); expect(head.records.has('statement:winner')).toBe(true);
+    expect(transport.headWrites()).toBe(1);
   });
 
   it('makes an empty authority-check mutation a real CAS', async () => {
