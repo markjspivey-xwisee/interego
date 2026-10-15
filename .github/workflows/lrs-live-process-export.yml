@@ -1,0 +1,65 @@
+name: Preserve original live LRS process
+on:
+  push:
+    branches: [codex/lrs-live-process-export-20261015]
+    paths: [.github/workflows/lrs-live-process-export.yml, tools/lrs-live-export.mjs, tools/lrs-live-remote.mjs]
+permissions:
+  contents: read
+concurrency:
+  group: lrs-live-process-preservation-20261015
+  cancel-in-progress: false
+jobs:
+  preserve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LRS_INSTANCE: fee20311-b340-466d-878f-3361535e9dd8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create temporary maintenance SSH key
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/lrs-live" "$RUNNER_TEMP/lrs-ssh"
+          ssh-keygen -q -t ed25519 -N '' -C "interego-lrs-live-${GITHUB_RUN_ID}" -f "$RUNNER_TEMP/lrs-ssh/key"
+          ssh-keyscan -T 10 -t ed25519 ssh.railway.com > "$RUNNER_TEMP/lrs-ssh/known_hosts"
+          test -s "$RUNNER_TEMP/lrs-ssh/known_hosts"
+          ssh-keygen -lf "$RUNNER_TEMP/lrs-ssh/known_hosts"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lrs-maintenance-public-key
+          path: ${{ runner.temp }}/lrs-ssh/key.pub
+          retention-days: 1
+          if-no-files-found: error
+      - name: Wait for authorized operator key registration
+        run: |
+          for attempt in $(seq 1 120); do
+            if ssh -T -i "$RUNNER_TEMP/lrs-ssh/key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/lrs-ssh/known_hosts" "$LRS_INSTANCE@ssh.railway.com" node -v > "$RUNNER_TEMP/lrs-ssh/check.txt" 2>/dev/null; then
+              cat "$RUNNER_TEMP/lrs-ssh/check.txt"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Temporary maintenance key was not authorized in time'
+          exit 1
+      - name: Export exact existing records without restart
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/lrs-ssh/key"
+          hosts="$RUNNER_TEMP/lrs-ssh/known_hosts"
+          remote="$LRS_INSTANCE@ssh.railway.com"
+          dir="/tmp/lrs-live-${GITHUB_RUN_ID}"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "umask 077; mkdir '$dir'"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" tools/lrs-live-export.mjs tools/lrs-live-remote.mjs "$remote:$dir/"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir' && node lrs-live-remote.mjs"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote:$dir/lrs-live-output/lrs-live.encrypted.json" "$remote:$dir/lrs-live-output/lrs-live-summary.json" "$RUNNER_TEMP/lrs-live/"
+          sha256sum "$RUNNER_TEMP/lrs-live/lrs-live.encrypted.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lrs-original-process-encrypted
+          path: ${{ runner.temp }}/lrs-live/*.json
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Remove runner private maintenance key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/lrs-ssh/key"
