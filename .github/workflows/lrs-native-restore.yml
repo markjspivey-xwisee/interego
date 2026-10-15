@@ -1,0 +1,90 @@
+name: Restore preserved LRS into native Interego
+on:
+  push:
+    branches: [codex/lrs-native-restore-20261015]
+    paths: [.github/workflows/lrs-native-restore.yml]
+permissions:
+  contents: read
+concurrency:
+  group: lrs-native-restore-20261015
+  cancel-in-progress: false
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LRS_INSTANCE: fee20311-b340-466d-878f-3361535e9dd8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create temporary maintenance SSH key
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/lrs-native" "$RUNNER_TEMP/lrs-ssh"
+          ssh-keygen -q -t ed25519 -N '' -C "interego-lrs-native-${GITHUB_RUN_ID}" -f "$RUNNER_TEMP/lrs-ssh/key"
+          ssh-keyscan -T 10 -t ed25519 ssh.railway.com > "$RUNNER_TEMP/lrs-ssh/known_hosts"
+          test "$(ssh-keygen -lf "$RUNNER_TEMP/lrs-ssh/known_hosts" | awk '{print $2}')" = 'SHA256:+S1xg92FrnHz6pY3bpkmh1OGtWQGNANXilPzlxA7B1g'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lrs-maintenance-public-key
+          path: ${{ runner.temp }}/lrs-ssh/key.pub
+          retention-days: 1
+          if-no-files-found: error
+      - name: Wait for authorized operator key registration
+        run: |
+          for attempt in $(seq 1 120); do
+            if ssh -T -i "$RUNNER_TEMP/lrs-ssh/key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/lrs-ssh/known_hosts" "$LRS_INSTANCE@ssh.railway.com" node -v > "$RUNNER_TEMP/lrs-ssh/check.txt" 2>/dev/null; then
+              cat "$RUNNER_TEMP/lrs-ssh/check.txt"
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
+      - name: Prepare isolated maintenance directory and verified originals
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/lrs-ssh/key"
+          hosts="$RUNNER_TEMP/lrs-ssh/known_hosts"
+          remote="$LRS_INSTANCE@ssh.railway.com"
+          dir="/tmp/lrs-native-${GITHUB_RUN_ID}"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "umask 077; mkdir -p '$dir/output' '$dir/native-import' '$dir/final'; cp /tmp/lrs-live-38798523494/lrs-live-output/lrs-live.encrypted.json '$dir/output/original.encrypted.json'"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" tools/lrs-native-import/import.mjs tools/lrs-native-import/run-in-container.mjs tools/lrs-native-import/runtime.mjs tools/lrs-native-import/runtime-build-manifest.json "$remote:$dir/native-import/"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" tools/lrs-live-export.mjs tools/lrs-live-remote.mjs "$remote:$dir/final/"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir' && node native-import/import.mjs --offline --archive output/original.encrypted.json --expect-source-sha 82c751d218761dabba3952b3970b062aca51bc6e233aa05fc9a84ed7b5b6d4b3"
+      - name: Prove owner and bridge decryption and dry-run native restoration
+        run: |
+          ssh -T -i "$RUNNER_TEMP/lrs-ssh/key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/lrs-ssh/known_hosts" "$LRS_INSTANCE@ssh.railway.com" "cd '/tmp/lrs-native-${GITHUB_RUN_ID}' && node native-import/run-in-container.mjs --establish-operator-pin --operator-pin-output output/operator-pin.public.json --archive output/original.encrypted.json --checkpoint output/native-import.checkpoint.encrypted.json --expect-source-sha 82c751d218761dabba3952b3970b062aca51bc6e233aa05fc9a84ed7b5b6d4b3"
+      - name: Capture current old process and require identical original records
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/lrs-ssh/key"
+          hosts="$RUNNER_TEMP/lrs-ssh/known_hosts"
+          remote="$LRS_INSTANCE@ssh.railway.com"
+          dir="/tmp/lrs-native-${GITHUB_RUN_ID}"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir/final' && node lrs-live-remote.mjs"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir' && node -e 'const fs=require(\"fs\");const original=JSON.parse(fs.readFileSync(\"output/original.encrypted.json\"));const current=JSON.parse(fs.readFileSync(\"final/lrs-live-output/lrs-live.encrypted.json\"));if(original.header.plaintextSha256!==\"150ddb1bbb32d725a423a59c26fc1e2c728d29159b5054e87a7ac4dc571a2870\"||current.header.plaintextSha256!==original.header.plaintextSha256)process.exit(1);console.log(\"ORIGINAL_RECORDS_UNCHANGED=true\");'"
+      - name: Atomically import primary records then verify native query projection
+        run: |
+          ssh -T -i "$RUNNER_TEMP/lrs-ssh/key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/lrs-ssh/known_hosts" "$LRS_INSTANCE@ssh.railway.com" "cd '/tmp/lrs-native-${GITHUB_RUN_ID}' && node native-import/run-in-container.mjs --establish-operator-pin --operator-pin-output output/operator-pin.public.json --archive output/original.encrypted.json --checkpoint output/native-import.checkpoint.encrypted.json --expect-source-sha 82c751d218761dabba3952b3970b062aca51bc6e233aa05fc9a84ed7b5b6d4b3 --apply"
+      - name: Retain encrypted checkpoint and public receipts
+        if: always()
+        run: |
+          key="$RUNNER_TEMP/lrs-ssh/key"
+          hosts="$RUNNER_TEMP/lrs-ssh/known_hosts"
+          remote="$LRS_INSTANCE@ssh.railway.com"
+          dir="/tmp/lrs-native-${GITHUB_RUN_ID}"
+          for name in original.encrypted.json operator-pin.public.json native-import.checkpoint.encrypted.json native-import.checkpoint.encrypted.json.summary.json; do
+            scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote:$dir/output/$name" "$RUNNER_TEMP/lrs-native/" || true
+          done
+          for name in lrs-live.encrypted.json lrs-live-summary.json; do
+            scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote:$dir/final/lrs-live-output/$name" "$RUNNER_TEMP/lrs-native/final-$name" || true
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lrs-native-restoration-encrypted-checkpoint
+          path: ${{ runner.temp }}/lrs-native/*.json
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Remove runner private maintenance key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/lrs-ssh/key"
