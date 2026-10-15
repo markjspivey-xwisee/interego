@@ -1,0 +1,90 @@
+name: Verify all preserved LRS originals after service restarts
+on:
+  push:
+    branches: [codex/lrs-post-restart-proof-20261015]
+    paths: [.github/workflows/lrs-post-restart-proof.yml]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: lrs-post-restart-proof-20261015
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LRS_INSTANCE: fee20311-b340-466d-878f-3361535e9dd8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lrs-native-restoration-encrypted-checkpoint
+          run-id: 38800733404
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/lrs-input
+      - name: Create temporary readback SSH key
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/lrs-proof" "$RUNNER_TEMP/lrs-ssh"
+          ssh-keygen -q -t ed25519 -N '' -C "interego-lrs-proof-${GITHUB_RUN_ID}" -f "$RUNNER_TEMP/lrs-ssh/key"
+          ssh-keyscan -T 10 -t ed25519 ssh.railway.com > "$RUNNER_TEMP/lrs-ssh/known_hosts"
+          test "$(ssh-keygen -lf "$RUNNER_TEMP/lrs-ssh/known_hosts" | awk '{print $2}')" = 'SHA256:+S1xg92FrnHz6pY3bpkmh1OGtWQGNANXilPzlxA7B1g'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lrs-maintenance-public-key
+          path: ${{ runner.temp }}/lrs-ssh/key.pub
+          retention-days: 1
+          if-no-files-found: error
+      - name: Wait for authorized operator key registration
+        run: |
+          for attempt in $(seq 1 120); do
+            if ssh -T -i "$RUNNER_TEMP/lrs-ssh/key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/lrs-ssh/known_hosts" "$LRS_INSTANCE@ssh.railway.com" node -v > "$RUNNER_TEMP/lrs-ssh/check.txt" 2>/dev/null; then
+              cat "$RUNNER_TEMP/lrs-ssh/check.txt"
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
+      - name: Verify every original against durable history and the fresh current head
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/lrs-ssh/key"
+          hosts="$RUNNER_TEMP/lrs-ssh/known_hosts"
+          remote="$LRS_INSTANCE@ssh.railway.com"
+          dir="/tmp/lrs-proof-${GITHUB_RUN_ID}"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "node -e 'if(process.env.INTEREGO_BUILD_SHA!==\"ea81f7ea52770e4042e3a48c9e3c90fe0e914088\"||process.env.FOXXI_LRS_BACKEND!==\"interego\")process.exit(1);console.log(\"NATIVE_PRODUCTION_CONFIGURATION=true\");'"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "umask 077; mkdir '$dir'"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" tools/lrs-native-import/import.mjs tools/lrs-native-import/runtime.mjs tools/lrs-native-import/verify-preservation.mjs tools/lrs-native-import/http-read-original.mjs "$RUNNER_TEMP/lrs-input/original.encrypted.json" "$RUNNER_TEMP/lrs-input/native-import.checkpoint.encrypted.json" "$remote:$dir/"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir' && node verify-preservation.mjs --archive original.encrypted.json --checkpoint native-import.checkpoint.encrypted.json --expect-source-sha 82c751d218761dabba3952b3970b062aca51bc6e233aa05fc9a84ed7b5b6d4b3 --omit-legacy-undefined-properties > post-restart-proof.json"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote:$dir/post-restart-proof.json" "$RUNNER_TEMP/lrs-proof/"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir' && node http-read-original.mjs --archive original.encrypted.json --expect-source-sha 82c751d218761dabba3952b3970b062aca51bc6e233aa05fc9a84ed7b5b6d4b3 --omit-legacy-undefined-properties > http-original-read.json"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote:$dir/http-original-read.json" "$RUNNER_TEMP/lrs-proof/"
+          python3 - <<'PY'
+          import json,os
+          p=os.environ['RUNNER_TEMP']+'/lrs-proof/post-restart-proof.json'
+          d=json.load(open(p))
+          assert d['ok'] and d['readOnly'] and d['statements']==779 and d['stateDocuments']==1
+          assert d['checkpointHeadOriginalsExact'] and d['fixedCurrentHeadOriginalsExact']
+          assert d['exactStatementWireBodies'] and d['exactStoredAuthorityAndVoidFlags'] and d['exactDocumentMetadataAndBytes']
+          assert d['latestHeadUnchangedDuringVerification']
+          assert d['archiveDigest']=='1d2b699390ffbf81190f17a9deff478b32863da132ea17b1dc16dc48ed4c3165'
+          assert d['sourceDigest']=='150ddb1bbb32d725a423a59c26fc1e2c728d29159b5054e87a7ac4dc571a2870'
+          assert d['targetSourceSha256']=='82c751d218761dabba3952b3970b062aca51bc6e233aa05fc9a84ed7b5b6d4b3'
+          assert d['projectPolicy']=='omit-legacy-undefined-own-object-properties/1'
+          assert d['wireJsonUnchanged'] and d['rawArchiveUnchanged'] and d['exactOpaqueCollectionKeys']
+          print(json.dumps(d))
+          h=json.load(open(os.environ['RUNNER_TEMP']+'/lrs-proof/http-original-read.json'))
+          assert h['httpOriginalReadVerified'] or (h['skipped'] and not h['existingMatchingCredentialAvailable'])
+          print(json.dumps(h))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lrs-post-restart-preservation-proof
+          path: ${{ runner.temp }}/lrs-proof/*.json
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Remove runner private readback key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/lrs-ssh/key"
