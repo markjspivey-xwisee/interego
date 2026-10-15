@@ -9,7 +9,64 @@ concurrency:
   group: native-lrs-foxxi-cutover-20261015
   cancel-in-progress: false
 jobs:
+  final_old_check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LRS_INSTANCE: fee20311-b340-466d-878f-3361535e9dd8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare temporary last-capture SSH key
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/lrs-final" "$RUNNER_TEMP/lrs-ssh"
+          ssh-keygen -q -t ed25519 -N '' -C "interego-lrs-cutover-${GITHUB_RUN_ID}" -f "$RUNNER_TEMP/lrs-ssh/key"
+          ssh-keyscan -T 10 -t ed25519 ssh.railway.com > "$RUNNER_TEMP/lrs-ssh/known_hosts"
+          test "$(ssh-keygen -lf "$RUNNER_TEMP/lrs-ssh/known_hosts" | awk '{print $2}')" = 'SHA256:+S1xg92FrnHz6pY3bpkmh1OGtWQGNANXilPzlxA7B1g'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lrs-maintenance-public-key
+          path: ${{ runner.temp }}/lrs-ssh/key.pub
+          retention-days: 1
+          if-no-files-found: error
+      - name: Wait for authorized operator key registration
+        run: |
+          for attempt in $(seq 1 120); do
+            if ssh -T -i "$RUNNER_TEMP/lrs-ssh/key" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$RUNNER_TEMP/lrs-ssh/known_hosts" "$LRS_INSTANCE@ssh.railway.com" node -v >/dev/null 2>&1; then exit 0; fi
+            sleep 5
+          done
+          exit 1
+      - name: Capture latest original records and refuse an unreconciled source change
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/lrs-ssh/key"
+          hosts="$RUNNER_TEMP/lrs-ssh/known_hosts"
+          remote="$LRS_INSTANCE@ssh.railway.com"
+          dir="/tmp/lrs-cutover-${GITHUB_RUN_ID}"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "umask 077; mkdir '$dir'"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" tools/lrs-live-export.mjs tools/lrs-live-remote.mjs "$remote:$dir/"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir' && node lrs-live-remote.mjs"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote:$dir/lrs-live-output/lrs-live.encrypted.json" "$remote:$dir/lrs-live-output/lrs-live-summary.json" "$RUNNER_TEMP/lrs-final/"
+          python3 - <<'PROOF'
+          import json,os
+          p=os.environ['RUNNER_TEMP']+'/lrs-final/lrs-live-summary.json'
+          d=json.load(open(p))
+          assert d['plaintextSha256']=='150ddb1bbb32d725a423a59c26fc1e2c728d29159b5054e87a7ac4dc571a2870'
+          assert d['statements']==779 and d['stateDocuments']==1 and d['exactDecryptedBytesCompared']
+          print('LAST_ORIGINAL_SNAPSHOT_MATCHES_RESTORED_RECORDS=true')
+          PROOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lrs-cutover-last-originals-encrypted
+          path: ${{ runner.temp }}/lrs-final/*.json
+          retention-days: 90
+          if-no-files-found: warn
+      - name: Remove runner private last-capture key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/lrs-ssh/key"
   foxxi:
+    needs: final_old_check
     uses: markjspivey-xwisee/interego/.github/workflows/deploy-railway.yml@88aec11320e594ae1180a9be27c0aeefc5a6d910
     with:
       service: foxxi-bridge
