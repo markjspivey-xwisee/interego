@@ -1,0 +1,36 @@
+name: Isolated LRS count inventory
+
+# This branch is an operator read only. Never merge it and never deploy it.
+on:
+  push:
+    branches: [codex/lrs-record-inventory-20261015]
+    paths:
+      - tools/lrs-safe-inventory.mjs
+      - tools/lrs-safe-inventory.test.mjs
+      - .github/workflows/lrs-safe-inventory.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: isolated-lrs-count-inventory-20261015
+  cancel-in-progress: false
+
+jobs:
+  counts:
+    if: github.repository == 'markjspivey-xwisee/interego' && github.ref == 'refs/heads/codex/lrs-record-inventory-20261015'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Verify scope and redaction with fictional transports
+        run: node --test tools/lrs-safe-inventory.test.mjs
+      - name: Count existing authorized LRS scopes without publishing records
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: node tools/lrs-safe-inventory.mjs
