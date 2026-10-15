@@ -12,6 +12,40 @@ const canonical = value => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const same = (left, right) => JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 
+/** One-run immutable-reference cache. The underlying SDK still validates every first ciphertext fetch. */
+export function createArtifactReadMemoizer(readArtifact, scope) {
+  const entries = new Map();
+  const counters = { networkReadCount: 0, cacheHits: 0, inFlightDedupeHits: 0 };
+  const scopeKey = JSON.stringify(canonical(scope));
+  return {
+    async readArtifact(reference) {
+      // Include the complete reference, not just a URL: changed digest, top URI or scope is a new fetch.
+      const key = scopeKey + ':' + JSON.stringify(canonical(reference));
+      let entry = entries.get(key);
+      if (entry) { counters.cacheHits++; if (!entry.settled) counters.inFlightDedupeHits++; }
+      else {
+        counters.networkReadCount++;
+        entry = { settled: false, successful: false };
+        const boundReference = structuredClone(reference);
+        entry.promise = Promise.resolve().then(() => readArtifact(boundReference)).then(value => {
+          entry.settled = true;
+          // Neither absence nor a failed fetch is retained. Every later attempt reaches the SDK again.
+          if (value === null || value === undefined) { entries.delete(key); return value; }
+          const stored = structuredClone(value); entry.successful = true; return stored;
+        }).catch(error => { entry.settled = true; entries.delete(key); throw error; });
+        entries.set(key, entry);
+      }
+      // Consumers never receive the stored object: Maps, arrays and node records remain isolated.
+      return structuredClone(await entry.promise);
+    },
+    statistics() {
+      return { ...counters, uniqueSuccessfulReferences: [...entries.values()].filter(entry => entry.successful).length,
+        scope: 'Per-run readArtifact only; full reference and configured scope bind cache keys. Head reads, absences and errors are not cached.' };
+    },
+  };
+}
+const activeClients = new WeakSet();
+
 function validateCheckpoint(plan, checkpoint, scope) {
   const binding = sha(JSON.stringify({ ...plan.bindings, scope }));
   if (!checkpoint || checkpoint.schema !== 'interego-native-lrs-import-checkpoint-v1'
@@ -23,7 +57,7 @@ function validateCheckpoint(plan, checkpoint, scope) {
 }
 
 /** Adds no records and tolerates additional current keys, while every original primary and alias must still match. */
-export async function verifyPreservation(database, plan, runtime, checkpoint) {
+async function verifyPreservationAtHeads(database, plan, runtime, checkpoint) {
   await database.client.ready(); // OPTIONS only. database.ready() would publish a new no-op head.
   const current = await database.client.readHead();
   validateCheckpoint(plan, checkpoint, current.scope);
@@ -71,6 +105,23 @@ export async function verifyPreservation(database, plan, runtime, checkpoint) {
     extrasClassifiedAsLegitimate: false,
     bounds: 'Every original primary and alias was verified at both reported fixed heads. Extra keys were counted only; their legitimacy and any head published during verification were not verified. This is not final cutover, source-delta reconciliation or a claim of new learner achievement.',
   };
+}
+
+export async function verifyPreservation(database, plan, runtime, checkpoint) {
+  const client = database.client;
+  if (activeClients.has(client)) fail('preservation-client-already-in-use');
+  const original = Object.getOwnPropertyDescriptor(client, 'readArtifact');
+  const memo = createArtifactReadMemoizer(client.readArtifact.bind(client), { owner: database.owner, scope: checkpoint?.scope });
+  activeClients.add(client);
+  try {
+    Object.defineProperty(client, 'readArtifact', { configurable: true, writable: true,
+      enumerable: original?.enumerable ?? false, value: reference => memo.readArtifact(reference) });
+    return { ...await verifyPreservationAtHeads(database, plan, runtime, checkpoint), artifactReadMemoization: memo.statistics() };
+  } finally {
+    if (original) Object.defineProperty(client, 'readArtifact', original);
+    else delete client.readArtifact;
+    activeClients.delete(client);
+  }
 }
 
 async function main() {

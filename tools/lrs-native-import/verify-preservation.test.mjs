@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { validateSnapshot, buildNativePlan } from './import.mjs';
-import { verifyPreservation } from './verify-preservation.mjs';
+import { verifyPreservation, createArtifactReadMemoizer } from './verify-preservation.mjs';
 import * as runtime from './runtime.mjs';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -62,6 +62,7 @@ test('fixed historical and current heads verify every original with no native wr
   assert.equal(report.checkpointHeadOriginalsExact, true); assert.equal(report.fixedCurrentHeadOriginalsExact, true);
   assert.equal(report.statements, 1); assert.equal(report.stateDocuments, 1); assert.equal(report.extraNativeRecords, 0);
   assert.equal(report.latestHeadUnchangedDuringVerification, true); f.untouched();
+  assert.ok(report.artifactReadMemoization.cacheHits > 0);
 });
 test('additional background native record is counted separately without hiding original preservation', async () => {
   const f = fixture();
@@ -92,4 +93,41 @@ test('changed checkpoint source or projection binding fails before a preservatio
   const f = fixture();
   const checkpoint = { ...f.checkpoint, bindings: { ...f.checkpoint.bindings, sourceProjection: { projectPolicy: 'changed' } } };
   await assert.rejects(verifyPreservation(f.database, f.plan, runtime, checkpoint), /preservation-checkpoint-binding-mismatch/); f.untouched();
+});
+test('artifact memoization deduplicates concurrent full-reference reads and isolates returned mutable data', async () => {
+  let network = 0;
+  const memo = createArtifactReadMemoizer(async () => {
+    network++; return { topUri: 'urn:test:top', nodes: new Map([['urn:test:node', { level: 0, value: 'original' }]]) };
+  }, scope);
+  const reference = { resourceUrl: 'https://native.test/artifact/1', bodyDigest: 'sha256:first', topUri: 'urn:test:top' };
+  const [first, concurrent] = await Promise.all([memo.readArtifact(reference), memo.readArtifact(reference)]);
+  first.nodes.get('urn:test:node').value = 'consumer mutation'; first.nodes.set('urn:new', {});
+  const again = await memo.readArtifact({ topUri: reference.topUri, bodyDigest: reference.bodyDigest, resourceUrl: reference.resourceUrl });
+  assert.equal(network, 1); assert.equal(concurrent.nodes.get('urn:test:node').value, 'original');
+  assert.equal(again.nodes.get('urn:test:node').value, 'original'); assert.equal(again.nodes.has('urn:new'), false);
+  assert.equal(memo.statistics().inFlightDedupeHits, 1); assert.equal(memo.statistics().cacheHits, 2);
+});
+test('changed artifact digest or any full-reference field causes a new SDK fetch', async () => {
+  let network = 0;
+  const memo = createArtifactReadMemoizer(async () => ({ read: ++network }), scope);
+  const reference = { resourceUrl: 'https://native.test/artifact/1', bodyDigest: 'sha256:first', topUri: 'urn:test:top', scope: 'one' };
+  await memo.readArtifact(reference);
+  await memo.readArtifact({ ...reference, bodyDigest: 'sha256:changed' });
+  await memo.readArtifact({ ...reference, topUri: 'urn:test:other' });
+  await memo.readArtifact({ ...reference, scope: 'two' });
+  assert.equal(network, 4); assert.equal(memo.statistics().cacheHits, 0);
+});
+test('failed and missing artifact reads are never retained', async () => {
+  let attempts = 0;
+  const memo = createArtifactReadMemoizer(async () => {
+    attempts++; if (attempts === 1) throw new Error('temporary SDK refusal');
+    if (attempts === 2) return null; return { ok: true };
+  }, scope);
+  const reference = { resourceUrl: 'https://native.test/artifact/1', bodyDigest: 'sha256:first' };
+  await assert.rejects(memo.readArtifact(reference), /temporary SDK refusal/);
+  assert.equal(await memo.readArtifact(reference), null);
+  assert.deepEqual(await memo.readArtifact(reference), { ok: true });
+  assert.deepEqual(await memo.readArtifact(reference), { ok: true });
+  assert.equal(attempts, 3); assert.equal(memo.statistics().networkReadCount, 3);
+  assert.equal(memo.statistics().uniqueSuccessfulReferences, 1);
 });
