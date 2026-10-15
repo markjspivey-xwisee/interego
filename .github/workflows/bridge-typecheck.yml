@@ -373,6 +373,11 @@ jobs:
       - name: Build @interego/* packages
         if: steps.dist.outputs.cache-hit != 'true'
         run: npm run build
+      - name: Require native atomic store and encrypted SDK contracts
+        env:
+          REQUIRE_LRS_NATIVE_TESTS: '1'
+          TEST_NATIVE_PG_URL: postgresql://foxxi_test:isolated_fixture_only@127.0.0.1:5432/native_interego_test
+        run: npx vitest run tests/pgsl-store-native-commit.test.ts tests/native-commit-store.test.ts
       # CSS must be outside the monorepo: its Components.js major differs from
       # the root's generator dependencies. This is the existing deploy shape.
       - name: Assemble isolated native CSS runtime
@@ -410,4 +415,4 @@ jobs:
           REQUIRE_LRS_NATIVE_TESTS: '1'
           TEST_NATIVE_CSS_ROOT: ${{ runner.temp }}/native-lrs-css/integrations/pgsl-css-accessor
           TEST_NATIVE_PG_URL: postgresql://foxxi_test:isolated_fixture_only@127.0.0.1:5432/native_interego_test
-        run: npx vitest run tests/pgsl-store-native-commit.test.ts tests/native-commit-store.test.ts applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts
+        run: npx vitest run applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts
