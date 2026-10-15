@@ -471,7 +471,7 @@ async function main(): Promise<void> {
 }
 
 async function workerMain(): Promise<void> {
-  const { AppRunner, SafeErrorHandler } = await import('@solid/community-server');
+  const { AppRunner, SafeErrorHandler, MemoryMapStorage } = await import('@solid/community-server');
   const safeHandle = SafeErrorHandler.prototype.handle;
   SafeErrorHandler.prototype.handle = async function(this: InstanceType<typeof SafeErrorHandler>, input: Parameters<typeof safeHandle>[0]) {
     process.send?.({ event: 'operation-error', diagnostic: workerDiagnostic(input.error, 'css-http-error') });
@@ -508,7 +508,20 @@ async function workerMain(): Promise<void> {
   const baseUrl = process.env.NATIVE_COMMIT_TEST_BASE_URL;
   assert.ok(Number.isInteger(port) && port > 0 && baseUrl);
   workerStage = 'create-css';
-  const app = await new AppRunner().create({
+  const runner = new AppRunner();
+  type FixtureManager = { instantiate(id: string, settings: Record<string, unknown>): Promise<unknown> };
+  const createManager = Reflect.get(runner, 'createComponentsManager') as (...args: unknown[]) => Promise<FixtureManager>;
+  Object.defineProperty(runner, 'createComponentsManager', { value: async (...args: unknown[]) => {
+    const manager = await createManager.apply(runner, args);
+    workerStage = 'validate-lock-storage';
+    const lockStorage = await manager.instantiate('urn:solid-server:default:LockStorage', {});
+    assert.ok(lockStorage && typeof lockStorage === 'object');
+    assert.ok(Reflect.get(lockStorage, 'source') instanceof MemoryMapStorage,
+      'memory resource mutexes require process-local reader counts from the actual ComponentsJS instance');
+    workerStage = 'create-css';
+    return manager;
+  } });
+  const app = await runner.create({
     loaderProperties: { mainModulePath: pkgRoot, typeChecking: false },
     config: configPath,
     shorthand: { port, baseUrl, loggingLevel: 'error', rootFilePath: path.join(os.tmpdir(), `pgsl-native-${randomUUID()}`) },

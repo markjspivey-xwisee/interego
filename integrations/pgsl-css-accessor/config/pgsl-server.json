@@ -54,6 +54,19 @@
   ],
   "@graph": [
     {
+      "comment": "Memory mutexes require process-local reader counters. Native cross-process commits remain conditional transactions in PGSL.",
+      "@type": "Override",
+      "overrideInstance": {
+        "@id": "urn:solid-server:default:LockStorage"
+      },
+      "overrideParameters": {
+        "@type": "HashEncodingStorage",
+        "source": {
+          "@type": "MemoryMapStorage"
+        }
+      }
+    },
+    {
       "@type": "Override",
       "overrideInstance": {
         "@id": "urn:solid-server:default:MetadataWriter_Mapped"
