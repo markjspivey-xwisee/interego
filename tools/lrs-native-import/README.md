@@ -18,6 +18,31 @@ application process running. The wrapper inherits the existing container's
 environment and uses secrets internally; do not download or print its environment.
 It does not alter the running application's environment.
 
+The default wrapper path requires an existing matching published owner key and
+encrypted tenant directory. When the operator explicitly chooses to establish
+the native pin from the existing container configuration, add
+`--establish-operator-pin` to the wrapper command. This flag is consumed by the
+wrapper and never forwarded to the importer. It derives the owner key twice from
+the existing `FOXXI_ADMIN_KEY_SEED`, derives the stable bridge recipient from the
+existing bridge private key and owner scope, and locally encrypts a synthetic
+native-format artifact to both recipients. Both keys must decrypt and verify the
+exact native artifact and byte digest. No pod publication is required or created
+in this explicit mode. The assurance is reported accurately as
+`operator-established pin from preexisting container configuration`, alongside
+key fingerprints and booleans. It proves local key custody and repeatability; it
+does not prove historical publication, WebID control, or live write authority.
+The existing pod, configured owner and existing capability are reused, an
+existing conflicting native pin is refused, and only the child receives the pin.
+Actual Railway service pin configuration remains a separate operator action.
+To make that public key available for service configuration without exporting
+secrets, the operator may also pass `--operator-pin-output PATH`. The wrapper
+writes a mode-0600 public JSON artifact containing the pod, owner, public key,
+fingerprints and stated assurance. It includes no seed, private key or capability.
+The output is create-only; an existing identical artifact is accepted, and any
+different existing content (including an archive) is never overwritten. Both
+wrapper flags are consumed before invoking the importer. Public-key setting in
+Railway still requires the explicit service-scoped configuration operation.
+
 The wrapper checks the configured pod and owner, compares the existing published
 tenant-admin encryption key with the key derived from the existing admin seed,
 and actually decrypts the existing encrypted tenant directory. Descriptor and
@@ -127,3 +152,7 @@ readback after a fresh database readiness cycle, lost acknowledgments in either
 phase, interrupted alias generation, strict source/scope/cursor changes,
 binary/JSON distinction, invalid voids, capacity refusal, archive/checkpoint
 tampering, concurrent head drift, and operator output-path collisions.
+Five additional `operator-pin.test.mjs` tests verify the explicit mode's actual
+two-recipient cryptography, unchanged default publication requirement,
+fingerprint-only log reporting, conflict refusal, wrapper flag consumption and
+the public-pin artifact's exact whitelist, private permissions and overwrite refusal.

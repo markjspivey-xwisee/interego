@@ -619,8 +619,8 @@
     }
   ],
   "packageLockSha256": "feac8965373c74c20148236a3cb041c3cb69008564fdeea951631ca4088f416d",
-  "runtimeSha256": "2546f37f746243128863870e92b4b26320340e4eb91de7252a6b171201e42b32",
-  "runtimeBytes": 468010,
+  "runtimeSha256": "41592796f6294aa105437760a0df6dd16232f1daa69ad78b3d7925db666ba6ce",
+  "runtimeBytes": 468089,
   "externalNodeBuiltinsOnly": [
     "crypto",
     "node:crypto",
