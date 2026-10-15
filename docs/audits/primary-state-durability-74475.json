@@ -1,0 +1,495 @@
+{
+  "auditDate": "2026-10-15",
+  "repository": "markjspivey-xwisee/interego",
+  "baseline": "74475d4a0220abc6f7d3e8134258d0908d1607a9",
+  "scope": "Bounded source-derived inventory of primary Foxxi/Interego state other than the LRS statement store. No production record payloads, secrets, roles, grants, configuration, or persistence behavior were read or changed. No live counts or full-stack durability verification are claimed.",
+  "severityMeaning": {
+    "gap": "Source can acknowledge or hold primary state without dependable restart recovery.",
+    "conditional": "A durable mechanism exists, but prerequisites, caller acknowledgment, custody, or recovery need confirmation.",
+    "durableMechanism": "Source awaits durable write and has a recovery path; live durability remains unverified.",
+    "ephemeral": "Short-lived auth or reproducible cache can intentionally remain process-local."
+  },
+  "commonMechanisms": [
+    {
+      "id": "shared-snapshot",
+      "sources": [
+        "applications/foxxi-content-intelligence/src/pod-snapshot-publisher.ts:97-105,128-140,166-194,197-287,311-330"
+      ],
+      "behavior": "One configured tenant pod; descriptors authorize foaf:Agent Read; full JSON is reversibly base64 encoded, not encrypted; dirty publication is delayed (default2s) and fire-and-forget; absent config skips publication; write errors log and return; hydration returns null on absence/failure and does not verify signature/schema/freshness here.",
+      "limits": "This is source behavior, not proof any particular production snapshot was published or is publicly accessible. Collectors may gather multiple tenants into that one target."
+    },
+    {
+      "id": "pod-kv",
+      "sources": [
+        "applications/foxxi-content-intelligence/src/pod-kv-store.ts:119-194,245-296,329-385,399-416"
+      ],
+      "behavior": "PodKeyValueStore awaits publish before caching; get/load can rehydrate. Generic descriptor grants public Read, JSON is base64 without encryption. Convenience factory falls back to RAM Map if required pod/source config is missing; default reads conflate failure with absence unless strictReads.",
+      "limits": "Callers and actual deployment configuration must be checked individually. Public authored course metadata differs from private learner state; do not route the latter through this generic public mechanism."
+    },
+    {
+      "id": "encrypted-pgsl",
+      "sources": [
+        "applications/foxxi-content-intelligence/src/foundation-shared-lattice.ts:190-198,236-280,313-352,392-568,746-779"
+      ],
+      "behavior": "Resident PGSL is a cache over per-pod encrypted canonical foxxi-lattice/<resource>.holon.json. Load failures fence overwrites; conditional CAS with bounded merge/retry persists; compose returns persisted:true only after successful canonical write. Derived descriptor publication is separate. publishDescriptor:false suppresses public projection. Ephemeral mode intentionally skips persistence for code-derived reproducible vocab/ontology only.",
+      "limits": "Stable bridge encryption key required; owner recipient is best effort if owner public key cannot be resolved. This demonstrates a durable mechanism, not proof all writers await/check receipts or every artifact has owner custody."
+    }
+  ],
+  "stores": [
+    {
+      "id": "xapi-documents",
+      "data": "Activity State, Activity Profile and Agent Profile documents",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/xapi-lrs.ts:278-346,1570-1573"
+      ],
+      "mechanism": "shared-snapshot",
+      "gap": "Writes acknowledge before debounced publication; full map restoration exists only for successfully written/read snapshot."
+    },
+    {
+      "id": "xapi-attachments",
+      "data": "xAPI attachment binary bytes",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/xapi-lrs.ts:284,314-329,823,1025,1203"
+      ],
+      "mechanism": "RAM attachmentStores",
+      "gap": "Not included in XapiDocsSnapshot; statement metadata does not preserve bytes."
+    },
+    {
+      "id": "scorm-sequencing-sessions",
+      "data": "Generic SCORM sequencing session state",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/scorm-sequencing.ts:1033-1077"
+      ],
+      "mechanism": "RAM sessions plus shared-snapshot collector",
+      "gap": "hydrateScormFromPod loops snapshot entries but intentionally discards each with void; restores no sessions."
+    },
+    {
+      "id": "agent-scorm-attempts",
+      "data": "Agent SCORM in-progress plays/sequencing/grading/retry state",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/bridge/server.ts:10023,12003,12014"
+      ],
+      "mechanism": "RAM agentScormPlays",
+      "gap": "Separate from generic SCORM session snapshot; no durable attempt recovery."
+    },
+    {
+      "id": "cmi5-launches",
+      "data": "cmi5 launch registrations and satisfied AU sets",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/cmi5-lms.ts:149-190"
+      ],
+      "mechanism": "shared-snapshot",
+      "gap": "Full reconstruction exists; inherits shared publisher risks and includes learner identifiers/pod URLs."
+    },
+    {
+      "id": "cmi5-course-registry",
+      "data": "cmi5 registered course structures",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/cmi5-lms.ts:208-225",
+        "applications/foxxi-content-intelligence/src/content-delivery.ts:118-135,227-230"
+      ],
+      "mechanism": "RAM courseRegistry; published subset has PodKeyValueStore recovery",
+      "gap": "General externally registered course structures lack equivalent demonstrated recovery."
+    },
+    {
+      "id": "cmi5-rollup-dedup",
+      "data": "Course rollup emitted set and enrollment registration identifiers",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/cmi5-lms.ts:208-213,252-290"
+      ],
+      "mechanism": "RAM rollupEmitted/courseEnrollmentReg",
+      "gap": "Omitted from snapshot; restart loses dedup and can mint new enrollment UUID."
+    },
+    {
+      "id": "cmi5-auth-tokens",
+      "data": "Fetch tokens and per-launch auth tokens",
+      "classification": "ephemeral",
+      "primary": false,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/cmi5-lms.ts:120-127,420-447"
+      ],
+      "mechanism": "RAM",
+      "gap": "Restart requires relaunch/re-authentication; token lifetime is intentionally ephemeral."
+    },
+    {
+      "id": "lti-registrations",
+      "data": "LTI platform registrations",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/lti13.ts:60-76,113,532"
+      ],
+      "mechanism": "FOXXI_LTI_PLATFORMS configuration",
+      "gap": "Persistence depends on preserved valid deployment configuration; no actual config read."
+    },
+    {
+      "id": "lti-tool-lineitems",
+      "data": "LTI tool AGS line items",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/lti13.ts:356-399"
+      ],
+      "mechanism": "shared-snapshot",
+      "gap": "Full reconstruction exists subject to shared publisher risks."
+    },
+    {
+      "id": "lti-platform-gradebook",
+      "data": "LTI platform line items, scores/results, members/progress/comments",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/lti-platform.ts:481-508",
+        "applications/foxxi-content-intelligence/bridge/server.ts:5892-5895"
+      ],
+      "mechanism": "shared-snapshot",
+      "gap": "Snapshot/restore/on-change wiring exists; private learning records inherit shared publisher privacy and acknowledgment risks."
+    },
+    {
+      "id": "lti-ephemeral-auth",
+      "data": "OIDC login states, launch grants/access tokens/replay cache",
+      "classification": "ephemeral",
+      "primary": false,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/lti13.ts:287-306",
+        "applications/foxxi-content-intelligence/src/lti-platform.ts:193-195"
+      ],
+      "mechanism": "RAM",
+      "gap": "One-time/short-lived auth state intentionally excluded from learning record snapshots."
+    },
+    {
+      "id": "oneroster-base",
+      "data": "Bundled roster base",
+      "classification": "ephemeral",
+      "primary": false,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/oneroster.ts:90-100,335-341"
+      ],
+      "mechanism": "Bundled imported/admin_payload.json",
+      "gap": "Image is recovery source; does not recover later CSV overlay imports."
+    },
+    {
+      "id": "oneroster-overlay",
+      "data": "Imported CSV users/orgs/courses/classes/enrollments",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/oneroster.ts:271,289-318,520-551"
+      ],
+      "mechanism": "shared-snapshot",
+      "gap": "Complete map reconstruction exists, subject to shared publisher privacy and acknowledgment risks."
+    },
+    {
+      "id": "native-trajectories",
+      "data": "Explicitly recorded native agent trajectories, including intentions/counterfactuals/task hierarchy",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/bridge/server.ts:276,296-336,3862-3879,4182"
+      ],
+      "mechanism": "RAM plus registered collector",
+      "gap": "No dirty calls schedule this surface after heartbeat removal. xAPI projection is lossy and cannot recover native-only information."
+    },
+    {
+      "id": "mesh-trajectories",
+      "data": "Agent-pod projected lens trajectories and deterministic xAPI projections",
+      "classification": "ephemeral",
+      "primary": false,
+      "sources": [
+        "applications/foxxi-content-intelligence/bridge/server.ts:1336-1349,1982-2024,2132-2152"
+      ],
+      "mechanism": "Re-derived from source agent pod descriptors",
+      "gap": "Legitimate rebuildable view; lens namespace alone does not classify other writers or prove all resident statements recoverable."
+    },
+    {
+      "id": "performance-probes",
+      "data": "Performance intervention/probe baseline records",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/bridge/server.ts:280,302-336,3989-3997"
+      ],
+      "mechanism": "RAM plus registered collector",
+      "gap": "No dirty calls schedule foxxi-probes publication; no alternate durable write in handler."
+    },
+    {
+      "id": "evaluation-workflow",
+      "data": "Evaluation cohort ownership, enrollment decisions, candidate acceptance and run bindings",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/agent-evaluation.ts:123-125,139-235",
+        "applications/foxxi-content-intelligence/bridge/server.ts:284,312-335"
+      ],
+      "mechanism": "RAM EvaluationRegistry",
+      "gap": "JSON stringify of private Map produces empty evaluations object; no hydrate or dirty calls. Durable xAPI evidence cannot reconstruct these decisions/bindings."
+    },
+    {
+      "id": "authored-course-content",
+      "data": "Agent-authored course content and catalog",
+      "classification": "conditional",
+      "primary": false,
+      "sources": [
+        "applications/foxxi-content-intelligence/bridge/server.ts:10376-10415,10473-10494,11934-11943",
+        "applications/foxxi-content-intelligence/src/foundation-shared-lattice.ts:788-794"
+      ],
+      "mechanism": "encrypted-pgsl",
+      "gap": "RAM is cache when canonical persistence succeeds; caller must check persisted receipt. PR626 includes narrow author-response fix; baseline target URL alone is not a receipt."
+    },
+    {
+      "id": "course-author-index",
+      "data": "Course-to-author ownership/discovery index",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/bridge/server.ts:10426-10467"
+      ],
+      "mechanism": "RAM plus plaintext course-authors.json",
+      "gap": "Async raw GET/merge/PUT lacks CAS, ignores non-ok PUT, clears dirty before write, caller fires without await; necessary for discovering non-mesh bare course URLs."
+    },
+    {
+      "id": "content-items",
+      "data": "Authored fragments/compositions/bundles",
+      "classification": "conditional",
+      "primary": false,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/content-store.ts:136-139",
+        "applications/foxxi-content-intelligence/bridge/server.ts:11013-11080"
+      ],
+      "mechanism": "encrypted-pgsl and RAM hash-verified cache",
+      "gap": "Durable canonical write precedes cache on authored path; location index is separate plaintext JSON, async stateWriter retry with no demonstrated CAS. Cache misses need usable location index and source availability."
+    },
+    {
+      "id": "admissions",
+      "data": "Learner-owned content admissions/standing",
+      "classification": "durableMechanism",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/admission-store.ts:82-104"
+      ],
+      "mechanism": "Encrypted own-pod content-admissions.envelope.json",
+      "gap": "Conditional PUT with conflict reload/retry; returns failure on rejected write. Bridge recipient always, owner recipient if key resolves; actual custody not checked."
+    },
+    {
+      "id": "capture-consent",
+      "data": "Per-actor telemetry automatic-capture preferences and revision history",
+      "classification": "durableMechanism",
+      "primary": true,
+      "sources": [
+        "applications/llm-telemetry/capture.ts",
+        "applications/foxxi-content-intelligence/bridge/server.ts:9756-9791"
+      ],
+      "mechanism": "encrypted-pgsl dedicated per-owner resource, publishDescriptor:false",
+      "gap": "Update awaits persisted receipt then fresh readback; capture rereads and fails closed on unavailable/conflicting consent. Local locks are coordination only."
+    },
+    {
+      "id": "collector-grants",
+      "data": "Telemetry collector hashed token grants, expiration/revocation history",
+      "classification": "durableMechanism",
+      "primary": true,
+      "sources": [
+        "applications/llm-telemetry/collector.ts",
+        "applications/foxxi-content-intelligence/bridge/server.ts:9756-9791"
+      ],
+      "mechanism": "encrypted-pgsl dedicated per-owner resource, publishDescriptor:false",
+      "gap": "Issue/revoke await persistence and verify readback. Raw token not persisted. Actual live grants not inspected."
+    },
+    {
+      "id": "forwarding-config",
+      "data": "Own-pod LRS forwarding targets and inbound credential secrets",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/forwarding-persist.ts:48-91",
+        "applications/foxxi-content-intelligence/src/lrs-forwarding.ts:324-366",
+        "applications/foxxi-content-intelligence/bridge/server.ts:9632-9655,9703,9747"
+      ],
+      "mechanism": "Encrypted own-pod foxxi-forwarding-config.json with RAM hydration",
+      "gap": "Bridge wrapper returns silently without bridge key and swallows persistence errors; helper tolerates412 with no readback. Load conflates absence/unreadable/decryptfailure. Owner key resolution may leave bridge-only custody."
+    },
+    {
+      "id": "forwarding-queue",
+      "data": "Failed outgoing statement dead-letter queue and inbound forwarding receipts",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/lrs-forwarding.ts:274-318,324-366,488-521"
+      ],
+      "mechanism": "RAM bounded queues/rings",
+      "gap": "Config export deliberately omits dead letters, metrics and receipts; same-process re-import preserves them but restart does not. Pending delivery work is not a disposable cache."
+    },
+    {
+      "id": "mesh-enrollment",
+      "data": "Mesh enrollment/retirement register",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "applications/foxxi-content-intelligence/bridge/server.ts:1371-1485,2037-2043"
+      ],
+      "mechanism": "Durable public tenant-pod register plus session fallback",
+      "gap": "Re-read each cycle and cached on read. If persistence fails response should disclose session scope; a fallback remains RAM. Public register is intentional membership metadata, not learner payload."
+    },
+    {
+      "id": "identity-account-metadata",
+      "data": "User auth methods, wallet/passkey metadata and signout epoch",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "deploy/identity/server.ts:508-582,657-717,1012-1084,1418-1480"
+      ],
+      "mechanism": "Per-user pod auth-methods.jsonld; RAM account indexes/cache",
+      "gap": "Canonical pod metadata supports account reconstruction; live configuration/access not checked. Session revocation reads pod epoch."
+    },
+    {
+      "id": "identity-private-keys",
+      "data": "Server-managed per-identity Ed25519/X25519 private keys and identity-server DID key",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "deploy/identity/server.ts:388-418,512-513,1017-1032,1187-1192,3184-3188"
+      ],
+      "mechanism": "RAM generated keypairs",
+      "gap": "Hydration calls seedIdentity which generates new signing/keyAgreement pair; own SERVER_KEY also generated each process. No durable import in this source path. Does not establish that separately bridge-encrypted Foxxi resources are unrecoverable."
+    },
+    {
+      "id": "identity-jwt",
+      "data": "JWT HMAC signing authority and stateless sessions",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "deploy/identity/server.ts:1345-1480"
+      ],
+      "mechanism": "TOKEN_SIGNING_KEY configuration plus pod sessionEpoch",
+      "gap": "Valid stable configured secret makes tokens restart-stable; absent/invalid key silently falls back with warning to random ephemeral key. Secret was not read and configuration presence not verified."
+    },
+    {
+      "id": "browser-session-keys",
+      "data": "Per-tab wallet-delegated session key and grant",
+      "classification": "ephemeral",
+      "primary": false,
+      "sources": [
+        "applications/foxxi-content-intelligence/src/session-key.ts"
+      ],
+      "mechanism": "Client memory key; signed grant supplied and verified each request",
+      "gap": "Intentional short-lived auth, not sole storage of a business record. Private key should not be persisted by this audit."
+    },
+    {
+      "id": "relay-oauth-clients",
+      "data": "OAuth dynamic client registrations/secrets",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "deploy/mcp-relay/oauth-provider.ts:662-683",
+        "deploy/mcp-relay/oauth-client-store.ts:520-595,695-784",
+        "deploy/mcp-relay/server.ts:1395-1409,1470-1476"
+      ],
+      "mechanism": "Service-pod descriptors, sealed client_secret, startup/read-through hydration",
+      "gap": "Registration returns success before fire-and-forget persistence; failures log only. Startup discovery errors become empty map; individual read failures skipped. OAuth metadata plaintext, source says anonymous CSS GET/list can reach records; only sensitive fields sealed, not whole payload."
+    },
+    {
+      "id": "relay-oauth-grants",
+      "data": "OAuth access and refresh grants",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "deploy/mcp-relay/oauth-provider.ts:1137-1158,1260-1335",
+        "deploy/mcp-relay/oauth-token-store.ts:204-332,597-636"
+      ],
+      "mechanism": "Service-pod hashed token filenames, identity bearer fields encrypted; startup/read-through hydration",
+      "gap": "Token response before both writes settle. Rotation deletes RAM entry but durable deletion best-effort/swallowed, so retired grant can rehydrate after restart. Read/network/decrypt errors become missing token."
+    },
+    {
+      "id": "relay-amep",
+      "data": "AMEP engagements, turns and state",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "deploy/mcp-relay/engagement-store.ts:164-181,441-479,621-640,701-712",
+        "deploy/mcp-relay/agent-interop-mount.ts:405-421,583-585"
+      ],
+      "mechanism": "Awaited PostgreSQL CAS when RELAY_PGSL_PG_CONNSTR configured; else RAM",
+      "gap": "Absent config logs warning and keeps primary engine only in RAM. Configured is not proof reachable. Individual IDs recover; list only includes IDs encountered this process. No live config read."
+    },
+    {
+      "id": "relay-handoffs",
+      "data": "Client signing/handoff records and pending queues",
+      "classification": "durableMechanism",
+      "primary": true,
+      "sources": [
+        "deploy/mcp-relay/client-interactions.ts:35-94,243-278",
+        "deploy/mcp-relay/server.ts:5161-5163"
+      ],
+      "mechanism": "Encrypted service-pod files with conditional writes; creation awaits record and queue writes",
+      "gap": "Depends on stable relay key and storage; no verified readback or live durability test here."
+    },
+    {
+      "id": "relay-pgsl-published",
+      "data": "Explicitly published PGSL node closures/commons",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "deploy/mcp-relay/pgsl-node-store.ts:15-45,68-115,178-217,264-327,395-406",
+        "deploy/mcp-relay/server.ts:9964-10020"
+      ],
+      "mechanism": "Awaited PostgreSQL transaction persists selected complete closure before serving cache; reads restore DB; faults503",
+      "gap": "RELAY_PGSL_IN_MEMORY=1 explicitly selects RAM; live mode not inspected. Public authenticated publication intentionally world-readable, screens sensitive content, refuses encrypted atoms."
+    },
+    {
+      "id": "relay-pgsl-kernel",
+      "data": "Private PGSL kernel workspace from mint/promote/pgsl_ingest",
+      "classification": "gap",
+      "primary": true,
+      "sources": [
+        "deploy/mcp-relay/server.ts:9771-9801,9812-9885",
+        "deploy/mcp-relay/pgsl-node-store.ts:15-32"
+      ],
+      "mechanism": "Separate process-global RAM lattice; optional pod export",
+      "gap": "ingested:true only proves RAM admission. Optional publish_to_pod serializes WHOLE shared singleton via pgslToTurtle and publish with no encryption option. Own-pod destination gate does not limit serialization to caller ingest slice. Source plaintext/cross-caller export risk; no live payload inspected."
+    },
+    {
+      "id": "relay-key-custody",
+      "data": "Relay X25519 encryption key and compliance signing key",
+      "classification": "conditional",
+      "primary": true,
+      "sources": [
+        "deploy/mcp-relay/server.ts:1191-1292"
+      ],
+      "mechanism": "Stable configured JSON/file, else generated key and local file attempt",
+      "gap": "Generated encryption key path continues if file write fails; ephemeral container file can reset. Stable key configuration required to preserve decryptability. No actual key/config read."
+    },
+    {
+      "id": "relay-auth-transport",
+      "data": "Pending OAuth authorizations/auth codes and MCP transport sessions",
+      "classification": "ephemeral",
+      "primary": false,
+      "sources": [
+        "deploy/mcp-relay/oauth-provider.ts:172-184,218-241",
+        "deploy/mcp-relay/mcp-serving.ts:8-51"
+      ],
+      "mechanism": "RAM",
+      "gap": "Short-lived authorization/transport state intentionally expires on restart; reauthorization/reinitialize needed."
+    }
+  ],
+  "nonConclusions": [
+    "No production snapshot payload or learner record was fetched; source public/plaintext behavior is not proof of a live public leak.",
+    "No claim every subsystem or deployment config was audited; this is a bounded inventory of inspected source.",
+    "The 776 projected-event log is events.length of current pod-derived candidates, not an exact statement-store category count; landed0 indicates existing IDs for those candidates at that cycle, not that all779 resident records are disposable.",
+    "Moving statement storage to durable PostgreSQL alone does not fix attachment/document/session/registry/key-custody gaps listed here.",
+    "Short-lived auth state and reproducible views can remain in memory; acknowledged primary data needs durable persistence/recovery."
+  ]
+}
+

@@ -126,7 +126,8 @@
         "FOXXI_AUDIENCE": "both",
         "FOXXI_TENANT_PROFILE_NAME": "Acme Training L&D",
         "FOXXI_REQUIRE_AUTH": "true",
-        "FOXXI_LRS_BACKEND": "memory",
+        "FOXXI_LRS_BACKEND": "postgres",
+        "FOXXI_LRS_POSTGRES_URL": "${{ postgres.DATABASE_URL }}",
         "FOXXI_AGENTIC_RATE_LIMIT_PER_IP": "40"
       },
       "secretEnv": [

@@ -8,15 +8,11 @@
  * Cloud / Watershed / Yet Analytics / Veracity / Learning Locker) as
  * the source of truth and Foxxi as the read-through cache.
  *
- * Pick which one runs at boot via `FOXXI_LRS_BACKEND`:
- *   memory                 ← default AND what production currently sets (deploy/railway/
- *                            services.json). No persistence, lost on restart, and bounded
- *                            by a process-wide statement budget that EVICTS — so a
- *                            statement id already published as a credential's
- *                            rawDataLocation can stop resolving. Durable deployments use
- *                            file: or pod.
- *   file:/path/to/dir      ← append-only JSONL with index file
- *   forward:<endpoint>     ← every write forwarded; reads from local cache
+ * Deployed bridges use FOXXI_LRS_BACKEND=postgres with FOXXI_LRS_POSTGRES_URL
+ * (or DATABASE_URL) and a stable FOXXI_LRS_ENCRYPTION_KEY (or bridge private key).
+ * PostgreSQL holds tenant-isolated encrypted statements, attachments and documents.
+ * Memory is available only outside deployed environments for development/tests;
+ * legacy file/forward/pod statement backends do not provide durable document storage.
  *
  * Per-store guarantees regardless of backend:
  *   - get-by-id returns the exact stored object
@@ -31,13 +27,14 @@
  */
 
 import { promises as fs } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getHeapStatistics } from 'node:v8';
 import {
   withTransientRetry,
 } from '@interego/solid';
 import { PodStatementStore } from './pod-statement-store.js';
+import { PostgresLrsDatabase } from './postgres-lrs-store.js';
 
 export interface StoredStatement {
   id: string;
@@ -363,7 +360,8 @@ export class InMemoryStatementStore implements StatementStore {
     this.store.clear();
   }
 
-  async put(record: StoredStatement): Promise<void> {
+  /** Explicit synchronous seam for memory-only development and tests. */
+  putSynchronous(record: StoredStatement): void {
     const prior = this.store.get(record.id);
     if (prior && !statementBodyEqual(prior.statement, record.statement)) {
       throw new ConflictError(`statement id ${record.id} already stored with different content (xAPI 2.0 §4.1.1)`);
@@ -376,6 +374,7 @@ export class InMemoryStatementStore implements StatementStore {
     this.store.set(record.id, record);
     if (this.budgeted) { residentStatements++; evictToBudget(); }
   }
+  async put(record: StoredStatement): Promise<void> { this.putSynchronous(record); }
   async get(id: string): Promise<StoredStatement | null> { return this.store.get(id) ?? null; }
   async markVoided(id: string, voidingStatementId: string, onlyIf?: (target: StoredStatement) => boolean): Promise<boolean> {
     // No await between the read, the check and the write: they are one step.
@@ -544,7 +543,52 @@ export class ConflictError extends Error {
 
 // ── Factory ──────────────────────────────────────────────────────────
 
-export function createStatementStore(spec: string = 'memory'): StatementStore {
+/** The server has no permitted volatile primary in a deployed environment. */
+export function isProductionLrsEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NODE_ENV === 'production' || Boolean(env.RAILWAY_ENVIRONMENT_NAME || env.RAILWAY_ENVIRONMENT_ID || env.RAILWAY_SERVICE_ID);
+}
+export function configuredLrsBackend(env: NodeJS.ProcessEnv = process.env): string {
+  return env.FOXXI_LRS_BACKEND || ((env.FOXXI_LRS_POSTGRES_URL || env.DATABASE_URL) ? 'postgres' : 'memory');
+}
+export function assertLrsPrimaryConfiguration(env: NodeJS.ProcessEnv = process.env): void {
+  const spec = configuredLrsBackend(env);
+  if (isProductionLrsEnvironment(env) && spec !== 'postgres') {
+    throw new Error('deployed LRS requires FOXXI_LRS_BACKEND=postgres; volatile primary storage is disabled');
+  }
+  if (spec === 'postgres') {
+    if (!(env.FOXXI_LRS_POSTGRES_URL || env.DATABASE_URL)) throw new Error('PostgreSQL LRS requires FOXXI_LRS_POSTGRES_URL or DATABASE_URL');
+    const key = env.FOXXI_LRS_ENCRYPTION_KEY || env.FOXXI_BRIDGE_PRIVATE_KEY;
+    if (!key || Buffer.byteLength(key, 'utf8') < 32) throw new Error('PostgreSQL LRS requires a stable encryption key of at least 32 bytes');
+  }
+}
+let postgresDatabase: PostgresLrsDatabase | undefined;
+/** Initialize before accepting HTTP requests; a database failure never selects memory. */
+export async function readyStatementStore(): Promise<void> {
+  assertLrsPrimaryConfiguration();
+  if (configuredLrsBackend() === 'postgres') {
+    createStatementStore('postgres');
+    await postgresDatabase!.ready();
+  }
+}
+
+/** Persistent tenant enumeration includes dormant tenants after a process restart. */
+export async function listPersistentStatementTenants(): Promise<string[]> {
+  if (configuredLrsBackend() !== 'postgres') throw new Error('persistent tenant enumeration requires PostgreSQL');
+  createStatementStore('postgres');
+  return postgresDatabase!.listTenants();
+}
+
+export function createStatementStore(spec: string = configuredLrsBackend(), tenant = 'default'): StatementStore {
+  assertLrsPrimaryConfiguration();
+  if (isProductionLrsEnvironment() && spec !== 'postgres') throw new Error('deployed LRS cannot override its durable primary');
+  if (spec === 'postgres') {
+    if (!postgresDatabase) {
+      const connectionString = process.env.FOXXI_LRS_POSTGRES_URL || process.env.DATABASE_URL || '';
+      const encryptionKey = process.env.FOXXI_LRS_ENCRYPTION_KEY || process.env.FOXXI_BRIDGE_PRIVATE_KEY || '';
+      postgresDatabase = new PostgresLrsDatabase({ connectionString, encryptionKey });
+    }
+    return postgresDatabase.forTenant(tenant);
+  }
   if (!spec || spec === 'memory') return new InMemoryStatementStore();
   if (spec.startsWith('file:')) return new FileStatementStore(spec.slice(5));
   if (spec.startsWith('forward:')) {
@@ -569,7 +613,7 @@ export function createStatementStore(spec: string = 'memory'): StatementStore {
     const containerPath = spec.startsWith('pod:') ? spec.slice('pod:'.length) : 'foxxi/lrs/';
     return new PodStatementStore({ podUrl, authoritativeSource: authoritativeSource as unknown as never, containerPath });
   }
-  throw new Error(`unknown FOXXI_LRS_BACKEND=${spec}; accepted: memory | file:<dir> | forward:<endpoint>||<user>||<password>[||<version>] | pod[:container-path]`);
+  throw new Error(`unknown FOXXI_LRS_BACKEND; accepted: postgres | memory (development/test) | file:<dir> | forward:<endpoint>||<user>||<password>[||<version>] | pod[:container-path]`);
 }
 
 export { randomUUID };

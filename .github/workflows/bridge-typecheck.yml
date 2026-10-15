@@ -336,3 +336,44 @@ jobs:
         run: npm run build
       - name: This part of the suite
         run: npx vitest run ${{ matrix.part.files }}
+
+  durable-lrs:
+    name: "Durable LRS: real PostgreSQL commit and recovery"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: foxxi_test
+          POSTGRES_PASSWORD: isolated_fixture_only
+          POSTGRES_DB: foxxi_lrs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U foxxi_test -d foxxi_lrs_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v6
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install
+        run: npm ci
+      - uses: actions/cache@v5
+        id: dist
+        with:
+          path: packages/*/dist
+          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
+      - name: Build @interego/* packages
+        if: steps.dist.outputs.cache-hit != 'true'
+        run: npm run build
+      - name: Require committed statements, attachments, documents and restart recovery
+        env:
+          REQUIRE_LRS_PG_TESTS: '1'
+          TEST_PG_URL: postgresql://foxxi_test:isolated_fixture_only@127.0.0.1:5432/foxxi_lrs_test
+        run: npx vitest run applications/foxxi-content-intelligence/tests/postgres-lrs-store.test.ts applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts

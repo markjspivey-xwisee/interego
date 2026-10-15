@@ -40,17 +40,16 @@
  *   GET|PUT|POST|DELETE|HEAD /xapi/activities/profile
  *   GET|PUT|POST|DELETE|HEAD /xapi/agents/profile
  *
- * Not a "memory-only" demo — every Statement persists as a descriptor on
- * the tenant pod, queryable via iep:discover() filtered on
- * `lrs:StatementIngestion`. The state/profile resources use an in-memory
- * Map sized for demo workloads; swap for Redis/Postgres at production
- * scale (the statement store is already pluggable — see statement-store.ts).
+ * Deployed primary storage is encrypted PostgreSQL for statements, attachment
+ * bytes and State/Profile documents. Success follows the primary commit.
+ * Memory storage is an explicit development/test option only.
  */
 
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import { randomUUID, createHash } from 'node:crypto';
 import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adapter/src/pod-publisher.js';
-import { createStatementStore, ConflictError, matchesFilter, decodeCursor, type StatementStore, type StoredStatement } from './statement-store.js';
+import { createStatementStore, InMemoryStatementStore, configuredLrsBackend, assertLrsPrimaryConfiguration, listPersistentStatementTenants, ConflictError, matchesFilter, decodeCursor, type StatementStore, type StoredStatement } from './statement-store.js';
+import { PostgresLrsStore } from './postgres-lrs-store.js';
 import { validateStatement, validateAgentObject, utcTimestamp } from './xapi-validate.js';
 import { TenantPartition, DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import {
@@ -76,27 +75,12 @@ void _unusedTypeAnchor;
 // partitioned by tenant through TenantPartition; a single-tenant
 // deployment resolves every request to DEFAULT_TENANT and behaves
 // byte-identically to a single-tenant build.
-// Tenants forced to an in-memory statement store regardless of the global
-// FOXXI_LRS_BACKEND. These are DERIVED, re-projectable VIEWS — never the system
-// of record. The agent pod is the source of truth; Foxxi virtualizes the LRS
-// over it (on-read projection), and the per-source-pod LENS tenants (`lens:<agent>`)
-// hold the rebuildable index of that virtualization. Pod durability is wrong for
-// them: a write would contend on a pod manifest CAS, and the data is re-derived
-// from the agent's own pod every cycle. Memory is correct (lost on restart,
-// re-projected next cycle). Configured by an explicit allowlist
-// (FOXXI_LRS_MEMORY_TENANTS, csv) OR a prefix (FOXXI_LRS_MEMORY_TENANT_PREFIXES,
-// csv — defaults to `lens:` so every per-agent virtualization view is in-memory).
-const memoryBackedTenants = new Set(
-  (process.env.FOXXI_LRS_MEMORY_TENANTS ?? '').split(',').map(s => s.trim()).filter(Boolean),
-);
-const memoryTenantPrefixes = (process.env.FOXXI_LRS_MEMORY_TENANT_PREFIXES ?? 'lens:')
-  .split(',').map(s => s.trim()).filter(Boolean);
-function isDerivedViewTenant(tenant: string): boolean {
-  return memoryBackedTenants.has(tenant) || memoryTenantPrefixes.some(p => tenant.startsWith(p));
-}
+// One primary backend policy applies to every tenant, including projected lens tenants.
+// A namespace is not proof that a record can be rebuilt: HTTP writes can enter a lens too.
+assertLrsPrimaryConfiguration();
 const statementStores = new TenantPartition<StatementStore>(
   (tenant) => createStatementStore(
-    isDerivedViewTenant(String(tenant)) ? 'memory' : process.env.FOXXI_LRS_BACKEND,
+    configuredLrsBackend(), String(tenant),
   ),
   // A dropped partition must leave the process-wide statement budget. Without this the
   // budget counts statements from partitions that were evicted long ago, and the bridge
@@ -128,13 +112,13 @@ export interface XapiLrsConfig {
   oauthPublicKey?: KeyObject | null;
   /** Optional: invoked after each Statement is stored, with its tenant.
    *  The cmi5 LMS uses this to watch for moveOn satisfaction. */
-  onStatementStored?: (statement: Record<string, unknown>, tenant: TenantId) => void;
+  onStatementStored?: (statement: Record<string, unknown>, tenant: TenantId) => void | Promise<void>;
   /** Optional: invoked once a voiding statement has taken effect, with the statement it voided
    *  (as the store holds it, marked) and the tenant it was voided in. Never for a void that took
    *  no effect: a target not held yet, another voiding statement, or one outside the writer's
    *  registration. The bridge keeps it where the voided statement's owner keeps their record,
-   *  since a lens tenant's store is a view that eviction and restarts empty. */
-  onVoidApplied?: (target: StoredStatement, voidingStatementId: string, tenant: TenantId) => void;
+   *  in addition to the committed primary record. */
+  onVoidApplied?: (target: StoredStatement, voidingStatementId: string, tenant: TenantId) => void | Promise<void>;
   /** Optional: resolve the OWNER tenant for outbound forwarding from the
    *  statement's actor (self-sovereign per-user forwarding). Returns null
    *  when the actor has no resolvable owner — forwarding then falls back to
@@ -216,8 +200,8 @@ export async function keepStatementsWhole(statements: ReadonlyArray<Record<strin
 }
 
 /**
- * Store an internally-emitted statement. Returns the statement id, or NULL when the
- * statement was refused for non-conformance.
+ * Synchronous memory-only development/test seam. Production emitters must await
+ * storeStatementDurably. Returns null when the statement is non-conformant.
  *
  * ★ It used to return the id either way. That made a rejection invisible to every
  * caller: record_performance reported `recorded: true`, handed the caller a
@@ -235,10 +219,11 @@ export async function keepStatementsWhole(statements: ReadonlyArray<Record<strin
 export function storeStatementInternal(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): string | null {
   const rec = internalRecord(stmt, 'storeStatementInternal');
   if (!rec) return null;
-  void statementStores.for(tenant).put(rec).catch(err => {
-    // eslint-disable-next-line no-console
-    console.warn('[storeStatementInternal]', (err as Error).message);
-  });
+  const store = statementStores.for(tenant);
+  if (!(store instanceof InMemoryStatementStore)) {
+    throw new Error('synchronous LRS emission is available only for development/test memory storage; await storeStatementDurably');
+  }
+  store.putSynchronous(rec);
   return rec.id;
 }
 
@@ -253,9 +238,10 @@ export async function storeStatementDurably(stmt: Record<string, unknown>, tenan
   try {
     await statementStores.for(tenant).put(rec);
     return rec.id;
-  } catch (err) {
+  } catch {
+    // Driver failures can contain private values; report only the failed persistence boundary.
     // eslint-disable-next-line no-console
-    console.warn('[storeStatementDurably]', (err as Error).message);
+    console.warn('[storeStatementDurably] primary write failed');
     return null;
   }
 }
@@ -269,8 +255,10 @@ export async function clearStatementStore(tenant: TenantId = DEFAULT_TENANT): Pr
 export function getStatementStore(tenant: TenantId = DEFAULT_TENANT): StatementStore {
   return statementStores.for(tenant);
 }
-/** Every tenant that currently holds statements — for cross-tenant ops. */
-export function statementStoreTenants(): TenantId[] { return statementStores.tenants(); }
+/** Durable tenant registry in PG mode; process-local partitions only in development memory mode. */
+export async function statementStoreTenants(): Promise<TenantId[]> {
+  return configuredLrsBackend() === 'postgres' ? listPersistentStatementTenants() : statementStores.tenants();
+}
 
 // ── In-memory document stores (state + profile), tenant-partitioned ──
 
@@ -341,9 +329,12 @@ async function hydrateXapiDocsFromPod(): Promise<void> {
   if (snap.activityProfile) restore(activityProfileStores, snap.activityProfile);
   if (snap.agentProfile) restore(agentProfileStores, snap.agentProfile);
 }
-registerXapiDocsSnapshot({ surface: 'xapi-docs', typeIri: XAPI_SNAP_TYPES.XapiDocs, collect: collectXapiDocsSnapshot });
-void hydrateXapiDocsFromPod();
-const xapiDocsPodDirty = (): void => markXapiDocsDirty('xapi-docs');
+// PG is authoritative; never hydrate unverified public snapshots into it or publish private docs.
+if (configuredLrsBackend() !== 'postgres') {
+  registerXapiDocsSnapshot({ surface: 'xapi-docs', typeIri: XAPI_SNAP_TYPES.XapiDocs, collect: collectXapiDocsSnapshot });
+  void hydrateXapiDocsFromPod();
+}
+const xapiDocsPodDirty = (): void => { if (configuredLrsBackend() !== 'postgres') markXapiDocsDirty('xapi-docs'); };
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -805,14 +796,13 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   }
 
   const store = statementStores.for(tenantOf(req));
-  const attachStore = attachmentStores.for(tenantOf(req));
   const ids: string[] = [];
   const authority = { homePage: config.selfBaseUrl, name: 'foxxi-lrs' };
   for (const stmt of batch) {
     const enriched = ensureStatementFields(stmt, authority);
     const id = enriched.id as string;
     try {
-      await store.put({ id, statement: enriched, stored: enriched.stored as string, voided: false });
+      await putStatementWithAttachments(store, tenantOf(req), { id, statement: enriched, stored: enriched.stored as string, voided: false }, multipartParts);
     } catch (err) {
       if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
       throw err;
@@ -820,8 +810,7 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
     // Voided only once the voiding statement itself is taken: one refused as a conflict voids nothing.
     await applyVoiding(enriched, id, store, boundRegistration(req), r => notifyVoidApplied(r, id, tenantOf(req), config));
     ids.push(id);
-    persistAttachmentData(enriched, multipartParts, attachStore);
-    notifyStatementStored(enriched, tenantOf(req), config);
+    await notifyStatementStored(enriched, tenantOf(req), config);
     recordInboundIfForwarded(req, enriched);
     // Forward to the OWNER's targets (per-user self-sovereign forwarding) when
     // the actor resolves to an owner; else the caller's tenant. So user A's
@@ -846,7 +835,7 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
  * automated review of #487). The store evaluates the guard against the very record it marks.
  */
 async function applyVoiding(stmt: Record<string, unknown>, voidingId: string, store: StatementStore, registration: string | undefined,
-  onApplied?: (target: StoredStatement) => void): Promise<void> {
+  onApplied?: (target: StoredStatement) => void | Promise<void>): Promise<void> {
   const target = isVoidingStatement(stmt);
   if (!target) return;
   const marked = await store.markVoided(target, voidingId, (existing) => !isVoidingStatement(existing.statement)
@@ -854,7 +843,7 @@ async function applyVoiding(stmt: Record<string, unknown>, voidingId: string, st
   // Told only once it took effect, with the statement as the store now holds it.
   if (!marked || !onApplied) return;
   const voided = await store.get(target);
-  if (voided) onApplied(voided);
+  if (voided) await onApplied(voided);
 }
 
 /** Validate the structural headers of every non-first multipart part. */
@@ -896,27 +885,20 @@ function collectAttachmentHashes(batch: Record<string, unknown>[]): Set<string> 
   return out;
 }
 
-/** Persist a Statement's attachment bytes so `?attachments=true` can serve them. */
-function persistAttachmentData(
-  stmt: Record<string, unknown>,
-  parts: Map<string, MultipartPart> | null,
-  attachStore: Map<string, { data: Buffer; contentType: string }>,
-): void {
-  if (!parts) return;
-  const attachments = stmt.attachments;
-  if (!Array.isArray(attachments)) return;
-  for (const att of attachments) {
-    if (!att || typeof att !== 'object') continue;
-    const a = att as Record<string, unknown>;
-    const sha2 = typeof a.sha2 === 'string' ? a.sha2 : '';
-    const part = parts.get(sha2);
-    if (part) {
-      cappedMapSet(attachStore, sha2, {
-        data: part.body,
-        contentType: typeof a.contentType === 'string' ? a.contentType : 'application/octet-stream',
-      });
-    }
+/** A statement and all supplied attachment bytes are committed together by the PG primary. */
+async function putStatementWithAttachments(store: StatementStore, tenant: TenantId, record: StoredStatement, parts: Map<string, MultipartPart> | null): Promise<void> {
+  const attachments = new Map<string, { data: Buffer; contentType: string }>();
+  for (const sha of collectAttachmentHashes([record.statement])) {
+    const part = parts?.get(sha);
+    if (part) attachments.set(sha, { data: part.body, contentType: part.headers['content-type'] ?? 'application/octet-stream' });
   }
+  if (store instanceof PostgresLrsStore) {
+    await store.putWithAttachments(record, attachments);
+    return;
+  }
+  await store.put(record);
+  const target = attachmentStores.for(tenant);
+  for (const [sha, attachment] of attachments) cappedMapSet(target, sha, attachment);
 }
 
 /**
@@ -1015,15 +997,14 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   const store = statementStores.for(tenantOf(req));
   const enriched = ensureStatementFields(stmt, { homePage: config.selfBaseUrl, name: 'foxxi-lrs' });
   try {
-    await store.put({ id: statementId, statement: enriched, stored: enriched.stored as string, voided: false });
+    await putStatementWithAttachments(store, tenantOf(req), { id: statementId, statement: enriched, stored: enriched.stored as string, voided: false }, multipartParts);
   } catch (err) {
     if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
     throw err;
   }
   // Voided only once the voiding statement itself is taken: one refused as a conflict voids nothing.
   await applyVoiding(enriched, statementId, store, boundRegistration(req), r => notifyVoidApplied(r, statementId, tenantOf(req), config));
-  persistAttachmentData(enriched, multipartParts, attachmentStores.for(tenantOf(req)));
-  notifyStatementStored(enriched, tenantOf(req), config);
+  await notifyStatementStored(enriched, tenantOf(req), config);
   recordInboundIfForwarded(req, enriched);
   forwardToTargets(config.ownerTenantOfStatement?.(enriched) ?? tenantOf(req), enriched).catch(() => undefined);
   res.status(204).end();
@@ -1042,10 +1023,10 @@ function recordInboundIfForwarded(req: Request, stmt: Record<string, unknown>): 
 }
 
 /** Fire the applied-void hook (the bridge keeps an applied void with the voided statement's owner). */
-function notifyVoidApplied(target: StoredStatement, voidingStatementId: string, tenant: TenantId, config: XapiLrsConfig): void {
+async function notifyVoidApplied(target: StoredStatement, voidingStatementId: string, tenant: TenantId, config: XapiLrsConfig): Promise<void> {
   if (!config.onVoidApplied) return;
   try {
-    config.onVoidApplied(target, voidingStatementId, tenant);
+    await config.onVoidApplied(target, voidingStatementId, tenant);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[foxxi-lrs] onVoidApplied hook threw:', (err as Error).message);
@@ -1053,10 +1034,10 @@ function notifyVoidApplied(target: StoredStatement, voidingStatementId: string, 
 }
 
 /** Fire the post-store hook (the cmi5 LMS watches moveOn through it). */
-function notifyStatementStored(stmt: Record<string, unknown>, tenant: TenantId, config: XapiLrsConfig): void {
+async function notifyStatementStored(stmt: Record<string, unknown>, tenant: TenantId, config: XapiLrsConfig): Promise<void> {
   if (!config.onStatementStored) return;
   try {
-    config.onStatementStored(stmt, tenant);
+    await config.onStatementStored(stmt, tenant);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[foxxi-lrs] onStatementStored hook threw:', (err as Error).message);
@@ -1200,7 +1181,7 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
   const wantAttachments = (req.query.attachments as string | undefined) === 'true';
   const tenant = tenantOf(req);
   const store = statementStores.for(tenant);
-  const attachStore = attachmentStores.for(tenant);
+  const attachment = (sha: string) => store instanceof PostgresLrsStore ? store.getAttachment(sha) : Promise.resolve(attachmentStores.for(tenant).get(sha));
 
   if (statementId !== undefined) {
     if (!isUuid(statementId)) { res.status(400).json({ error: 'statementId must be a UUID' }); return; }
@@ -1208,7 +1189,7 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     const outside = rec !== null && rec !== undefined && boundRegistration(req) !== undefined && registrationOfStatement(rec.statement) !== boundRegistration(req);
     if (!rec || rec.voided || outside) { res.status(404).json({ error: 'statement not found or voided' }); return; }
     res.setHeader('Last-Modified', new Date(rec.stored).toUTCString());
-    sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments, attachStore);
+    await sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments, attachment);
     return;
   }
   if (voidedStatementId !== undefined) {
@@ -1217,13 +1198,13 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     const outside = rec !== null && rec !== undefined && boundRegistration(req) !== undefined && registrationOfStatement(rec.statement) !== boundRegistration(req);
     if (!rec || !rec.voided || outside) { res.status(404).json({ error: 'statement not voided (use ?statementId= for non-voided)' }); return; }
     res.setHeader('Last-Modified', new Date(rec.stored).toUTCString());
-    sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments, attachStore);
+    await sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments, attachment);
     return;
   }
 
   const limitRaw = req.query.limit;
-  if (limitRaw !== undefined && (Number.isNaN(Number(limitRaw)) || Number(limitRaw) < 0)) {
-    res.status(400).json({ error: 'limit must be a non-negative integer' });
+  if (limitRaw !== undefined && (typeof limitRaw !== 'string' || !Number.isSafeInteger(Number(limitRaw)) || Number(limitRaw) < 0)) {
+    res.status(400).json({ error: 'limit must be a non-negative safe integer' });
     return;
   }
   let agent: Record<string, unknown> | undefined;
@@ -1249,6 +1230,10 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
   // and letting a caller half-override it would produce a page sequence that is
   // neither the original query nor a coherent new one.
   const resumed = decodeCursor(cursorToken)?.q;
+  if (cursorToken && !decodeCursor(cursorToken)) { res.status(400).json({ error: 'invalid continuation token' }); return; }
+  if (resumed?.limit !== undefined && (!Number.isSafeInteger(resumed.limit) || resumed.limit < 0)) {
+    res.status(400).json({ error: 'continuation limit must be a non-negative safe integer' }); return;
+  }
   const bound = boundRegistration(req);
   const askedRegistration = resumed ? resumed.registration : (req.query.registration as string | undefined);
   if (bound !== undefined && askedRegistration !== undefined && askedRegistration !== bound) {
@@ -1282,16 +1267,6 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     if (voiding) { recs.push(voiding); includedIds.add(voiding.id); }
   }
 
-  // Consistent-Through honesty for DERIVED-VIEW (lens) tenants: these are
-  // in-memory, re-projectable caches of the agent's own pod — not a durable
-  // system of record. Advertise the horizon actually materialized (the newest
-  // stored statement), never the gate's "now", so a consumer can't mistake a
-  // freshly-restarted / partly-rebuilt view for a durable LRS. Durable backends
-  // (the certified DEFAULT/customer LRS) keep now().
-  if (isDerivedViewTenant(String(tenant))) {
-    const horizon = all.reduce((m, r) => (r.stored > m ? r.stored : m), '1970-01-01T00:00:00.000Z');
-    res.setHeader('X-Experience-API-Consistent-Through', horizon);
-  }
   // The `limit` parameter caps the *whole* result, including any Voiding
   // Statements surfaced above.
   if (filter.limit && filter.limit > 0 && recs.length > filter.limit) {
@@ -1301,12 +1276,12 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
   const moreUrl = result.more
     ? `/xapi/statements?continuationToken=${encodeURIComponent(result.more)}`
     : '';
-  sendStatementsResponse(
+  await sendStatementsResponse(
     res,
     { statements: recs.map(r => applyFormat(r.statement, format, langs)), more: moreUrl },
     recs.map(r => r.statement),
     wantAttachments,
-    attachStore,
+    attachment,
   );
 }
 
@@ -1316,13 +1291,13 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
  * followed by one binary part per attachment whose raw data the LRS
  * holds. Otherwise it is plain `application/json`.
  */
-function sendStatementsResponse(
+async function sendStatementsResponse(
   res: Response,
   payload: Record<string, unknown>,
   statements: Record<string, unknown>[],
   wantAttachments: boolean,
-  attachStore: Map<string, { data: Buffer; contentType: string }>,
-): void {
+  attachment: (sha: string) => Promise<{ data: Buffer; contentType: string } | null | undefined>,
+): Promise<void> {
   if (!wantAttachments) { res.status(200).json(payload); return; }
   const boundary = `foxxi-${randomUUID()}`;
   const chunks: Buffer[] = [];
@@ -1332,7 +1307,7 @@ function sendStatementsResponse(
   text('\r\n');
   const emitted = new Set<string>();
   for (const sha2 of collectAttachmentHashes(statements)) {
-    const data = attachStore.get(sha2);
+    const data = await attachment(sha2);
     if (!data || emitted.has(sha2)) continue;
     emitted.add(sha2);
     text(`--${boundary}\r\nContent-Type: ${data.contentType}\r\n`
@@ -1372,6 +1347,45 @@ function handleAbout(req: Request, res: Response, config: XapiLrsConfig): void {
 // ── State / profile document resources ──────────────────────────────
 
 type DocKind = 'state' | 'activityProfile' | 'agentProfile';
+interface DocumentStore {
+  get(key: string): Promise<StoredDoc | null>;
+  list(): Promise<Array<[string, StoredDoc]>>;
+  update<R>(key: string, change: (current: StoredDoc | null) => { value: StoredDoc | null; result: R }): Promise<R>;
+  delete(key: string): Promise<void>;
+}
+function documentStore(tenant: TenantId, kind: DocKind): DocumentStore {
+  const primary = statementStores.for(tenant);
+  if (primary instanceof PostgresLrsStore) return {
+    get: key => primary.getResource<StoredDoc>(kind, key),
+    list: () => primary.listResources<StoredDoc>(kind),
+    update: (key, change) => primary.updateResource(kind, key, change),
+    delete: key => primary.deleteResource(kind, key),
+  };
+  const map = (kind === 'state' ? stateStores : kind === 'activityProfile' ? activityProfileStores : agentProfileStores).for(tenant);
+  return {
+    get: async key => map.get(key) ?? null,
+    list: async () => [...map],
+    update: async (key, change) => {
+      const next = change(map.get(key) ?? null);
+      if (next.value === null) map.delete(key); else cappedMapSet(map, key, next.value);
+      return next.result;
+    },
+    delete: async key => { map.delete(key); },
+  };
+}
+/** Entity-tag lists use strong comparison for If-Match and weak comparison for If-None-Match. */
+function matchesDocumentEtag(header: string, existing: StoredDoc | null, weak: boolean): boolean {
+  if (header.trim() === '*') return existing !== null;
+  if (!existing) return false;
+  return header.split(',').some(raw => {
+    const tag = raw.trim();
+    return (weak && tag.startsWith('W/') ? tag.slice(2) : tag) === existing.etag;
+  });
+}
+class DocumentRefusal extends Error {
+  constructor(readonly status: number, message: string, readonly plain = false) { super(message); }
+}
+
 
 function stateKey(activityId: string, agent: string, stateId: string, registration?: string): string {
   return `${activityId}::${agent}::${stateId}::${registration ?? ''}`;
@@ -1386,16 +1400,18 @@ export interface StateAddress { readonly activityId: string; readonly agent: str
  * before the AU reads it (cmi5 §10); this is that write, stored exactly as a PUT to the State
  * resource would store it, so the AU's GET finds it.
  */
-export function stageStateDocument(tenant: TenantId, at: StateAddress, content: Record<string, unknown>): void {
+export async function stageStateDocument(tenant: TenantId, at: StateAddress, content: Record<string, unknown>): Promise<void> {
   const body = JSON.stringify(content);
   const etag = `"${createHash('sha1').update(body).digest('hex')}"`;
-  cappedMapSet(stateStores.for(tenant), stateKey(at.activityId, at.agent, at.stateId, at.registration), { content, etag, updated: nowIso(), contentType: 'application/json' });
+  const key = stateKey(at.activityId, at.agent, at.stateId, at.registration);
+  const doc = { content, etag, updated: nowIso(), contentType: 'application/json' };
+  await documentStore(tenant, 'state').update(key, () => ({ value: doc, result: undefined }));
   xapiDocsPodDirty();
 }
 
 /** Read a State document the way the State resource's GET would find it; undefined when absent. */
-export function readStateDocument(tenant: TenantId, at: StateAddress): unknown {
-  return stateStores.for(tenant).get(stateKey(at.activityId, at.agent, at.stateId, at.registration))?.content;
+export async function readStateDocument(tenant: TenantId, at: StateAddress): Promise<unknown> {
+  return (await documentStore(tenant, 'state').get(stateKey(at.activityId, at.agent, at.stateId, at.registration)))?.content;
 }
 function profileKey(iri: string, profileId: string): string {
   return `${iri}::${profileId}`;
@@ -1412,12 +1428,12 @@ function readDocBody(req: Request): { value: unknown; contentType: string } {
  * required-parameter rules (missing → 400), `agent` JSON validity,
  * optimistic concurrency, JSON-document merge on POST, and HEAD.
  */
-function handleDocResource(
+async function handleDocResource(
   kind: DocKind,
-  resourceStore: Map<string, StoredDoc>,
+  resourceStore: DocumentStore,
   req: Request,
   res: Response,
-): void {
+): Promise<void> {
   const q = req.query as Record<string, string>;
   const method = req.method === 'HEAD' ? 'GET' : req.method;
 
@@ -1493,17 +1509,17 @@ function handleDocResource(
     if (!docId) {
       // Multiple-document GET — return the array of document ids in scope.
       const since = q.since ? Date.parse(q.since) : NaN;
-      const ids = [...resourceStore.entries()]
+      const ids = (await resourceStore.list())
         .filter(([k]) => inScope(k))
         .filter(([, v]) => Number.isNaN(since) || Date.parse(v.updated) > since)
         .map(([k]) => k.slice(scopePrefix.length + 2).split('::')[0]);
       res.status(200).json(ids);
       return;
     }
-    const v = resourceStore.get(key);
+    const v = await resourceStore.get(key);
     if (!v) { res.status(404).end(); return; }
     const ifNoneMatch = req.headers['if-none-match'] as string | undefined;
-    if (ifNoneMatch && (ifNoneMatch === v.etag || ifNoneMatch === '*')) {
+    if (ifNoneMatch && matchesDocumentEtag(ifNoneMatch, v, true)) {
       res.status(304).setHeader('ETag', v.etag).end();
       return;
     }
@@ -1515,80 +1531,45 @@ function handleDocResource(
     return;
   }
 
-  // ── PUT / POST ──────────────────────────────────────────────────
-  if (method === 'PUT' || method === 'POST') {
-    const existing = resourceStore.get(key);
-    const ifMatch = req.headers['if-match'] as string | undefined;
-    const ifNoneMatch = req.headers['if-none-match'] as string | undefined;
-    // §4.1.4 concurrency: a PUT that would overwrite an existing document
-    // without a precondition is rejected 409 (lost-update guard). A POST
-    // is a document *merge* and is exempt — it never needs a precondition.
-    if (method === 'PUT' && existing && !ifMatch && !ifNoneMatch) {
-      // Plain-text body: the xAPI conformance suite asserts the 409 response has a
-      // non-empty `text` (raw string) explaining the situation — superagent only
-      // populates res.text for non-JSON responses, so this MUST NOT be JSON.
-      res.status(409).type('text/plain').send('Conflict: a document already exists at this resource. Supply If-Match (to replace) or If-None-Match (to guard) on the PUT, per xAPI §6.3 concurrency.');
-      return;
+  // Preconditions and document merge run under the primary's transaction lock.
+  if (method === 'PUT' || method === 'POST' || (method === 'DELETE' && docId)) {
+    try {
+      const etag = await resourceStore.update(key, existing => {
+        const ifMatch = req.headers['if-match'] as string | undefined;
+        const ifNoneMatch = req.headers['if-none-match'] as string | undefined;
+        if (method === 'PUT' && existing && !ifMatch && !ifNoneMatch) {
+          throw new DocumentRefusal(409, 'Conflict: a document already exists at this resource. Supply If-Match (to replace) or If-None-Match (to guard) on the PUT, per xAPI §6.3 concurrency.', true);
+        }
+        if (ifMatch && !matchesDocumentEtag(ifMatch, existing, false)) throw new DocumentRefusal(412, 'If-Match precondition failed');
+        if (ifNoneMatch && matchesDocumentEtag(ifNoneMatch, existing, true)) throw new DocumentRefusal(412, 'If-None-Match precondition failed — document exists');
+        if (method === 'DELETE') return { value: null, result: undefined };
+        const { value, contentType } = readDocBody(req);
+        let stored: unknown = value;
+        let storedCt = contentType;
+        if (method === 'POST' && existing) {
+          if (!contentType.toLowerCase().includes('application/json') || !existing.contentType.toLowerCase().includes('application/json')) {
+            throw new DocumentRefusal(400, 'POST can only update a document when both the stored and the new document are application/json');
+          }
+          if (!isPlainObject(existing.content) || !isPlainObject(value)) throw new DocumentRefusal(400, 'POST merge requires both documents to be JSON objects');
+          stored = { ...existing.content, ...value };
+          storedCt = 'application/json';
+        }
+        const bytes = Buffer.isBuffer(stored) ? stored : typeof stored === 'string' ? stored : JSON.stringify(stored);
+        const nextEtag = `"${createHash('sha1').update(bytes).digest('hex')}"`;
+        return { value: { content: stored, etag: nextEtag, updated: nowIso(), contentType: storedCt }, result: nextEtag };
+      });
+      xapiDocsPodDirty();
+      if (etag) res.setHeader('ETag', etag);
+      res.status(204).end();
+    } catch (err) {
+      if (!(err instanceof DocumentRefusal)) throw err;
+      if (err.plain) res.status(err.status).type('text/plain').send(err.message);
+      else res.status(err.status).json({ error: err.message });
     }
-    if (ifMatch && (!existing || existing.etag !== ifMatch)) {
-      res.status(412).json({ error: 'If-Match precondition failed' });
-      return;
-    }
-    if (ifNoneMatch === '*' && existing) {
-      res.status(412).json({ error: 'If-None-Match: * precondition failed — document exists' });
-      return;
-    }
-
-    const { value, contentType } = readDocBody(req);
-    let stored: unknown = value;
-    let storedCt = contentType;
-
-    if (method === 'POST' && existing) {
-      // §4.2.x: POST merges JSON documents; if either side is non-JSON
-      // the merge is impossible and the LRS MUST respond 400.
-      const newIsJson = contentType.toLowerCase().includes('application/json');
-      const oldIsJson = existing.contentType.toLowerCase().includes('application/json');
-      if (!newIsJson || !oldIsJson) {
-        res.status(400).json({ error: 'POST can only update a document when both the stored and the new document are application/json' });
-        return;
-      }
-      if (!isPlainObject(existing.content) || !isPlainObject(value)) {
-        res.status(400).json({ error: 'POST merge requires both documents to be JSON objects' });
-        return;
-      }
-      stored = { ...(existing.content as Record<string, unknown>), ...(value as Record<string, unknown>) };
-      storedCt = 'application/json';
-    }
-
-    // Strong, content-addressed ETag: a 40-hex SHA-1 of the stored body enclosed
-    // in double quotes. The xAPI conformance suite asserts the quoted form
-    // (etag[0] === '"' and etag[41] === '"'), which requires exactly 40 chars
-    // between the quotes — a UUID (36) is too short. SHA-1 also makes the ETag
-    // change iff the content changes (correct concurrency semantics).
-    const etagBody = typeof stored === 'string' ? stored : JSON.stringify(stored);
-    const etag = `"${createHash('sha1').update(etagBody).digest('hex')}"`;
-    cappedMapSet(resourceStore, key, { content: stored, etag, updated: nowIso(), contentType: storedCt });
-    xapiDocsPodDirty();
-    res.setHeader('ETag', etag);
-    res.status(204).end();
     return;
   }
-
-  // ── DELETE ──────────────────────────────────────────────────────
   if (method === 'DELETE') {
-    if (docId) {
-      const existing = resourceStore.get(key);
-      const ifMatch = req.headers['if-match'] as string | undefined;
-      if (ifMatch && (!existing || existing.etag !== ifMatch)) {
-        res.status(412).json({ error: 'If-Match precondition failed' });
-        return;
-      }
-      resourceStore.delete(key);
-    } else {
-      for (const k of Array.from(resourceStore.keys())) {
-        if (inScope(k)) resourceStore.delete(k);
-      }
-    }
+    for (const [k] of await resourceStore.list()) if (inScope(k)) await resourceStore.delete(k);
     xapiDocsPodDirty();
     res.status(204).end();
     return;
@@ -1711,12 +1692,12 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
   }
 
   // Statements resource.
-  app.post('/xapi/statements', gate, rawMultipart, (req, res) => { void handlePostStatements(req, res, config); });
-  app.put('/xapi/statements', gate, rawMultipart, (req, res) => { void handlePutStatement(req, res, config); });
-  app.get('/xapi/statements', gate, (req, res) => { void handleGetStatements(req, res); });
+  app.post('/xapi/statements', gate, rawMultipart, async (req, res) => { await handlePostStatements(req, res, config); });
+  app.put('/xapi/statements', gate, rawMultipart, async (req, res) => { await handlePutStatement(req, res, config); });
+  app.get('/xapi/statements', gate, async (req, res) => { await handleGetStatements(req, res); });
 
   // Activities + Agents inspection helpers.
-  app.get('/xapi/activities', gate, (req, res) => { void (async () => {
+  app.get('/xapi/activities', gate, async (req, res) => {
     if (rejectUnknownParams(req, res, ['activityId'])) return;
     const id = req.query.activityId as string | undefined;
     if (!id) { res.status(400).json({ error: '"activityId" is a required parameter' }); return; }
@@ -1754,9 +1735,9 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
     }
     if (Object.keys(mergedDef).length > 0) merged.definition = mergedDef;
     res.status(200).json(merged);
-  })(); });
+  });
 
-  app.get('/xapi/agents', gate, (req, res) => { void (async () => {
+  app.get('/xapi/agents', gate, async (req, res) => {
     if (rejectUnknownParams(req, res, ['agent'])) return;
     const agentJson = req.query.agent as string | undefined;
     if (!agentJson) { res.status(400).json({ error: '"agent" is a required parameter' }); return; }
@@ -1806,25 +1787,25 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
     if (openids.size) person.openid = [...openids];
     if (accounts.length) person.account = accounts;
     res.status(200).json(person);
-  })(); });
+  });
 
   // State + profile document resources — GET/PUT/POST/DELETE/HEAD.
   // Each resource's store is tenant-partitioned; the per-request store
   // is resolved from the gated request's tenant.
-  const docResources: Array<[string, DocKind, TenantPartition<Map<string, StoredDoc>>]> = [
-    ['/xapi/activities/state', 'state', stateStores],
-    ['/xapi/activities/profile', 'activityProfile', activityProfileStores],
-    ['/xapi/agents/profile', 'agentProfile', agentProfileStores],
+  const docResources: Array<[string, DocKind]> = [
+    ['/xapi/activities/state', 'state'],
+    ['/xapi/activities/profile', 'activityProfile'],
+    ['/xapi/agents/profile', 'agentProfile'],
   ];
-  for (const [path, kind, docStores] of docResources) {
+  for (const [path, kind] of docResources) {
     const allowed = kind === 'state' ? STATE_PARAMS
       : kind === 'activityProfile' ? ACTIVITY_PROFILE_PARAMS : AGENT_PROFILE_PARAMS;
     const paramGate = (req: Request, res: Response, next: NextFunction): void => {
       if (rejectUnknownParams(req, res, allowed)) return;
       next();
     };
-    const handle = (req: Request, res: Response): void =>
-      handleDocResource(kind, docStores.for(tenantOf(req)), req, res);
+    const handle = async (req: Request, res: Response): Promise<void> =>
+      handleDocResource(kind, documentStore(tenantOf(req), kind), req, res);
     app.get(path, gate, paramGate, handle);
     app.head(path, gate, paramGate, handle);
     app.put(path, gate, paramGate, rawDoc, handle);
@@ -1840,8 +1821,8 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
     if (res.headersSent) { next(err); return; }
     setXapiHeaders(res, negotiateVersion(req));
     const isParse = err.type === 'entity.parse.failed' || err instanceof SyntaxError;
-    res.status(isParse ? 400 : (err.status ?? 500)).json({
-      error: isParse ? 'request body is not valid JSON' : (err.message || 'internal error'),
+    res.status(isParse ? 400 : (err.status ?? 503)).json({
+      error: isParse ? 'request body is not valid JSON' : 'LRS storage operation unavailable',
     });
   });
 }

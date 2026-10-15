@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-15 — Durable primary LRS storage and preservation hold
+
+Foxxi now has an encrypted PostgreSQL primary for tenant-separated statements, voids, attachment bytes and State/Profile documents. HTTP success and internal emission await commits; database failures do not select memory. A persistent tenant registry supports inventory after restart, and key verification refuses an accidentally changed encryption key rather than presenting empty history. Deployed bridges refuse volatile primary storage, including the former lens-tenant overrides. The desired Railway configuration references the existing database.
+
+The old process remains on hold until its in-memory records are preserved or their specified loss is knowingly accepted. A read-only inventory of the existing Basic-credential scope found no records in that scope and does not classify or back up the 779 process-wide resident statements. Source and log evidence distinguish pod-derived event candidates from verified primary records; no subtraction of those counts establishes the remaining risk. Real PostgreSQL recovery tests are part of the existing Bridge Typecheck workflow. The operations note and bounded source audit document remaining non-LRS primary-state gaps without claiming whole-system durability.
+
 ## 2026-10-15 — Live capability directory and workbench examples
 
 The I2IDL-X directory now reads current Foxxi and Relay contracts, including the twelve operations absent from its embedded snapshot. Typed inputs, editable examples and returned evidence distinguish a live execution from input validation or a task packet for a connected AI client. Protected writes remain in that client’s authenticated flow; credentials are refused by the public example runner.

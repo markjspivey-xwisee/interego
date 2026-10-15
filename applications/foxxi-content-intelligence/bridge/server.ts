@@ -438,7 +438,8 @@ import {
   type AccessDecisionTrace,
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
-import { attachXapiLrsRoutes, internalRefusalOf, keepStatementsWhole, listStoredStatements, storeStatementDurably, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
+import { readyStatementStore } from '../src/statement-store.js';
+import { attachXapiLrsRoutes, internalRefusalOf, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
@@ -1985,12 +1986,13 @@ async function bindSignedCaller(body: unknown, opts: { hint?: string } = {}): Pr
 
 /** Land one projected mesh event into its agent's OWN derived-view tenant
  *  (`lens:<agent>`) — the PUSH path, single event, no batch contention. */
-function landMeshEvent(ev: ProjectedMeshEvent): void {
-  storeStatementInternal(ev.statement, lensTenantFor(ev.agent));
+async function landMeshEvent(ev: ProjectedMeshEvent): Promise<void> {
+  const id = await storeStatementDurably(ev.statement, lensTenantFor(ev.agent));
+  if (!id) throw new Error('projected statement was not committed');
 }
 
-/** Land a batch into each event's per-agent `lens:<agent>` view (memory-backed
- *  derived index — no pod write, no manifest contention). Idempotent on the
+/** Land a batch into each event's per-agent `lens:<agent>` partition, using the
+ *  configured primary (encrypted PG in deployed environments). Idempotent on the
  *  deterministic statement id, so re-projection each cycle is a true no-op. */
 async function landMeshBatch(events: ProjectedMeshEvent[]): Promise<number> {
   let landed = 0;
@@ -5838,7 +5840,7 @@ const instrumentedHandlers = Object.fromEntries(
               }
             } catch { /* ignore — unverified → anonymous attribution */ }
           }
-          emitAffordanceStatement({
+          await emitAffordanceStatement({
             toolName: name,
             caller: callerCtx,
             args,
@@ -5969,18 +5971,22 @@ const app = createVerticalBridge({
       },
       // cmi5 moveOn orchestration — after each Statement is stored, the
       // LMS re-evaluates the AU's moveOn and auto-emits `satisfied`.
-      onStatementStored: (stmt, tenant) => {
+      onStatementStored: async (stmt, tenant) => {
         // A learner's own cmi5 launch (POST /agent/cmi5/launch) keeps its record on the learner's
         // pod as well as in the lens: the AU's statements, and the LMS's `satisfied` below.
         const reg = (stmt.context as { registration?: string } | undefined)?.registration;
         const own = reg ? signedLaunchLearner(reg, tenant) : undefined;
         if (own) keepCmi5OnLearnerPod(stmt, own);
-        void observeCmi5Statement(stmt, tenant, {
+        await observeCmi5Statement(stmt, tenant, {
           statementsForRegistration: async (reg) =>
             (await getStatementStore(tenant).query({ registration: reg, limit: 500 }))
               .statements.map(r => r.statement),
-          emit: (s) => { const id = storeStatementInternal(s, tenant); if (id && own) keepCmi5OnLearnerPod({ ...s, id }, own); },
-        }).catch(() => undefined);
+          emit: async (s) => {
+            const id = await storeStatementDurably(s, tenant);
+            if (!id) throw new Error('cmi5 satisfaction statement was not committed');
+            if (own) keepCmi5OnLearnerPod({ ...s, id }, own);
+          },
+        });
       },
       // A void that took effect is kept with the voided statement's owner (keepAppliedVoid).
       onVoidApplied: (target, voidingStatementId) => { void keepAppliedVoid(target.statement, voidingStatementId); },
@@ -10968,7 +10974,7 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       ...(returnUrl ? { returnUrl } : {}),
       learnerPod: learner.podUrl,
     });
-    stageLaunchData(tenant, launch, au.id);
+    await stageLaunchData(tenant, launch, au.id);
     res.json({
       kind: 'cmi5-launch', courseId: course.id, auId: au.id, auTitle: au.title, moveOn: au.moveOn,
       ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}),
@@ -12470,7 +12476,7 @@ app.post('/agent/mesh-event', async (req, res) => {
     }
     const ev = projectMeshEntry(entry, originPod, MESH_ACTOR_LABELS);
     if (!ev) { res.json({ ok: true, projected: false, reason: 'descriptor lacks a projectable envelope' }); return; }
-    landMeshEvent(ev);
+    await landMeshEvent(ev);
     res.json({ ok: true, projected: true, mode: ev.mode, agent: ev.agent, statementId: ev.statement.id, tenant: lensTenantFor(ev.agent) });
   } catch (err) {
     // Generic body (never leak stack/path detail) AND log server-side for operators (round-49).
@@ -12532,6 +12538,8 @@ app.use((err: unknown, _req: import('express').Request, res: import('express').R
   res.status(status).json({ ok: false, error: status === 400 ? 'invalid request body (malformed JSON)' : 'internal error' });
 });
 
+// A deployed bridge does not accept requests before its encrypted primary is ready.
+await readyStatementStore();
 app.listen(PORT, () => {
   console.log(`foxxi-content-intelligence bridge on http://localhost:${PORT}`);
   console.log(`  MCP endpoint:        http://localhost:${PORT}/mcp`);

@@ -32,7 +32,7 @@
 
 import { randomUUID } from 'node:crypto';
 import express, { type Express, type Request, type Response } from 'express';
-import { DEFAULT_TENANT, TenantPartition, tenantIdOf, type TenantId } from './tenant-context.js';
+import { DEFAULT_TENANT, TenantPartition, type TenantId } from './tenant-context.js';
 import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { buildCmi5Statement, evaluateMoveOn } from './cmi5.js';
 import {
@@ -249,13 +249,33 @@ function courseContainingAu(tenant: TenantId, auId: string): Cmi5Course | undefi
  * satisfied, and for the course itself once every AU is — each emitted
  * at most once per learner.
  */
-function rollupCourse(
+// These maps coordinate in-flight commits only; durable evidence remains in the LRS primary.
+const satisfactionCommits = new Map<string, Promise<unknown>>();
+function serializeSatisfaction<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const prior = satisfactionCommits.get(key) ?? Promise.resolve();
+  const next = prior.catch(() => undefined).then(work);
+  satisfactionCommits.set(key, next);
+  const cleanup = (): void => { if (satisfactionCommits.get(key) === next) satisfactionCommits.delete(key); };
+  void next.then(cleanup, cleanup);
+  return next;
+}
+async function rollupCourse(
+  tenant: TenantId, learner: { id: string; name?: string }, authoritativeSource: string,
+  emit: (statement: Record<string, unknown>) => void | Promise<void>, auId: string,
+): Promise<void> {
+  const course = courseContainingAu(tenant, auId);
+  if (!course) return;
+  await serializeSatisfaction(JSON.stringify(['rollup', tenant, course.id, learner.id]), () =>
+    rollupCourseUnlocked(tenant, learner, authoritativeSource, emit, auId));
+}
+
+async function rollupCourseUnlocked(
   tenant: TenantId,
   learner: { id: string; name?: string },
   authoritativeSource: string,
-  emit: (statement: Record<string, unknown>) => void,
+  emit: (statement: Record<string, unknown>) => void | Promise<void>,
   auId: string,
-): void {
+): Promise<void> {
   const course = courseContainingAu(tenant, auId);
   if (!course) return;
   const key = `${tenant}|${course.id}|${learner.id}`;
@@ -265,8 +285,8 @@ function rollupCourse(
   let reg = courseEnrollmentReg.get(key);
   if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); }
 
-  const emitSatisfied = (activityId: string): void => {
-    emit(buildCmi5Statement({
+  const emitSatisfied = async (activityId: string): Promise<void> => {
+    await emit(buildCmi5Statement({
       verb: 'satisfied',
       actor: {
         account: { homePage: authoritativeSource, name: learner.id },
@@ -280,15 +300,15 @@ function rollupCourse(
   for (const block of flatBlocks(course)) {
     const ids = blockAuIds(block);
     if (ids.length > 0 && ids.every(id => satisfied.has(id)) && !emitted.has(block.id)) {
+      await emitSatisfied(block.id);
       emitted.add(block.id);
-      emitSatisfied(block.id);
     }
   }
   // The course is satisfied once every AU is.
   const allAus = flatAus(course).map(a => a.id);
   if (allAus.length > 0 && allAus.every(id => satisfied.has(id)) && !emitted.has(course.id)) {
+    await emitSatisfied(course.id);
     emitted.add(course.id);
-    emitSatisfied(course.id);
   }
 }
 
@@ -376,8 +396,8 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
  * the AU's activity id, the launch's actor as the JSON string the launch URL carries, the
  * registration. Before this, the launch returned the document and only told the caller to stage it.
  */
-export function stageLaunchData(tenant: TenantId, launch: Cmi5Launch, auId: string): void {
-  stageStateDocument(tenant, { activityId: auId, agent: JSON.stringify(launch.actor), stateId: 'LMS.LaunchData', registration: launch.registration }, launch.launchData);
+export async function stageLaunchData(tenant: TenantId, launch: Cmi5Launch, auId: string): Promise<void> {
+  await stageStateDocument(tenant, { activityId: auId, agent: JSON.stringify(launch.actor), stateId: 'LMS.LaunchData', registration: launch.registration }, launch.launchData);
 }
 
 /**
@@ -454,7 +474,7 @@ export interface Cmi5ObserveDeps {
   /** All stored statements carrying this registration. */
   statementsForRegistration: (registration: string) => Promise<Array<Record<string, unknown>>>;
   /** Persist a statement (the `satisfied` statement) into the tenant's LRS. */
-  emit: (statement: Record<string, unknown>) => void;
+  emit: (statement: Record<string, unknown>) => void | Promise<void>;
 }
 
 /** The result of observing one statement against a tracked launch. */
@@ -478,6 +498,15 @@ export interface Cmi5ObserveResult {
  * emitted `satisfied` statement is itself ignored — no loop.
  */
 export async function observeCmi5Statement(
+  statement: Record<string, unknown>, tenant: TenantId, deps: Cmi5ObserveDeps,
+): Promise<Cmi5ObserveResult | null> {
+  const registration = (statement.context as { registration?: string } | undefined)?.registration;
+  if (!registration) return null;
+  return serializeSatisfaction(JSON.stringify(['registration', tenant, registration]), () =>
+    observeCmi5StatementUnlocked(statement, tenant, deps));
+}
+
+async function observeCmi5StatementUnlocked(
   statement: Record<string, unknown>,
   tenant: TenantId,
   deps: Cmi5ObserveDeps,
@@ -490,6 +519,7 @@ export async function observeCmi5Statement(
   const verbId = (statement.verb as { id?: string } | undefined)?.id;
   if (!verbId || verbId === V_SATISFIED || !CMI5_LIFECYCLE.has(verbId)) return null;
   if (launch.satisfied) {
+    await rollupCourse(tenant, launch.learner, launch.authoritativeSource, deps.emit, launch.auId);
     return { registration, satisfied: true, reason: launch.reason, emittedSatisfied: false };
   }
 
@@ -521,11 +551,7 @@ export async function observeCmi5Statement(
     return { registration, satisfied: false, reason: decision.reason, emittedSatisfied: false };
   }
 
-  // moveOn met — record it and emit the AU's cmi5 `satisfied` statement.
-  launch.satisfied = true;
-  launch.satisfiedAt = new Date().toISOString();
-  markAuSatisfied(tenant, launch.learner.id, launch.auId);
-  cmi5PodDirty();
+  // Record satisfaction only after its evidence statement has committed.
   const satisfied = buildCmi5Statement({
     verb: 'satisfied',
     actor: {
@@ -538,10 +564,14 @@ export async function observeCmi5Statement(
       ...(launch.courseId ? { courseActivityId: launch.courseId } : {}),
     },
   });
-  deps.emit(satisfied as unknown as Record<string, unknown>);
+  await deps.emit(satisfied as unknown as Record<string, unknown>);
+  launch.satisfied = true;
+  launch.satisfiedAt = new Date().toISOString();
+  markAuSatisfied(tenant, launch.learner.id, launch.auId);
+  cmi5PodDirty();
   // Roll satisfaction up the course structure — emit `satisfied` for any
   // block now fully satisfied, and for the course once every AU is.
-  rollupCourse(tenant, launch.learner, launch.authoritativeSource, deps.emit, launch.auId);
+  await rollupCourse(tenant, launch.learner, launch.authoritativeSource, deps.emit, launch.auId);
   return { registration, satisfied: true, reason: decision.reason, emittedSatisfied: true };
 }
 
@@ -699,7 +729,7 @@ export function attachCmi5LmsRoutes(app: Express, config: {
       courseId: courseId ?? course?.id,
     });
     // The LMS stages LaunchData itself (cmi5 §10); this route used to hand it back and ask the caller to.
-    stageLaunchData(tenant, launch, auId);
+    await stageLaunchData(tenant, launch, auId);
     res.status(200).json({
       ...launch,
       launchDataStaged: true,

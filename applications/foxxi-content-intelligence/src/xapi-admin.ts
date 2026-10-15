@@ -18,7 +18,7 @@
  */
 
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
-import { listStoredStatements, statementStoreTenants } from './xapi-lrs.js';
+import { getStatementStore, listStoredStatements, statementStoreTenants } from './xapi-lrs.js';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { FOXXI_PROFILE_ID } from './xapi-profile.js';
 import { verifySessionToken, trustedAddressMap } from './auth.js';
@@ -365,7 +365,7 @@ function handleConfig(_req: Request, res: Response, config: AdminConfig): void {
       const [endpoint, _creds, version] = t.split('||');
       return { endpoint, version: version || '1.0.3' };
     }),
-    retention: 'in-memory (replace with Redis / Postgres at production scale)',
+    retention: getStatementStore(DEFAULT_TENANT).backendDescription(),
     versionsSupported: ['2.0.0', '1.0.3'],
   });
 }
@@ -378,11 +378,11 @@ function handleConfig(_req: Request, res: Response, config: AdminConfig): void {
  */
 async function handleTenants(req: Request, res: Response): Promise<void> {
   const role = (req as Request & { adminRole?: string }).adminRole;
-  const tenants = role === 'admin' ? statementStoreTenants() : [DEFAULT_TENANT];
+  const tenants = role === 'admin' ? await statementStoreTenants() : [DEFAULT_TENANT];
   // Ensure the default tenant is always offered even if it holds nothing yet.
   if (!tenants.map(String).includes(String(DEFAULT_TENANT))) tenants.unshift(DEFAULT_TENANT);
   const withCounts = await Promise.all(
-    tenants.map(async t => ({ tenant: String(t), count: (await listStoredStatements(t)).length })),
+    tenants.map(async t => ({ tenant: String(t), count: await getStatementStore(t).count() })),
   );
   withCounts.sort((a, b) => b.count - a.count);
   res.json({ tenants: withCounts, default: String(DEFAULT_TENANT) });
@@ -494,11 +494,17 @@ function handleDeleteCredential(req: Request, res: Response): void {
 export function attachXapiAdminRoutes(app: Express, config: AdminConfig): void {
   const gate = makeAdminGate(config);
   const json = express.json({ limit: '256kb' });
-  app.get('/xapi/admin/statements', gate, (req, res) => { void handleStatementsAdmin(req, res); });
-  app.get('/xapi/admin/aggregates', gate, (req, res) => { void handleAggregates(req, res); });
-  app.get('/xapi/admin/conformance', gate, (req, res) => { void handleConformance(req, res, config); });
+  const storageRead = (read: (req: Request, res: Response) => Promise<void>) => async (req: Request, res: Response): Promise<void> => {
+    try { await read(req, res); }
+    catch {
+      if (!res.headersSent) res.status(503).json({ error: 'LRS storage operation unavailable' });
+    }
+  };
+  app.get('/xapi/admin/statements', gate, storageRead(handleStatementsAdmin));
+  app.get('/xapi/admin/aggregates', gate, storageRead(handleAggregates));
+  app.get('/xapi/admin/conformance', gate, storageRead((req, res) => handleConformance(req, res, config)));
   app.get('/xapi/admin/config', gate, (req, res) => handleConfig(req, res, config));
-  app.get('/xapi/admin/tenants', gate, (req, res) => { void handleTenants(req, res); });
+  app.get('/xapi/admin/tenants', gate, storageRead(handleTenants));
 
   // Outbound forwarding targets + metrics + dead-letter retry.
   app.get('/xapi/admin/forwarding/targets', gate, (req, res) => handleListForwarding(req, res));
