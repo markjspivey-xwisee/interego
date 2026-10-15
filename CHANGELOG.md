@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-15 — Native Interego LRS commits and preservation hold
+
+Foxxi's replacement primary uses Interego's native encrypted, content-addressed PGSL records. The separately proposed PostgreSQL LRS is rejected in accordance with the owner's existing storage requirement; Foxxi carries no SQL driver, connection or application tables. Native conditional commits publish the statement, attachment bytes, void relationships, State/Profile documents and tenant registry through one authoritative head. xAPI remains the interface and rebuildable query projection. The existing Interego substrate's PostgreSQL engine remains an explicit infrastructure dependency.
+
+Writes await native receipts; missing authority, changed keys, corrupt closures and storage failures do not select memory. Native storage tests require the actual CSS/PGSL engine path, independent writers and storage-process recovery. The old process remains on hold until its resident records are inventoried, privately preserved and restored in isolation, or the owner knowingly accepts specific losses. The 779 resident statement count and 776 projector candidates do not identify record kinds or prove that only three need preservation. No production backend change, restart or complete backup is claimed. The operations decision and bounded source audit record the remaining system-wide durability work.
+
+## 2026-10-15 — Live capability directory and workbench examples
+
+The I2IDL-X directory now reads current Foxxi and Relay contracts, including the twelve operations absent from its embedded snapshot. Typed inputs, editable examples and returned evidence distinguish a live execution from input validation or a task packet for a connected AI client. Protected writes remain in that client’s authenticated flow; credentials are refused by the public example runner.
+
+The four advertised stub operations now load real lessons, verify configured LMS connections, and publish encrypted concept maps or caller-reported compliance artifacts with readback checks. They require a verified own-pod identity and signature-bound owner encryption key for writes. Loading a lesson does not assert completion, an LMS probe does not schedule synchronization, and reported events do not establish regulatory compliance. Capability descriptions now match actual computation and document-building behavior. LRS discovery explicitly exposes this deployment’s transient in-memory storage.
+
 ## 2026-10-14 — I2IDL-X hosted application and reference links
 
 The application link now points to the verified Foxxi-hosted I2IDL-X workbench, with a direct link to its generated reference. The existing Claude artifact remains an explicit archive and the native bootstrap retains that archived fallback. Durable shared and private saves require an established browser-held encryption key; hosted browsing and connected-client task delivery do not depend on a project-paid model key.

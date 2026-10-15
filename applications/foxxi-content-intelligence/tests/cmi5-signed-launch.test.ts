@@ -45,12 +45,12 @@ describe('a signed learner\'s launch', () => {
     authoritativeSource: 'did:web:bridge.example', tenant, courseId: course.id, learnerPod: 'https://pod.example/eth-1111111111aa/',
   });
 
-  it('stages LMS.LaunchData under the address a conformant AU reads it from', () => {
-    stageLaunchData(tenant, launch, second);
+  it('stages LMS.LaunchData under the address a conformant AU reads it from', async () => {
+    await stageLaunchData(tenant, launch, second);
     const q = new URL(launch.launchUrl).searchParams;
     // The AU re-serializes the actor it parsed from its launch URL; the key must survive that.
     const agent = JSON.stringify(JSON.parse(q.get('actor') ?? '{}'));
-    expect(readStateDocument(tenant, { activityId: q.get('activityId') ?? '', agent, stateId: 'LMS.LaunchData', registration: q.get('registration') ?? '' })).toEqual(launch.launchData);
+    expect(await readStateDocument(tenant, { activityId: q.get('activityId') ?? '', agent, stateId: 'LMS.LaunchData', registration: q.get('registration') ?? '' })).toEqual(launch.launchData);
     expect(launch.launchData).toMatchObject({ moveOn: 'Passed', masteryScore: 0.6, contextTemplate: { registration: launch.registration } });
   });
 

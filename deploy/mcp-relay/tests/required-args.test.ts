@@ -60,6 +60,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
+  discoverySelectorRefusal,
   ENFORCED_REQUIRED_ARGS,
   invalidRequiredArgs,
   missingRequiredArgs,
@@ -304,6 +305,45 @@ function main(): void {
     missingRequiredArgs('a_tool_that_does_not_exist', {}).length === 0,
     'an unknown tool is not this module\'s to judge (dynamic pod-authored tools land here)',
   );
+
+
+  // An optional pod selector is not permission to replace malformed input with "my pod".
+  {
+    ok(discoverySelectorRefusal({}) === null, 'omitted discovery selectors remain eligible for a session default');
+    for (const name of ['pod_url', 'pod_name', 'podUrl']) {
+      ok(discoverySelectorRefusal({ [name]: 'https://pod.example/alice/' }) === null,
+        name + ' accepts a supplied non-empty string');
+      for (const value of [42, false, null, {}, [], '', '   ']) {
+        const refusal = discoverySelectorRefusal({ [name]: value });
+        ok(refusal?.error === 'invalid_required_argument' && refusal.code === 400
+          && refusal.retryable === false && refusal.missing.length === 0
+          && refusal.invalid.length === 1 && refusal.invalid[0]?.name === name,
+        name + ' refuses supplied malformed input before a default can erase it: ' + JSON.stringify(value));
+      }
+    }
+    const both = discoverySelectorRefusal({ pod_url: 42, pod_name: false });
+    ok(both?.invalid.map(item => item.name).join(',') === 'pod_url,pod_name',
+      'all supplied malformed selector spellings are reported together');
+    const mcp = serverSrc.slice(serverSrc.indexOf('async function callWithSession('));
+    ok(mcp.indexOf('discoverySelectorRefusal(args)') > 0
+      && mcp.indexOf('discoverySelectorRefusal(args)') < mcp.indexOf('if (authContext)'),
+      'MCP validates raw discovery selectors before identity defaults can replace falsy fields');
+    const rest = serverSrc.slice(serverSrc.lastIndexOf("app.post('/tool/:name'"));
+    ok(rest.indexOf('discoverySelectorRefusal(req.body ?? {})') > 0
+      && rest.indexOf('discoverySelectorRefusal(req.body ?? {})') < rest.indexOf('if (AUTH_REQUIRED_TOOLS.has(toolName))'),
+      'REST validates raw discovery selectors before any verified identity injection');
+    const signedCheck = rest.indexOf('const signedSelectorRefusal');
+    ok(signedCheck > 0 && signedCheck < rest.indexOf('if (!req.body.pod_name && ownPodHere)'),
+      'signed REST validates the unwrapped selector before signed identity defaults');
+    const messages = serverSrc.slice(serverSrc.lastIndexOf("if (method === 'tools/call')"));
+    ok(messages.indexOf('discoverySelectorRefusal(args)') > 0
+      && messages.indexOf('discoverySelectorRefusal(args)') < messages.indexOf('if (AUTH_REQUIRED_TOOLS.has(toolName))'),
+      'legacy messages validate raw selectors before any identity defaults');
+    const handler = serverSrc.slice(serverSrc.indexOf('async function handleDiscoverContext('));
+    ok(handler.indexOf('discoverySelectorRefusal(args)') > 0
+      && handler.indexOf('discoverySelectorRefusal(args)') < handler.indexOf('resolvePodSubject('),
+      'the discovery handler repeats validation before resolving any subject');
+  }
 
   // ── The table cannot drift from the schemas it enforces ─────────────────────
   //

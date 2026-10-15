@@ -276,7 +276,7 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // tool's own export read in its own model, package question banks and typed answers, the base
 // running without verticals, the extension catalog, the deploy and rebuild triggers), and none
 // was removed.
-export const MIN_TEST_MODULES = 509;
+export const MIN_TEST_MODULES = 510;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

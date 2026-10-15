@@ -134,8 +134,8 @@ describe('a cmi5 auth-token is bound to its launch', () => {
   });
 
   it('deletes and lists only its own launch\'s State, even for a relaunch of the same AU (the review of #485)', async () => {
-    stageLaunchData(tenant, A, au(1).id);
-    stageLaunchData(tenant, C, au(1).id);
+    await stageLaunchData(tenant, A, au(1).id);
+    await stageLaunchData(tenant, C, au(1).id);
     const scope = (token: string, registration: string, method = 'GET') => {
       const u = new URL(`${base}/xapi/activities/state`);
       u.searchParams.set('activityId', new URL(A.launchUrl).searchParams.get('activityId') ?? '');

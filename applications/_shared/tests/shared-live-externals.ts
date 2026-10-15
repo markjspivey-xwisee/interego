@@ -375,8 +375,9 @@ const SCORM_CLOUD: SharedLiveExternal = {
  *
  * A public Nostr relay belonging to somebody else. `public-relay-interop.yml` sets
  * `RUN_PUBLIC_RELAY` from a repo variable with a LITERAL fallback, so the job arms it
- * unconditionally — nightly, and on any pull request touching `packages/p2p`. Every other
- * entry here is dormant on the runner; this one runs.
+ * unconditionally — nightly, and on any pull request touching `packages/p2p`. At the first
+ * census this was the only unconditionally armed entry; the isolated durable-LRS PostgreSQL
+ * fixture below now also runs in CI.
  *
  * Shared twice over. Both modules open `WebSocketRelayMirror`s to the SAME relay and publish
  * signed kind-30040 events into it, and tier4's assertion is specifically that the relay
@@ -432,8 +433,59 @@ const TYPESAFE: SharedLiveExternal = {
   fingerprints: [envRead('JEV_LIVE')],
 };
 
+/**
+ * Native Interego CSS backed by its existing PGSL engine, exercised by both durable-LRS
+ * application suites and a direct engine suite. The application suites start their own CSS
+ * subprocesses through native-css-fixture.ts; the engine service and connection budget are
+ * shared by all three. Foxxi reaches CSS over HTTP and owns no SQL schema or database connection.
+ *
+ * TEST_NATIVE_CSS_ROOT plus TEST_NATIVE_PG_URL configure that real subprocess. An explicitly
+ * supplied TEST_NATIVE_POD_URL selects an external native pod instead. REQUIRE_LRS_NATIVE_TESTS
+ * supplies neither an address nor a server: it makes missing fixture prerequisites a failure,
+ * so the required CI job cannot pass by silently skipping its external checks.
+ */
+const FOXXI_LRS_NATIVE: SharedLiveExternal = {
+  id: 'foxxi-lrs-native-css-pgsl',
+  address: 'the isolated native PGSL engine at TEST_NATIVE_PG_URL, reached directly by the core '
+    + 'suite and through application-owned CSS subprocesses from TEST_NATIVE_CSS_ROOT; optional '
+    + 'TEST_NATIVE_POD_URL retargets only the application suites',
+  contention: 'the direct engine suite and separate CSS children share one isolated PGSL service '
+    + 'and its connection budget. The HTTP recovery suite also kills bridge children, then reads '
+    + 'through native CSS again; loopback listeners do not make these dependencies in-process',
+  armedBy: ['TEST_NATIVE_POD_URL', 'TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL', 'REQUIRE_LRS_NATIVE_TESTS'],
+  offSwitch: [],
+  retargetedBy: ['TEST_NATIVE_POD_URL', 'TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL'],
+  switchExceptions: [
+    {
+      name: 'TEST_NATIVE_CSS_ROOT',
+      module: 'tests/pgsl-store-native-commit.test.ts',
+      why: 'This suite opens the existing PGSL engine directly and does not launch CSS. The '
+        + 'CSS package directory belongs to the two application fixtures, not this engine caller.',
+    },
+    {
+      name: 'TEST_NATIVE_POD_URL',
+      module: 'tests/pgsl-store-native-commit.test.ts',
+      why: 'This suite tests native engine transactions directly through TEST_NATIVE_PG_URL. '
+        + 'It neither selects nor dials an external CSS pod, so the application pod retarget is irrelevant.',
+    },
+  ],
+  armedInCi: ['.github/workflows/bridge-typecheck.yml'],
+  touchedBy: [
+    'applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts',
+    'applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts',
+    'tests/pgsl-store-native-commit.test.ts',
+  ],
+  fingerprints: [
+    helperImport('native-css-fixture'),
+    envRead('TEST_NATIVE_POD_URL'),
+    envRead('TEST_NATIVE_CSS_ROOT'),
+    envRead('TEST_NATIVE_PG_URL'),
+    envRead('REQUIRE_LRS_NATIVE_TESTS'),
+  ],
+};
+
 export const SHARED_LIVE_EXTERNALS: readonly SharedLiveExternal[] =
-  [POD, LRSQL, SCORM_CLOUD, PUBLIC_RELAY, TYPESAFE];
+  [POD, LRSQL, SCORM_CLOUD, PUBLIC_RELAY, TYPESAFE, FOXXI_LRS_NATIVE];
 
 /**
  * The scan's roots, mirroring `vitest.config.ts`'s `include`. `deploy/` is deliberately out: no
@@ -448,13 +500,15 @@ export const COLLECTED_ROOTS: readonly string[] = ['tests', 'applications', 'int
  * waved through. Adding a line is a decision; the test refuses to let it be an omission.
  */
 export const SHARED_BUT_NOT_LIVE: readonly { readonly name: string; readonly why: string }[] = [
-  // ★ EMPTY, AND THAT IS A MEASUREMENT RATHER THAN AN OVERSIGHT. Re-measured on the widened
-  // closure: 34 names are read by two or more collected modules, 13 of them belong to an entry
-  // above, and the other 21 are shared ONLY through production code the tests import — they are
-  // in SHARED_ONLY_THROUGH_IMPORTED_CODE below, which is a different fact about a name and is
-  // kept a different list for that reason. Nothing is left over. This list stays for the case
-  // this repository does not currently have: a name two or more modules read IN THE TEST TREE
-  // that addresses nothing outside the process.
+  // Native fixture addresses and activation gates belong to their external entry above. This
+  // optional test credential names neither a destination nor a gate: only an explicitly supplied
+  // TEST_NATIVE_POD_URL selects the external target, and the local fixture uses its own constant.
+  {
+    name: 'TEST_NATIVE_CAPABILITY',
+    why: 'An optional authorization value for the explicitly retargeted test pod. It supplies '
+      + 'neither an address nor the CSS/PGSL prerequisites and cannot activate a suite by itself. '
+      + 'The isolated CI fixture uses its own synthetic capability rather than this variable.',
+  },
   //
   // The single candidate that once looked like it needed a line — FOXXI_WALLET_SEED — is read
   // in the TEST TREE by exactly ONE module, `applications/foxxi-content-intelligence/tests/
@@ -483,14 +537,20 @@ export const SHARED_BUT_NOT_LIVE: readonly { readonly name: string; readonly why
  * EMBARRASSMENT. `FOXXI_TENANT_POD_URL` (with `FOXXI_AUTHORITATIVE_SOURCE`) names a real Solid
  * pod that `pod-snapshot-publisher.ts` writes to with `globalThis.fetch`,
  * `RELAY_PGSL_PG_CONNSTR` names a real PostgreSQL that `engagement-store.ts` opens, and
- * `FOXXI_LRS_BACKEND` and `FOXXI_XAPI_PROFILE_URL` can name another LRS to forward to and a
- * profile document to fetch. They are here rather than in `SHARED_LIVE_EXTERNALS` because of a
- * fact that is MEASURED, not assumed: nothing in this tree and no workflow sets any of them, and
- * every dial behind them is guarded by the value being present — `podConfig()` returns null,
- * `createStatementStore()` builds the in-memory store and `createStatementStore('pod')` throws
- * before constructing anything, the built-in profile is used, `isConfigured()` is false and
- * `defaultEngagementStore()` returns null. The test asserts the unset half, over the tree and
- * over `.github`, so the day one of them is armed this goes red.
+ * `FOXXI_XAPI_PROFILE_URL` can name a profile document to fetch. The dormant addresses remain
+ * here because nothing in the test tree or workflows supplies them, and each dial is guarded
+ * by configuration being present. The native CSS/PGSL LRS fixture above is different: two
+ * suites explicitly read its test configuration and a required CI job supplies the real CSS
+ * runtime and isolated substrate. Foxxi itself dials the native pod rather than opening SQL;
+ * production configuration read sites below are retained only while the measured import
+ * closure actually reaches them. A backend selector is not by itself a destination.
+ *
+ * FOXXI_LRS_BACKEND and the native pod/owner/capability/key/path settings are read from the
+ * injected `env` parameter in statement-store.ts, defaulting to process.env. This is the alias
+ * limitation stated in the header: their absence from this census is not proof that the native
+ * storage dependency is absent. The live application and engine suites explicitly configure
+ * the native CSS/PGSL fixture above. The old standalone SQL URL/encryption-key read sites have been removed; do
+ * not retain dead imported-code entries or invent direct reads to describe the old source.
  *
  * What that leaves is worth saying plainly rather than filing away: an operator who exports
  * `FOXXI_TENANT_POD_URL` and `FOXXI_AUTHORITATIVE_SOURCE` in their shell configures a live pod
@@ -648,6 +708,13 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'into a competency IRI. An identifier authority, not a dial target.',
   },
   {
+    name: 'FOXXI_ACTIVITY_ID_BASE',
+    readIn: 'applications/foxxi-content-intelligence/src/activity-identity.ts',
+    why: 'the authority used to mint activity definition IRIs, joined with a local vocabulary '
+      + 'path. Instrumentation and activity-identity tests now share this imported read; '
+      + 'the minter does not fetch that address or open a database.',
+  },
+  {
     name: 'FOXXI_CONTENT_ID_BASE',
     readIn: 'applications/foxxi-content-intelligence/src/content-fragments.ts',
     why: 'the per-kind override of the identifier base above, read at module scope and joined '
@@ -682,32 +749,10 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'site and same argument as the base above.',
   },
   {
-    name: 'FOXXI_LRS_BACKEND',
-    readIn: 'applications/foxxi-content-intelligence/src/xapi-lrs.ts',
-    why: 'CAN NAME A LIVE ADDRESS: the store a tenant\'s statements are kept in, where '
-      + '`forward:<endpoint>||…` sends every statement to another LRS and `pod` writes to the '
-      + 'tenant pod. Unset, createStatementStore() builds the in-memory store. Shared because '
-      + 'the modules that import the LRS reach that read; nothing in this tree and no workflow '
-      + 'sets it, which the dormancy test beside this file asserts.',
-  },
-  {
     name: 'FOXXI_LRS_MEMORY_MAX_STATEMENTS',
     readIn: 'applications/foxxi-content-intelligence/src/statement-store.ts',
     why: 'an override for the resident statement budget, which is otherwise derived from the '
       + 'V8 heap limit. A cap on an in-memory Map; nothing outside the process is named.',
-  },
-  {
-    name: 'FOXXI_LRS_MEMORY_TENANTS',
-    readIn: 'applications/foxxi-content-intelligence/src/xapi-lrs.ts',
-    why: 'a csv allowlist of tenants whose statements stay in the in-memory store whatever '
-      + 'FOXXI_LRS_BACKEND says. It chooses between stores inside the process and names nothing '
-      + 'outside it.',
-  },
-  {
-    name: 'FOXXI_LRS_MEMORY_TENANT_PREFIXES',
-    readIn: 'applications/foxxi-content-intelligence/src/xapi-lrs.ts',
-    why: 'the prefix form of the allowlist above, defaulting to `lens:` so every per-agent view '
-      + 'stays in memory. Same read site and same argument.',
   },
   {
     name: 'FOXXI_LTI_PRIVATE_KEY_PEM',

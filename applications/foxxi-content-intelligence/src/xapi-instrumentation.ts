@@ -18,7 +18,7 @@
  *   - cmi5 context-categories on course-life-cycle verbs (§7.1.4)
  */
 
-import { storeStatementInternal } from './xapi-lrs.js';
+import { storeStatementDurably } from './xapi-lrs.js';
 import { FOXXI_NS } from './xapi-profile.js';
 import { courseIri } from './course-identity.js';
 import { activityIri } from './activity-identity.js';
@@ -148,7 +148,7 @@ function pickObject(binding: VerbBinding | undefined, args: EmissionArgs): Recor
  * Returns the stored statement id (or undefined if emission was skipped,
  * e.g. instrumentation disabled).
  */
-export function emitAffordanceStatement(args: EmissionArgs): string | undefined {
+export async function emitAffordanceStatement(args: EmissionArgs): Promise<string | undefined> {
   const binding = TOOL_VERBS[args.toolName];
   const verbId = binding?.verbId ?? `${FOXXI_NS}verbs/affordance-invoked`;
   const display = binding?.display ?? 'affordance-invoked';
@@ -182,5 +182,5 @@ export function emitAffordanceStatement(args: EmissionArgs): string | undefined 
     },
   };
 
-  return storeStatementInternal(statement) ?? undefined;
+  return (await storeStatementDurably(statement)) ?? undefined;
 }

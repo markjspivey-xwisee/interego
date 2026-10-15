@@ -133,12 +133,12 @@ describe("the bridge's own emitters wait for the store", () => {
     }
   });
 
-  it('writes unawaited only where nothing is reported: a re-projected view, and the LMS\'s own statements it keeps on the pod', () => {
+  it('awaits primary commits even for projected views and LMS-generated statements', () => {
     const sites = server.split('\n').filter((l) => l.includes('storeStatementInternal(')).map((l) => l.trim());
-    expect(sites).toEqual([
-      'storeStatementInternal(ev.statement, lensTenantFor(ev.agent));',
-      'emit: (s) => { const id = storeStatementInternal(s, tenant); if (id && own) keepCmi5OnLearnerPod({ ...s, id }, own); },',
-    ]);
+    expect(sites).toEqual([]);
+    expect(server).toContain('const id = await storeStatementDurably(ev.statement, lensTenantFor(ev.agent));');
+    expect(server).toContain('const id = await storeStatementDurably(s, tenant);');
+    expect(server).toContain('await landMeshEvent(ev);');
     expect(server.match(/emitStatement: \(stmt, tenant\) => storeStatementDurably\(stmt, tenant\),/g)).toHaveLength(2);
   });
 });

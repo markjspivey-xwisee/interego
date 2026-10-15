@@ -170,7 +170,8 @@ export interface RequiredArgsRefusal {
  *
  * ★ THIS IS DELIBERATELY NOT "every `required` field in every inputSchema".
  *
- * 34 tools declare `required`; this table lists 19. The others were measured too and left
+ * The table lists 18 tools. discover_context instead resolves its optional pod selectors
+ * through resolvePodSubject, which refuses a missing subject before any fetch. The others were measured too and left
  * alone, because they already answer the caller immediately and in words:
  *
  *   remember, record_trajectory_step, notify_agent, render_hmd, publish_node,
@@ -232,7 +233,8 @@ export const ENFORCED_REQUIRED_ARGS: Readonly<Record<string, readonly RequiredAr
   ],
   decompose: [{ name: 'iri', kind: 'string' }],
   // Pod / federation reads and control-plane mutators.
-  discover_context: [{ name: 'pod_url', kind: 'string' }],
+  // discover_context resolves pod_url, pod_name or the authenticated session through
+  // resolvePodSubject. Requiring one spelling here hid the other two before that resolver.
   get_descriptor: [{ name: 'url', kind: 'string' }],
   subscribe_to_pod: [{ name: 'pod_url', kind: 'string' }],
   unsubscribe_from_pod: [{ name: 'pod_url', kind: 'string' }],
@@ -385,5 +387,33 @@ export function requiredArgsRefusal(
       + 'no argument — or, worse, as an answer computed over a value you never sent, or a '
       + 'document written to a pod claiming an IRI you never named. Resending will not '
       + 'help; fix the argument.',
+  };
+}
+
+
+/**
+ * Optional discovery selectors must be omitted or usable, never silently defaulted.
+ * This is checked before transport identity defaults can overwrite falsy wire values,
+ * and again at the handler before resolving a subject. podUrl is the resolver's legacy
+ * alias; accepting it does not make a mistyped alias an instruction to read "my pod".
+ */
+export function discoverySelectorRefusal(args: Record<string, unknown>): RequiredArgsRefusal | null {
+  const invalid: InvalidArg[] = [];
+  for (const name of ['pod_url', 'pod_name', 'podUrl']) {
+    const value = args[name];
+    if (value === undefined) continue;
+    if (typeof value === 'string' && value.trim().length > 0) continue;
+    invalid.push({ name, expected: 'a non-empty string', received: describeValue(value) });
+  }
+  if (invalid.length === 0) return null;
+  return {
+    error: 'invalid_required_argument',
+    code: 400,
+    retryable: false,
+    missing: [],
+    invalid,
+    message: 'discover_context requires each supplied pod selector to be a non-empty string. '
+      + invalid.map(item => item.name + ' arrived as ' + item.received + '.').join(' ')
+      + ' Omit the selectors to use the authenticated caller pod; malformed selectors never select it.',
   };
 }

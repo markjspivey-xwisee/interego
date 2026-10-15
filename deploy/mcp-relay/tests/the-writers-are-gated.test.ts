@@ -91,6 +91,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import express from 'express';
+import { findSubjectsOfType, followAffordance, parseTrig, readIriValue, readStringValue } from '@interego/core';
 
 import { sha256Hex } from '../federation-store.js';
 import { listenLoopback } from './listen-loopback.js';
@@ -496,6 +497,119 @@ console.log('\n2. driven: no caller of the helper can be pointed at a foreign or
   try {
     booted = await bootRelay(seedTwoPods);
     const { callTool, pod, cssUrl } = booted;
+
+
+    // The relay's own catalog must be followable by its real Turtle/TriG follower.
+    // This drives the running route, follower, dispatch and analyze_question handler.
+    const catalogUrl = booted.base + '/.well-known/operations';
+    const jsonResponse = await fetch(catalogUrl, { headers: { Accept: 'application/json' } });
+    const catalog = await jsonResponse.json() as Record<string, unknown>;
+    const ldResponse = await fetch(catalogUrl, { headers: { Accept: 'application/ld+json' } });
+    const ldCatalog = await ldResponse.json() as Record<string, unknown>;
+    const defaultResponse = await fetch(catalogUrl);
+    const defaultCatalog = await defaultResponse.json() as Record<string, unknown>;
+    check('the default operations representation stays JSON',
+      defaultResponse.headers.get('content-type')?.includes('application/json') === true
+      && JSON.stringify(defaultCatalog) === JSON.stringify(catalog));
+    check('JSON and JSON-LD retain the same catalog identity, digest and members',
+      jsonResponse.ok && ldResponse.ok && JSON.stringify(catalog) === JSON.stringify(ldCatalog)
+      && catalog['@id'] === catalogUrl
+      && typeof catalog['dct:identifier'] === 'string');
+    const catalogMembers = catalog['hydra:member'] as Array<Record<string, unknown>>;
+    const analyze = catalogMembers.find(member => member['@id'] === 'urn:iep:operation:analyze_question');
+    check('the JSON operation retains its declared target and fetchable schema URL',
+      analyze?.['action'] === booted.base + '/ns/iep/action/relay/analyze_question'
+      && analyze?.['target'] === booted.base + '/tool/analyze_question'
+      && analyze?.['expects'] === catalogUrl + '/analyze_question/input');
+    const schemaResponse = await fetch(catalogUrl + '/analyze_question/input');
+    const schema = await schemaResponse.json() as Record<string, unknown>;
+    check('the input contract keeps its advertised identifier',
+      schemaResponse.ok && schema['$id'] === analyze?.['expects']);
+    const turtleResponse = await fetch(catalogUrl, { headers: { Accept: 'text/turtle, application/trig, */*' } });
+    const turtle = await turtleResponse.text();
+    check('the exact follower Accept header negotiates Turtle and varies caches by Accept',
+      turtleResponse.ok && turtleResponse.headers.get('content-type')?.includes('text/turtle') === true
+      && turtleResponse.headers.get('vary')?.includes('Accept') === true
+      && turtle.includes('<urn:iep:operation:analyze_question>'));
+    const parsedCatalog = parseTrig(turtle);
+    const affordanceSubjects = findSubjectsOfType(parsedCatalog, 'https://markjspivey-xwisee.github.io/interego/ns/iep#Affordance');
+    check('every declared operation has exactly one Turtle affordance',
+      affordanceSubjects.length === catalogMembers.length);
+    for (const member of catalogMembers) {
+      const subject = affordanceSubjects.find(candidate => candidate.subject === member['@id']);
+      check('Turtle preserves action, target, method and schema identifiers for ' + String(member['@id']),
+        subject !== undefined
+        && readIriValue(subject, 'https://markjspivey-xwisee.github.io/interego/ns/iep#action') === member['action']
+        && readIriValue(subject, 'http://www.w3.org/ns/hydra/core#target') === member['target']
+        && readStringValue(subject, 'http://www.w3.org/ns/hydra/core#method') === member['method']
+        && readIriValue(subject, 'http://www.w3.org/ns/hydra/core#expects') === member['expects']
+        && readIriValue(subject, 'http://www.w3.org/ns/hydra/core#returns') === member['returns']);
+    }
+    const trigResponse = await fetch(catalogUrl, { headers: { Accept: 'application/trig' } });
+    check('TriG clients receive the same parseable Turtle subset',
+      trigResponse.ok && trigResponse.headers.get('content-type')?.includes('application/trig') === true
+      && await trigResponse.text() === turtle);
+    const followed = await followAffordance(
+      catalogUrl, booted.base + '/ns/iep/action/relay/analyze_question',
+      { question: 'What is a learning record store?' },
+    );
+    const followedBody = JSON.parse(followed.body) as Record<string, unknown>;
+    check('the real follower reaches the declared live handler through the operations catalog',
+      followed.status === 200 && followedBody['strategy'] === 'direct'
+      && followed.affordance.target === booted.base + '/tool/analyze_question');
+
+    // These are three advertised spellings of one read, not three different APIs.
+    pod.stored.set('/' + VICTIM + '/.well-known/context-graphs', EMPTY_CONTAINER);
+    pod.stored.set('/' + SENDER + '/.well-known/context-graphs', EMPTY_CONTAINER);
+    const named = await callTool('discover_context', 'token-sender', { pod_name: VICTIM, limit: 1 });
+    check('discover_context honours pod_name through the actual registry guard and handler',
+      named['pod'] === cssUrl + VICTIM + '/' && Array.isArray(named['entries']));
+    const publicNamed = await callTool('discover_context', 'invalid-bearer', { pod_name: VICTIM, limit: 1 });
+    check('an invalid bearer does not turn an explicit public pod read into an authenticated-only route',
+      publicNamed['pod'] === cssUrl + VICTIM + '/' && Array.isArray(publicNamed['entries']));
+    const defaulted = await callTool('discover_context', 'token-sender', { limit: 1 });
+    check('discover_context defaults to the authenticated caller pod on REST',
+      defaulted['pod'] === cssUrl + SENDER + '/' && Array.isArray(defaulted['entries']));
+    for (const selector of ['pod_url', 'pod_name', 'podUrl']) {
+      for (const value of [42, false, null, {}, [], '', '   ']) {
+        const before = pod.requests.length;
+        const malformed = await callTool('discover_context', 'token-sender', { [selector]: value, limit: 1 });
+        const invalid = malformed['invalid'] as Array<Record<string, unknown>> | undefined;
+        // seedRelease42 starts independently after listen and can overlap this window.
+        // Its exact /amep/state/ subtree is already named as startup traffic in section3.
+        // Every other request must remain absent, including any caller-pod default read.
+        const attempted = pod.requests.slice(before).filter(request => !request.decoded.includes('/amep/state/'));
+        check('malformed ' + selector + ' is refused before a session default or pod fetch: ' + JSON.stringify(value),
+          malformed['error'] === 'invalid_required_argument' && malformed['code'] === 400
+          && invalid?.some(item => item['name'] === selector) === true
+          && attempted.length === 0,
+          JSON.stringify(attempted));
+      }
+    }
+    const conflicted = await callTool('discover_context', 'token-sender',
+      { pod_name: VICTIM, pod_url: cssUrl + SENDER + '/', limit: 1 });
+    check('discover_context still refuses conflicting selectors',
+      conflicted['error'] === 'pod_selector_conflict' && conflicted['code'] === 400);
+    const unresolvedResponse = await fetch(booted.base + '/tool/discover_context', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const unresolved = await unresolvedResponse.json() as Record<string, unknown>;
+    check('discover_context refuses an anonymous call with no subject instead of reading a placeholder',
+      unresolved['error'] === 'pod_subject_unresolved' && unresolved['code'] === 400);
+    const toolsResponse = await fetch(booted.base + '/tools');
+    const toolCatalog = await toolsResponse.json() as Record<string, unknown>;
+    const declaredTools = toolCatalog['hydra:member'] as Array<Record<string, unknown>>;
+    for (const name of ['discover_directory', 'resolve_webfinger']) {
+      const declared = declaredTools.find(tool => tool['name'] === name);
+      const annotations = declared?.['annotations'] as Record<string, unknown> | undefined;
+      check(name + ' declares its federation registry mutation rather than readOnlyHint',
+        annotations?.['readOnlyHint'] === false);
+    }
+    const discoverSchemaResponse = await fetch(catalogUrl + '/discover_context/input');
+    const discoverSchema = await discoverSchemaResponse.json() as Record<string, unknown>;
+    check('the discover contract no longer demands one optional selector spelling',
+      !Array.isArray(discoverSchema['required'])
+      || !(discoverSchema['required'] as unknown[]).includes('pod_url'));
 
     // The plant that makes the question reachable at all: `add_pod` takes an arbitrary URL.
     const planted = await callTool('add_pod', 'token-sender', { pod_url: `${FOREIGN}/${VICTIM}/` });

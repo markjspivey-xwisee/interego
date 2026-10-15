@@ -151,7 +151,7 @@ import { authorizePodUrl } from './pod-authorization.js';
 import { resolvePublishOwnerAttribution } from './publish-owner-attribution.js';
 // Operation contracts: the expects/returns URLs the catalog advertises, and the documents
 // served at them. Extracted because the catalog was minting urn: values that fetch nothing.
-import { contractDocument, operationActionUrl, operationContract } from './operation-contracts.js';
+import { contractDocument, operationActionUrl, operationContract, operationsCatalogTurtle } from './operation-contracts.js';
 // The outbound HTTP layer — pools, solidFetch, and the guarded egress choke point.
 // Extracted so the SSRF address screen's WIRING is importable by a test; see the
 // header of egress.ts for why a regex over this file could never assert it.
@@ -400,7 +400,7 @@ import {
 import { resolveInteropPrincipal } from './interop-principal.js';
 import { NotificationLog } from './notification-log.js';
 import { POD_STATUS_ENTRY_BUDGET_BYTES, podStatusEntryPage } from './pod-status-page.js';
-import { ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
+import { discoverySelectorRefusal, ENFORCED_REQUIRED_ARGS, requiredArgsRefusal } from './required-args.js';
 import { turtleIriArgs } from './turtle-iri-args.js';
 import { parseSealedPayload, type SealedPayload } from './sealed-payload.js';
 import {
@@ -4453,6 +4453,8 @@ async function handlePgslDecide(args: ToolArgs): Promise<string> {
 }
 
 async function handleDiscoverContext(args: ToolArgs): Promise<string> {
+  const selectorRefusal = discoverySelectorRefusal(args);
+  if (selectorRefusal) return JSON.stringify(selectorRefusal);
   // `pod_name` was accepted by the wire, injected by three of the four dispatchers, and
   // read by nothing here — so `discover_context { pod_name: "<not yours>" }` listed the
   // caller's own descriptors and the response named no pod, exactly the unattributable
@@ -10809,66 +10811,19 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
 type ToolEntry = { description: string; handler: (args: ToolArgs) => Promise<string> };
 
 /**
- * Put the required-argument refusal in front of every gated handler, once — for an argument
- * that is ABSENT and equally for one that arrived as something the tool cannot use.
+ * Apply the required-argument guard once, around each explicitly listed handler.
  *
- * ★ WHY THE REGISTRY AND NOT NINETEEN HANDLER ENTRIES.
+ * All transports resolve this same table after binding their session fields, so the
+ * guard sees exactly the arguments the handler sees. Only /mcp injects pod_url;
+ * REST and /messages inject the caller's pod_name, and interop injects neither.
  *
- * FOUR transports dispatch tool calls — `/mcp` (`setRequestHandler('tools/call')`), the
- * `act`/verb router, `/tool/:name`, and `/messages` — and all four resolve the handler the
- * same way: `declaredTool(name)`, then call `.handler(args)`. Wrapping
- * once here is therefore the only edit that cannot be transport-shaped: a guard added to
- * one dispatcher would have left the other three answering with the TypeError, which is
- * exactly the class of half-applied fix this file keeps re-learning.
+ * discover_context is intentionally resolved in its handler by resolvePodSubject:
+ * pod_url, pod_name and the authenticated session are alternative subject sources.
+ * A required pod_url gate here used to reject the latter two before that resolver
+ * could inspect them. The resolver still refuses a missing subject or conflicting
+ * selectors before any pod read. The eighteen single-spelling guards remain here.
  *
- * ★ AND IT WRAPS AFTER WHATEVER EACH DISPATCHER INJECTS — WHICH IS NOT THE SAME THING.
- *
- * Wrapping the handler means the gate sees exactly the args the handler sees, whatever the
- * transport put there. That is the property being relied on, and it is the ONLY one: the
- * four dispatchers do NOT agree about what they inject, and an earlier version of this
- * comment claimed they did.
- *
- * Measured, per dispatcher, for the five gated tools that key on `pod_url`
- * (discover_context, subscribe_to_pod, unsubscribe_from_pod, add_pod, remove_pod):
- *
- *   /mcp             fills `pod_url` from the auth context when absent — the ONE site that
- *                    does it, and the only `args.pod_url =` in this file.
- *   /tool/:name      fills `agent_id` / `owner_webid` / `pod_name` only. Deliberately NOT
- *                    `pod_url` — on this path `pod_url` is a TARGET, not "my pod" (see the
- *                    autoRegisterAgentCard comment on that route), and defaulting it to the
- *                    caller's own pod would mis-address notify_agent / read_inbox.
- *   /messages        `agent_id` / `owner_webid` / `pod_name` only, same as /tool.
- *   interop invokeCapability   injects nothing; `args` is the raw `data` part with the
- *                    reserved wire fields stripped.
- *
- * So on three of the four transports a caller who omits `pod_url` IS refused by this gate.
- * That is correct rather than a regression: those handlers never defaulted it either —
- * `handleDiscoverContext` reads `args.pod_url as string` with no fallback — so the same
- * calls already failed, just with `TypeError: Cannot read properties of undefined (reading
- * 'endsWith')` instead of a sentence naming the argument.
- *
- * ★ WHAT THE NEXT PERSON TO EDIT THE TABLE NEEDS FROM THIS, AND WHAT HAS CHANGED UNDER IT.
- * This paragraph used to end "do not add a tool whose handler DEFAULTS `pod_url` from
- * `pod_name` … such a tool needs the injection unified across the dispatchers FIRST".
- * That unification has now happened, and not because the shape was inconvenient to gate:
- * the per-transport disagreement was itself the bug. Because `/mcp` filled `pod_url`
- * unconditionally, `pod_name` lost every contest it entered there, so `verify_agent
- * { agent_id, pod_name: <someone else's pod> }` returned a cryptographically-confident
- * verdict about the CALLER's pod, and `get_current_head`'s own schema promise ("provide
- * either") was unsatisfiable on the transport almost every caller uses.
- *
- * The injection is not removed — the "defaults to your home pod" behaviour these five
- * tools rely on is intact. What is added is PROVENANCE: each dispatcher now marks the
- * selector it supplied (`POD_URL_INJECTED` / `POD_NAME_INJECTED`, reserved + wire-stripped),
- * and `pod-selector.ts` resolves the subject from the marked args. So a handler can finally
- * distinguish "the caller named no pod" from "the caller named this pod", which is the one
- * fact every rule in this area needed and none of them had. Gating a `pod_url`-defaulting
- * tool is therefore no longer the trap described above; the resolver refuses in the
- * handler, with a sentence naming the argument, on every transport alike.
- *
- * Only names in `ENFORCED_REQUIRED_ARGS` are wrapped; everything else is passed through
- * with the identical entry object, so the gate's blast radius is exactly that table and a
- * reader can see it in one place. Dynamic (pod-authored) tools never go through here.
+ * An unknown table name fails boot instead of silently guarding nothing.
  */
 function gateRequiredArgs(tools: Record<string, ToolEntry>): Record<string, ToolEntry> {
   for (const name of Object.keys(ENFORCED_REQUIRED_ARGS)) {
@@ -11833,7 +11788,6 @@ const TOOL_SCHEMAS = [
         limit: { type: 'integer', minimum: 0, description: 'Cap result count. Combined with sort, gives the "latest N descriptors" affordance. Default: unbounded.' },
         verify_delegation: { type: 'boolean', description: 'If true, also fetch the agent registry to verify delegation' },
       },
-      required: ['pod_url'],
     },
     outputSchema: DISCOVER_CONTEXT_OUTPUT,
     annotations: { title: 'Discover descriptors on a pod', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -12028,7 +11982,7 @@ const TOOL_SCHEMAS = [
       required: ['directory_url'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
-    annotations: { title: 'Discover a directory of pods', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { title: 'Discover a directory of pods', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'publish_directory',
@@ -12054,7 +12008,7 @@ const TOOL_SCHEMAS = [
       required: ['resource'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
-    annotations: { title: 'Resolve WebFinger handle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { title: 'Resolve WebFinger handle', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'notify_agent',
@@ -12185,7 +12139,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'check_balance',
-    description: 'Compatibility shim — calls the active chain\'s RPC; not a substrate-level operation. Checks the ETH balance of a wallet on the active chain. Returns balance, funding status, and instructions if unfunded.',
+    description: 'Compatibility shim — calls the active chain\'s RPC; not a substrate-level operation. Checks the ETH balance of a wallet on the active chain. Returns balance, funding status, and instructions if unfunded. Requires a configured blockchain RPC (CG_CHAIN=base-sepolia or base). In local mode it returns a configuration message, not a wallet balance.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -12925,6 +12879,11 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // pod-selector markers to that constant would then have left this transport — the
     // one the original defect was measured on — accepting a forged marker.
     stripReservedWireFields(args);
+    const selectorRefusal = name === 'discover_context' ? discoverySelectorRefusal(args) : null;
+    if (selectorRefusal) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify(selectorRefusal) }],
+        structuredContent: { ...selectorRefusal }, isError: true };
+    }
     // Inject identity from auth context so the authenticated user's default
     // pod / agent / WebID fill in when the caller doesn't specify them.
     // Applies to ALL tools, not just writes — lets reads like get_pod_status
@@ -13471,6 +13430,8 @@ app.get('/.well-known/operations', (req, res) => {
   // application/ld+json only when explicitly requested. Body is the
   // same JSON either way (JSON-LD ⊂ JSON).
   const wantsJsonLd = (req.get('accept') || '').includes('application/ld+json');
+  const negotiated = req.accepts(['application/json', 'application/ld+json', 'text/turtle', 'application/trig']);
+  const wantsTurtle = negotiated === 'text/turtle' || negotiated === 'application/trig';
   const base = `${req.protocol}://${req.get('host') ?? ''}`;
   const catalogId = `${base}/.well-known/operations`;
   res.set('Cache-Control', 'no-cache');
@@ -13528,7 +13489,7 @@ app.get('/.well-known/operations', (req, res) => {
       // it sends a client looking.
     };
   });
-  res.type(wantsJsonLd ? 'application/ld+json' : 'application/json').json({
+  const catalog = {
     '@context': KERNEL_JSONLD_CONTEXT,
     '@id': catalogId,
     '@type': ['hydra:Collection', 'urn:iep:type:OperationsCatalog'],
@@ -13536,7 +13497,13 @@ app.get('/.well-known/operations', (req, res) => {
     'dct:identifier': `sha256:${TOOL_SURFACE_DIGEST}`,
     'hydra:totalItems': members.length,
     'hydra:member': members,
-  });
+  };
+  res.vary('Accept');
+  if (wantsTurtle) {
+    res.type(negotiated === 'application/trig' ? 'application/trig' : 'text/turtle').send(operationsCatalogTurtle(catalog));
+    return;
+  }
+  res.type(wantsJsonLd ? 'application/ld+json' : 'application/json').json(catalog);
 });
 
 /**
@@ -16191,6 +16158,12 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     return;
   }
 
+  const selectorRefusal = toolName === 'discover_context' ? discoverySelectorRefusal(req.body ?? {}) : null;
+  if (selectorRefusal) {
+    res.type('application/ld+json').send(decorateRelayShimText(toolName, JSON.stringify(selectorRefusal)));
+    return;
+  }
+
   // Auth check for write operations. Two paths accepted: OAuth bearer
   // (browser-mediated, the claude.ai/ChatGPT connector flow) OR an
   // ECDSA signed-request envelope (headless-agent flow — see
@@ -16327,6 +16300,11 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     // recovered DID is then bound so a signed read still defaults to the caller's own pod.
     // POD_NAME_INJECTED is set AFTER the strip so the legitimate marker survives.
     unwrapSignedPayloadInto(req.body);
+    const signedSelectorRefusal = toolName === 'discover_context' ? discoverySelectorRefusal(req.body) : null;
+    if (signedSelectorRefusal) {
+      res.type('application/ld+json').send(decorateRelayShimText(toolName, JSON.stringify(signedSelectorRefusal)));
+      return;
+    }
     if (sig.authenticated && sig.recoveredDid) {
       req.body.agent_id = sig.recoveredDid;
       // Derived from the DID itself rather than a hand-sliced address — same shared fact as the
@@ -16335,6 +16313,13 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
       if (!req.body.pod_name && ownPodHere) { req.body.pod_name = ownPodHere; req.body[POD_NAME_INJECTED] = true; }
       if (!req.body.owner_webid) req.body.owner_webid = sig.recoveredDid;
     }
+  } else if (toolName === 'discover_context' && req.headers.authorization) {
+    // This public read may name an explicit pod anonymously, but its advertised
+    // own-pod default needs a verified session. Public tools previously ignored an
+    // ordinary REST bearer entirely. Bind it only for this defaulting read; never
+    // auto-register a card or create a pod as a consequence of reading.
+    const auth = await verifyBearerToken(req.headers.authorization);
+    if (auth.authenticated) injectRestVerifiedIdentity(req.body ??= {}, auth, false);
   }
 
   try {
@@ -16633,6 +16618,13 @@ app.post('/messages', messagesLimiter, async (req, res) => {
     }
 
     const args: Record<string, unknown> = { ...(params?.arguments ?? {}) };
+    const selectorRefusal = toolName === 'discover_context' ? discoverySelectorRefusal(args) : null;
+    if (selectorRefusal) {
+      res.json({ jsonrpc: '2.0', id, result: {
+        content: [{ type: 'text', text: JSON.stringify(selectorRefusal) }], structuredContent: selectorRefusal,
+      } });
+      return;
+    }
     if (AUTH_REQUIRED_TOOLS.has(toolName)) {
       // Same dual-path auth as /tool/:name: OAuth bearer OR ECDSA
       // signed-request envelope. See verifySignedRequest for the

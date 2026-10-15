@@ -323,7 +323,8 @@ export function corsHeadersFor(originHeader) {
     // never checked.
     'Access-Control-Expose-Headers':
       'Link, ETag, Accept-Post, Accept-Patch, Accept-Put, Location, WAC-Allow, '
-      + 'Last-Modified, Content-Type, Allow, Updates-Via',
+      + 'Last-Modified, Content-Type, Allow, Updates-Via, '
+      + 'Interego-Native-Commit, Interego-Revision, Interego-Body-Digest',
     'Vary': 'Origin',
     // Deliberately no Access-Control-Allow-Credentials.
   };
@@ -695,6 +696,54 @@ function buildResponseHeaders(upstreamHeaders, corsHeaders) {
   return out;
 }
 
+const NATIVE_COMMIT_TYPE = 'application/vnd.interego.native-commit+json';
+const NATIVE_REVISION = /^sha256:[a-f0-9]{64}$/;
+const NATIVE_NODE = /^urn:pgsl:(?:atom|fragment):[a-f0-9]{40}$/;
+function isNativeCommitType(value) {
+  return typeof value === 'string' && value.split(';', 1)[0].trim().toLowerCase() === NATIVE_COMMIT_TYPE;
+}
+
+/** Only the private engine's own bounded protocol receipt may cross the URL boundary. */
+async function mappedNativeReceipt(upstream, target, hostHeader, requestHeaders) {
+  if (String(upstream.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase() !== 'application/json'
+    || (upstream.headers['content-encoding'] && upstream.headers['content-encoding'] !== 'identity')) {
+    throw new Error('invalid native receipt representation');
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of upstream.body) {
+    size += chunk.length;
+    if (size > 32_768) throw new Error('native receipt exceeds its bound');
+    chunks.push(Buffer.from(chunk));
+  }
+  const receipt = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const storage = new URL(target.href);
+  storage.host = hostHeader;
+  // CSS's OriginalUrlExtractor deliberately excludes the query string.
+  storage.search = '';
+  const publicResource = new URL(storage.pathname, PUBLIC_BASE_URL).href;
+  const etagRevision = /^"(sha256:[a-f0-9]{64})(?:-[a-f0-9]{16})?"$/.exec(String(upstream.headers.etag ?? ''))?.[1];
+  const expected = /^"(sha256:[a-f0-9]{64})(?:-[a-f0-9]{16})?"$/.exec(String(requestHeaders['if-match'] ?? ''))?.[1];
+  const conditional = requestHeaders['if-none-match'] === '*'
+    ? !requestHeaders['if-match'] && receipt?.expectedRevision === null
+    : !requestHeaders['if-none-match'] && expected && receipt?.expectedRevision === expected;
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+    || receipt.version !== 1 || receipt.status !== 'committed'
+    || receipt.resource !== storage.href || receipt.path !== storage.href || receipt.storageResource !== undefined || receipt.storagePath !== undefined
+    || typeof receipt.pod !== 'string' || !receipt.pod || receipt.pod.length > 4096
+    || !NATIVE_REVISION.test(receipt.revision) || etagRevision !== receipt.revision
+    || !(receipt.expectedRevision === null || NATIVE_REVISION.test(receipt.expectedRevision))
+    || !conditional || receipt.revision === receipt.expectedRevision || !NATIVE_REVISION.test(receipt.bodyDigest)
+    || typeof receipt.contentType !== 'string' || !receipt.contentType || receipt.contentType.length > 255 || /[\r\n]/.test(receipt.contentType)
+    || !Number.isSafeInteger(receipt.size) || receipt.size < 0 || receipt.size > 8 * 1024 * 1024
+    || !Number.isSafeInteger(receipt.updatedAt) || receipt.updatedAt < 0
+    || !NATIVE_NODE.test(receipt.topUri) || !NATIVE_NODE.test(receipt.opaqueUri)) {
+    throw new Error('native receipt target or commit metadata mismatch');
+  }
+  return Buffer.from(JSON.stringify({ ...receipt, resource: publicResource, path: publicResource,
+    storageResource: receipt.resource, storagePath: receipt.path }));
+}
+
 /**
  * The URL this gate forwards a request to. Built once per request, and every decision about the
  * request's path is made on IT, never on the raw request-target.
@@ -824,7 +873,7 @@ const server = createServer(async (req, res) => {
   // CORS preflight: short-circuit. We don't proxy OPTIONS upstream — CSS
   // doesn't need to see it, and answering here lets a browser do its
   // pre-write probe even when WRITE_SECRET is unknown to the client.
-  if (method === 'OPTIONS') {
+  if (method === 'OPTIONS' && req.headers['access-control-request-method']) {
     res.writeHead(204, corsHeaders);
     res.end();
     return;
@@ -983,6 +1032,27 @@ const server = createServer(async (req, res) => {
     delete req.headers['authorization'];
   }
 
+  // Public ciphertext reads may carry the gate's opaque write capability.
+  // Strip only one we verified; unrelated Solid-OIDC/DPoP credentials retain
+  // their original CSS authentication path. Private documents were gated above.
+  if (!isWrite && !privatePod && (method === 'GET' || method === 'HEAD')) {
+    const auth = req.headers['authorization'] ?? '';
+    if (auth.startsWith('Bearer ')) {
+      if (safeEqual(auth, `Bearer ${WRITE_SECRET}`)) delete req.headers['authorization'];
+      else {
+        const verified = await verifyUserBearer(auth.slice(7));
+        if (verified.ok) {
+          if (target.encodedSeparator || target.pod !== verified.userId) {
+            res.writeHead(target.encodedSeparator ? 400 : 403, { 'Content-Type': 'application/json', ...corsHeaders });
+            res.end(JSON.stringify({ error: target.encodedSeparator ? 'encoded path separator' : 'cross-pod read denied' }));
+            return;
+          }
+          delete req.headers['authorization'];
+        }
+      }
+    }
+  }
+
   // Proxy through via undici Pool. The gate has historically used
   // raw http(s).request because the Host header MUST be overridden
   // when forwarding to CSS (CSS computes request identifiers from
@@ -1069,6 +1139,26 @@ const server = createServer(async (req, res) => {
         : { error: 'upstream CSS unreachable', detail: err.message }));
     } else {
       res.end();
+    }
+    return;
+  }
+
+  // Native commit receipts are protocol acknowledgements, not stored application
+  // bytes. Translate only a validated receipt for this exact forwarded PUT;
+  // retain the engine identifier so its native revision remains attributable.
+  if (method === 'PUT' && isNativeCommitType(req.headers['content-type'])
+    && upstreamRes.statusCode >= 200 && upstreamRes.statusCode < 300) {
+    try {
+      const body = await mappedNativeReceipt(upstreamRes, upstreamUrl, hostHeader, req.headers);
+      const receiptHeaders = buildResponseHeaders(upstreamRes.headers, corsHeaders);
+      delete receiptHeaders['content-encoding'];
+      receiptHeaders['content-length'] = String(body.length);
+      res.writeHead(upstreamRes.statusCode, receiptHeaders);
+      res.end(body);
+    } catch {
+      upstreamRes.body?.destroy?.();
+      res.writeHead(502, { 'Content-Type': 'application/json', ...corsHeaders });
+      res.end(JSON.stringify({ error: 'native commit receipt did not bind the forwarded resource' }));
     }
     return;
   }

@@ -94,6 +94,9 @@ COPY applications/learner-performer-companion/src/ ./applications/learner-perfor
 # lrs-adapter provides the TLA Experience Index read-side federator that the
 # foxxi bridge composes for foxxi.query_experience_index.
 COPY applications/lrs-adapter/src/ ./applications/lrs-adapter/src/
+# directory-actions imports the compliance evidence overlay by repository-relative path.
+# Its runtime imports use the @interego/* packages already copied above.
+COPY integrations/compliance-overlay/src/ ./integrations/compliance-overlay/src/
 
 # Compile all @interego/* packages → their dist/. The foxxi vertical imports
 # @interego/core + @interego/solid + @interego/pgsl + @interego/passport, and
@@ -214,5 +217,11 @@ ENV FOXXI_I2IDLX_DIST_DIR=/app/applications/foxxi-content-intelligence/i2idlx/di
 # purpose: ARG does not cross a FROM, and earlier would bust the cache on every commit.
 ARG GIT_SHA=unset
 ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
+# Exercise the real tsx entrypoint in the assembled runtime filesystem. This catches
+# transitive relative imports that compile in the repo but were omitted from COPY.
+# Fixture-only configuration and disabled networking keep the probe self-contained.
+COPY tools/smoke-foxxi-container.mjs ./tools/smoke-foxxi-container.mjs
+RUN --network=none node tools/smoke-foxxi-container.mjs
 
 CMD ["npx", "tsx", "applications/foxxi-content-intelligence/bridge/server.ts"]

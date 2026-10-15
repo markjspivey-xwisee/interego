@@ -20,7 +20,7 @@ import {
   attachContextChatRoutes, classifyContextIntent, answerContextQuestion, mergeDiscovered,
   type NetworkedContext,
 } from '../src/context-chat.js';
-import { storeStatementDurably, storeStatementInternal } from '../src/xapi-lrs.js';
+import { storeStatementDurably } from '../src/xapi-lrs.js';
 
 let pass = 0, fail = 0;
 const check = (label: string, cond: boolean, detail?: unknown) => {
@@ -201,7 +201,7 @@ async function testRoutes(): Promise<void> {
       (catalog.json.answer as string).includes('Refund Dispute Resolution'), catalog.json.answer);
 
     // ── Progress — after a real completion lands in the LRS ──────────
-    storeStatementInternal({
+    await storeStatementDurably({
       actor: { objectType: 'Agent', account: { homePage: 'did:web:test', name: LEARNER } },
       verb: { id: 'http://adlnet.gov/expapi/verbs/satisfied', display: { 'en-US': 'satisfied' } },
       object: { objectType: 'Activity', id: course.id, definition: { name: { 'en-US': 'Refund Dispute Resolution' } } },
