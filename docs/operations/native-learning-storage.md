@@ -64,6 +64,14 @@ targets. Ordinary and encrypted application bodies remain unchanged. The native
 recovery fixture includes the actual gateway and CSS with distinct origins,
 rather than substituting an authentication shim.
 
+When CSS uses its memory resource locker, reader counters also use process-local
+MemoryMapStorage, scoped only to LockStorage. Their lifetime matches the local
+mutexes. Durable KeyValueStorage and BackendKeyValueStorage remain unchanged;
+the Redis configuration retains its existing shared bookkeeping. Independent
+native writers still arbitrate through the shared engine's atomic head CAS.
+This configuration does not establish general CSS multi-replica write safety.
+Old internal lock documents are left intact; this is not a cleanup operation.
+
 ## Current interface scope
 
 The initial adapter uses an explicitly configured private native service scope,
@@ -77,6 +85,11 @@ snapshot API still enumerates the complete index into a rebuildable in-process
 view. The adapter's 4,096-record payload scan bound does not bound that initial
 metadata traversal. Narrow native lookup/paging APIs and their consumption must
 be validated before claiming bounded work per query at large record counts.
+
+Legacy ordinary-resource reads retain a separate stat-then-lazy-stream path. A
+concurrent deletion can leave that reader with an empty stream. Native version-
+bound reads use the captured native head and bytes instead. General legacy read
+consistency requires its own change and validation.
 
 ## Evidence and rollout boundary
 
