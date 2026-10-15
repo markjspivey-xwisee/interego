@@ -44,6 +44,7 @@ try {
   const digest=createHash('sha256').update(await readFile(source)).digest('hex');
   if(digest!==BASELINE_SOURCE_SHA256) throw new Error('source-identity-refused');
   if(!process.env.FOXXI_ADMIN_KEY_SEED) throw new Error('archive-key-unavailable');
+  if (/(?:^|\s)--inspect/.test(process.env.NODE_OPTIONS ?? '')) throw new Error('inherited-inspector-flags-refused');
   const port=Number(process.env.PORT??6080);
   if(port!==6080) throw new Error('application-port-refused');
   const sockets = new Set();
@@ -72,6 +73,12 @@ try {
   let ready=false;
   for(let i=0;i<30;i++){try{await targets();ready=true;break;}catch{await delay(100);}}
   if(!ready) throw new Error('inspector-start-failed');
+  const inspectorRows=(await readFile('/proc/net/tcp','utf8')).trim().split('\n').slice(1)
+    .map(line=>line.trim().split(/\s+/)).filter(cols=>cols[1]?.endsWith(':240D')&&cols[3]==='0A');
+  if(inspectorRows.length!==1 || inspectorRows[0][1]!=='0100007F:240D') throw new Error('inspector-bind-refused');
+  const inspectorInode=`socket:[${inspectorRows[0][9]}]`;
+  const ownLinks=await Promise.all((await readdir(`/proc/${pid}/fd`)).map(fd=>readlink(`/proc/${pid}/fd/${fd}`).catch(()=>'')));
+  if(!ownLinks.includes(inspectorInode)) throw new Error('inspector-process-refused');
   const code=await new Promise((resolve,reject)=>{
     const child=spawn(process.execPath,['./lrs-live-export.mjs'],{stdio:['ignore','inherit','inherit'],env:process.env});
     child.once('error',reject); child.once('exit',resolve);
@@ -82,7 +89,8 @@ try {
 } catch(error) {
   const safe=new Set(['deployment-identity-refused','source-identity-refused','archive-key-unavailable',
     'application-port-refused','process-identity-refused','listener-process-ambiguous','inspector-already-enabled',
-    'inspector-target-refused','inspector-start-failed','live-export-failed','application-health-failed']);
+    'inspector-target-refused','inspector-start-failed','live-export-failed','application-health-failed',
+    'inherited-inspector-flags-refused','inspector-bind-refused','inspector-process-refused']);
   console.log(`LRS_OPERATOR_EXPORT_FAILED=${safe.has(error.message)?error.message:'operator-operation-failed'}`); process.exitCode=1;
 } finally {
   try {await closeStartedInspector();}

@@ -1,12 +1,12 @@
 name: Preserve original live LRS process
 on:
   push:
-    branches: [codex/lrs-live-process-export-20261015]
+    branches: [codex/lrs-live-process-export-20261015-v2]
     paths: [.github/workflows/lrs-live-process-export.yml, tools/lrs-live-export.mjs, tools/lrs-live-remote.mjs]
 permissions:
   contents: read
 concurrency:
-  group: lrs-live-process-preservation-20261015
+  group: lrs-live-process-preservation-20261015-v2
   cancel-in-progress: false
 jobs:
   preserve:
