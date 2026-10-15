@@ -399,7 +399,7 @@ jobs:
       - name: Install and check existing gateway policy
         run: |
           npm ci --prefix deploy/css-gate
-          npm test --prefix deploy/css-gate
+          node --test deploy/css-gate/tests/*.test.mjs
       - name: Native CSS atomic commit and version contract on persistent engine
         working-directory: ${{ runner.temp }}/native-lrs-css/integrations/pgsl-css-accessor
         env:
