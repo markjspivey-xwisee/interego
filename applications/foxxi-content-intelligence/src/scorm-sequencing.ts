@@ -1,3 +1,4 @@
+import { durableLearningEnabled, registerLearningMap, registerLearningPartition } from './postgres-learning-store.js';
 /**
  * SCORM 2004 4th Edition — Sequencing & Navigation runtime engine.
  *
@@ -1031,7 +1032,9 @@ export function sessionView(session: SeqSession): Record<string, unknown> {
  *  order) past the cap — a real session set is small. */
 const SCORM_SESSIONS_MAX = 5000;
 const sessions = new Map<string, SeqSession>();
+registerLearningMap('scorm-sequencing:sessions', sessions);
 function retainSession(id: string, s: SeqSession): void {
+  if (durableLearningEnabled() && sessions.size >= SCORM_SESSIONS_MAX && !sessions.has(id)) throw new Error('SCORM session capacity reached; no saved session was discarded');
   while (sessions.size >= SCORM_SESSIONS_MAX) {
     const oldest = sessions.keys().next().value;
     if (oldest === undefined) break;

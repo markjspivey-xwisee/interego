@@ -186,7 +186,7 @@ export class LtiPlatform {
     title: 'Foxxi open courses',
     type: [COURSE_OFFERING],
   };
-  private readonly keys: Es256Keys;
+  private keys: Es256Keys;
   private readonly onChange: () => void;
   private readonly verifyJwt: NonNullable<LtiPlatformConfig['verifyJwt']>;
   private readonly maxLiveAssertions: number;
@@ -476,6 +476,23 @@ export class LtiPlatform {
         } : null,
       };
     });
+  }
+
+  /** Private database checkpoint, including one-use grants and replay protection. */
+  durableSnapshot(): unknown {
+    return { keys: this.keys.privateKey.export({type:'pkcs8',format:'pem'}).toString(),
+      grants:this.grants,tokens:this.tokens,seenJti:this.seenJti,
+      lineItems:this.lineItems,results:this.results,members:this.members };
+  }
+  restoreDurableSnapshot(value: unknown): void {
+    const data = value as { keys:string; grants:Map<string,Grant>; tokens:Map<string,AccessToken>;
+      seenJti:Map<string,number>; lineItems:Map<string,LineItem>; results:Map<string,Map<string,ResultRow>>; members:Set<string> };
+    if (typeof data?.keys !== 'string' || !(data.grants instanceof Map) || !(data.members instanceof Set)) throw new Error('invalid LTI platform checkpoint');
+    this.keys=es256Keys('foxxi-lms',this.issuer,data.keys);
+    const restore = <K,V>(target:Map<K,V>,source:Map<K,V>):void => { target.clear(); for (const [k,v] of source) target.set(k,v); };
+    restore(this.grants,data.grants); restore(this.tokens,data.tokens); restore(this.seenJti,data.seenJti);
+    restore(this.lineItems,data.lineItems); restore(this.results,data.results);
+    this.members.clear(); for (const member of data.members) this.members.add(member);
   }
 
   snapshot(): PlatformSnapshot {

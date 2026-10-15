@@ -1,3 +1,4 @@
+import { registerLearningMap } from './postgres-learning-store.js';
 /**
  * OneRoster 1.2 connector for the Foxxi vertical.
  *
@@ -269,6 +270,7 @@ interface ImportedRoster {
 }
 
 const importedRosters = new Map<TenantId, ImportedRoster>();
+registerLearningMap('oneroster:imports', importedRosters);
 
 // ── Pod projection (foxxi:OneRosterSnapshot) ─────────────────────────
 // Every applyCsvBundle() publishes a snapshot to the tenant pod; the

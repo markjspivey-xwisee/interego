@@ -71,6 +71,7 @@ export class TenantPartition<T> {
   for(tenant: TenantId): T {
     let store = this.byTenant.get(tenant);
     if (store === undefined) {
+      if ((process.env.FOXXI_LEARNING_DATABASE_URL || process.env.FOXXI_LEARNING_DB_HOST) && this.byTenant.size >= TenantPartition.MAX) throw new Error('tenant capacity reached; durable partitions were retained');
       if (this.byTenant.size >= TenantPartition.MAX) {
         const oldest = this.byTenant.keys().next().value;
         if (oldest !== undefined) {
@@ -83,6 +84,13 @@ export class TenantPartition<T> {
       this.byTenant.set(tenant, store);
     }
     return store;
+  }
+
+  /** Restore a private durable checkpoint, replacing the cache atomically. */
+  restore(entries: Array<[TenantId,T]>): void {
+    for (const [tenant,store] of this.byTenant) this.onEvict?.(store,tenant);
+    this.byTenant.clear();
+    for (const [tenant,store] of entries) this.byTenant.set(tenant,store);
   }
 
   has(tenant: TenantId): boolean {

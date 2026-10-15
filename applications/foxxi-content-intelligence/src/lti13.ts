@@ -1,3 +1,4 @@
+import { registerLearningMap, registerLearningPartition, registerLearningState } from './postgres-learning-store.js';
 /**
  * LTI 1.3 Advantage Tool Provider for the Foxxi vertical.
  *
@@ -145,6 +146,18 @@ export interface Es256Keys {
  */
 let _cachedKeys: Es256Keys | null = null;
 let _cachedSeed: string | null = null;
+registerLearningState('lti-tool:keys', {
+  collect: () => _cachedKeys && _cachedSeed ? { seed:_cachedSeed,pem:_cachedKeys.privateKey.export({type:'pkcs8',format:'pem'}).toString() } : null,
+  restore: value => {
+    if (value === null) return;
+    const data=value as {seed:string;pem:string};
+    if (typeof data?.seed !== 'string' || typeof data.pem !== 'string') throw new Error('invalid LTI Tool key checkpoint');
+    const restored=es256Keys('foxxi-lti',data.seed,data.pem);
+    if (_cachedKeys) Object.assign(_cachedKeys,restored); else _cachedKeys=restored;
+    _cachedSeed=data.seed;
+  },
+});
+
 
 function deriveKeys(seed: string): Es256Keys {
   if (_cachedKeys && _cachedSeed === seed) return _cachedKeys;
@@ -295,6 +308,7 @@ interface LoginState {
   expiresAt: number;
 }
 const loginStates = new Map<string, LoginState>();
+registerLearningMap('lti13:loginStates', loginStates);
 function rememberLoginState(s: LoginState): void {
   loginStates.set(s.state, s);
   // Garbage-collect after 10min
@@ -354,6 +368,7 @@ interface AgsLineItem {
   platformLineItemUrl?: string;
 }
 const lineItemStore = new Map<TenantId, Map<string, AgsLineItem>>();
+registerLearningMap('lti13:lineItemStore', lineItemStore);
 /** Per-tenant line-item cap — bounds the debounced pod snapshot so a runaway
  *  writer cannot grow the persisted store without limit (round-26 DoS guard). */
 const AGS_LINEITEM_MAX = 5000;
