@@ -74,7 +74,7 @@ export function restApiCatalog(): string {
     lines.push(action + ' a i2x:ActionIdentity ; rdfs:label ' + q(op.summary ?? id) + ' .');
     lines.push(port + ' a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ;');
     lines.push('  rdfs:label ' + q(op.summary ?? id) + ' ; hydra:title ' + q(op.summary ?? id) + ' ; iep:action ' + action + ' ; hydra:method "GET" ;');
-    lines.push('  ' + (params.length ? 'i2x:targetTemplate ' + q(template) + ' ; hydra:search ' + cat('rest-template-' + id) : 'hydra:target ' + iri(template)) + ' ;');
+    lines.push('  ' + (params.length ? 'i2x:targetTemplate ' + cat('rest-template-' + id) + ' ; hydra:search ' + cat('rest-template-' + id) : 'hydra:target ' + iri(template)) + ' ;');
     lines.push('  dcat:accessService cat:rest-service ; dcat:mediaType "application/json" ; hydra:returns ' + cat('rest-response-' + id) + ' ;');
     if (params.length) lines.push('  hydra:expects ' + cat('rest-input-' + id) + ' ;');
     lines.push('  iep:reads cat:rest-projection ; iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;');
@@ -98,7 +98,11 @@ export function restApiCatalog(): string {
       const constraints = ['sh:path ' + property, 'sh:maxCount 1', 'sh:datatype ' + type];
       if (p.required) constraints.push('sh:minCount 1');
       for (const [key, predicate] of [['minimum', 'minInclusive'], ['maximum', 'maxInclusive'], ['default', 'defaultValue'], ['pattern', 'pattern'], ['maxLength', 'maxLength']] as const) {
-        const value = p.schema[key]; if (value !== undefined) constraints.push('sh:' + predicate + ' ' + scalar(value));
+        const value = p.schema[key];
+        // Equivalent XPath spelling also stays inside the native regex subset:
+        // ordinary grouping and a singleton hyphen class, not class subtraction.
+        if (key === 'pattern' && value !== undefined && value !== '^[a-z0-9]+(?:-[a-z0-9]+)*$') throw new Error('Unreviewed identifier regex');
+        if (value !== undefined) constraints.push('sh:' + predicate + ' ' + scalar(key === 'pattern' ? '^[a-z0-9]+([-][a-z0-9]+)*$' : value));
       }
       if (p.schema.enum) constraints.push('sh:in ( ' + p.schema.enum.map(q).join(' ') + ' )');
       lines.push(binding + ' ' + constraints.join(' ; ') + ' .');

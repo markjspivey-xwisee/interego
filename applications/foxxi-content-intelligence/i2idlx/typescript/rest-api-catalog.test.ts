@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Parser, Store, DataFactory } from 'n3';
 import { restApiCatalog } from './rest-api-catalog.js';
+import { shaclValidate } from './validation.js';
 
 const root = new URL('../', import.meta.url), base = 'https://example.org/catalog', ns = 'https://example.org/i2x#';
 const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', DCAT = 'http://www.w3.org/ns/dcat#';
@@ -48,6 +49,17 @@ test('DPROD ports are services; DCAT distributions resolve back to the same serv
   assert.ok(graph.countQuads(n(dataset), n(DCAT + 'distribution'), n(base + '#rest-json'), null));
   assert.equal(graph.getSubjects(null, null, null).some(s => s.value.startsWith('https://id.i2idl.org/concepts/')), false);
 });
+test('Interego targetTemplate links to the typed Hydra template, rather than misclassifying a URL string under RDFS', () => {
+  const links = graph.getQuads(null, n(ns + 'targetTemplate'), null, null);
+  assert.equal(links.length, 8);
+  for (const link of links) {
+    assert.equal(link.object.termType, 'NamedNode');
+    assert.ok(graph.countQuads(link.object, n(RDF + 'type'), n(HYDRA + 'IriTemplate'), null));
+    const template = graph.getObjects(link.object, n(HYDRA + 'template'), null)[0];
+    assert.equal(template?.termType, 'Literal');
+    assert.match(template!.value, /^https:\/\/id\.i2idl\.org\/api\/v1\//);
+  }
+});
 test('argument contracts include real pagination, identifier and traversal bounds, with no invented REST quota', () => {
   const binding = (op: string, p: string) => base + '#rest-binding-' + op + '-' + p;
   assert.equal(value(binding('listConcepts', 'limit'), SH + 'minInclusive'), '1');
@@ -61,4 +73,19 @@ test('argument contracts include real pagination, identifier and traversal bound
   assert.equal(value(base + '#rest-input-conceptContext', SH + 'closed'), 'true');
   assert.equal(graph.getQuads(null, n(ns + 'rateLimitPerMinute'), null, null).length, 0);
   assert.equal(graph.getQuads(null, n('http://www.w3.org/ns/odrl/2/count'), null, null).length, 0);
+});
+test('the native SHACL engine accepts default annotations and enforces REST argument constraints', async () => {
+  async function conforms(operation: string, bindings: Record<string, string | number>) {
+    const shapes = new Store(graph), data = new Store(), request = n('urn:request');
+    shapes.addQuad(n(base + '#rest-input-' + operation), n(SH + 'targetNode'), request);
+    for (const [key, value] of Object.entries(bindings)) data.addQuad(request,
+      n(base + '#rest-param-' + operation + '-' + key),
+      DataFactory.literal(String(value), n('http://www.w3.org/2001/XMLSchema#' + (typeof value === 'number' ? 'integer' : 'string'))));
+    return (await shaclValidate(data, shapes)).conforms;
+  }
+  assert.equal(await conforms('listConcepts', {limit: 20, offset: 0}), true);
+  assert.equal(await conforms('listConcepts', {limit: 101}), false);
+  assert.equal(await conforms('conceptContext', {id: 'learning-engineering', depth: 1, maxRelated: 20}), true);
+  assert.equal(await conforms('conceptContext', {id: 'learning-engineering', depth: 2}), false);
+  assert.equal(await conforms('conceptContext', {depth: 1}), false);
 });

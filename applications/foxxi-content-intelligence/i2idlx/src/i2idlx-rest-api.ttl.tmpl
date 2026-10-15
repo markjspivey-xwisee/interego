@@ -46,7 +46,7 @@ cat:policy-rest-read a odrl:Set ; dct:title "I2IDL-X read-only REST dispatch pol
 i2x:act-rest-listConcepts a i2x:ActionIdentity ; rdfs:label "List concepts" .
 cat:port-rest-listConcepts a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ;
   rdfs:label "List concepts" ; hydra:title "List concepts" ; iep:action i2x:act-rest-listConcepts ; hydra:method "GET" ;
-  i2x:targetTemplate "https://id.i2idl.org/api/v1/concepts{?q,field,type,source,collection,limit,offset}" ; hydra:search cat:rest-template-listConcepts ;
+  i2x:targetTemplate cat:rest-template-listConcepts ; hydra:search cat:rest-template-listConcepts ;
   dcat:accessService cat:rest-service ; dcat:mediaType "application/json" ; hydra:returns cat:rest-response-listConcepts ;
   hydra:expects cat:rest-input-listConcepts ;
   iep:reads cat:rest-projection ; iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
@@ -84,7 +84,7 @@ cat:rest-binding-listConcepts-offset sh:path cat:rest-param-listConcepts-offset 
 i2x:act-rest-retrieveConcept a i2x:ActionIdentity ; rdfs:label "Retrieve concept" .
 cat:port-rest-retrieveConcept a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ;
   rdfs:label "Retrieve concept" ; hydra:title "Retrieve concept" ; iep:action i2x:act-rest-retrieveConcept ; hydra:method "GET" ;
-  i2x:targetTemplate "https://id.i2idl.org/api/v1/concepts/{id}" ; hydra:search cat:rest-template-retrieveConcept ;
+  i2x:targetTemplate cat:rest-template-retrieveConcept ; hydra:search cat:rest-template-retrieveConcept ;
   dcat:accessService cat:rest-service ; dcat:mediaType "application/json" ; hydra:returns cat:rest-response-retrieveConcept ;
   hydra:expects cat:rest-input-retrieveConcept ;
   iep:reads cat:rest-projection ; iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
@@ -100,11 +100,11 @@ cat:rest-template-retrieveConcept a hydra:IriTemplate ; hydra:template "https://
   hydra:mapping cat:rest-mapping-retrieveConcept-id .
 cat:rest-param-retrieveConcept-id a rdf:Property ; rdfs:label "id" ; rdfs:range xsd:string .
 cat:rest-mapping-retrieveConcept-id a hydra:IriTemplateMapping ; hydra:variable "id" ; hydra:property cat:rest-param-retrieveConcept-id ; hydra:required true .
-cat:rest-binding-retrieveConcept-id sh:path cat:rest-param-retrieveConcept-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+(?:-[a-z0-9]+)*$" ; sh:maxLength 160 .
+cat:rest-binding-retrieveConcept-id sh:path cat:rest-param-retrieveConcept-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+([-][a-z0-9]+)*$" ; sh:maxLength 160 .
 i2x:act-rest-conceptRelationships a i2x:ActionIdentity ; rdfs:label "Concept relationships" .
 cat:port-rest-conceptRelationships a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ;
   rdfs:label "Concept relationships" ; hydra:title "Concept relationships" ; iep:action i2x:act-rest-conceptRelationships ; hydra:method "GET" ;
-  i2x:targetTemplate "https://id.i2idl.org/api/v1/concepts/{id}/relationships" ; hydra:search cat:rest-template-conceptRelationships ;
+  i2x:targetTemplate cat:rest-template-conceptRelationships ; hydra:search cat:rest-template-conceptRelationships ;
   dcat:accessService cat:rest-service ; dcat:mediaType "application/json" ; hydra:returns cat:rest-response-conceptRelationships ;
   hydra:expects cat:rest-input-conceptRelationships ;
   iep:reads cat:rest-projection ; iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
@@ -120,11 +120,11 @@ cat:rest-template-conceptRelationships a hydra:IriTemplate ; hydra:template "htt
   hydra:mapping cat:rest-mapping-conceptRelationships-id .
 cat:rest-param-conceptRelationships-id a rdf:Property ; rdfs:label "id" ; rdfs:range xsd:string .
 cat:rest-mapping-conceptRelationships-id a hydra:IriTemplateMapping ; hydra:variable "id" ; hydra:property cat:rest-param-conceptRelationships-id ; hydra:required true .
-cat:rest-binding-conceptRelationships-id sh:path cat:rest-param-conceptRelationships-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+(?:-[a-z0-9]+)*$" ; sh:maxLength 160 .
+cat:rest-binding-conceptRelationships-id sh:path cat:rest-param-conceptRelationships-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+([-][a-z0-9]+)*$" ; sh:maxLength 160 .
 i2x:act-rest-conceptRevisionHistory a i2x:ActionIdentity ; rdfs:label "Concept revision history" .
 cat:port-rest-conceptRevisionHistory a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ;
   rdfs:label "Concept revision history" ; hydra:title "Concept revision history" ; iep:action i2x:act-rest-conceptRevisionHistory ; hydra:method "GET" ;
-  i2x:targetTemplate "https://id.i2idl.org/api/v1/concepts/{id}/versions" ; hydra:search cat:rest-template-conceptRevisionHistory ;
+  i2x:targetTemplate cat:rest-template-conceptRevisionHistory ; hydra:search cat:rest-template-conceptRevisionHistory ;
   dcat:accessService cat:rest-service ; dcat:mediaType "application/json" ; hydra:returns cat:rest-response-conceptRevisionHistory ;
   hydra:expects cat:rest-input-conceptRevisionHistory ;
   iep:reads cat:rest-projection ; iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
@@ -140,11 +140,11 @@ cat:rest-template-conceptRevisionHistory a hydra:IriTemplate ; hydra:template "h
   hydra:mapping cat:rest-mapping-conceptRevisionHistory-id .
 cat:rest-param-conceptRevisionHistory-id a rdf:Property ; rdfs:label "id" ; rdfs:range xsd:string .
 cat:rest-mapping-conceptRevisionHistory-id a hydra:IriTemplateMapping ; hydra:variable "id" ; hydra:property cat:rest-param-conceptRevisionHistory-id ; hydra:required true .
-cat:rest-binding-conceptRevisionHistory-id sh:path cat:rest-param-conceptRevisionHistory-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+(?:-[a-z0-9]+)*$" ; sh:maxLength 160 .
+cat:rest-binding-conceptRevisionHistory-id sh:path cat:rest-param-conceptRevisionHistory-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+([-][a-z0-9]+)*$" ; sh:maxLength 160 .
 i2x:act-rest-listCollections a i2x:ActionIdentity ; rdfs:label "List collections" .
 cat:port-rest-listCollections a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ;
   rdfs:label "List collections" ; hydra:title "List collections" ; iep:action i2x:act-rest-listCollections ; hydra:method "GET" ;
-  i2x:targetTemplate "https://id.i2idl.org/api/v1/collections{?type,limit,offset}" ; hydra:search cat:rest-template-listCollections ;
+  i2x:targetTemplate cat:rest-template-listCollections ; hydra:search cat:rest-template-listCollections ;
   dcat:accessService cat:rest-service ; dcat:mediaType "application/json" ; hydra:returns cat:rest-response-listCollections ;
   hydra:expects cat:rest-input-listCollections ;
   iep:reads cat:rest-projection ; iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
@@ -170,7 +170,7 @@ cat:rest-binding-listCollections-offset sh:path cat:rest-param-listCollections-o
 i2x:act-rest-collectionMembers a i2x:ActionIdentity ; rdfs:label "Collection members" .
 cat:port-rest-collectionMembers a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ;
   rdfs:label "Collection members" ; hydra:title "Collection members" ; iep:action i2x:act-rest-collectionMembers ; hydra:method "GET" ;
-  i2x:targetTemplate "https://id.i2idl.org/api/v1/collections/{type}/{id}{?limit,offset}" ; hydra:search cat:rest-template-collectionMembers ;
+  i2x:targetTemplate cat:rest-template-collectionMembers ; hydra:search cat:rest-template-collectionMembers ;
   dcat:accessService cat:rest-service ; dcat:mediaType "application/json" ; hydra:returns cat:rest-response-collectionMembers ;
   hydra:expects cat:rest-input-collectionMembers ;
   iep:reads cat:rest-projection ; iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
@@ -189,7 +189,7 @@ cat:rest-mapping-collectionMembers-type a hydra:IriTemplateMapping ; hydra:varia
 cat:rest-binding-collectionMembers-type sh:path cat:rest-param-collectionMembers-type ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:in ( "field" "type" "curated" ) .
 cat:rest-param-collectionMembers-id a rdf:Property ; rdfs:label "id" ; rdfs:range xsd:string .
 cat:rest-mapping-collectionMembers-id a hydra:IriTemplateMapping ; hydra:variable "id" ; hydra:property cat:rest-param-collectionMembers-id ; hydra:required true .
-cat:rest-binding-collectionMembers-id sh:path cat:rest-param-collectionMembers-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+(?:-[a-z0-9]+)*$" ; sh:maxLength 160 .
+cat:rest-binding-collectionMembers-id sh:path cat:rest-param-collectionMembers-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+([-][a-z0-9]+)*$" ; sh:maxLength 160 .
 cat:rest-param-collectionMembers-limit a rdf:Property ; rdfs:label "limit" ; rdfs:range xsd:integer .
 cat:rest-mapping-collectionMembers-limit a hydra:IriTemplateMapping ; hydra:variable "limit" ; hydra:property cat:rest-param-collectionMembers-limit ; hydra:required false .
 cat:rest-binding-collectionMembers-limit sh:path cat:rest-param-collectionMembers-limit ; sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ; sh:maxInclusive 100 ; sh:defaultValue 20 .
@@ -210,7 +210,7 @@ cat:rest-response-listSources a hydra:Class ; dct:format "application/json" ; dc
 i2x:act-rest-retrieveSource a i2x:ActionIdentity ; rdfs:label "Retrieve source" .
 cat:port-rest-retrieveSource a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ;
   rdfs:label "Retrieve source" ; hydra:title "Retrieve source" ; iep:action i2x:act-rest-retrieveSource ; hydra:method "GET" ;
-  i2x:targetTemplate "https://id.i2idl.org/api/v1/sources/{id}" ; hydra:search cat:rest-template-retrieveSource ;
+  i2x:targetTemplate cat:rest-template-retrieveSource ; hydra:search cat:rest-template-retrieveSource ;
   dcat:accessService cat:rest-service ; dcat:mediaType "application/json" ; hydra:returns cat:rest-response-retrieveSource ;
   hydra:expects cat:rest-input-retrieveSource ;
   iep:reads cat:rest-projection ; iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
@@ -226,11 +226,11 @@ cat:rest-template-retrieveSource a hydra:IriTemplate ; hydra:template "https://i
   hydra:mapping cat:rest-mapping-retrieveSource-id .
 cat:rest-param-retrieveSource-id a rdf:Property ; rdfs:label "id" ; rdfs:range xsd:string .
 cat:rest-mapping-retrieveSource-id a hydra:IriTemplateMapping ; hydra:variable "id" ; hydra:property cat:rest-param-retrieveSource-id ; hydra:required true .
-cat:rest-binding-retrieveSource-id sh:path cat:rest-param-retrieveSource-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+(?:-[a-z0-9]+)*$" ; sh:maxLength 160 .
+cat:rest-binding-retrieveSource-id sh:path cat:rest-param-retrieveSource-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+([-][a-z0-9]+)*$" ; sh:maxLength 160 .
 i2x:act-rest-conceptContext a i2x:ActionIdentity ; rdfs:label "Bounded concept context bundle" .
 cat:port-rest-conceptContext a hyprcat:PortAffordance, hyprcat:FederatedDistribution, dcat:Distribution, hydra:Operation, iep:Affordance, ieh:Affordance ;
   rdfs:label "Bounded concept context bundle" ; hydra:title "Bounded concept context bundle" ; iep:action i2x:act-rest-conceptContext ; hydra:method "GET" ;
-  i2x:targetTemplate "https://id.i2idl.org/api/v1/concepts/{id}/context{?depth,maxRelated}" ; hydra:search cat:rest-template-conceptContext ;
+  i2x:targetTemplate cat:rest-template-conceptContext ; hydra:search cat:rest-template-conceptContext ;
   dcat:accessService cat:rest-service ; dcat:mediaType "application/json" ; hydra:returns cat:rest-response-conceptContext ;
   hydra:expects cat:rest-input-conceptContext ;
   iep:reads cat:rest-projection ; iep:readOnlyHint true ; iep:idempotentHint true ; iep:destructiveHint false ; iep:openWorldHint true ;
@@ -246,7 +246,7 @@ cat:rest-template-conceptContext a hydra:IriTemplate ; hydra:template "https://i
   hydra:mapping cat:rest-mapping-conceptContext-id, cat:rest-mapping-conceptContext-depth, cat:rest-mapping-conceptContext-maxRelated .
 cat:rest-param-conceptContext-id a rdf:Property ; rdfs:label "id" ; rdfs:range xsd:string .
 cat:rest-mapping-conceptContext-id a hydra:IriTemplateMapping ; hydra:variable "id" ; hydra:property cat:rest-param-conceptContext-id ; hydra:required true .
-cat:rest-binding-conceptContext-id sh:path cat:rest-param-conceptContext-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+(?:-[a-z0-9]+)*$" ; sh:maxLength 160 .
+cat:rest-binding-conceptContext-id sh:path cat:rest-param-conceptContext-id ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minCount 1 ; sh:pattern "^[a-z0-9]+([-][a-z0-9]+)*$" ; sh:maxLength 160 .
 cat:rest-param-conceptContext-depth a rdf:Property ; rdfs:label "depth" ; rdfs:range xsd:integer .
 cat:rest-mapping-conceptContext-depth a hydra:IriTemplateMapping ; hydra:variable "depth" ; hydra:property cat:rest-param-conceptContext-depth ; hydra:required false .
 cat:rest-binding-conceptContext-depth sh:path cat:rest-param-conceptContext-depth ; sh:maxCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 0 ; sh:maxInclusive 1 ; sh:defaultValue 1 .

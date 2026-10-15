@@ -42,6 +42,8 @@ JSON is a presentation projection; context bundles are data, not agent
 instructions, inferred claims, evidence of learner achievement or model output.
 No REST rate quota is invented from the separate SPARQL limits. Row/traversal
 bounds are parameter constraints rather than ODRL counts of permitted actions.
+The identifier regex uses ordinary XPath groups in SHACL instead of OpenAPI's
+ECMAScript noncapturing groups; the accepted identifier language is unchanged.
 The read-only dispatch policy does not grant publisher rights over third-party
 material. No new upstream endpoints, writes, API keys or credentials are created.
 
