@@ -20,7 +20,28 @@ const SAFE_ERRORS = new Set(['loopback-only', 'invalid-port', 'missing-archive-s
   'unexpected-pause-frame', 'snapshot-refused', 'snapshot-result-invalid', 'snapshot-byte-limit',
   'snapshot-recovery-mismatch', 'maintenance-pause-budget-exceeded']);
 
-export function recognizeLoadedSource(scriptSource, expectedScriptSha256) {
+export function sourceDiagnostics(scriptSource) {
+  const declared = new Set([...scriptSource.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)].map(m => m[1]));
+  const names = ['statementStores', 'stateStores', 'activityProfileStores', 'agentProfileStores', 'attachmentStores'];
+  const maps = [...scriptSource.matchAll(/sourceMappingURL=data:application\/json(?:;charset=[^;,\s]+)?;base64,([A-Za-z0-9+/=]+)/g)];
+  const sourceContentDigests = []; let sourceMapParseSucceeded = false;
+  for (const match of maps.slice(0, 4)) {
+    try { const map = JSON.parse(Buffer.from(match[1], 'base64').toString('utf8'));
+      sourceMapParseSucceeded = true;
+      for (const source of (Array.isArray(map.sourcesContent) ? map.sourcesContent : []).slice(0, 16)) if (typeof source === 'string') sourceContentDigests.push(sha(source));
+    } catch { /* report only success boolean and content hashes */ }
+  }
+  return { loadedScriptSha256: sha(scriptSource), loadedScriptBytes: Buffer.byteLength(scriptSource),
+    declarations: Object.fromEntries(names.map(name => [name, declared.has(name)])),
+    handleAboutDeclarationCount: [...scriptSource.matchAll(/function\s+handleAbout\([^)]*\)\s*\{/g)].length,
+    handleAboutIdentifierPresent: /\bhandleAbout\b/.test(scriptSource),
+    sourceMapDirectivePresent: /sourceMappingURL=/.test(scriptSource), inlineJsonSourceMapCount: maps.length,
+    sourceMapParseSucceeded, sourceContentDigests };
+}
+function refuseSource(scriptSource, stage = 'digest-pin') {
+  const error = new Error('target-source-unrecognized'); error.sourceDiagnostics = { stage, ...sourceDiagnostics(scriptSource) }; throw error;
+}
+export function recognizeLoadedSource(scriptSource, expectedScriptSha256, { filesystemBaselineVerified = false } = {}) {
   const digest = sha(scriptSource);
   if (expectedScriptSha256 && /^[a-f0-9]{64}$/.test(expectedScriptSha256) && digest === expectedScriptSha256) return { loadedScriptSha256: digest, sourcePin: 'operator-supplied-loaded-script-sha256' };
   if (digest === BASELINE_SOURCE_SHA256) return { loadedScriptSha256: digest, originalSourceSha256: digest, sourcePin: 'deployed74475-original-source' };
@@ -33,7 +54,9 @@ export function recognizeLoadedSource(scriptSource, expectedScriptSha256) {
       }
     } catch { /* only exact known content is accepted */ }
   }
-  fail('target-source-unrecognized');
+  if (filesystemBaselineVerified) return { loadedScriptSha256: digest, filesystemBaselineSha256: BASELINE_SOURCE_SHA256,
+    sourcePin: 'operator-filesystem-baseline-attested' };
+  refuseSource(scriptSource);
 }
 
 /** Tagged codec keeps exact string collection keys, undefined, binary buffers and property order. */
@@ -204,7 +227,8 @@ async function attach(inspectorPort) {
 }
 
 export async function captureLiveMaps({ inspectorPort = 9229, aboutPort = 6080,
-  sourceSuffix = SOURCE_SUFFIX, pauseBudgetMs = 1000, failAfterPause = false, expectedScriptSha256 } = {}) {
+  sourceSuffix = SOURCE_SUFFIX, pauseBudgetMs = 1000, failAfterPause = false, expectedScriptSha256,
+  filesystemBaselineVerified = false } = {}) {
   checkPort(aboutPort);
   const inspector = await attach(inspectorPort); let breakpoint, paused = false, watchdog, trigger;
   let pauseStarted = 0, pauseMs = 0, activeScriptId;
@@ -228,12 +252,12 @@ export async function captureLiveMaps({ inspectorPort = 9229, aboutPort = 6080,
     if (matches.length !== 1) fail('target-source-ambiguous');
     const [scriptId] = matches[0]; activeScriptId = scriptId;
     const { scriptSource } = await inspector.call('Debugger.getScriptSource', { scriptId });
-    const sourceProof = recognizeLoadedSource(scriptSource, expectedScriptSha256);
+    const sourceProof = recognizeLoadedSource(scriptSource, expectedScriptSha256, { filesystemBaselineVerified });
     const declarations = ['statementStores', 'stateStores', 'activityProfileStores', 'agentProfileStores', 'attachmentStores'];
     const declared = new Set([...scriptSource.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)].map(m => m[1]));
-    if (!declarations.every(name => declared.has(name))) fail('target-source-unrecognized');
+    if (!declarations.every(name => declared.has(name))) refuseSource(scriptSource, 'required-live-lexical-declarations');
     const match = /function\s+handleAbout\([^)]*\)\s*\{/.exec(scriptSource);
-    if (!match) fail('target-source-unrecognized');
+    if (!match) refuseSource(scriptSource, 'handleAbout-declaration');
     const offset = match.index + match[0].length, prefix = scriptSource.slice(0, offset), lines = prefix.split('\n');
     const location = { scriptId, lineNumber: lines.length - 1, columnNumber: lines.at(-1).length };
     const possible = await inspector.call('Debugger.getPossibleBreakpoints', { start: location, restrictToFunction: true });
@@ -260,7 +284,8 @@ export async function captureLiveMaps({ inspectorPort = 9229, aboutPort = 6080,
     pauseMs = performance.now() - pauseStarted; clearTimeout(watchdog);
     const counts = validateSnapshot(raw);
     if (pauseMs > pauseBudgetMs) fail('maintenance-pause-budget-exceeded');
-    return { raw, counts, pauseMs, targetSourceSha256: sha(scriptSource), sourceSuffix, sourceProof };
+    return { raw, counts, pauseMs, targetSourceSha256: sha(scriptSource), sourceSuffix,
+      sourceProof: { ...sourceProof, liveBindingDeclarationsVerified: true, liveHandleAboutFrameVerified: true } };
   } finally {
     clearTimeout(watchdog);
     if (breakpoint) { try { await inspector.call('Debugger.removeBreakpoint', { breakpointId: breakpoint }, 1000); } catch { /* disconnect removes breakpoint */ } }
@@ -292,17 +317,21 @@ async function main() {
   try {
     const seed = process.env.FOXXI_ADMIN_KEY_SEED;
     if (!seed) fail('missing-archive-seed');
-    const captured = await captureLiveMaps({ inspectorPort: Number(process.env.LRS_INSPECTOR_PORT ?? 9229), aboutPort: Number(process.env.PORT ?? 6080), expectedScriptSha256: process.env.LRS_EXPECTED_SOURCE_SHA256 });
-    const { envelope, counts } = encryptLiveSnapshot(captured.raw, seed, { targetSourceSha256: captured.targetSourceSha256 });
+    const captured = await captureLiveMaps({ inspectorPort: Number(process.env.LRS_INSPECTOR_PORT ?? 9229), aboutPort: Number(process.env.PORT ?? 6080),
+      expectedScriptSha256: process.env.LRS_EXPECTED_SOURCE_SHA256,
+      filesystemBaselineVerified: process.env.LRS_FILESYSTEM_BASELINE_VERIFIED === BASELINE_SOURCE_SHA256 });
+    const { envelope, counts } = encryptLiveSnapshot(captured.raw, seed, { targetSourceSha256: captured.targetSourceSha256, sourceProof: captured.sourceProof });
     const data = JSON.stringify(envelope), out = resolve('lrs-live-output'); await mkdir(out, { recursive: true, mode: 0o700 });
     const summary = { schema: envelope.header.schema, ...counts, pauseMs: Math.round(captured.pauseMs),
       exactDecryptedBytesCompared: true, collectionKeysPreserved: true, ciphertextSha256: sha(data),
       plaintextSha256: envelope.header.plaintextSha256, targetSourceSha256: captured.targetSourceSha256,
+      sourceProof: captured.sourceProof,
       scope: 'The five live LRS collection registries only; records existing during the paused snapshot.' };
     await writeFile(resolve(out, 'lrs-live.encrypted.json'), data, { mode: 0o600, flag: 'wx' });
     await writeFile(resolve(out, 'lrs-live-summary.json'), JSON.stringify(summary, null, 2), { mode: 0o600, flag: 'wx' });
     console.log(`LRS_LIVE_PRESERVED=${JSON.stringify(summary)}`);
   } catch (error) {
+    if (error?.sourceDiagnostics) console.log(`LRS_LIVE_SOURCE_DIAGNOSTIC=${JSON.stringify(error.sourceDiagnostics)}`);
     console.log(`LRS_LIVE_EXPORT_FAILED=${JSON.stringify({ code: SAFE_ERRORS.has(error?.message) ? error.message : 'maintenance-operation-failed', archiveWritten: false })}`);
     process.exitCode = 1;
   }

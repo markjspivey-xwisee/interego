@@ -1,12 +1,12 @@
 name: Preserve original live LRS process
 on:
   push:
-    branches: [codex/lrs-live-process-export-20261015-v2]
+    branches: [codex/lrs-live-process-export-20261015-v3]
     paths: [.github/workflows/lrs-live-process-export.yml, tools/lrs-live-export.mjs, tools/lrs-live-remote.mjs]
 permissions:
   contents: read
 concurrency:
-  group: lrs-live-process-preservation-20261015-v2
+  group: lrs-live-process-preservation-20261015-v3
   cancel-in-progress: false
 jobs:
   preserve:
@@ -53,6 +53,17 @@ jobs:
           ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir' && node lrs-live-remote.mjs"
           scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote:$dir/lrs-live-output/lrs-live.encrypted.json" "$remote:$dir/lrs-live-output/lrs-live-summary.json" "$RUNNER_TEMP/lrs-live/"
           sha256sum "$RUNNER_TEMP/lrs-live/lrs-live.encrypted.json"
+      - name: Check archive and native restore without writing records
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/lrs-ssh/key"
+          hosts="$RUNNER_TEMP/lrs-ssh/known_hosts"
+          remote="$LRS_INSTANCE@ssh.railway.com"
+          dir="/tmp/lrs-live-${GITHUB_RUN_ID}"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "mkdir '$dir/native-import'"
+          scp -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" tools/lrs-native-import/import.mjs tools/lrs-native-import/run-in-container.mjs tools/lrs-native-import/runtime.mjs tools/lrs-native-import/runtime-build-manifest.json "$remote:$dir/native-import/"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir' && node native-import/import.mjs --offline --archive lrs-live-output/lrs-live.encrypted.json"
+          ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$hosts" "$remote" "cd '$dir' && node native-import/run-in-container.mjs --archive lrs-live-output/lrs-live.encrypted.json --checkpoint lrs-live-output/native-import.checkpoint.encrypted.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -80,7 +80,8 @@ try {
   const ownLinks=await Promise.all((await readdir(`/proc/${pid}/fd`)).map(fd=>readlink(`/proc/${pid}/fd/${fd}`).catch(()=>'')));
   if(!ownLinks.includes(inspectorInode)) throw new Error('inspector-process-refused');
   const code=await new Promise((resolve,reject)=>{
-    const child=spawn(process.execPath,['./lrs-live-export.mjs'],{stdio:['ignore','inherit','inherit'],env:process.env});
+    const child=spawn(process.execPath,['./lrs-live-export.mjs'],{stdio:['ignore','inherit','inherit'],
+      env:{...process.env,LRS_FILESYSTEM_BASELINE_VERIFIED:BASELINE_SOURCE_SHA256}});
     child.once('error',reject); child.once('exit',resolve);
   });
   if(code!==0) throw new Error('live-export-failed');
