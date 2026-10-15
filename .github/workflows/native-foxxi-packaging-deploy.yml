@@ -1,0 +1,41 @@
+name: Deploy packaging-corrected native Foxxi
+on:
+  push:
+    branches: [codex/native-foxxi-packaging-deploy-20261015]
+    paths: [.github/workflows/native-foxxi-packaging-deploy.yml]
+permissions:
+  contents: read
+concurrency:
+  group: native-lrs-foxxi-cutover-20261015
+  cancel-in-progress: false
+jobs:
+  foxxi:
+    uses: markjspivey-xwisee/interego/.github/workflows/deploy-railway.yml@d3ab04628dd3cdaf12e2aaaeb7f7d4f5d07e3663
+    with:
+      service: foxxi-bridge
+      tag: ea81f7ea52770e4042e3a48c9e3c90fe0e914088
+      set_registry_credentials: false
+    secrets: inherit
+  verify:
+    needs: foxxi
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify native LRS and current I2IDL-X capability directory
+        run: |
+          python3 - <<'PY'
+          import urllib.request,json
+          base='https://foxxi-bridge.interego.xwisee.com'
+          def get(path):
+              return json.loads(urllib.request.urlopen(base+path,timeout=45).read())
+          health=get('/health')
+          assert health['status']=='ok' and health['build']=='ea81f7ea52770e4042e3a48c9e3c90fe0e914088'
+          about=get('/xapi/about')
+          backend=next(v for k,v in about['extensions'].items() if k.endswith('#lrsBackend'))
+          assert backend.startswith('interego '),backend
+          directory=get('/i2idlx/directory')
+          assert directory['build']=='ea81f7ea52770e4042e3a48c9e3c90fe0e914088'
+          assert directory['complete'],directory['sources']
+          assert len(directory['actions'])==202,len(directory['actions'])
+          assert len({a['iri'] for a in directory['actions']})==202
+          print(json.dumps({'build':health['build'],'nativeLrsBackend':backend,'liveCapabilities':len(directory['actions']),'complete':directory['complete']}))
+          PY
