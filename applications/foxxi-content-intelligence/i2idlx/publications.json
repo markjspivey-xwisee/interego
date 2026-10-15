@@ -4,7 +4,7 @@
   "i2idlx-shapes": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791928119179.ttl",
   "i2idlx": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791928856006.ttl",
   "i2idlx-rules": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791928633781.ttl",
-  "i2idlx-catalog": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791928520847.ttl",
+  "i2idlx-catalog": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1792100697892.ttl",
   "i2idlx-enactments": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791929252825.ttl",
   "i2idlx-mappings": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791929250225.ttl",
   "i2idlx-releases": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791929060798.ttl",
@@ -34,6 +34,7 @@
    "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791517581826.ttl"
   ],
   "i2idlx-catalog": [
+   "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791928520847.ttl",
    "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791582409369.ttl",
    "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791581785851.ttl",
    "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1791571713112.ttl",

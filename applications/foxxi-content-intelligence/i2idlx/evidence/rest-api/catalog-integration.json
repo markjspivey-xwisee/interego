@@ -1,0 +1,12 @@
+{
+  "originalTriples": 900,
+  "extendedTriples": 1734,
+  "newTriples": 834,
+  "originalTextPreservedAsPrefix": true,
+  "currentPublishedShapesConform": true,
+  "priorCatalogSha256": "ea396298c1e792c4756b9eb8bf9f64ae3220b8f6dbd3795d75cc7d8fc72d981b",
+  "extendedCatalogSha256": "68ec4497c3499e57f3219ddbc517bb6a0d97997e66cb1097fd86acfeb473b023",
+  "publishedGraphIsomorphicToExpected": true,
+  "liveRestAffordances": 9,
+  "liveTriples": 1734
+}

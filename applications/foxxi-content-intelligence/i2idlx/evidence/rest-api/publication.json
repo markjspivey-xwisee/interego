@@ -1,0 +1,25 @@
+{
+  "published": true,
+  "descriptorUrl": "http://css.railway.internal:3456/u-pk-33d42e6b33dc/context-graphs/1792100697892.ttl",
+  "graphUrl": "http://css.railway.internal:3456/u-pk-33d42e6b33dc/context-graphs/1792100697892-graph.trig",
+  "previousHeadUrl": "http://css.railway.internal:3456/u-pk-33d42e6b33dc/context-graphs/1791928520847.ttl",
+  "currentHead": {
+    "descriptorUrl": "http://css.railway.internal:3456/u-pk-33d42e6b33dc/context-graphs/1792100697892.ttl",
+    "cid": "bafkreich6gy77ae77oalugxbpcfeiqlylpzngctd6wnytm4tzbpy4frtpq"
+  },
+  "authorship": {
+    "authorshipVerified": true,
+    "signedBy": "did:web:identity.interego.xwisee.com:agents:chatgpt-u-pk-731e988c2c5b",
+    "verificationMethod": "did:ethr:0x276E11D2229D3a96Dc96356C15C03c7F83201eBc",
+    "effectiveTrustLevel": "CryptographicallyVerified",
+    "contentBinding": "declared",
+    "contentBindingNote": "The proof commits to a content digest but NOTHING WAS CHECKED against it: the payload could not be read here (encrypted to other recipients, absent, or unparseable). Treat this exactly as an unverified content claim \u2014 it is neither an attestation of the content nor evidence against it. A digest that WAS checked and failed is reported as `mismatched`, never here.",
+    "descriptorBinding": {
+      "bound": true,
+      "basis": "slug-and-owner",
+      "note": "the proof names the URN <urn:iep:u-pk-33d42e6b33dc:1792100697892>, so only its terminal segment was matched against the URL \u2014 but the pod serving it publishes the same owner the proof signs (<https://identity.interego.xwisee.com/users/u-pk-33d42e6b33dc/profile#me>), so the record is not on some other party's pod. What is still uncompared: the container within that pod, and the pod's ownership claim is the pod's own \u2014 nobody signs the pod-to-owner binding."
+    },
+    "signatureAuthority": "relay",
+    "signingNote": "The relay signed this attestation about the authenticated caller. A separate client signature must be verified to establish authorization by the caller's own key."
+  }
+}

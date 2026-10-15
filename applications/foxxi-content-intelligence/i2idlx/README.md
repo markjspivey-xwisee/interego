@@ -127,7 +127,7 @@ Owner and slugs are one line each in `config.json`; the build re-mints every IRI
 
 ## Agentic, through hypermedia
 
-**HyprCat catalog.** The glossary is a `hyprcat:FederatedDataProduct` in the ServiceWorld. Every port is simultaneously a `dcat:Distribution`, `hydra:Operation`, `iep:Affordance` and `ieh:Affordance`, so any of those dialects can act on it. 23 controls:
+**HyprCat catalog.** The glossary is a `hyprcat:FederatedDataProduct` in the ServiceWorld. Every port is simultaneously a `dcat:Distribution`, `hydra:Operation`, `iep:Affordance` and `ieh:Affordance`, so any of those dialects can act on it. The 23 core controls are supplemented by nine REST reads:
 - **Output ports** on I2IDL's real service: JSON-LD and Turtle dumps, scheme, SPARQL with its published limits as data (`i2x:ServiceLimits`: 12,000-character queries, 30 requests per minute, 5,000-row caps, no Update/SERVICE/FROM) and as ODRL constraints, the human glossary. SPARQL has two ports: GET (`?query=`) for plain HTTP clients, and POST (`application/sparql-query`) for agents acting through Interego, which call `act` with the catalog, `i2x:act-query-glossary-post` and the query as a plain string payload.
 - **Output ports on Interego**: the release feed, the change history, and the three semantic-layer graphs (`port-vocabulary`, `port-alignments`, `port-referents`).
 - **Templated controls** (RFC 6570 over `dct:identifier`, `gs:activeDefinition`, `dct:source`) for per-concept resolution, expanded by the agent or materialized by the decorator projection.

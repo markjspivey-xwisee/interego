@@ -334,7 +334,7 @@ limits_doc, limits_text = next(((p, t.split("## SPARQL service limits", 1)[1].sp
                                 for p in ("docs/SPARQL.md", "README.md")
                                 for t in [subprocess.run(["git", "show", f"{commit}:{p}"], cwd=clone, capture_output=True, text=True).stdout]
                                 if "## SPARQL service limits" in t), (None, ""))
-catalog_ttl = render((SRC / "i2idlx-catalog.ttl.tmpl").read_text().replace("{{STORED_QUERIES}}", "\n".join(sq_blocks))
+catalog_ttl = render(((SRC / "i2idlx-catalog.ttl.tmpl").read_text() + "\n" + (SRC / "i2idlx-rest-api.ttl.tmpl").read_text()).replace("{{STORED_QUERIES}}", "\n".join(sq_blocks))
                      .replace("{{LIMITS_DOC}}", limits_doc or "README.md"))
 catalog = Graph().parse(data=catalog_ttl, format="turtle")
 
