@@ -116,3 +116,57 @@ continues to apply. A corrected writer protects future commits; it cannot recove
 the previous process's sole copies after a restart. Neither implementation nor a
 green test run authorizes discarding records, deploying the draft, changing live
 credentials or restarting any affected service.
+
+## 2026-10-16: Hallowmarch service-monitor rollout evidence
+
+This bounded production check used public HTTP reads and scoped Railway HTTP/runtime
+logs. It created no observation, signed request, identity, consent or deployment and
+did not read a sealed canonical body or a human record.
+
+| Observation (UTC) | Result |
+| --- | --- |
+| Foxxi `/health`, 15:05:15 | HTTP 200; build `d11bf9aba51ef0cdcf95a3e753af36e10d338a51`. Railway deployment `f40a6a11-0d77-4c56-9587-f7268a81b0f1` reported SUCCESS. |
+| Foxxi `/affordances`, 15:05:15 | HTTP 200; 151 affordances, including existing signed xAPI read/write and public LRS discovery. |
+| Natural xAPI write, 15:01:57.144 | Proxy HTTP 499 after 89,963 ms. |
+| Natural xAPI write, 15:04:04.819 | Proxy HTTP 200 after 68,079 ms. Path-only logs do not independently attribute the request to a signer. |
+| Hallowmarch `/gaming/status`, checked 15:08:02 | Export count advanced 4 to 5; last confirmed acknowledgement **15:05:15.236Z**, statement `c191dca7-e31a-8b12-8697-0c9fcbfc38f1`; HTTP 200 and uncertainty cleared. Count is local to the process. |
+| Subsequent natural sample | One pending record, attempt 15:06:47.968Z; its HTTP request returned 499 at 15:08:17.983 after 89,949 ms. A prior acknowledgement does not make this newer delivery confirmed. |
+| Durable game state, 15:08:02 | Live sequence 29, durable sequence 29, durable version 17, pending commands 0. These are `march-proof` game-service gauges, not client FPS, RTT or per-realm/player analytics. |
+
+The current dedicated service actor was
+`did:ethr:0xF4cce38Cd47B4c31960a21CD420a4A467f9b5CB8`. Its monitor status
+continued to report human learning disabled. At 15:08:26, the public container
+`https://gate.interego.xwisee.com/u-eth-f4cce38cd47b/foxxi-lattice/` returned 200
+and listed `holon-0b57d9b6c5c9500102208f73.ttl`. The [public projection](https://gate.interego.xwisee.com/u-eth-f4cce38cd47b/foxxi-lattice/holon-0b57d9b6c5c9500102208f73.ttl)
+returned 200 at 15:09:21. Its asserting-agent, on-behalf-of and attribution metadata
+named that same service DID, with an observed timestamp of 15:02:12.324Z.
+It has **no authorship proof**: this is evidence of projection placement, not an
+independent cryptographic or private-body proof. The older `eth-*` projection
+container remained present; this change does not migrate or merge old lenses.
+
+Storage roles remain distinct. The LRS primary uses its configured service-owned
+native Interego scope with private tenant/lens partitions. The signed xAPI adapter
+additionally awaits an encrypted shared-lattice mirror in the selected,
+ownership-checked subject pod. Hallowmarch stages its technical observation and
+delivery acknowledgement in its encrypted game-owned outbox. The public status
+acknowledgement therefore reports both exact Foxxi durable-receipt acceptance and
+the subsequent game-outbox acknowledgement commit; it exposes no sealed-body proof.
+
+The awaited source path is: native LRS batch commit, actual LRS-enriched readback,
+then each statement's owner-pod mirror in sequence. Monitor batches contain at most
+two statements. The mirror awaits lattice load, recipient-key lookup, container
+creation, a per-resource write lock and encrypted CAS; even its best-effort public
+descriptor PUT is awaited. The outer monitor HTTP deadline is 90 seconds; each
+Foxxi loopback LRS request defaults to 120 seconds and native LRS HTTP operations
+to 15 seconds. Four mirror CAS attempts and eight native LRS conflict attempts
+bound retries, but do not establish one end-to-end deadline. The generic guarded
+mirror fetch does not add a deadline itself. These source facts identify possible
+waiting stages; the available logs do not identify which caused either 499.
+
+Next diagnosis should time signature binding, LRS POST/readback, mirror load/key
+lookup/CAS/projection and the separate Hallowmarch outbox-stage/ack commits using
+fixed metric names and outcome codes, with no payloads, credentials, human IDs or
+caller-selected URLs. Correlate an already retained observation and its normal
+retry; do not create replacement events or widen consent. Keep both native LRS
+and required owner-mirror receipt checks. A future bounded repair path for the
+public projection can be assessed separately after measurements identify its cost.
