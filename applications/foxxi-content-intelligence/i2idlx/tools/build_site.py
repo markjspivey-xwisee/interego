@@ -238,10 +238,18 @@ def action_name(iri) -> str:
 
 def action_link(iri) -> str:
     s = str(iri)
-    a = anchor(s)
+    a = catalog_action_targets.get(s) or anchor(s)
     if a:
-        return f'<a class="qn" href="#{esc(a)}">{esc(a)}</a>'
+        return f'<a class="qn" href="#{esc(a)}">{esc(s[len(NS):] if s.startswith(NS) else action_name(s))}</a>'
     return ext(s, esc(action_name(s)), "qn")
+
+
+catalog_action_targets = {}
+for control in cat.objects(URIRef(IRI["catalog"]), IEP.affordance):
+    action = cat.value(control, IEP.action)
+    if (isinstance(action, URIRef) and str(action).startswith(NS)
+            and (action, RDF.type, I2X.ActionIdentity) in cat and not list(onto.triples((action, None, None)))):
+        catalog_action_targets.setdefault(str(action), str(control).removeprefix(str(CAT)))
 
 
 # ── Graphs ──────────────────────────────────────────────────────────────────────────────────────────
@@ -285,9 +293,8 @@ graph_rows.append(
     'Not published: an agent can derive it from the catalog templates.</td></tr>')
 
 # ── Catalog controls ────────────────────────────────────────────────────────────────────────────────
-listing = re.search(r"iep:affordance(.*?);\s*\n\s*rdfs:seeAlso", cat_src, re.S).group(1)
-control_order = re.findall(r"cat:([A-Za-z0-9_-]+)", listing)
-GROUPS = ["Reads on the live glossary", "Semantic layer (graphs on Interego)", "Per-concept templates",
+control_order = [str(s).removeprefix(str(CAT)) for s in cat.objects(URIRef(IRI["catalog"]), IEP.affordance)]
+GROUPS = ["Reads on the live glossary", "REST API reads", "Semantic layer (graphs on Interego)", "Per-concept templates",
           "Governed writes through Interego", "Foxxi capabilities", "Human-routed"]
 SEMANTIC_PORTS = {"port-vocabulary", "port-alignments", "port-referents"}
 grouped: dict[str, list[str]] = {g: [] for g in GROUPS}
@@ -307,6 +314,8 @@ for local in control_order:
     desc = text_of(cat, s, HYDRA.description) or text_of(cat, s, HYDRA.title) or ""
     if routed:
         group = "Human-routed"
+    elif local.startswith("port-rest-"):
+        group = "REST API reads"
     elif local in SEMANTIC_PORTS:
         group = "Semantic layer (graphs on Interego)"
     elif str(action).startswith(ACTION_ROOT + "foxxi/"):

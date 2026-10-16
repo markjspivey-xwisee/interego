@@ -3,10 +3,22 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { shareUrlBootstrap, orderedMappingIds } from './build-app.js';
 import { canonicalizeNeighborhoodTargets } from './decorations.js';
-import { originVocabularyDeclarations } from './build-site.js';
+import { originVocabularyDeclarations, catalogActionTargets } from './build-site.js';
 import { construct, parseTurtle, nn, PROV } from './rdf.js';
 
 const archive = 'https://claude.ai/artifact/retained-archive';
+test('catalog-only action links target rendered controls without replacing ontology or bridge links', () => {
+  const ns='https://example.org/ontology#', catalogIri='https://example.org/catalog';
+  const catalog=parseTurtle('@prefix i: <'+ns+'> . @prefix c: <'+catalogIri+'#> . '+
+    '@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> . '+
+    '<'+catalogIri+'> iep:affordance c:rest, c:core, c:bridge, c:untyped, c:rest-alias . '+
+    'c:rest iep:action i:act-rest . c:rest-alias iep:action i:act-rest . i:act-rest a i:ActionIdentity . '+
+    'c:core iep:action i:act-core . i:act-core a i:ActionIdentity . '+
+    'c:bridge iep:action <https://relay.interego.xwisee.com/ns/iep/action/foxxi/discover-lrs> . '+
+    'c:untyped iep:action i:undeclared .');
+  const ontology=parseTurtle('<'+ns+'act-core> a <'+ns+'ActionIdentity> .');
+  assert.deepEqual([...catalogActionTargets(catalog,ontology,catalogIri,ns)],[ [ns+'act-rest','rest'] ]);
+});
 test('share URLs use the current hosted origin and canonical workbench route', () => {
   const window = { location: { href: 'https://preview.example.org/i2idlx/reference?draft=1#record' } } as { location: { href: string }; __APP_URL__?: string; __ARCHIVED_APP_URL__?: string };
   vm.runInNewContext(shareUrlBootstrap(archive), { window, URL });
