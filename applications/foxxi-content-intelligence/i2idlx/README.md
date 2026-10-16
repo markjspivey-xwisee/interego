@@ -93,7 +93,7 @@ All ten publishable graphs have stable public IRIs. `npm run i2idlx:verify-publi
 | Ontology (`i2x:`) | `i2idlx` | I2IDL-X | Asserted | 1,822 | 107 KiB |
 | Shapes | `i2idlx-shapes` | Interego | Asserted | 815 | 22 KiB |
 | Rules (SHACL-AF TripleRules) | `i2idlx-rules` | derived | Asserted | 1,372 | 47 KiB |
-| HyprCat catalog — **agent entry point** | `i2idlx-catalog` | added · Interego | Asserted | 1,734 | — |
+| HyprCat catalog — **agent entry point** | `i2idlx-catalog` | added · Interego | Asserted | 1,734 | 98 KiB |
 | Enactments (concept → capability) | `i2idlx-enactments` | proposed | **Hypothetical** | 838 | 50 KiB |
 | Mapping proposals | `i2idlx-mappings` | proposed | **Hypothetical** | 790 | 48 KiB |
 | Release feed | `i2idlx-releases` | derived | Asserted | 184 | 13 KiB |
@@ -173,7 +173,7 @@ The same paths run through the Interego connector itself: `invoke_affordance` on
 
 - Everything proposed — enactments, crosswalks, referent categories, alignments — is published Hypothetical on purpose; a reasoner using it reaches Hypothetical conclusions, and it needs review before ratification.
 - I2IDL collection IRIs (`/collections/...`) are distinct from API routes. The catalog reaches collections through SPARQL or the advertised `/api/v1/collections` REST controls.
-- Foxxi's LRS reports an in-memory backend ("lost on restart") in its live `/xapi/about`, so usage interpretants are only as durable as wherever the statements are persisted.
+- Foxxi's live `/xapi/about` reports native Interego storage: encrypted canonical PGSL artifacts, awaited atomic commits and a rebuildable xAPI view. Older evidence snapshots retain the former in-memory backend as historical observations.
 - Templated controls are for agents to expand; Interego's strict follower only invokes controls with a concrete `hydra:target` (18 in the catalog, 1,985 in the decorations), and the relay's HyperMarkdown marks the other 14 DECLARATIVE.
 - Interego's follower sends no payload on a GET, so a GET control whose input belongs in the URL (the SPARQL GET port) is for plain HTTP clients; agents use the POST port. The build's follower check catches regressions of this kind.
 - `publish_context` takes each graph inline, so publish the file verbatim. The publish path strips four leading spaces from lines inside multi-line literals, so stored queries are indented at most three spaces; the build refuses deeper indentation. The build's published-state lines and `typescript/verify-published.ts` flag any drift between what is live and the build.
