@@ -1,0 +1,9 @@
+name: Build Foxxi monitor pod hotfix
+on:
+  push:
+    branches: [codex/foxxi-owned-monitor-pod-20261016]
+jobs:
+  build:
+    permissions: { contents: read, packages: write }
+    uses: ./.github/workflows/build-ghcr.yml
+    with: { image: interego-foxxi-bridge }

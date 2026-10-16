@@ -275,6 +275,7 @@ PORT=6080 \
 | Var | What it does |
 |---|---|
 | `PORT` | Port the bridge HTTP server binds to. |
+| `FOXXI_SIGNED_XAPI_TIMEOUT_MS` | Optional. Same-process signed xAPI request deadline, including response bodies: 120000 ms by default; integer range 30000–180000. A POST timeout reports an unconfirmed outcome with the original statement IDs; it does not cancel or roll back native persistence. Retry identical IDs and content. The caller's own deadline should allow POST, canonical read-back and encrypted PGSL persistence; a caller using a shorter deadline (such as Hallowmarch's 90 seconds) must retain those same IDs for reconciliation. |
 | `FOXXI_TENANT_POD_URL` | Pod base the bridge reads and writes against. Must end in the tenant slug — the deployed tenant pod is `/foxxi/`. Against a local CSS use `http://localhost:3000/foxxi/`; against the deployed substrate use the **css-gate** URL (`https://gate.interego.xwisee.com/foxxi/`), not the raw CSS URL. |
 | `FOXXI_AUTHORITATIVE_SOURCE` | `did:web:` (or other) identifier the bridge stamps on tenant-authored descriptors so federated readers can resolve attribution. |
 | `FOXXI_AUDIENCE` | Which audience slice the bridge serves (`learner`, `admin`, or `both`). |
@@ -288,6 +289,8 @@ PORT=6080 \
 | `FOXXI_TRANSPORT_<CHANNEL>` | Optional. Per-channel webhook URL (e.g. `FOXXI_TRANSPORT_SLACK`) that `POST /content/deliver` calls. |
 
 ### Substrate write path
+
+The native LRS transport keeps a disposable ciphertext cache bounded to 2048 entries and 16 MiB. It accepts only exact SHA-addressed immutable artifacts and archived commits with matching native metadata and body digest. Mutable heads, capability discovery, writes and the first read after any write always use the authenticated network path. The SDK still decrypts and validates every returned artifact; this cache never acknowledges a primary write or supplies a fallback head.
 
 Storage stays zero-trust: anyone can read pod contents and the local CSS still accepts anonymous writes. On the deployed substrate, the css-gate fronts CSS — `GET`/`HEAD`/`OPTIONS` pass through anonymously, mutating verbs require the bearer. Trust lives at the verifier and reader layer: the bridge verifies wallet signatures on every `/performance/outcome` and `/agent/teach` write, and the reader-side federated-outcome loader silently drops any peer descriptor whose `foxxi:agentSignature` does not recover to its `prov:wasGeneratedBy` DID.
 

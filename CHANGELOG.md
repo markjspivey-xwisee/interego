@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — Signed xAPI follows the caller's provisioned owner pod
+
+Signed xAPI reads and writes now honor the verified payload's explicit owner pod through the existing principal and store checks. A wallet's provisioned `u-eth-*` pod can be selected consistently for both its private LRS lens and native artifact persistence. Foreign principals or stores still select only the caller's derived pod. Requests without an explicit pod keep their existing scope; prior lenses are not merged or migrated. Actual-handler regressions cover both pod spellings, private scope isolation, foreign targets and actors, invalid signatures and unconfirmed persistence. Telemetry collection and learning consent are unchanged.
+
 ## 2026-10-15 — Native Interego LRS commits and preservation hold
 
 Foxxi's replacement primary uses Interego's native encrypted, content-addressed PGSL records. The separately proposed PostgreSQL LRS is rejected in accordance with the owner's existing storage requirement; Foxxi carries no SQL driver, connection or application tables. Native conditional commits publish the statement, attachment bytes, void relationships, State/Profile documents and tenant registry through one authoritative head. xAPI remains the interface and rebuildable query projection. The existing Interego substrate's PostgreSQL engine remains an explicit infrastructure dependency.
