@@ -9796,7 +9796,12 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
         ? checkTelemetryRateLimit(bound.callerDid, operation === 'telemetry-ingest' || operation === 'telemetry-otlp' ? 'ingest' : operation === 'telemetry-query' ? 'query' : 'settings')
         : checkAgenticRateLimit(ip);
       if (!rl.ok) { res.setHeader('Retry-After', String(rl.retryAfterSeconds)); res.status(429).json({ error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
-      const podUrl = resolveSubjectPodUrl(bound.callerDid);
+      // The signed xAPI caller may name its provisioned own pod. Reuse the
+      // existing principal/store fence before selecting either private LRS lens
+      // or native persistence target; a signature alone cannot authorize a pod.
+      const podUrl = operation === 'read' || operation === 'write'
+        ? selfBoundPod(bound.callerDid, typeof bound.payload.subject_pod_url === 'string' ? bound.payload.subject_pod_url : undefined)
+        : resolveSubjectPodUrl(bound.callerDid);
       const label = actorForPod(podUrl, MESH_ACTOR_LABELS);
       const tenant = lensTenantFor(label);
       const captureStore = telemetryCaptureStore(bound.callerDid, podUrl, label);
