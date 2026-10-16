@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — Relay registry reads stay fresh after agent registration
+
+The descriptor body cache now admits only published context descriptor and plaintext graph URLs, checking the fetched location as well as the requested URL. Mutable agent registries, profiles, manifests and arbitrary Turtle or TriG resources are fetched afresh, so registration readback does not wait for a stale cache entry to expire. Published versions retain cache hits; encrypted envelopes remain outside the shared cache. The existing `get_descriptor` freshness flag is now advertised as `bypass_cache`, with authorization and verification unchanged. Handler regressions cover registration readback, an in-flight stale read, URL aliases, redirects, immutable cache hits and recipient isolation.
+
 ## 2026-10-14 — I2IDL-X browser evidence follows the requested source head
 
 The browser oracle now runs only for pull requests or an explicit manual selection. Its redundant producer-completion trigger used GitHub's default-branch workflow context while selecting a different producer commit, so browser failures against an unrelated dependency-update run were attributed to the release commit and blocked deployment. Unsupported events are refused before any GitHub API call.

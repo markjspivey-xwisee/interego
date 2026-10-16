@@ -1664,11 +1664,12 @@ async function discoverCached(podUrl: string, filter?: DiscoverFilterLite): Prom
 
 // ── Descriptor body cache (Fix-4 outer) ─────────────────────
 //
-// Descriptors and their graph bodies are content-addressed via
-// iep:contentCid — once published, the URL → bytes mapping is immutable.
-// Cache plaintext (non-encrypted) bodies with a long TTL so repeated
-// dereference / get_descriptor / federated-read calls don't hit CSS
-// for the same URL. Encrypted envelopes are NEVER cached (the bytes
+// Only versioned resources in the SDK's context-graphs publication container
+// are eligible. Arbitrary Turtle (agents, profiles, manifests) is mutable, even
+// when returned by get_descriptor. Unknown/custom layouts conservatively miss.
+// Cache plaintext bodies so repeated reads of a published version don't hit CSS.
+// This URL convention is a cache policy, never proof of authorship or integrity.
+// Encrypted envelopes are NEVER cached (the bytes
 // depend on the recipient key thumbprint; cross-recipient leakage
 // would be a security bug).
 const DESCRIPTOR_BODY_CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
@@ -1680,8 +1681,18 @@ const DESCRIPTOR_BODY_CACHE_MAX = 2048;
 // only the body would answer the second read of a URL with no idea where it landed, so the
 // binding would silently weaken to `slug-only` on every cache hit.
 const descriptorBodyCache = new Map<string, { content: string; mediaType: string; encrypted: boolean; landedUrl?: string; expiresAt: number }>();
+function canCacheDescriptorBody(url: string, landedUrl = url): boolean {
+  return [url, landedUrl].every(value => {
+    try {
+      const parsed = new URL(value);
+      return /^https?:$/.test(parsed.protocol) && !parsed.username && !parsed.password
+        && !parsed.search && !parsed.hash && !/%(?:2f|5c|2e)/i.test(value)
+        && /\/context-graphs\/[^/]+(?:\.ttl|-graph\.trig)$/.test(parsed.pathname);
+    } catch { return false; }
+  });
+}
 function cacheDescriptorBody(url: string, value: { content: string; mediaType: string; encrypted: boolean; landedUrl?: string }): void {
-  if (value.encrypted) return;
+  if (value.encrypted || !canCacheDescriptorBody(url, value.landedUrl)) return;
   if (descriptorBodyCache.size >= DESCRIPTOR_BODY_CACHE_MAX) {
     const oldest = descriptorBodyCache.keys().next().value;
     if (oldest !== undefined) descriptorBodyCache.delete(oldest);
@@ -4604,14 +4615,19 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
   // recipients registered on the pod include us when we published, so
   // round-tripping is seamless).
   if (url.endsWith('.envelope.jose.json') || url.endsWith('.trig')) {
-    // Cache plaintext envelopes only — encrypted ones depend on the
-    // recipient key, and we don't want to leak cross-recipient.
+    // Only published plaintext graph payloads are cacheable. Envelopes and
+    // mutable TriG stay fresh; encrypted bytes depend on the recipient key.
     const cached = !args.bypass_cache ? descriptorBodyCache.get(url) : undefined;
-    if (cached && cached.expiresAt > Date.now() && !cached.encrypted) {
+    if (cached && cached.expiresAt > Date.now() && !cached.encrypted && canCacheDescriptorBody(url, cached.landedUrl)) {
       return JSON.stringify({ url, encrypted: false, mediaType: cached.mediaType, content: cached.content });
     }
+    let graphLandedUrl: string | undefined;
     const { content, encrypted, mediaType } = await fetchGraphContent(url, {
-      fetch: guardedInvokeFetch,   // caller-supplied URL: screen every redirect hop (R4)
+      fetch: async (target, init) => {
+        const response = await guardedInvokeFetch(target, init); // screens every redirect hop (R4)
+        graphLandedUrl = response.url;
+        return response;
+      },
       // Decrypt ONLY within the caller's proven own pod. get_descriptor needs no
       // credential, so passing relayAgentKey unconditionally made this an
       // unauthenticated oracle for every user's private plaintext.
@@ -4625,14 +4641,13 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
         error: 'Relay agent key is not a recipient of this envelope; cannot decrypt.',
       });
     }
-    if (!encrypted && content !== null) {
-      cacheDescriptorBody(url, { content, mediaType, encrypted: false });
+    if (!encrypted && content !== null && graphLandedUrl) {
+      cacheDescriptorBody(url, { content, mediaType, encrypted: false, landedUrl: graphLandedUrl });
     }
     return JSON.stringify({ url, encrypted, mediaType, content });
   }
 
-  // Descriptor turtle is immutable (content-addressed) so cache it with
-  // a long TTL keyed by URL only.
+  // Published descriptor versions may be cached; arbitrary Turtle may not.
   const cached = !args.bypass_cache ? descriptorBodyCache.get(url) : undefined;
   let turtle: string;
   let representationMediaType: string;
@@ -4641,7 +4656,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
   // asked of this and never of `url`. See the cache comment for why anchoring on the URL
   // asked for is the bug rather than the simplification.
   let landedUrl: string;
-  if (cached && cached.expiresAt > Date.now() && !cached.encrypted) {
+  if (cached && cached.expiresAt > Date.now() && !cached.encrypted && canCacheDescriptorBody(url, cached.landedUrl)) {
     turtle = cached.content;
     representationMediaType = cached.mediaType;
     // A pre-existing entry (written before this field existed) has no landed URL. Falling
@@ -4663,7 +4678,7 @@ async function handleGetDescriptor(args: ToolArgs, project = true): Promise<stri
     landedUrl = landed;
     // Direct HMD resources (courses, catalogues, etc.) are mutable representations,
     // not immutable Turtle descriptors. Do not mislabel or descriptor-cache them.
-    if (!/^text\/markdown(?:\s*;|\s*$)/i.test(representationMediaType)) {
+    if (!/^text\/markdown(?:\s*;|\s*$)/i.test(representationMediaType) && canCacheDescriptorBody(url, landed)) {
       cacheDescriptorBody(url, { content: turtle, mediaType: representationMediaType, encrypted: false, landedUrl: landed });
     }
   }
@@ -11845,6 +11860,7 @@ const TOOL_SCHEMAS = [
       type: 'object',
       properties: {
         url: { type: 'string', description: 'Full URL of the descriptor resource (ends in .ttl). If you don\'t have the URL yet but know the urn:graph IRI it describes, call get_current_head first.' },
+        bypass_cache: { type: 'boolean', description: 'Fetch current bytes instead of a cached descriptor body. Authorization, decryption and verification checks still apply.' },
       },
       required: ['url'],
     },
