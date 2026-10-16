@@ -1,0 +1,9 @@
+name: Build relay cache hotfix
+on:
+  push:
+    branches: [codex/relay-mutable-descriptor-cache-20261016]
+jobs:
+  build:
+    permissions: { contents: read, packages: write }
+    uses: ./.github/workflows/build-ghcr.yml
+    with: { image: interego-relay }
