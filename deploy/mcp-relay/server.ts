@@ -251,6 +251,7 @@ import { CLIENT_CHECK_HTML, CLIENT_CHECK_CSP } from './client-check.js';
 import { canonicalSessionActorId } from './session-actor.js';
 import { selectDelegationSubject, cacheDelegationSubject, equivalentDelegationSubjects, canAutoRegisterPrincipal } from './delegation-subject.js';
 import { verifyPrincipalDelegation } from './principal-delegation.js';
+import { ensureOwnedPublisherCredential, OwnedPublisherCredentialError } from './owned-publisher-credential.js';
 import { INVOKE_AFFORDANCE_OUTPUT, loadResourceCompositions, resourceActionResponse, resourceInvocation, type ResourceContext, type ResourceDescriptor, type ResourceEntry, type ResourceReads, type ResourceWriteContext } from './resource-compositions.js';
 import { protectResourcePublication } from './resource-publication.js';
 import { readClientSigningKeys } from './client-signing-keys.js';
@@ -2736,6 +2737,21 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     });
   }
   ownerWebIdRef = targetOwnerIri.refs.owner_webid;
+
+  if (args.sign_authorship === true && args.visibility === 'public' && !sealed && args._session_agent_did === agentId
+    && /^did:web:[^\s]+:agents:[^\s]+$/.test(agentId)
+    && !(await requireOwnPod(args, podUrl, 'publish_context:publisher-proof'))) {
+    try {
+      // Bootstrap can leave an authorized session row without its signed VC.
+      // Complete ONLY that missing proof. This never writes the registry or
+      // reauthorizes a missing/revoked/narrowed agent, and is not cache-gated.
+      await ensureOwnedPublisherCredential({ podUrl, agentId: agentId as IRI, ownerWebId: ownerWebId as IRI,
+        identityBaseUrl: IDENTITY_URL, fetch: solidFetch, signer: getDelegationSigner, verifier: delegationVerifier });
+    } catch (error) {
+      return JSON.stringify({ error: error instanceof OwnedPublisherCredentialError ? error.code : 'publisher_credential_unavailable',
+        code: 503, published: false, retryable: false });
+    }
+  }
 
   const builder = ContextDescriptor.create(descId)
 .describes((args.graph_iri as string) as IRI)
