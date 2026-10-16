@@ -34,13 +34,20 @@ export async function writeSelfXapi(callerDid: string, input: unknown, deps: Sel
     if (s.attachments !== undefined || (s.object as Json).objectType && (s.object as Json).objectType !== 'Activity') return failure(400, 'this signed adapter accepts Activity statements without attachments; use the standard xAPI surface for other transports');
     ids.add(s.id);
   }
-  const accepted = await deps.request('POST', new URLSearchParams(), input);
+  let accepted: SelfXapiReply;
+  try { accepted = await deps.request('POST', new URLSearchParams(), input); }
+  catch {
+    // Aborting the adapter's HTTP request cannot roll back an LRS/native commit.
+    // Stable ids let the caller reconcile or retry without inventing another event.
+    return { status: 503, body: { ok: false, lrsAccepted: null, statementIds: [...ids], durable: false, retryable: true,
+      error: 'LRS write outcome is unconfirmed; reconcile or retry these same ids and content' } };
+  }
   if (accepted.status < 200 || accepted.status >= 300) return accepted;
   const receipts: Array<{ statementId: string; persisted: boolean; descriptorUrl?: string; holonUri?: string }> = [];
   // Read the actual LRS-enriched envelopes, never persist a caller-authored substitute.
   for (const id of ids) {
-    const read = await deps.request('GET', new URLSearchParams({ statementId: id }));
-    if (read.status !== 200 || !read.body || typeof read.body !== 'object' || (read.body as Json).id !== id) {
+    const read = await deps.request('GET', new URLSearchParams({ statementId: id })).catch(() => null);
+    if (!read || read.status !== 200 || !read.body || typeof read.body !== 'object' || (read.body as Json).id !== id) {
       return { status: 502, body: { ok: false, lrsAccepted: true, statementIds: [...ids], durable: false, error: 'LRS accepted the batch but read-back failed; reconcile these same ids before retrying' } };
     }
     let persisted: Awaited<ReturnType<SelfXapiDependencies['persist']>> = null;

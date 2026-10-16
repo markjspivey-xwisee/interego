@@ -21,6 +21,7 @@
 
 import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
+import { configuredSelfXapiTimeout, createSelfXapiRequest } from '../src/self-xapi-request.js';
 import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapshot, type TelemetryDependencies } from '../../llm-telemetry/service.js';
 import { telemetryProfile } from '../../llm-telemetry/profile.js';
 import { normalizeOtlpLogs } from '../../llm-telemetry/otlp.js';
@@ -5763,6 +5764,7 @@ else if (audience === 'admin') activeAffordances = foxxiAdminAffordances;
 else activeAffordances = [...foxxiAffordances, ...foxxiAdminAffordances];
 
 const PORT = parseInt(process.env.PORT ?? '6080', 10);
+const signedXapiTimeoutMs = configuredSelfXapiTimeout();
 
 // Browser dashboard origin (default Vite dev server). Override with
 // FOXXI_DASHBOARD_ORIGIN for production. Multiple browser surfaces
@@ -9842,16 +9844,7 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
             if (!statement.stored || !statement.authority) throw new Error('durable record is missing its LRS-assigned envelope');
             await getStatementStore(tenant).put({ id: String(statement.id), statement, stored: String(statement.stored), voided: false });
           },
-          request: async (method, query, body) => {
-            const url = new URL(`http://127.0.0.1:${PORT}/xapi/statements`);
-            url.search = query.toString();
-            const response = await fetch(url, {
-              method, redirect: 'error', signal: AbortSignal.timeout(30_000),
-              headers: { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0', Authorization: `Basic ${Buffer.from(`${principal}:${secret}`).toString('base64')}` },
-              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-            });
-            return { status: response.status, body: await response.json() as unknown };
-          },
+          request: createSelfXapiRequest({ port: PORT, principal, secret, timeoutMs: signedXapiTimeoutMs }),
           persist: async (statement) => {
             const result = await composeIntoSharedLattice({
             podUrl, agentDid: bound.callerDid, label: telemetry ? `${label}-llm-telemetry-v1` : label,
