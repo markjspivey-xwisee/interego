@@ -299,6 +299,68 @@
       "label": "Request upstream editorial review",
       "method": "GET",
       "writes": false
+     },
+     {
+      "id": "port-rest-listConcepts",
+      "label": "List concepts",
+      "method": "GET",
+      "writes": false,
+      "takesInput": null
+     },
+     {
+      "id": "port-rest-retrieveConcept",
+      "label": "Retrieve concept",
+      "method": "GET",
+      "writes": false,
+      "takesInput": null
+     },
+     {
+      "id": "port-rest-conceptRelationships",
+      "label": "Concept relationships",
+      "method": "GET",
+      "writes": false,
+      "takesInput": null
+     },
+     {
+      "id": "port-rest-conceptRevisionHistory",
+      "label": "Concept revision history",
+      "method": "GET",
+      "writes": false,
+      "takesInput": null
+     },
+     {
+      "id": "port-rest-listCollections",
+      "label": "List collections",
+      "method": "GET",
+      "writes": false,
+      "takesInput": null
+     },
+     {
+      "id": "port-rest-collectionMembers",
+      "label": "Collection members",
+      "method": "GET",
+      "writes": false,
+      "takesInput": null
+     },
+     {
+      "id": "port-rest-listSources",
+      "label": "List sources",
+      "method": "GET",
+      "writes": false
+     },
+     {
+      "id": "port-rest-retrieveSource",
+      "label": "Retrieve source",
+      "method": "GET",
+      "writes": false,
+      "takesInput": null
+     },
+     {
+      "id": "port-rest-conceptContext",
+      "label": "Bounded concept context bundle",
+      "method": "GET",
+      "writes": false,
+      "takesInput": null
      }
     ],
     "storedQueries": [
@@ -370,7 +432,7 @@
      "Referents (Hypothetical)"
     ]
    },
-   "summary": "23 controls · 11 stored queries",
+   "summary": "32 controls · 11 stored queries",
    "t": 70145
   },
   {
@@ -5599,6 +5661,376 @@
    "step": "close",
    "status": "done",
    "t": 688282
+  }
+ ],
+ "amendments": [
+  {
+   "result": "c2",
+   "path": "result.controls",
+   "recorded": [
+    {
+     "id": "port-glossary-jsonld",
+     "label": "Download the glossary (JSON-LD)",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-glossary-turtle",
+     "label": "Download the glossary (Turtle)",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-scheme",
+     "label": "Get the concept scheme",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-sparql-get",
+     "label": "Query the glossary (GET)",
+     "method": "GET",
+     "writes": false,
+     "takesInput": "SPARQL query input"
+    },
+    {
+     "id": "port-sparql-post",
+     "label": "Query the glossary (POST)",
+     "method": "POST",
+     "writes": false,
+     "takesInput": "SPARQL query text"
+    },
+    {
+     "id": "port-human",
+     "label": "Open the human glossary",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-release-feed",
+     "label": "Release feed",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-change-history",
+     "label": "Change history",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-vocabulary",
+     "label": "I2IDL-X vocabulary",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-alignments",
+     "label": "Alignments to upper ontologies and peers",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-referents",
+     "label": "What each concept classifies",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-concept-turtle",
+     "label": "Resolve a concept (Turtle)",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-concept-jsonld",
+     "label": "Resolve a concept (JSON-LD)",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-definition",
+     "label": "Resolve the active definition",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-source",
+     "label": "Resolve an evidence source",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-human",
+     "label": "Open a concept card",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-propose-mapping",
+     "label": "Propose a crosswalk mapping",
+     "method": "POST",
+     "writes": true,
+     "takesInput": "Propose-mapping input"
+    },
+    {
+     "id": "port-ratify",
+     "label": "Vote on a proposal or enactment",
+     "method": "POST",
+     "writes": true,
+     "takesInput": "Ratification input"
+    },
+    {
+     "id": "port-align-course-concept",
+     "label": "Align a Foxxi course concept to I2IDL",
+     "method": "POST",
+     "writes": true,
+     "takesInput": "Course-concept alignment input"
+    },
+    {
+     "id": "port-publish-classified",
+     "label": "Publish classified data",
+     "method": "POST",
+     "writes": true,
+     "takesInput": "Classified-data input"
+    },
+    {
+     "id": "port-record-usage",
+     "label": "Record concept usage (xAPI via Foxxi)",
+     "method": "POST",
+     "writes": true
+    },
+    {
+     "id": "port-coverage",
+     "label": "Concept coverage across the Foxxi catalog",
+     "method": "POST",
+     "writes": false
+    },
+    {
+     "id": "port-upstream-review",
+     "label": "Request upstream editorial review",
+     "method": "GET",
+     "writes": false
+    }
+   ],
+   "now": [
+    {
+     "id": "port-glossary-jsonld",
+     "label": "Download the glossary (JSON-LD)",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-glossary-turtle",
+     "label": "Download the glossary (Turtle)",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-scheme",
+     "label": "Get the concept scheme",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-sparql-get",
+     "label": "Query the glossary (GET)",
+     "method": "GET",
+     "writes": false,
+     "takesInput": "SPARQL query input"
+    },
+    {
+     "id": "port-sparql-post",
+     "label": "Query the glossary (POST)",
+     "method": "POST",
+     "writes": false,
+     "takesInput": "SPARQL query text"
+    },
+    {
+     "id": "port-human",
+     "label": "Open the human glossary",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-release-feed",
+     "label": "Release feed",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-change-history",
+     "label": "Change history",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-vocabulary",
+     "label": "I2IDL-X vocabulary",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-alignments",
+     "label": "Alignments to upper ontologies and peers",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-referents",
+     "label": "What each concept classifies",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-concept-turtle",
+     "label": "Resolve a concept (Turtle)",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-concept-jsonld",
+     "label": "Resolve a concept (JSON-LD)",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-definition",
+     "label": "Resolve the active definition",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-source",
+     "label": "Resolve an evidence source",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "tmpl-human",
+     "label": "Open a concept card",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-propose-mapping",
+     "label": "Propose a crosswalk mapping",
+     "method": "POST",
+     "writes": true,
+     "takesInput": "Propose-mapping input"
+    },
+    {
+     "id": "port-ratify",
+     "label": "Vote on a proposal or enactment",
+     "method": "POST",
+     "writes": true,
+     "takesInput": "Ratification input"
+    },
+    {
+     "id": "port-align-course-concept",
+     "label": "Align a Foxxi course concept to I2IDL",
+     "method": "POST",
+     "writes": true,
+     "takesInput": "Course-concept alignment input"
+    },
+    {
+     "id": "port-publish-classified",
+     "label": "Publish classified data",
+     "method": "POST",
+     "writes": true,
+     "takesInput": "Classified-data input"
+    },
+    {
+     "id": "port-record-usage",
+     "label": "Record concept usage (xAPI via Foxxi)",
+     "method": "POST",
+     "writes": true
+    },
+    {
+     "id": "port-coverage",
+     "label": "Concept coverage across the Foxxi catalog",
+     "method": "POST",
+     "writes": false
+    },
+    {
+     "id": "port-upstream-review",
+     "label": "Request upstream editorial review",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-rest-listConcepts",
+     "label": "List concepts",
+     "method": "GET",
+     "writes": false,
+     "takesInput": null
+    },
+    {
+     "id": "port-rest-retrieveConcept",
+     "label": "Retrieve concept",
+     "method": "GET",
+     "writes": false,
+     "takesInput": null
+    },
+    {
+     "id": "port-rest-conceptRelationships",
+     "label": "Concept relationships",
+     "method": "GET",
+     "writes": false,
+     "takesInput": null
+    },
+    {
+     "id": "port-rest-conceptRevisionHistory",
+     "label": "Concept revision history",
+     "method": "GET",
+     "writes": false,
+     "takesInput": null
+    },
+    {
+     "id": "port-rest-listCollections",
+     "label": "List collections",
+     "method": "GET",
+     "writes": false,
+     "takesInput": null
+    },
+    {
+     "id": "port-rest-collectionMembers",
+     "label": "Collection members",
+     "method": "GET",
+     "writes": false,
+     "takesInput": null
+    },
+    {
+     "id": "port-rest-listSources",
+     "label": "List sources",
+     "method": "GET",
+     "writes": false
+    },
+    {
+     "id": "port-rest-retrieveSource",
+     "label": "Retrieve source",
+     "method": "GET",
+     "writes": false,
+     "takesInput": null
+    },
+    {
+     "id": "port-rest-conceptContext",
+     "label": "Bounded concept context bundle",
+     "method": "GET",
+     "writes": false,
+     "takesInput": null
+    }
+   ],
+   "on": "2026-10-16T14:57:51.386Z",
+   "why": "Replayed the actual deterministic read_catalog implementation against the native 32-control projection from source eda257c98fe8eee6d24fa334d742ba49f4d77707 after publishing nine read-only I2IDL REST affordances. This is a catalog refresh of the recorded result; the original agent calls, recording timestamps and other results are retained."
+  },
+  {
+   "result": "c2",
+   "path": "summary",
+   "recorded": "23 controls · 11 stored queries",
+   "now": "32 controls · 11 stored queries",
+   "on": "2026-10-16T14:57:51.386Z",
+   "why": "Replaced the stale control count with the summary returned by the same actual read_catalog replay; the original summary is retained here."
   }
  ]
 }

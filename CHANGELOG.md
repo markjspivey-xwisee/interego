@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-16 — I2IDL REST API catalog decoration and reference-site integration
+
+The glossary catalog adds nine read-only REST operations from I2IDL's v0.0.89 platform release while retaining the canonical v0.0.86 glossary pin. DCAT describes the REST projection and service; the current OMG DPROD product wrapper has service-valued output ports. Hydra templates and response contracts, SHACL argument bounds, ODRL dispatch and source-specific reuse policies, and pinned PROV/SPDX evidence decorate the API without restating canonical glossary definitions. Eight routes derive from OpenAPI; the context route is attributed separately to its released handler and documentation. API contract and glossary publication versions remain distinct, and SPARQL quotas are not inferred for REST.
+
+Both workbench and reference-site implementations enumerate all 32 controls. Catalog-only action identities link to rendered control rows, while ontology vocabulary links and external bridge identities retain their existing destinations. REST reads have their own reference-site group. Independent Python builds remain CI oracles; the production build remains native TypeScript. Regression checks cover catalog action routing, source reproducibility, native and independent SHACL parameter validation, and the live read-only API observations.
+
+The live catalog preserves its original 900 triples and extends to 1,734, verified by complete graph readback. Its descriptor verifies authorship but reports payload binding as declared; independent RDF comparison is separate evidence. The workbench and README now reflect the native LRS backend reported by the live Foxxi discovery endpoint, replacing stale in-memory wording. This change does not perform an infrastructure deployment or restart.
+
 ## 2026-10-15 — Native Interego LRS commits and preservation hold
 
 Foxxi's replacement primary uses Interego's native encrypted, content-addressed PGSL records. The separately proposed PostgreSQL LRS is rejected in accordance with the owner's existing storage requirement; Foxxi carries no SQL driver, connection or application tables. Native conditional commits publish the statement, attachment bytes, void relationships, State/Profile documents and tenant registry through one authoritative head. xAPI remains the interface and rebuildable query projection. The existing Interego substrate's PostgreSQL engine remains an explicit infrastructure dependency.

@@ -93,7 +93,7 @@ All ten publishable graphs have stable public IRIs. `npm run i2idlx:verify-publi
 | Ontology (`i2x:`) | `i2idlx` | I2IDL-X | Asserted | 1,822 | 107 KiB |
 | Shapes | `i2idlx-shapes` | Interego | Asserted | 815 | 22 KiB |
 | Rules (SHACL-AF TripleRules) | `i2idlx-rules` | derived | Asserted | 1,372 | 47 KiB |
-| HyprCat catalog — **agent entry point** | `i2idlx-catalog` | added · Interego | Asserted | 900 | 49 KiB |
+| HyprCat catalog — **agent entry point** | `i2idlx-catalog` | added · Interego | Asserted | 1,734 | 98 KiB |
 | Enactments (concept → capability) | `i2idlx-enactments` | proposed | **Hypothetical** | 838 | 50 KiB |
 | Mapping proposals | `i2idlx-mappings` | proposed | **Hypothetical** | 790 | 48 KiB |
 | Release feed | `i2idlx-releases` | derived | Asserted | 184 | 13 KiB |
@@ -127,8 +127,9 @@ Owner and slugs are one line each in `config.json`; the build re-mints every IRI
 
 ## Agentic, through hypermedia
 
-**HyprCat catalog.** The glossary is a `hyprcat:FederatedDataProduct` in the ServiceWorld. Every port is simultaneously a `dcat:Distribution`, `hydra:Operation`, `iep:Affordance` and `ieh:Affordance`, so any of those dialects can act on it. 23 controls:
+**HyprCat catalog.** The glossary is a `hyprcat:FederatedDataProduct` in the ServiceWorld. Every port is simultaneously a `dcat:Distribution`, `hydra:Operation`, `iep:Affordance` and `ieh:Affordance`, so any of those dialects can act on it. The 23 core controls are supplemented by nine REST reads:
 - **Output ports** on I2IDL's real service: JSON-LD and Turtle dumps, scheme, SPARQL with its published limits as data (`i2x:ServiceLimits`: 12,000-character queries, 30 requests per minute, 5,000-row caps, no Update/SERVICE/FROM) and as ODRL constraints, the human glossary. SPARQL has two ports: GET (`?query=`) for plain HTTP clients, and POST (`application/sparql-query`) for agents acting through Interego, which call `act` with the catalog, `i2x:act-query-glossary-post` and the query as a plain string payload.
+- **REST API reads**: nine GET operations from the separately pinned v0.0.89 release, including concepts, relationships, revision history, collections, sources and context. DCAT and DPROD describe the service and product; Hydra and SHACL carry URI templates and parameter contracts; ODRL preserves read-only dispatch and source-specific reuse. See [the source evidence and model](evidence/rest-api/README.md).
 - **Output ports on Interego**: the release feed, the change history, and the three semantic-layer graphs (`port-vocabulary`, `port-alignments`, `port-referents`).
 - **Templated controls** (RFC 6570 over `dct:identifier`, `gs:activeDefinition`, `dct:source`) for per-concept resolution, expanded by the agent or materialized by the decorator projection.
 - **Input ports** that write governed records to the caller's own pod through the relay — `propose-mapping`, `ratify`, `align-course-concept`, `publish-classified` — each with an input shape the HyperMarkdown projection renders as a form and `conforms_to_shapes` defaulted, so the relay rejects malformed records before writing. Foxxi ports (`record-usage` fronting `write-xapi-statements-signed`, `coverage`) and a human-mediated upstream-review control complete it.
@@ -171,9 +172,9 @@ The same paths run through the Interego connector itself: `invoke_affordance` on
 ## Things to know
 
 - Everything proposed — enactments, crosswalks, referent categories, alignments — is published Hypothetical on purpose; a reasoner using it reaches Hypothetical conclusions, and it needs review before ratification.
-- I2IDL collection IRIs (`/collections/...`) return 404 upstream; only scheme, concept, definition and source IRIs dereference. The catalog reaches collections through SPARQL for that reason.
-- Foxxi's LRS reports an in-memory backend ("lost on restart") in its live `/xapi/about`, so usage interpretants are only as durable as wherever the statements are persisted.
-- Templated controls are for agents to expand; Interego's strict follower only invokes controls with a concrete `hydra:target` (17 in the catalog, 1,985 in the decorations), and the relay's HyperMarkdown marks the other six DECLARATIVE.
+- I2IDL collection IRIs (`/collections/...`) are distinct from API routes. The catalog reaches collections through SPARQL or the advertised `/api/v1/collections` REST controls.
+- Foxxi's live `/xapi/about` reports native Interego storage: encrypted canonical PGSL artifacts, awaited atomic commits and a rebuildable xAPI view. Older evidence snapshots retain the former in-memory backend as historical observations.
+- Templated controls are for agents to expand; Interego's strict follower only invokes controls with a concrete `hydra:target` (18 in the catalog, 1,985 in the decorations), and the relay's HyperMarkdown marks the other 14 DECLARATIVE.
 - Interego's follower sends no payload on a GET, so a GET control whose input belongs in the URL (the SPARQL GET port) is for plain HTTP clients; agents use the POST port. The build's follower check catches regressions of this kind.
 - `publish_context` takes each graph inline, so publish the file verbatim. The publish path strips four leading spaces from lines inside multi-line literals, so stored queries are indented at most three spaces; the build refuses deeper indentation. The build's published-state lines and `typescript/verify-published.ts` flag any drift between what is live and the build.
 - The relay validates a publish only against shapes that target something in it: the catalog and referents are checked on publish; the alignments graph has nothing the shapes target, so the build checks it locally.

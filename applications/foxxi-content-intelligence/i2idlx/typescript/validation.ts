@@ -15,7 +15,7 @@ import {RDF,RDFS,XSD,termKey,objects,subjects,has,union,rdfList,rdfsClosure,vali
 const {namedNode:nn,blankNode:bn,literal,quad}=DataFactory;
 const SH='http://www.w3.org/ns/shacl#';
 const dedup=(nodes:Term[])=>[...new Map(nodes.map(n=>[termKey(n),n])).values()];
-const annotationNames=new Set(['name','description','message','order','group','severity','deactivated','prefixes','declare','prefix','namespace']);
+const annotationNames=new Set(['name','description','message','order','group','severity','deactivated','prefixes','declare','prefix','namespace','defaultValue']);
 const supportedNames=new Set(['NodeShape','PropertyShape','targetClass','targetNode','targetSubjectsOf','targetObjectsOf','path','property',
  'nodeKind','IRI','BlankNode','Literal','BlankNodeOrIRI','BlankNodeOrLiteral','IRIOrLiteral',
  'minCount','maxCount','minLength','maxLength','pattern','flags','datatype','class','node','hasValue','in',

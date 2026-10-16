@@ -665,7 +665,7 @@ export function XapiModal({ ids, onClose }) {
         </div>
         <CodeBlock title="xAPI statement" code={pretty(stmt)} />
         <CodeBlock title="Interego act call (agent)" code={pretty(usageActCall(stmt))} />
-        <div className="note"><Icon name="info" /><span><code>actor.account.name</code> must be your authenticated DID; Foxxi rejects statements on anyone else's behalf. Foxxi's live LRS reports an in-memory backend, so persist statements you need to keep.</span></div>
+        <div className="note"><Icon name="info" /><span><code>actor.account.name</code> must be your authenticated DID; Foxxi rejects statements on anyone else's behalf. Usage records are persisted through Foxxi's native Interego-backed LRS.</span></div>
       </div>
     </Modal>
   );
