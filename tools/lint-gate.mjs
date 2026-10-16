@@ -264,7 +264,9 @@ const UNLINTED_FRONTIER = {
   //    All seven lint clean.
   // CI measured 808 application source files after the native I2IDL-X modules;
   // the error pin remains unchanged.
-  applications: { errors: 1452, files: 808 },
+  // The signed xAPI transport/cache modules crossed the tracked census slack;
+  // the gate requested this exact file count. The error ceiling is unchanged.
+  applications: { errors: 1452, files: 852 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },

@@ -35,6 +35,7 @@ import {
 import { PodStatementStore } from './pod-statement-store.js';
 import { deriveEncryptionKeyPair, type IRI } from '@interego/core';
 import { NativeCommitStore } from '@interego/pgsl';
+import { createNativeLrsTransport } from './native-lrs-transport.js';
 import { NativeInteregoLrsDatabase } from './native-lrs-store.js';
 
 export interface StoredStatement {
@@ -589,18 +590,9 @@ export function assertLrsPrimaryConfiguration(env: NodeJS.ProcessEnv = process.e
 let nativeDatabase: NativeInteregoLrsDatabase | undefined;
 /** Authenticated transport is constrained to the configured native pod, including reads. */
 export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = process.env): NativeInteregoLrsDatabase {
-  const config = nativeConfiguration(env), originalFetch = globalThis.fetch.bind(globalThis);
+  const config = nativeConfiguration(env);
   const senderKeyPair = deriveEncryptionKeyPair(config.privateKey, config.scope.owner);
-  const pod = new URL(config.scope.pod);
-  const transport: typeof globalThis.fetch = async (input, init) => {
-    const request = input instanceof Request ? input : undefined;
-    const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-    if (url.origin !== pod.origin || !url.pathname.startsWith(pod.pathname) || url.username || url.password || url.hash || url.search || /%2e|%2f|%5c/i.test(url.pathname)) throw new Error('native LRS transport left its authorized pod scope');
-    const headers = new Headers(init?.headers ?? request?.headers);
-    headers.set('Authorization', 'Bearer ' + config.capability);
-    return originalFetch(input, { ...init, headers, method: init?.method ?? request?.method ?? 'GET',
-      redirect: 'manual', signal: init?.signal ?? AbortSignal.timeout(15000) });
-  };
+  const transport = createNativeLrsTransport({ scope: config.scope, capability: config.capability });
   const client = new NativeCommitStore({ scope: config.scope, fetch: transport, senderKeyPair,
     ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
   return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
