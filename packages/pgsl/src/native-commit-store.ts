@@ -36,6 +36,9 @@ export interface NativeSnapshot {
   readonly reference: NativeSnapshotReference | null;
   readonly operationId: string | null;
   readonly records: ReadonlyMap<string, NativeArtifactReference>;
+  /** Present only for a selected read: unlisted keys have NOT been checked.
+   * Listed missing keys are absent at this same verified native head. */
+  readonly selectedRecordKeys?: readonly string[];
 }
 export interface NativeResourceReceipt {
   readonly version: 1; readonly status: 'committed'; readonly expectedRevision: string | null;
@@ -53,10 +56,15 @@ export interface NativeCommitReceipt {
 export interface NativeCommitRequest {
   readonly operationId: string; readonly expected: NativeSnapshot;
   readonly changes: readonly { readonly key: string; readonly artifact: NativeArtifactInput | null }[];
+  /** Return only these verified record paths, including on recovered/replayed
+   * operations. Omission retains the complete-snapshot API. */
+  readonly resultRecordKeys?: readonly string[];
 }
 export interface NativeCommitClient {
   ready(): Promise<void>;
   readHead(): Promise<NativeSnapshot>;
+  /** Optional for compatibility with existing NativeCommitClient adapters. */
+  readHeadRecords?(keys: readonly string[]): Promise<NativeSnapshot>;
   readSnapshotAt(reference: NativeSnapshotReference): Promise<NativeSnapshot>;
   readArtifact(reference: NativeArtifactReference): Promise<NativeArtifact>;
   commit(request: NativeCommitRequest): Promise<NativeCommitReceipt>;
@@ -84,6 +92,12 @@ type IndexNode = IndexLeaf | IndexBranch;
 
 function digest(bytes: Uint8Array | string): string { return 'sha256:' + createHash('sha256').update(bytes).digest('hex'); }
 function compareStrings(a: string, b: string): number { return a < b ? -1 : a > b ? 1 : 0; }
+function recordSelection(keys: readonly string[]): readonly string[] {
+  if (!Array.isArray(keys) || keys.length > 1000) fail('Native record selection exceeds capacity.', 400);
+  const selected = new Set<string>();
+  for (const key of keys) { bounded(key, 4096, 'record selection key'); selected.add(key); }
+  return Object.freeze([...selected].sort(compareStrings));
+}
 function hashKey(key: string): string { return createHash('sha256').update(key).digest('hex'); }
 function fail(message: string, status = 503): never { throw new NativeCommitError(message, status); }
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
@@ -450,6 +464,20 @@ export class NativeCommitStore implements NativeCommitClient {
   }
   private async complete(head: DecodedHead): Promise<DecodedHead> { return { ...head, records: await this.records(head.index) }; }
   async readHead(): Promise<NativeSnapshot> { return this.complete(await this.current()); }
+  /** Verify only requested HAMT paths under ONE verified current head. This
+   * does not validate branches outside the explicitly returned selection. */
+  private async selected(head: DecodedHead, keys: readonly string[]): Promise<DecodedHead> {
+    const records = new Map<string, NativeArtifactReference>();
+    for (const key of keys) {
+      const reference = await this.lookup(head.index, 'record:' + key);
+      if (reference) records.set(key, reference);
+    }
+    return { ...head, records, selectedRecordKeys: keys };
+  }
+  async readHeadRecords(keys: readonly string[]): Promise<NativeSnapshot> {
+    const selected = recordSelection(keys);
+    return this.selected(await this.current(), selected);
+  }
   private async operation(operationId: string, current: DecodedHead): Promise<DecodedHead | null> {
     if (current.operationId === operationId) return current;
     const ref = await this.lookup(current.index, 'operation:' + operationId);
@@ -469,12 +497,15 @@ export class NativeCommitStore implements NativeCommitClient {
     if (!retained || canonical(retained.reference) !== canonical(reference)) return fail('Historical snapshot is not in the committed native index.');
     return this.complete(retained);
   }
-  private async result(head: DecodedHead, replayed: boolean, receipt: NativeResourceReceipt | null): Promise<NativeCommitReceipt> {
+  private async result(head: DecodedHead, replayed: boolean, receipt: NativeResourceReceipt | null,
+    selectedRecordKeys?: readonly string[]): Promise<NativeCommitReceipt> {
     if (!head.reference || !head.operationId) return fail('Native commit receipt lacks a committed head.');
     return { operationId: head.operationId, scope: this.scope, previousHead: head.previous, head: head.reference, createdAt: head.createdAt,
-      replayed, snapshot: await this.complete(head), resourceReceipt: receipt };
+      replayed, snapshot: selectedRecordKeys === undefined ? await this.complete(head) : await this.selected(head, selectedRecordKeys), resourceReceipt: receipt };
   }
   async commit(request: NativeCommitRequest): Promise<NativeCommitReceipt> {
+    // Detach caller selection before the first await, including its absence.
+    const selectedRecordKeys = request.resultRecordKeys === undefined ? undefined : recordSelection(request.resultRecordKeys);
     bounded(request.operationId, 200, 'operation ID');
     if (canonical(request.expected.scope) !== canonical(this.scope) || !Array.isArray(request.changes) || request.changes.length > 1000) fail('Native mutation scope or capacity is invalid.', 400);
     const changes = [...request.changes].sort((a, b) => compareStrings(a.key, b.key)), keys = new Set<string>();
@@ -484,7 +515,7 @@ export class NativeCommitStore implements NativeCommitClient {
     }
     const logicalDigest = digest(canonical({ scope: this.scope, changes: changes.map(c => ({ key: c.key, plaintextDigest: c.artifact ? digest(serializeArtifact({ topUri: c.artifact.topUri, nodes: c.artifact.pgsl.nodes })) : null })) }));
     const current = await this.current(), prior = await this.operation(request.operationId, current);
-    if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null); }
+    if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null, selectedRecordKeys); }
     if (current.revision !== request.expected.revision || canonical(current.reference) !== canonical(request.expected.reference)) throw new NativeCommitConflictError();
     await this.ready();
     const indexChanges = new Map<string, NativeArtifactReference | null>();
@@ -507,13 +538,13 @@ export class NativeCommitStore implements NativeCommitClient {
     catch (error) {
       if (!(error instanceof NativeCommitConflictError)) throw error;
       const winner = await this.operation(request.operationId, await this.current());
-      if (winner && winner.logicalDigest === logicalDigest) return this.result(winner, true, null);
+      if (winner && winner.logicalDigest === logicalDigest) return this.result(winner, true, null, selectedRecordKeys);
       throw error;
     }
     if (!receipt) {
       const recovered = await this.operation(request.operationId, await this.current());
       if (!recovered || recovered.logicalDigest !== logicalDigest) return fail('Native head acknowledgement is uncertain; retry the same operation ID.');
-      return this.result(recovered, true, null);
+      return this.result(recovered, true, null, selectedRecordKeys);
     }
     const committed = this.decodeHead(bytes, receipt.revision, topUri), actual = await this.readRepresentation(this.scope.headUrl);
     if (!actual || actual.revision !== receipt.revision || !Buffer.from(actual.bytes).equals(Buffer.from(bytes))) {
@@ -521,6 +552,6 @@ export class NativeCommitStore implements NativeCommitClient {
       if (!ancestor || ancestor.reference?.revision !== receipt.revision || ancestor.reference.topUri !== topUri || ancestor.logicalDigest !== logicalDigest) return fail('Native committed head could not be verified unchanged.');
     }
     this.decrypt(bytes, topUri);
-    return this.result(committed, false, receipt);
+    return this.result(committed, false, receipt, selectedRecordKeys);
   }
 }

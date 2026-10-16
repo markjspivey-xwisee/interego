@@ -105,6 +105,91 @@ async function textAt(transport: NativeTransport, snapshot: Awaited<ReturnType<N
 }
 
 describe('strict native encrypted PGSL commits', () => {
+  it('bounds and detaches selected coverage before I/O, including proven absence at an empty head', async () => {
+    const transport = new NativeTransport(), client = transport.client();
+    for (const keys of [new Array(1001).fill('x'), [''], ['bad\nkey'], [null], 'key']) {
+      await expect(client.readHeadRecords(keys as readonly string[])).rejects.toThrow();
+    }
+    expect(transport.methods).toHaveLength(0);
+    const keys = ['missing', 'a', 'missing'], pending = client.readHeadRecords(keys); keys.push('not-requested');
+    const empty = await pending;
+    expect(empty.selectedRecordKeys).toEqual(['a', 'missing']); expect(Object.isFrozen(empty.selectedRecordKeys)).toBe(true);
+    expect(empty.revision).toBeNull(); expect(empty.records.size).toBe(0);
+    expect((await client.readHead()).selectedRecordKeys).toBeUndefined();
+  });
+
+  it('anchors every selected path to one verified head even when another writer advances during the read', async () => {
+    const transport = new NativeTransport(); await put(transport, 'first'); let advanced = false, heads = 0;
+    const client = transport.client({ fetch: async (url, init) => {
+      const response = await transport.fetch(url, init);
+      if (String(url) === scope.headUrl && (init?.method ?? 'GET') === 'GET') {
+        heads++; if (!advanced) { advanced = true; await put(transport, 'later'); }
+      }
+      return response;
+    } });
+    const selected = await client.readHeadRecords(['statement:first', 'statement:later']);
+    expect(heads).toBe(1); expect(selected.records.has('statement:first')).toBe(true);
+    expect(selected.records.has('statement:later')).toBe(false);
+    expect(selected.revision).not.toBe((await transport.client().readHead()).revision);
+  });
+
+  it('selected proofs visit only requested paths and do not claim validation of unrelated branches', async () => {
+    const transport = new NativeTransport(), client = transport.client();
+    await client.commit({ operationId: 'wide-index', expected: await client.readHead(),
+      changes: Array.from({ length: 96 }, (_, i) => ({ key: 'key-' + i, artifact: artifact('body-' + i) })), resultRecordKeys: [] });
+    transport.methods.length = 0;
+    const selected = await client.readHeadRecords(['key-0', 'absent']);
+    const visited = new Set(transport.methods.filter(method => method.startsWith('GET ')).map(method => method.slice(4)));
+    expect(selected.selectedRecordKeys).toEqual(['absent', 'key-0']); expect([...selected.records.keys()]).toEqual(['key-0']);
+    const selectedReads = visited.size; transport.methods.length = 0;
+    expect((await client.readHead()).records.size).toBe(96);
+    const fullReads = new Set(transport.methods.filter(method => method.startsWith('GET ')).map(method => method.slice(4)));
+    expect(fullReads.size).toBeGreaterThan(selectedReads * 2);
+    const unvisited = [...fullReads].find(url => url.includes('/artifact-') && !visited.has(url))!;
+    expect(unvisited).toBeDefined(); const old = transport.rows.get(unvisited)!;
+    transport.rows.set(unvisited, { ...old, bytes: Buffer.from('{}') });
+    expect((await client.readHeadRecords(['key-0', 'absent'])).records.size).toBe(1);
+    await expect(client.readHead()).rejects.toThrow(); transport.rows.set(unvisited, old);
+    const selectedPath = [...visited].filter(url => url.includes('/artifact-')).at(-1)!;
+    transport.rows.set(selectedPath, { ...transport.rows.get(selectedPath)!, bytes: Buffer.from('{}') });
+    await expect(client.readHeadRecords(['key-0', 'absent'])).rejects.toThrow();
+  });
+
+  it('selected commit results and historical replay retain exact coverage without enumerating unrelated records', async () => {
+    const transport = new NativeTransport(), client = transport.client(), initial = await client.readHeadRecords(['one']);
+    const keys = ['one', 'absent'], input = artifact('one');
+    const pending = client.commit({ operationId: 'selected', expected: initial, changes: [{ key: 'one', artifact: input }], resultRecordKeys: keys });
+    keys.push('not-requested'); const first = await pending;
+    expect(first.snapshot.selectedRecordKeys).toEqual(['absent', 'one']); expect([...first.snapshot.records.keys()]).toEqual(['one']);
+    await put(transport, 'later');
+    const replay = await client.commit({ operationId: 'selected', expected: initial, changes: [{ key: 'one', artifact: input }], resultRecordKeys: ['one', 'statement:later'] });
+    expect(replay.head).toEqual(first.head); expect(replay.replayed).toBe(true);
+    expect(replay.snapshot.selectedRecordKeys).toEqual(['one', 'statement:later']); expect(replay.snapshot.records.has('statement:later')).toBe(false);
+    expect((await client.readSnapshotAt(first.head)).selectedRecordKeys).toBeUndefined();
+    const before = transport.writes.length;
+    await expect(client.commit({ operationId: 'stale-selected', expected: first.snapshot, changes: [], resultRecordKeys: [] })).rejects.toBeInstanceOf(NativeCommitConflictError);
+    expect(transport.writes.length).toBe(before);
+  });
+
+  it('selected result coverage survives lost acknowledgements, ancestor readback and an identical competing operation', async () => {
+    for (const mode of ['lost-ack', 'ancestor', 'identical-competitor']) {
+      const transport = new NativeTransport(), client = transport.client(), initial = await client.readHeadRecords(['own']);
+      const changes = [{ key: 'own', artifact: artifact('own') }];
+      if (mode === 'identical-competitor') transport.beforeHead = async () => {
+        await transport.client().commit({ operationId: 'own', expected: initial, changes, resultRecordKeys: [] });
+      };
+      else {
+        if (mode === 'lost-ack') transport.loseHeadAck = true;
+        transport.afterHead = async () => { await put(transport, 'rival'); };
+      }
+      const result = await client.commit({ operationId: 'own', expected: initial, changes, resultRecordKeys: ['own', 'statement:rival'] });
+      expect(result.snapshot.selectedRecordKeys).toEqual(['own', 'statement:rival']);
+      expect([...result.snapshot.records.keys()]).toEqual(['own']);
+      expect(result.replayed).toBe(mode !== 'ancestor');
+      expect(await textAt(transport, result.snapshot, 'own')).toBe('own');
+    }
+  });
+
   it('discovers a missing native target without claiming write authority', async () => {
     const transport = new NativeTransport(); await transport.client().ready();
     expect(await transport.client().readHead()).toMatchObject({ revision: null, operationId: null });

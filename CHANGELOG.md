@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — Selected native record proofs
+
+NativeCommitStore can verify selected record paths under one current native head and return selected commit-result snapshots, including recovered and replayed operations. Explicit coverage distinguishes a requested absent key from an unvisited key. Existing complete reads and default commit results remain unchanged; the selected API claims only visited index-path closures and their artifact references. Record payloads still require readArtifact, and unvisited index branches are not validated. It uses the same owner, canonical head, CAS predicates, immutable artifacts and operation history. No backend protocol or live deployment change is included.
+
 ## 2026-10-15 — Native Interego LRS commits and preservation hold
 
 Foxxi's replacement primary uses Interego's native encrypted, content-addressed PGSL records. The separately proposed PostgreSQL LRS is rejected in accordance with the owner's existing storage requirement; Foxxi carries no SQL driver, connection or application tables. Native conditional commits publish the statement, attachment bytes, void relationships, State/Profile documents and tenant registry through one authoritative head. xAPI remains the interface and rebuildable query projection. The existing Interego substrate's PostgreSQL engine remains an explicit infrastructure dependency.
