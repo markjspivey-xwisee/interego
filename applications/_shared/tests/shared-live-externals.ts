@@ -854,6 +854,35 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
       + 'way. Set this one and both would share it.',
   },
   {
+    name: 'PGSL_PG_CONNSTR',
+    readIn: 'tools/pgsl-store-gc.ts',
+    why: 'the collector CLI database address, read only inside main(). The collector decision '
+      + 'and retention suites import this module for pure helpers; neither invokes main(), '
+      + 'reads this variable directly, nor supplies a live connection. The command entry '
+      + 'guard does not run when the module is imported by Vitest.',
+  },
+  {
+    name: 'PGSL_GC_VOLUME_CAPACITY_BYTES',
+    readIn: 'tools/pgsl-store-gc.ts',
+    why: 'verified volume capacity supplied to the CLI rebuild guard inside main(). Both '
+      + 'collector suites reach the read by importing pure helpers, but their fixtures pass '
+      + 'headroom values explicitly and never execute the CLI or read this variable.',
+  },
+  {
+    name: 'PGSL_GC_VOLUME_USED_BYTES',
+    readIn: 'tools/pgsl-store-gc.ts',
+    why: 'verified volume usage supplied beside capacity to the CLI rebuild guard. The '
+      + 'shared import reaches this guarded main() read; collected tests instead pass '
+      + 'explicit fixture values and never run the CLI or configure a live volume.',
+  },
+  {
+    name: 'PGSL_GC_VOLUME_SAMPLED_AT',
+    readIn: 'tools/pgsl-store-gc.ts',
+    why: 'the sample timestamp checked for freshness by the CLI rebuild guard inside main(). '
+      + 'It addresses no resource; the two collector suites import the module without '
+      + 'running main() and pass fixture timestamps explicitly to the pure guard.',
+  },
+  {
     name: 'RELAY_PGSL_TABLE',
     readIn: 'deploy/mcp-relay/engagement-store.ts',
     why: 'the table name inside whatever the connection string above addresses, defaulted to '
