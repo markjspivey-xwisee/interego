@@ -2,13 +2,15 @@
 // isolated InMemoryFdb is only this transactional-engine test's backing store.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { webcrypto } from 'node:crypto';
+import { randomUUID, webcrypto } from 'node:crypto';
 import { Pool } from 'undici';
 import { listenLoopback } from '../../deploy/css-gate/tests/loopback.mjs';
 import { openStore, InMemoryFdb, CodecRegistry, LdpStore } from '../../packages/pgsl-store/dist/index.js';
 import { createNativeResourceClient } from '../../packages/pgsl/dist/browser-native-resource.js';
 
-process.env.WRITE_SECRET = 'isolated-gate-fixture';
+// Credentials are generated for this isolated process and never persisted.
+const fixtureAuthority = randomUUID(), fixtureOwnerToken = randomUUID();
+process.env.WRITE_SECRET = fixtureAuthority;
 process.env.CSS_INTERNAL_URL = 'http://native-storage.invalid';
 process.env.PUBLIC_BASE_URL = 'https://native-gate.invalid';
 process.env.CSS_HOST_HEADER = 'native-canonical.invalid';
@@ -19,7 +21,7 @@ const identity = await listenLoopback(createServer((req, res) => {
   let body = '';
   req.on('data', chunk => { body += chunk; });
   req.on('end', () => {
-    const valid = JSON.parse(body || '{}').token === 'owner-oauth';
+    const valid = JSON.parse(body || '{}').token === fixtureOwnerToken;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(valid ? { valid: true, userId: 'alice', scope: 'pod:write' } : { valid: false }));
   });
@@ -61,7 +63,7 @@ _setUpstreamPool(process.env.CSS_INTERNAL_URL, pool);
 const gate = await listenLoopback(server);
 try {
   const publicBase = process.env.PUBLIC_BASE_URL;
-  let token = 'owner-oauth';
+  let token = fixtureOwnerToken;
   const authorizedFetch = async (url, init) => {
     assert.equal(new URL(url).origin, publicBase);
     const headers = new Headers(init?.headers); headers.set('Authorization', 'Bearer ' + token);
@@ -102,7 +104,7 @@ try {
   const foreign = createNativeResourceClient({ resourceUrl: publicBase + '/bob/character/head', podUrl: publicBase + '/bob/',
     fetch: authorizedFetch, maxBytes: 1024, crypto: webcrypto });
   await assert.rejects(foreign.read(), { code: 'HTTP', status: 403 });
-  token = 'invalid-current-token';
+  token = randomUUID();
   await assert.rejects(client.write({ expectedRevision: second.receipt.revision, body: new Uint8Array([1]), contentType: 'application/octet-stream' }),
     { code: 'HTTP', status: 401 });
   process.stdout.write(JSON.stringify({ ok: true, ownerOnly: true, cors: true, cas: true }) + '\n');

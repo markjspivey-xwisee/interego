@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-17 — Browser-owned opaque native resource CAS
+
+The `@interego/pgsl/browser-native-resource` subpath exposes the existing CSS native resource protocol to browser clients without importing Node code or accepting vault keys. Callers provide their verified owner-pod scope and current authorized fetch. The helper checks native capability discovery, matching body and HTTP revision predicates, exact receipts and physical opaque atom addresses, and digest-bound readback. Bytes, reply streams and operation deadlines are bounded. A dispatched write with a lost or unverifiable acknowledgement stays explicitly uncertain; the helper never retries it automatically. Existing Node stores and server behavior are unchanged.
+
+Thirteen helper tests cover native engine CAS races, forged receipts, stream failures, lost acknowledgements, input snapshots and browser bundling. The loopback fixture uses the actual gateway and native engine to check owner OAuth, cross-pod refusal, current invalid credentials and CORS headers; its credentials are generated anew for each isolated run. The combined native regression run passes 68 tests, with three pre-existing optional PostgreSQL cases not enabled. Application integration, production publication and live rollback coverage require separate verification.
+
 ## 2026-10-16 — Selected native record proofs
 
 NativeCommitStore can verify selected record paths under one current native head and return selected commit-result snapshots, including recovered and replayed operations. Explicit coverage distinguishes a requested absent key from an unvisited key. Existing complete reads and default commit results remain unchanged; the selected API claims only visited index-path closures and their artifact references. Record payloads still require readArtifact, and unvisited index branches are not validated. It uses the same owner, canonical head, CAS predicates, immutable artifacts and operation history. No backend protocol or live deployment change is included.
