@@ -45,20 +45,42 @@ import {
 import type { StoredNode } from './node.js';
 
 const dec = new TextDecoder();
+const nodeDec = new TextDecoder('utf-8', { fatal: true });
 const NODE_URN = /^urn:pgsl:(atom|fragment):[0-9a-f]{40}$/;
 const ADDR_BYTES = 21;
 const HASH_BYTES = 20;
 // Large opaque atoms are commonly ~700 KiB. A 2,000-node fetch can allocate
 // over a gigabyte before traversal starts; keep each fetch small instead.
 const TRAVERSAL_BATCH_SIZE = 32;
-type NodeTopology = Pick<StoredNode, 'kind' | 'level' | 'items' | 'left' | 'right'>;
+export type NodeTopology = Pick<StoredNode, 'kind' | 'level' | 'items' | 'left' | 'right'>;
+export interface NodeTopologyRecord {
+  /** Null records an unreadable node; collection must not authorize cleanup. */
+  readonly topology: NodeTopology | null;
+  /** Exact original stored value bytes, never the projected JSON length. */
+  readonly byteLength: number;
+}
 
-/** The two reads a collector needs; `readerFromFdb` serves tests, `readerFromPg` production. */
+/** Collector reads; `readerFromFdb` serves tests, `readerFromPg` production. */
 export interface KvReader {
   /** Every row of [begin, end) in key order, paged; `onRow` may be async. */
   scan(begin: Uint8Array, end: Uint8Array, onRow: (key: Uint8Array, value: Uint8Array) => void): Promise<void>;
   /** The values of the given keys, by hex key; absent keys are simply missing from the map. */
   getMany(keys: readonly Uint8Array[]): Promise<Map<string, Uint8Array>>;
+  /** Optional payload-free traversal; absent keys have no stored node row. */
+  getManyTopology?(keys: readonly Uint8Array[]): Promise<Map<string, NodeTopologyRecord>>;
+}
+
+function nodeTopology(value: unknown): NodeTopology | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  if ((row.kind !== 'atom' && row.kind !== 'fragment') || !Number.isSafeInteger(row.level) || (row.level as number) < 0) return null;
+  if (row.kind === 'atom') return { kind: row.kind, level: row.level as number };
+  if ((row.items != null && (!Array.isArray(row.items) || row.items.some(item => typeof item !== 'string')))
+    || (row.left != null && typeof row.left !== 'string') || (row.right != null && typeof row.right !== 'string')) return null;
+  return { kind: row.kind, level: row.level as number,
+    ...(row.items != null ? { items: row.items as string[] } : {}),
+    ...(row.left != null ? { left: row.left as string } : {}),
+    ...(row.right != null ? { right: row.right as string } : {}) };
 }
 
 export const hex = (b: Uint8Array): string => Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString('hex');
@@ -90,8 +112,10 @@ export function readerFromFdb(fdb: FdbLike, pageSize = 1000): KvReader {
   };
 }
 
-/** A reader over a `pg` client (or pool) for the store's table; batched so 100k nodes cost 50 queries. */
-export function readerFromPg(client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<{ k: Buffer; v: Buffer }> }> }, table = 'pgsl_kv', pageSize = 5000): KvReader {
+/** A reader over a `pg` client (or pool); traversal fetches at most 32 nodes per query. */
+export function readerFromPg(client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<{
+  k: Buffer; v?: Buffer; topology?: unknown; value_bytes?: unknown; needs_js_parse?: unknown;
+}> }> }, table = 'pgsl_kv', pageSize = 5000): KvReader {
   const t = table.replace(/[^a-zA-Z0-9_]/g, '');
   return {
     async scan(begin, end, onRow) {
@@ -99,7 +123,10 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
       const endBuf = Buffer.from(end);
       for (;;) {
         const r = await client.query(`SELECT k, v FROM ${t} WHERE k >= $1 AND k < $2 ORDER BY k LIMIT $3`, [from, endBuf, pageSize]);
-        for (const row of r.rows) onRow(new Uint8Array(row.k), new Uint8Array(row.v));
+        for (const row of r.rows) {
+          if (!Buffer.isBuffer(row.v)) throw new Error('collector row value is unavailable');
+          onRow(new Uint8Array(row.k), new Uint8Array(row.v));
+        }
         if (r.rows.length < pageSize) return;
         from = Buffer.concat([r.rows[r.rows.length - 1]!.k, Buffer.from([0])]);
       }
@@ -109,7 +136,58 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
       for (let i = 0; i < keys.length; i += 2000) {
         const batch = keys.slice(i, i + 2000).map((k) => Buffer.from(k));
         const r = await client.query(`SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[])`, [batch]);
-        for (const row of r.rows) out.set(hex(new Uint8Array(row.k)), new Uint8Array(row.v));
+        for (const row of r.rows) {
+          if (!Buffer.isBuffer(row.v)) throw new Error('collector row value is unavailable');
+          out.set(hex(new Uint8Array(row.k)), new Uint8Array(row.v));
+        }
+      }
+      return out;
+    },
+    async getManyTopology(keys) {
+      const out = new Map<string, NodeTopologyRecord>();
+      // Ordinary atom values/provenance stay in PostgreSQL. JSON's native
+      // parser rejects escapes that JS JSON.stringify can legitimately emit
+      // (NUL and lone surrogates), even in ignored values. Divert every raw
+      // backslash-u sequence before parsing and read only that exceptional row
+      // with the native JS semantics. This conservative discriminator can
+      // produce harmless false positives, without poisoning a rebuild's SQL
+      // transaction or exporting the rest of its 32-node batch.
+      for (let i = 0; i < keys.length; i += TRAVERSAL_BATCH_SIZE) {
+        const batch = keys.slice(i, i + TRAVERSAL_BATCH_SIZE).map(k => Buffer.from(k));
+        try {
+          const result = await client.query(`SELECT source.k, octet_length(source.v) AS value_bytes,
+            position(decode('5c75', 'hex') in source.v) > 0 AS needs_js_parse,
+            json_build_object('kind', n.kind, 'level', n.level,
+              'items', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n.items END,
+              'left', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."left" END,
+              'right', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."right" END) AS topology
+            FROM ${t} AS source
+            CROSS JOIN LATERAL json_to_record(CASE
+              WHEN position(decode('5c75', 'hex') in source.v) > 0 THEN '{}'::json
+              ELSE convert_from(source.v, 'UTF8')::json END)
+              AS n(kind json, level json, items json, "left" json, "right" json)
+            WHERE source.k = ANY($1::bytea[])`, [batch]);
+          for (const row of result.rows) {
+            if (!Buffer.isBuffer(row.k) || !Number.isSafeInteger(row.value_bytes) || (row.value_bytes as number) < 0
+              || typeof row.needs_js_parse !== 'boolean') {
+              throw new Error('invalid topology record');
+            }
+            let topology: NodeTopology | null;
+            if (row.needs_js_parse) {
+              const exceptional = await client.query(`SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[])`, [[row.k]]);
+              const value = exceptional.rows[0];
+              if (exceptional.rows.length !== 1 || !value || !Buffer.isBuffer(value.k) || !value.k.equals(row.k)
+                || !Buffer.isBuffer(value.v) || value.v.length !== row.value_bytes) throw new Error('invalid exceptional topology record');
+              topology = nodeTopology(JSON.parse(nodeDec.decode(value.v)));
+            } else topology = nodeTopology(row.topology);
+            out.set(hex(new Uint8Array(row.k)), { topology, byteLength: row.value_bytes as number });
+          }
+        } catch {
+          // PostgreSQL JSON/UTF8 error details can include private payload bytes.
+          // No caller receives that error or its cause, and no incomplete scan
+          // may advance to retirement or rebuilding.
+          throw new Error('refusing collection: PostgreSQL node topology could not be read');
+        }
       }
       return out;
     },
@@ -220,21 +298,23 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
   for (const a of rootAddrs) enqueue(addrOfBytes(unhex(a)));
   while (frontier.length > 0) {
     const batch = frontier.splice(0, TRAVERSAL_BATCH_SIZE);
-    const values = await reader.getMany(batch.map((a) => nodeKey(a)));
+    const batchKeys = batch.map(a => nodeKey(a));
+    const values = reader.getManyTopology ? await reader.getManyTopology(batchKeys) : await reader.getMany(batchKeys);
     for (const addr of batch) {
       const k = nodeKey(addr);
       const v = values.get(hex(k));
       const h = hex(nodeAddrBytes(addr));
       if (v === undefined) { dangling.push(`urn:pgsl:${addr.kind}:${hex(addr.hash)}`); live.delete(h); continue; }
-      liveNodeBytes += v.length;
       let node: NodeTopology | null = null;
-      try {
-        const parsed = JSON.parse(dec.decode(v)) as StoredNode;
-        // Payload/provenance are not used for reachability or reconstructed keys.
-        // Keeping the parsed atom here retained the entire live payload in RAM.
-        node = { kind: parsed.kind, level: parsed.level,
-          ...(parsed.kind === 'fragment' ? { items: parsed.items, left: parsed.left, right: parsed.right } : {}) };
-      } catch { unreadable += 1; }
+      if (v instanceof Uint8Array) {
+        liveNodeBytes += v.length;
+        try { node = nodeTopology(JSON.parse(nodeDec.decode(v))); } catch { /* unreadable below */ }
+      } else {
+        if (!Number.isSafeInteger(v.byteLength) || v.byteLength < 0) throw new Error('refusing collection: invalid topology byte count');
+        liveNodeBytes += v.byteLength;
+        node = nodeTopology(v.topology);
+      }
+      if (!node || node.kind !== addr.kind) { node = null; unreadable += 1; }
       // Release fetched bytes as each node is consumed, not at the next batch.
       values.delete(hex(k));
       live.set(h, { addr, node });

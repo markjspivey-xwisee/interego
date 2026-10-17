@@ -2,6 +2,8 @@ import { createHash, webcrypto } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { describe, it, expect } from 'vitest';
 import { build } from 'esbuild';
 import { createNativeResourceClient, NativeResourceError,
@@ -93,6 +95,58 @@ describe('browser native opaque resource CAS', () => {
     await expect(client.read()).rejects.toMatchObject({ code: 'INTEGRITY', writeMayHaveCommitted: false });
   });
 
+  it('reads gzip-decoded encrypted bytes with a weak representation tag and exact native revision and digest', async () => {
+    const body = bytes('{"ciphertext":"opaque encrypted bytes, not decrypted"}'), revision = 'sha256:' + '1'.repeat(64);
+    const server = createServer((request, response) => {
+      expect(request.method).toBe('GET');
+      response.writeHead(200, { 'Content-Type': ct, 'Content-Encoding': 'gzip',
+        ETag: 'W/"' + revision + '-0123456789abcdef"', 'Interego-Revision': revision, 'Interego-Body-Digest': sha(body) });
+      response.end(gzipSync(body));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const address = server.address(); if (!address || typeof address === 'string') throw new Error('test listener unavailable');
+      const root = 'http://127.0.0.1:' + address.port + '/alice/';
+      const client = createNativeResourceClient({ resourceUrl: root + 'checkpoint', podUrl: root, fetch, maxBytes: 1024, crypto });
+      expect(await client.read()).toEqual({ revision, body, contentType: ct });
+    } finally { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+  });
+
+  it('never accepts a weak tag without its exact native revision and encrypted-body digest', async () => {
+    const revision = 'sha256:' + '1'.repeat(64), weak = 'W/"' + revision + '-0123456789abcdef"';
+    const headers = { 'Content-Type': ct, ETag: weak, 'Interego-Revision': revision, 'Interego-Body-Digest': sha(bytes('x')) };
+    for (const changes of [{ 'Interego-Revision': 'sha256:' + '2'.repeat(64) }, { 'Interego-Revision': '' },
+      { 'Interego-Body-Digest': sha(bytes('changed')) }, { 'Interego-Body-Digest': '' },
+      ...['W/W/"' + revision + '"', 'w/"' + revision + '"', 'W/ "' + revision + '"',
+        'W/' + revision, weak + ', "' + revision + '"', 'W/"' + revision + '-bad"'].map(ETag => ({ ETag }))]) {
+      await expect(fixture().client({ fetch: async () => new Response('x', { headers: { ...headers, ...changes } }) }).read())
+        .rejects.toMatchObject({ code: 'INTEGRITY', writeMayHaveCommitted: false });
+    }
+  });
+
+  it('keeps CAS conditions and command receipt tags strong when readback has a weak representation tag', async () => {
+    const f = fixture(); f.mutateRead(response => {
+      const headers = new Headers(response.headers); headers.set('ETag', 'W/' + headers.get('ETag'));
+      return new Response(response.body, { headers });
+    });
+    const client = f.client(), first = await client.write({ expectedRevision: null, body: bytes('one'), contentType: ct });
+    const read = await client.read(); expect(read.revision).toBe(first.receipt.revision);
+    const second = await client.write({ expectedRevision: read.revision, body: bytes('two'), contentType: ct });
+    const puts = f.requests.filter(request => request.method === 'PUT');
+    expect(new Headers(puts[1]!.init.headers).get('If-Match')).toBe('"' + first.receipt.revision + '"');
+    expect(second.receipt.revision).not.toBe(first.receipt.revision);
+    await expect(client.write({ expectedRevision: read.revision, body: bytes('stale'), contentType: ct }))
+      .rejects.toMatchObject({ code: 'CONFLICT', writeMayHaveCommitted: false });
+    const g = fixture(), weakReceiptClient = g.client({ fetch: async (url, init) => {
+      const response = await g.fetcher(url, init); if (init?.method !== 'PUT') return response;
+      const headers = new Headers(response.headers); headers.set('ETag', 'W/' + headers.get('ETag'));
+      return new Response(response.body, { headers });
+    } });
+    await expect(weakReceiptClient.write({ expectedRevision: null, body: bytes('committed'), contentType: ct }))
+      .rejects.toMatchObject({ code: 'INTEGRITY', writeMayHaveCommitted: true });
+    expect(g.requests.filter(request => request.method === 'PUT')).toHaveLength(1);
+  });
+
   it('captures byte input before asynchronous hashing, and never caches a stale read revision', async () => {
     const f = fixture(), client = f.client(), original = bytes('original');
     const pending = client.write({ expectedRevision: null, body: original, contentType: ct });
@@ -176,7 +230,7 @@ describe('browser native opaque resource CAS', () => {
   it('enforces stream size and digest/header integrity, distinguishing only 404 as absence', async () => {
     const revision = 'sha256:' + '1'.repeat(64);
     const goodHeaders = { 'Content-Type': ct, ETag: '"' + revision + '"', 'Interego-Revision': revision, 'Interego-Body-Digest': sha(bytes('x')) };
-    for (const headers of [{ ...goodHeaders, ETag: 'W/"' + revision + '"' }, { ...goodHeaders, 'Interego-Revision': 'bad' },
+    for (const headers of [{ ...goodHeaders, ETag: 'W/W/"' + revision + '"' }, { ...goodHeaders, 'Interego-Revision': 'bad' },
       { ...goodHeaders, 'Interego-Body-Digest': sha(bytes('bad')) }]) {
       await expect(fixture().client({ fetch: async () => new Response('x', { headers }) }).read()).rejects.toMatchObject({ code: 'INTEGRITY' });
     }

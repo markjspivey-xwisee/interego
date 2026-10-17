@@ -35,6 +35,13 @@ function fixture({ missing = false, unreadable = false, omitCopy = false, shortI
     if (sql === 'SELECT k, v FROM pgsl_kv WHERE k = ANY($1::bytea[])') {
       return { rows: params[0].map(k => source.get(hex(k))).filter(Boolean), rowCount: null };
     }
+    if (sql.startsWith('SELECT source.k, octet_length(source.v) AS value_bytes,')) {
+      return { rows: params[0].map(k => source.get(hex(k))).filter(Boolean).map(r => {
+        const node = JSON.parse(r.v.toString('utf8'));
+        return { k: r.k, value_bytes: r.v.length, needs_js_parse: false,
+          topology: { kind: node.kind, level: node.level, items: node.items ?? null, left: node.left ?? null, right: node.right ?? null } };
+      }), rowCount: null };
+    }
     if (sql === 'CREATE TABLE pgsl_kv_live (LIKE pgsl_kv INCLUDING ALL)') {
       destination = new Map(); return { rows: [], rowCount: null };
     }
@@ -59,7 +66,9 @@ function fixture({ missing = false, unreadable = false, omitCopy = false, shortI
 
 for (const options of [{ missing: true }, { unreadable: true }]) {
   const f = fixture(options);
-  await assert.rejects(rebuildTable(f.client, 'pgsl_kv', { suffixOld: 'old_fixture', batch: 2 }), /refusing to rebuild:.*dangling roots.*unreadable nodes/);
+  await assert.rejects(rebuildTable(f.client, 'pgsl_kv', { suffixOld: 'old_fixture', batch: 2 }), options.unreadable
+    ? /^Error: refusing collection: PostgreSQL node topology could not be read$/
+    : /refusing to rebuild:.*dangling roots.*unreadable nodes/);
   assert.ok(f.queries[0].startsWith('SELECT pg_try_advisory_lock(')); assert.equal(f.queries[1], 'BEGIN');
   assert.ok(f.queries.includes('LOCK TABLE pgsl_kv IN ACCESS EXCLUSIVE MODE'));
   assert.equal(f.queries.at(-2), 'ROLLBACK'); assert.ok(f.queries.at(-1).startsWith('SELECT pg_advisory_unlock(')); assert.equal(f.rolledBack, true); assert.equal(f.committed, false);

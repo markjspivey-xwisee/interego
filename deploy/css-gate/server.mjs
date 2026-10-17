@@ -699,6 +699,18 @@ function buildResponseHeaders(upstreamHeaders, corsHeaders) {
 const NATIVE_COMMIT_TYPE = 'application/vnd.interego.native-commit+json';
 const NATIVE_REVISION = /^sha256:[a-f0-9]{64}$/;
 const NATIVE_NODE = /^urn:pgsl:(?:atom|fragment):[a-f0-9]{40}$/;
+
+/** Native validators and digests describe exact bytes, even through an edge proxy. */
+function preventNativeTransformation(headers) {
+  const current = headers['cache-control'];
+  const policy = Array.isArray(current) ? current.join(', ') : current ?? '';
+  // Split directives without treating a quoted extension value as a directive.
+  const directives = policy.match(/(?:[^,"]|"(?:\\.|[^"\\])*")+/g) ?? [];
+  if (!directives.some(value => value.trim().toLowerCase() === 'no-transform')) {
+    headers['cache-control'] = policy ? `${policy}, no-transform` : 'no-transform';
+  }
+}
+
 function isNativeCommitType(value) {
   return typeof value === 'string' && value.split(';', 1)[0].trim().toLowerCase() === NATIVE_COMMIT_TYPE;
 }
@@ -1151,6 +1163,7 @@ const server = createServer(async (req, res) => {
     try {
       const body = await mappedNativeReceipt(upstreamRes, upstreamUrl, hostHeader, req.headers);
       const receiptHeaders = buildResponseHeaders(upstreamRes.headers, corsHeaders);
+      preventNativeTransformation(receiptHeaders);
       delete receiptHeaders['content-encoding'];
       receiptHeaders['content-length'] = String(body.length);
       res.writeHead(upstreamRes.statusCode, receiptHeaders);
@@ -1164,6 +1177,11 @@ const server = createServer(async (req, res) => {
   }
 
   const responseHeaders = buildResponseHeaders(upstreamRes.headers, corsHeaders);
+  if (method === 'GET' && upstreamRes.statusCode === 200
+    && typeof responseHeaders['interego-revision'] === 'string' && NATIVE_REVISION.test(responseHeaders['interego-revision'])
+    && typeof responseHeaders['interego-body-digest'] === 'string' && NATIVE_REVISION.test(responseHeaders['interego-body-digest'])) {
+    preventNativeTransformation(responseHeaders);
+  }
   res.writeHead(upstreamRes.statusCode ?? 502, responseHeaders);
 
   // Stream the response body back. upstreamRes.body is a Node Readable.
