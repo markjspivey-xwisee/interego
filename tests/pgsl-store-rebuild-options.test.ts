@@ -3,7 +3,7 @@
  * options, so without this the autovacuum tuning would vanish with every weekly rebuild.
  */
 import { describe, expect, it } from 'vitest';
-import { copyStorageParameters } from '../packages/pgsl-store/src/gc.js';
+import { copyStorageParameters, rebuildOldTableSuffix } from '../packages/pgsl-store/src/gc.js';
 
 function fakeClient(heap: unknown, toast: unknown) {
   const sql: string[] = [];
@@ -33,4 +33,10 @@ describe('storage parameters across a rebuild', () => {
     expect(await copyStorageParameters(odd, 'pgsl_kv', 'pgsl_kv_live', (l) => lines.push(l))).toEqual(['fillfactor=90']);
     expect(lines[0]).toContain('not carried over');
   });
+});
+
+
+it('names repeated same-day rebuilds independently', () => {
+  expect(rebuildOldTableSuffix(new Date('2026-10-17T09:30:01.123Z'))).toBe('old_20261017_093001123');
+  expect(rebuildOldTableSuffix(new Date('2026-10-17T10:30:01.123Z'))).toBe('old_20261017_103001123');
 });

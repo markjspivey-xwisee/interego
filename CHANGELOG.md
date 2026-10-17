@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — Selected native record proofs
+
+NativeCommitStore can verify selected record paths under one current native head and return selected commit-result snapshots, including recovered and replayed operations. Explicit coverage distinguishes a requested absent key from an unvisited key. Existing complete reads and default commit results remain unchanged; the selected API claims only visited index-path closures and their artifact references. Record payloads still require readArtifact, and unvisited index branches are not validated. It uses the same owner, canonical head, CAS predicates, immutable artifacts and operation history. No backend protocol or live deployment change is included.
+
 ## 2026-10-16 — I2IDL REST API catalog decoration and reference-site integration
 
 The glossary catalog adds nine read-only REST operations from I2IDL's v0.0.89 platform release while retaining the canonical v0.0.86 glossary pin. DCAT describes the REST projection and service; the current OMG DPROD product wrapper has service-valued output ports. Hydra templates and response contracts, SHACL argument bounds, ODRL dispatch and source-specific reuse policies, and pinned PROV/SPDX evidence decorate the API without restating canonical glossary definitions. Eight routes derive from OpenAPI; the context route is attributed separately to its released handler and documentation. API contract and glossary publication versions remain distinct, and SPARQL quotas are not inferred for REST.

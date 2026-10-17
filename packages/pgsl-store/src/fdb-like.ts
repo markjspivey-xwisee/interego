@@ -40,8 +40,9 @@ export interface FdbTxn {
    *
    * ★ AND THE CURSOR IS FREE, because the keyspace is bytewise-order-preserving with clean prefix
    * ranges: the LAST KEY RETURNED *is* the cursor, and the next page is
-   * `getRange(strinc(lastKey), end, { limit })`. No cursor encoding, no offset, no server state —
-   * and unlike an offset, it neither skips nor duplicates when the store grows during a walk.
+   * `getRange(Uint8Array.from([...lastKey, 0]), end, { limit })`. No cursor encoding, no offset, no server state —
+   * strinc(lastKey) is a prefix-range end and would skip keys extending lastKey;
+   * unlike an offset, it neither skips nor duplicates when the store grows during a walk.
    *
    * An implementation that ignores `limit` is not a slower implementation, it is a broken one: the
    * callers above rely on the bound for their own bound. `tests/fdb-like-limit.test.ts` holds every

@@ -15,15 +15,15 @@
  * swaps the names in the same transaction, and leaves the old table for `--drop` after the
  * store has been checked. See packages/pgsl-store/src/gc.ts for what "live" means.
  *
- * ── THE WEEKLY RUN, AND WHERE ITS LINE IS ──────────────────────────────────────────────────
+ * ── THE SCHEDULED RUN, AND WHERE ITS LINE IS ──────────────────────────────────────────────────
  *
- * pgsl-store-gc.yml runs `--drop-previous-older-than 7 --rebuild-above 0.5` every Sunday at the
+ * pgsl-store-gc.yml runs `--drop-previous-older-than 1 --rebuild-above 0.5` every day at the
  * quietest hour. The measurement is the same dry run; the decision is `rebuildDecision`, which
  * rebuilds when at least half of a table of at least --min-rows rows is unreferenced history —
  * the shape the 2026-09-20 outage had (78.7M rows, 1.19M live) — or when the table on disk holds
  * at least four times its live values and at least 1 GiB, the TOAST-and-index bloat the
  * 2026-09-21 measurement showed (2 GB on disk, 0.5 GB live, 7% of rows unreferenced). Below both
- * a table is never rebuilt automatically: the lock would cost more than the space. The table a rebuild leaves behind stays a week, so the store
+ * a table is never rebuilt automatically: the lock would cost more than the space. The table a rebuild leaves behind stays at least a day, so the store
  * has run on the new one before `previousTablesToDrop` lets the next run drop it. Both
  * decisions are pure and tested (tests/pgsl-store-gc-tool.test.ts); a person can still
  * dispatch any mode by hand.
@@ -48,7 +48,7 @@ export interface RebuildDecision {
 }
 
 /**
- * Whether the weekly run rebuilds: the unreferenced share of a table big enough to matter has
+ * Whether the scheduled run rebuilds: the unreferenced share of a table big enough to matter has
  * crossed the line. An unknown row estimate (a table never analysed reports -1) decides nothing.
  */
 export function rebuildDecision(input: {
@@ -94,17 +94,22 @@ export function rebuildDecision(input: {
 }
 
 /**
- * The tables earlier rebuilds left behind (`<table>_old_YYYYMMDD`) that are older than `days`:
+ * The tables earlier rebuilds left behind (`<table>_old_YYYYMMDD[_HHMMSSmmm]`) that are older than `days`:
  * the store has run on the new table for that long, so the copy has served its purpose.
  */
 export function previousTablesToDrop(names: readonly string[], table: string, now: Date, days: number): string[] {
-  const re = new RegExp(`^${table}_old_([0-9]{4})([0-9]{2})([0-9]{2})$`);
+  const re = new RegExp(`^${table}_old_([0-9]{4})([0-9]{2})([0-9]{2})(?:_([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{3}))?$`);
   const cutoff = now.getTime() - days * 86_400_000;
   return names
     .filter((n) => {
       const m = re.exec(n);
       if (!m) return false;
-      return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) <= cutoff;
+      const time = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+        Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0), Number(m[7] ?? 0));
+      // Reject calendar/time overflow rather than aging a malformed name.
+      const stamp = new Date(time).toISOString().replace(/[-:.TZ]/g, '');
+      if (stamp !== m.slice(1, 4).join('') + m.slice(4).map(v => v ?? '').join('').padEnd(9, '0')) return false;
+      return time <= cutoff;
     })
     .sort();
 }

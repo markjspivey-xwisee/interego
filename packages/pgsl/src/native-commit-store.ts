@@ -14,6 +14,7 @@ const PREFIX = 'urn:interego:native-commit:v1:';
 const HEAD = PREFIX + 'head', ENTRY = PREFIX + 'entry', LEAF = PREFIX + 'leaf';
 const BRANCH = PREFIX + 'branch', EMPTY = PREFIX + 'empty', PREVIOUS = PREFIX + 'previous';
 const REFERENCE = PREFIX + 'reference', OPERATION = PREFIX + 'operation', BYTES = PREFIX + 'bytes';
+const ATOMIC = PREFIX + 'atomic-checkpoint';
 const REVISION = /^sha256:[a-f0-9]{64}$/;
 const DEFAULT_LIMIT = 8 * 1024 * 1024;
 const LEAF_SIZE = 16;
@@ -36,6 +37,9 @@ export interface NativeSnapshot {
   readonly reference: NativeSnapshotReference | null;
   readonly operationId: string | null;
   readonly records: ReadonlyMap<string, NativeArtifactReference>;
+  /** Present only for a selected read: unlisted keys have NOT been checked.
+   * Listed missing keys are absent at this same verified native head. */
+  readonly selectedRecordKeys?: readonly string[];
 }
 export interface NativeResourceReceipt {
   readonly version: 1; readonly status: 'committed'; readonly expectedRevision: string | null;
@@ -53,15 +57,23 @@ export interface NativeCommitReceipt {
 export interface NativeCommitRequest {
   readonly operationId: string; readonly expected: NativeSnapshot;
   readonly changes: readonly { readonly key: string; readonly artifact: NativeArtifactInput | null }[];
+  /** Return only these verified record paths, including on recovered/replayed
+   * operations. Omission retains the complete-snapshot API. */
+  readonly resultRecordKeys?: readonly string[];
 }
 export interface NativeCommitClient {
   ready(): Promise<void>;
   readHead(): Promise<NativeSnapshot>;
+  /** Optional for compatibility with existing NativeCommitClient adapters. */
+  readHeadRecords?(keys: readonly string[]): Promise<NativeSnapshot>;
   readSnapshotAt(reference: NativeSnapshotReference): Promise<NativeSnapshot>;
   readArtifact(reference: NativeArtifactReference): Promise<NativeArtifact>;
   commit(request: NativeCommitRequest): Promise<NativeCommitReceipt>;
 }
 export interface NativeCommitStoreOptions {
+  /** Explicit opt-in for an application's bounded rolling checkpoint format.
+   * Existing immutable clients refuse this format after a CAS migration. */
+  readonly atomicCheckpoint?: boolean;
   /** Already resolved and authorized through the adapter's capability/Type Index contract. */
   readonly scope: NativeCommitScope;
   readonly fetch: typeof globalThis.fetch;
@@ -72,6 +84,10 @@ export interface NativeCommitStoreOptions {
   /** CSS's native storage domain is "css"; this is not the logical owner pod URL. */
   readonly storageDomain?: string;
   readonly maxArtifactBytes?: number;
+}
+export interface NativeAtomicCheckpoint {
+  readonly revision: string | null;
+  readonly artifact: NativeArtifact | null;
 }
 interface Representation { bytes: Uint8Array; revision: string; }
 interface DecodedHead extends NativeSnapshot {
@@ -84,6 +100,12 @@ type IndexNode = IndexLeaf | IndexBranch;
 
 function digest(bytes: Uint8Array | string): string { return 'sha256:' + createHash('sha256').update(bytes).digest('hex'); }
 function compareStrings(a: string, b: string): number { return a < b ? -1 : a > b ? 1 : 0; }
+function recordSelection(keys: readonly string[]): readonly string[] {
+  if (!Array.isArray(keys) || keys.length > 1000) fail('Native record selection exceeds capacity.', 400);
+  const selected = new Set<string>();
+  for (const key of keys) { bounded(key, 4096, 'record selection key'); selected.add(key); }
+  return Object.freeze([...selected].sort(compareStrings));
+}
 function hashKey(key: string): string { return createHash('sha256').update(key).digest('hex'); }
 function fail(message: string, status = 503): never { throw new NativeCommitError(message, status); }
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
@@ -450,6 +472,83 @@ export class NativeCommitStore implements NativeCommitClient {
   }
   private async complete(head: DecodedHead): Promise<DecodedHead> { return { ...head, records: await this.records(head.index) }; }
   async readHead(): Promise<NativeSnapshot> { return this.complete(await this.current()); }
+  /** An explicitly composed bounded checkpoint uses the same encrypted native CAS
+   * protocol without creating independently rooted immutable history files.
+   * Applications put their explicitly bounded rollback window inside the holon.
+   * Migration of an immutable head requires an explicit application CAS. */
+  private checkpointScope(): void {
+    if (this.options.atomicCheckpoint !== true) fail('Atomic checkpoints require explicit composition.', 400);
+  }
+  async readAtomicCheckpoint(): Promise<NativeAtomicCheckpoint> {
+    this.checkpointScope();
+    const stored = await this.readRepresentation(this.scope.headUrl);
+    if (!stored) return { revision: null, artifact: null };
+    const artifact = this.decrypt(stored.bytes), row = fields(artifact, artifact.topUri);
+    if (valueOrNull(artifact, row[0]) !== ATOMIC) {
+      // Legacy migration input must be an exact scoped head backed by its
+      // immutable commit, not merely a decryptable artifact from this owner.
+      const head = this.decodeHead(stored.bytes, stored.revision);
+      const archived = await this.archived(head.reference!);
+      if (archived.logicalDigest !== head.logicalDigest || archived.operationId !== head.operationId) fail('Native head is not backed by its immutable commit.');
+      return { revision: stored.revision, artifact };
+    }
+    if (row.length !== 6 || value(artifact, row[1]) !== this.scope.owner || value(artifact, row[2]) !== this.scope.pod
+      || value(artifact, row[3]) !== this.scope.headUrl || value(artifact, row[4]) !== this.scope.artifactContainer) fail('Atomic checkpoint scope changed.');
+    return { revision: stored.revision, artifact: validateNativeArtifact({ topUri: row[5]!, nodes: artifact.nodes }) };
+  }
+  private atomicCheckpointBytes(input: NativeArtifactInput): { bytes: Uint8Array; artifact: NativeArtifact; topUri: IRI } {
+    this.checkpointScope();
+    const artifact = validateNativeArtifact({ topUri: input.topUri, nodes: input.pgsl.nodes });
+    const body = readNativeByteArtifact(artifact);
+    if (body.owner !== this.scope.owner || body.contentType !== 'application/vnd.interego.rolling-checkpoint+gzip') fail('Atomic checkpoint ownership or type changed.', 400);
+    const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
+    for (const [id, node] of artifact.nodes) pgsl.nodes.set(id, node);
+    const topUri = ingest(pgsl, [ATOMIC, this.scope.owner, this.scope.pod, this.scope.headUrl, this.scope.artifactContainer]
+      .map(v => literal(pgsl, v)).concat(artifact.topUri));
+    // Wrapper literals share content addresses with submitted atoms such as
+    // the owner. Keep the submitted provenance as well as its exact content.
+    for (const [id, node] of artifact.nodes) pgsl.nodes.set(id, node);
+    const bytes = this.encrypt({ topUri, nodes: pgsl.nodes });
+    // A hard per-resource bound also limits superseded physical blocks between
+    // successful shared-store collections. Oversize writes preserve the head.
+    if (bytes.length > 1024 * 1024) fail('Atomic checkpoint exceeds its 1 MiB storage budget.', 413);
+    return { bytes, artifact, topUri };
+  }
+  /** The encrypted representation's byte length, including scope wrapping.
+   * Encryption changes the nonce and ciphertext on each call, but not their
+   * encoded lengths. Applications can reserve this size in a durable budget. */
+  atomicCheckpointSize(input: NativeArtifactInput): number {
+    return this.atomicCheckpointBytes(input).bytes.length;
+  }
+  async commitAtomicCheckpoint(expectedRevision: string | null, input: NativeArtifactInput,
+    options: { readonly maxEncryptedBytes?: number } = {}): Promise<NativeAtomicCheckpoint> {
+    this.checkpointScope();
+    if (expectedRevision !== null && !REVISION.test(expectedRevision)) fail('Invalid checkpoint revision.', 400);
+    const maximum = options.maxEncryptedBytes ?? 1024 * 1024;
+    if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 1024 * 1024) fail('Invalid atomic checkpoint byte reservation.', 400);
+    const { bytes, artifact, topUri } = this.atomicCheckpointBytes(input);
+    if (bytes.length > maximum) fail('Atomic checkpoint exceeds its reserved encrypted bytes.', 413);
+    await this.ready();
+    await this.put(this.scope.headUrl, bytes, expectedRevision);
+    const actual = await this.readRepresentation(this.scope.headUrl);
+    if (!actual || !Buffer.from(actual.bytes).equals(Buffer.from(bytes))) fail('Checkpoint outcome is uncertain; recover the same operation before retrying.');
+    this.decrypt(actual.bytes, topUri);
+    return { revision: actual.revision, artifact };
+  }
+  /** Verify only requested HAMT paths under ONE verified current head. This
+   * does not validate branches outside the explicitly returned selection. */
+  private async selected(head: DecodedHead, keys: readonly string[]): Promise<DecodedHead> {
+    const records = new Map<string, NativeArtifactReference>();
+    for (const key of keys) {
+      const reference = await this.lookup(head.index, 'record:' + key);
+      if (reference) records.set(key, reference);
+    }
+    return { ...head, records, selectedRecordKeys: keys };
+  }
+  async readHeadRecords(keys: readonly string[]): Promise<NativeSnapshot> {
+    const selected = recordSelection(keys);
+    return this.selected(await this.current(), selected);
+  }
   private async operation(operationId: string, current: DecodedHead): Promise<DecodedHead | null> {
     if (current.operationId === operationId) return current;
     const ref = await this.lookup(current.index, 'operation:' + operationId);
@@ -469,12 +568,15 @@ export class NativeCommitStore implements NativeCommitClient {
     if (!retained || canonical(retained.reference) !== canonical(reference)) return fail('Historical snapshot is not in the committed native index.');
     return this.complete(retained);
   }
-  private async result(head: DecodedHead, replayed: boolean, receipt: NativeResourceReceipt | null): Promise<NativeCommitReceipt> {
+  private async result(head: DecodedHead, replayed: boolean, receipt: NativeResourceReceipt | null,
+    selectedRecordKeys?: readonly string[]): Promise<NativeCommitReceipt> {
     if (!head.reference || !head.operationId) return fail('Native commit receipt lacks a committed head.');
     return { operationId: head.operationId, scope: this.scope, previousHead: head.previous, head: head.reference, createdAt: head.createdAt,
-      replayed, snapshot: await this.complete(head), resourceReceipt: receipt };
+      replayed, snapshot: selectedRecordKeys === undefined ? await this.complete(head) : await this.selected(head, selectedRecordKeys), resourceReceipt: receipt };
   }
   async commit(request: NativeCommitRequest): Promise<NativeCommitReceipt> {
+    // Detach caller selection before the first await, including its absence.
+    const selectedRecordKeys = request.resultRecordKeys === undefined ? undefined : recordSelection(request.resultRecordKeys);
     bounded(request.operationId, 200, 'operation ID');
     if (canonical(request.expected.scope) !== canonical(this.scope) || !Array.isArray(request.changes) || request.changes.length > 1000) fail('Native mutation scope or capacity is invalid.', 400);
     const changes = [...request.changes].sort((a, b) => compareStrings(a.key, b.key)), keys = new Set<string>();
@@ -484,7 +586,7 @@ export class NativeCommitStore implements NativeCommitClient {
     }
     const logicalDigest = digest(canonical({ scope: this.scope, changes: changes.map(c => ({ key: c.key, plaintextDigest: c.artifact ? digest(serializeArtifact({ topUri: c.artifact.topUri, nodes: c.artifact.pgsl.nodes })) : null })) }));
     const current = await this.current(), prior = await this.operation(request.operationId, current);
-    if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null); }
+    if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null, selectedRecordKeys); }
     if (current.revision !== request.expected.revision || canonical(current.reference) !== canonical(request.expected.reference)) throw new NativeCommitConflictError();
     await this.ready();
     const indexChanges = new Map<string, NativeArtifactReference | null>();
@@ -507,13 +609,13 @@ export class NativeCommitStore implements NativeCommitClient {
     catch (error) {
       if (!(error instanceof NativeCommitConflictError)) throw error;
       const winner = await this.operation(request.operationId, await this.current());
-      if (winner && winner.logicalDigest === logicalDigest) return this.result(winner, true, null);
+      if (winner && winner.logicalDigest === logicalDigest) return this.result(winner, true, null, selectedRecordKeys);
       throw error;
     }
     if (!receipt) {
       const recovered = await this.operation(request.operationId, await this.current());
       if (!recovered || recovered.logicalDigest !== logicalDigest) return fail('Native head acknowledgement is uncertain; retry the same operation ID.');
-      return this.result(recovered, true, null);
+      return this.result(recovered, true, null, selectedRecordKeys);
     }
     const committed = this.decodeHead(bytes, receipt.revision, topUri), actual = await this.readRepresentation(this.scope.headUrl);
     if (!actual || actual.revision !== receipt.revision || !Buffer.from(actual.bytes).equals(Buffer.from(bytes))) {
@@ -521,6 +623,6 @@ export class NativeCommitStore implements NativeCommitClient {
       if (!ancestor || ancestor.reference?.revision !== receipt.revision || ancestor.reference.topUri !== topUri || ancestor.logicalDigest !== logicalDigest) return fail('Native committed head could not be verified unchanged.');
     }
     this.decrypt(bytes, topUri);
-    return this.result(committed, false, receipt);
+    return this.result(committed, false, receipt, selectedRecordKeys);
   }
 }

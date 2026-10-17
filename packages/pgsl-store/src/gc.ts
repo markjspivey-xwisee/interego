@@ -40,7 +40,7 @@
 import { kindByte, nodeAddrFromUrn, type NodeAddr, type NodeKind } from './addressing.js';
 import type { FdbLike } from './fdb-like.js';
 import {
-  SUBSPACE_PAYLOAD_OFFSET, cbKey, ciKey, cpKey, lftKey, lvKey, nodeAddrBytes, nodeKey, prKey, rgtKey, strinc, subspaceRange, type SubspaceTag,
+  SUBSPACE_PAYLOAD_OFFSET, cbKey, ciKey, cpKey, lftKey, lvKey, nodeAddrBytes, nodeKey, prKey, rgtKey, subspaceRange, type SubspaceTag,
 } from './keyspace.js';
 import type { StoredNode } from './node.js';
 
@@ -48,6 +48,10 @@ const dec = new TextDecoder();
 const NODE_URN = /^urn:pgsl:(atom|fragment):[0-9a-f]{40}$/;
 const ADDR_BYTES = 21;
 const HASH_BYTES = 20;
+// Large opaque atoms are commonly ~700 KiB. A 2,000-node fetch can allocate
+// over a gigabyte before traversal starts; keep each fetch small instead.
+const TRAVERSAL_BATCH_SIZE = 32;
+type NodeTopology = Pick<StoredNode, 'kind' | 'level' | 'items' | 'left' | 'right'>;
 
 /** The two reads a collector needs; `readerFromFdb` serves tests, `readerFromPg` production. */
 export interface KvReader {
@@ -68,7 +72,9 @@ export function readerFromFdb(fdb: FdbLike, pageSize = 1000): KvReader {
         const rows = await fdb.transact((txn) => txn.getRange(from, end, { limit: pageSize }));
         for (const r of rows) onRow(r.key, r.value);
         if (rows.length < pageSize) return;
-        from = strinc(rows[rows.length - 1]!.key);
+        // This is an exclusive cursor after ONE key, not a prefix-range end.
+        // strinc(last) skips every extension, including document ACL keys.
+        from = Uint8Array.from([...rows[rows.length - 1]!.key, 0]);
       }
     },
     async getMany(keys) {
@@ -95,7 +101,7 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
         const r = await client.query(`SELECT k, v FROM ${t} WHERE k >= $1 AND k < $2 ORDER BY k LIMIT $3`, [from, endBuf, pageSize]);
         for (const row of r.rows) onRow(new Uint8Array(row.k), new Uint8Array(row.v));
         if (r.rows.length < pageSize) return;
-        from = Buffer.from(strinc(new Uint8Array(r.rows[r.rows.length - 1]!.k)));
+        from = Buffer.concat([r.rows[r.rows.length - 1]!.k, Buffer.from([0])]);
       }
     },
     async getMany(keys) {
@@ -204,7 +210,7 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
   log(`roots: ${roots.size} URNs from C/O, ${rootAddrs.size} addresses from A/X/P; C ${scanned.C ?? 0}, O ${scanned.O ?? 0}, P ${scanned.P ?? 0} rows`);
 
   // Traverse.
-  const live = new Map<string, { addr: NodeAddr; node: StoredNode | null }>(); // hex addr -> node
+  const live = new Map<string, { addr: NodeAddr; node: NodeTopology | null }>(); // hex addr -> node
   const dangling: string[] = [];
   let unreadable = 0;
   let liveNodeBytes = 0;
@@ -213,7 +219,7 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
   for (const urn of roots) { try { enqueue(nodeAddrFromUrn(urn)); } catch { dangling.push(urn); } }
   for (const a of rootAddrs) enqueue(addrOfBytes(unhex(a)));
   while (frontier.length > 0) {
-    const batch = frontier.splice(0, 2000);
+    const batch = frontier.splice(0, TRAVERSAL_BATCH_SIZE);
     const values = await reader.getMany(batch.map((a) => nodeKey(a)));
     for (const addr of batch) {
       const k = nodeKey(addr);
@@ -221,8 +227,16 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
       const h = hex(nodeAddrBytes(addr));
       if (v === undefined) { dangling.push(`urn:pgsl:${addr.kind}:${hex(addr.hash)}`); live.delete(h); continue; }
       liveNodeBytes += v.length;
-      let node: StoredNode | null = null;
-      try { node = JSON.parse(dec.decode(v)) as StoredNode; } catch { unreadable += 1; }
+      let node: NodeTopology | null = null;
+      try {
+        const parsed = JSON.parse(dec.decode(v)) as StoredNode;
+        // Payload/provenance are not used for reachability or reconstructed keys.
+        // Keeping the parsed atom here retained the entire live payload in RAM.
+        node = { kind: parsed.kind, level: parsed.level,
+          ...(parsed.kind === 'fragment' ? { items: parsed.items, left: parsed.left, right: parsed.right } : {}) };
+      } catch { unreadable += 1; }
+      // Release fetched bytes as each node is consumed, not at the next batch.
+      values.delete(hex(k));
       live.set(h, { addr, node });
       if (node?.kind === 'fragment') {
         for (const item of node.items ?? []) { try { enqueue(nodeAddrFromUrn(item)); } catch { /* not a node urn */ } }
@@ -324,13 +338,18 @@ export async function copyStorageParameters(
  * set is computed INSIDE the lock, so it is exact. The old table is renamed, not dropped; the
  * operator drops it after checking the store.
  */
+export function rebuildOldTableSuffix(now = new Date()): string {
+  const stamp = now.toISOString().replace(/[-:.TZ]/g, '');
+  return `old_${stamp.slice(0, 8)}_${stamp.slice(8)}`;
+}
+
 export async function rebuildTable(
   client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number | null }> },
   table: string,
   opts: { readonly log?: (line: string) => void; readonly batch?: number; readonly suffixOld?: string } = {},
 ): Promise<RebuildResult> {
   const t = table.replace(/[^a-zA-Z0-9_]/g, '');
-  const oldTable = `${t}_${opts.suffixOld ?? `old_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}`}`;
+  const oldTable = `${t}_${opts.suffixOld ?? rebuildOldTableSuffix()}`;
   const newTable = `${t}_live`;
   const batch = opts.batch ?? 4000;
   const log = opts.log ?? (() => undefined);
@@ -346,6 +365,11 @@ export async function rebuildTable(
     log('lock held: readers and writers wait until the swap commits');
     const live = await collectLive(readerFromPg(client as never, t), { log });
     if (live.keys.size === 0) throw new Error('refusing to rebuild: the live set is empty');
+    // A missing or unreadable retained node makes reachability incomplete.
+    // Preserve the existing table rather than collecting through uncertainty.
+    if (live.stats.danglingRoots.length > 0 || live.stats.unreadableNodes > 0) {
+      throw new Error(`refusing to rebuild: ${live.stats.danglingRoots.length} dangling roots and ${live.stats.unreadableNodes} unreadable nodes`);
+    }
     await client.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
     await copyStorageParameters(client, t, newTable, log);
     const all = [...live.keys];
@@ -358,7 +382,11 @@ export async function rebuildTable(
     }
     const count = await client.query(`SELECT count(*)::bigint AS n FROM ${newTable}`);
     const newRows = Number(count.rows[0]?.['n'] ?? 0);
-    if (newRows === 0) throw new Error('refusing to swap: the new table is empty');
+    // Reconstructed keys are promises of retained data. Both the INSERT row
+    // counts and an independent table count must confirm every promised key.
+    if (copied !== live.keys.size || newRows !== live.keys.size) {
+      throw new Error(`refusing to swap: expected ${live.keys.size} live keys, copied ${copied}, counted ${newRows}`);
+    }
     await client.query(`ALTER TABLE ${t} RENAME TO ${oldTable}`);
     await client.query(`ALTER TABLE ${newTable} RENAME TO ${t}`);
     await client.query('COMMIT');
