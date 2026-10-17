@@ -12,6 +12,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./browser-native-resource": {
+      "import": "./dist/browser-native-resource.js",
+      "types": "./dist/browser-native-resource.d.ts"
     }
   },
   "files": ["dist/", "src/", "README.md"],
