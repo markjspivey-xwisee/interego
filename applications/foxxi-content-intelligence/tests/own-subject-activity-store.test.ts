@@ -62,6 +62,23 @@ function fixture() {
 }
 
 describe('bounded own-subject native activity primary', () => {
+  it('binds the complete native account and refuses competing actor identifiers before storage', async () => {
+    const f = fixture(), s = f.statement();
+    for (const actor of [
+      { ...s.actor, account: { ...s.actor.account, homePage: 'https://other-identity.test' } },
+      { ...s.actor, account: { ...s.actor.account, homePage: 'https://identity.test/' } },
+      { ...s.actor, mbox: 'mailto:other@example.test' },
+      { ...s.actor, mbox_sha1sum: 'a'.repeat(40) },
+      { ...s.actor, openid: 'https://other-identity.test/person' },
+      { ...s.actor, objectType: 'Group' },
+    ]) expect((await f.create().write([{ ...s, actor }])).status).toBe(400);
+    expect(f.calls).toHaveLength(0); expect(f.puts()).toBe(0);
+    expect((await f.create().write([{ ...s, actor: { ...s.actor, name: 'Player display name' } }])).status).toBe(200);
+    const count = f.puts();
+    await f.mutate(state => { state.records[0]!.statement.actor.account!.homePage = 'https://other-identity.test'; });
+    await expect(f.create(true).read({ statementId: s.id })).rejects.toThrow('Activity statement binding corrupt');
+    expect(f.puts()).toBe(count + 1); // Only the explicit native corruption fixture wrote.
+  });
   it('uses one encrypted resource, real owner binding, immutable UUID replay and read-only zero writes', async () => {
     const f = fixture(), store = f.create(), s = f.statement();
     expect((await f.create(true).read({})).status).toBe(200); expect(f.puts()).toBe(0);

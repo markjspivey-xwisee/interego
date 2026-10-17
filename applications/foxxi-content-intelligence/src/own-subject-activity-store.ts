@@ -11,7 +11,7 @@ import type { SelfXapiReply } from './self-xapi.js';
 type Json = Record<string, unknown>;
 interface ActivityStatement extends Json {
   id: string; timestamp: string;
-  actor: { objectType?: string; account?: { name?: string } };
+  actor: { objectType?: string; name?: string; account?: { homePage?: string; name?: string } };
   verb: { id: string }; object: { objectType?: string; id: string };
   context?: { registration?: string; extensions?: Record<string, unknown> };
   authority?: { objectType: string; account: { homePage: string; name: string } };
@@ -54,6 +54,21 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
   const owner = authority.subjectDid, scope = { pod: pod.href, owner: owner as IRI,
     headUrl: new URL('foxxi/activity/own-subject/head', pod).href,
     artifactContainer: new URL('foxxi/activity/own-subject/artifacts/', pod).href };
+  // The caller verifier has already bound this exact native users DID to its
+  // configured identity authority. xAPI identifies an account by BOTH fields;
+  // the DID name alone must not admit a different homePage or another IFI.
+  const identityHost = /^did:web:([^:]+):users:[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.exec(owner)?.[1];
+  if (!identityHost) throw Error('Canonical native subject DID required');
+  const decodedHost = decodeURIComponent(identityHost), identityOrigin = new URL('https://' + decodedHost);
+  if (identityOrigin.host !== decodedHost || identityOrigin.username || identityOrigin.password
+    || identityOrigin.pathname !== '/' || identityOrigin.search || identityOrigin.hash) throw Error('Canonical native identity authority required');
+  function ownsActor(actor: unknown): boolean {
+    if (!plain(actor) || Object.keys(actor).some(k => !['objectType', 'name', 'account'].includes(k))
+      || actor.objectType !== undefined && actor.objectType !== 'Agent'
+      || actor.name !== undefined && typeof actor.name !== 'string' || !plain(actor.account)) return false;
+    return Object.keys(actor.account).every(k => ['homePage', 'name'].includes(k))
+      && actor.account.name === owner && actor.account.homePage === identityOrigin.origin;
+  }
   const authorityOrigin = new URL(options.selfBaseUrl ?? 'https://foxxi-bridge.interego.xwisee.com');
   if (authorityOrigin.protocol !== 'https:' || authorityOrigin.username || authorityOrigin.password) throw Error('HTTPS activity authority required');
   const assignedAuthority = { objectType: 'Agent', account: { homePage: authorityOrigin.origin, name: 'foxxi-personal-activity-window' } };
@@ -101,7 +116,7 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
     }
     for (const record of state.records) {
       const receipt = state.receipts.find(r => r.id === record.id), s = record.statement;
-      if (!receipt || !plain(s) || s.id !== record.id || s.actor?.account?.name !== owner || s.stored !== receipt.stored
+      if (!receipt || !plain(s) || s.id !== record.id || !ownsActor(s.actor) || s.stored !== receipt.stored
         || s.authority?.objectType !== 'Agent' || s.authority?.account?.name !== assignedAuthority.account.name
         || typeof s.authority.account.homePage !== 'string' || !/^https:\/\/[^\s]+$/.test(s.authority.account.homePage)
         || s.version !== '2.0.0') throw Error('Activity statement binding corrupt');
@@ -161,7 +176,7 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
       if (!plain(value) || validateStatement(value).length) return refused(400, 'A valid xAPI observation is required');
       const s = value as ActivityStatement;
       if (!plain(s) || validateStatement(s).length || typeof s.id !== 'string' || !UUID.test(s.id) || ids.has(s.id)
-        || s.actor?.objectType === 'Group' || s.actor?.account?.name !== owner || !iso(s.timestamp)
+        || !ownsActor(s.actor) || !iso(s.timestamp)
         || s.authority !== undefined || s.stored !== undefined || s.version !== undefined || s.attachments !== undefined
         || s.object?.objectType && s.object.objectType !== 'Activity') return refused(400, 'Actual self-attributed Activity statements with stable UUIDs and timestamps are required');
       if (Date.parse(s.timestamp) <= at - L.retentionMs) return refused(410, 'Observation is outside the retained hour; an old delivery is not recounted');
