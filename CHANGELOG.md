@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-17 — Native CAS responses preserve validators through edge compression
+
+The CSS gateway adds `Cache-Control: no-transform` to current native GET representations with valid revision and body-digest headers, and to validated successful native PUT receipts. Edge compression had weakened a resource's ETag while its decoded bytes still matched the native digest, so installed browser clients rejected the read after a committed save. Existing cache directives, validators, response bytes, and ordinary responses remain unchanged. All 32 gateway HTTP tests pass, including native GET/PUT coverage, cache-policy preservation, and malformed or non-native response cases. A read-only production probe confirmed that a gzip request now receives the strong ETag and unchanged body digest without content encoding.
+
 ## 2026-10-16 — Selected native record proofs
 
 NativeCommitStore can verify selected record paths under one current native head and return selected commit-result snapshots, including recovered and replayed operations. Explicit coverage distinguishes a requested absent key from an unvisited key. Existing complete reads and default commit results remain unchanged; the selected API claims only visited index-path closures and their artifact references. Record payloads still require readArtifact, and unvisited index branches are not validated. It uses the same owner, canonical head, CAS predicates, immutable artifacts and operation history. No backend protocol or live deployment change is included.
