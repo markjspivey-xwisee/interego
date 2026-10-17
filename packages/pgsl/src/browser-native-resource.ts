@@ -53,8 +53,12 @@ function resourceUrl(value: string): URL {
     || value !== url.href) invalid('Native resource URL must be canonical HTTPS without unsafe components.');
   return url;
 }
-function revisionFromEtag(value: string | null): string | null {
-  return value?.match(/^"(sha256:[a-f0-9]{64})(?:-[a-f0-9]{16})?"$/)?.[1] ?? null;
+function revisionFromEtag(value: string | null, allowWeak = false): string | null {
+  // Compression can weaken the HTTP representation validator. Reads bind the
+  // decoded bytes separately to Interego-Revision and Interego-Body-Digest;
+  // command receipts and outgoing CAS conditions still require strong tags.
+  const tag = allowWeak && value?.startsWith('W/') ? value.slice(2) : value;
+  return tag?.match(/^"(sha256:[a-f0-9]{64})(?:-[a-f0-9]{16})?"$/)?.[1] ?? null;
 }
 function opaqueType(value: string | null): NativeOpaqueContentType | null {
   // HTTP media type tokens are case-insensitive and CSS can append a charset.
@@ -157,7 +161,7 @@ export function createNativeResourceClient(options: NativeResourceClientOptions)
     const response = await context.request({ method: 'GET', headers: { Accept: TYPES.join(', ') } });
     if (response.status === 404) { await response.body?.cancel(); return { revision: null, body: null, contentType: null }; }
     if (!response.ok) { await response.body?.cancel(); throw context.error('Native resource read was refused.', 'HTTP', response.status); }
-    const revision = revisionFromEtag(response.headers.get('ETag'));
+    const revision = revisionFromEtag(response.headers.get('ETag'), true);
     const contentType = opaqueType(response.headers.get('Content-Type'));
     if (!revision || response.headers.get('Interego-Revision') !== revision || !contentType) {
       await response.body?.cancel(); throw context.error('Native resource read headers failed integrity checks.', 'INTEGRITY');
