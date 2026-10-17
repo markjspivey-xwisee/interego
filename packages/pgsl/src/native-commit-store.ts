@@ -484,14 +484,20 @@ export class NativeCommitStore implements NativeCommitClient {
     const stored = await this.readRepresentation(this.scope.headUrl);
     if (!stored) return { revision: null, artifact: null };
     const artifact = this.decrypt(stored.bytes), row = fields(artifact, artifact.topUri);
-    if (valueOrNull(artifact, row[0]) !== ATOMIC) return { revision: stored.revision, artifact }; // verified legacy migration input
+    if (valueOrNull(artifact, row[0]) !== ATOMIC) {
+      // Legacy migration input must be an exact scoped head backed by its
+      // immutable commit, not merely a decryptable artifact from this owner.
+      const head = this.decodeHead(stored.bytes, stored.revision);
+      const archived = await this.archived(head.reference!);
+      if (archived.logicalDigest !== head.logicalDigest || archived.operationId !== head.operationId) fail('Native head is not backed by its immutable commit.');
+      return { revision: stored.revision, artifact };
+    }
     if (row.length !== 6 || value(artifact, row[1]) !== this.scope.owner || value(artifact, row[2]) !== this.scope.pod
       || value(artifact, row[3]) !== this.scope.headUrl || value(artifact, row[4]) !== this.scope.artifactContainer) fail('Atomic checkpoint scope changed.');
     return { revision: stored.revision, artifact: validateNativeArtifact({ topUri: row[5]!, nodes: artifact.nodes }) };
   }
-  async commitAtomicCheckpoint(expectedRevision: string | null, input: NativeArtifactInput): Promise<NativeAtomicCheckpoint> {
+  private atomicCheckpointBytes(input: NativeArtifactInput): { bytes: Uint8Array; artifact: NativeArtifact; topUri: IRI } {
     this.checkpointScope();
-    if (expectedRevision !== null && !REVISION.test(expectedRevision)) fail('Invalid checkpoint revision.', 400);
     const artifact = validateNativeArtifact({ topUri: input.topUri, nodes: input.pgsl.nodes });
     const body = readNativeByteArtifact(artifact);
     if (body.owner !== this.scope.owner || body.contentType !== 'application/vnd.interego.rolling-checkpoint+gzip') fail('Atomic checkpoint ownership or type changed.', 400);
@@ -499,10 +505,29 @@ export class NativeCommitStore implements NativeCommitClient {
     for (const [id, node] of artifact.nodes) pgsl.nodes.set(id, node);
     const topUri = ingest(pgsl, [ATOMIC, this.scope.owner, this.scope.pod, this.scope.headUrl, this.scope.artifactContainer]
       .map(v => literal(pgsl, v)).concat(artifact.topUri));
+    // Wrapper literals share content addresses with submitted atoms such as
+    // the owner. Keep the submitted provenance as well as its exact content.
+    for (const [id, node] of artifact.nodes) pgsl.nodes.set(id, node);
     const bytes = this.encrypt({ topUri, nodes: pgsl.nodes });
     // A hard per-resource bound also limits superseded physical blocks between
     // successful shared-store collections. Oversize writes preserve the head.
     if (bytes.length > 1024 * 1024) fail('Atomic checkpoint exceeds its 1 MiB storage budget.', 413);
+    return { bytes, artifact, topUri };
+  }
+  /** The encrypted representation's byte length, including scope wrapping.
+   * Encryption changes the nonce and ciphertext on each call, but not their
+   * encoded lengths. Applications can reserve this size in a durable budget. */
+  atomicCheckpointSize(input: NativeArtifactInput): number {
+    return this.atomicCheckpointBytes(input).bytes.length;
+  }
+  async commitAtomicCheckpoint(expectedRevision: string | null, input: NativeArtifactInput,
+    options: { readonly maxEncryptedBytes?: number } = {}): Promise<NativeAtomicCheckpoint> {
+    this.checkpointScope();
+    if (expectedRevision !== null && !REVISION.test(expectedRevision)) fail('Invalid checkpoint revision.', 400);
+    const maximum = options.maxEncryptedBytes ?? 1024 * 1024;
+    if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 1024 * 1024) fail('Invalid atomic checkpoint byte reservation.', 400);
+    const { bytes, artifact, topUri } = this.atomicCheckpointBytes(input);
+    if (bytes.length > maximum) fail('Atomic checkpoint exceeds its reserved encrypted bytes.', 413);
     await this.ready();
     await this.put(this.scope.headUrl, bytes, expectedRevision);
     const actual = await this.readRepresentation(this.scope.headUrl);

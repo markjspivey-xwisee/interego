@@ -1,0 +1,14 @@
+{
+  "originalTriples": 900,
+  "extendedTriples": 1734,
+  "newTriples": 834,
+  "originalTextPreservedAsPrefix": true,
+  "currentPublishedShapesConform": true,
+  "priorCatalogSha256": "ea396298c1e792c4756b9eb8bf9f64ae3220b8f6dbd3795d75cc7d8fc72d981b",
+  "extendedCatalogSha256": "31fcc2d7b7cac496b1d4a6c9cab78eaa3b1bd2ff1fa21bd81796b9d10ac4149e",
+  "publishedGraphIsomorphicToExpected": true,
+  "liveRestAffordances": 9,
+  "liveTriples": 1734,
+  "nativeRdfsCatalogConforms": true,
+  "nativeParameterBindingsConform": true
+}

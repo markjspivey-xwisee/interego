@@ -486,7 +486,9 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
     if (via) rec.via = str(via); if (cap) rec.cap = str(cap).split('#').pop();
     return rec;
   });
-  check(ports.length === 23 && ['port-change-history', 'port-vocabulary', 'port-alignments', 'port-referents', 'port-publish-classified'].every(id => ports.some(p => p.id === id)), '23 catalog controls in catalog order, including change history and semantic layer');
+  check(ports.length === 32 && ['port-change-history', 'port-vocabulary', 'port-alignments', 'port-referents', 'port-publish-classified'].every(id => ports.some(p => p.id === id)) &&
+    ports.filter(p => p.id.startsWith('port-rest-')).length === 9 && ports.filter(p => p.id.startsWith('port-rest-')).every(p => p.m === 'GET' && p.ro && !p.de),
+  '32 catalog controls in catalog order, including nine read-only REST operations');
   const samples: Row = { 'concept-neighborhood': { concept: 'learning-record-store-lrs' }, 'concept-search': { text: 'record store' }, 'definition-evidence': { concept: 'data-privacy' },
     'collection-members': { collection: 'curated/competency-and-assessment' }, 'field-intersection': { fieldA: 'field/learning-engineering', fieldB: 'field/learning-sciences' },
     'concepts-by-type': { type: 'type/standard' }, 'multi-field-concepts': {}, 'provenance-profile': {}, 'release-check': { version: release }, classify: {}, 'concept-referents': { concept: 'formative-assessment' } };

@@ -1,0 +1,92 @@
+{
+  "repository": "https://github.com/blakeplock/i2idl-linked-data",
+  "commit": "d16b105e46c2dd5fb685a24830b01e207b4efd93",
+  "release": "v0.0.89",
+  "openapiSha256": "65e469161e2c0e63c0e2187f228db227954921b9fad79f521576005cf43e9d06",
+  "observedAt": "2026-10-15T21:35:07.619564+00:00",
+  "sourceFiles": {
+    "public/api/openapi.json": "65e469161e2c0e63c0e2187f228db227954921b9fad79f521576005cf43e9d06",
+    "api/v1.mjs": "c2f95b395567ad5cd42868706c4c6cd37b99d12d40bedf2a432d695f77bee8d4",
+    "api/v1-graph.mjs": "22599449998b7bba7e7511ae32cf23636b429b3a3024e4a81fc148b4bfff7bef",
+    "api/v1-context.mjs": "dfa323f2ab57ad93998034ee9867b7a80557ad12077a691511539e4aafb49341",
+    "docs/REST-API-V1-PHASE4.md": "fc92b8ac9c3e6fda8993443c1f268cd29cbb634cde673967f44793b2fd3a434a",
+    "vercel.json": "b8e99c61af8b24ae20c63d286750f8cdc1489638fc104b81c0686ef7c85b5500",
+    "DATA-LICENSE.md": "34f2ca01d03fa6f883c24fadfab55536d6b1b8191a0644b1b0c80f7b4d7ac11a"
+  },
+  "context": {
+    "path": "/api/v1/concepts/{id}/context",
+    "operationId": "conceptContext",
+    "summary": "Bounded concept context bundle",
+    "parameters": [
+      {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "maxLength": 160
+        }
+      },
+      {
+        "name": "depth",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        }
+      },
+      {
+        "name": "maxRelated",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20,
+          "default": 10
+        }
+      }
+    ],
+    "evidence": [
+      "api/v1-context.mjs",
+      "docs/REST-API-V1-PHASE4.md",
+      "vercel.json"
+    ],
+    "notInOpenApi": true
+  },
+  "dprod": {
+    "repository": "https://github.com/EKGF/dprod",
+    "commit": "2c7de68290f14d98c42791fa75dcddebf556ea1d",
+    "namespace": "https://www.omg.org/spec/DPROD/dprod/"
+  },
+  "notes": [
+    "API contract version 1.0.0 and glossary publication version v0.0.89 are independent.",
+    "Existing canonical glossary pin v0.0.86 is unchanged.",
+    "Context route is absent from upstream OpenAPI; released implementation and Phase 4 docs are separate evidence.",
+    "No REST rate quota is stated; SPARQL limits are not inherited.",
+    "Canonical RDF and source-specific licences remain authoritative."
+  ],
+  "parameterOverrides": {
+    "listConcepts": {
+      "q": {
+        "maxLength": 160
+      },
+      "field": {
+        "maxLength": 200
+      },
+      "type": {
+        "maxLength": 200
+      },
+      "source": {
+        "maxLength": 200
+      },
+      "collection": {
+        "maxLength": 200
+      }
+    }
+  }
+}

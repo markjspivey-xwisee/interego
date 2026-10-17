@@ -120,6 +120,11 @@ jobs:
       - run: npm run build
       - name: Native reasoning, semantic and history fixtures
         run: npx tsx --test applications/foxxi-content-intelligence/i2idlx/typescript/*.test.ts
+      - name: Independently reject invalid REST argument bindings with SHACL
+        run: |
+          python3 -m venv "$RUNNER_TEMP/i2idlx-rest-shacl"
+          "$RUNNER_TEMP/i2idlx-rest-shacl/bin/pip" install rdflib==7.1.4 pyshacl==0.30.1
+          "$RUNNER_TEMP/i2idlx-rest-shacl/bin/python" applications/foxxi-content-intelligence/i2idlx/tools/verify_rest_api_shapes.py
       - name: Independent RDF and workbench security checks
         run: npx vitest run applications/foxxi-content-intelligence/tests/i2idlx-parity.test.ts applications/foxxi-content-intelligence/tests/i2idlx-workbench.test.ts applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts
       - name: Checkout the pinned upstream source, including its history

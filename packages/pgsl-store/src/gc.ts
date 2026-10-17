@@ -365,6 +365,11 @@ export async function rebuildTable(
     log('lock held: readers and writers wait until the swap commits');
     const live = await collectLive(readerFromPg(client as never, t), { log });
     if (live.keys.size === 0) throw new Error('refusing to rebuild: the live set is empty');
+    // A missing or unreadable retained node makes reachability incomplete.
+    // Preserve the existing table rather than collecting through uncertainty.
+    if (live.stats.danglingRoots.length > 0 || live.stats.unreadableNodes > 0) {
+      throw new Error(`refusing to rebuild: ${live.stats.danglingRoots.length} dangling roots and ${live.stats.unreadableNodes} unreadable nodes`);
+    }
     await client.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
     await copyStorageParameters(client, t, newTable, log);
     const all = [...live.keys];
@@ -377,7 +382,11 @@ export async function rebuildTable(
     }
     const count = await client.query(`SELECT count(*)::bigint AS n FROM ${newTable}`);
     const newRows = Number(count.rows[0]?.['n'] ?? 0);
-    if (newRows === 0) throw new Error('refusing to swap: the new table is empty');
+    // Reconstructed keys are promises of retained data. Both the INSERT row
+    // counts and an independent table count must confirm every promised key.
+    if (copied !== live.keys.size || newRows !== live.keys.size) {
+      throw new Error(`refusing to swap: expected ${live.keys.size} live keys, copied ${copied}, counted ${newRows}`);
+    }
     await client.query(`ALTER TABLE ${t} RENAME TO ${oldTable}`);
     await client.query(`ALTER TABLE ${newTable} RENAME TO ${t}`);
     await client.query('COMMIT');

@@ -188,7 +188,7 @@ export async function generate(root = DEFAULT_ROOT, options: {outputDir?: string
     let text='';try{text=git(clone,['show',commit+':'+path]);}catch{continue;}
     if(text.includes('## SPARQL service limits')) {limitsDoc=path;limitsText=text.split('## SPARQL service limits')[1]!.split('\n## ')[0]!;break;}
   }
-  const catalogTtl=render(template('i2idlx-catalog.ttl.tmpl').replace('{{STORED_QUERIES}}',storedBlocks.join('\n')).replace('{{LIMITS_DOC}}',limitsDoc||'README.md'));
+  const catalogTtl=render((template('i2idlx-catalog.ttl.tmpl')+'\n'+template('i2idlx-rest-api.ttl.tmpl')).replace('{{STORED_QUERIES}}',storedBlocks.join('\n')).replace('{{LIMITS_DOC}}',limitsDoc||'README.md'));
   const prefixes: Record<string,string>={i2x:NS,en:IRI.enactments+'#',mp:IRI.mappings+'#',i2idl:CONCEPT_BASE,
     fxa:ACTION_ROOT+'foxxi/',rla:ACTION_ROOT+'relay/','iep': IEP,skos:SKOS,dct:DCT,prov:PROV,owl:OWL,rdfs:RDFS,xsd:XSD};
   const headerPrefixes=Object.entries(prefixes).map(([p,n])=>'@prefix '+p+': '+safeIri(n)+' .').join('\n')+'\n';

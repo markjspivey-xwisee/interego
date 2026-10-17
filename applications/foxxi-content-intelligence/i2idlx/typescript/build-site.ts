@@ -78,6 +78,17 @@ export interface OriginDeclarations { groups:{id:string}[]; origins:{id:string}[
 export function originVocabularyDeclarations(source:OriginDeclarations):string {
   return [...source.groups,...source.origins].map(origin=>'i2x:origin-'+origin.id+' a skos:Concept .').join('\n');
 }
+/** Catalog-only action identities link to their control, while ontology terms keep their own anchors. */
+export function catalogActionTargets(catalog:Store,ontology:Store,catalogIri:string,namespace:string):Map<string,string> {
+  const targets=new Map<string,string>();
+  for(const control of os(catalog,namedNode(catalogIri),IEP+'affordance')){
+    const action=value(catalog,control,IEP+'action');
+    if(action?.termType==='NamedNode'&&action.value.startsWith(namespace)&&
+      catalog.countQuads(action,namedNode(RDF+'type'),namedNode(namespace+'ActionIdentity'),null)>0&&
+      ontology.countQuads(action,null,null,null)===0&&!targets.has(action.value))targets.set(action.value,control.value.slice((catalogIri+'#').length));
+  }
+  return targets;
+}
 /** Render the reference from built RDF and verification records; never runs Python. */
 export async function buildSite(root:string,options:SiteOptions={}):Promise<{output:string;terms:number;controls:number;queries:number}> {
   const ROOT=resolve(root),cfg=readJson<Config>(join(ROOT,'config.json'));
@@ -119,6 +130,7 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
   };
   const load=(k:string):[Store,string]=>{const s=readFileSync(join(DIST,SLUG[k]!+'.ttl'),'utf8');return[new Store(new Parser({format:'text/turtle',baseIRI:IRI[k]}).parse(s)),s];};
   const[onto]=load('ontology'),[cat]=load('catalog'),[enact]=load('enactments'),[maps]=load('mappings');
+  const actionTargets=catalogActionTargets(cat,onto,IRI.catalog!,NS);
   const[rels]=load('releases'),[chg]=load('changes'),[refs]=load('referents');load('alignments');
   const sem=readJson<ReasoningRecord>(join(DIST,'semantic-layer.json')),pub=readJson<{graphs:PublishedGraph[]}>(join(DIST,'published.json'));
   readJson<unknown>(join(DIST,'publish-plan.json'));
@@ -129,7 +141,7 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
   const conceptLabel=(iri:string):string=>labels.get(iri)??iri.split('/').at(-1)!;
   const conceptLink=(n:Term|string|undefined):string=>{const iri=typeof n==='string'?n:lexical(n);return ext(iri,esc(conceptLabel(iri)));};
   const actionName=(iri:string):string=>iri.startsWith(ACTION_ROOT)?iri.slice(ACTION_ROOT.length):qname(iri);
-  const actionLink=(n:Term|string|undefined):string=>{const iri=typeof n==='string'?n:lexical(n),a=anchor(iri);return a?'<a class="qn" href="#'+esc(a)+'">'+esc(a)+'</a>':ext(iri,esc(actionName(iri)),'qn');};
+  const actionLink=(n:Term|string|undefined):string=>{const iri=typeof n==='string'?n:lexical(n),a=actionTargets.get(iri)??anchor(iri);return a?'<a class="qn" href="#'+esc(a)+'">'+esc(iri.startsWith(NS)?iri.slice(NS.length):actionName(iri))+'</a>':ext(iri,esc(actionName(iri)),'qn');};
   const sections:[string,string][]=[],sectionOf=new Map<string,string>(),order:string[]=[];let current:string|undefined;
   const ontologySource=readFileSync(join(ROOT,'src','i2idlx.ttl.tmpl'),'utf8')
     .replace('{{CHANGE_KINDS}}',CHANGE_KINDS.map(([code])=>'i2x:change-'+code+' a skos:Concept .').join('\n'))
@@ -155,14 +167,14 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
 
   const controls=os(cat,namedNode(IRI.catalog!),IEP+'affordance').map(n=>n.value.slice(CAT.length));
   if(controls.length===0)throw new Error('Catalog has no affordance listing');
-  const groups=['Reads on the live glossary','Semantic layer (graphs on Interego)','Per-concept templates','Governed writes through Interego','Foxxi capabilities','Human-routed'];
+  const groups=['Reads on the live glossary','REST API reads','Semantic layer (graphs on Interego)','Per-concept templates','Governed writes through Interego','Foxxi capabilities','Human-routed'];
   const grouped=new Map(groups.map(g=>[g,[] as string[]]));let nFollowable=0,nTemplates=0;
   for(const local of controls){const s=namedNode(CAT+local),action=value(cat,s,IEP+'action');
     const method=value(cat,s,HYDRA+'method')?.value??'POST',target=value(cat,s,HYDRA+'target'),tmplNode=value(cat,s,NS+'targetTemplate');
     const template=tmplNode?lexical(value(cat,tmplNode,HYDRA+'template')):undefined,media=value(cat,s,DCAT+'mediaType');
     const readOnly=boolean(value(cat,s,IEP+'readOnlyHint')),cap=value(cat,s,NS+'requiresCapability'),routed=boolean(value(cat,s,IEP+'externallyRouted'));
     const label=text(cat,s,RDFS+'label'),desc=text(cat,s,HYDRA+'description')??text(cat,s,HYDRA+'title')??'';
-    const group=routed?'Human-routed':['port-vocabulary','port-alignments','port-referents'].includes(local)?'Semantic layer (graphs on Interego)':
+    const group=routed?'Human-routed':local.startsWith('port-rest-')?'REST API reads':['port-vocabulary','port-alignments','port-referents'].includes(local)?'Semantic layer (graphs on Interego)':
       lexical(action).startsWith(ACTION_ROOT+'foxxi/')?'Foxxi capabilities':template?'Per-concept templates':!readOnly?'Governed writes through Interego':'Reads on the live glossary';
     let where:string;if(target){nFollowable++;where='<code class="iri">'+wbr(target.value)+'</code>';}else{nTemplates++;where='<code class="iri tpl">'+wbr(template)+'</code> <span class="tag">template</span>';}
     grouped.get(group)!.push('<tr id="'+esc(local)+'"><td><div class="cell-title">'+esc(label)+'</div><div class="muted small">'+esc(desc)+
@@ -434,9 +446,9 @@ export async function buildSite(root:string,options:SiteOptions={}):Promise<{out
   if(dangling.length)throw new Error('In-page links with no target: '+dangling.join(', '));
   if(/@@I2IDLX_SLOT_\d+@@/.test(page))throw new Error('Unresolved reference page slot');
   mkdirSync(OUTDIR,{recursive:true});writeFileSync(OUT,page);
-  console.log(OUT+': '+number(Buffer.byteLength(page))+' bytes; '+nTerms+' terms, '+nControls+' controls, '+queryCards.length+' queries, '+enactRows.length+
+  process.stdout.write(OUT+': '+number(Buffer.byteLength(page))+' bytes; '+nTerms+' terms, '+nControls+' controls, '+queryCards.length+' queries, '+enactRows.length+
     ' enactments, '+nRoleCaps+' role capabilities, '+mapRows.length+' mappings, '+releaseRows.length+' releases, '+nPass+' checks pass, '+nFail+
-    ' fail; walkthrough chain '+walkChain.length+' steps');
+    ' fail; walkthrough chain '+walkChain.length+' steps\n');
   return{output:OUT,terms:nTerms,controls:nControls,queries:queryCards.length};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href){

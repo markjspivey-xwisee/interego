@@ -15,15 +15,15 @@
  * swaps the names in the same transaction, and leaves the old table for `--drop` after the
  * store has been checked. See packages/pgsl-store/src/gc.ts for what "live" means.
  *
- * ── THE WEEKLY RUN, AND WHERE ITS LINE IS ──────────────────────────────────────────────────
+ * ── THE SCHEDULED RUN, AND WHERE ITS LINE IS ──────────────────────────────────────────────────
  *
- * pgsl-store-gc.yml runs `--drop-previous-older-than 7 --rebuild-above 0.5` every Sunday at the
+ * pgsl-store-gc.yml runs `--drop-previous-older-than 1 --rebuild-above 0.5` every day at the
  * quietest hour. The measurement is the same dry run; the decision is `rebuildDecision`, which
  * rebuilds when at least half of a table of at least --min-rows rows is unreferenced history —
  * the shape the 2026-09-20 outage had (78.7M rows, 1.19M live) — or when the table on disk holds
  * at least four times its live values and at least 1 GiB, the TOAST-and-index bloat the
  * 2026-09-21 measurement showed (2 GB on disk, 0.5 GB live, 7% of rows unreferenced). Below both
- * a table is never rebuilt automatically: the lock would cost more than the space. The table a rebuild leaves behind stays a week, so the store
+ * a table is never rebuilt automatically: the lock would cost more than the space. The table a rebuild leaves behind stays at least a day, so the store
  * has run on the new one before `previousTablesToDrop` lets the next run drop it. Both
  * decisions are pure and tested (tests/pgsl-store-gc-tool.test.ts); a person can still
  * dispatch any mode by hand.
@@ -48,7 +48,7 @@ export interface RebuildDecision {
 }
 
 /**
- * Whether the weekly run rebuilds: the unreferenced share of a table big enough to matter has
+ * Whether the scheduled run rebuilds: the unreferenced share of a table big enough to matter has
  * crossed the line. An unknown row estimate (a table never analysed reports -1) decides nothing.
  */
 export function rebuildDecision(input: {
