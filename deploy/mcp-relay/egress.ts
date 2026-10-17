@@ -241,6 +241,9 @@ export function createEgress(config: EgressConfig): Egress {
         ok: resp.ok,
         status: resp.status,
         statusText: resp.statusText,
+        // Optional native stream for callers that must stop reading at a byte
+        // ceiling. Existing substrate FetchFn consumers retain text/json APIs.
+        body: resp.body,
         headers: { get: (n: string) => resp.headers.get(n) },
         text: () => resp.text(),
         json: () => resp.json(),

@@ -185,7 +185,9 @@ const UNLINTED_FRONTIER = {
   // Both additions lint clean, so the error ceiling remains unchanged.
   // Private HMD auth/resolution brings the tracked census to 166; no added lint debt.
   // Derived-resource confidentiality adds a tracked module; the error ceiling stays fixed.
-  deploy: { errors: 356, files: 176 },
+  // The session-delegation repair module and wiring suite bring the committed
+  // census to 187. Bank coverage; the existing error pin remains unchanged.
+  deploy: { errors: 356, files: 187 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
