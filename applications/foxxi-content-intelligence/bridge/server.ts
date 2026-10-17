@@ -20,6 +20,12 @@
  */
 
 import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
+import { format } from 'node:util';
+
+// Explicit output streams preserve operational diagnostics without ambient console calls.
+const bridgeLog = (...values: unknown[]) => { process.stdout.write(format(...values) + '\n'); };
+const bridgeWarn = (...values: unknown[]) => { process.stderr.write(format(...values) + '\n'); };
+const bridgeError = (...values: unknown[]) => { process.stderr.write(format(...values) + '\n'); };
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
 import { composeOwnSubjectXapiVerifier } from '../src/own-subject-xapi-auth.js';
 import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
@@ -80,7 +86,7 @@ import express, { type RequestHandler } from 'express';
     }
     return originalFetch(input, init2);
   }) as typeof globalThis.fetch;
-  console.log(`[foxxi-bridge] global write-fetch guard installed (redirect:manual on writes${writeSecret && tenantOrigin ? `; pod-write bearer on exact ${tenantOrigin} writes` : ''})`);
+  bridgeLog(`[foxxi-bridge] global write-fetch guard installed (redirect:manual on writes${writeSecret && tenantOrigin ? `; pod-write bearer on exact ${tenantOrigin} writes` : ''})`);
 }
 // Resilience: a thrown error / rejected promise on a request path (e.g. a pod
 // write that the handler didn't await inside its try/catch) must NEVER take the
@@ -88,10 +94,10 @@ import express, { type RequestHandler } from 'express';
 // process with code 1, which is exactly how an authenticated /xapi/statements
 // POST was crashing the LRS. Log the stack and continue serving.
 process.on('unhandledRejection', (reason) => {
-  console.error('[foxxi-bridge] unhandledRejection (continuing):', reason instanceof Error ? reason.stack : reason);
+  bridgeError('[foxxi-bridge] unhandledRejection (continuing):', reason instanceof Error ? reason.stack : reason);
 });
 process.on('uncaughtException', (err) => {
-  console.error('[foxxi-bridge] uncaughtException (continuing):', (err as Error)?.stack ?? err);
+  bridgeError('[foxxi-bridge] uncaughtException (continuing):', (err as Error)?.stack ?? err);
 });
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { wantsHmd, sendHmd, sendActionResult, renderAffordanceManifestHmd } from '../../_shared/hypermedia/index.js';
@@ -201,7 +207,7 @@ import { recoverSignedRequest } from '../src/auth.js';
 import { acceptSessionKeys, sessionKeyPolicy, sessionKeyPolicyFor, SESSION_KEY_CHAIN_ID } from '../src/session-key.js';
 import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
-import { courseIri, courseIdOf, sameCourse } from '../src/course-identity.js';
+import { courseIri, courseIdOf } from '../src/course-identity.js';
 import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest } from '../src/scorm-artifacts.js';
 import { validateScormResponses, type ScormAssessmentQuestion } from '../src/scorm-assessment.js';
 import { authorQuestion, questionForLearner, questionIsRight, QuestionError } from '../src/course-questions.js';
@@ -232,7 +238,7 @@ import {
   contentJudgmentOutcome, decodeBundleJson, entityGraphUrl, findEntityEntry, isContentJudgment, isContentJudgmentOutcome, judgeContentClaim,
   recordedContentJudgment, type ContentJudgment, type ContentJudgmentKind, type ContentJudgmentOutcome, type EntityEntry, type EvidenceItem,
 } from '../src/content-judgment.js';
-import { CONTENT_JUDGMENT_ATTESTATION_TYPE, CONTENT_REPUTATION_POLICY, attestationFromEntity, contentJudgmentAttestation, contentJudgmentReputation, isContentJudgmentAttestation, type ContentJudgmentAttestation } from '../src/content-reputation.js';
+import { CONTENT_JUDGMENT_ATTESTATION_TYPE, CONTENT_REPUTATION_POLICY, attestationFromEntity, contentJudgmentReputation, isContentJudgmentAttestation, type ContentJudgmentAttestation } from '../src/content-reputation.js';
 import { confirmNext, pendingJudgments, type PendingJudgment } from '../src/confirm-next.js';
 import { bestJudges, crossConfirmPairs, disagreementsFor, judgeAttestations, latestJudgmentsByClaim } from '../src/judges.js';
 import { AUTONOMY_POLICY_TYPE, DEFAULT_AUTONOMY_POLICY, amendAutonomyPolicy, autonomyDecision, isAutonomyPolicy, parseRules, standingOf, type AutonomyPolicy } from '../src/autonomy.js';
@@ -432,7 +438,7 @@ import {
   calibrateMasteryThreshold,
   frameworkGapAnalysis,
 } from '../src/learning-engineering.js';
-import { verifySessionToken, trustedAddressMap, type SessionToken } from '../src/auth.js';
+import { verifySessionToken, trustedAddressMap } from '../src/auth.js';
 import {
   resolveCallerContext,
   emitAccessDecision,
@@ -442,7 +448,7 @@ import {
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { readyStatementStore } from '../src/statement-store.js';
-import { attachXapiLrsRoutes, internalRefusalOf, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
@@ -608,7 +614,7 @@ function sameStore(a: string, b: string): boolean {
  */
 const authoritativeSource = (process.env.FOXXI_AUTHORITATIVE_SOURCE ?? 'did:web:foxxi.example') as IRI;
 if (!process.env.FOXXI_AUTHORITATIVE_SOURCE) {
-  console.error(
+  bridgeError(
     '[foxxi] FOXXI_AUTHORITATIVE_SOURCE is unset — every published record will name '
     + '%s as its authoritative source, and that identifier does not resolve. '
     + 'Set it to a dereferenceable DID before publishing anything a verifier will read.',
@@ -683,13 +689,13 @@ const conformanceSelfIdentity = {
 };
 
 if (!adminKeySeed) {
-  console.warn('[foxxi-bridge] WARNING: FOXXI_ADMIN_KEY_SEED is unset — admin sections cannot be decrypted; learner queries will fail. Set FOXXI_ADMIN_KEY_SEED to the same seed used at publish time.');
+  bridgeWarn('[foxxi-bridge] WARNING: FOXXI_ADMIN_KEY_SEED is unset — admin sections cannot be decrypted; learner queries will fail. Set FOXXI_ADMIN_KEY_SEED to the same seed used at publish time.');
 }
 if (!adminWebId) {
-  console.warn('[foxxi-bridge] WARNING: FOXXI_ADMIN_WEB_ID is unset — role resolution can never elevate any caller to admin role.');
+  bridgeWarn('[foxxi-bridge] WARNING: FOXXI_ADMIN_WEB_ID is unset — role resolution can never elevate any caller to admin role.');
 }
 if (!issuerKeySeed) {
-  console.warn('[foxxi-bridge] WARNING: FOXXI_ISSUER_KEY_SEED is unset — foxxi.issue_completion_credential will fail; set this to the tenant\'s persistent issuer-key seed (different from FOXXI_ADMIN_KEY_SEED).');
+  bridgeWarn('[foxxi-bridge] WARNING: FOXXI_ISSUER_KEY_SEED is unset — foxxi.issue_completion_credential will fail; set this to the tenant\'s persistent issuer-key seed (different from FOXXI_ADMIN_KEY_SEED).');
 }
 
 const adminKeyPair = adminKeySeed ? deriveAdminKeyPair(adminKeySeed) : undefined;
@@ -1241,7 +1247,7 @@ async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdmin
     const forceClosed = samePod(podUrl, tenantPodUrl);
     return await fetchAdminPayload({ ...fetcherConfig(), podUrl, forceClosed }) as FoxxiAdminPayload;
   } catch (err) {
-    console.error('[foxxi-bridge] autoFetchAdmin failed:', (err as Error).message);
+    bridgeError('[foxxi-bridge] autoFetchAdmin failed:', (err as Error).message);
     return null;
   }
 }
@@ -1271,7 +1277,7 @@ async function autoFetchCourse(args: Record<string, unknown>, courseId: string):
   try {
     return await fetchCoursePackage(courseId, { ...fetcherConfig(), podUrl }) as FoxxiAgenticPayload;
   } catch (err) {
-    console.error('[foxxi-bridge] autoFetchCourse failed:', (err as Error).message);
+    bridgeError('[foxxi-bridge] autoFetchCourse failed:', (err as Error).message);
     return null;
   }
 }
@@ -1305,7 +1311,7 @@ async function fetchInteregoDescriptors(): Promise<DiscoveredDescriptor[]> {
     try {
       entries = await discover(pod);
     } catch (err) {
-      console.error(`[foxxi-bridge] discover(${pod}) failed:`, (err as Error).message);
+      bridgeError(`[foxxi-bridge] discover(${pod}) failed:`, (err as Error).message);
       continue;
     }
     for (const e of entries) {
@@ -1330,7 +1336,7 @@ async function fetchInteregoDescriptors(): Promise<DiscoveredDescriptor[]> {
           const pkg = await fetchCoursePackage(courseIdMatch[1], { ...fetcherConfig(), podUrl: pod }) as FoxxiAgenticPayload;
           descriptor.course = payloadToAgenticCourse(pkg, authoritativeSource);
         } catch (err) {
-          console.error(`[foxxi-bridge] deep-fetch of course "${courseIdMatch[1]}" from ${pod} failed:`, (err as Error).message);
+          bridgeError(`[foxxi-bridge] deep-fetch of course "${courseIdMatch[1]}" from ${pod} failed:`, (err as Error).message);
         }
       }
       collected.push(descriptor);
@@ -1464,7 +1470,7 @@ async function hydrateDurableEnrolment(): Promise<{ count: number; stale: boolea
   if (!tenantPodUrl) return { count: 0, stale: false };
   const read = await readSectionArrayOrFail(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
   if (!read.ok) {
-    console.error(`[foxxi-bridge][mesh] durable register unreadable (${read.reason}) — keeping the ${durableEnrolled.size} entr(ies) already loaded rather than reporting nobody is enrolled`);
+    bridgeError(`[foxxi-bridge][mesh] durable register unreadable (${read.reason}) — keeping the ${durableEnrolled.size} entr(ies) already loaded rather than reporting nobody is enrolled`);
     return { count: durableEnrolled.size, stale: true };
   }
   const next = new Map<string, { at: string; by: string }>();
@@ -1520,7 +1526,7 @@ async function persistEnrolmentUnsafe(row: MeshEnrolmentRow): Promise<boolean> {
     // silently un-enrolling everyone else. That is the worst outcome this endpoint can produce.
     const read = await readSectionArrayOrFail(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
     if (!read.ok) {
-      console.error(`[foxxi-bridge][mesh] refusing to write the register: could not read it first (${read.reason}) — a blind write would drop every other row`);
+      bridgeError(`[foxxi-bridge][mesh] refusing to write the register: could not read it first (${read.reason}) — a blind write would drop every other row`);
       return false;
     }
     const kept = read.rows.filter((r) => typeof r.pod_url === 'string' && podKey(r.pod_url) !== podKey(row.pod_url));
@@ -1538,7 +1544,7 @@ async function persistEnrolmentUnsafe(row: MeshEnrolmentRow): Promise<boolean> {
     if (after.stale) return false;
     return [...durableEnrolled.keys()].some((p) => podKey(p) === podKey(row.pod_url));
   } catch (err) {
-    console.error(`[foxxi-bridge][mesh] durable enrolment write failed for ${row.pod_url}: ${(err as Error).message}`);
+    bridgeError(`[foxxi-bridge][mesh] durable enrolment write failed for ${row.pod_url}: ${(err as Error).message}`);
     return false;
   }
 }
@@ -1631,7 +1637,7 @@ async function pruneDeadEnrolments(absentThisCycle: Set<string>, seenThisCycle: 
     const removed = await withdrawEnrolment(pod, reason);
     sessionEnrolled.delete(pod);
     meshAbsentStreak.delete(podKey(pod));
-    console.log(`[foxxi-bridge][mesh] retired ${pod} — no manifest for ${streak} consecutive cycles (durable row retired: ${removed}). It can re-enrol itself at any time.`);
+    bridgeLog(`[foxxi-bridge][mesh] retired ${pod} — no manifest for ${streak} consecutive cycles (durable row retired: ${removed}). It can re-enrol itself at any time.`);
   }
 }
 
@@ -1648,7 +1654,7 @@ async function withdrawEnrolmentUnsafe(pod: string, reason: string): Promise<boo
     const read = await readSectionArrayOrFail(tenantPodUrl, TENANT_TYPES.MeshEnrolmentRegister);
     // Same rule as the write: an unreadable register must not become the basis of a republish.
     if (!read.ok) {
-      console.error(`[foxxi-bridge][mesh] refusing to rewrite the register for a withdrawal: could not read it first (${read.reason})`);
+      bridgeError(`[foxxi-bridge][mesh] refusing to rewrite the register for a withdrawal: could not read it first (${read.reason})`);
       return false;
     }
     /**
@@ -1669,7 +1675,7 @@ async function withdrawEnrolmentUnsafe(pod: string, reason: string): Promise<boo
     if (after.stale) return false;
     return ![...durableEnrolled.keys()].some((p) => podKey(p) === podKey(pod));
   } catch (err) {
-    console.error(`[foxxi-bridge][mesh] withdrawal failed for ${pod}: ${(err as Error).message}`);
+    bridgeError(`[foxxi-bridge][mesh] withdrawal failed for ${pod}: ${(err as Error).message}`);
     return false;
   }
 }
@@ -1903,7 +1909,7 @@ function selfBoundPod(callerDid: string, explicit?: string): string {
    * still a fallback the caller should be able to see.
    */
   if (explicit) {
-    console.warn(`[foxxi-bridge] pod override ignored for ${callerDid}: `
+    bridgeWarn(`[foxxi-bridge] pod override ignored for ${callerDid}: `
       + `${explicit} did not resolve to the caller's own pod `
       + `(sameActor=${sameActor}, sameStore=${sameOrigin}); using ${derived}`);
   }
@@ -2027,7 +2033,7 @@ async function landMeshBatch(events: ProjectedMeshEvent[]): Promise<number> {
       await store.put({ id, statement: { ...ev.statement, stored: storedAt }, stored: storedAt, voided: false } as StoredStatement);
       landed++;
     } catch (err) {
-      console.warn(`[foxxi-bridge][mesh] put failed for ${id} (${ev.mode}):`, (err as Error).message);
+      bridgeWarn(`[foxxi-bridge][mesh] put failed for ${id} (${ev.mode}):`, (err as Error).message);
     }
   }
   return landed;
@@ -2097,7 +2103,7 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
         // ALWAYS partial is a pod whose older rows this projector will never reach, and that
         // should be visible in the log rather than discovered later from a gap in the data.
         if (page.bounded) {
-          console.log(`[foxxi-bridge][mesh] ${pod}: read window filled (${entries.length} row(s), `
+          bridgeLog(`[foxxi-bridge][mesh] ${pod}: read window filled (${entries.length} row(s), `
             + `${page.archivesFollowed} segment(s)) — older rows were not read this cycle`);
         }
       }
@@ -2111,7 +2117,7 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
         // no space — so a `not found` pattern alone would never fire and dead rows would accumulate
         // forever while the retirement code looked correct. Measured against the live gate.
         if (/\b404\b|not\s*found|H404|no manifest|ENOTFOUND|does not exist/i.test(msg)) absentThisCycle.add(pod);
-        console.error(`[foxxi-bridge][mesh] discover(${pod}) failed:`, msg);
+        bridgeError(`[foxxi-bridge][mesh] discover(${pod}) failed:`, msg);
         continue;
       }
       /**
@@ -2176,7 +2182,7 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
        */
       const mu = process.memoryUsage();
       const mb = (n: number): string => `${Math.round(n / 1048576)}MB`;
-      console.log(`[foxxi-bridge][mesh] projected ${events.length} event(s) (landed ${landed}) from ${pods.length} pod(s) across ${stepsByAgent.size} agent(s) -> per-agent lens:<agent> views · heap ${mb(mu.heapUsed)}/${mb(mu.heapTotal)} rss ${mb(mu.rss)} ext ${mb(mu.external)}`);
+      bridgeLog(`[foxxi-bridge][mesh] projected ${events.length} event(s) (landed ${landed}) from ${pods.length} pod(s) across ${stepsByAgent.size} agent(s) -> per-agent lens:<agent> views · heap ${mb(mu.heapUsed)}/${mb(mu.heapTotal)} rss ${mb(mu.rss)} ext ${mb(mu.external)}`);
     }
     return { pods: pods.length, projected: landed, agents: stepsByAgent.size };
   } finally {
@@ -2184,7 +2190,7 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
     // throw cannot leave a streak half-counted, and awaited so a prune cannot race the next cycle's
     // register read.
     try { await pruneDeadEnrolments(absentThisCycle, seenThisCycle); }
-    catch (err) { console.error('[foxxi-bridge][mesh] prune failed:', (err as Error).message); }
+    catch (err) { bridgeError('[foxxi-bridge][mesh] prune failed:', (err as Error).message); }
     meshProjectionRunning = false;
   }
 }
@@ -3277,10 +3283,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
           try {
             await ensureResident(at, authorDid, label);
             for (const a of latticeArtifacts(label, 'foxxi:Course')) candidates.push(a.content as AgentScormCourse | null);
-          } catch (e) { console.warn(`[foxxi-bridge][catalog] lattice read failed for ${label}: ${(e as Error).message}`); }
+          } catch (e) { bridgeWarn(`[foxxi-bridge][catalog] lattice read failed for ${label}: ${(e as Error).message}`); }
           try {
             for (const c of await listScormCourses({ podUrl: at })) candidates.push(c as unknown as AgentScormCourse);
-          } catch (e) { console.warn(`[foxxi-bridge][catalog] pod records read failed for ${label}: ${(e as Error).message}`); }
+          } catch (e) { bridgeWarn(`[foxxi-bridge][catalog] pod records read failed for ${label}: ${(e as Error).message}`); }
         }
         courses.push(...authoredCourseProducts(candidates, authorDid, new Set(courses.map((c) => c.courseId)), courseIri) as typeof courses);
       }
@@ -3748,7 +3754,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       await persistRecordedStatement({ podUrl: perfPod, agentDid: performerDid, statement: withId });
       durablePersisted = true;
     } catch (e) {
-      console.warn('[foxxi][record_performance] durable persist failed:', (e as Error).message);
+      bridgeWarn('[foxxi][record_performance] durable persist failed:', (e as Error).message);
     }
     void composeIntoSharedLattice({
       podUrl: perfPod, agentDid: performerDid, label: perfLabel,
@@ -3756,7 +3762,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       content: withId, contentType: 'xapi:Statement',
       ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
       projections: ['rdf', 'vc', 'activity'],
-    }).catch(e => console.warn('[foxxi][record_performance] lattice compose failed:', (e as Error).message));
+    }).catch(e => bridgeWarn('[foxxi][record_performance] lattice compose failed:', (e as Error).message));
     return {
       recorded: true,
       statementId,
@@ -5068,8 +5074,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         more: list.more,
       };
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[foxxi:scorm_cloud_pull]', err instanceof Error ? (err.stack ?? err.message) : err);
+      bridgeError('[foxxi:scorm_cloud_pull]', err instanceof Error ? (err.stack ?? err.message) : err);
       return upstreamFailed('SCORM Cloud pull failed — see bridge logs');
     }
   },
@@ -5854,8 +5859,7 @@ const instrumentedHandlers = Object.fromEntries(
           });
         } catch (xapiErr) {
           // Instrumentation must never block the handler's response.
-          // eslint-disable-next-line no-console
-          console.warn('[xapi-instrumentation]', (xapiErr as Error).message);
+          bridgeWarn('[xapi-instrumentation]', (xapiErr as Error).message);
         }
       }
     },
@@ -6659,14 +6663,14 @@ const app = createVerticalBridge({
     // renders the single-source model (identical to the holon's content atom).
     if (tenantPodUrl) {
       void composeAllSpecOntologies({ podUrl: tenantPodUrl, agentDid: tenantProfileDid })
-        .then(c => { for (const x of c) if (x.holonUri) specHolons.set(x.module, { label: x.label, holonUri: x.holonUri }); console.log(`[foxxi-bridge][spec-ontology] composed ${specHolons.size}/${c.length} spec ontologies into the lattice (now served as holon projections)`); })
-        .catch(e => console.warn('[foxxi-bridge][spec-ontology] compose skipped:', (e as Error).message));
+        .then(c => { for (const x of c) if (x.holonUri) specHolons.set(x.module, { label: x.label, holonUri: x.holonUri }); bridgeLog(`[foxxi-bridge][spec-ontology] composed ${specHolons.size}/${c.length} spec ontologies into the lattice (now served as holon projections)`); })
+        .catch(e => bridgeWarn('[foxxi-bridge][spec-ontology] compose skipped:', (e as Error).message));
       // Compose the compliance framework ontologies the same way (best-effort) so a
       // cited control IRI (soc2:CC6.1, eu-ai-act:Article12, nist-rmf:MEASURE) is a
       // genuine projection of a PGSL holon, not just a rendered file.
       void Promise.allSettled(Object.values(COMPLIANCE_MODELS).map(m => composeComplianceOntology(m, { podUrl: tenantPodUrl, agentDid: tenantProfileDid })))
-        .then(rs => { let n = 0; for (const r of rs) if (r.status === 'fulfilled' && r.value?.holonUri) { specHolons.set(r.value.module, { label: r.value.label, holonUri: r.value.holonUri }); n++; } console.log(`[foxxi-bridge][compliance-ontology] composed ${n}/${rs.length} compliance ontologies into the lattice`); })
-        .catch(e => console.warn('[foxxi-bridge][compliance-ontology] compose skipped:', (e as Error).message));
+        .then(rs => { let n = 0; for (const r of rs) if (r.status === 'fulfilled' && r.value?.holonUri) { specHolons.set(r.value.module, { label: r.value.label, holonUri: r.value.holonUri }); n++; } bridgeLog(`[foxxi-bridge][compliance-ontology] composed ${n}/${rs.length} compliance ontologies into the lattice`); })
+        .catch(e => bridgeWarn('[foxxi-bridge][compliance-ontology] compose skipped:', (e as Error).message));
       // Compose the credential + IEEE-LER/ADL-TLA SHACL shape models into the lattice too,
       // exactly like the spec + compliance ontologies (#composable): the OB3, CLR and
       // IEEE-LER/ADL-TLA conformance shapes become first-class PGSL holons, so validating a
@@ -6675,8 +6679,8 @@ const app = createVerticalBridge({
       // makes /ns/ob3 + /ns/clr project from the composed holon (specHolons → liveModel),
       // uniform with /ns/xapi. Best-effort; identical read-back means serving is unchanged.
       void Promise.allSettled([LER_MODEL, OB3_MODEL, CLR_MODEL].map(m => composeComplianceOntology(m as unknown as SpecOntologyModel, { podUrl: tenantPodUrl, agentDid: tenantProfileDid })))
-        .then(rs => { let n = 0; for (const r of rs) if (r.status === 'fulfilled' && r.value?.holonUri) { specHolons.set(r.value.module, { label: r.value.label, holonUri: r.value.holonUri }); n++; } console.log(`[foxxi-bridge][credential-ontology] composed ${n}/${rs.length} credential/LER shape ontologies into the lattice`); })
-        .catch(e => console.warn('[foxxi-bridge][credential-ontology] compose skipped:', (e as Error).message));
+        .then(rs => { let n = 0; for (const r of rs) if (r.status === 'fulfilled' && r.value?.holonUri) { specHolons.set(r.value.module, { label: r.value.label, holonUri: r.value.holonUri }); n++; } bridgeLog(`[foxxi-bridge][credential-ontology] composed ${n}/${rs.length} credential/LER shape ontologies into the lattice`); })
+        .catch(e => bridgeWarn('[foxxi-bridge][credential-ontology] compose skipped:', (e as Error).message));
       // Foundation-first for foxxi: itself — compose its own vocab into the PGSL
       // lattice (term IRIs → content-addressed atoms; the vocab a lossless holon) so
       // /ns/foxxi serves the holon projection instead of the hardcoded array. The
@@ -6701,8 +6705,8 @@ const app = createVerticalBridge({
           // publicLattice: the vocab is served in full at /ns/foxxi, so its nodes are
           // safe to dereference by hash without a label (see resolvePublicNode).
           const sl = await composeIntoSharedLattice({ podUrl: tenantPodUrl, agentDid: tenantProfileDid, label: 'ns-foxxi', terms, termGroups: groups, content: { turtle }, contentType: 'spec:Ontology', projections: ['rdf'], ephemeral: true, publicLattice: true });
-          if (sl?.holonUri) { foxxiVocabHolon = { label: 'ns-foxxi', holonUri: sl.holonUri }; console.log('[foxxi-bridge][foxxi-vocab] composed foxxi: into the lattice; /ns/foxxi now serves the holon projection'); }
-        } catch (e) { console.warn('[foxxi-bridge][foxxi-vocab] compose skipped:', (e as Error).message); }
+          if (sl?.holonUri) { foxxiVocabHolon = { label: 'ns-foxxi', holonUri: sl.holonUri }; bridgeLog('[foxxi-bridge][foxxi-vocab] composed foxxi: into the lattice; /ns/foxxi now serves the holon projection'); }
+        } catch (e) { bridgeWarn('[foxxi-bridge][foxxi-vocab] compose skipped:', (e as Error).message); }
       })();
     }
 
@@ -6818,9 +6822,9 @@ async function seedDemoContent(): Promise<void> {
       .then(r => r.json()) as { course?: unknown };
     if (composed.course) await postJson('/content/publish-course', { course: composed.course });
     await postJson('/content/job-aid', SAMPLE_JOB_AID);
-    console.log('[foxxi-bridge] seeded the demo course + job aid into the content store');
+    bridgeLog('[foxxi-bridge] seeded the demo course + job aid into the content store');
   } catch (e) {
-    console.warn(`[foxxi-bridge] demo-content seed skipped: ${(e as Error).message}`);
+    bridgeWarn(`[foxxi-bridge] demo-content seed skipped: ${(e as Error).message}`);
   }
 }
 
@@ -8200,7 +8204,7 @@ function auditDelegatedAdmin(agentDid: string, tool: string, tenantPod: string):
   // URL) is the canonical, leak-safe identity.
   const slug = tenantPod.match(/(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i)?.[0] ?? 'tenant';
   const trace = emitAccessDecision({ ctx: delegatedAdminContext(agentDid), tool, decision: 'allow', appliedPolicies: ['delegated-admin@' + slug] });
-  console.log('[foxxi][delegated-admin] ' + JSON.stringify(trace));
+  bridgeLog('[foxxi][delegated-admin] ' + JSON.stringify(trace));
   return trace;
 }
 // Pod base of a member web_id (`<pod>/profile/card#me`) or a pod URL, normalized
@@ -8333,7 +8337,7 @@ app.post('/agent/void-credential', async (req, res) => {
       const m = await rebuildManifestFromPod(pod, { fetch: guardedFetchFn(globalThis.fetch) as never, containers });
       manifest = { written: m.written, scanned: m.scanned };
     }
-    catch (e) { console.warn('[void-credential] manifest rebuild failed:', (e as Error).message); }
+    catch (e) { bridgeWarn('[void-credential] manifest rebuild failed:', (e as Error).message); }
     res.json({ ok: true, voidedBy: callerDid, descriptor: descriptorUrl, deletions, manifest: manifest ?? 'rebuild-failed' });
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
@@ -9343,11 +9347,11 @@ app.post('/agent/record-performance', async (req, res) => {
     try {
       await persistRecordedStatement({ podUrl: subjectPod, agentDid: callerDid, statement: { ...statement, id: statementId }, ...(recipientPods.length ? { recipientPods } : {}) });
     } catch (e) {
-      console.warn('[foxxi][agent-record-performance] durable persist failed:', (e as Error).message);
+      bridgeWarn('[foxxi][agent-record-performance] durable persist failed:', (e as Error).message);
     }
     // Forward to the performer's OWN downstream targets (no-op if they set none).
     forwardToTargets(lensTenantFor(label), { ...statement, id: statementId })
-      .catch(e => console.warn('[foxxi-forward][record-performance]', (e as Error).message));
+      .catch(e => bridgeWarn('[foxxi-forward][record-performance]', (e as Error).message));
     // Foundation-first: PGSL is the canonical durable store. Compose this
     // performance INTO the agent's shared lattice — its terms become reused nodes,
     // the full statement is stored losslessly, and the cg descriptor is PROJECTED
@@ -9390,7 +9394,7 @@ app.post('/agent/record-performance', async (req, res) => {
       try {
         const read = await learnerStatementsReadWhole(subjectPod, callerDid);
         if (read.complete) kindNow = classifySubjectKind({ isSelf: false, statements: read.statements, subjectPodUrl: subjectPod });
-      } catch (e) { console.warn('[foxxi][record-visibility]', (e as Error).message); }
+      } catch (e) { bridgeWarn('[foxxi][record-visibility]', (e as Error).message); }
       recordVisibility = recordVisibilityAfterAgentWork(kindNow);
     }
     /**
@@ -9411,7 +9415,7 @@ app.post('/agent/record-performance', async (req, res) => {
       try {
         workOffer = await workOfferFor({ id: callerDid, kind: p.actor_kind === 'human' ? 'human' : 'agent' }, subjectPod, { taskType: activityType, taskName });
       } catch (e) {
-        console.warn('[foxxi][work-offer]', (e as Error).message);
+        bridgeWarn('[foxxi][work-offer]', (e as Error).message);
         workOffer = { offered: false, because: 'your recorded work could not be read, so no offer is made' };
       }
     }
@@ -9590,7 +9594,7 @@ app.post('/agent/record-course-completion', async (req, res) => {
       });
       // Forward to the learner's OWN downstream targets (no-op if none set).
       forwardToTargets(lensTenantFor(label), withId)
-        .catch(e => console.warn('[foxxi-forward][record-course-completion]', (e as Error).message));
+        .catch(e => bridgeWarn('[foxxi-forward][record-course-completion]', (e as Error).message));
     }
     res.json({ ok: true, completedBy: callerDid, courseId, courseActivityId, scoreScaled, masteryScore, passed: session.some(s => verbOf(s) === 'passed'), statementCount: kept.keptIds.length, durable: subjectPod, lensTenant: lensTenantFor(label) });
   } catch (err) {
@@ -9616,7 +9620,7 @@ async function hydrateOwnerForwarding(tenant: TenantId, ownerPod: string): Promi
   const kp = bridgeEncryptionKeypair();
   if (kp) {
     try { const blob = await loadForwardingConfig({ ownerPod, bridgeKp: kp }); if (blob) importForwardingConfig(tenant, blob); }
-    catch (e) { console.warn('[foxxi-forward][hydrate]', (e as Error).message); }
+    catch (e) { bridgeWarn('[foxxi-forward][hydrate]', (e as Error).message); }
   }
   markForwardingHydrated(tenant); // don't let the cold-start hydrator re-load + clobber
 }
@@ -9624,7 +9628,7 @@ async function persistOwnerForwarding(tenant: TenantId, ownerPod: string): Promi
   const kp = bridgeEncryptionKeypair();
   if (!kp) return;
   try { await persistForwardingConfig({ ownerPod, blob: exportForwardingConfig(tenant), bridgeKp: kp }); }
-  catch (e) { console.warn('[foxxi-forward][persist]', (e as Error).message); }
+  catch (e) { bridgeWarn('[foxxi-forward][persist]', (e as Error).message); }
 }
 // Cold-start hydrator for the forward path (no affordance call yet this boot):
 // reverse-derive the owner pod from the lens tenant and load their persisted
@@ -10132,7 +10136,7 @@ async function emitAgentActivity(args: {
     });
     forwardToTargets(lens, { ...statement, id }).catch(() => {});
     return id;
-  } catch (e) { console.warn('[agent-activity]', (e as Error).message); return null; }
+  } catch (e) { bridgeWarn('[agent-activity]', (e as Error).message); return null; }
 }
 
 // ── Credentials earned from evidence ─────────────────────────────────────────────────────
@@ -10440,10 +10444,10 @@ async function hydrateAgentCourses(force = false): Promise<void> {
       try {
         await ensureResident(podUrl, podUrl, label);
         for (const a of latticeArtifacts(label, 'foxxi:Course')) found.push(a.content as AgentScormCourse | null);
-      } catch (e) { console.warn(`[foxxi-bridge][courses] lattice read failed for ${label}: ${(e as Error).message}`); }
+      } catch (e) { bridgeWarn(`[foxxi-bridge][courses] lattice read failed for ${label}: ${(e as Error).message}`); }
       try {
         for (const c of await listScormCourses({ podUrl })) found.push(c as unknown as AgentScormCourse);
-      } catch (e) { console.warn(`[foxxi-bridge][courses] pod records read failed for ${label}: ${(e as Error).message}`); }
+      } catch (e) { bridgeWarn(`[foxxi-bridge][courses] pod records read failed for ${label}: ${(e as Error).message}`); }
       for (const c of found) {
         // A live authored course wins over the durable copy (same content, but
         // the in-process one is what launch/submit are already holding).
@@ -10457,7 +10461,7 @@ async function hydrateAgentCourses(force = false): Promise<void> {
     coursesHydratedAt = Date.now();
     // Say what was rebuilt. The first cut swallowed every failure, so an empty
     // catalog was indistinguishable from a catalog that failed to load.
-    console.log(`[foxxi-bridge][courses] catalog holds ${agentScormCourses.size} course(s) after hydrating ${meshPods().length} pod(s)`);
+    bridgeLog(`[foxxi-bridge][courses] catalog holds ${agentScormCourses.size} course(s) after hydrating ${meshPods().length} pod(s)`);
   })().finally(() => { courseHydrationInflight = null; });
   return courseHydrationInflight;
 }
@@ -10500,7 +10504,7 @@ async function loadCourseAuthors(): Promise<void> {
     if (!r.ok) return;
     const j = await r.json() as Record<string, unknown>;
     for (const [k, v] of Object.entries(j)) if (typeof v === 'string' && !courseAuthors.has(k)) courseAuthors.set(k, v);
-    console.log(`[foxxi-bridge][courses] course→author registry holds ${courseAuthors.size} entr(y|ies) after boot`);
+    bridgeLog(`[foxxi-bridge][courses] course→author registry holds ${courseAuthors.size} entr(y|ies) after boot`);
   } catch { /* best-effort */ }
 }
 function recordCourseAuthor(courseId: string, authorDid: string): void {
@@ -10641,8 +10645,8 @@ async function hydratePublicMemories(force = false): Promise<void> {
     try {
       await ensureResident(MEMORY_COMMONS_POD, MEMORY_COMMONS_POD, MEMORY_LATTICE_LABEL, undefined, MEMORY_RESOURCE_NAME);
       markLatticePublic(MEMORY_LATTICE_LABEL);   // resident-again → resolver-served again
-      console.log(`[foxxi-bridge][memories] public-memories commons ${isResident(MEMORY_LATTICE_LABEL) ? 'resident' : 'empty'} after hydrate`);
-    } catch (e) { console.warn('[foxxi-bridge][memories] hydrate failed:', (e as Error).message); }
+      bridgeLog(`[foxxi-bridge][memories] public-memories commons ${isResident(MEMORY_LATTICE_LABEL) ? 'resident' : 'empty'} after hydrate`);
+    } catch (e) { bridgeWarn('[foxxi-bridge][memories] hydrate failed:', (e as Error).message); }
     memoriesHydratedAt = Date.now();
   })().finally(() => { memoryHydrationInflight = null; });
   return memoryHydrationInflight;
@@ -11009,8 +11013,7 @@ function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did
     terms: [learner.did, verbId, objectId], content: statement, contentType: 'xapi:Statement',
     ...(typeof statement.timestamp === 'string' ? { ts: statement.timestamp } : {}),
     projections: ['rdf', 'vc', 'activity'],
-  // eslint-disable-next-line no-console -- the bridge's log is its operator's only view of a failed pod write
-  }).catch((e) => console.warn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message));
+  }).catch((e) => bridgeWarn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message));
 }
 
 app.post('/agent/cmi5/launch', async (req, res) => {
@@ -12608,17 +12611,17 @@ app.use((err: unknown, _req: import('express').Request, res: import('express').R
 // A deployed bridge does not accept requests before its encrypted primary is ready.
 await readyStatementStore();
 app.listen(PORT, () => {
-  console.log(`foxxi-content-intelligence bridge on http://localhost:${PORT}`);
-  console.log(`  MCP endpoint:        http://localhost:${PORT}/mcp`);
-  console.log(`  Affordance manifest: http://localhost:${PORT}/affordances`);
-  console.log(`  Standards extension: http://localhost:${PORT}/agent/extend-standards  |  Guidance: http://localhost:${PORT}/guidance`);
-  console.log(`  Audience: ${audience} (${activeAffordances.length} affordances active; FOXXI_AUDIENCE=learner|admin|both)`);
+  bridgeLog(`foxxi-content-intelligence bridge on http://localhost:${PORT}`);
+  bridgeLog(`  MCP endpoint:        http://localhost:${PORT}/mcp`);
+  bridgeLog(`  Affordance manifest: http://localhost:${PORT}/affordances`);
+  bridgeLog(`  Standards extension: http://localhost:${PORT}/agent/extend-standards  |  Guidance: http://localhost:${PORT}/guidance`);
+  bridgeLog(`  Audience: ${audience} (${activeAffordances.length} affordances active; FOXXI_AUDIENCE=learner|admin|both)`);
   void seedDemoContent();
   // Warm the public-memories commons so a published memory resolves from the first
   // request after a restart, not only after a lazy on-miss rehydrate.
-  void hydratePublicMemories(true).catch(e => console.warn('[foxxi-bridge][memories] boot warm:', (e as Error).message));
+  void hydratePublicMemories(true).catch(e => bridgeWarn('[foxxi-bridge][memories] boot warm:', (e as Error).message));
   // Load the durable course→author registry so a bare course URL resolves after a restart.
-  void loadCourseAuthors().catch(e => console.warn('[foxxi-bridge][courses] registry boot load:', (e as Error).message));
+  void loadCourseAuthors().catch(e => bridgeWarn('[foxxi-bridge][courses] registry boot load:', (e as Error).message));
   // Agent-mesh projection: kick an initial cycle + schedule the poller.
   /**
    * ── ★★ THE POLLER STARTS EVEN WITH NOTHING CONFIGURED ───────────────────────
@@ -12637,13 +12640,13 @@ app.listen(PORT, () => {
   // is honoured immediately rather than a cycle later — and so the boot log reports the set the
   // projector will actually read, not just the configured seed.
   void hydrateDurableEnrolment()
-    .catch((e) => { console.error('[foxxi-bridge][mesh] durable register hydrate failed:', (e as Error).message); return { count: 0, stale: true }; })
+    .catch((e) => { bridgeError('[foxxi-bridge][mesh] durable register hydrate failed:', (e as Error).message); return { count: 0, stale: true }; })
     .then((durable) => {
-      console.log(`[foxxi-bridge][mesh] sweeping ${meshPods().length} pod(s) every ${MESH_PROJECT_INTERVAL_MS}ms into per-agent lens:<agent> views (on-read, never written back to the agent pod) — ${configured} seeded from config, ${durable.count} durably enrolled on the pod${durable.stale ? ' (REGISTER UNREADABLE at boot — durable enrolments are missing until a later cycle reads it)' : ''}; agents enrol their own pod at POST /agent/mesh/enrolment (cap ${MESH_ENROLMENT_CAP})`);
+      bridgeLog(`[foxxi-bridge][mesh] sweeping ${meshPods().length} pod(s) every ${MESH_PROJECT_INTERVAL_MS}ms into per-agent lens:<agent> views (on-read, never written back to the agent pod) — ${configured} seeded from config, ${durable.count} durably enrolled on the pod${durable.stale ? ' (REGISTER UNREADABLE at boot — durable enrolments are missing until a later cycle reads it)' : ''}; agents enrol their own pod at POST /agent/mesh/enrolment (cap ${MESH_ENROLMENT_CAP})`);
       return runMeshProjectionCycle();
     })
-    .catch(e => console.error('[foxxi-bridge][mesh] initial cycle:', (e as Error).message));
+    .catch(e => bridgeError('[foxxi-bridge][mesh] initial cycle:', (e as Error).message));
   setInterval(() => {
-    void runMeshProjectionCycle().catch(e => console.error('[foxxi-bridge][mesh] cycle:', (e as Error).message));
+    void runMeshProjectionCycle().catch(e => bridgeError('[foxxi-bridge][mesh] cycle:', (e as Error).message));
   }, MESH_PROJECT_INTERVAL_MS);
 });

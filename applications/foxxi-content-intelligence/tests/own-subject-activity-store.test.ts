@@ -3,12 +3,19 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { deriveEncryptionKeyPair, mintNodeId, type IRI } from '@interego/core';
 import { NativeCommitStore, NATIVE_COMMIT_MEDIA_TYPE, createNativeByteArtifact, readNativeByteArtifact } from '@interego/pgsl';
-import { createOwnSubjectActivityStore, OWN_SUBJECT_ACTIVITY_LIMITS as L } from '../src/own-subject-activity-store.js';
+import { createOwnSubjectActivityStore, OWN_SUBJECT_ACTIVITY_LIMITS as L, type OwnSubjectActivityState } from '../src/own-subject-activity-store.js';
 import type { OwnSubjectXapiAuthority } from '../src/own-subject-xapi-auth.js';
+
+interface ActivityReadView {
+  statement: { authority: { account: { homePage: string } }; version: string };
+  profile: OwnSubjectActivityState['profile'];
+  coverage: { retainedCount: number; prunedCount: number; retainedFrom: string | null };
+  more: string;
+}
 
 // Actual native SDK encryption, provenance, scope wrapper and CAS protocol.
 // HTTP is an explicit isolated contract model, not a production CSS proof.
-const sha = (bytes: any) => 'sha256:' + createHash('sha256').update(bytes).digest('hex');
+const sha = (bytes: string | Uint8Array) => 'sha256:' + createHash('sha256').update(bytes).digest('hex');
 function fixture() {
   const owner = 'did:web:identity.test:users:alice', pod = 'https://pod.test/alice/';
   const privateKey = 'a'.repeat(64), ownerKey = deriveEncryptionKeyPair('b'.repeat(64), owner);
@@ -46,10 +53,10 @@ function fixture() {
   const native = new NativeCommitStore({ scope: { pod, owner: owner as IRI, headUrl: pod + 'foxxi/activity/own-subject/head', artifactContainer: pod + 'foxxi/activity/own-subject/artifacts/' },
     atomicCheckpoint: true, senderKeyPair: key, ownerPublicKey: ownerKey.publicKey, recipientPublicKeys: [ownerKey.publicKey, key.publicKey], fetch: transport });
   return { create, statement, rows, calls, control, authority, transport, now: () => at, advance(ms: number) { at += ms; }, puts: () => calls.filter(c => c.method === 'PUT').length,
-    async mutate(change: (s: any) => void) {
+    async mutate(change: (s: OwnSubjectActivityState) => void) {
       const checkpoint = await native.readAtomicCheckpoint();
       const original = readNativeByteArtifact(checkpoint.artifact!);
-      const state = JSON.parse(gunzipSync(original.bytes).toString('utf8')); change(state);
+      const state = JSON.parse(gunzipSync(original.bytes).toString('utf8')) as OwnSubjectActivityState; change(state);
       await native.commitAtomicCheckpoint(checkpoint.revision, createNativeByteArtifact({ owner: owner as IRI, contentType: original.contentType, bytes: gzipSync(Buffer.from(JSON.stringify(state))) }));
     } };
 }
@@ -61,8 +68,8 @@ describe('bounded own-subject native activity primary', () => {
     const result = await store.write([s]); expect(result.status).toBe(200);
     expect(f.rows.size).toBe(1); expect(f.puts()).toBe(1);
     const saved = await f.create(true).read({ statementId: s.id });
-    expect(saved.status).toBe(200); expect((saved.body as any).statement.authority.account.homePage).toBe('https://actual-bridge.test');
-    expect((saved.body as any).statement.version).toBe('2.0.0');
+    expect(saved.status).toBe(200); expect((saved.body as ActivityReadView).statement.authority.account.homePage).toBe('https://actual-bridge.test');
+    expect((saved.body as ActivityReadView).statement.version).toBe('2.0.0');
     expect(f.rows.values().next().value!.bytes.includes(Buffer.from('urn:test:performed'))).toBe(false);
     f.advance(1000); expect((await f.create().write([s])).status).toBe(200); expect(f.puts()).toBe(1);
     expect((await store.write([{ ...s, object: { id: 'urn:changed' } }])).status).toBe(409); expect(f.puts()).toBe(1);
@@ -72,19 +79,19 @@ describe('bounded own-subject native activity primary', () => {
     f.control.corrupt = true; await expect(store.read({})).rejects.toThrow(); expect(f.puts()).toBe(1);
   });
   it('rolls detail beyond 512 while retaining cumulative facts and replay receipts, then continues after an hour', async () => {
-    const f = fixture(), store = f.create(); let first: any;
+    const f = fixture(), store = f.create(); let first: ReturnType<typeof f.statement> | undefined;
     for (let batch = 0; batch < 27; batch++) {
       const list = Array.from({ length: 20 }, () => f.statement()); first ??= list[0];
       expect((await store.write(list)).status).toBe(200); f.advance(1000);
     }
-    const read = (await store.read({ limit: 200 })).body as any;
+    const read = (await store.read({ limit: 200 })).body as ActivityReadView;
     expect(read.profile.total).toBe(540); expect(read.coverage.retainedCount).toBe(512); expect(read.coverage.prunedCount).toBe(28);
     expect(read.profile.byController).toEqual([{ id: 'did:web:identity.test:agents:actual-agent', count: 540 }]);
-    expect((await store.read({ statementId: first.id })).status).toBe(410);
+    expect((await store.read({ statementId: first!.id })).status).toBe(410);
     const count = f.puts(); expect((await f.create().write([first])).status).toBe(200); expect(f.puts()).toBe(count);
     f.advance(L.retentionMs); expect((await store.write([first])).status).toBe(410); expect(f.puts()).toBe(count);
     expect((await store.write([f.statement()])).status).toBe(200);
-    const next = (await f.create(true).read({})).body as any;
+    const next = (await f.create(true).read({})).body as ActivityReadView;
     expect(next.profile.total).toBe(541); expect(next.coverage.retainedCount).toBe(1); expect(f.rows.size).toBe(1);
     expect(f.rows.values().next().value!.bytes.length).toBeLessThanOrEqual(L.encryptedBytes);
   }, 60000);
@@ -94,42 +101,47 @@ describe('bounded own-subject native activity primary', () => {
     expect(raced.map(r => r.status)).toEqual([200, 200]); expect(f.puts()).toBe(2);
     const pair = await Promise.all([f.create().write([f.statement()]), f.create().write([f.statement()])]);
     expect(pair.map(r => r.status)).toEqual([200, 200]);
-    expect(((await f.create().read({})).body as any).profile.total).toBe(3);
+    expect(((await f.create().read({})).body as ActivityReadView).profile.total).toBe(3);
     f.control.loseAck = true; const lost = f.statement(); expect((await f.create().write([lost])).status).toBe(200);
     // Actual SDK reconciles a committed PUT whose acknowledgement was lost.
     const count = f.puts(); expect((await f.create().write([lost])).status).toBe(200); expect(f.puts()).toBe(count);
-    expect(((await f.create().read({})).body as any).profile.total).toBe(4);
+    expect(((await f.create().read({})).body as ActivityReadView).profile.total).toBe(4);
   });
   it('persists its hourly encrypted-byte budget across cold instances and resumes when buckets expire', async () => {
     const f = fixture(); expect((await f.create().write([f.statement()])).status).toBe(200);
     await f.mutate(state => { state.budget = [{ minute: Math.floor(f.now() / 60000), bytes: L.writeBytesPerHour }]; });
     const count = f.puts(); expect((await f.create().write([f.statement()])).status).toBe(429); expect(f.puts()).toBe(count);
     f.advance(L.retentionMs + 60001); expect((await f.create().write([f.statement()])).status).toBe(200);
-    expect(((await f.create().read({})).body as any).profile.total).toBe(2);
+    expect(((await f.create().read({})).body as ActivityReadView).profile.total).toBe(2);
   });
   it('preserves unexpired UUID receipts at the admission cap and resumes rather than failing permanently', async () => {
     const f = fixture(), first = f.statement(); expect((await f.create().write([first])).status).toBe(200);
     await f.mutate(state => {
       const original = state.receipts[0];
+      if (!original) throw Error('The fixture must contain its acknowledged observation');
       state.receipts = Array.from({ length: L.receipts }, (_, index) => index === 0 ? original
         : { ...original, id: randomUUID(), digest: sha('synthetic acknowledged observation ' + index).slice(7), sequence: index + 1 });
       state.sequence = state.profile.total = L.receipts; state.profile.detailsPruned = L.receipts - 1;
-      for (const field of ['byVerb', 'byBody', 'byController']) state.profile[field][0].count = L.receipts;
+      for (const field of ['byVerb', 'byBody', 'byController'] as const) {
+        const counter = state.profile[field][0];
+        if (!counter) throw Error('The fixture must contain its acknowledged aggregate');
+        counter.count = L.receipts;
+      }
     });
     const count = f.puts(); expect((await f.create().write([f.statement()])).status).toBe(429); expect(f.puts()).toBe(count);
     expect((await f.create().write([first])).status).toBe(200); expect(f.puts()).toBe(count);
     f.advance(L.retentionMs + 1); expect((await f.create().write([f.statement()])).status).toBe(200);
-    expect(((await f.create().read({})).body as any).profile.total).toBe(L.receipts + 1); expect(f.rows.size).toBe(1);
+    expect(((await f.create().read({})).body as ActivityReadView).profile.total).toBe(L.receipts + 1); expect(f.rows.size).toBe(1);
   });
   it('keeps out-of-order observation coverage honest and binds cursors to head, filters and retention membership', async () => {
     const f = fixture(), older = f.statement(f.now() - L.retentionMs + 1000), newer = f.statement();
     expect((await f.create().write([newer, older, f.statement()])).status).toBe(200);
-    const page = (await f.create().read({ limit: 1 })).body as any;
+    const page = (await f.create().read({ limit: 1 })).body as ActivityReadView;
     expect(page.profile.firstAt).toBe(older.timestamp); expect(page.profile.lastAt).toBe(newer.timestamp); expect(page.coverage.retainedFrom).toBe(older.timestamp);
     expect((await f.create().read({ cursor: page.more, verb: 'urn:other' })).status).toBe(400);
     const next = await f.create().read({ cursor: page.more }); expect(next.status).toBe(200);
     f.advance(1001); expect((await f.create().read({ cursor: page.more })).status).toBe(409);
-    const current = (await f.create().read({ limit: 1 })).body as any;
+    const current = (await f.create().read({ limit: 1 })).body as ActivityReadView;
     expect((await f.create().write([f.statement()])).status).toBe(200);
     expect((await f.create().read({ cursor: current.more })).status).toBe(409);
   });

@@ -8,12 +8,24 @@ import { validateStatement } from './xapi-validate.js';
 import type { OwnSubjectXapiAuthority } from './own-subject-xapi-auth.js';
 import type { SelfXapiReply } from './self-xapi.js';
 
-type Json = Record<string, any>;
+type Json = Record<string, unknown>;
+interface ActivityStatement extends Json {
+  id: string; timestamp: string;
+  actor: { objectType?: string; account?: { name?: string } };
+  verb: { id: string }; object: { objectType?: string; id: string };
+  context?: { registration?: string; extensions?: Record<string, unknown> };
+  authority?: { objectType: string; account: { homePage: string; name: string } };
+  stored?: string; version?: string;
+}
+interface StoredActivityStatement extends ActivityStatement {
+  authority: { objectType: string; account: { homePage: string; name: string } };
+  stored: string; version: string;
+}
 type Receipt = { id: string; digest: string; observedAt: number; stored: string; sequence: number };
 type Count = { id: string; count: number };
 interface State {
   schema: string; owner: string; pod: string; head: string; writtenAt: number; sequence: number;
-  records: Array<{ id: string; statement: Json }>;
+  records: Array<{ id: string; statement: StoredActivityStatement }>;
   receipts: Receipt[]; expired: string[];
   profile: { total: number; byVerb: Count[]; byBody: Count[]; byController: Count[]; otherVerb: number; otherBody: number; otherController: number; saturated: boolean; firstAt: string | null; lastAt: string | null; detailsPruned: number };
   budget: Array<{ minute: number; bytes: number }>;
@@ -25,7 +37,7 @@ const L = OWN_SUBJECT_ACTIVITY_LIMITS, TYPE = 'application/vnd.interego.rolling-
 const SCHEMA = 'foxxi.personal-activity-window/v1';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const plain = (v: unknown): v is Json => v !== null && typeof v === 'object' && !Array.isArray(v);
-const canonical = (v: any): string => Array.isArray(v) ? '[' + v.map(canonical).join(',') + ']'
+const canonical = (v: unknown): string => Array.isArray(v) ? '[' + v.map(canonical).join(',') + ']'
   : plain(v) ? '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canonical(v[k])).join(',') + '}' : JSON.stringify(v);
 const hash = (v: unknown) => createHash('sha256').update(canonical(v)).digest('hex');
 const copy = <T>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -45,7 +57,7 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
   const authorityOrigin = new URL(options.selfBaseUrl ?? 'https://foxxi-bridge.interego.xwisee.com');
   if (authorityOrigin.protocol !== 'https:' || authorityOrigin.username || authorityOrigin.password) throw Error('HTTPS activity authority required');
   const assignedAuthority = { objectType: 'Agent', account: { homePage: authorityOrigin.origin, name: 'foxxi-personal-activity-window' } };
-  const enrich = (input: Json, stored: string) => ({ ...copy(input), authority: copy(assignedAuthority), stored, version: '2.0.0' });
+  const enrich = (input: ActivityStatement, stored: string) => ({ ...copy(input), authority: copy(assignedAuthority), stored, version: '2.0.0' });
   const key = deriveEncryptionKeyPair(options.privateKey, 'urn:foxxi:personal-activity-window:' + owner);
   const clock = options.now ?? Date.now;
   const native = new NativeCommitStore({ scope, atomicCheckpoint: true, senderKeyPair: key,
@@ -145,7 +157,9 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
   function invalid(input: unknown, at: number): SelfXapiReply | null {
     if (!Array.isArray(input) || !input.length || input.length > 20 || Buffer.byteLength(JSON.stringify(input)) > 131072) return refused(400, 'One to twenty bounded statements required');
     const ids = new Set<string>();
-    for (const s of input) {
+    for (const value of input) {
+      if (!plain(value) || validateStatement(value).length) return refused(400, 'A valid xAPI observation is required');
+      const s = value as ActivityStatement;
       if (!plain(s) || validateStatement(s).length || typeof s.id !== 'string' || !UUID.test(s.id) || ids.has(s.id)
         || s.actor?.objectType === 'Group' || s.actor?.account?.name !== owner || !iso(s.timestamp)
         || s.authority !== undefined || s.stored !== undefined || s.version !== undefined || s.attachments !== undefined
@@ -157,7 +171,7 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
     }
     return null;
   }
-  function reply(state: State, list: Json[], at: number): SelfXapiReply {
+  function reply(state: State, list: ActivityStatement[], at: number): SelfXapiReply {
     return { status: 200, body: { ok: true, subjectDid: owner, visibility: 'private', purpose: 'personal-performance',
       durable: true, lrsAccepted: true, statementIds: list.map(s => s.id), receipts: list.map(s => ({ statementId: s.id, persisted: true,
         detailRetained: state.records.some(row => row.id === s.id) })), coverage: coverage(state, at), profile: copy(state.profile) } };
@@ -170,13 +184,13 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
     async write(input: unknown): Promise<SelfXapiReply> {
       if (options.readOnly) return refused(403, 'Read-only personal activity scope');
       let at = now(); const error = invalid(input, at); if (error) return error;
-      const list = copy(input as Json[]);
+      const list = copy(input as ActivityStatement[]);
       for (let attempt = 0; attempt < 5; attempt++) {
         const selected = await native.readAtomicCheckpoint(), state = decode(selected); at = now();
         const expired = invalid(list, at); if (expired) return expired;
         if (at < state.writtenAt) return refused(503, 'Native activity clock regressed');
         prune(state, at);
-        const fresh: Json[] = [];
+        const fresh: ActivityStatement[] = [];
         for (const s of list) {
           const prior = state.receipts.find(r => r.id === s.id);
           if (prior && prior.digest !== hash(s)) return refused(409, 'Statement UUID already has different immutable content');
@@ -189,7 +203,8 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
           const stored = new Date(at).toISOString(); state.sequence++; state.profile.total++;
           state.receipts.push({ id: s.id, digest: hash(s), observedAt: Date.parse(s.timestamp), stored, sequence: state.sequence });
           state.records.push({ id: s.id, statement: enrich(s, stored) });
-          const ext = s.context?.extensions?.['urn:interego:gaming:activity:context'];
+          const context = s.context?.extensions?.['urn:interego:gaming:activity:context'];
+          const ext = plain(context) ? context : null;
           count(state.profile, 'Verb', s.verb.id, 64); count(state.profile, 'Body', ext?.bodyId, 17);
           count(state.profile, 'Controller', ext?.controllerId || ext?.controllerKind, 16);
           if (state.profile.firstAt === null || s.timestamp < state.profile.firstAt) state.profile.firstAt = s.timestamp;
@@ -222,8 +237,8 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
           const confirmed = decode(committed);
           if (list.some(s => confirmed.receipts.find(r => r.id === s.id)?.digest !== hash(s))) throw Error('Activity receipt readback failed');
           return reply(confirmed, list, at);
-        } catch (cause: any) {
-          if (cause?.status === 412 || cause?.name === 'NativeCommitConflictError') continue;
+        } catch (cause: unknown) {
+          if (plain(cause) && cause.status === 412 || cause instanceof Error && cause.name === 'NativeCommitConflictError') continue;
           // A lost acknowledgement may follow a real commit. Do not issue a
           // replacement write here; the caller reconciles these exact IDs.
           return refused(502, 'Private activity write outcome is unconfirmed; reconcile the same IDs before retrying', { subjectDid: owner, durable: false, statementIds: list.map(s => s.id) });
@@ -255,14 +270,16 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
         } catch { return refused(400, 'Invalid personal activity cursor'); }
       }
       const limit = query.limit === undefined ? 100 : Number(query.limit);
-      if (!Number.isInteger(limit) || limit < 1 || limit > 200 || query.ascending !== undefined && ![true, false, 'true', 'false'].includes(query.ascending)
+      if (!Number.isInteger(limit) || limit < 1 || limit > 200 || query.ascending !== undefined
+        && query.ascending !== true && query.ascending !== false && query.ascending !== 'true' && query.ascending !== 'false'
         || ['verb', 'activity', 'registration'].some(k => query[k] !== undefined && typeof query[k] !== 'string')
         || ['since', 'until'].some(k => query[k] !== undefined && !iso(query[k]))) return refused(400, 'Invalid personal activity filters');
+      const since = typeof query.since === 'string' ? query.since : undefined, until = typeof query.until === 'string' ? query.until : undefined;
       const rows = state.records.filter(({ statement: s }) => Date.parse(s.timestamp) > at - L.retentionMs
         && (query.verb === undefined || s.verb.id === query.verb) && (query.activity === undefined || s.object.id === query.activity)
         && (query.registration === undefined || s.context?.registration === query.registration)
-        && (query.since === undefined || s.stored > query.since) && (query.until === undefined || s.stored <= query.until));
-      if (![true, 'true'].includes(query.ascending)) rows.reverse();
+        && (since === undefined || s.stored > since) && (until === undefined || s.stored <= until));
+      if (query.ascending !== true && query.ascending !== 'true') rows.reverse();
       const result = rows.slice(offset, offset + limit), more = offset + limit < rows.length
         ? cursor({ revision: selected.revision, query, offset: offset + limit,
           // Retention membership must not shrink under an unchanged-head cursor.
@@ -271,3 +288,5 @@ export function createOwnSubjectActivityStore(authority: OwnSubjectXapiAuthority
     },
   });
 }
+
+export type OwnSubjectActivityState = State;
