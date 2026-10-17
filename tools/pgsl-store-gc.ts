@@ -94,17 +94,22 @@ export function rebuildDecision(input: {
 }
 
 /**
- * The tables earlier rebuilds left behind (`<table>_old_YYYYMMDD`) that are older than `days`:
+ * The tables earlier rebuilds left behind (`<table>_old_YYYYMMDD[_HHMMSSmmm]`) that are older than `days`:
  * the store has run on the new table for that long, so the copy has served its purpose.
  */
 export function previousTablesToDrop(names: readonly string[], table: string, now: Date, days: number): string[] {
-  const re = new RegExp(`^${table}_old_([0-9]{4})([0-9]{2})([0-9]{2})$`);
+  const re = new RegExp(`^${table}_old_([0-9]{4})([0-9]{2})([0-9]{2})(?:_([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{3}))?$`);
   const cutoff = now.getTime() - days * 86_400_000;
   return names
     .filter((n) => {
       const m = re.exec(n);
       if (!m) return false;
-      return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) <= cutoff;
+      const time = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+        Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0), Number(m[7] ?? 0));
+      // Reject calendar/time overflow rather than aging a malformed name.
+      const stamp = new Date(time).toISOString().replace(/[-:.TZ]/g, '');
+      if (stamp !== m.slice(1, 4).join('') + m.slice(4).map(v => v ?? '').join('').padEnd(9, '0')) return false;
+      return time <= cutoff;
     })
     .sort();
 }

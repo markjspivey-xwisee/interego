@@ -64,3 +64,12 @@ describe('the previous tables', () => {
     expect(previousTablesToDrop(['pgsl_kv_old_20260921'], 'pgsl_kv', now, 7)).toEqual(['pgsl_kv_old_20260921']);
   });
 });
+
+
+it('ages timestamped backups precisely alongside legacy dates and excludes malformed names', () => {
+  const names = ['pgsl_kv_old_20261010', 'pgsl_kv_old_20261010_093001122',
+    'pgsl_kv_old_20261010_093001123', 'pgsl_kv_old_20261010_093001124',
+    'pgsl_kv_old_20261301_000000000', 'pgsl_kv_old_20261010_253001123',
+    'pgsl_kv_old_20261010_093001123_extra', 'other_old_20261010_093001123'];
+  expect(previousTablesToDrop(names, 'pgsl_kv', new Date('2026-10-17T09:30:01.123Z'), 7)).toEqual(names.slice(0, 3));
+});

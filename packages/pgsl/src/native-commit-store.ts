@@ -14,6 +14,7 @@ const PREFIX = 'urn:interego:native-commit:v1:';
 const HEAD = PREFIX + 'head', ENTRY = PREFIX + 'entry', LEAF = PREFIX + 'leaf';
 const BRANCH = PREFIX + 'branch', EMPTY = PREFIX + 'empty', PREVIOUS = PREFIX + 'previous';
 const REFERENCE = PREFIX + 'reference', OPERATION = PREFIX + 'operation', BYTES = PREFIX + 'bytes';
+const ATOMIC = PREFIX + 'atomic-checkpoint';
 const REVISION = /^sha256:[a-f0-9]{64}$/;
 const DEFAULT_LIMIT = 8 * 1024 * 1024;
 const LEAF_SIZE = 16;
@@ -70,6 +71,9 @@ export interface NativeCommitClient {
   commit(request: NativeCommitRequest): Promise<NativeCommitReceipt>;
 }
 export interface NativeCommitStoreOptions {
+  /** Explicit opt-in for an application's bounded rolling checkpoint format.
+   * Existing immutable clients refuse this format after a CAS migration. */
+  readonly atomicCheckpoint?: boolean;
   /** Already resolved and authorized through the adapter's capability/Type Index contract. */
   readonly scope: NativeCommitScope;
   readonly fetch: typeof globalThis.fetch;
@@ -80,6 +84,10 @@ export interface NativeCommitStoreOptions {
   /** CSS's native storage domain is "css"; this is not the logical owner pod URL. */
   readonly storageDomain?: string;
   readonly maxArtifactBytes?: number;
+}
+export interface NativeAtomicCheckpoint {
+  readonly revision: string | null;
+  readonly artifact: NativeArtifact | null;
 }
 interface Representation { bytes: Uint8Array; revision: string; }
 interface DecodedHead extends NativeSnapshot {
@@ -464,6 +472,44 @@ export class NativeCommitStore implements NativeCommitClient {
   }
   private async complete(head: DecodedHead): Promise<DecodedHead> { return { ...head, records: await this.records(head.index) }; }
   async readHead(): Promise<NativeSnapshot> { return this.complete(await this.current()); }
+  /** An explicitly composed bounded checkpoint uses the same encrypted native CAS
+   * protocol without creating independently rooted immutable history files.
+   * Applications put their explicitly bounded rollback window inside the holon.
+   * Migration of an immutable head requires an explicit application CAS. */
+  private checkpointScope(): void {
+    if (this.options.atomicCheckpoint !== true) fail('Atomic checkpoints require explicit composition.', 400);
+  }
+  async readAtomicCheckpoint(): Promise<NativeAtomicCheckpoint> {
+    this.checkpointScope();
+    const stored = await this.readRepresentation(this.scope.headUrl);
+    if (!stored) return { revision: null, artifact: null };
+    const artifact = this.decrypt(stored.bytes), row = fields(artifact, artifact.topUri);
+    if (valueOrNull(artifact, row[0]) !== ATOMIC) return { revision: stored.revision, artifact }; // verified legacy migration input
+    if (row.length !== 6 || value(artifact, row[1]) !== this.scope.owner || value(artifact, row[2]) !== this.scope.pod
+      || value(artifact, row[3]) !== this.scope.headUrl || value(artifact, row[4]) !== this.scope.artifactContainer) fail('Atomic checkpoint scope changed.');
+    return { revision: stored.revision, artifact: validateNativeArtifact({ topUri: row[5]!, nodes: artifact.nodes }) };
+  }
+  async commitAtomicCheckpoint(expectedRevision: string | null, input: NativeArtifactInput): Promise<NativeAtomicCheckpoint> {
+    this.checkpointScope();
+    if (expectedRevision !== null && !REVISION.test(expectedRevision)) fail('Invalid checkpoint revision.', 400);
+    const artifact = validateNativeArtifact({ topUri: input.topUri, nodes: input.pgsl.nodes });
+    const body = readNativeByteArtifact(artifact);
+    if (body.owner !== this.scope.owner || body.contentType !== 'application/vnd.interego.rolling-checkpoint+gzip') fail('Atomic checkpoint ownership or type changed.', 400);
+    const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
+    for (const [id, node] of artifact.nodes) pgsl.nodes.set(id, node);
+    const topUri = ingest(pgsl, [ATOMIC, this.scope.owner, this.scope.pod, this.scope.headUrl, this.scope.artifactContainer]
+      .map(v => literal(pgsl, v)).concat(artifact.topUri));
+    const bytes = this.encrypt({ topUri, nodes: pgsl.nodes });
+    // A hard per-resource bound also limits superseded physical blocks between
+    // successful shared-store collections. Oversize writes preserve the head.
+    if (bytes.length > 1024 * 1024) fail('Atomic checkpoint exceeds its 1 MiB storage budget.', 413);
+    await this.ready();
+    await this.put(this.scope.headUrl, bytes, expectedRevision);
+    const actual = await this.readRepresentation(this.scope.headUrl);
+    if (!actual || !Buffer.from(actual.bytes).equals(Buffer.from(bytes))) fail('Checkpoint outcome is uncertain; recover the same operation before retrying.');
+    this.decrypt(actual.bytes, topUri);
+    return { revision: actual.revision, artifact };
+  }
   /** Verify only requested HAMT paths under ONE verified current head. This
    * does not validate branches outside the explicitly returned selection. */
   private async selected(head: DecodedHead, keys: readonly string[]): Promise<DecodedHead> {
