@@ -5,7 +5,8 @@
  *   PGSL_PG_CONNSTR=... npx tsx tools/pgsl-store-gc.ts --rebuild       # copy the live rows into a new table and swap
  *   PGSL_PG_CONNSTR=... npx tsx tools/pgsl-store-gc.ts --drop <old>    # drop the previous table once the store checks out
  *   ... --rebuild-above 0.5 [--min-rows 2000000]                       # measure, then rebuild only above that unreferenced share
- *   ... --drop-previous-older-than 7                                   # first drop <table>_old_YYYYMMDD tables older than that
+ *   ... --drop-previous-older-than-hours 1                             # verify current closure, then retire hour-old rollback copies
+ *   ... --drop-previous-older-than 7                                   # legacy whole-day retention, with the same verification
  *   ... --table pgsl_kv                                                # the table (default pgsl_kv)
  *
  * WHY A REBUILD AND NOT A DELETE: deleting tens of millions of rows leaves the table the same
@@ -17,23 +18,24 @@
  *
  * ── THE SCHEDULED RUN, AND WHERE ITS LINE IS ──────────────────────────────────────────────────
  *
- * pgsl-store-gc.yml runs `--drop-previous-older-than 1 --rebuild-above 0.5` every day at the
- * quietest hour. The measurement is the same dry run; the decision is `rebuildDecision`, which
+ * pgsl-store-gc.yml runs `--drop-previous-older-than-hours 1 --rebuild-above 0.5` every hour.
+ * The measurement is the same dry run; the decision is `rebuildDecision`, which
  * rebuilds when at least half of a table of at least --min-rows rows is unreferenced history —
  * the shape the 2026-09-20 outage had (78.7M rows, 1.19M live) — or when the table on disk holds
  * at least four times its live values and at least 1 GiB, the TOAST-and-index bloat the
  * 2026-09-21 measurement showed (2 GB on disk, 0.5 GB live, 7% of rows unreferenced). Below both
- * a table is never rebuilt automatically: the lock would cost more than the space. The table a rebuild leaves behind stays at least a day, so the store
- * has run on the new one before `previousTablesToDrop` lets the next run drop it. Both
- * decisions are pure and tested (tests/pgsl-store-gc-tool.test.ts); a person can still
- * dispatch any mode by hand.
+ * a table is never rebuilt automatically: the lock would cost more than the space. A rollback
+ * copy stays at least one hour and is retired only after a complete current live-set check.
+ * A fresh platform volume measurement must cover two table copies plus 1 GiB before a rebuild.
+ * Collectors serialize before relation lookup; waiting for a table lock is capped at five
+ * seconds. A person can still dispatch any mode by hand, including explicit `--drop`.
  *
  * The connection string is read from the environment and never printed.
  */
 
 import { basename } from 'node:path';
 import { Client } from 'pg';
-import { collectLive, keysBySubspace, readerFromPg, rebuildTable } from '../packages/pgsl-store/src/gc.js';
+import { acquireCollectorLock, collectLive, keysBySubspace, readerFromPg, rebuildTable, type LiveSet } from '../packages/pgsl-store/src/gc.js';
 
 function flag(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -114,6 +116,53 @@ export function previousTablesToDrop(names: readonly string[], table: string, no
     .sort();
 }
 
+/** Date-only legacy names cannot establish an hour: keep them until the end
+ * of their named UTC day plus the retention window. New backups carry millis. */
+export function previousTablesToDropAfterHours(names: readonly string[], table: string, now: Date, hours: number): string[] {
+  if (!Number.isSafeInteger(hours) || hours < 1 || !Number.isFinite(now.getTime())) throw new Error('backup retention takes a positive whole number of hours');
+  return previousTablesToDrop(names, table, now, hours / 24).filter(name => {
+    if (/_\d{9}$/.test(name)) return true;
+    const date = /_(\d{4})(\d{2})(\d{2})$/.exec(name)!;
+    const latestPossibleTime = Date.UTC(Number(date[1]), Number(date[2]) - 1, Number(date[3])) + 86_400_000;
+    return latestPossibleTime <= now.getTime() - hours * 3_600_000;
+  });
+}
+
+export function assertCompleteLiveSet(live: Pick<LiveSet, 'keys' | 'stats'>): void {
+  if (live.keys.size === 0 || live.stats.danglingRoots.length > 0 || live.stats.unreadableNodes > 0) {
+    throw new Error(`refusing backup cleanup: ${live.keys.size} live keys, ${live.stats.danglingRoots.length} dangling roots, ${live.stats.unreadableNodes} unreadable nodes`);
+  }
+}
+
+type CollectorClient = Pick<Client, 'query'>;
+/** Only a complete current store authorizes retiring its generated rollback copies. */
+export async function dropExpiredPreviousTables(client: CollectorClient, table: string, live: Pick<LiveSet, 'keys' | 'stats'>,
+  retention: { hours: number } | { days: number }, now = new Date(), log: (line: string) => void = () => {}): Promise<string[]> {
+  assertCompleteLiveSet(live);
+  if (!/^[a-zA-Z0-9_]+$/.test(table)) throw new Error('invalid collector table');
+  const names = (await client.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE $1`, [`${table}_old_%`])).rows.map(row => String(row['relname']));
+  const due = 'hours' in retention ? previousTablesToDropAfterHours(names, table, now, retention.hours)
+    : previousTablesToDrop(names, table, now, retention.days);
+  for (const old of due) {
+    log(`dropping verified rollback copy ${old} after ${'hours' in retention ? `${retention.hours} hour(s)` : `${retention.days} day(s)`}`);
+    await client.query(`DROP TABLE public.${old}`);
+  }
+  log(`rollback cleanup verified current closure; ${due.length} expired copy/copies dropped (${names.length} present)`);
+  return due;
+}
+
+/** A copy also generates WAL and indexes. Reserve two source-table sizes plus
+ * 1 GiB for concurrent traffic; unknown/stale platform usage never permits it. */
+export function assertRebuildHeadroom(input: { capacityBytes: number; usedBytes: number; sampledAt: number; tableBytes: number }, now = Date.now()): void {
+  const { capacityBytes, usedBytes, sampledAt, tableBytes } = input;
+  if (![capacityBytes, usedBytes, sampledAt, tableBytes, now].every(Number.isSafeInteger)
+    || capacityBytes <= 0 || usedBytes < 0 || usedBytes > capacityBytes || tableBytes <= 0
+    || sampledAt > now || now - sampledAt > 10 * 60_000) throw new Error('refusing rebuild: fresh verified volume headroom is unavailable');
+  const required = tableBytes * 2 + 1_073_741_824;
+  if (!Number.isSafeInteger(required)) throw new Error('refusing rebuild: required headroom exceeds a safe byte count');
+  if (capacityBytes - usedBytes < required) throw new Error(`refusing rebuild: ${capacityBytes - usedBytes} free bytes, need ${required} for copy, WAL and reserve`);
+}
+
 async function main(): Promise<void> {
   const conn = process.env['PGSL_PG_CONNSTR'];
   if (!conn) { console.error('PGSL_PG_CONNSTR is not set'); process.exit(2); }
@@ -121,7 +170,10 @@ async function main(): Promise<void> {
   const client = new Client({ connectionString: conn, statement_timeout: 0, application_name: 'pgsl-store-gc' });
   await client.connect();
   const log = (line: string): void => { console.log(`[${new Date().toISOString().slice(11, 19)}] ${line}`); };
+  let release: (() => Promise<void>) | undefined;
   try {
+    release = await acquireCollectorLock(client, table);
+    await client.query("SET lock_timeout = '5s'");
     const size = async (t: string): Promise<string> => String((await client.query(`SELECT pg_size_pretty(pg_total_relation_size($1)) AS s`, [t])).rows[0]?.['s']);
     log(`${table}: ${await size(table)} on disk before`);
     const drop = flag('--drop');
@@ -143,19 +195,18 @@ async function main(): Promise<void> {
       log('tuned: autovacuum fires at 2% churn on the table and its toast; idle transactions end after five minutes');
       return;
     }
-    const dropOlder = flag('--drop-previous-older-than');
-    if (dropOlder !== undefined) {
-      const days = Number(dropOlder);
-      if (!Number.isInteger(days) || days < 1) throw new Error('--drop-previous-older-than takes a whole number of days');
-      const names = (await client.query(`SELECT relname FROM pg_class WHERE relkind = 'r' AND relname LIKE $1`, [`${table}_old_%`])).rows.map((r) => String(r['relname']));
-      const due = previousTablesToDrop(names, table, new Date(), days);
-      if (due.length === 0) log(`no previous table older than ${days} day(s) to drop (${names.length} present)`);
-      for (const t of due) {
-        log(`dropping ${t} (${await size(t)}), left by a rebuild more than ${days} day(s) ago`);
-        await client.query(`DROP TABLE ${t}`);
-      }
-    }
+    const dropOlder = flag('--drop-previous-older-than'), dropHours = flag('--drop-previous-older-than-hours');
+    if (dropOlder !== undefined && dropHours !== undefined) throw new Error('choose hours or days for backup retention');
+    if (dropOlder !== undefined && (!Number.isSafeInteger(Number(dropOlder)) || Number(dropOlder) < 1)) throw new Error('--drop-previous-older-than takes a whole number of days');
+    if (dropHours !== undefined && (!Number.isSafeInteger(Number(dropHours)) || Number(dropHours) < 1)) throw new Error('--drop-previous-older-than-hours takes a positive whole number of hours');
+    const headroom = async (): Promise<void> => {
+      const bytes = Number((await client.query(`SELECT pg_total_relation_size($1) AS b`, [table])).rows[0]?.['b']);
+      assertRebuildHeadroom({ tableBytes: bytes, capacityBytes: Number(process.env['PGSL_GC_VOLUME_CAPACITY_BYTES']),
+        usedBytes: Number(process.env['PGSL_GC_VOLUME_USED_BYTES']), sampledAt: Number(process.env['PGSL_GC_VOLUME_SAMPLED_AT']) });
+      log('fresh volume headroom covers copy, WAL and reserve');
+    };
     if (process.argv.includes('--rebuild')) {
+      await headroom();
       const r = await rebuildTable(client, table, { log });
       log(`rebuild done: ${r.newRows} rows live in ${table} (${await size(table)}); previous table ${r.oldTable} (${await size(r.oldTable)}) awaits --drop`);
       await client.query(`ANALYZE ${table}`);
@@ -167,6 +218,9 @@ async function main(): Promise<void> {
     log(`live nodes ${live.stats.liveNodes} (${live.stats.liveAtoms} atoms, ${live.stats.liveFragments} fragments), ${(live.stats.liveNodeBytes / 1048576).toFixed(1)} MB of node values`);
     log(`scanned rows ${JSON.stringify(live.stats.scanned)}; dangling roots ${live.stats.danglingRoots.length}; unreadable nodes ${live.stats.unreadableNodes}`);
     if (live.stats.danglingRoots.length > 0) log(`first dangling roots: ${live.stats.danglingRoots.slice(0, 5).join(', ')}`);
+    if (dropOlder !== undefined || dropHours !== undefined) {
+      await dropExpiredPreviousTables(client, table, live, dropHours !== undefined ? { hours: Number(dropHours) } : { days: Number(dropOlder) }, new Date(), log);
+    }
     const total = await client.query(`SELECT reltuples::bigint AS n FROM pg_class WHERE relname = $1`, [table]);
     log(`table rows (planner estimate): ${total.rows[0]?.['n']}; the rebuild would keep ${live.keys.size}`);
     const line = flag('--rebuild-above');
@@ -175,12 +229,14 @@ async function main(): Promise<void> {
       const d = rebuildDecision({ liveKeys: live.keys.size, tableRows: Number(total.rows[0]?.['n'] ?? -1), line: Number(line), minRows: Number(flag('--min-rows') ?? 2_000_000), totalBytes: Number(bytes.rows[0]?.['b'] ?? -1), liveBytes: live.stats.liveNodeBytes });
       log(`${d.rebuild ? 'rebuilding' : 'not rebuilding'}: ${d.reason}`);
       if (d.rebuild) {
+        await headroom();
         const r = await rebuildTable(client, table, { log });
         log(`rebuild done: ${r.newRows} rows live in ${table} (${await size(table)}); previous table ${r.oldTable} (${await size(r.oldTable)}) is dropped by a later run's --drop-previous-older-than`);
         await client.query(`ANALYZE ${table}`);
       }
     }
   } finally {
+    await release?.().catch(() => undefined);
     await client.end();
   }
 }

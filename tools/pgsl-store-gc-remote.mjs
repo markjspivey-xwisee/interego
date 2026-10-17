@@ -25,6 +25,7 @@ import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { railwayGql } from './railway-pins.mjs';
+import { collectorVolumeHeadroom } from './pgsl-store-gc-volume.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -48,6 +49,14 @@ const vars = await gql('query($p:String!,$e:String!,$s:String!){ variables(proje
 const { POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB } = vars.variables;
 if (!POSTGRES_USER || !POSTGRES_PASSWORD || !POSTGRES_DB) { process.stderr.write('the postgres service does not carry POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB\n'); process.exit(2); }
 
+let headroom = {};
+if (process.argv.includes('--rebuild') || process.argv.includes('--rebuild-above')) {
+  const volumes = await gql('query($p:String!,$e:String!){ project(id:$p){ volumes{ edges{ node{ id volumeInstances{ edges{ node{ serviceId mountPath sizeMB currentSizeMB } } } } } } } environment(id:$e){ config(decryptVariables:false) } }', { p: projectId, e: environmentId });
+  const measured = collectorVolumeHeadroom(volumes, pg.node.id);
+  headroom = { PGSL_GC_VOLUME_CAPACITY_BYTES: String(measured.capacityBytes), PGSL_GC_VOLUME_USED_BYTES: String(measured.usedBytes), PGSL_GC_VOLUME_SAMPLED_AT: String(measured.sampledAt) };
+  process.stdout.write(`verified environment database volume: at least ${measured.capacityBytes - measured.usedBytes} bytes free before collection\n`);
+}
+
 const existing = await gql('query($e:String!,$s:String!){ tcpProxies(environmentId:$e, serviceId:$s){ id domain proxyPort applicationPort } }', { e: environmentId, s: pg.node.id });
 let proxy = existing.tcpProxies.find((p) => p.applicationPort === 5432);
 let createdId = null;
@@ -65,7 +74,7 @@ let code = 1;
 try {
   code = await new Promise((resolve) => {
     const child = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['tsx', 'tools/pgsl-store-gc.ts', ...process.argv.slice(2)], {
-      cwd: ROOT, stdio: 'inherit', shell: process.platform === 'win32', env: { ...process.env, PGSL_PG_CONNSTR: conn },
+      cwd: ROOT, stdio: 'inherit', shell: process.platform === 'win32', env: { ...process.env, ...headroom, PGSL_PG_CONNSTR: conn },
     });
     child.on('exit', (c) => resolve(c ?? 1));
   });

@@ -343,6 +343,28 @@ export function rebuildOldTableSuffix(now = new Date()): string {
   return `old_${stamp.slice(0, 8)}_${stamp.slice(8)}`;
 }
 
+/** Serialize collectors before PostgreSQL resolves the live relation's OID.
+ * A waiter on LOCK TABLE alone can acquire the renamed backup after another
+ * collector swaps it, then accidentally collect the new live table unlocked.
+ * Session advisory locks also cover CLI measurement/drop and are reentrant when
+ * that same session calls rebuildTable. A lost connection releases the lock. */
+export async function acquireCollectorLock(
+  client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> },
+  table: string,
+): Promise<() => Promise<void>> {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) throw new Error('invalid collector table name');
+  const key = table.toLowerCase();
+  const acquired = await client.query("SELECT pg_try_advisory_lock(hashtextextended(current_database() || ':public.' || $1, 0)) AS acquired", [key]);
+  if (acquired.rows[0]?.['acquired'] !== true) throw new Error('refusing concurrent collector: another collector holds this database/table lock');
+  let released = false;
+  return async () => {
+    if (released) return;
+    const result = await client.query("SELECT pg_advisory_unlock(hashtextextended(current_database() || ':public.' || $1, 0)) AS released", [key]);
+    if (result.rows[0]?.['released'] !== true) throw new Error('collector advisory lock release was not confirmed');
+    released = true;
+  };
+}
+
 export async function rebuildTable(
   client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number | null }> },
   table: string,
@@ -353,47 +375,55 @@ export async function rebuildTable(
   const newTable = `${t}_live`;
   const batch = opts.batch ?? 4000;
   const log = opts.log ?? (() => undefined);
-  await client.query('BEGIN');
+  const release = await acquireCollectorLock(client, t);
   try {
-    // ACCESS EXCLUSIVE from the start, not EXCLUSIVE upgraded at the rename: with EXCLUSIVE held,
-    // a store transaction that had already read (ACCESS SHARE) and now waited to write blocked on
-    // this transaction, whose RENAME then waited on that reader's ACCESS SHARE, and Postgres
-    // resolved the cycle by killing the rebuild after the copy (measured on the first production
-    // run, 2026-09-20). Taking the strongest lock first means readers wait too, for the minutes
-    // the copy takes, and nothing can deadlock against a lock that is never upgraded.
-    await client.query(`LOCK TABLE ${t} IN ACCESS EXCLUSIVE MODE`);
-    log('lock held: readers and writers wait until the swap commits');
-    const live = await collectLive(readerFromPg(client as never, t), { log });
-    if (live.keys.size === 0) throw new Error('refusing to rebuild: the live set is empty');
-    // A missing or unreadable retained node makes reachability incomplete.
-    // Preserve the existing table rather than collecting through uncertainty.
-    if (live.stats.danglingRoots.length > 0 || live.stats.unreadableNodes > 0) {
-      throw new Error(`refusing to rebuild: ${live.stats.danglingRoots.length} dangling roots and ${live.stats.unreadableNodes} unreadable nodes`);
+    await client.query('BEGIN');
+    try {
+      // A queued ACCESS EXCLUSIVE request can also stall new traffic. Defer this
+      // optional maintenance if an existing transaction does not release promptly.
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      // ACCESS EXCLUSIVE from the start, not EXCLUSIVE upgraded at the rename: with EXCLUSIVE held,
+      // a store transaction that had already read (ACCESS SHARE) and now waited to write blocked on
+      // this transaction, whose RENAME then waited on that reader's ACCESS SHARE, and Postgres
+      // resolved the cycle by killing the rebuild after the copy (measured on the first production
+      // run, 2026-09-20). Taking the strongest lock first means readers wait too, for the minutes
+      // the copy takes, and nothing can deadlock against a lock that is never upgraded.
+      await client.query(`LOCK TABLE ${t} IN ACCESS EXCLUSIVE MODE`);
+      log('lock held: readers and writers wait until the swap commits');
+      const live = await collectLive(readerFromPg(client as never, t), { log });
+      if (live.keys.size === 0) throw new Error('refusing to rebuild: the live set is empty');
+      // A missing or unreadable retained node makes reachability incomplete.
+      // Preserve the existing table rather than collecting through uncertainty.
+      if (live.stats.danglingRoots.length > 0 || live.stats.unreadableNodes > 0) {
+        throw new Error(`refusing to rebuild: ${live.stats.danglingRoots.length} dangling roots and ${live.stats.unreadableNodes} unreadable nodes`);
+      }
+      await client.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
+      await copyStorageParameters(client, t, newTable, log);
+      const all = [...live.keys];
+      let copied = 0;
+      for (let i = 0; i < all.length; i += batch) {
+        const chunk = all.slice(i, i + batch).map((h) => Buffer.from(h, 'hex'));
+        const r = await client.query(`INSERT INTO ${newTable} (k, v) SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[]) ON CONFLICT DO NOTHING`, [chunk]);
+        copied += r.rowCount ?? 0;
+        if ((i / batch) % 25 === 0) log(`copied ${copied} of up to ${all.length} rows`);
+      }
+      const count = await client.query(`SELECT count(*)::bigint AS n FROM ${newTable}`);
+      const newRows = Number(count.rows[0]?.['n'] ?? 0);
+      // Reconstructed keys are promises of retained data. Both the INSERT row
+      // counts and an independent table count must confirm every promised key.
+      if (copied !== live.keys.size || newRows !== live.keys.size) {
+        throw new Error(`refusing to swap: expected ${live.keys.size} live keys, copied ${copied}, counted ${newRows}`);
+      }
+      await client.query(`ALTER TABLE ${t} RENAME TO ${oldTable}`);
+      await client.query(`ALTER TABLE ${newTable} RENAME TO ${t}`);
+      await client.query('COMMIT');
+      log(`swapped: ${t} now has ${newRows} rows; the previous table is ${oldTable}`);
+      return { copied, oldTable, newRows };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
     }
-    await client.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
-    await copyStorageParameters(client, t, newTable, log);
-    const all = [...live.keys];
-    let copied = 0;
-    for (let i = 0; i < all.length; i += batch) {
-      const chunk = all.slice(i, i + batch).map((h) => Buffer.from(h, 'hex'));
-      const r = await client.query(`INSERT INTO ${newTable} (k, v) SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[]) ON CONFLICT DO NOTHING`, [chunk]);
-      copied += r.rowCount ?? 0;
-      if ((i / batch) % 25 === 0) log(`copied ${copied} of up to ${all.length} rows`);
-    }
-    const count = await client.query(`SELECT count(*)::bigint AS n FROM ${newTable}`);
-    const newRows = Number(count.rows[0]?.['n'] ?? 0);
-    // Reconstructed keys are promises of retained data. Both the INSERT row
-    // counts and an independent table count must confirm every promised key.
-    if (copied !== live.keys.size || newRows !== live.keys.size) {
-      throw new Error(`refusing to swap: expected ${live.keys.size} live keys, copied ${copied}, counted ${newRows}`);
-    }
-    await client.query(`ALTER TABLE ${t} RENAME TO ${oldTable}`);
-    await client.query(`ALTER TABLE ${newTable} RENAME TO ${t}`);
-    await client.query('COMMIT');
-    log(`swapped: ${t} now has ${newRows} rows; the previous table is ${oldTable}`);
-    return { copied, oldTable, newRows };
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => undefined);
-    throw err;
+  } finally {
+    await release();
   }
 }

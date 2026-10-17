@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-17 — Hourly pod-store checks and verified rollback retirement
+
+The pod-store collector now measures hourly and retires generated rollback tables older than one hour only after the current live closure is complete. Existing row and bloat thresholds still decide whether to rebuild. A rebuild requires fresh, unambiguous Railway volume headroom for the copy, WAL and reserve. Session advisory locks serialize CLI and library collectors before relation lookup, and table-lock waits stop after five seconds. Scheduled monitoring-review publication stays daily at hour 06 UTC. Explicit manual table removal remains available; current resources, immutable security records and live roots keep their existing retention rules. Hourly scheduling does not promise exact one-hour physical reclamation when a run is delayed, the live closure cannot be verified, or rebuild thresholds are not reached.
+
 ## 2026-10-16 — Selected native record proofs
 
 NativeCommitStore can verify selected record paths under one current native head and return selected commit-result snapshots, including recovered and replayed operations. Explicit coverage distinguishes a requested absent key from an unvisited key. Existing complete reads and default commit results remain unchanged; the selected API claims only visited index-path closures and their artifact references. Record payloads still require readArtifact, and unvisited index branches are not validated. It uses the same owner, canonical head, CAS predicates, immutable artifacts and operation history. No backend protocol or live deployment change is included.
