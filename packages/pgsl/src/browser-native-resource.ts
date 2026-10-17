@@ -57,7 +57,11 @@ function revisionFromEtag(value: string | null): string | null {
   return value?.match(/^"(sha256:[a-f0-9]{64})(?:-[a-f0-9]{16})?"$/)?.[1] ?? null;
 }
 function opaqueType(value: string | null): NativeOpaqueContentType | null {
-  return TYPES.find(type => type === value) ?? null;
+  // HTTP media type tokens are case-insensitive and CSS can append a charset.
+  // Parameters do not change these opaque bytes: revision and full body digest
+  // still authenticate the exact representation before it is returned.
+  const mediaType = value?.split(';', 1)[0]?.trim().toLowerCase();
+  return TYPES.find(type => type === mediaType) ?? null;
 }
 function base64(bytes: Uint8Array): string {
   // A bounded chunk avoids argument-list limits without depending on Node Buffer.
@@ -177,7 +181,7 @@ export function createNativeResourceClient(options: NativeResourceClientOptions)
       const expectedRevision = input.expectedRevision, contentType = input.contentType;
       if (expectedRevision !== null && (typeof expectedRevision !== 'string' || !REVISION.test(expectedRevision))) invalid('An explicit native expected revision is required.');
       if (!(input.body instanceof Uint8Array) || input.body.length > maxBytes) invalid('Native resource body exceeds its byte limit.');
-      if (!opaqueType(contentType)) invalid('Native resource body must use an opaque supported content type.');
+      if (!TYPES.some(type => type === contentType)) invalid('Native resource body must use an opaque supported content type.');
       const body = new Uint8Array(input.body);
       return operation(async context => {
         const bodyBase64 = base64(body), bodyDigest = await digest(body);

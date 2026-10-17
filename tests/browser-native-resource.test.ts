@@ -71,6 +71,28 @@ describe('browser native opaque resource CAS', () => {
     expect(f.requests.filter(request => request.method === 'PUT')).toHaveLength(2);
   });
 
+  it('accepts CSS media type parameters and case while preserving exact revision and raw byte verification', async () => {
+    const f = fixture();
+    f.mutateRead(response => {
+      const headers = new Headers(response.headers);
+      headers.set('Content-Type', 'Application/JSON; charset=utf-8');
+      return new Response(response.body, { status: response.status, headers });
+    });
+    const client = f.client(); await client.ready();
+    const saved = await client.write({ expectedRevision: null, body: bytes('{"sealed":"CSS charset representation"}'), contentType: ct });
+    expect(saved.readback.contentType).toBe(ct);
+    expect(saved.readback.body).toEqual(bytes('{"sealed":"CSS charset representation"}'));
+    const opened = await client.read(); expect(opened.revision).toBe(saved.receipt.revision);
+    expect(opened.body).toEqual(saved.readback.body);
+    expect(() => client.write({ expectedRevision: saved.receipt.revision, body: bytes('x'),
+      contentType: 'application/json; charset=utf-8' as typeof ct })).toThrow(NativeResourceError);
+    f.mutateRead(response => {
+      const headers = new Headers(response.headers); headers.set('Content-Type', 'application/json; charset=utf-8');
+      return new Response('changed bytes', { headers });
+    });
+    await expect(client.read()).rejects.toMatchObject({ code: 'INTEGRITY', writeMayHaveCommitted: false });
+  });
+
   it('captures byte input before asynchronous hashing, and never caches a stale read revision', async () => {
     const f = fixture(), client = f.client(), original = bytes('original');
     const pending = client.write({ expectedRevision: null, body: original, contentType: ct });
