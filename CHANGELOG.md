@@ -1,10 +1,14 @@
 # Changelog
 
+## 2026-10-17 — Native CAS responses preserve validators through edge compression
+
+The CSS gateway adds `Cache-Control: no-transform` to current native GET representations with valid revision and body-digest headers, and to validated successful native PUT receipts. Edge compression had weakened a resource's ETag while its decoded bytes still matched the native digest, so installed browser clients rejected the read after a committed save. Existing cache directives, validators, response bytes, and ordinary responses remain unchanged. All 32 gateway HTTP tests pass, including native GET/PUT coverage, cache-policy preservation, and malformed or non-native response cases. A read-only production probe confirmed that a gzip request now receives the strong ETag and unchanged body digest without content encoding.
+
 ## 2026-10-17 — Browser-owned opaque native resource CAS
 
 The `@interego/pgsl/browser-native-resource` subpath exposes the existing CSS native resource protocol to browser clients without importing Node code or accepting vault keys. Callers provide their verified owner-pod scope and current authorized fetch. The helper checks native capability discovery, matching body and HTTP revision predicates, exact receipts and physical opaque atom addresses, and digest-bound readback. Bytes, reply streams and operation deadlines are bounded. A dispatched write with a lost or unverifiable acknowledgement stays explicitly uncertain; the helper never retries it automatically. Existing Node stores and server behavior are unchanged.
 
-Thirteen helper tests cover native engine CAS races, forged receipts, stream failures, lost acknowledgements, input snapshots and browser bundling. The loopback fixture uses the actual gateway and native engine to check owner OAuth, cross-pod refusal, current invalid credentials and CORS headers; its credentials are generated anew for each isolated run. The combined native regression run passes 68 tests, with three pre-existing optional PostgreSQL cases not enabled. Application integration, production publication and live rollback coverage require separate verification.
+Seventeen helper tests cover native engine CAS races, forged receipts, stream failures, lost acknowledgements, input snapshots, HTTP media-type parameters, compressed reads and browser bundling. A weak GET representation tag is accepted only with its exact native revision and encrypted-body digest; PUT receipt tags and outgoing CAS conditions remain strong. The loopback fixture uses the actual gateway and native engine to check owner OAuth, cross-pod refusal, current invalid credentials and CORS headers; its credentials are generated anew for each isolated run. Application integration and live rollback coverage require separate verification.
 
 ## 2026-10-16 — Selected native record proofs
 
