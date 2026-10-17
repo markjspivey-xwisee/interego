@@ -60,6 +60,7 @@ export { runMigration, type PodPlan, type FleetReport } from './runner.js';
 export {
   collectLive,
   rebuildTable,
+  RebuildDeferredError,
   readerFromFdb,
   readerFromPg,
   keysBySubspace,

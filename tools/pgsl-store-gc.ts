@@ -12,8 +12,8 @@
  * WHY A REBUILD AND NOT A DELETE: deleting tens of millions of rows leaves the table the same
  * size until it is rewritten, and rewriting a 45 GB table needs 45 GB free, which is precisely
  * what a full volume does not have. The live set is small, so `rebuildTable` copies it into a
- * new table under an ACCESS EXCLUSIVE lock (readers and writers wait for the minutes it takes),
- * swaps the names in the same transaction, and leaves the old table for `--drop` after the
+ * new table under an ACCESS EXCLUSIVE lock with a five-second SQL work budget,
+ * swaps the names in the same transaction only if it finishes, and leaves the old table for `--drop` after the
  * store has been checked. See packages/pgsl-store/src/gc.ts for what "live" means.
  *
  * ── THE SCHEDULED RUN, AND WHERE ITS LINE IS ──────────────────────────────────────────────────
@@ -27,15 +27,19 @@
  * a table is never rebuilt automatically: the lock would cost more than the space. A rollback
  * copy stays at least one hour and is retired only after a complete current live-set check.
  * A fresh platform volume measurement must cover two table copies plus 1 GiB before a rebuild.
- * Collectors serialize before relation lookup; waiting for a table lock is capped at five
- * seconds. A person can still dispatch any mode by hand, including explicit `--drop`.
+ * Collectors serialize before relation lookup. Rebuild uses NOWAIT and a monotonic total SQL
+ * work budget, remaining server statement timeouts and a short idle-transaction timeout.
+ * A large rebuild is deferred safely; this does not guarantee physical reclamation, online
+ * compaction or an absolute wall-clock lock bound during durable COMMIT/network stalls.
+ * A person can still dispatch any mode by hand, including explicit `--drop`.
  *
  * The connection string is read from the environment and never printed.
  */
 
 import { basename } from 'node:path';
 import { Client } from 'pg';
-import { acquireCollectorLock, collectLive, keysBySubspace, readerFromPg, rebuildTable, type LiveSet } from '../packages/pgsl-store/src/gc.js';
+import { acquireCollectorLock, collectLive, keysBySubspace, readerFromPg, rebuildTable, RebuildDeferredError, type LiveSet } from '../packages/pgsl-store/src/gc.js';
+import { requestFreshCollectorHeadroom } from './pgsl-store-gc-headroom-ipc.mjs';
 
 function flag(name: string): string | undefined {
   const i = process.argv.indexOf(name);
@@ -200,14 +204,29 @@ async function main(): Promise<void> {
     if (dropOlder !== undefined && (!Number.isSafeInteger(Number(dropOlder)) || Number(dropOlder) < 1)) throw new Error('--drop-previous-older-than takes a whole number of days');
     if (dropHours !== undefined && (!Number.isSafeInteger(Number(dropHours)) || Number(dropHours) < 1)) throw new Error('--drop-previous-older-than-hours takes a positive whole number of hours');
     const headroom = async (): Promise<void> => {
+      // The remote parent's platform token stays outside this collector. Ask
+      // for a NEW numeric sample only once a write attempt is actually needed,
+      // after an arbitrarily long read-only scan and verified backup retirement.
+      // An IPC failure must never fall back to the stale startup environment.
+      const measured = typeof process.send === 'function' ? await requestFreshCollectorHeadroom()
+        : { capacityBytes: Number(process.env['PGSL_GC_VOLUME_CAPACITY_BYTES']),
+          usedBytes: Number(process.env['PGSL_GC_VOLUME_USED_BYTES']), sampledAt: Number(process.env['PGSL_GC_VOLUME_SAMPLED_AT']) };
       const bytes = Number((await client.query(`SELECT pg_total_relation_size($1) AS b`, [table])).rows[0]?.['b']);
-      assertRebuildHeadroom({ tableBytes: bytes, capacityBytes: Number(process.env['PGSL_GC_VOLUME_CAPACITY_BYTES']),
-        usedBytes: Number(process.env['PGSL_GC_VOLUME_USED_BYTES']), sampledAt: Number(process.env['PGSL_GC_VOLUME_SAMPLED_AT']) });
+      assertRebuildHeadroom({ tableBytes: bytes, ...measured });
       log('fresh volume headroom covers copy, WAL and reserve');
+    };
+    const attemptRebuild = async (): Promise<Awaited<ReturnType<typeof rebuildTable>> | null> => {
+      try { return await rebuildTable(client, table, { log }); }
+      catch (error) {
+        if (!(error instanceof RebuildDeferredError)) throw error;
+        log(`${error.message}; original table remains authoritative, no physical reclamation is claimed`);
+        return null;
+      }
     };
     if (process.argv.includes('--rebuild')) {
       await headroom();
-      const r = await rebuildTable(client, table, { log });
+      const r = await attemptRebuild();
+      if (!r) return;
       log(`rebuild done: ${r.newRows} rows live in ${table} (${await size(table)}); previous table ${r.oldTable} (${await size(r.oldTable)}) awaits --drop`);
       await client.query(`ANALYZE ${table}`);
       return;
@@ -230,7 +249,8 @@ async function main(): Promise<void> {
       log(`${d.rebuild ? 'rebuilding' : 'not rebuilding'}: ${d.reason}`);
       if (d.rebuild) {
         await headroom();
-        const r = await rebuildTable(client, table, { log });
+        const r = await attemptRebuild();
+        if (!r) return;
         log(`rebuild done: ${r.newRows} rows live in ${table} (${await size(table)}); previous table ${r.oldTable} (${await size(r.oldTable)}) is dropped by a later run's --drop-previous-older-than`);
         await client.query(`ANALYZE ${table}`);
       }

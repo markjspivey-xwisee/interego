@@ -11,10 +11,13 @@ name: Pod store collector
 # (packages/pgsl-store/src/gc.ts says what "live" means). On 2026-09-20 that history reached
 # 45 GB against 666 MB of live data, the volume filled, and every pod answered 500. The dry run
 # reads only and prints the live set beside the table's size, so the gap is visible hourly
-# instead of discovered by an outage. The rebuild holds an ACCESS EXCLUSIVE lock for the
-# minutes it takes (readers and writers wait), so the hourly run takes it only above a line —
+# instead of discovered by an outage. Rebuild uses ACCESS EXCLUSIVE NOWAIT with a short total
+# traversal/copy SQL budget and rollback on expiry; a large graph may defer compaction. The
+# budget is not an absolute wall-clock bound on durable COMMIT or network/scheduling latency.
+# The hourly run attempts it only above a line —
 # at least half of a table of at least two million rows unreferenced, the outage's shape and not
-# a normal week's. Fresh volume headroom must cover the copy and WAL before it starts.
+# a normal week's. Fresh volume headroom, sampled just before the attempt even after a long
+# scan, must cover the copy and WAL before it starts. Deferral claims no physical reclamation.
 # Since compose stopped rewriting the projection
 # rows of existing nodes (2026-09-21) a normal week stays far below that line, so most runs
 # this is a measurement and nothing else. `rebuildDecision` in tools/pgsl-store-gc.ts is the

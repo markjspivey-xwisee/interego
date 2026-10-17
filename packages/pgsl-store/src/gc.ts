@@ -30,14 +30,17 @@
  *
  * Deleting tens of millions of rows leaves a table just as large until it is rewritten, and a
  * rewrite of a 45 GB table needs 45 GB free. The live set is small, so `rebuildTable` copies
- * the live rows into a new table under an ACCESS EXCLUSIVE lock on the old one (readers and
- * writers wait for the minutes it takes), swaps the names in the same transaction, and leaves
- * the old table for the operator to drop once the store has been checked. The collection runs
- * inside that lock, so nothing written during the copy can be missed. `tools/pgsl-store-gc.ts`
+ * the live rows into a new table under a budgeted ACCESS EXCLUSIVE attempt. The collection
+ * runs inside that lock, so nothing written during the copy can be missed. NOWAIT refuses
+ * contention; a short monotonic SQL work budget aborts a long traversal/copy. Only a completed
+ * attempt swaps the names and leaves the old table for later verified retirement. Large live
+ * graphs can therefore defer compaction; this is not an online collector. Durable COMMIT and
+ * network/scheduling latency are not an absolute wall-clock bound. `tools/pgsl-store-gc.ts`
  * drives it; a dry run only reads.
  */
 
 import { kindByte, nodeAddrFromUrn, type NodeAddr, type NodeKind } from './addressing.js';
+import { performance } from 'node:perf_hooks';
 import type { FdbLike } from './fdb-like.js';
 import {
   SUBSPACE_PAYLOAD_OFFSET, cbKey, ciKey, cpKey, lftKey, lvKey, nodeAddrBytes, nodeKey, prKey, rgtKey, subspaceRange, type SubspaceTag,
@@ -383,6 +386,15 @@ export interface RebuildResult {
   readonly newRows: number;
 }
 
+/** Optional compaction was deferred; the original table remains authoritative. */
+export class RebuildDeferredError extends Error {
+  readonly code = 'REBUILD_DEFERRED';
+  constructor(readonly reason: 'sql-work-budget' | 'lock-unavailable') {
+    super(`rebuild deferred: ${reason === 'sql-work-budget' ? 'SQL work budget exhausted' : 'live table is busy'}; compaction is not confirmed`);
+    this.name = 'RebuildDeferredError';
+  }
+}
+
 /**
  * The storage parameters of `from`, applied to `to`: `CREATE TABLE ... (LIKE ... INCLUDING ALL)`
  * copies columns, constraints, indexes and column storage, but no relation options, so the
@@ -414,9 +426,11 @@ export async function copyStorageParameters(
 }
 /**
  * Copy the live rows into a fresh table and swap it in, inside one transaction that holds an
- * ACCESS EXCLUSIVE lock on the old table: every other session waits until the commit. The live
- * set is computed INSIDE the lock, so it is exact. The old table is renamed, not dropped; the
- * operator drops it after checking the store.
+ * ACCESS EXCLUSIVE lock on the old table: every other session waits until commit or rollback.
+ * The exact live set is computed INSIDE that lock. The entire SQL work has a five-second
+ * monotonic budget with a server statement timeout for each remaining slice. PostgreSQL 16
+ * cannot interrupt durable COMMIT, so the deadline is checked before dispatch but is not an
+ * absolute lock-hold guarantee. This is not online compaction or guaranteed reclamation.
  */
 export function rebuildOldTableSuffix(now = new Date()): string {
   const stamp = now.toISOString().replace(/[-:.TZ]/g, '');
@@ -448,62 +462,107 @@ export async function acquireCollectorLock(
 export async function rebuildTable(
   client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number | null }> },
   table: string,
-  opts: { readonly log?: (line: string) => void; readonly batch?: number; readonly suffixOld?: string } = {},
+  opts: { readonly log?: (line: string) => void; readonly batch?: number; readonly suffixOld?: string;
+    /** Tests or a stricter caller may lower, but never lengthen, the live SQL work budget. */
+    readonly sqlWorkBudgetMs?: number } = {},
 ): Promise<RebuildResult> {
   const t = table.replace(/[^a-zA-Z0-9_]/g, '');
   const oldTable = `${t}_${opts.suffixOld ?? rebuildOldTableSuffix()}`;
   const newTable = `${t}_live`;
   const batch = opts.batch ?? 4000;
   const log = opts.log ?? (() => undefined);
+  const budget = opts.sqlWorkBudgetMs ?? 5000;
+  if (!Number.isSafeInteger(budget) || budget < 1 || budget > 5000) throw new Error('collector SQL work budget must be between 1 and 5000 milliseconds');
   const release = await acquireCollectorLock(client, t);
+  let failure: unknown;
   try {
+    // PostgreSQL 16 has no transaction_timeout. On newer servers, use its
+    // independent backstop in addition to the remaining-statement budget.
+    const setting = await client.query("SELECT current_setting('transaction_timeout', true) AS transaction_timeout");
+    const hasTransactionTimeout = typeof setting.rows[0]?.['transaction_timeout'] === 'string';
+    const deadline = performance.now() + budget;
+    let deferred: RebuildDeferredError | undefined;
+    const remaining = (): number => {
+      const ms = Math.floor(deadline - performance.now());
+      if (ms < 1) { deferred ??= new RebuildDeferredError('sql-work-budget'); throw deferred; }
+      return ms;
+    };
+    const bounded = { async query(sql: string, params?: unknown[]) {
+      const allowance = remaining();
+      try {
+        // A client-side query_timeout does not cancel PostgreSQL work. Use the
+        // server's timeout, reduced before EVERY query while the lock is held.
+        await client.query(`SET LOCAL statement_timeout = '${allowance}ms'`);
+        remaining();
+        const result = await client.query(sql, params);
+        // An acknowledged commit already released the lock and must never be
+        // reported as rolled back just because its reply crossed the deadline.
+        if (sql !== 'COMMIT') remaining();
+        return result;
+      } catch (error) {
+        const code = error !== null && typeof error === 'object' ? (error as { code?: string }).code : undefined;
+        if (code === '57014') deferred ??= new RebuildDeferredError('sql-work-budget');
+        if (code === '55P03') deferred ??= new RebuildDeferredError('lock-unavailable');
+        throw deferred ?? error;
+      }
+    } };
     await client.query('BEGIN');
     try {
-      // A queued ACCESS EXCLUSIVE request can also stall new traffic. Defer this
-      // optional maintenance if an existing transaction does not release promptly.
-      await client.query("SET LOCAL lock_timeout = '5s'");
+      // A stalled collector must not retain its transaction while waiting for
+      // another client query. This setting is local to this maintenance attempt.
+      await bounded.query("SET LOCAL idle_in_transaction_session_timeout = '1s'");
+      if (hasTransactionTimeout) await bounded.query(`SET LOCAL transaction_timeout = '${remaining()}ms'`);
       // ACCESS EXCLUSIVE from the start, not EXCLUSIVE upgraded at the rename: with EXCLUSIVE held,
       // a store transaction that had already read (ACCESS SHARE) and now waited to write blocked on
       // this transaction, whose RENAME then waited on that reader's ACCESS SHARE, and Postgres
       // resolved the cycle by killing the rebuild after the copy (measured on the first production
-      // run, 2026-09-20). Taking the strongest lock first means readers wait too, for the minutes
-      // the copy takes, and nothing can deadlock against a lock that is never upgraded.
-      await client.query(`LOCK TABLE ${t} IN ACCESS EXCLUSIVE MODE`);
-      log('lock held: readers and writers wait until the swap commits');
-      const live = await collectLive(readerFromPg(client as never, t), { log });
+      // run, 2026-09-20). Take the strongest lock without queuing, then keep the traversal and
+      // copy within the short budget; no lock upgrade can form that cycle.
+      await bounded.query(`LOCK TABLE ${t} IN ACCESS EXCLUSIVE MODE NOWAIT`);
+      log('lock held for a budgeted maintenance attempt; readers and writers resume on commit or rollback');
+      const live = await collectLive(readerFromPg(bounded as never, t), { log });
+      remaining();
       if (live.keys.size === 0) throw new Error('refusing to rebuild: the live set is empty');
       // A missing or unreadable retained node makes reachability incomplete.
       // Preserve the existing table rather than collecting through uncertainty.
       if (live.stats.danglingRoots.length > 0 || live.stats.unreadableNodes > 0) {
         throw new Error(`refusing to rebuild: ${live.stats.danglingRoots.length} dangling roots and ${live.stats.unreadableNodes} unreadable nodes`);
       }
-      await client.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
-      await copyStorageParameters(client, t, newTable, log);
+      await bounded.query(`CREATE TABLE ${newTable} (LIKE ${t} INCLUDING ALL)`);
+      await copyStorageParameters(bounded, t, newTable, log);
       const all = [...live.keys];
       let copied = 0;
       for (let i = 0; i < all.length; i += batch) {
         const chunk = all.slice(i, i + batch).map((h) => Buffer.from(h, 'hex'));
-        const r = await client.query(`INSERT INTO ${newTable} (k, v) SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[]) ON CONFLICT DO NOTHING`, [chunk]);
+        const r = await bounded.query(`INSERT INTO ${newTable} (k, v) SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[]) ON CONFLICT DO NOTHING`, [chunk]);
         copied += r.rowCount ?? 0;
         if ((i / batch) % 25 === 0) log(`copied ${copied} of up to ${all.length} rows`);
       }
-      const count = await client.query(`SELECT count(*)::bigint AS n FROM ${newTable}`);
+      const count = await bounded.query(`SELECT count(*)::bigint AS n FROM ${newTable}`);
       const newRows = Number(count.rows[0]?.['n'] ?? 0);
       // Reconstructed keys are promises of retained data. Both the INSERT row
       // counts and an independent table count must confirm every promised key.
       if (copied !== live.keys.size || newRows !== live.keys.size) {
         throw new Error(`refusing to swap: expected ${live.keys.size} live keys, copied ${copied}, counted ${newRows}`);
       }
-      await client.query(`ALTER TABLE ${t} RENAME TO ${oldTable}`);
-      await client.query(`ALTER TABLE ${newTable} RENAME TO ${t}`);
-      await client.query('COMMIT');
+      await bounded.query(`ALTER TABLE ${t} RENAME TO ${oldTable}`);
+      await bounded.query(`ALTER TABLE ${newTable} RENAME TO ${t}`);
+      await bounded.query('COMMIT');
       log(`swapped: ${t} now has ${newRows} rows; the previous table is ${oldTable}`);
       return { copied, oldTable, newRows };
     } catch (err) {
+      // Deliberately bypass the exhausted query wrapper so PostgreSQL releases
+      // the lock and rolls back any partially copied table or rename.
       await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
+      throw deferred ?? err;
     }
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    await release();
+    // A transaction/idle timeout on supported servers terminates the session,
+    // which already releases its advisory lock. Preserve the original failure.
+    if (failure) await release().catch(() => undefined);
+    else await release();
   }
 }

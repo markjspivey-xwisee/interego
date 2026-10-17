@@ -182,6 +182,7 @@ COPY deploy/mcp-relay/hmd-resource.ts ./
 COPY deploy/mcp-relay/session-actor.ts ./
 COPY deploy/mcp-relay/delegation-subject.ts ./
 COPY deploy/mcp-relay/principal-delegation.ts ./
+COPY deploy/mcp-relay/delegation-repair-only.ts ./
 COPY deploy/mcp-relay/resource-compositions.ts ./
 COPY deploy/mcp-relay/resource-publication.ts ./
 COPY deploy/mcp-relay/client-signing-keys.ts ./
