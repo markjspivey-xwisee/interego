@@ -40,4 +40,4 @@ assert.equal(live.stats.kept.P, count + 1);
 assert.equal(live.stats.kept.I, count);
 assert.equal(live.stats.kept.B, count);
 assert.equal(live.keys.size, 3 * (count + 1) + 2 * count + 1);
-console.log(JSON.stringify({ liveNodes: live.stats.liveNodes, liveNodeBytes: total, largestBatch }));
+process.stdout.write(JSON.stringify({ liveNodes: live.stats.liveNodes, liveNodeBytes: total, largestBatch }) + '\n');

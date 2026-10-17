@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 69 tools (i2idlx-capabilities, i2idlx-challenge, i2idlx-session, i2idlx-read, i2idlx-write, i2idlx-ask, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 71 tools (i2idlx-capabilities, i2idlx-challenge, i2idlx-session, i2idlx-read, i2idlx-write, i2idlx-ask, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 69
+  affordances: 71
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -77,6 +77,8 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.forwarding_targets` | Set / list / remove the downstream LRS endpoints YOUR OWN xAPI statements are forwarded to (per-user Statement Forwarding). | `POST https://foxxi-bridge.interego.xwisee.com/agent/forwarding/targets` *(HTTP only)* |
 | `foxxi.write_xapi_statements_signed` | Signed transport over the standard xAPI Statements Resource, scoped to your own lens. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/write` *(HTTP only)* |
 | `foxxi.read_xapi_statements_signed` | Signed transport to GET /xapi/statements in your own lens. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/read` *(HTTP only)* |
+| `foxxi.write_own_subject_xapi_statements_signed` | Record observed activity for the human who controls your native session agent. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/own-subject/write` *(HTTP only)* |
+| `foxxi.read_own_subject_xapi_statements_signed` | Read the authoritative bounded encrypted own-pod xAPI activity window for the human who controls your native session agent. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/own-subject/read` *(HTTP only)* |
 | `foxxi.credentials` | Mint / list / revoke the Basic-auth credentials an upstream system uses to forward xAPI statements INTO your OWN lens. | `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials` *(HTTP only)* |
 | `foxxi.publish_memory` | Author a job aid or quick reference as yourself. | `POST https://foxxi-bridge.interego.xwisee.com/agent/publish-memory` *(HTTP only)* |
 | `foxxi.content_fragment` | Author a fragment as yourself: one piece of teaching or support that compositions use by reference. | `POST https://foxxi-bridge.interego.xwisee.com/agent/content/fragment` *(HTTP only)* |

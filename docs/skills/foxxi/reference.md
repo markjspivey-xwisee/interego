@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 69 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 71 affordances.
 
 ## `foxxi.i2idlx_capabilities`
 
@@ -749,6 +749,36 @@ Signed transport to GET /xapi/statements in your own lens. Returns the actual LR
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | sign_request({query?:{statementId?,verb?,activity?,registration?,since?,until?,ascending?,limit?,cursor?}}); identity/pod are bound by the signature. |
 | `_signature` | string | yes | The complete signature returned by sign_request. |
+
+## `foxxi.write_own_subject_xapi_statements_signed`
+
+**Keep personal activity in your own encrypted native pod**
+
+Record observed activity for the human who controls your native session agent. The signed subject_did and purpose personal-performance are checked against the configured identity authority, own storage, active owner registry, cryptographically verified publish delegation and live relay signing anchor. A subject_pod_url stamp corroborates that independently derived destination; it cannot select another pod. Every statement actor must equal the verified human subject. API authority is the owner-issued native delegation; a signed purpose does not mint or enforce the game client 15-minute activity-recording choice. Keeps a bounded personal activity profile in that person own encrypted native Interego pod: cumulative activity counts plus a rolling one-hour window of exact xAPI observations and immutable delivery receipts. No shared tenant copy, public descriptor, or indefinitely growing event archive. Existing own-agent xAPI actions remain separate. Limits: 1–20 statements, 128 KiB batch, 16 KiB per statement, up to 512 recent details (which can be pruned sooner by capacity) and 4096 UUID/body-digest receipts retained for one hour by observation age. Unexpired receipt capacity refuses further events until slots age out. Events older than one hour are refused instead of being counted again. Native encrypted head is capped at 1 MiB; A separate persisted 16 MiB rolling-hour encrypted CAS write budget survives restarts; runtime throttles bound input to 4 MiB/hour, actual encrypted writes to 16 MiB/hour and 4 MiB/request, with two concurrent writes per subject. These runtime throttles reset on restart; the encrypted profile and window bounds do not. Retry identical UUID ids/content only after reconciling uncertainty through the matching own-subject read action.
+
+- Action: `urn:iep:action:foxxi:write-own-subject-xapi-statements-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/own-subject/write` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",statements:[{id,actor,verb,object,timestamp,result?,context?}]}). The relay supplies agent_id, subject_pod_url and fresh signature timestamp. Statement timestamps describe observed events. |
+| `_signature` | string | yes | The complete fresh signature returned by sign_request. |
+
+## `foxxi.read_own_subject_xapi_statements_signed`
+
+**Read and reconcile your own private native activity**
+
+Read the authoritative bounded encrypted own-pod xAPI activity window for the human who controls your native session agent. Requires subject_did, exact purpose personal-performance and fresh signed envelope. Independently verifies the native controller, own pod, active discover delegation and live relay anchor on every request. Queries do not initialize or mutate a pod head. This is a bounded personal activity profile with cumulative counts and a one-hour reconciliation window, not an indefinite raw-event LRS archive. statementId returns an owner-bound {ok,subjectDid,durable:true,statement}; a missing UUID returns 404 with coverage metadata, a known unavailable detail may return 410, and unavailable authority/storage returns an error. Expired observations must not be resent as new events. Other query fields match the own-agent adapter; continuation remains bound to this native subject and snapshot. No shared LRS cache, public descriptor, arbitrary learner, service-subject identity or inferred achievement.
+
+- Action: `urn:iep:action:foxxi:read-own-subject-xapi-statements-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-statements/own-subject/read` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",query:{statementId}}), or query filters verb/activity/registration/since/until/ascending/limit/cursor. The relay supplies agent_id, own pod stamp and fresh timestamp. |
+| `_signature` | string | yes | The complete fresh signature returned by sign_request. |
 
 ## `foxxi.credentials`
 

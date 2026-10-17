@@ -673,7 +673,7 @@ const BASELINE = {};
 // base-without-verticals tool and its test (#366) to 633; the gate named 603. The advertised-demos
 // lint and its declarations (#567 follow-up) brought it to 635; the gate named 604.
 // 2026-10-08: private HMD invocation coverage adds one file, so the floor is 605.
-export const MIN_FILES = 610;
+export const MIN_FILES = 647;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

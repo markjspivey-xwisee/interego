@@ -32,4 +32,4 @@ for (const pageSize of [1, 2, 3]) {
     }
   }
 }
-console.log('Both readers preserve prefix extensions, zero bytes, ACLs and range bounds across page sizes 1/2/3');
+process.stdout.write('Both readers preserve prefix extensions, zero bytes, ACLs and range bounds across page sizes 1/2/3\n');
