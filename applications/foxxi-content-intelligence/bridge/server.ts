@@ -21,6 +21,9 @@
 
 import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
+import { composeOwnSubjectXapiVerifier } from '../src/own-subject-xapi-auth.js';
+import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
+import { createOwnSubjectActivityStore } from '../src/own-subject-activity-store.js';
 import { ingestTelemetry, normalizeQuery, telemetryReport, mergeTelemetrySnapshot, type TelemetryDependencies } from '../../llm-telemetry/service.js';
 import { telemetryProfile } from '../../llm-telemetry/profile.js';
 import { normalizeOtlpLogs } from '../../llm-telemetry/otlp.js';
@@ -9903,6 +9906,70 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
 };
 app.post('/agent/xapi-statements/read', signedXapiHandler('read'));
 app.post('/agent/xapi-statements/write', signedXapiHandler('write'));
+// A separate advertised action preserves the existing independent-agent semantics.
+// This path binds the human controller and uses only that person's encrypted native
+// pod as the primary. It never enters the shared lens or descriptor projector.
+const verifyOwnSubjectXapiCaller = composeOwnSubjectXapiVerifier({
+  identityOrigin: process.env.INTEREGO_IDENTITY_URL ?? 'https://identity.interego.xwisee.com',
+  relayOrigin: process.env.INTEREGO_RELAY_URL ?? 'https://relay.interego.xwisee.com',
+  recover: recoverSignedRequest, ownPod: privatePerformancePod,
+  samePod: (a, b) => typeof a === 'string' && canonicalPublicPodUrl(a) === canonicalPublicPodUrl(b),
+  fetch: globalThis.fetch,
+});
+const ownSubjectWriteBudget = new OwnSubjectXapiWriteBudget();
+const ownSubjectRequestBudget = new OwnSubjectXapiRequestBudget();
+let ownSubjectAuthorityActive = 0;
+const ownSubjectXapiHandler = (write: boolean): RequestHandler => async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  let reservation: ReturnType<OwnSubjectXapiWriteBudget['begin']> | undefined;
+  let transportLimited = false;
+  try {
+    if (!ownSubjectRequestBudget.allow('ip:' + (req.ip ?? 'unknown'), 3000)) { res.setHeader('Retry-After', '60'); res.status(429).json({ ok: false, error: 'Activity request rate limit reached.' }); return; }
+    if (typeof req.body?._signed_payload === 'string' && Buffer.byteLength(req.body._signed_payload, 'utf8') > 262144) { res.status(413).json({ ok: false, error: 'Signed activity request exceeds capacity.' }); return; }
+    if (ownSubjectAuthorityActive >= 32) { res.setHeader('Retry-After', '2'); res.status(429).json({ ok: false, error: 'Personal activity authority checks are busy.' }); return; }
+    ownSubjectAuthorityActive++;
+    const authority = await verifyOwnSubjectXapiCaller(req.body, write).finally(() => { ownSubjectAuthorityActive--; });
+    if (!authority.ok) { res.status(authority.status).json({ ok: false, error: authority.error }); return; }
+    if (!ownSubjectRequestBudget.allow('subject:' + authority.subjectDid, 120)) { res.setHeader('Retry-After', '60'); res.status(429).json({ ok: false, error: 'Personal activity request rate limit reached.' }); return; }
+    if (write) {
+      reservation = ownSubjectWriteBudget.begin(authority.subjectDid, Buffer.byteLength(JSON.stringify(authority.payload.statements ?? null), 'utf8'));
+    }
+    const privateKey = process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '';
+    const store = createOwnSubjectActivityStore(authority, { privateKey, readOnly: !write, selfBaseUrl: bridgeBaseUrl,
+      fetch: async (input, init) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        await assertSafeFetchTarget(url);
+        if (init?.method?.toUpperCase() === 'PUT') {
+          const body = init.body, size = typeof body === 'string' ? Buffer.byteLength(body, 'utf8')
+            : body instanceof ArrayBuffer ? body.byteLength : ArrayBuffer.isView(body) ? body.byteLength : null;
+          try { if (size === null || !reservation) throw new Error('Invalid native write body'); reservation.reserveWrite(size); }
+          catch (error) { transportLimited = true; throw error; }
+        }
+        const response = await globalThis.fetch(input, { ...init, redirect: 'manual' });
+        if (response.status >= 300 && response.status < 400 || response.url && response.url !== url) throw new Error('Native own-pod redirects are refused');
+        return response;
+      },
+    });
+    const result = write ? await store.write(authority.payload.statements) : await store.read(authority.payload.query);
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    const status = transportLimited ? 429 : error instanceof Error && 'status' in error && typeof error.status === 'number' ? error.status
+      : error instanceof Error && error.name === 'ConflictError' ? 409 : 503;
+    if (status === 429) res.setHeader('Retry-After', '3600');
+    res.status(status).json({ ok: false, durable: false, error: status === 409 ? 'Statement id already exists with different content.'
+      : status === 429 ? 'Private activity runtime write budget reached; keep the same event ids and reconcile before retrying later.'
+      : status === 413 ? 'Private activity capacity reached; previous confirmed records are preserved.'
+      : status === 400 ? 'Invalid private activity query.' : 'Own-pod activity delivery is not confirmed. Reconcile the same statement ids before retrying.' });
+  } finally { reservation?.release(); }
+};
+app.get('/agent/xapi-statements/own-subject/affordance', (_req, res) => {
+  res.type('text/turtle').send(affordancesManifestTurtle(`${bridgeBaseUrl}/agent/xapi-statements/own-subject/affordance`, [
+    canonicalAffordance('urn:iep:action:foxxi:write-own-subject-xapi-statements-signed'),
+    canonicalAffordance('urn:iep:action:foxxi:read-own-subject-xapi-statements-signed'),
+  ], bridgeBaseUrl, { verticalLabel: 'Private own-subject activity', rdfsComment: 'Owner-bound native xAPI records in the controlling person own encrypted pod.' }));
+});
+app.post('/agent/xapi-statements/own-subject/write', ownSubjectXapiHandler(true));
+app.post('/agent/xapi-statements/own-subject/read', ownSubjectXapiHandler(false));
 app.post('/agent/llm-telemetry/ingest', signedXapiHandler('telemetry-ingest'));
 app.post('/agent/llm-telemetry/query', signedXapiHandler('telemetry-query'));
 app.post('/agent/llm-telemetry/capture/read', signedXapiHandler('telemetry-capture-read'));

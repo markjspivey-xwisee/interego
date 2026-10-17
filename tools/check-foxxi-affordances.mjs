@@ -77,6 +77,7 @@ const ALLOWLIST = [
   '/agent/record-course-completion/affordance',
   '/agent/forwarding/targets/affordance',
   '/agent/credentials/affordance',
+  '/agent/xapi-statements/own-subject/affordance', // Public descriptor for the signed own-subject read/write actions.
   // The SCORM affordance bundle descriptor.
   '/agent/scorm/affordances',
   // Course read views (dereference, public + read-only). A course is DESCRIPTIVE
