@@ -86,7 +86,7 @@ function Shell() {
 
   const nav = (
     <nav className="nav" aria-label="Views">
-      {NAV.filter((n) => n.v !== "ask" || engine.available).map((n) => (
+      {NAV.map((n) => (
         <a key={n.v} href={"#" + n.h} aria-current={route.view === n.v ? "page" : undefined}>
           <Icon name={n.icon} />{n.l}{n.v === "review" && needVotes ? <span className="count" title={`${needVotes} items have no votes yet`}>{needVotes}</span> : null}
           {n.v === "packs" && caps.ws.packs.length ? <span className="count">{caps.ws.packs.length}</span> : null}

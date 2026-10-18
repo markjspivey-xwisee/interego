@@ -11,7 +11,7 @@ const VIEWS = [
   { l: "Home", h: "home", icon: "home" }, { l: "Lexicon", h: "browse", icon: "book" }, { l: "Map", h: "whole", icon: "globe" },
   { l: "Compare", h: "cmp", icon: "compare" }, { l: "Review queue", h: "review", icon: "review" }, { l: "Packs", h: "packs", icon: "pack" },
   { l: "Insights", h: "insights", icon: "insights" }, { l: "Agent console", h: "agents", icon: "agent" },
-  { l: "Orchestrate: a team of agents at work", h: "orchestrate", icon: "route" }, { l: "Ask Claude", h: "ask", icon: "sparkle" },
+  { l: "Orchestrate: a team of agents at work", h: "orchestrate", icon: "route" }, { l: "Ask the glossary", h: "ask", icon: "sparkle" },
   { l: "Path between two terms", h: "path-~", icon: "route" },
 ];
 
@@ -31,7 +31,7 @@ export function Palette({ onClose, ask, current, setTheme }) {
       return out;
     }
     for (const r of search(q, 8)) out.push({ g: "Terms", t: r.c.l, d: snippet(r.why === "note" ? r.c.x : r.c.d, q, 110), dot: r.c.k, k: kindById.get(r.c.k).label, run: () => go("c-" + r.c.id) });
-    if (ask) out.push({ g: "Ask", t: `Ask Claude: “${q.trim()}”`, icon: "sparkle", run: () => ask.open(q.trim(), current ? [current] : []) });
+    if (ask) out.push({ g: "Ask", t: `Ask the glossary: “${q.trim()}”`, icon: "sparkle", run: () => ask.open(q.trim(), current ? [current] : []) });
     for (const f of COLLECTIONS.field) if (f.label.toLowerCase().includes(t)) out.push({ g: "Filter", t: "Field: " + f.label, icon: "filter", k: String(f.n), run: () => go("browse-f." + f.id) });
     for (const f of COLLECTIONS.type) if (f.label.toLowerCase().includes(t)) out.push({ g: "Filter", t: "Type: " + f.label, icon: "filter", k: String(f.n), run: () => go("browse-t." + f.id) });
     for (const f of COLLECTIONS.curated) if (f.label.toLowerCase().includes(t)) out.push({ g: "Filter", t: "Collection: " + f.label, icon: "book", k: String(f.n), run: () => go("browse-cu." + f.id) });
