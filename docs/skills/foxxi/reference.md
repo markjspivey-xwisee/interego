@@ -1,6 +1,55 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 71 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 75 affordances.
+
+## `foxxi.i2idlx_classify`
+
+**Classify an RDF draft**
+
+Run the fixed q-classify query and pinned category-disjointness checks. Derived types remain Hypothetical; this is not full OWL consistency checking.
+
+- Action: `urn:iep:action:foxxi:i2idlx-classify`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/classify` (served by a bespoke route; not through the bridge's MCP endpoint)
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `graph_content` | string | yes | Inline instance-only Turtle, at most 64000 UTF-8 bytes and 512 triples. No caller schema, inference-changing axioms, paths, remote graph URLs, custom shapes or executable queries. |
+
+## `foxxi.i2idlx_validate`
+
+**Validate an RDF draft**
+
+Run the existing native SHACL Core validator and check classified concept existence against the pinned glossary. Unsupported constraints fail closed.
+
+- Action: `urn:iep:action:foxxi:i2idlx-validate`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/validate` (served by a bespoke route; not through the bridge's MCP endpoint)
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `graph_content` | string | yes | Inline instance-only Turtle, at most 64000 UTF-8 bytes and 512 triples. No caller schema, inference-changing axioms, paths, remote graph URLs, custom shapes or executable queries. |
+
+## `foxxi.i2idlx_peer_term`
+
+**Look up a peer term**
+
+Look up an exact IRI in the pinned publisher-label and mapping-target evidence. A miss means unconfirmed in this snapshot, not nonexistent.
+
+- Action: `urn:iep:action:foxxi:i2idlx-peer-term`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/peer-term` (served by a bespoke route; not through the bridge's MCP endpoint)
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `iri` | string | yes | One absolute HTTP(S) term IRI, at most 2048 UTF-8 bytes. This operation does not fetch the supplied IRI. |
+
+## `foxxi.i2idlx_source_version`
+
+**Check the upstream source version**
+
+Compare the pinned glossary release with the canonical scheme fetched now. An outage returns unavailable; no snapshot is automatically upgraded.
+
+- Action: `urn:iep:action:foxxi:i2idlx-source-version`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/source-version` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Inputs: none
 
 ## `foxxi.i2idlx_capabilities`
 

@@ -19,11 +19,13 @@ export const semanticAffordances: Affordance[] = definitions.map(([, slug, title
     : [{ name: 'graph_content', type: 'string', required: true, description: 'Inline instance-only Turtle, at most 64000 UTF-8 bytes and 512 triples. No caller schema, inference-changing axioms, paths, remote graph URLs, custom shapes or executable queries.' }],
   outputs: {
     description: 'An executed deterministic read-only check with pinned source provenance and explicit evidence. No model sampling, pod writes, approval, ratification or publication occurs.',
+    // The shared MCP SDK also uses result for its text wrapper. HTTP check
+    // results remain objects, without narrowing that shared transport field.
     properties: {
       task: { type: 'string' }, status: { type: 'string' }, execution: { type: 'string' },
       sampling_performed: { type: 'boolean' }, writes_performed: { type: 'boolean' },
       source: { type: 'object', additionalProperties: true }, evidence: { type: 'object', additionalProperties: true },
-      result: { type: 'object', additionalProperties: true }, error: { type: 'string' },
+      error: { type: 'string' },
     },
   },
 }));
