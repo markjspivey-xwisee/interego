@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-18 — Native LRS point operations verify selected record paths
+
+Foxxi's native LRS now checks the exact statement, tenant-registry, attachment and void-target paths needed by a point write instead of reconstructing every tenant's index. Point statement and State/Profile reads use the same selected native proofs. A voided statement expands its verified relation to the actual voider and restarts on a changed head; an unvisited path cannot count as an absent record. Native write-authority checks and commits still await the existing verified native receipts, while ignored commit-result maps no longer trigger a second complete traversal. Adapters without the optional selected-read API keep the complete-read path.
+
+This changes neither storage ownership nor xAPI identity, immutable statement content, CAS conflict handling or delivery acknowledgement requirements. The independent-agent signed adapter still has its existing native LRS and pod-projection composition; the human own-subject activity profile remains a separate bounded own-pod path. List/query operations still use their existing complete index where required. Focused tests cover unrelated-record preservation, selected coverage, duplicate/conflicting writes, void relationships and commit acknowledgement ordering. Production timeout recovery requires separate live observation.
+
 ## 2026-10-17 — Missing-only session delegation credential repair
 
 The relay advertises `get_pod_status.capabilities.register_agent_repair_only` and accepts `register_agent {agent_id, pod_name, repair_only:true}` for an authenticated session's exact existing own-pod delegation. A live owner-delegated ReadWrite or PublishOnly row is required. Mutation parameters, missing or narrowed grants, other agents and other pods are refused. The repair never writes the registry or overwrites an existing credential: its signed JSON-LD credential is published through native atomic create-only CAS, with no ordinary LDP fallback.

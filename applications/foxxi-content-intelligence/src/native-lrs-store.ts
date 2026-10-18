@@ -158,6 +158,9 @@ export class NativeInteregoLrsDatabase {
     return createNativeByteArtifact({ owner: this.owner, contentType: RECORD_TYPE, bytes: Buffer.from(JSON.stringify(envelope), 'utf8') });
   }
   async readReference<T>(snapshot: NativeSnapshot, key: string, tenant: string, kind: string, id?: string): Promise<T | null> {
+    // A selected snapshot proves absence only for its explicitly checked paths.
+    // Never turn an omitted branch into an absent statement or overwrite it.
+    if (snapshot.selectedRecordKeys && !snapshot.selectedRecordKeys.includes(key)) throw new Error('native LRS record path was not selected');
     const reference = snapshot.records.get(key);
     if (!reference) return null;
     const payload = readNativeByteArtifact(await this.client.readArtifact(reference));
@@ -177,6 +180,17 @@ export class NativeInteregoLrsDatabase {
   async read<T>(snapshot: NativeSnapshot, tenant: string, kind: string, id: string): Promise<T | null> {
     return this.readReference<T>(snapshot, this.key(tenant, kind, id), tenant, kind, id);
   }
+  async readHead(keys?: readonly string[]): Promise<NativeSnapshot> {
+    if (keys === undefined || !this.client.readHeadRecords) return this.client.readHead();
+    const selected = [...new Set(keys)].sort();
+    // Preserve complete-index behavior for batches beyond the optional SDK
+    // selection capacity. Ordinary signed batches contain at most 20 records.
+    if (selected.length > 1000) return this.client.readHead();
+    const snapshot = await this.client.readHeadRecords(selected);
+    const checked = snapshot.selectedRecordKeys;
+    if (!checked || selected.some(key => !checked.includes(key))) throw new Error('native LRS selected head omitted a required path');
+    return snapshot;
+  }
   async ready(): Promise<void> {
     if (this.closed) throw new Error('native LRS is closed');
     if (!this.readiness) this.readiness = (async () => {
@@ -184,22 +198,25 @@ export class NativeInteregoLrsDatabase {
       await this.options.verifyReadiness?.();
       // A real native write, not a read-only probe: verifies live write authority.
       for (let attempt = 0; attempt < 8; attempt++) {
-        const expected = await this.client.readHead();
-        try { await this.client.commit({ operationId: randomUUID(), expected, changes: [] }); return; }
+        const expected = await this.readHead([]);
+        try { await this.client.commit({ operationId: randomUUID(), expected, changes: [], resultRecordKeys: [] }); return; }
         catch (error) { if (!(error instanceof NativeCommitConflictError) || attempt === 7) throw error; }
       }
     })();
     const pending = this.readiness;
     try { await pending; } catch (error) { if (pending === this.readiness) this.readiness = undefined; throw error; }
   }
-  async transaction<R>(prepare: (mutation: NativeMutation) => Promise<R>): Promise<R> {
+  async transaction<R>(prepare: (mutation: NativeMutation) => Promise<R>, readKeys?: readonly string[]): Promise<R> {
     await this.ready();
     for (let attempt = 0; attempt < 8; attempt++) {
-      const mutation = new NativeMutation(this, await this.client.readHead());
+      const mutation = new NativeMutation(this, await this.readHead(readKeys));
       const result = await prepare(mutation);
       if (!mutation.changes.size) return result;
       try {
-        await this.client.commit({ operationId: randomUUID(), expected: mutation.snapshot, changes: [...mutation.changes.values()] });
+        // The verified native receipt is still awaited. No caller here uses its
+        // returned record map, so reconstructing the entire global index would
+        // add unrelated network reads after an already committed point write.
+        await this.client.commit({ operationId: randomUUID(), expected: mutation.snapshot, changes: [...mutation.changes.values()], resultRecordKeys: [] });
         return result;
       } catch (error) {
         if (!(error instanceof NativeCommitConflictError)) throw error;
@@ -255,6 +272,10 @@ export class NativeInteregoLrsStore implements StatementStore {
       if (ids.has(row.id)) throw new ConflictError('duplicate statement UUID in batch');
       ids.add(row.id);
     }
+    const readKeys = [this.database.key(this.tenant, 'registry', 'tenant'),
+      ...records.map(row => this.database.key(this.tenant, 'statement', row.id)),
+      ...records.flatMap(row => { const target = voidTarget(row.statement); return target ? [this.database.key(this.tenant, 'statement', target)] : []; }),
+      ...[...attachments.keys()].map(sha => this.database.key(this.tenant, 'attachment', sha.toLowerCase()))];
     return this.database.transaction(async tx => {
       await tx.registerTenant(this.tenant);
       const kept: StoredStatement[] = [], inserted: StoredStatement[] = [];
@@ -291,9 +312,24 @@ export class NativeInteregoLrsStore implements StatementStore {
         applied.push({ target: { ...target, voided: true, voidingStatementId: row.id }, voidingStatementId: row.id });
       }
       return { records: kept, inserted, appliedVoids: applied };
-    });
+    }, readKeys);
   }
-  async get(id: string): Promise<StoredStatement | null> { await this.database.ready(); return this.getAt(await this.database.client.readHead(), id); }
+  async get(id: string): Promise<StoredStatement | null> {
+    await this.database.ready();
+    const keys = [this.database.key(this.tenant, 'statement', id), this.database.key(this.tenant, 'void', id)];
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const head = await this.database.readHead(keys);
+      const relation = await this.database.read<{ target: string; voidingStatementId: string }>(head, this.tenant, 'void', id);
+      if (!relation) return this.getAt(head, id);
+      // The voider's identity is learned only from the verified relation. If a
+      // concurrent commit moves the head, start over rather than mixing heads
+      // or treating an unchecked voider as missing.
+      const expanded = await this.database.readHead([...keys, this.database.key(this.tenant, 'statement', relation.voidingStatementId)]);
+      if (head.revision !== expanded.revision || stableJson(head.reference) !== stableJson(expanded.reference)) continue;
+      return this.getAt(expanded, id);
+    }
+    throw new Error('native LRS point read contention limit reached');
+  }
   async markVoided(id: string, voidingStatementId: string, onlyIf?: (target: StoredStatement) => boolean): Promise<boolean> {
     return this.database.transaction(async tx => {
       const target = await this.getAt(tx.snapshot, id);
@@ -395,7 +431,10 @@ export class NativeInteregoLrsStore implements StatementStore {
     await this.database.transaction(async tx => { for (const key of tx.snapshot.records.keys()) if (key.startsWith(this.database.prefix(this.tenant))) tx.remove(key); });
   }
   backendDescription(): string { return 'interego (encrypted canonical PGSL artifacts; awaited native atomic commits; rebuildable xAPI view)'; }
-  async getResource<T>(kind: string, id: string): Promise<T | null> { await this.database.ready(); return this.database.read<T>(await this.database.client.readHead(), this.tenant, kind, id); }
+  async getResource<T>(kind: string, id: string): Promise<T | null> {
+    await this.database.ready();
+    return this.database.read<T>(await this.database.readHead([this.database.key(this.tenant, kind, id)]), this.tenant, kind, id);
+  }
   async listResources<T>(kind: string): Promise<Array<[string, T]>> {
     await this.database.ready(); bounded(kind, 'record kind', 64);
     const head = await this.database.client.readHead(), prefix = this.database.prefix(this.tenant) + kind + '/', result: Array<[string, T]> = [];
@@ -416,7 +455,7 @@ export class NativeInteregoLrsStore implements StatementStore {
       if (next.value === null) tx.remove(this.database.key(this.tenant, kind, id));
       else { await tx.registerTenant(this.tenant); tx.write(this.tenant, kind, id, next.value); }
       return next.result;
-    });
+    }, [this.database.key(this.tenant, 'registry', 'tenant'), this.database.key(this.tenant, kind, id)]);
   }
   async putResource<T>(kind: string, id: string, value: T): Promise<void> { await this.updateResource<T, void>(kind, id, () => ({ value, result: undefined })); }
   async deleteResource(kind: string, id: string): Promise<void> { await this.updateResource<unknown, void>(kind, id, () => ({ value: null, result: undefined })); }
