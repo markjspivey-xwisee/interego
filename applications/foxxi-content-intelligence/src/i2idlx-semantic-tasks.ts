@@ -26,6 +26,11 @@ function argsOf(value: unknown, allowed: string[]): Row {
     try { const parsed: unknown = JSON.parse(value._signed_payload); if (!object(parsed)) throw Error(); args = parsed; }
     catch { throw new CheckError('Signed arguments must be a JSON object.'); }
   }
+  // The bridge's HTTP middleware adds these two fields to parsed bodies.
+  // They are transport context, never check arguments or an identity claim.
+  args = { ...args };
+  delete args.__client_ip;
+  delete args.__caller_token;
   // These public reads neither verify nor claim the identity in an optional envelope.
   const permitted = new Set([...allowed, 'agent_id', 'pod_url', 'timestamp']);
   if (Object.keys(args).some(k => !permitted.has(k))) throw new CheckError('Unsupported input; use only the advertised check arguments.');

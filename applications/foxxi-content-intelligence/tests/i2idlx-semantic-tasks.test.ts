@@ -291,6 +291,35 @@ WHERE { ?record a ?peer . ?peer i2x:fixtureConcept ?concept }`;
       }
     }, { config: { fetch: fetcher } });
   });
+  it('ignores bridge HTTP transport metadata without accepting other undeclared inputs', async () => {
+    const metadata = { __client_ip: '192.0.2.19', __caller_token: 'synthetic-transport-token' };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(scheme(RELEASE));
+    await withServer(async base => {
+      for (const [operation, args] of [
+        ['classify', { graph_content: VALID }], ['validate', { graph_content: VALID }],
+        ['peer-term', { iri: 'https://example.org/peer/Credential' }], ['source-version', {}],
+      ] as const) {
+        const response = await call(base, operation, { ...args, ...metadata });
+        expect(response.status).toBe(200);
+        const packet = await response.json(); expectReadOnly(packet);
+        expect(packet.status).toBe('performed'); expect(packet.result).toBeDefined();
+        expect(JSON.stringify(packet)).not.toContain(metadata.__client_ip);
+        expect(JSON.stringify(packet)).not.toContain(metadata.__caller_token);
+      }
+      for (const operation of ['classify', 'validate']) {
+        for (const args of [
+          { graph_content: VALID, url: 'http://127.0.0.1/private' },
+          { graph_content: VALID, __undeclared: true },
+          { graph_content: PREFIXES + 'ex:forged rdfs:subClassOf ex:Other .' },
+        ]) {
+          const response = await call(base, operation, { ...args, ...metadata });
+          expect(response.status).toBe(400); expect((await response.json()).result).toBeUndefined();
+        }
+      }
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(fetcher.mock.calls[0]![0]).toBe('https://id.i2idl.org/scheme.ttl');
+    }, { config: { fetch: fetcher } });
+  });
   it('does not turn an optional unsigned relay envelope into an identity claim', async () => {
     await withServer(async base => {
       const response = await call(base, 'validate', { _signed_payload: JSON.stringify({ graph_content: VALID, agent_id: 'forged-did', timestamp: new Date().toISOString() }), _signature: 'invalid-proof' });
