@@ -27,12 +27,16 @@ Shared team records and private workspaces are ciphertext at rest. Shared plaint
 
 ## Ask and Orchestrate through your connected MCP client
 
-These two real read-only HTTP affordances are advertised by the Foxxi manifest and `GET /i2idlx/capabilities`:
+The Foxxi manifest and `GET /i2idlx/capabilities` advertise the public task and check operations. The JSON representation links `descriptor_url` to `GET /i2idlx/capabilities.ttl`, a Turtle descriptor emitted from the same action registry and usable by Interego's descriptor-based follower. The original discovery URL also negotiates Turtle for clients that request it.
 
 | Action | Route | Arguments |
 | --- | --- | --- |
 | `urn:iep:action:foxxi:i2idlx-ask` (`foxxi.i2idlx_ask`) | `POST /i2idlx/api/ask` | `question` (at most 4,000 UTF-8 bytes), optional `concept_ids` (at most 14 existing ids) |
 | `urn:iep:action:foxxi:i2idlx-orchestrate` (`foxxi.i2idlx_orchestrate`) | `POST /i2idlx/api/orchestrate` | `example:true` for the labelled fictional walkthrough, OR `brief` and 1–20 `records`; optional `concept_ids` |
+| `urn:iep:action:foxxi:i2idlx-classify` (`foxxi.i2idlx_classify`) | `POST /i2idlx/api/classify` | `graph_content`: inline Turtle, at most 64,000 UTF-8 bytes and 512 triples |
+| `urn:iep:action:foxxi:i2idlx-validate` (`foxxi.i2idlx_validate`) | `POST /i2idlx/api/validate` | The same bounded `graph_content` |
+| `urn:iep:action:foxxi:i2idlx-peer-term` (`foxxi.i2idlx_peer_term`) | `POST /i2idlx/api/peer-term` | `iri`: exact HTTP(S) term IRI, at most 2,048 UTF-8 bytes; never fetched |
+| `urn:iep:action:foxxi:i2idlx-source-version` (`foxxi.i2idlx_source_version`) | `POST /i2idlx/api/source-version` | `{}`; fetches only the fixed canonical scheme |
 
 Connect the Interego MCP app in your own ChatGPT/Claude/other supported AI client. Ask that client to discover the Foxxi bridge's advertised I2IDL-X actions; follow the actual action IRI using Interego's generic `act` operation and the declared arguments. For example:
 
@@ -41,6 +45,14 @@ Connect the Interego MCP app in your own ChatGPT/Claude/other supported AI clien
 3. For your inventory instead of the example, supply `{"brief":"Classify our learning inventory","records":[{"id":"our-lrs","title":"Learning record store","description":"Our xAPI statement store."}]}`. Do not combine custom records with `example:true`.
 
 Both operations return `execution:"client-required"`, `status:"instructions-only"`, `sampling_performed:false` and `writes_performed:false`. They deliver a task for the client's own model, not a server answer or a completed run. The server neither spends a model subscription nor takes an API key. An Interego connection makes these operations discoverable/callable; the AI client executes the reasoning under its own available subscription/model. The client must report unavailable tools rather than invent results. No task/session/run is persisted by these endpoints.
+
+The four check operations execute deterministic public reads and return `execution:"deterministic-read-only"` with actual result evidence. Classification uses the existing fixed `q-classify` query, generated ontology/alignment/referent graphs and supplied category-disjointness matrix. Validation reuses the native SHACL Core validator with RDFS inference and separately checks assigned concepts against actual glossary membership on the evaluated graph. It reports evaluated draft focus/shape pairs separately from ontology targets; conformance with zero draft targets cannot pass a required validation check. Neither operation establishes full OWL consistency or publication authority. Graph inputs accept instance statements only: caller schema and inference-changing axioms are refused, along with URL, path, query and shape parameters. Only one semantic check runs at a time per bridge process; concurrent requests receive 429.
+
+Classifier output is projected to submitted draft subjects so built-in service classifications are not mixed into a user's draft. Evidence includes both the complete query result count and the returned draft count, along with input and source hashes.
+
+Peer checks use the existing pinned publisher-label and mapping-target indexes. A miss means unconfirmed in that snapshot. Source-version checks read the canonical scheme now with a timeout, no redirects and a bounded response; they retain the deliberate deployed pin and report both releases on a mismatch. An outage is unavailable, not a fabricated comparison. Every task packet starts with freshness `not_checked`; only a successful actual source-version check reports freshness `checked`.
+
+Orchestrate includes a client-maintained pending ledger for classification, conditional recheck, peer targets, publication validation and optional upstream comparison. The client records actual actions, exact input or digest, results, engine/profile and source pins. Role drafts and HTTP success alone cannot pass checks. Missing tools block dependent work; false conditional steps can be skipped with evidence. Preflight requires prepared callable checks rather than package installation or changes to the user's environment. This ledger creates no server run or state.
 
 Public context comes only from the same generated `app/build-ts/data.json` used by the workbench: release/commit and rights, at most 14 selected entries with source evidence, relevant semantic categories/disjointness/crosswalk bridges, and published catalog control inputs/queries. Ask shares its actual instruction source with the browser. Orchestrate reads the existing `orc/scenario.js` role charters and twelve dependency steps. Browser sandbox tool names are labelled source descriptors; they are not new MCP tools. No team notes, ballots, usage, private workspace, secrets or recorded transcript is returned.
 
@@ -77,6 +89,8 @@ As an optional fallback, a user can enter their own OpenAI API key and model nam
 
 `applications/foxxi-content-intelligence/tests/i2idlx-client-tasks.test.ts` verifies canonical read-only discovery, actual public context/instructions, relay-envelope argument compatibility without identity claims, eight-role dependencies, no private-state projection, input/output bounds and unavailable-artifact refusal. These are task-packet tests, not evidence that a model executed the returned recipe.
 
+`applications/foxxi-content-intelligence/tests/i2idlx-semantic-tasks.test.ts` exercises real local HTTP check routes with pinned RDF fixtures: type inference and deliberate/fixed category conflicts, positive and negative SHACL controls, target disclosure, unknown-concept rejection, unsupported-shape refusal, bounded input, exact peer evidence and actual fetched-version match/mismatch/outage. The workbench tests also follow the Turtle descriptor through the generic Interego affordance engine. These fixture results do not establish deployed behavior.
+
 These tests use generated test wallets and an in-memory HTTP pod double. They are software verification fixtures, not evidence of a live Interego write or deployed Railway behavior. Use `railway.toml` from the repository root and configure `railway.env.example` on the existing bridge service; these files create no service, database or new paid model connection by themselves.
 
 Run the repository build/typecheck and targeted test module in CI, then verify production build identity and actual route responses after a separately authorized deployment.
@@ -86,7 +100,7 @@ Run the repository build/typecheck and targeted test module in CI, then verify p
 
 Open [Capability directory](https://foxxi-bridge.interego.xwisee.com/i2idlx/#agents-directory) and refresh the live inventory. The hosted directory reads the deployment's Foxxi contracts and Relay's advertised operations and input schemas; an unavailable source is shown as partial, and the embedded build snapshot remains explicitly unverified.
 
-Expand an operation, choose **Load example**, edit its typed fields or JSON, and use **Run live example** where offered. The result shows the actual target response, HTTP status, timestamp and duration. Good starting points are LRS discovery, intervention methods, decoration binding and Relay descriptor composition. LRS discovery reports the current deployment's storage mode; the present in-memory LRS is transient and loses records on restart.
+Expand an operation, choose **Load example**, edit its typed fields or JSON, and use **Run live example** where offered. The result shows the actual target response, HTTP status, timestamp and duration. Good starting points are LRS discovery, intervention methods, decoration binding and Relay descriptor composition. Use the current LRS discovery response (`/xapi/about`) as evidence of the deployment's storage mode rather than assuming a mode from an embedded snapshot.
 
 **Validate inputs** checks supported declared input constraints without invoking the operation. Protected operations provide a prepared call for an authenticated Interego client and display the required identity, permissions, data and configuration. **Prepare client task** returns real grounded instructions for the connected AI client; it does not execute a model or complete the workflow. A listed operation or a schema-valid request is not execution evidence.
 

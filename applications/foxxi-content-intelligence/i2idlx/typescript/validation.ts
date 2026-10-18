@@ -26,8 +26,9 @@ const supportedNames=new Set(['NodeShape','PropertyShape','targetClass','targetN
 export interface ValidationResult {
   focusNode:Term; sourceShape:Term; component:string; path?:Term; value?:Term; message:string;
 }
+export interface ValidationTarget {focusNode:Term;sourceShape:Term}
 export interface ValidationReport {
-  conforms:boolean; results:ValidationResult[]; report:Store; graph:Store; text:string;
+  conforms:boolean; results:ValidationResult[]; targets:ValidationTarget[]; dataGraph:Store; report:Store; graph:Store; text:string;
 }
 export interface ValidationOptions {ontology?:Store;inference?:'none'|'rdfs'}
 
@@ -224,7 +225,7 @@ class CoreValidator {
     return out;
   }
 }
-function reportFor(results:ValidationResult[]):ValidationReport {
+function reportFor(results:ValidationResult[],targets:ValidationTarget[],dataGraph:Store):ValidationReport {
   const report=new Store(),root=bn(),conforms=results.length===0;
   report.addQuad(quad(root,nn(RDF+'type'),nn(SH+'ValidationReport')));
   report.addQuad(quad(root,nn(SH+'conforms'),literal(conforms?'true':'false',nn(XSD+'boolean'))));
@@ -237,22 +238,28 @@ function reportFor(results:ValidationResult[]):ValidationReport {
     if(r.path)report.addQuad(quad(result,nn(SH+'resultPath'),r.path as Quad['object']));
     if(r.value)report.addQuad(quad(result,nn(SH+'value'),r.value as Quad['object']));
   }
-  return {conforms,results,report,graph:report,text:'Validation Report\nConforms: '+conforms+'\n'+results.map(r=>'Constraint Violation: '+r.component+'; Focus Node: '+r.focusNode.value+'; '+r.message).join('\n')};
+  return {conforms,results,targets,dataGraph,report,graph:report,text:'Validation Report\nConforms: '+conforms+'\n'+results.map(r=>'Constraint Violation: '+r.component+'; Focus Node: '+r.focusNode.value+'; '+r.message).join('\n')};
 }
 export async function shaclValidate(data:Store,shapes:Store,options:ValidationOptions={}):Promise<ValidationReport> {
   const started = Date.now();
   progress('validation:shacl', 'start', { dataTriples: data.size, shapeTriples: shapes.size, inference: options.inference ?? 'none' });
   ensureSupported(shapes);
   const merged=union(data,...(options.ontology?[options.ontology]:[])),graph=options.inference==='rdfs'?rdfsClosure(merged):merged;
-  const validator=new CoreValidator(graph,shapes),results:ValidationResult[]=[];
+  const validator=new CoreValidator(graph,shapes),results:ValidationResult[]=[],evaluatedTargets:ValidationTarget[]=[];
   const roots=dedup([
     ...[...shapes].filter(q=>[SH+'targetClass',SH+'targetNode',SH+'targetSubjectsOf',SH+'targetObjectsOf'].includes(q.predicate.value)).map(q=>q.subject),
     ...subjects(shapes,RDF+'type',nn(SH+'NodeShape')).filter(s=>has(shapes,s,RDF+'type',nn(RDFS+'Class')))
   ]);
   progress('validation:shacl', 'targets', { roots: roots.length, inferredTriples: graph.size });
-  for(const s of roots)for(const n of targets(graph,shapes,s))results.push(...validator.validate(n,s));
+  for(const s of roots) {
+    if(truth(shapes,s,'deactivated'))continue;
+    for(const n of targets(graph,shapes,s)) {
+      evaluatedTargets.push({focusNode:n,sourceShape:s});
+      results.push(...validator.validate(n,s));
+    }
+  }
   progress('validation:shacl', 'end', { results: results.length, seconds: (Date.now() - started) / 1000 });
-  return reportFor(results);
+  return reportFor(results,evaluatedTargets,graph);
 }
 export function conformsToShape(data:Store,shapes:Store,focus:Term,shape:Term):boolean {
   ensureSupported(shapes);return new CoreValidator(data,shapes).validate(focus,shape).length===0;

@@ -65,7 +65,7 @@ describe('current workbench capability directory and bounded examples', () => {
         expect(row).toBeDefined(); expect(row.in.length).toBe(a.inputs.length);
         expect(row.input_schema?.required).toEqual(a.inputs.filter(i => i.required).map(i => i.name));
       }
-      expect(data.actions.filter(a => a.n.startsWith('foxxi.i2idlx_')).length).toBe(7);
+      expect(data.actions.filter(a => a.n.startsWith('foxxi.i2idlx_')).length).toBe(11);
       expect(data.sources.map(s => s.count)).toEqual([production.length, 51]);
       expect(io.calls).toHaveLength(52); expect(io.stats().maxSchemas).toBeLessThanOrEqual(6);
       expect(io.calls.every(c => c.init?.method === 'GET' && c.init.redirect === 'manual')).toBe(true);
