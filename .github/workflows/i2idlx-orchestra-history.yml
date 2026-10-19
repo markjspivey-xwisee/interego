@@ -39,7 +39,7 @@ jobs:
       I2IDLX_ARCHIVE: ${{ github.workspace }}/archive
       I2IDLX_RELATIVE_ROOT: applications/foxxi-content-intelligence/i2idlx
       I2IDLX_ROOT: ${{ github.workspace }}/archive/applications/foxxi-content-intelligence/i2idlx
-      I2IDL_CLONE: ${{ runner.temp }}/i2idl-linked-data-v0.0.86
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data-v0.0.86-history
       INTEREGO_CORE_SRC: ${{ github.workspace }}/archive/packages/core/src
       INTEREGO_TSX: ${{ github.workspace }}/archive/node_modules/.bin/tsx
       I2IDLX_REASONER_JAR: ${{ github.workspace }}/archive/applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar

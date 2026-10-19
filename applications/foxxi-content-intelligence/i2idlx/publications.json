@@ -1,5 +1,5 @@
 {
- "comment": "Genuine signed descriptor authorities returned by publish_context, with their advertised HTTPS gateway URLs verified by public readback. Republishing supersedes its descriptor: retain previous URLs in superseded. The historical replay repair leaves these reviewed v0.0.93 graph payloads unchanged. Refresh dist-ts/published.json with npm run i2idlx:record.",
+ "comment": "Genuine signed descriptor authorities returned by publish_context, with their advertised HTTPS gateway URLs verified by public readback. Republishing supersedes its descriptor: retain previous URLs in superseded. Historical replay and its isolated source-path repair leave these reviewed v0.0.93 graph payloads unchanged. Refresh dist-ts/published.json with npm run i2idlx:record.",
  "descriptors": {
   "i2idlx-shapes": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1792373433833.ttl",
   "i2idlx": "https://gate.interego.xwisee.com/u-pk-33d42e6b33dc/context-graphs/1792373435644.ttl",
