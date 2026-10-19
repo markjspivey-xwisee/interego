@@ -149,7 +149,7 @@ function upstreamTemplate(file: string, marker: string) {
   const text = readFileSync(new URL('../src/' + file, import.meta.url), 'utf8').split(marker)[0]!;
   const replacements: Record<string, string> = { NS: testNS, SHAPES: 'https://example.org/shapes',
     RULES: 'https://example.org/rules', ONTO: 'https://example.org/i2idlx', VERSION: 'test' };
-  return parseTurtle(text.replace(/{{([A-Z_]+)}}/gu, (_, key: string) => {
+  return parseTurtle(text.replace(/\{\{([A-Z_]+)\}\}/gu, (_, key: string) => {
     assert.ok(key in replacements, 'Unknown upstream fixture template token ' + key);
     return replacements[key]!;
   }));

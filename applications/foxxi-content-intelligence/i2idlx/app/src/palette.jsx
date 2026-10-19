@@ -56,7 +56,7 @@ export function Palette({ onClose, ask, current, setTheme }) {
       <div className="modal palette" role="dialog" aria-modal="true" aria-label="Search">
         <div className="pin">
           <Icon name="search" size={18} />
-          <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search 397 terms, fields, places…" aria-label="Search"
+          <input ref={inp} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${C.length} terms, fields, places…`} aria-label="Search"
             role="combobox" aria-expanded="true" aria-controls="pal-list"
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") { e.preventDefault(); setI((x) => Math.min(items.length - 1, x + 1)); }
