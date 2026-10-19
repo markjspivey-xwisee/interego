@@ -74,7 +74,7 @@ Everything shown alongside I2IDL carries one of seven origin labels. They are da
 
 | Origin | What it covers | Trust |
 |---|---|---|
-| **I2IDL** | Labels, definitions, editorial notes and status, types, fields, curated collections, broader / narrower / related, evidence and its classification, sources and their rights, the release. Served by id.i2idl.org. | Approved by I2IDL's editors. Canonical; never restated or edited here. |
+| **I2IDL** | Labels, definitions, editorial notes and supplied status, types, fields, curated collections, broader / narrower / related, evidence and its classification, sources and their rights, the release. Served by id.i2idl.org. | Canonical publisher data. Editorial approval is reported only where supplied; never invented or edited here. |
 | **I2IDL-X · derived** | Computed from I2IDL's own data with no claim about meaning: definition provenance, agentic kind, reuse class, release feed, change history, per-concept controls. | Deterministic; recomputed per release. |
 | **I2IDL-X · added** | Links asserted about I2IDL concepts: a standard's specification document, a live exemplar. | Asserted by I2IDL-X, not by I2IDL. |
 | **I2IDL-X · proposed** | Enactments, crosswalks, role capabilities, and the semantic layer (what each concept classifies, and its alignments). | Hypothetical until reviewers ratify. |
@@ -157,7 +157,7 @@ Owner and slugs are one line each in `config.json`; the build re-mints every IRI
 
 **Foxxi integration.** Usage tagging reuses Foxxi's existing `foxxi#conceptIds` xAPI extension with I2IDL IRIs as values — no new extension. `i2x:CourseConceptAlignment` aligns Foxxi course concept-graph nodes to I2IDL so concept-coverage analysis can be read against one shared reference space across courses and tenants.
 
-**Also included.** Upstream-contract shapes that check the canonical profile without inventing missing metadata; definition-provenance classes (390 source-grounded, 30 synthesized), matching the provenance visibility I2IDL plans; a release feed (30 versions, v0.0.54 → v0.0.86); Interego interrogative alignments (What → definition, Why → editorial explanation, WhatKind → type, Where → field, Whose → evidence, How → enactment); and a JSON-LD context for Foxxi apps.
+**Also included.** Upstream-contract shapes that check the canonical profile without inventing missing metadata; definition-provenance classes (390 source-grounded, 30 synthesized), matching the provenance visibility I2IDL plans; a release feed (30 versions, v0.0.54 through v0.0.93); Interego interrogative alignments (What → definition, Why → editorial explanation, WhatKind → type, Where → field, Whose → evidence, How → enactment); and a JSON-LD context for Foxxi apps.
 
 ## How an agent uses it
 

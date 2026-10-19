@@ -2,13 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
-import { shareUrlBootstrap, orderedMappingIds, upstreamDefinitionText, upstreamEvidenceSourceNodes } from './build-app.js';
+import { shareUrlBootstrap, orderedMappingIds, upstreamDefinitionText, upstreamEvidenceSourceNodes, upstreamRoadmapApi } from './build-app.js';
 import { canonicalizeNeighborhoodTargets } from './decorations.js';
 import { originVocabularyDeclarations, catalogActionTargets } from './build-site.js';
 import { construct, parseTurtle, nn, PROV } from './rdf.js';
 import { shaclRules, shaclValidate } from './validation.js';
 
 const archive = 'https://claude.ai/artifact/retained-archive';
+test('roadmap API reader preserves route examples and recognizes the actual v0.0.93 maintenance declaration', () => {
+  assert.deepEqual(upstreamRoadmapApi('### 2. Add an API\n/api/concepts\n/api/concepts/{id}\n/api/sources\n'),
+    { routes: ['/api/concepts', '/api/concepts/{id}', '/api/sources'], maintained: false });
+  // Verbatim heading, declaration and URLs from docs/ROADMAP.md at 0754254be64f0562bab7e68d69583f2cc90aa945.
+  const maintenance = '### 2. Maintain REST API v1 and MCP integration\n\n'+
+    '**Implemented since v0.0.88; ongoing maintenance.** The public read-only REST API v1 provides concept search, lookup, relationships, version history, sources, collections, and AI-oriented context bundles. '+
+    'The interactive documentation is at `https://id.i2idl.org/api/docs`. The stateless read-only MCP service at `https://id.i2idl.org/mcp` exposes four bounded semantic tools for compatible AI clients. '+
+    'Both are projections of the canonical graph, not independent sources of truth.\n\n### 3. Continue improving human-readable provenance\n';
+  assert.deepEqual(upstreamRoadmapApi(maintenance), { routes: [], maintained: true });
+  assert.throws(() => upstreamRoadmapApi('### 2. Add an API\n'), /must supply three API route examples/);
+  for (const required of ['**Implemented since v0.0.88; ongoing maintenance.**', '`https://id.i2idl.org/api/docs`', '`https://id.i2idl.org/mcp`'])
+    assert.throws(() => upstreamRoadmapApi(maintenance.replace(required, '')), /must supply three API route examples/);
+  assert.throws(() => upstreamRoadmapApi(maintenance.replace('### 2. Maintain REST API v1 and MCP integration', '### 1. Something else')),
+    /must supply three API route examples/);
+});
 test('catalog-only action links target rendered controls without replacing ontology or bridge links', () => {
   const ns='https://example.org/ontology#', catalogIri='https://example.org/catalog';
   const catalog=parseTurtle('@prefix i: <'+ns+'> . @prefix c: <'+catalogIri+'#> . '+

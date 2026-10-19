@@ -209,7 +209,11 @@ jobs:
         if: ${{ always() && github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ secrets.JEV_MERGE_TOKEN }}
-          ARMED: ${{ vars.JEV_AUTO_MERGE }}
+          # A draft remains a reviewable candidate. Keep the selection, security review,
+          # whole-suite wait and every decision assessment above/below; only disarm mutation.
+          # With armed=false the decision prints its refusal and cannot label, merge or
+          # update the base branch, even when the repository's auto-merge switch is on.
+          ARMED: ${{ github.event.pull_request.draft != true && vars.JEV_AUTO_MERGE == 'true' }}
           TOKEN_PRESENT: ${{ secrets.JEV_MERGE_TOKEN != '' }}
           SELECTION_RESULT: ${{ steps.selection.outcome }}
           CALIBRATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/calibration

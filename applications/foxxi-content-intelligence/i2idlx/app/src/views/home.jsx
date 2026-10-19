@@ -37,7 +37,7 @@ export function Home() {
         <section className="hero">
           <div className="eyebrow">I2IDL Digital Learning Glossary · {META.release} · with I2IDL-X</div>
           <h1>Every digital-learning term, <em>with what you can do with it.</em></h1>
-          <p className="lede">{C.length} approved definitions from <b>I2IDL</b>, exactly as published, with their evidence, rights and relations. Kept visibly separate on top: the <b>I2IDL-X</b> layer — provenance lines, history and reading aids derived from I2IDL's own data; capability links to Foxxi and Interego and crosswalks to UNESCO, xAPI, IEEE LER, ADL TLA and schema.org, proposed for review — and your team's votes, notes and usage.</p>
+          <p className="lede">{C.length} published definitions from <b>I2IDL</b>, exactly as published, with their evidence, rights and relations. Kept visibly separate on top: the <b>I2IDL-X</b> layer — provenance lines, history and reading aids derived from I2IDL's own data; capability links to Foxxi and Interego and crosswalks to UNESCO, xAPI, IEEE LER, ADL TLA and schema.org, proposed for review — and your team's votes, notes and usage.</p>
           <button className="bigsearch" onClick={() => palette.open()}><Icon name="search" size={20} /><span className="grow">Search terms, definitions, sources…</span><kbd>/</kbd></button>
           <div className="statline">
             <span><b>{C.length}</b> terms</span><span><b>{META.counts.evidence}</b> evidence records</span><span><b>{META.counts.sources}</b> sources</span>

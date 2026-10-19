@@ -151,7 +151,7 @@ describe('the documents', () => {
     expect(rows[0]).toBe('subject_id\tsubject_label\tpredicate_id\tobject_id\tobject_label\tmapping_justification\tcomment');
     expect(rows).toHaveLength(1 + lms.alignments.length + (lms.gaps?.length ?? 0));
     expect(rows.some(row => row.startsWith('lms-x:lms\tLearning management system\tskos:relatedMatch\ti2idl:learning-management-systems\t'))).toBe(true);
-    expect(tsv).not.toContain('sssom:NoTermFound');
+    expect(rows.join('\n')).not.toContain('sssom:NoTermFound');
     const lti = proposalsSssom(DECORATIONS['lti-x'], BASE);
     expect(lti).toContain('sssom:NoTermFound');
     expect(lti).toContain('the I2IDL glossary (v0.0.86): It has no term for LTI or for a learning tool launch.');

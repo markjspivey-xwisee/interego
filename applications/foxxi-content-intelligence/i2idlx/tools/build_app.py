@@ -641,6 +641,18 @@ def i2idl_doc(heading, *paths):
         if r.returncode == 0 and re.search("^" + re.escape(heading) + "$", r.stdout, re.M):
             return path, r.stdout
     raise SystemExit(f"no {heading!r} in any of {paths} at {commit_sha[:7]}")
+def upstream_roadmap_api(priority_block):
+    routes = re.findall(r"^(/api/[^\s]+)\r?$", priority_block, re.M)
+    parts = re.split(r"^### 2\. Maintain REST API v1 and MCP integration\r?$", priority_block, flags=re.M)
+    maintenance = re.split(r"^### \d+\. ", parts[1], flags=re.M)[0] if len(parts) > 1 else ""
+    maintained = ("**Implemented since v0.0.88; ongoing maintenance.**" in maintenance
+                  and "`https://id.i2idl.org/api/docs`" in maintenance
+                  and "`https://id.i2idl.org/mcp`" in maintenance)
+    if len(routes) != 3 and not (len(routes) == 0 and maintained):
+        raise ValueError("Upstream roadmap must supply three API route examples or its documented implemented API/MCP maintenance priority")
+    return routes, maintained
+
+
 roadmap_path, roadmap = i2idl_doc("## Next development priorities", "docs/ROADMAP.md", "README.md")
 principle_path, principle_doc = i2idl_doc("## Development principle", "docs/ARCHITECTURE.md", "README.md")
 phases = []
@@ -653,9 +665,9 @@ for mm in re.finditer(r"^### (\d+)\. (.+)$", prio_block, re.M):
                        "anchor": re.sub(r"[^a-z0-9 -]", "", (mm.group(1) + ". " + mm.group(2)).lower()).replace(" ", "-")})
 principle = " ".join(principle_doc.split("## Development principle", 1)[1].split("\n## ", 1)[0].split())
 principle = re.sub(r"`([^`]+)`", r"\1", principle)
-routes = re.findall(r"^(/api/[^\s]+)$", prio_block, re.M)
+routes, api_maintained = upstream_roadmap_api(prio_block)
 prov_lines = re.findall(r"^Definition provenance: (.+)$", prio_block, re.M)
-check(len(phases) == 7 and len(priorities) == 4 and len(routes) == 3 and len(prov_lines) == 2 and principle,
+check(len(phases) == 7 and len(priorities) == 4 and (len(routes) == 3 or api_maintained) and len(prov_lines) == 2 and principle,
       f"I2IDL's {roadmap_path} at {commit_sha[:7]}: {len(phases)} phases, {len(priorities)} next priorities, {len(routes)} example API routes, "
       f"{len(prov_lines)} provenance wordings; development principle from {principle_path}")
 check(prov_lines == ["Direct source definition", "I2IDL synthesis supported by source evidence"],

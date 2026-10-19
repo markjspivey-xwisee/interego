@@ -204,11 +204,15 @@ export function AddToPack({ ids, label = "Add to pack", small = true }) {
 
 function DefMeta({ c, x }) {
   const nd = c.ev.filter((e) => e.r === "d").length, ns = c.ev.length - nd;
+  const definitionMeta = [c.dq != null ? `Definition ${c.dq}` : null, c.dl || null].filter(Boolean).join(" · ");
+  const editorialTitle = c.ds === "approved" ? "I2IDL's published definition, marked approved in its editorial metadata."
+    : c.ds ? "I2IDL's published definition; editorial status is shown as supplied by the source."
+      : "I2IDL's published definition; editorial status is not supplied in this record.";
   return (
     <div className="stack" style={{ gap: 8 }}>
       <div className="def-meta">
-        <ModalChip status="Asserted" title="I2IDL's approved definition: published as fact.">I2IDL · {c.ds}</ModalChip>
-        <span>Definition {c.dq} · {c.dl}</span>
+        <ModalChip status={c.ds === "approved" ? "Asserted" : "Hypothetical"} title={editorialTitle}>I2IDL · {c.ds || "Not supplied"}</ModalChip>
+        {definitionMeta ? <span>{definitionMeta}</span> : null}
         <span>{plural(nd, "direct evidence record")}{ns ? `, ${ns} supporting` : ""}</span>
       </div>
       {x ? (

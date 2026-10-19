@@ -202,6 +202,16 @@ export function upstreamEvidenceSourceNodes(nodes: Row[]): Row[] {
     return source;
   });
 }
+/** Keep proposed route examples separate from v0.0.93's completed API/MCP maintenance priority. */
+export function upstreamRoadmapApi(priorityBlock: string): { routes: string[]; maintained: boolean } {
+  const routes = [...priorityBlock.matchAll(/^(\/api\/[^\s]+)\r?$/gm)].map(m => m[1]!);
+  const maintenance = priorityBlock.split(/^### 2\. Maintain REST API v1 and MCP integration\r?$/m)[1]?.split(/^### \d+\. /m)[0] || '';
+  const maintained = maintenance.includes('**Implemented since v0.0.88; ongoing maintenance.**') &&
+    maintenance.includes('`https://id.i2idl.org/api/docs`') && maintenance.includes('`https://id.i2idl.org/mcp`');
+  if (routes.length !== 3 && !(routes.length === 0 && maintained))
+    throw new Error('Upstream roadmap must supply three API route examples or its documented implemented API/MCP maintenance priority');
+  return { routes, maintained };
+}
 /** Preserve authored review order independently of the RDF serializer's subject order. */
 export function orderedMappingIds(actualIds:readonly string[],declaredIds:readonly string[]=mappingIds()):string[] {
   const actual=new Set(actualIds),declared=new Set(declaredIds);
@@ -485,8 +495,8 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   const prioBlock = roadmap.split('## Next development priorities')[1]!.split('\n## ')[0]!;
   const priorities = [...prioBlock.matchAll(/^### (\d+)\. (.+)$/gm)].map(m => ({ n: Number(m[1]!), title: m[2]!.trim(), anchor: (m[1]! + '. ' + m[2]!).toLowerCase().replace(/[^a-z0-9 -]/g, '').replace(/ /g, '-') }));
   const principle = clean(principleDoc.split('## Development principle')[1]!.split('\n## ')[0])!.replace(/`([^`]+)`/g, '$1');
-  const routes = [...prioBlock.matchAll(/^(\/api\/[^\s]+)$/gm)].map(m => m[1]!), provLines = [...prioBlock.matchAll(/^Definition provenance: (.+)$/gm)].map(m => m[1]!);
-  check(phases.length === 7 && priorities.length === 4 && routes.length === 3 && provLines.length === 2 && principle, "I2IDL's own roadmap and development principle are read from the pinned commit");
+  const { routes, maintained: apiMaintained } = upstreamRoadmapApi(prioBlock), provLines = [...prioBlock.matchAll(/^Definition provenance: (.+)$/gm)].map(m => m[1]!);
+  check(phases.length === 7 && priorities.length === 4 && (routes.length === 3 || apiMaintained) && provLines.length === 2 && principle, "I2IDL's own roadmap and development principle are read from the pinned commit");
   check(JSON.stringify(provLines) === JSON.stringify(['Direct source definition', 'I2IDL synthesis supported by source evidence']), "the provenance wording is I2IDL's own");
   const blob = cfg.i2idl.repo + '/blob/' + commitSha + '/', upstream = { phases, priorities, principle, routes, provenance: provLines, roadmap: blob + roadmapPath, roadmapName: roadmapPath !== 'README.md' ? 'roadmap' : 'README',
     principleSource: blob + principlePath, principleName: principlePath !== 'README.md' ? 'architecture notes' : 'README' };

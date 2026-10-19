@@ -62,7 +62,7 @@ export function Insights({ route }) {
       <div className="stack" style={{ gap: 6 }}>
         <div className="eyebrow">Insights · {META.scheme.title} {META.release}</div>
         <div className="row wrap" style={{ alignItems: "flex-end", gap: 18 }}>
-          <div><div className="hero-fig">{C.length}</div><div className="muted">approved concepts</div></div>
+          <div><div className="hero-fig">{C.length}</div><div className="muted">published concepts</div></div>
           <p className="lede" style={{ maxWidth: "52ch" }}>Built from commit <a href={`${META.repo}/commit/${META.commit}`} target="_blank" rel="noopener"><code>{META.commit.slice(0, 7)}</code></a> ({fmtDate(META.commitDate)}). Every number below is computed from that release and the I2IDL-X graphs published on Interego.</p>
         </div>
       </div>

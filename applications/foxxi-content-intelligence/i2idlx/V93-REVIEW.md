@@ -23,6 +23,8 @@ The new concepts omit the duplicate `skos:definition`, `schema:inDefinedTermSet`
 
 Readers and the release contract accommodate that actual profile while retaining required concept identity, membership, active-definition, value, evidence and source-resolution checks. Missing language and sequence remain unknown; missing editorial status derives a conservative Hypothetical decoration. No missing canonical field is filled in or rewritten.
 
+The workbench uses published rather than blanket-approved counts. An entry with absent editorial metadata shows Not supplied and a Hypothetical chip; absent language and sequence do not leave empty metadata. The desktop/mobile hosted visitor check opens the new LMS term, reads its active-only definition and checks the release-derived search count.
+
 All 23 new definitions have supporting evidence. They remain synthesized under the existing provenance rule. ERIC's rights text is preserved as an upstream statement, not an independent legal determination. The mixed source-specific reuse policy remains in force. The separate French catalog retains its own publicationVersion v0.0.90.
 
 All 46 glossary-affecting commits reachable through the checkout pin were inspected as exact Git blobs and grouped by their actual scheme publicationVersion. They contain 30 release groups, including the 23 retained through v86 and seven subsequent releases. This is derived from source history, not release-number arithmetic.
