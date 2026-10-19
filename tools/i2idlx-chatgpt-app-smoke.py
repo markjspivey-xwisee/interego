@@ -264,7 +264,10 @@ def main():
                         frame.locator(".pkterm").first.wait_for()
                         check(tag + ":pack_add_local_term", frame.locator(".pkterm").count() == 1
                               and "Learning Record Store (LRS)" in frame.locator(".pkterm").inner_text())
-                        check(tag + ":pack_no_private_identity", "Saved in this browser" in frame.locator(".pk aside").first.inner_text())
+                        pack_identity = frame.locator(".pk aside").first.inner_text()
+                        check(tag + ":pack_no_private_identity", "Packs are kept in this browser when storage is available." in pack_identity)
+                        check(tag + ":pack_no_pod_persistence_claim", "This ChatGPT App does not save them to an Interego pod." in pack_identity)
+                        check(tag + ":pack_no_fake_sign_in", not re.search(r"\bsign\s+in\b|claude\.ai", pack_identity, re.I))
                         frame.get_by_role("button", name="CSV", exact=True).click()
                         csv = frame.locator(".preview pre").text_content()
                         frame.get_by_role("button", name="Save csv", exact=True).click()
