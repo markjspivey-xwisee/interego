@@ -1,0 +1,160 @@
+name: I2IDL-X v0.0.93 controlled release
+
+# The authorized release from the existing draft branch. A receipt update is the
+# trigger: source-only candidate pushes are validated without touching production.
+# This caller adds no build/deploy implementation and never merges the draft PR.
+on:
+  push:
+    branches: [fix/i2idlx-executable-checks]
+    paths:
+      - 'applications/foxxi-content-intelligence/i2idlx/publications.json'
+
+concurrency:
+  # Distinct from the called workflow's railway-deploy-foxxi-bridge lock.
+  group: i2idlx-v93-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Verify the reviewed pin and wait for every CI result
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - name: Require the reviewed canonical source and original graph owner
+        env:
+          # Fill this with the validated candidate's exact SHA in the final receipt
+          # commit. The placeholder deliberately fails closed if it is not filled.
+          EXPECTED_PREDECESSOR: da05797176ea98668cea55e5cea06f23a7108875
+          PUSH_PREDECESSOR: ${{ github.event.before }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          assert.match(process.env.EXPECTED_PREDECESSOR, /^[0-9a-f]{40}$/);
+          assert.equal(process.env.PUSH_PREDECESSOR, process.env.EXPECTED_PREDECESSOR,
+            'Only the authorized successor of the reviewed candidate can release.');
+          const root = 'applications/foxxi-content-intelligence/i2idlx/';
+          const config = JSON.parse(readFileSync(root + 'config.json', 'utf8'));
+          const pin = JSON.parse(readFileSync(root + 'typescript/upstream-pin.json', 'utf8'));
+          assert.equal(config.i2idl.release, 'v0.0.93');
+          assert.equal(config.i2idl.repo, 'https://github.com/blakeplock/i2idl-linked-data');
+          assert.equal(config.i2idl.graphPath, 'public/glossary.jsonld');
+          assert.equal(pin.release, config.i2idl.release);
+          assert.equal(pin.repository, config.i2idl.repo);
+          assert.equal(pin.graphPath, config.i2idl.graphPath);
+          assert.equal(pin.commit, '0754254be64f0562bab7e68d69583f2cc90aa945');
+          assert.equal(pin.graphSha256, 'db172a650fc34766b81a1d75ae0f351131fcd6a0623ddc4b7f2bdd3643a40e6a');
+          assert.equal(config.owner, 'u-pk-33d42e6b33dc');
+          assert.equal(config.relayNsRoot, 'https://relay.interego.xwisee.com/ns');
+          const publications = JSON.parse(readFileSync(root + 'publications.json', 'utf8'));
+          const slugs = ['i2idlx-shapes', 'i2idlx', 'i2idlx-rules', 'i2idlx-catalog',
+            'i2idlx-enactments', 'i2idlx-mappings', 'i2idlx-releases', 'i2idlx-changes',
+            'i2idlx-alignments', 'i2idlx-referents'];
+          assert.deepEqual(Object.keys(publications.descriptors).sort(), slugs.sort());
+          for (const url of Object.values(publications.descriptors)) {
+            assert.match(url, /^https:\/\/gate\.interego\.xwisee\.com\/u-pk-33d42e6b33dc\/context-graphs\/[0-9]+\.ttl$/);
+          }
+          console.log('Reviewed v0.0.93 source pin and original publication namespace verified.');
+          NODE
+      - name: Require the full release CI surface to register
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SELF_WORKFLOW: I2IDL-X v0.0.93 controlled release
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { runsForSha } from './tools/ci-green-for-sha.mjs';
+          const required = ['ESLint', 'Bridge Typecheck', 'Mutation Gate', 'Ontology Lint',
+            'Foxxi SHACL Agreement', 'Base without verticals', 'I2IDL-X TypeScript parity',
+            'I2IDL-X bounded native diagnostic', 'I2IDL-X complete golden parity',
+            'I2IDL-X shared-input closure diagnostic', 'I2IDL-X browser and original client oracles',
+            'jev-harness (System One judgments)'];
+          const options = { repo: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN,
+            self: process.env.SELF_WORKFLOW };
+          for (let attempt = 0; attempt < 20; attempt++) {
+            const runs = await runsForSha(process.env.RELEASE_SHA, options);
+            const names = new Set(runs.map(run => run.name));
+            const missing = required.filter(name => !names.has(name));
+            if (missing.length === 0) {
+              console.log('Every required release workflow is registered for this exact SHA.');
+              process.exit(0);
+            }
+            console.log('Waiting for required workflows: ' + missing.join(', '));
+            await new Promise(resolve => setTimeout(resolve, 15_000));
+          }
+          throw new Error('The required release CI surface did not register; refusing to deploy.');
+          NODE
+      - name: Wait for CI on this exact commit and refuse unless it is green
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SELF_WORKFLOW: I2IDL-X v0.0.93 controlled release
+          CI_GATE_TIMEOUT_MS: '3600000'
+        run: node tools/ci-green-for-sha.mjs "${{ github.sha }}"
+      - name: Refuse a candidate superseded while its checks ran
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          ACTUAL_SHA="$(git ls-remote origin "$GITHUB_REF" | cut -f1)"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA" || {
+            echo 'This candidate is no longer the branch head; refusing its release.' >&2
+            exit 1
+          }
+
+  build:
+    name: Build the checked Foxxi bridge commit
+    needs: gate
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build-ghcr.yml
+    with:
+      image: interego-foxxi-bridge
+    secrets: inherit
+
+  deploy:
+    name: Deploy the checked Foxxi bridge image through existing guards
+    needs: [gate, build]
+    permissions: {}
+    uses: ./.github/workflows/deploy-railway.yml
+    with:
+      service: foxxi-bridge
+      tag: ${{ github.sha }}
+      set_registry_credentials: false
+    secrets: inherit
+
+  live-visitor:
+    name: Verify real public desktop and mobile visitor journeys
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install the same pinned browser oracle as the candidate checks
+        run: |
+          python3 -m pip install 'playwright==1.56.0'
+          python3 -m playwright install --with-deps chromium
+      - name: Visit the deployed public workbench without host or model credentials
+        run: >-
+          python3 tools/i2idlx-live-visitor-smoke.py
+          --url https://foxxi-bridge.interego.xwisee.com/i2idlx/
+          --expected-build "${{ github.sha }}"

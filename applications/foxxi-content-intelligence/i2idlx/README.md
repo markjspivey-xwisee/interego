@@ -88,6 +88,9 @@ Hosted *on Interego*, not on a static site: each graph is published with `publis
 
 All ten publishable graphs have stable public IRIs. `npm run i2idlx:verify-published` fetches every IRI as Turtle, JSON-LD and HyperMarkdown, requires Turtle and JSON-LD to be RDF-isomorphic to `dist-ts/`, and exits non-zero on any miss. `dist-ts/published.json` records each graph's signed descriptor (the authority), modal status, `validFrom` and signed content hash; refresh these read-only receipts with `npm run i2idlx:record`.
 
+The numerical sizes in this table retain the original v86 baseline. Current v93
+counts and byte sizes are generated in `dist-ts/publish-plan.json` and the verification reports.
+
 | Graph | IRI (`https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/…`) | Origin | Modal status | Triples | Size |
 |---|---|---|---|---|---|
 | Ontology (`i2x:`) | `i2idlx` | I2IDL-X | Asserted | 1,822 | 107 KiB |

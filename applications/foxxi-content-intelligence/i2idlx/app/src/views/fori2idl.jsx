@@ -75,7 +75,8 @@ export function ForI2IDL() {
         </Priority>
 
         <Priority n={2} title={prio(2).title} anchor={prio(2).anchor} o="interego"
-          lead={<>Your three example routes, answered today as projections of your canonical graph: stored queries against your own SPARQL service and your own content negotiation. No second source of truth, no new server.</>}>
+          lead={up.routes.length ? <>Your example routes, answered today as projections of your canonical graph: stored queries against your own SPARQL service and your own content negotiation. No second source of truth, no new server.</>
+            : <>Your current documentation describes implemented REST and MCP interfaces. The I2IDL-X examples below use controls from the published catalog: <b>Try here</b> evaluates this pinned release; <b>Live</b> opens the corresponding query on your SPARQL service.</>}>
           <ApiRoutes routes={up.routes} />
           <div className="small muted">For agents, the same projections are a HyprCat catalog on Interego: {PORTS.length} controls, {QUERIES.length} stored queries and your published limits as data, pointing at <code>id.i2idl.org</code>.</div>
           <div className="row wrap"><a className="btn sm" href="#agents"><Icon name="agent" />Agent console</a><a className="btn sm" href={META.iri.catalog} target="_blank" rel="noopener"><Icon name="external" />The catalog graph</a></div>
@@ -172,7 +173,19 @@ function UnescoTable({ rows }) {
 
 function ApiRoutes({ routes }) {
   const [open, setOpen] = useState(null);
-  const rows = useMemo(() => routes.map((r) => {
+  const rows = useMemo(() => {
+    if (!routes.length) {
+      const search = QS.find((q) => q.name === "concept-search");
+      const neighborhood = QS.find((q) => q.name === "concept-neighborhood");
+      return [
+        search ? { route: "Stored query: " + search.name, how: "I2IDL-X catalog example: search for competency",
+          url: liveGet(bind(search, { text: "competency" })), local: runLocal(search.name, { text: "competency" }) } : null,
+        neighborhood && byId.has("learning-record-store-lrs") ? { route: "Stored query: " + neighborhood.name,
+          how: "I2IDL-X catalog example: the LRS concept and its relationships",
+          url: liveGet(bind(neighborhood, { concept: "learning-record-store-lrs" })), local: runLocal(neighborhood.name, { concept: "learning-record-store-lrs" }) } : null,
+      ].filter(Boolean);
+    }
+    return routes.map((r) => {
     const q = r.match(/\?q=([^&]+)/);
     const id = r.split("/").pop().split("?")[0];
     if (q) {
@@ -185,9 +198,11 @@ function ApiRoutes({ routes }) {
     }
     const c = byId.get(id);
     return { route: r, how: "your own content negotiation", url: c ? iriOf(c.id) + ".jsonld" : null, local: c ? { head: ["concept", "label"], rows: [[c.id, c.l]], concept: true } : null };
-  }), [routes]);
+    });
+  }, [routes]);
   return (
     <div className="routes">
+      {!routes.length ? <div className="small muted"><Origin o="added" quiet /> I2IDL-X catalog examples. The current upstream roadmap supplies no proposed route examples.</div> : null}
       {rows.map((r, i) => (
         <div key={r.route} className="route">
           <div className="row wrap" style={{ gap: 8 }}>

@@ -125,11 +125,18 @@ jobs:
             if (!/^[a-z0-9-]+\.ttl$/.test(graph.file)) throw new Error('Unexpected publication filename');
             const bytes = readFileSync(join(directory, graph.file));
             if (bytes.length !== graph.bytes) throw new Error('Publication byte count differs from plan');
-            process.stdout.write('I2IDLX_PUBLICATION_INPUT=' + JSON.stringify({
+            const encoded = bytes.toString('base64');
+            const chunkSize = 8192, chunks = Math.ceil(encoded.length / chunkSize);
+            process.stdout.write('I2IDLX_PUBLICATION_MANIFEST=' + JSON.stringify({
               headSha: process.env.I2IDLX_HEAD_SHA, graph,
               sha256: createHash('sha256').update(bytes).digest('hex'),
-              base64: bytes.toString('base64'),
+              chunks,
             }) + '\n');
+            for (let index = 0; index < chunks; index++) {
+              process.stdout.write('I2IDLX_PUBLICATION_CHUNK=' + JSON.stringify({
+                file: graph.file, index, base64: encoded.slice(index * chunkSize, (index + 1) * chunkSize),
+              }) + '\n');
+            }
           }
           JS
       - name: Emit timing and progress evidence, including on timeout
