@@ -35,7 +35,7 @@ jobs:
         env:
           # Fill this with the validated candidate's exact SHA in the final receipt
           # commit. The placeholder deliberately fails closed if it is not filled.
-          EXPECTED_PREDECESSOR: da05797176ea98668cea55e5cea06f23a7108875
+          EXPECTED_PREDECESSOR: 066f9de9ec71ba60464141e1914fc6e1fb3dac3c
           PUSH_PREDECESSOR: ${{ github.event.before }}
         run: |
           node --input-type=module <<'NODE'
@@ -80,7 +80,7 @@ jobs:
             'Foxxi SHACL Agreement', 'Base without verticals', 'I2IDL-X TypeScript parity',
             'I2IDL-X bounded native diagnostic', 'I2IDL-X complete golden parity',
             'I2IDL-X shared-input closure diagnostic', 'I2IDL-X browser and original client oracles',
-            'jev-harness (System One judgments)'];
+            'jev-harness (System One judgments)', 'I2IDL-X historical orchestration oracle'];
           const options = { repo: process.env.GITHUB_REPOSITORY, token: process.env.GITHUB_TOKEN,
             self: process.env.SELF_WORKFLOW };
           for (let attempt = 0; attempt < 20; attempt++) {

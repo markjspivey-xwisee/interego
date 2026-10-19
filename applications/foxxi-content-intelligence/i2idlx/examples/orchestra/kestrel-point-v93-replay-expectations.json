@@ -1,0 +1,422 @@
+{
+  "v": 1,
+  "purpose": "Exact deterministic replay expectations for current v93. The original v86 Claude recording is unchanged; these are observed tool outputs, not a new model recording.",
+  "historical": {
+    "release": "v0.0.86",
+    "implementationCommit": "f933fcf5f1e8df56aad0d7721b5f4c927514fce0",
+    "traceGitBlob": "8b46443e9a5c4c4a35ffcc6a9e70884a4f1012f5",
+    "traceSha256": "cfa66c5ce432eb3cf46452c55435da307ef5dc08811d26ea31d417e179f89aba"
+  },
+  "current": {
+    "release": "v0.0.93",
+    "checkoutCommit": "0754254be64f0562bab7e68d69583f2cc90aa945",
+    "graphRevision": "b75261de5ad7851c1f61607091cc00e486bbbb5f",
+    "graphSha256": "db172a650fc34766b81a1d75ae0f351131fcd6a0623ddc4b7f2bdd3643a40e6a"
+  },
+  "capture": {
+    "sourceHead": "3aea797c3fef2bacf98f9247b8b196eb7a26236c",
+    "run": 39187572225,
+    "job": 117853116469,
+    "dataSha256": "91a059effa96993e3a8a1a5ea75655cb0f8f52ab76fa60a577a4ccce5110b67a",
+    "captureSha256": "50722045b0c7422d5ac4318488e3fa74d1ff0ab25d4afed3a7f6d1e520d4257c",
+    "reviewedAt": "2026-10-19",
+    "review": "All 11 differences reviewed against actual v93 source: four search batches, six bounded related-term lists, and one application count. No old definition text changes. All 37 other results must remain exact."
+  },
+  "results": [
+    {
+      "id": "c1",
+      "tool": "get_records",
+      "ok": true,
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "recordedSha256": "277d348e7205e5023b9f09585097d6a0cef4c11fcbe4b162a7cfa246ffe37ae9",
+      "expectedSha256": "277d348e7205e5023b9f09585097d6a0cef4c11fcbe4b162a7cfa246ffe37ae9"
+    },
+    {
+      "id": "c2",
+      "tool": "read_catalog",
+      "ok": true,
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "recordedSha256": "f4a78099f55b421936e13fb11c78b020d5f8296f4901eb0a9dfd1f74b5cb1127",
+      "expectedSha256": "f4a78099f55b421936e13fb11c78b020d5f8296f4901eb0a9dfd1f74b5cb1127"
+    },
+    {
+      "id": "c3",
+      "tool": "inspect_control",
+      "ok": true,
+      "inputSha256": "3448831fb89e3c108e81e97f3dcfb297ab0e70e3813e64d7c518371b9035e5d7",
+      "recordedSha256": "6b3eca276823459dabfeedaeb58df994474cf1fd1e4a182e292e50b0e228803f",
+      "expectedSha256": "6b3eca276823459dabfeedaeb58df994474cf1fd1e4a182e292e50b0e228803f"
+    },
+    {
+      "id": "c4",
+      "tool": "inspect_control",
+      "ok": true,
+      "inputSha256": "15e9eeb5e2a5025b9aaeeeb011541d2a1ed60466c1447524a72340f3c48d602f",
+      "recordedSha256": "ced94beae58ee000ccaa553d969bcc6a3b90106b5252cd592732a017ca8b93bc",
+      "expectedSha256": "ced94beae58ee000ccaa553d969bcc6a3b90106b5252cd592732a017ca8b93bc"
+    },
+    {
+      "id": "c5",
+      "tool": "inspect_control",
+      "ok": true,
+      "inputSha256": "7f2249e29994d252601a8a79236fa1c399469d4633824c838c09ea8fa0b8af37",
+      "recordedSha256": "567e78393418fb28e46a60ef7d27518273395e26d65b971a02733932b1642830",
+      "expectedSha256": "567e78393418fb28e46a60ef7d27518273395e26d65b971a02733932b1642830"
+    },
+    {
+      "id": "c6",
+      "tool": "inspect_control",
+      "ok": true,
+      "inputSha256": "1a97b19a4e07d30c95ce8acdc5ba4ce8b915c174a8334b52520e80b4efbf1bc1",
+      "recordedSha256": "5490a37fd76a62796c61df86ee85ff135394832d2900dd1131ef5a10c63cf8a6",
+      "expectedSha256": "5490a37fd76a62796c61df86ee85ff135394832d2900dd1131ef5a10c63cf8a6"
+    },
+    {
+      "id": "c7",
+      "tool": "get_records",
+      "ok": true,
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "recordedSha256": "277d348e7205e5023b9f09585097d6a0cef4c11fcbe4b162a7cfa246ffe37ae9",
+      "expectedSha256": "277d348e7205e5023b9f09585097d6a0cef4c11fcbe4b162a7cfa246ffe37ae9"
+    },
+    {
+      "id": "c8",
+      "tool": "search_glossary",
+      "ok": true,
+      "inputSha256": "2d47c0bac4d366fe2294d7c647dcc2e544989aa31ba736da3784af349d2ee2d9",
+      "recordedSha256": "82c2be91ec06b2c53323eaf39ded2201f28110c923c6a3d701e88e34e4feab53",
+      "expectedSha256": "252939acc9a655bfa418c7bce6d2e1f6a1c07bb00df9116fbfcd15f18d0247fc",
+      "changeReason": "Assessment Literacy is a new v93 assessment search hit; the unchanged six-result limit shifts subsequent hits."
+    },
+    {
+      "id": "c9",
+      "tool": "search_glossary",
+      "ok": true,
+      "inputSha256": "2e8a10ac35d77dd4cbfd35ac0202f083f864a0e6a1909396ec32d848ddfc7057",
+      "recordedSha256": "ffa75d6b8e7c38e20f9a227b8348533ddc0ea86f858de8c188a3dd3b1f4a1ada",
+      "expectedSha256": "5ef885d2739eb6b3d7d53f352336a6cc033314a2cae1df5b8ed6b874d3287161",
+      "changeReason": "Instructional Design and Adaptive Testing are new v93 search hits; existing definitions remain unchanged."
+    },
+    {
+      "id": "c10",
+      "tool": "search_glossary",
+      "ok": true,
+      "inputSha256": "07d59177a075d9dc721ba34325e2a8cb1b7a19c08e640dbf60346516d4518e60",
+      "recordedSha256": "1b8182295c75e9a57fb6fa2786e9cc66768c62436ef53a6cdc0c23e544ab1635",
+      "expectedSha256": "2d23414fc3c9fbdad35fea827a2a4012411b3242bc8cbc5f3d67df6acf7a90eb",
+      "changeReason": "New Learning Strategies and Learning Objectives affect current search ranks; bounded results reflect the v93 corpus."
+    },
+    {
+      "id": "c11",
+      "tool": "search_glossary",
+      "ok": true,
+      "inputSha256": "e998464eb37e3f359ecfc3d65111d00704431633a3c9de023bba47524dfde16e",
+      "recordedSha256": "98ad3571f191c6e71b699fb060d7c509f34b4b12aac2a49744a8825036feec7b",
+      "expectedSha256": "53a30e2b54dfd5425601287581c8532ca9b27bfbfca37ebc808712d7c0b60601",
+      "changeReason": "Transfer of Training is new; the expanded current corpus changes training search ranks."
+    },
+    {
+      "id": "c12",
+      "tool": "read_concepts",
+      "ok": true,
+      "inputSha256": "52761f7b677b235e169344ab243a422d720954ee13e35766a906cb5b716a6376",
+      "recordedSha256": "abc4f37d3e9189aebbe202fa4b93ebcce1761f6832299b0e74bd223ecafac1b4",
+      "expectedSha256": "edf2c23844823bddc17c56fbad6f168e561a79e1c7a1bf570ad1642239e63a8d",
+      "changeReason": "Reviewed v93 related links add LMS, Game Based Learning and Assessment Literacy to the bounded concept neighborhoods."
+    },
+    {
+      "id": "c13",
+      "tool": "read_concepts",
+      "ok": true,
+      "inputSha256": "91a1653c771db668705f4d2171a2bb1797d9e3ec3289614baf4fe0d4d3e14958",
+      "recordedSha256": "d5a295c09978b2b0ba715ca47dbc59878a13597f084900b30a554aa0d7f2aee9",
+      "expectedSha256": "c075a14549180eef5020fa6d24ec04c0202418d3ff1b78d3fd5df238eda06e2e",
+      "changeReason": "Reviewed v93 related links add Media Literacy and Transfer of Training."
+    },
+    {
+      "id": "c14",
+      "tool": "classify_records",
+      "ok": true,
+      "inputSha256": "321b557d722233c75bbd81ddda910bc50ad62caf7e163d983b1548510f9d6977",
+      "recordedSha256": "d337556714b13e3a6f22182014c4c0e7e33d4cffbbf072bcb126c2bceb7de0e6",
+      "expectedSha256": "d337556714b13e3a6f22182014c4c0e7e33d4cffbbf072bcb126c2bceb7de0e6"
+    },
+    {
+      "id": "c15",
+      "tool": "flag_gap",
+      "ok": true,
+      "inputSha256": "ffbfd44467897d68342bfbd89202df8e736f8cefdaff13c42e60055bc4010dc3",
+      "recordedSha256": "721de4bc63f3a46a81ff19bd726944b208a3914e90254b9cad2220acc5510ac5",
+      "expectedSha256": "721de4bc63f3a46a81ff19bd726944b208a3914e90254b9cad2220acc5510ac5"
+    },
+    {
+      "id": "c16",
+      "tool": "run_classifier",
+      "ok": true,
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "recordedSha256": "d9b036a116e82e1a7eb17085ef3f8df0514618071054612a6ab3a6712be78519",
+      "expectedSha256": "d9b036a116e82e1a7eb17085ef3f8df0514618071054612a6ab3a6712be78519"
+    },
+    {
+      "id": "c17",
+      "tool": "read_concepts",
+      "ok": true,
+      "inputSha256": "5f431a524448dffc2f6d6f5a9ffe7fecb04c0c0e98483595fafba588ad25ecbf",
+      "recordedSha256": "749c964df21790b6c7137184af061c938d4dcee5f5337533cfe4ce3dd7101458",
+      "expectedSha256": "1a7b102ceafa8882ad409f861a340db226ab8165d6e93498c89deb87dd0e5a89",
+      "changeReason": "Same reviewed v93 LMS, Game Based Learning and Assessment Literacy neighborhood additions as c12."
+    },
+    {
+      "id": "c18",
+      "tool": "read_concepts",
+      "ok": true,
+      "inputSha256": "acc83261d143bd498c1e7532e7a815e912a41d9735b656e4beaf34b70489bdc1",
+      "recordedSha256": "8dc2b4a87b34cf210541c95fd867bb589d57abb4978d75f899229503f55c3252",
+      "expectedSha256": "ae609d73edc54c741ec63056202b019338070da7018f6b4da3de47625595adc8",
+      "changeReason": "Reviewed assessment neighborhood adds Adaptive Testing and Performance Based Assessment."
+    },
+    {
+      "id": "c19",
+      "tool": "list_classified",
+      "ok": true,
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "recordedSha256": "b474f55d3a7605324d53a29e14d07d485815829f2438639399a6c9dde7063b5d",
+      "expectedSha256": "b474f55d3a7605324d53a29e14d07d485815829f2438639399a6c9dde7063b5d"
+    },
+    {
+      "id": "c20",
+      "tool": "explain_category",
+      "ok": true,
+      "inputSha256": "903180d56b36841367e34d99526226f5da67c46b1877986bb506e4990c39b573",
+      "recordedSha256": "b94b35be83ddff93a3c871d56e0dc19042bd6f4eb10c937d73580a21e7518793",
+      "expectedSha256": "d6ccece61080db5af4bc73214bd9571c5394ed608db2b2c424924ffd055fb153",
+      "changeReason": "Application category rises from 12 to 13 because Learning Management Systems is newly assigned as an application referent."
+    },
+    {
+      "id": "c21",
+      "tool": "explain_category",
+      "ok": true,
+      "inputSha256": "543a1d32bdd0cc022163040d3dcded6e6b41d078d490df7703fcb6b2b4d59a8b",
+      "recordedSha256": "96f313840c31f88f45cc4c27f1c3199de208a37eadb75dc5b60d0d434dd54869",
+      "expectedSha256": "96f313840c31f88f45cc4c27f1c3199de208a37eadb75dc5b60d0d434dd54869"
+    },
+    {
+      "id": "c22",
+      "tool": "read_concepts",
+      "ok": true,
+      "inputSha256": "5404b188f1ba1118172649b1542cb295bf8200f0fad7799c1bf3090d7c89842b",
+      "recordedSha256": "afa2e97b20f8d843f65055d662dc6cb98db09458f1327018534af74da5dfa4ea",
+      "expectedSha256": "afa2e97b20f8d843f65055d662dc6cb98db09458f1327018534af74da5dfa4ea"
+    },
+    {
+      "id": "c23",
+      "tool": "find_crosswalks",
+      "ok": true,
+      "inputSha256": "3c7a2a2ddb22116d8f9eb2591791bbd59cf382e8efc3f89e815f2e7500c758d9",
+      "recordedSha256": "d35faee21d2ae4bab09aa9c7a2170a13d49768e91e93f818873262117367bfce",
+      "expectedSha256": "d35faee21d2ae4bab09aa9c7a2170a13d49768e91e93f818873262117367bfce"
+    },
+    {
+      "id": "c24",
+      "tool": "check_peer_term",
+      "ok": true,
+      "inputSha256": "56e6ab4118a1cbb3e20db80a93994cead3087c0d641a946f84bc64bd08e49315",
+      "recordedSha256": "a077656342edefd28ebe796d21ae16e02fcee5d5d8a1a17959f5834dad0bf49b",
+      "expectedSha256": "a077656342edefd28ebe796d21ae16e02fcee5d5d8a1a17959f5834dad0bf49b"
+    },
+    {
+      "id": "c25",
+      "tool": "check_peer_term",
+      "ok": true,
+      "inputSha256": "28335e007a80a7cc4cbae7ec1532f2181a7459233af214ef8893ec8eee646072",
+      "recordedSha256": "50e4b742ae7a1206490ee3327de344715551e0c22adad865c00b324068f13ac7",
+      "expectedSha256": "50e4b742ae7a1206490ee3327de344715551e0c22adad865c00b324068f13ac7"
+    },
+    {
+      "id": "c26",
+      "tool": "check_peer_term",
+      "ok": true,
+      "inputSha256": "a8ee46f7834148ea364914f7a508c82d28f0a30900687b47944a9cc01e3dcbb4",
+      "recordedSha256": "2224a32f027330907f10b946a21ffe02e160b819ba24e3462a089505410f8816",
+      "expectedSha256": "2224a32f027330907f10b946a21ffe02e160b819ba24e3462a089505410f8816"
+    },
+    {
+      "id": "c27",
+      "tool": "check_peer_term",
+      "ok": true,
+      "inputSha256": "2a70d8f9da01bff79ca2740848cd1b945c94c2781d1e5542424dad7441d5894a",
+      "recordedSha256": "83564508fc1c0e86bce66c2c2b8dd1ccf1d2733aa0dacd796c279c0c208f0923",
+      "expectedSha256": "83564508fc1c0e86bce66c2c2b8dd1ccf1d2733aa0dacd796c279c0c208f0923"
+    },
+    {
+      "id": "c28",
+      "tool": "check_peer_term",
+      "ok": true,
+      "inputSha256": "ac7d6f13e4b84e1eadafdf464a1402c29e65b722cfd2a9439b2a8b141dc3d1a9",
+      "recordedSha256": "c4333eb31b83a776db813426eea31030a8d070d089b108062e63d1ebca3dffac",
+      "expectedSha256": "c4333eb31b83a776db813426eea31030a8d070d089b108062e63d1ebca3dffac"
+    },
+    {
+      "id": "c29",
+      "tool": "propose_mapping",
+      "ok": true,
+      "inputSha256": "d1c077e5f30bfc4f9b07742dcdacb4970d690c7813282c8b07046fa78cbb6a5e",
+      "recordedSha256": "2b1322cf0b1623ed89d78b59f8a9f311631d72a44c969b742796c4a72dac6c96",
+      "expectedSha256": "2b1322cf0b1623ed89d78b59f8a9f311631d72a44c969b742796c4a72dac6c96"
+    },
+    {
+      "id": "c30",
+      "tool": "explain_category",
+      "ok": true,
+      "inputSha256": "b2f948a5e6521d7c34ab187dc3c9dba0aad695ca830120d872d090d670287bc7",
+      "recordedSha256": "1abfbf9fc1925efbe0c52406efadee11dd07362ed281efb5422619e2c20ceb87",
+      "expectedSha256": "1abfbf9fc1925efbe0c52406efadee11dd07362ed281efb5422619e2c20ceb87"
+    },
+    {
+      "id": "c31",
+      "tool": "read_proposal",
+      "ok": true,
+      "inputSha256": "2bf01d0c69b8db383bdabe498c3f4523b340de88cfeeede9e63d11b7757726c5",
+      "recordedSha256": "58ae6069978106ae5680c787926d2daa6ef7b3a35c15a1a9a42fa11f9dfeb3fc",
+      "expectedSha256": "58ae6069978106ae5680c787926d2daa6ef7b3a35c15a1a9a42fa11f9dfeb3fc"
+    },
+    {
+      "id": "c32",
+      "tool": "read_concepts",
+      "ok": true,
+      "inputSha256": "5404b188f1ba1118172649b1542cb295bf8200f0fad7799c1bf3090d7c89842b",
+      "recordedSha256": "afa2e97b20f8d843f65055d662dc6cb98db09458f1327018534af74da5dfa4ea",
+      "expectedSha256": "afa2e97b20f8d843f65055d662dc6cb98db09458f1327018534af74da5dfa4ea"
+    },
+    {
+      "id": "c33",
+      "tool": "read_proposal",
+      "ok": true,
+      "inputSha256": "2bf01d0c69b8db383bdabe498c3f4523b340de88cfeeede9e63d11b7757726c5",
+      "recordedSha256": "58ae6069978106ae5680c787926d2daa6ef7b3a35c15a1a9a42fa11f9dfeb3fc",
+      "expectedSha256": "58ae6069978106ae5680c787926d2daa6ef7b3a35c15a1a9a42fa11f9dfeb3fc"
+    },
+    {
+      "id": "c34",
+      "tool": "cast_vote",
+      "ok": true,
+      "inputSha256": "3173dc09fb2534687d66b11cde17877e4200fe73d3d42f969bee5a2de4f8d1e1",
+      "recordedSha256": "1bbbd1bf4d00490e00423a99ecb8f0e75fb8d5fab0d130abb701ea01fd4c8de7",
+      "expectedSha256": "1bbbd1bf4d00490e00423a99ecb8f0e75fb8d5fab0d130abb701ea01fd4c8de7"
+    },
+    {
+      "id": "c35",
+      "tool": "read_concepts",
+      "ok": true,
+      "inputSha256": "5404b188f1ba1118172649b1542cb295bf8200f0fad7799c1bf3090d7c89842b",
+      "recordedSha256": "afa2e97b20f8d843f65055d662dc6cb98db09458f1327018534af74da5dfa4ea",
+      "expectedSha256": "afa2e97b20f8d843f65055d662dc6cb98db09458f1327018534af74da5dfa4ea"
+    },
+    {
+      "id": "c36",
+      "tool": "cast_vote",
+      "ok": true,
+      "inputSha256": "779267bd3e5c67addcf0fcdbc2164426d45c1aeef6a11bec3d07cdf01dbf71ba",
+      "recordedSha256": "1d4284a0dd4498d378171dc654808e51a1b4698e358008066c2b231d987498df",
+      "expectedSha256": "1d4284a0dd4498d378171dc654808e51a1b4698e358008066c2b231d987498df"
+    },
+    {
+      "id": "c37",
+      "tool": "list_classified",
+      "ok": true,
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "recordedSha256": "b474f55d3a7605324d53a29e14d07d485815829f2438639399a6c9dde7063b5d",
+      "expectedSha256": "b474f55d3a7605324d53a29e14d07d485815829f2438639399a6c9dde7063b5d"
+    },
+    {
+      "id": "c38",
+      "tool": "read_concepts",
+      "ok": true,
+      "inputSha256": "af304bfe9ec0cc6ea5786161a9dfa00867ce2ef4253eca2859fed7785dad0295",
+      "recordedSha256": "e5e03a1713f2fdb861d708228656911f9eb622616c5f0f1d75dafd977f84f85c",
+      "expectedSha256": "85e052def59c3818ab6a1783ae7208b54c84b5dd36d2d91c2d1d9d88ebc48f00",
+      "changeReason": "Same reviewed v93 LMS, Game Based Learning and Assessment Literacy neighborhood additions as c12."
+    },
+    {
+      "id": "c39",
+      "tool": "create_pack",
+      "ok": true,
+      "inputSha256": "8d7e74c242b8bdf757403d1e794f4b9a49a0204894ef394f848552ff7b1f3c93",
+      "recordedSha256": "dba332468d5441b551a9335236b564ad9afe8a4676f51268ad8317236783fca0",
+      "expectedSha256": "dba332468d5441b551a9335236b564ad9afe8a4676f51268ad8317236783fca0"
+    },
+    {
+      "id": "c40",
+      "tool": "suggest_additions",
+      "ok": true,
+      "inputSha256": "22fb34d3e1e83fb2564f7f17e4dac89ead81df081194a0f4ca44294599f77ee8",
+      "recordedSha256": "5aa2780a6a1671c2861c2d7ef7239ab012703326089bbc2c602ee16db90bc808",
+      "expectedSha256": "5aa2780a6a1671c2861c2d7ef7239ab012703326089bbc2c602ee16db90bc808"
+    },
+    {
+      "id": "c41",
+      "tool": "read_concepts",
+      "ok": true,
+      "inputSha256": "578224f817656c2228f43ca34f3a4fcc32e177729cdfd53e1b140fa380f7aeaa",
+      "recordedSha256": "b38940896a0a3abb4bc12348e87df37d478a2630100fffb4dca47f40b7a32279",
+      "expectedSha256": "5c625d6a447ed59b845fafa058fd26a129e447ab6dae6e3018a558336c8e140e",
+      "changeReason": "Reviewed Learning Analytics neighborhood adds Educational Indicators to its bounded results."
+    },
+    {
+      "id": "c42",
+      "tool": "add_to_pack",
+      "ok": true,
+      "inputSha256": "a5a0217696e5f0876f658554d4a4304b3e71523c0ed2fb457f9f67c6bb4b78e3",
+      "recordedSha256": "126843c79320140d4086eb6761d142b92b8902cd2388b3cfb98055788a962798",
+      "expectedSha256": "126843c79320140d4086eb6761d142b92b8902cd2388b3cfb98055788a962798"
+    },
+    {
+      "id": "c43",
+      "tool": "add_to_pack",
+      "ok": true,
+      "inputSha256": "b2c540728c7e723882823a47d47536abcc5ab54299548957e058b18c91834b07",
+      "recordedSha256": "b761bd36a47eaf83bce27bf4226c8af25caf40911b65b416a437b61165f66137",
+      "expectedSha256": "b761bd36a47eaf83bce27bf4226c8af25caf40911b65b416a437b61165f66137"
+    },
+    {
+      "id": "c44",
+      "tool": "add_to_pack",
+      "ok": true,
+      "inputSha256": "73e8436f3443e547d982f1cb9cea78172a400783ed499ad701aa759bda6800e8",
+      "recordedSha256": "5308d7958434b5b819c54d58357a6aeeea88f13d4189f3d5064e2b3b5af72040",
+      "expectedSha256": "5308d7958434b5b819c54d58357a6aeeea88f13d4189f3d5064e2b3b5af72040"
+    },
+    {
+      "id": "c45",
+      "tool": "validate_publication",
+      "ok": true,
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "recordedSha256": "91329d6fab686c3d4a63938f46e676c1224a14349de8ba378c671da3f0ebc737",
+      "expectedSha256": "91329d6fab686c3d4a63938f46e676c1224a14349de8ba378c671da3f0ebc737"
+    },
+    {
+      "id": "c46",
+      "tool": "stage_publication",
+      "ok": true,
+      "inputSha256": "4dbe6ff7ab01203cc28982dbef9f30d82a177737c1c380841a19256cfc0995f7",
+      "recordedSha256": "8102873fc6885dd1608cd8054cd765d1fc4957f8dda8dc35e93192d13d2c2e40",
+      "expectedSha256": "8102873fc6885dd1608cd8054cd765d1fc4957f8dda8dc35e93192d13d2c2e40"
+    },
+    {
+      "id": "c47",
+      "tool": "request_approval",
+      "ok": true,
+      "inputSha256": "a72aab2704bd7ccfb8c9db7f8f9896900e976b69050526210c3e62395fa187c0",
+      "recordedSha256": "561d66b02a8a42961c40fc30ca4564861b7a60d6cc42d4108c8c2ec10c61ca89",
+      "expectedSha256": "561d66b02a8a42961c40fc30ca4564861b7a60d6cc42d4108c8c2ec10c61ca89"
+    },
+    {
+      "id": "c48",
+      "tool": "run_summary",
+      "ok": true,
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "recordedSha256": "7e283b95a82bc8c212348d5c9b0c0df67d2a531d58a80d4ad43fe676955f9f15",
+      "expectedSha256": "7e283b95a82bc8c212348d5c9b0c0df67d2a531d58a80d4ad43fe676955f9f15"
+    }
+  ]
+}

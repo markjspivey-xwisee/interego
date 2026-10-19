@@ -46,3 +46,9 @@ Use a clean full-history v93 checkout and verify the raw source digest. Rebuild 
 Generate exact candidate publication bytes before publishing. Existing receipts cannot establish equality with newly generated graphs. Publish genuine signed successors in the original project pod with fresh head checks and the existing graph modalities, retain prior descriptors, then require all ten live Turtle and JSON-LD graphs to match the build. The two changed LMS-X graphs have a separate receipt history; the other eight shared-kit graph outputs must remain unchanged.
 
 Keep the maintenance PR draft and unmerged. No reviewer vote, mapping ratification, fictional academy publication, identity change, new key or permission expansion is part of this adoption.
+
+## Historical orchestration replay
+
+The original Claude transcript remains byte-for-byte v86 evidence. Its strict 48-result replay runs separately against immutable implementation `f933fcf5f1e8df56aad0d7721b5f4c927514fce0` and its original v86 source. Re-execution against current v93 uses a separately reviewed deterministic-result fixture; it is not a new model recording. Every call, input and result is bound exactly, while permissions, completion and all staged-write SHACL checks remain required.
+
+The actual v93 capture changed eleven of 48 results: four search batches include the expanded corpus, six bounded related-term lists reflect the added source relationships, and the application count rises from 12 to 13 with Learning Management Systems. The other 37 results remain exact. The UI retains visible differences from the historical recording and identifies both releases; exported provenance names the original recording and current source separately.

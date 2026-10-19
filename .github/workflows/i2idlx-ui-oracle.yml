@@ -225,8 +225,24 @@ jobs:
         run: python3 -I "$I2IDLX_ROOT/tools/smoke_app.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" --shots "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Original control, SPARQL, classification and exported-record cross-check
         run: python3 -I "$I2IDLX_ROOT/tools/check_app_logic.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
-      - name: Replay original orchestration trace and validate every staged write
-        run: python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT"
+      - name: Require all current replay outputs to match the reviewed v93 migration fixture
+        run: >-
+          python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT"
+          --migration "$I2IDLX_ROOT/examples/orchestra/kestrel-point-v93-replay-expectations.json"
+      - name: Require a wrong expected replay digest to fail the migration gate
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const fixture = JSON.parse(fs.readFileSync(process.env.I2IDLX_ROOT + '/examples/orchestra/kestrel-point-v93-replay-expectations.json', 'utf8'));
+          fixture.results.find(row => row.id === 'c8').expectedSha256 = '0'.repeat(64);
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'invalid-replay-expectations.json'), JSON.stringify(fixture));
+          JS
+          if python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT" --migration "$RUNNER_TEMP/invalid-replay-expectations.json" > "$RUNNER_TEMP/replay-negative.log" 2>&1; then
+            echo 'The migration gate accepted a deliberately incorrect expected digest.' >&2
+            exit 1
+          fi
+          grep -F 'FAIL 47 of 48 v0.0.93 migration tool results reproduced exactly; actual digest mismatch:' "$RUNNER_TEMP/replay-negative.log"
       - name: Hosted path without credentials or model capabilities
         run: python3 -I tools/i2idlx-hosted-visitor-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Capability directory typed inputs, results, freshness and credential boundary
