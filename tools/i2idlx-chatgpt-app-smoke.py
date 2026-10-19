@@ -241,7 +241,7 @@ def main():
                         visit("packs", ".pk")
                         frame.get_by_role("button", name="New pack", exact=True).click()
                         frame.get_by_role("textbox", name="Pack name", exact=True).fill("Embedded browser acceptance " + tag)
-                        picker = frame.get_by_role("combobox", name="Add a term.", exact=True)
+                        picker = frame.locator('.pk input[role="combobox"]')
                         picker.fill("learning record store")
                         frame.get_by_role("option", name="Learning Record Store (LRS)", exact=True).click()
                         frame.locator(".pkterm").first.wait_for()
@@ -276,6 +276,33 @@ def main():
                         check(tag + ":preview_not_model_execution", len(host_requests(page, "ui/message")) == 0
                               and '"simulated": true' in frame.locator("details[open]").inner_text()
                               and "does not run the recipe or ask the model" in frame.locator("details[open]").inner_text())
+
+                        # A preview belongs to its exact selected concepts. Remove each
+                        # selection, including the final one, and require stale context
+                        # to disappear without automatically asking the host for more.
+                        remaining = selected[:]
+                        for concept_id in selected:
+                            calls_before = len(host_requests(page, "tools/call"))
+                            frame.get_by_role("button", name="Remove " + concepts[concept_id]["l"], exact=True).click()
+                            remaining.remove(concept_id)
+                            expect(frame.locator("details[open] summary")).to_have_count(0)
+                            check(tag + ":selection_removal_clears_preview:" + concept_id,
+                                  frame.locator("details[open] summary").count() == 0)
+                            check(tag + ":selection_removal_no_automatic_tool_call:" + concept_id,
+                                  len(host_requests(page, "tools/call")) == calls_before)
+                            if remaining:
+                                frame.get_by_role("button", name="Preview task context", exact=True).click()
+                                frame.locator("details[open] summary").filter(has_text="reasoning and checks pending").wait_for()
+                                check(tag + ":preview_tracks_remaining_selection",
+                                      host_requests(page, "tools/call")[-1]["params"] == {
+                                          "name": "i2idlx_ask", "arguments": {"question": question, "concept_ids": remaining[:]}})
+                        for concept_id in selected:
+                            frame.get_by_role("textbox", name="Find concepts to attach", exact=True).fill(concept_id)
+                            frame.get_by_role("button", name=concepts[concept_id]["l"], exact=True).click()
+                        frame.get_by_role("button", name="Preview task context", exact=True).click()
+                        frame.locator("details[open] summary").filter(has_text="reasoning and checks pending").wait_for()
+                        check(tag + ":readded_selection_has_fresh_preview",
+                              host_requests(page, "tools/call")[-1]["params"] == {"name": "i2idlx_ask", "arguments": expected})
                         frame.get_by_role("button", name="Ask ChatGPT", exact=True).click()
                         wait_requests(page, "ui/message", 1)
                         frame.get_by_role("region", name="Requests sent to ChatGPT").wait_for()

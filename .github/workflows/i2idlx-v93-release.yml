@@ -36,7 +36,7 @@ jobs:
         env:
           # Fill this with the validated candidate's exact SHA in the final receipt
           # commit. The placeholder deliberately fails closed if it is not filled.
-          EXPECTED_PREDECESSOR: fa2bffdce050592af684e88ad216cf76e5a4a1bb
+          EXPECTED_PREDECESSOR: 384139ae945f54e3920aa4c7077db171849a469e
           PUSH_PREDECESSOR: ${{ github.event.before }}
         run: |
           node --input-type=module <<'NODE'
@@ -159,3 +159,57 @@ jobs:
           python3 tools/i2idlx-live-visitor-smoke.py
           --url https://foxxi-bridge.interego.xwisee.com/i2idlx/
           --expected-build "${{ github.sha }}"
+      - name: Verify the deployed public ChatGPT MCP App contract
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          const endpoint = 'https://foxxi-bridge.interego.xwisee.com/i2idlx/mcp';
+          let sequence = 0;
+          async function rpc(method, params = {}, modern = false) {
+            const response = await fetch(endpoint, {
+              method: 'POST', signal: AbortSignal.timeout(30000),
+              headers: { 'Content-Type': 'application/json', ...(modern ? { 'Mcp-Method': method } : {}) },
+              body: JSON.stringify({ jsonrpc: '2.0', id: ++sequence, method, params: { ...params,
+                ...(modern ? { _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+                  'io.modelcontextprotocol/clientCapabilities': {} } } : {}) } }),
+            });
+            assert.equal(response.status, 200, method + ' HTTP status');
+            const body = await response.json();
+            assert.equal(body.error, undefined, method + ' JSON-RPC error');
+            return body.result;
+          }
+          async function call(name, args = {}) {
+            const result = await rpc('tools/call', { name, arguments: args });
+            assert.notEqual(result.isError, true, name + ' tool error');
+            return result.structuredContent;
+          }
+          const initialized = await rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {},
+            clientInfo: { name: 'i2idlx-live-release-check', version: '1' } });
+          assert.ok(initialized.capabilities.tools && initialized.capabilities.resources);
+          assert.ok((await rpc('server/discover', {}, true)).supportedVersions.includes('2026-07-28'));
+          const tools = (await rpc('tools/list')).tools;
+          assert.equal(tools.length, 8);
+          assert.ok(tools.every(tool => tool.annotations.readOnlyHint && !tool.annotations.destructiveHint));
+          const workbench = await call('i2idlx_workbench');
+          assert.equal(workbench.source.release, 'v0.0.93');
+          assert.equal(workbench.source.concept_count, 420);
+          const uri = tools.find(tool => tool.name === 'i2idlx_workbench')._meta.ui.resourceUri;
+          const resource = (await rpc('resources/read', { uri })).contents[0];
+          assert.equal(resource.mimeType, 'text/html;profile=mcp-app');
+          assert.ok(resource.text.includes('window.__I2IDLX_CHATGPT_APP__=true'));
+          const source = JSON.parse(/<script\b[^>]*id="i2-data"[^>]*>([\s\S]*?)<\/script>/i.exec(resource.text)[1]);
+          assert.equal(source.meta.release, 'v0.0.93');
+          assert.equal(source.concepts.length, 420);
+          const ask = await call('i2idlx_ask', { question: 'How do an LMS and an LRS differ?',
+            concept_ids: ['learning-management-systems', 'learning-record-store-lrs'] });
+          assert.equal(ask.execution, 'client-required');
+          assert.equal(ask.context.concepts.length, 2);
+          const recipe = await call('i2idlx_orchestrate', { example: true });
+          assert.equal(recipe.workflow.steps.length, 12);
+          assert.ok(recipe.workflow.ledger.checks.every(check => check.status === 'pending'));
+          assert.ok([workbench, ask, recipe].every(packet => packet.writes_performed === false && packet.sampling_performed === false));
+          console.log(JSON.stringify({ ok: true, checks: ['legacy initialization', 'modern discovery',
+            'eight read-only tools', 'v93 workbench', 'verified GUI resource', 'exact Ask context',
+            'pending twelve-step example recipe', 'no server model or writes'],
+            real_chatgpt_acceptance: false, model_calls: 0 }));
+          NODE

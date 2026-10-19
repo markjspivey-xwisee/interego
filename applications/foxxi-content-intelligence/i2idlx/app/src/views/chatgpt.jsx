@@ -64,6 +64,10 @@ export function ChatGPTTaskView({ mode = "ask" }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(null), [packet, setPacket] = useState(null);
   const [requests, setRequests] = useStored("chatgpt.requests", []);
   const running = useRef(false);
+  const inputSignature = JSON.stringify([mode, question, brief, records, example, ids]);
+  const latestInput = useRef(inputSignature);
+  latestInput.current = inputSignature;
+  useEffect(() => { setPacket(null); }, [inputSignature]);
   useEffect(() => {
     const on = () => {
       const next = pendingAsk;
@@ -124,8 +128,12 @@ export function ChatGPTTaskView({ mode = "ask" }) {
   const preview = async () => {
     if (running.current) return;
     running.current = true;
+    const requestedInput = latestInput.current;
     setBusy(true); setError(null);
-    try { setPacket(packetOf(await callWorkbenchTool(toolFor(mode), args()))); }
+    try {
+      const result = packetOf(await callWorkbenchTool(toolFor(mode), args()));
+      if (requestedInput === latestInput.current) setPacket(result);
+    }
     catch (e) { setError(e.message || "Could not load the task packet."); }
     finally { running.current = false; setBusy(false); }
   };
