@@ -146,6 +146,19 @@ describe('Interpretant dedicated ChatGPT MCP App', () => {
       expect(search.body.result.structuredContent.bounded_search).toBe(true);
     });
   });
+  it('prioritizes attached terms and bounds additional question context', async () => {
+    await withServer(async (base, directory) => {
+      const data = fixture();
+      for (let index = 0; index < 20; index++) data.concepts.push({ ...data.concepts[0]!, id: 'resource-' + index, l: 'Learning resource ' + index });
+      await writeFile(join(directory, 'data.json'), JSON.stringify(data));
+      const response = (await call(base, 'i2idlx_ask', { question: 'Explain learning resources.', concept_ids: ['activity', 'resource'] })).body.result;
+      expect(response.isError).not.toBe(true);
+      const concepts = response.structuredContent.context.concepts;
+      expect(concepts).toHaveLength(14);
+      expect(concepts.slice(0, 2).map((concept: { id: string }) => concept.id)).toEqual(['activity', 'resource']);
+      expect(concepts.every((concept: { definition: string }) => typeof concept.definition === 'string' && concept.definition.length > 0)).toBe(true);
+    });
+  });
   it('executes actual classifier and SHACL controls through MCP, including contradiction and vacuous controls', async () => {
     await withServer(async base => {
       const classificationResponse = (await call(base, 'i2idlx_classify', { graph_content: CONFLICT })).body.result;

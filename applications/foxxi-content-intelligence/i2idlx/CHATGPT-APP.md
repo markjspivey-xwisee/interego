@@ -24,6 +24,8 @@ the existing classifier, SHACL, peer-term and source-version checks. Their
 HTTP and MCP projections share the same execution logic and semantic capacity
 limit. Source text is reference data, and no task packet establishes that a
 check passed. A zero-target SHACL result is not applicable validation.
+Attached concepts appear first in an Ask packet. Relevant question matches can
+add further entries within the same 14-concept context limit.
 
 The MCP App endpoint has no pod-write, identity, credential, voting or
 publication operation. An available ChatGPT conversation grants no Interego

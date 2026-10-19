@@ -36,7 +36,7 @@ jobs:
         env:
           # Fill this with the validated candidate's exact SHA in the final receipt
           # commit. The placeholder deliberately fails closed if it is not filled.
-          EXPECTED_PREDECESSOR: 6e2fa65b8304cab7fc28cc79ad4b2613a9582803
+          EXPECTED_PREDECESSOR: 8e938fe2f30e35030793577bfd44434f33bfaa87
           PUSH_PREDECESSOR: ${{ github.event.before }}
         run: |
           node --input-type=module <<'NODE'
@@ -203,7 +203,10 @@ jobs:
           const ask = await call('i2idlx_ask', { question: 'How do an LMS and an LRS differ?',
             concept_ids: ['learning-management-systems', 'learning-record-store-lrs'] });
           assert.equal(ask.execution, 'client-required');
-          assert.equal(ask.context.concepts.length, 2);
+          assert.deepEqual(ask.context.concepts.slice(0, 2).map(concept => concept.id),
+            ['learning-management-systems', 'learning-record-store-lrs']);
+          assert.ok(ask.context.concepts.length <= 14);
+          assert.ok(ask.context.concepts.every(concept => typeof concept.definition === 'string' && concept.definition.length));
           const recipe = await call('i2idlx_orchestrate', { example: true });
           assert.equal(recipe.workflow.steps.length, 12);
           assert.ok(recipe.workflow.ledger.checks.every(check => check.status === 'pending'));
