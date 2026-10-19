@@ -10,7 +10,7 @@ let nextId = 0, connection = null, listening = false, initialized = false;
 let capabilities = {}, resizeObserver = null;
 let state = {
   status: "unavailable", canMessage: false, canCallTools: false,
-  canUpdateModelContext: false, canFullscreen: false,
+  canUpdateModelContext: false, canFullscreen: false, canDownload: false,
   error: null, hostContext: {}, lastToolResult: null,
 };
 
@@ -69,7 +69,7 @@ function unavailable(error) {
   listening = false;
   finishPending(new Error(error || "This ChatGPT workbench view is unavailable."));
   publish({ status: "unavailable", canMessage: false, canCallTools: false,
-    canUpdateModelContext: false, canFullscreen: false, error: error || null });
+    canUpdateModelContext: false, canFullscreen: false, canDownload: false, error: error || null });
 }
 
 function applyHost(update) {
@@ -187,6 +187,7 @@ export async function connectHost() {
       publish({ status: "ready", error: null,
         canMessage: object(capabilities.message?.text),
         canCallTools: object(capabilities.serverTools),
+        canDownload: object(capabilities.downloadFile),
         canUpdateModelContext: object(capabilities.updateModelContext?.text) ||
           object(capabilities.updateModelContext?.structuredContent) });
       startResize();
@@ -207,6 +208,7 @@ async function action(method, params, timeout) {
   try {
     const result = await rpc(method, params, timeout);
     if (!object(result)) throw new Error("ChatGPT returned an invalid response to " + method + ".");
+    if (method === "ui/download-file" && own(result, "isError") && typeof result.isError !== "boolean") throw new Error("ChatGPT returned an invalid download acknowledgement.");
     if (method === "tools/call" && !Array.isArray(result.content)) throw new Error("ChatGPT returned an invalid workbench tool result.");
     if (result?.isError && method !== "tools/call") throw new Error("ChatGPT could not complete " + method + ".");
     publish({ error: null });
@@ -233,6 +235,29 @@ export async function callWorkbenchTool(name, args = {}) {
   const result = await action("tools/call", { name, arguments: args }, 60000);
   publish({ lastToolResult: result });
   return result;
+}
+
+const exportMimeType = filename => {
+  if (/\.html?$/i.test(filename)) return "text/html;charset=utf-8";
+  if (/\.md$/i.test(filename)) return "text/markdown;charset=utf-8";
+  if (/\.csv$/i.test(filename)) return "text/csv;charset=utf-8";
+  if (/\.jsonld(?:\.json)?$/i.test(filename)) return "application/ld+json";
+  if (/\.json$/i.test(filename)) return "application/json";
+  if (/\.ttl(?:\.txt)?$/i.test(filename)) return "text/turtle;charset=utf-8";
+  return "text/plain;charset=utf-8";
+};
+
+// Sandboxed Apps cannot initiate browser anchor downloads. Inline MCP resources
+// let the host save these exact bytes without an upload or a server-side record.
+export async function downloadWorkbenchFile({ filename, data } = {}) {
+  if (typeof filename !== "string" || !filename.trim() || /[\\/\x00]/.test(filename)) throw new Error("Invalid export filename.");
+  const text = typeof data === "string" ? data : JSON.stringify(data);
+  if (typeof text !== "string") throw new Error("The export has no file contents.");
+  await ready();
+  if (!state.canDownload) throw new Error("Downloads aren't available in this ChatGPT view. Use Copy to export the current format.");
+  return action("ui/download-file", { contents: [{ type: "resource", resource: {
+    uri: "file:///" + encodeURIComponent(filename), mimeType: exportMimeType(filename), text,
+  } }] }, 60000);
 }
 
 export async function updateModelContext(viewState, content = []) {

@@ -2,6 +2,7 @@
 // A host may provide signRequest + sample through its existing MCP connection.
 // No host identity claim is trusted: /session verifies the signature and returns the account.
 import { backendUrl, workbenchHosted } from "./backend-url.js";
+import { isChatGPTApp, connectHost, getHostState, subscribeHost, downloadWorkbenchFile } from "./chatgpt-host.js";
 const hosted = workbenchHosted;
 let connected = null, personalSample = null;
 const announce = () => window.dispatchEvent(new Event("interego-workbench:changed"));
@@ -17,6 +18,14 @@ const downloads = { async save({ filename, data }) {
   const href = URL.createObjectURL(blob), a = document.createElement("a");
   a.href = href; a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
 } };
+const appDownloads = { save: downloadWorkbenchFile };
+if (isChatGPTApp()) {
+  let available = false;
+  subscribeHost(state => {
+    const next = state.status === "ready" && state.canDownload;
+    if (next !== available) { available = next; announce(); }
+  });
+}
 async function walletSigner() {
   const provider = window.ethereum;
   if (!provider || typeof provider.request !== "function") throw failure("Connect Interego in your AI client, or install a browser wallet and connect an existing Interego pod.");
@@ -131,6 +140,12 @@ export async function connectWorkbench() {
 }
 export function disconnectWorkbench() { connected = null; personalSample = null; announce(); }
 export async function resolveWorkbenchCap(name) {
+  if (isChatGPTApp() && name === "downloads") {
+    const current = getHostState();
+    // A torn-down or failed host must not be reconnected by a capability refresh.
+    const state = current.status === "unavailable" && current.error ? current : await connectHost();
+    return state.status === "ready" && state.canDownload ? appDownloads : null;
+  }
   if (!hosted()) return undefined; // preserve the original Claude artifact's own capability environment
   if (name === "downloads") return downloads;
   if (name === "sample") return (connected && connected.sample) || personalSample;

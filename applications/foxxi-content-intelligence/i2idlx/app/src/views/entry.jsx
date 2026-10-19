@@ -1,3 +1,4 @@
+import { identityCopy } from "../identity-copy.js";
 // One dictionary entry, in two zones that never mix: the I2IDL record exactly as I2IDL publishes it,
 // and what I2IDL-X layers on top (derived reading aids, history, proposals, live capabilities, team use).
 import {
@@ -589,7 +590,7 @@ function Usage({ c }) {
   const [ctx, setCtx] = useState("");
   const [text, setText] = useState("");
   const [xapi, setXapi] = useState(false);
-  const why = !resolved ? "" : !signedIn ? "Sign in to claude.ai to add notes and usage." : !writable ? "View-only access: you can read the team's notes." : "";
+  const why = !resolved ? "" : !signedIn ? identityCopy("usage") : !writable ? "View-only access: you can read the team's notes." : "";
   const doUse = async (close) => {
     try { await setUse(c.id, ctx.trim()); setCtx(""); close(); toast("Marked as in use", { icon: "check" }); }
     catch { toast(why || "That didn't save. Try again.", { icon: "warn" }); }

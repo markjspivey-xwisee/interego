@@ -1,3 +1,4 @@
+import { identityCopy } from "../identity-copy.js";
 // Home: one search box, the day's term, and the ways in — fields, collections, kinds, and the layers.
 import { C, META, KINDS, COLLECTIONS, byId, kindById, fieldById, termOfDay, ITEMS, ENACTMENTS, MAPPINGS, ACTIONS, QUERIES, SEMANTIC } from "../data.js";
 import { useCaps, consensus } from "../caps.js";
@@ -66,7 +67,7 @@ export function Home() {
           <section className="stack" aria-label="Your workspace">
             <div className="card pad stack" style={{ gap: 10 }}>
               <div className="row"><Icon name="review" /><b className="grow">Review queue</b><a className="small" href="#review">Open</a></div>
-              <div className="small muted">{review.need} of {ITEMS.length} proposed capability links and crosswalks have no votes yet · {review.ratified} ratified here.{!signedIn ? " Sign in to vote." : !writable ? " View-only access." : ""}</div>
+              <div className="small muted">{review.need} of {ITEMS.length} proposed capability links and crosswalks have no votes yet · {review.ratified} ratified here.{!signedIn ? " " + identityCopy("home") : !writable ? " View-only access." : ""}</div>
               <div className="progress" aria-hidden="true"><span style={{ width: ((ITEMS.length - review.need) / ITEMS.length) * 100 + "%", background: "var(--accent)" }} /></div>
             </div>
             <div className="card pad stack" style={{ gap: 10 }}>

@@ -1,3 +1,4 @@
+import { identityCopy } from "../identity-copy.js";
 // Insights: the glossary's shape and health, its release history, I2IDL-X coverage and team activity.
 import { C, META, KINDS, COLLECTIONS, SOURCES, RELEASES, SUGGESTIONS, ITEMS, itemByKey, byId, kindById, fieldById, enactByConcept, mapsByConcept, reuseClass, RIGHTS, degree, kindPhrase } from "../data.js";
 import { OriginStrip } from "../origin.jsx";
@@ -145,7 +146,7 @@ export function Insights({ route }) {
 
       <section className="stack">
         <div className="sec-h"><h2>Team activity</h2><span className="meta">From this page's shared data</span></div>
-        {!signedIn ? <div className="note"><Icon name="lock" /><span>Sign in to claude.ai to see and add your team's votes, notes and usage.</span></div> : (
+        {!signedIn ? <div className="note"><Icon name="lock" /><span>{identityCopy("activity")}</span></div> : (
           <>
             <div className="stats">
               {[["Reviewers", team.reviewers], ["Votes cast", team.votes], ["Items decided", team.decided], ["Notes", team.notes], ["Terms in use", usageByConcept.size]].map(([l, v]) => <div className="stat" key={l}><span className="l">{l}</span><span className="v">{v}</span></div>)}

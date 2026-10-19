@@ -9,14 +9,15 @@ let checks = 0;
 function check(condition, description) { assert.ok(condition, description); checks++; }
 
 async function fixture({ embedded = true, caps, hostContext, hostVersion = "26.1017.11052", auto = true } = {}) {
-  const handlers = new Set(), sent = [], timers = new Map(), css = new Map(), nodes = new Map();
+  const handlers = new Set(), sent = [], timers = new Map(), css = new Map(), nodes = new Map(), events = [];
   let timerId = 0;
   const root = { dataset: {}, style: { setProperty: (k, v) => css.set(k, v), removeProperty: (k) => css.delete(k) } };
   const document = { documentElement: root, body: { getBoundingClientRect: () => ({ height: 700 }) },
     head: { append: (node) => nodes.set(node.id, node) }, getElementById: (id) => nodes.get(id), createElement: () => ({}) };
   const window = { __I2IDLX_CHATGPT_APP__: embedded,
-    addEventListener: (_, handler) => handlers.add(handler), removeEventListener: (_, handler) => handlers.delete(handler) };
-  const context = vm.createContext({ window, document, console,
+    addEventListener: (_, handler) => handlers.add(handler), removeEventListener: (_, handler) => handlers.delete(handler),
+    dispatchEvent: event => { events.push(event.type); return true; } };
+  const context = vm.createContext({ window, document, console, Event: class { constructor(type) { this.type = type; } },
     setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, ms }); return id; },
     clearTimeout: (id) => timers.delete(id) });
   function receive(message, from = window.parent) {
@@ -27,13 +28,13 @@ async function fixture({ embedded = true, caps, hostContext, hostVersion = "26.1
     sent.push(plain(message)); assert.equal(origin, "*");
     if (auto && message.method === "ui/initialize") queueMicrotask(() => respond(message, {
       protocolVersion: "2026-01-26", hostInfo: { name: "ChatGPT", version: hostVersion },
-      hostCapabilities: caps || { message: { text: {} }, serverTools: {}, updateModelContext: { text: {}, structuredContent: {} }, experimental: { "openai/message": {} } },
+      hostCapabilities: caps || { message: { text: {} }, serverTools: {}, downloadFile: {}, updateModelContext: { text: {}, structuredContent: {} }, experimental: { "openai/message": {} } },
       hostContext: hostContext || { platform: "web", theme: "dark", availableDisplayModes: ["inline", "fullscreen"], safeAreaInsets: { top: 12, right: 3, bottom: 8, left: 3 }, styles: { variables: { "--color-text-primary": "#fafafa" } } },
     }));
   } } : window;
   const module = new vm.SourceTextModule(source, { context });
   await module.link(() => { throw new Error("No dependencies expected."); }); await module.evaluate();
-  return { api: module.namespace, sent, receive, respond, timers, css, root, nodes, window,
+  return { api: module.namespace, module, context, sent, receive, respond, timers, css, root, nodes, window, events,
     flush: async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); } };
 }
 
@@ -117,13 +118,14 @@ async function fixture({ embedded = true, caps, hostContext, hostVersion = "26.1
   f.respond(f.sent.at(-1), { isError: true }); await assert.rejects(send, /could not complete/); checks++;
   check(!!f.api.getHostState().error, "Host refusal remains visible to the UI");
 }
-for (const value of [false, true, "enabled", []]) {
-  const f = await fixture({ caps: { message: { text: value }, serverTools: value, updateModelContext: { text: value, structuredContent: value }, experimental: { "openai/message": value } } });
+for (const value of [false, true, "enabled", [], null]) {
+  const f = await fixture({ caps: { message: { text: value }, serverTools: value, downloadFile: value, updateModelContext: { text: value, structuredContent: value }, experimental: { "openai/message": value } } });
   await f.api.connectHost();
-  check(!f.api.getHostState().canMessage && !f.api.getHostState().canCallTools && !f.api.getHostState().canUpdateModelContext, "False or malformed capabilities cannot enable actions: " + JSON.stringify(value));
+  check(!f.api.getHostState().canMessage && !f.api.getHostState().canCallTools && !f.api.getHostState().canUpdateModelContext && !f.api.getHostState().canDownload, "False or malformed capabilities cannot enable actions: " + JSON.stringify(value));
   const before = f.sent.length;
   await assert.rejects(f.api.sendConversation("Question"), /does not support/); checks++;
   await assert.rejects(f.api.callWorkbenchTool("i2idlx_classify", {}), /does not support/); checks++;
+  await assert.rejects(f.api.downloadWorkbenchFile({ filename: "terms.csv", data: "id,label" }), /Use Copy/); checks++;
   assert.equal(await f.api.updateModelContext({ page: "ask" }), null); checks++;
   check(f.sent.length === before, "Unsupported actions emit no request");
 }
@@ -160,4 +162,121 @@ for (const value of [false, true, "enabled", []]) {
   await f.api.connectHost();
   check(f.api.getHostState().status === "unavailable" && /Update ChatGPT Desktop/.test(f.api.getHostState().error), "Older desktop receives actionable upgrade state");
 }
-console.log(JSON.stringify({ ok: true, checks, scope: "Isolated MCP Apps transport, capability, lifecycle and truthful-result checks; not a real ChatGPT host acceptance test." }));
+{
+  const f = await fixture(); await f.api.connectHost();
+  const csv = 'id,label\r\n"lrs","Learning Record Store — café"\r\n';
+  const save = f.api.downloadWorkbenchFile({ filename: "terms café.csv", data: csv }); await f.flush();
+  const request = f.sent.at(-1);
+  assert.deepEqual(request.params, { contents: [{ type: "resource", resource: {
+    uri: "file:///terms%20caf%C3%A9.csv", mimeType: "text/csv;charset=utf-8", text: csv,
+  } }] }); checks++;
+  check(request.method === "ui/download-file", "Exports use the host download protocol, not an iframe anchor");
+  let settled = false; save.then(() => { settled = true; });
+  await f.flush(); check(!settled, "No successful save before host acknowledgement");
+  f.receive({ jsonrpc: "2.0", id: request.id, result: {} }, {}); await f.flush();
+  check(!settled, "A foreign window cannot acknowledge a download");
+  f.respond(request, {}); assert.deepEqual(plain(await save), {}); checks++;
+  check(f.api.getHostState().lastToolResult === null, "Export acknowledgement invents no semantic evidence or model answer");
+  for (const [filename, mime] of [
+    ["terms.html", "text/html;charset=utf-8"], ["terms.md", "text/markdown;charset=utf-8"],
+    ["terms.jsonld.json", "application/ld+json"], ["terms-xapi-tags.json", "application/json"],
+    ["terms-foxxi-alignment.ttl.txt", "text/turtle;charset=utf-8"], ["terms-flashcards.txt", "text/plain;charset=utf-8"],
+  ]) {
+    const pending = f.api.downloadWorkbenchFile({ filename, data: "Exact export\n" }); await f.flush();
+    assert.equal(f.sent.at(-1).params.contents[0].resource.mimeType, mime); checks++;
+    f.respond(f.sent.at(-1), {}); await pending;
+  }
+  const before = f.sent.length;
+  for (const filename of ["", "../terms.csv", "folder/terms.csv", "folder\\terms.csv", "bad\0.csv"]) {
+    await assert.rejects(f.api.downloadWorkbenchFile({ filename, data: csv }), /filename/); checks++;
+  }
+  await assert.rejects(f.api.downloadWorkbenchFile({ filename: "empty.csv" }), /no file contents/); checks++;
+  check(f.sent.length === before, "Invalid exports never reach the host");
+  for (const result of [{ isError: true }, null]) {
+    const pending = f.api.downloadWorkbenchFile({ filename: "terms.csv", data: csv }); await f.flush();
+    f.respond(f.sent.at(-1), result); await assert.rejects(pending, /could not complete|invalid response/); checks++;
+  }
+  for (const isError of [null, "false", 0]) {
+    const pending = f.api.downloadWorkbenchFile({ filename: "terms.csv", data: csv }); await f.flush();
+    f.respond(f.sent.at(-1), { isError }); await assert.rejects(pending, /invalid download acknowledgement/); checks++;
+  }
+  const denied = f.api.downloadWorkbenchFile({ filename: "terms.csv", data: csv }); await f.flush();
+  f.receive({ jsonrpc: "2.0", id: f.sent.at(-1).id, error: { code: -32000, message: "Download permission denied" } });
+  await assert.rejects(denied, /Download permission denied/); checks++;
+  const timeout = f.api.downloadWorkbenchFile({ filename: "terms.csv", data: csv }); await f.flush();
+  const timer = [...f.timers.values()][0]; check(timer.ms === 60000, "Host download confirmation has a bounded timeout");
+  timer.fn(); await assert.rejects(timeout, /did not respond/); checks++;
+}
+{
+  const adapterSource = await fs.readFile(new URL("../src/interego-caps.js", import.meta.url), "utf8");
+  const adapter = async (f, hosted = true) => {
+    const module = new vm.SourceTextModule(adapterSource, { context: f.context });
+    await module.link(specifier => {
+      if (specifier === "./chatgpt-host.js") return f.module;
+      assert.equal(specifier, "./backend-url.js");
+      return new vm.SyntheticModule(["backendUrl", "workbenchHosted"], function () {
+        this.setExport("backendUrl", value => value); this.setExport("workbenchHosted", () => hosted);
+      }, { context: f.context });
+    });
+    await module.evaluate(); return module.namespace;
+  };
+  const f = await fixture({ caps: { downloadFile: {} } }), caps = await adapter(f);
+  f.context.Blob = class { constructor() { throw new Error("Iframe Blob download must not run"); } };
+  const downloads = await caps.resolveWorkbenchCap("downloads");
+  check(!!downloads && f.events.includes("interego-workbench:changed"), "A negotiated download capability refreshes the UI");
+  const pending = downloads.save({ filename: "terms.csv", data: "id,label\n" }); await f.flush();
+  check(f.sent.at(-1).method === "ui/download-file", "The real capability adapter routes App saves to the host");
+  f.respond(f.sent.at(-1), {}); await pending;
+  f.receive({ jsonrpc: "2.0", id: "close", method: "ui/resource-teardown", params: {} });
+  const before = f.sent.length;
+  assert.equal(await caps.resolveWorkbenchCap("downloads"), null); checks++;
+  check(f.sent.length === before && f.events.filter(name => name === "interego-workbench:changed").length === 2,
+    "Teardown removes Save and refreshes the UI without automatically reconnecting");
+  const unsupported = await fixture({ caps: {} }), unsupportedCaps = await adapter(unsupported);
+  assert.equal(await unsupportedCaps.resolveWorkbenchCap("downloads"), null); checks++;
+  check(!unsupported.sent.some(message => message.method === "ui/download-file"), "Unsupported hosts expose Copy without a false Save capability");
+  const site = await fixture({ embedded: false }), siteCaps = await adapter(site);
+  let clicked = 0, blobParts = null;
+  site.context.Blob = class { constructor(parts) { blobParts = parts; } };
+  site.context.URL = { createObjectURL: () => "blob:test", revokeObjectURL() {} };
+  site.context.document.createElement = () => ({ click() { clicked++; } });
+  const siteDownloads = await siteCaps.resolveWorkbenchCap("downloads");
+  await siteDownloads.save({ filename: "terms.csv", data: "original,bytes\n" });
+  check(clicked === 1 && blobParts[0] === "original,bytes\n" && site.sent.length === 0,
+    "The ordinary hosted website keeps its browser export path and exact bytes");
+  const original = await fixture({ embedded: false }), originalCaps = await adapter(original, false);
+  assert.equal(await originalCaps.resolveWorkbenchCap("downloads"), undefined); checks++;
+}
+{
+  const copySource = await fs.readFile(new URL("../src/identity-copy.js", import.meta.url), "utf8");
+  const keys = ["usage", "review", "activity", "vote", "reviewUnavailable", "home", "packs"];
+  const legacy = {
+    usage: "Sign in to claude.ai to add notes and usage.",
+    review: "Sign in to claude.ai to vote. You can read the queue and the team's votes.",
+    activity: "Sign in to claude.ai to see and add your team's votes, notes and usage.",
+    vote: "Connect Interego to vote.", reviewUnavailable: "Connect an admitted account and verify shared pod data.",
+    home: "Sign in to vote.", packs: "Saved in this browser; sign in to keep them with your account.",
+  };
+  for (const embedded of [false, true]) {
+    const context = vm.createContext({});
+    const module = new vm.SourceTextModule(copySource, { context });
+    await module.link(specifier => {
+      assert.equal(specifier, "./chatgpt-host.js");
+      return new vm.SyntheticModule(["isChatGPTApp"], function () {
+        this.setExport("isChatGPTApp", () => embedded);
+      }, { context });
+    });
+    await module.evaluate();
+    for (const key of keys) {
+      const value = module.namespace.identityCopy(key);
+      if (embedded) check(typeof value === "string" && value.includes("ChatGPT App") && !/claude\.ai|sign in/i.test(value), "App identity copy offers no misleading sign-in: " + key);
+      else { assert.equal(value, legacy[key], "Ordinary site identity text is unchanged: " + key); checks++; }
+    }
+    if (embedded) {
+      check(module.namespace.identityCopy("usage").includes("separately verified Interego connection"), "ChatGPT connection does not imply Interego write authority");
+      check(module.namespace.identityCopy("review").includes("read-only"), "Review remains explicitly read-only in the App");
+      check(module.namespace.identityCopy("packs").includes("does not save them to an Interego pod"), "Local packs do not claim a pod save or account synchronization");
+    }
+  }
+}
+console.log(JSON.stringify({ ok: true, checks, scope: "Isolated MCP Apps transport, capability, lifecycle, host downloads, truthful-result and host-aware identity-copy checks; not a real ChatGPT host acceptance test." }));

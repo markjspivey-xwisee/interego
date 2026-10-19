@@ -1,3 +1,4 @@
+import { identityCopy } from "../identity-copy.js";
 // Review: the shared queue that closes the ratification loop for I2IDL-X crosswalks and capability links.
 import { ITEMS as ALL_ITEMS, META, byId, ACTIONS, roleById, methodById, systemLabel, itemByKey as ITEM_BY_KEY, METHODS } from "../data.js";
 import { OriginStrip } from "../origin.jsx";
@@ -131,7 +132,7 @@ export function Review({ route }) {
             <button className="btn sm" onClick={() => setExp("ledger")}><Icon name="download" />Team ledger (Turtle)</button>
           </div>
           <details className="card pad"><summary className="small" style={{ cursor: "pointer", fontWeight: 700 }}>How the loop closes</summary><div style={{ marginTop: 10 }}><GovernanceLoop /></div></details>
-          {resolved && !writable ? <div className="note"><Icon name="lock" /><span className="small">{!signedIn ? "Sign in to claude.ai to vote. You can read the queue and the team's votes." : "You have view-only access. Ask the owner for Contributor access to vote."}</span></div> : null}
+          {resolved && !writable ? <div className="note"><Icon name="lock" /><span className="small">{!signedIn ? identityCopy("review") : "You have view-only access. Ask the owner for Contributor access to vote."}</span></div> : null}
           <div className="tiny muted">Keys: <kbd>j</kbd>/<kbd>k</kbd> move · <kbd>f</kbd> for · <kbd>a</kbd> against · <kbd>x</kbd> abstain</div>
         </aside>
         <div className="stack rv-list" style={{ gap: 12, minWidth: 0 }}>

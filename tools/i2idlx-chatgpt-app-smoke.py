@@ -24,8 +24,9 @@ HOST_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
 </head><body><script>
 window.__host = {
   simulated: true, messages: [], requests: [], unexpected: [],
-  rejectNextMessage: null, errorNextMessage: false, errorNextTool: false,
+  rejectNextMessage: null, errorNextMessage: false, errorNextTool: false, errorNextDownload: false,
   noMessages: new URLSearchParams(location.search).has('no-messages'),
+  noDownloads: new URLSearchParams(location.search).has('no-downloads'),
   initialToolResult: {content:[{type:'text',text:'SIMULATED host launch receipt; no model work.'}],
     structuredContent:{initial_view:'ask',query:'',concept_ids:[]}}
 };
@@ -47,6 +48,7 @@ window.addEventListener('message', event => {
     const caps = {serverTools:{},updateModelContext:{text:{},structuredContent:{}},
       experimental:{'openai/message':{}}};
     if (!host.noMessages) caps.message = {text:{}};
+    if (!host.noDownloads) caps.downloadFile = {};
     return respond(event.source,value.id,{
       protocolVersion:'2026-01-26',hostInfo:{name:'ChatGPT SIMULATED browser harness',version:'26.1017.11052'},
       hostCapabilities:caps,hostContext:{platform:'web',theme:'dark',
@@ -80,12 +82,19 @@ window.addEventListener('message', event => {
         requestedTool:value.params.name,arguments:value.params.arguments,checks:[]}
     });
   }
+  if (value.method === 'ui/download-file') {
+    if (host.errorNextDownload) {
+      host.errorNextDownload = false;
+      return respond(event.source,value.id,{isError:true});
+    }
+    return respond(event.source,value.id,{});
+  }
   if (value.method === 'ui/update-model-context') return respond(event.source,value.id,{});
   if (value.method === 'ui/request-display-mode') return respond(event.source,value.id,{mode:value.params.mode});
   host.unexpected.push(value);
   event.source.postMessage({jsonrpc:'2.0',id:value.id,error:{code:-32601,message:'Unexpected simulated host method'}}, '*');
 });
-</script><iframe id="workbench" name="workbench" title="I2IDL-X Workbench" sandbox="allow-scripts allow-same-origin allow-downloads" src="http://i2idlx-frame.test/i2idlx/#ask"></iframe>
+</script><iframe id="workbench" name="workbench" title="I2IDL-X Workbench" sandbox="allow-scripts allow-same-origin" src="http://i2idlx-frame.test/i2idlx/#ask"></iframe>
 </body></html>"""
 
 
@@ -256,6 +265,20 @@ def main():
                         check(tag + ":pack_add_local_term", frame.locator(".pkterm").count() == 1
                               and "Learning Record Store (LRS)" in frame.locator(".pkterm").inner_text())
                         check(tag + ":pack_no_private_identity", "Saved in this browser" in frame.locator(".pk aside").first.inner_text())
+                        frame.get_by_role("button", name="CSV", exact=True).click()
+                        csv = frame.locator(".preview pre").text_content()
+                        frame.get_by_role("button", name="Save csv", exact=True).click()
+                        wait_requests(page, "ui/download-file", 1)
+                        resource = host_requests(page, "ui/download-file")[-1]["params"]["contents"]
+                        check(tag + ":pack_export_host_download_exact_bytes", resource == [{"type": "resource", "resource": {
+                            "uri": "file:///embedded-browser-acceptance-" + tag + ".csv",
+                            "mimeType": "text/csv;charset=utf-8", "text": csv}}])
+                        check(tag + ":pack_export_no_model_turn", len(host_requests(page, "ui/message")) == 0)
+                        page.evaluate("window.__host.errorNextDownload = true")
+                        frame.get_by_role("button", name="Save csv", exact=True).click()
+                        wait_requests(page, "ui/download-file", 2)
+                        frame.get_by_text(re.compile("Saving isn't available here.*use Copy instead")).wait_for()
+                        check(tag + ":pack_export_refusal_has_copy_fallback", True)
                         visit("review", ".rcard")
                         visit("insights", ".chart svg")
                         visit("semantic", ".matrix tbody tr")
@@ -410,7 +433,7 @@ def main():
                 page = context.new_page()
                 page.set_default_timeout(20_000)
                 try:
-                    page.goto(HOST_URL + "?no-messages", wait_until="domcontentloaded")
+                    page.goto(HOST_URL + "?no-messages&no-downloads", wait_until="domcontentloaded")
                     page.frame_locator("#workbench").get_by_role("textbox", name="Ask ChatGPT", exact=True).wait_for()
                     frame = page.frame(name="workbench")
                     frame.get_by_role("textbox", name="Ask ChatGPT", exact=True).fill("Host lacks message capability.")
@@ -419,6 +442,12 @@ def main():
                     check("missing_message_capability_disables_send", frame.get_by_role("button", name="Ask ChatGPT", exact=True).is_disabled())
                     check("missing_message_capability_no_false_handoff", len(host_requests(page, "ui/message")) == 0
                           and frame.get_by_role("region", name="Requests sent to ChatGPT").count() == 0)
+                    frame.evaluate("location.hash = '#packs'")
+                    frame.get_by_role("button", name="New pack", exact=True).click()
+                    frame.get_by_text("Downloads aren't available in this ChatGPT view. Use Copy to export the current format.", exact=True).wait_for()
+                    check("missing_download_capability_no_save_action", frame.get_by_role("button", name=re.compile(r"^Save ")).count() == 0)
+                    check("missing_download_capability_keeps_copy", frame.locator(".pk").get_by_role("button", name="Copy", exact=True).count() == 1)
+                    check("missing_download_capability_no_host_request", len(host_requests(page, "ui/download-file")) == 0)
                 finally:
                     context.close()
             finally:
