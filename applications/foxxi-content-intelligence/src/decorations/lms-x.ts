@@ -22,7 +22,7 @@ const ROSTER = 'an OAuth 2.0 access token for a OneRoster rostering scope: https
 export const LMS_X: DecorationSpec = {
   id: 'lms-x',
   title: 'LMS-X',
-  version: '0.1.0',
+  version: '0.1.1',
   summary: 'A learning management system, decorated for agents through the 1EdTech interfaces it exposes: its LTI 1.3 configuration and keys, the gradebook and roster services a launch hands a tool, and OneRoster 1.2. Each control names the scope it asks for; proposals tie each interface to the I2IDL glossary and to the Foxxi capabilities that work with it.',
   decorates: {
     name: 'a learning management system that speaks LTI 1.3 Advantage and OneRoster 1.2',
@@ -63,6 +63,7 @@ export const LMS_X: DecorationSpec = {
     { id: 'roster-courses', part: 'roster', title: 'List courses', method: 'GET', target: '{+oneroster}/ims/oneroster/rostering/v1p2/courses{?limit,offset,sort,filter,fields}', accept: 'application/json', auth: ROSTER, readOnly: true, cites: 'OneRoster 1.2, getAllCourses' },
   ],
   alignments: [
+    { part: 'lms', relation: 'relatedMatch', target: `${I2}learning-management-systems`, targetLabel: 'Learning Management Systems', rationale: 'I2IDL v0.0.93 defines software platforms for administering, delivering and tracking learning. This part describes an LMS configured for LTI and OneRoster; the proposed relation concerns that description, not an equivalence between a deployed instance and a vocabulary concept.' },
     { part: 'roster', relation: 'relatedMatch', target: `${I2}interoperability`, targetLabel: 'Interoperability', rationale: 'OneRoster exists so roster data moves between systems without re-entry.' },
     { part: 'line-items', relation: 'relatedMatch', target: `${I2}interoperability`, targetLabel: 'Interoperability', rationale: 'The gradebook service lets a tool and an LMS exchange grades through one interface.' },
     { part: 'configuration', relation: 'relatedMatch', target: `${I2}endpoint`, targetLabel: 'Endpoint', rationale: 'The configuration names the LMS\'s endpoints.' },
@@ -71,8 +72,5 @@ export const LMS_X: DecorationSpec = {
     { part: 'lms', action: 'urn:iep:action:foxxi:connect-lms', role: 'operationalizes', rationale: 'Registers an LMS with a Foxxi tenant as a connector.' },
     { part: 'lms', action: 'urn:iep:action:foxxi:scorm-dispatch-signed', role: 'operationalizes', rationale: 'Plays a Foxxi course inside the LMS through a SCORM stub the LMS imports.' },
     { part: 'results', action: 'urn:iep:action:foxxi:lti-gradebook-signed', role: 'realizes', rationale: 'Foxxi\'s own LMS keeps a gradebook a learner reads their results from.' },
-  ],
-  gaps: [
-    { part: 'lms', vocabulary: 'the I2IDL glossary (v0.0.86)', note: 'It has no term for a learning management system.' },
   ],
 };

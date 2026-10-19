@@ -43,10 +43,12 @@ jobs:
     timeout-minutes: 25
     env:
       I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
-      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data-v0.0.93
       INTEREGO_CORE_SRC: ${{ github.workspace }}/packages/core/src
       INTEREGO_TSX: ${{ github.workspace }}/node_modules/.bin/tsx
-      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
+      I2IDLX_BUILT_DATE: '2026-10-08'
+      I2IDLX_MODIFIED: '2026-10-19'
+      I2IDLX_NOW: '2026-10-19T00:51:00+00:00'
       PYTHONHASHSEED: '0'
       TZ: UTC
     steps:
@@ -201,8 +203,8 @@ jobs:
         run: |
           mkdir -p .cache
           git clone https://github.com/blakeplock/i2idl-linked-data "$I2IDL_CLONE"
-          git -C "$I2IDL_CLONE" checkout --detach 9f865995d879165d8fa49422915a5e53d2ecebf9
-          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 9f865995d879165d8fa49422915a5e53d2ecebf9
+          git -C "$I2IDL_CLONE" checkout --detach 0754254be64f0562bab7e68d69583f2cc90aa945
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 0754254be64f0562bab7e68d69583f2cc90aa945
       - name: Rebundle current app using existing native graph and reasoning outputs
         run: |
           npx tsx "$I2IDLX_ROOT/typescript/build-app.ts" "$I2IDLX_ROOT" --dist "$I2IDLX_ROOT/dist-ts" --out "$I2IDLX_ROOT/app/build-ts" --site "$I2IDLX_ROOT/site-ts"

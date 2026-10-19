@@ -69,6 +69,31 @@ test('record equality ignores key order and absent fields compare as None', () =
   assert.deepEqual(changed_fields({ record: { a: 1, b: 2 }, missing: null }, { record: { b: 2, a: 1 } }), {});
   assert.deepEqual(diff(before, before), []);
 });
+
+test('tracks a cited CreativeWork source and active-only definition without inventing metadata', () => {
+  const concept = 'https://id.i2idl.org/concepts/learning-management-systems';
+  const definition = 'https://id.i2idl.org/definitions/learning-management-systems';
+  const source = 'https://id.i2idl.org/sources/eric-thesaurus-2025';
+  const doc: JsonObject = { '@graph': [
+    { '@id': concept, '@type': ['skos:Concept', 'schema:DefinedTerm'],
+      'skos:prefLabel': 'Learning Management Systems', 'gs:activeDefinition': { '@id': definition } },
+    { '@id': definition, '@type': ['gs:Definition'], 'rdf:value': 'A learning platform.',
+      'gs:evidence': [{ 'dcterms:source': { '@id': source }, 'gs:evidenceRelation': 'supporting' }] },
+    { '@id': source, '@type': ['schema:CreativeWork'], 'dcterms:title': 'ERIC Thesaurus (2025)', 'dcterms:rights': 'Public domain' },
+    { '@id': 'https://id.i2idl.org/sources/not-cited', '@type': ['schema:CreativeWork'], 'dcterms:title': 'An unrelated work' },
+  ] };
+  const original = JSON.stringify(doc), first = snapshot(doc);
+  assert.deepEqual(Object.keys(first.sources), [source]);
+  assert.equal(first.concepts[concept]!.definition, 'A learning platform.');
+  assert.equal(first.concepts[concept]!.status, null);
+  assert.equal(totals(first).sources, 1);
+  const changed = structuredClone(doc);
+  (changed['@graph'] as JsonObject[]).find(n => n['@id'] === definition)!['rdf:value'] = 'An updated learning platform.';
+  assert.deepEqual(diff(first, snapshot(changed)).filter(e => e.kind === 'definition-revised'), [
+    { kind: 'definition-revised', concept, prior: 'A learning platform.', new: 'An updated learning platform.' },
+  ]);
+  assert.equal(JSON.stringify(doc), original);
+});
 test('Python repr and Unicode ordering preserve history event identity', () => {
   assert.equal(pyRepr("O'Brien"), '"O\'Brien"');
   assert.equal(pyRepr('both " and \''), "'both \" and \\'" + "'");

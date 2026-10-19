@@ -20,6 +20,11 @@ on:
 permissions:
   contents: read
 
+env:
+  I2IDLX_BUILT_DATE: '2026-10-08'
+  I2IDLX_MODIFIED: '2026-10-19'
+  I2IDLX_NOW: '2026-10-19T00:51:00+00:00'
+
 concurrency:
   group: i2idlx-typescript-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -110,7 +115,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data-v0.0.93
     steps:
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
@@ -131,7 +136,8 @@ jobs:
         run: |
           mkdir -p .cache
           git clone https://github.com/blakeplock/i2idl-linked-data "$I2IDL_CLONE"
-          git -C "$I2IDL_CLONE" checkout 9f86599
+          git -C "$I2IDL_CLONE" checkout --detach 0754254be64f0562bab7e68d69583f2cc90aa945
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 0754254be64f0562bab7e68d69583f2cc90aa945
       - name: Compare every native release snapshot and event with Python
         run: |
           ROOT=applications/foxxi-content-intelligence/i2idlx

@@ -78,7 +78,7 @@ for cid, ctl in out["controls"].items():
     got = {str(a).split("--", 1)[1]: str(deco.value(a, URIRef(HYDRA + "target"))) for a in deco.objects(URIRef("https://id.i2idl.org/concepts/" + cid), URIRef(IEP + "affordance"))}
     if got != ctl:
         bad += 1
-check(bad == 0 and len(out["controls"]) == 397, f"client controls match all {len(out['controls']) * 5} materialized targets ({bad} concepts differ)")
+check(bad == 0 and len(out["controls"]) == 420, f"client controls match all {len(out['controls']) * 5} materialized targets ({bad} concepts differ)")
 
 # 2. stored queries
 gl = Graph().parse(pathlib.Path(cfg["i2idl"]["localClone"]) / cfg["i2idl"]["graphPath"], format="json-ld", base="https://id.i2idl.org/")

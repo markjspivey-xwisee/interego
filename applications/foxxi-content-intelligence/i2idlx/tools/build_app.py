@@ -210,12 +210,42 @@ def rights_class(r: str) -> str:
     return "open"
 
 
+def upstream_definition_text(concept, definition):
+    value = clean(definition.get("rdf:value"))
+    if not value:
+        raise ValueError("Missing active definition text for " + concept["@id"])
+    if concept.get("skos:definition") is not None and clean(concept["skos:definition"]) != value:
+        raise ValueError("Definition text differs from its active definition for " + concept["@id"])
+    return value
+
+
+def upstream_evidence_source_nodes(nodes):
+    by_id = {n["@id"]: n for n in nodes}
+    refs = {n["@id"] for n in nodes if "dcterms:BibliographicResource" in ids(n.get("@type"))}
+    for n in nodes:
+        for evidence in aslist(n.get("gs:evidence")):
+            source = evidence.get("dcterms:source", {}).get("@id")
+            if not isinstance(source, str):
+                raise ValueError("Evidence has no source IRI on " + n["@id"])
+            refs.add(source)
+    out = []
+    for iri in sorted(refs):
+        source = by_id.get(iri)
+        if not iri.startswith(I2IDL + "sources/") or source is None:
+            raise ValueError("Unresolved evidence source " + iri)
+        if (not {"dcterms:BibliographicResource", "schema:CreativeWork"}.intersection(ids(source.get("@type")))
+                or not clean(source.get("dcterms:title")) or not clean(source.get("dcterms:rights"))):
+            raise ValueError("Evidence source lacks its declared type, title or rights: " + iri)
+        out.append(source)
+    return out
+
+
 sources, src_index = [], {}
 short_label = {}
 for n in nodes:
     for ev in aslist(n.get("gs:evidence")):
         short_label.setdefault(ev["dcterms:source"]["@id"], ev["gs:sourceLabel"])
-for n in sorted((n for n in nodes if n.get("@type") == "dcterms:BibliographicResource"), key=lambda n: n["@id"]):
+for n in upstream_evidence_source_nodes(nodes):
     sid = local(n["@id"], I2IDL + "sources/")
     rights = n.get("dcterms:rights", "")
     rec = {"id": sid, "iri": n["@id"], "title": n["dcterms:title"], "label": short_label.get(n["@id"], n["dcterms:title"]),
@@ -228,7 +258,7 @@ for n in sorted((n for n in nodes if n.get("@type") == "dcterms:BibliographicRes
             rec[k] = clean(n[jk]) if isinstance(n[jk], str) else n[jk]
     src_index[n["@id"]] = len(sources)
     sources.append(rec)
-check(len(sources) == 14, "14 evidence sources with rights")
+check(len(sources) == 15, "15 evidence sources with rights")
 print("     rights classes:", {s["label"]: s["rc"] for s in sources})
 
 # ── Concepts ───────────────────────────────────────────────────────────────────────────────────────
@@ -256,6 +286,8 @@ for n in concept_nodes:
     d = by_id[n["gs:activeDefinition"]["@id"]]
     ev = []
     for e in aslist(d.get("gs:evidence")):
+        if e.get("gs:evidenceRelation") not in ("direct", "supporting"):
+            raise ValueError("Unknown evidence relation for " + cid + ": " + str(e.get("gs:evidenceRelation")))
         rec = {"s": src_index[e["dcterms:source"]["@id"]], "r": "d" if e["gs:evidenceRelation"] == "direct" else "s",
                "c": clean(e.get("gs:citationDetail")), "u": e.get("schema:url")}
         if e.get("gs:pdfPage") is not None:
@@ -283,11 +315,10 @@ for n in concept_nodes:
     want = NS + ("SourceGroundedDefinition" if prov == "g" else "SynthesizedDefinition")
     if want not in deco_prov:
         failures.append(f"provenance of {cid}: computed {prov}, decorations say {sorted(deco_prov)}")
-    if clean(n["skos:definition"]) != clean(d["rdf:value"]):
-        failures.append(f"definition text of {cid} differs from its active definition")
+    definition = upstream_definition_text(n, d)
     concepts.append({
         "id": cid, "l": n["skos:prefLabel"], "a": aslist(n.get("skos:altLabel")),
-        "d": clean(n["skos:definition"]), "x": clean(n.get("gs:editorialExplanation")),
+        "d": definition, "x": clean(n.get("gs:editorialExplanation")),
         "st": n.get("gs:editorialStatus"), "t": type_id, "f": fields, "pf": primary_field,
         "cu": sorted(curated_of.get(cid, [])), "k": kind, "pv": prov,
         "b": sorted(local(x, CONCEPTS) for x in ids(n.get("skos:broader"))),
@@ -301,8 +332,8 @@ for n in concept_nodes:
                                               "skos:broadMatch", "skos:narrowMatch") for t in ids(n.get(p))],
     })
 cidx = {c["id"]: i for i, c in enumerate(concepts)}
-check(len(concepts) == 397, f"{len(concepts)} concepts extracted")
-check(n_ev == 541, f"{n_ev} evidence records extracted")
+check(len(concepts) == 420, f"{len(concepts)} concepts extracted")
+check(n_ev == 564, f"{n_ev} evidence records extracted")
 check(all(c["pf"] in c["f"] for c in concepts), "every concept's primary field is among its field memberships")
 check(not [f for f in failures if f.startswith(("kind of", "provenance of", "definition text", "concept IRI"))],
       "kinds and definition provenance agree with the materialized decorations")
@@ -526,8 +557,8 @@ for s in rels.subjects(RDF.type, I2X.GlossaryRelease):
                      "rev": sorted(local(str(o), CONCEPTS) for o in rels.objects(s, I2X.revisedDefinitionOf)),
                      "diff": str(cmp_) if cmp_ is not None else None, "note": text(rels, s, RDFS.comment)})
 releases.sort(key=lambda r: tuple(int(x) for x in r["v"].lstrip("v").split(".")))
-check(len(releases) == 23 and releases[-1]["v"] == release and releases[-1]["n"] == 397,
-      "23 releases ending at the pinned release with 397 concepts")
+check(len(releases) == 30 and releases[-1]["v"] == release and releases[-1]["n"] == 420,
+      "30 releases ending at the pinned release with 420 concepts")
 
 # ── Change history: the same derivation (src/history.py) as the published i2idlx-changes graph ─────
 hrels = hist.releases(cfg["i2idl"]["localClone"], cfg["i2idl"]["graphPath"])

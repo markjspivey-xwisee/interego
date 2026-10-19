@@ -54,8 +54,8 @@ i2xr:ConceptRules a sh:NodeShape ;
     ] , [
         a sh:TripleRule ; sh:order 1 ;
         rdfs:comment "Any other editorial status ⇒ modal status Hypothetical."@en ;
-        sh:condition [ a sh:NodeShape ; sh:property [ sh:path gs:editorialStatus ; sh:minCount 1 ] ] ,
-                     [ a sh:NodeShape ; sh:not [ a sh:NodeShape ; sh:property [ sh:path gs:editorialStatus ; sh:hasValue "approved" ] ] ] ;
+        # Missing status is unknown, not approved; only the derived modality is added.
+        sh:condition [ a sh:NodeShape ; sh:not [ a sh:NodeShape ; sh:property [ sh:path gs:editorialStatus ; sh:hasValue "approved" ] ] ] ;
         sh:subject sh:this ; sh:predicate i2x:editorialModality ; sh:object iep:Hypothetical
     ] .
 

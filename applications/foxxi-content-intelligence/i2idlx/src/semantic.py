@@ -651,6 +651,31 @@ CONCEPT_CATEGORY = {
     "pedagogy": ("discipline", "The theory and practice of teaching."),
     "source-of-influence": ("notion", "A factor of any kind — data, research, experience, technology — cited for a decision."),
     "emergent-impact": ("notion", "Effects, uses, outcomes or extensions of any kind."),
+    # v0.0.90 additions retained in v0.0.93: reviewed from each active definition.
+    # The upstream type is Concept for these terms, so it supplies no referent default.
+    "learning-management-systems": ("application", "Defined as software platforms for administering, delivering, organizing, tracking and reporting learning."),
+    "technology-integration": ("activity", "The incorporation of technological tools and services into instructional practice is an intentional activity."),
+    "electronic-learning": ("learning", "Learning supported by electronic devices, software or digital processes is a learning activity."),
+    "instructional-design": ("activity", "The systematic analysis and design of learning experiences, materials and assessments is work that people carry out."),
+    "instructional-systems": ("ecosystem", "Coordinated arrangements of people, content, processes, resources and technologies form a socio-technical system."),
+    "learning-objectives": ("information", "Statements describing expected knowledge, skills or capabilities are information artifacts about intended learning."),
+    "learning-strategies": ("method", "Approaches, procedures and techniques for supporting learning are reusable methods."),
+    "blended-learning": ("method", "Defined as an instructional approach combining delivery modes: a reusable way of arranging instruction."),
+    "gamification": ("activity", "The application of game design elements in other contexts is an intentional design activity."),
+    "game-based-learning": ("method", "Defined as an approach that uses games or gameplay for learning: a reusable instructional method."),
+    "adaptive-testing": ("assessment", "Assessment that adjusts subsequent test items in response to earlier answers is an assessment activity."),
+    "assessment-literacy": ("competence", "Knowledge and skills for designing, interpreting and using assessments are capabilities people possess."),
+    "performance-based-assessment": ("assessment", "Requiring and evaluating a demonstration of knowledge or skill is an assessment activity."),
+    "learning-trajectories": ("model", "Descriptions of development through successive stages are representations used to guide learning and assessment."),
+    "transfer-of-training": ("process", "The influence of earlier learning on later learning or performance unfolds across tasks and contexts."),
+    "assistive-technology": ("technology", "The definition includes devices, equipment, software and adapted systems, covering both hardware and software."),
+    "access-to-internet": ("situation", "The availability of means to connect to and use the Internet is a condition of access."),
+    "information-literacy": ("competence", "The ability to locate, evaluate, interpret and use information is a competence a person can exercise."),
+    "media-literacy": ("competence", "The ability to access, interpret, evaluate and create media messages is a competence a person can exercise."),
+    "technological-literacy": ("competence", "Understanding technologies and making informed choices about them are knowledge and capabilities people possess."),
+    "natural-language-processing": ("method", "Defined as computational methods for processing human language: reusable techniques."),
+    "instructional-effectiveness": ("quality", "The degree to which instruction supports intended objectives is a quality of that instruction."),
+    "educational-indicators": ("measure", "Measures describing educational conditions, activities or outcomes are indicators used for evaluation and comparison."),
 }
 
 # ── What I2IDL's own records are (record alignments) ──────────────────────────────────────────────────

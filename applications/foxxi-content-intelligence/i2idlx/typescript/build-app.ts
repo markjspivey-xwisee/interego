@@ -175,6 +175,33 @@ export function shareUrlBootstrap(archivedUrl: string): string {
   return 'window.__ARCHIVED_APP_URL__ = ' + archived + '; window.__APP_URL__ = window.claude ? window.__ARCHIVED_APP_URL__ : new URL("/i2idlx/", window.location.href).href;';
 }
 export interface BuildAppOptions { distDir?: string; outputDir?: string; siteDir?: string; dataOnly?: boolean; now?: string; }
+/** The active definition is canonical; skos:definition is an optional, checked mirror. */
+export function upstreamDefinitionText(concept: Row, definition: Row): string {
+  const value = clean(definition?.['rdf:value']);
+  if (!value) throw new Error('Missing active definition text for ' + concept['@id']);
+  if (concept['skos:definition'] != null && clean(concept['skos:definition']) !== value)
+    throw new Error('Definition text differs from its active definition for ' + concept['@id']);
+  return value;
+}
+/** Resolve evidence references, including CreativeWork sources introduced in v0.0.93. */
+export function upstreamEvidenceSourceNodes(nodes: Row[]): Row[] {
+  const byId: Row = Object.fromEntries(nodes.map(n => [n['@id'], n]));
+  const refs = new Set<string>(nodes.filter(n => ids(n['@type']).includes('dcterms:BibliographicResource')).map(n => n['@id']));
+  for (const n of nodes) for (const evidence of aslist<Row>(n['gs:evidence'])) {
+    const source = evidence['dcterms:source']?.['@id'];
+    if (typeof source !== 'string') throw new Error('Evidence has no source IRI on ' + n['@id']);
+    refs.add(source);
+  }
+  return [...refs].sort().map(iri => {
+    const source = byId[iri];
+    if (!iri.startsWith(I2IDL + 'sources/') || !source)
+      throw new Error('Unresolved evidence source ' + iri);
+    if (!ids(source['@type']).some(t => ['dcterms:BibliographicResource', 'schema:CreativeWork'].includes(t)) ||
+        !clean(source['dcterms:title']) || !clean(source['dcterms:rights']))
+      throw new Error('Evidence source lacks its declared type, title or rights: ' + iri);
+    return source;
+  });
+}
 /** Preserve authored review order independently of the RDF serializer's subject order. */
 export function orderedMappingIds(actualIds:readonly string[],declaredIds:readonly string[]=mappingIds()):string[] {
   const actual=new Set(actualIds),declared=new Set(declaredIds);
@@ -247,7 +274,7 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
   check(JSON.stringify(sort(Object.keys(kindOfType))) === JSON.stringify(sort(collections.type.map(c => c.id))), 'every type collection has exactly one agentic kind');
   const sources: Row[] = [], srcIndex: Row = {}, shortLabel: Row = {};
   for (const n of nodes) for (const ev of aslist<Row>(n['gs:evidence'])) shortLabel[ev['dcterms:source']['@id']] ??= ev['gs:sourceLabel'];
-  for (const n of nodes.filter(n => n['@type'] === 'dcterms:BibliographicResource').sort((a, b) => a['@id'] < b['@id'] ? -1 : 1)) {
+  for (const n of upstreamEvidenceSourceNodes(nodes)) {
     const rights = n['dcterms:rights'] || '', rec: Row = {
       id: local(n['@id'], I2IDL + 'sources/'), iri: n['@id'], title: n['dcterms:title'], label: shortLabel[n['@id']] || n['dcterms:title'],
       url: get(n, 'schema:url'), rights, rightsUrl: get(n, 'gs:rightsUrl'), rc: rightsClass(rights),
@@ -257,7 +284,7 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
     }
     srcIndex[n['@id']] = sources.length; sources.push(rec);
   }
-  check(sources.length === 14, '14 evidence sources with rights');
+  check(sources.length === 15, '15 evidence sources with rights');
   const conceptNodes = nodes.filter(n => ids(n['@type']).includes('skos:Concept')).sort((a, b) => a['skos:prefLabel'].toLowerCase() < b['skos:prefLabel'].toLowerCase() ? -1 : a['skos:prefLabel'].toLowerCase() > b['skos:prefLabel'].toLowerCase() ? 1 : 0);
   const fieldOf: Row = {}, curatedOf: Row = {};
   for (const [iri, mem] of Object.entries(members)) {
@@ -270,6 +297,8 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
     const cid = n['dcterms:identifier'], iri = n['@id'], d = byId[n['gs:activeDefinition']['@id']];
     if (iri !== CONCEPTS + cid) failures.push('concept IRI ' + iri + ' is not built from its identifier');
     const ev: Row[] = aslist<Row>(d['gs:evidence']).map(e => {
+      if (!['direct', 'supporting'].includes(e['gs:evidenceRelation']))
+        throw new Error('Unknown evidence relation for ' + cid + ': ' + e['gs:evidenceRelation']);
       const rec: Row = { s: srcIndex[e['dcterms:source']['@id']], r: e['gs:evidenceRelation'] === 'direct' ? 'd' : 's', c: clean(e['gs:citationDetail']), u: get(e, 'schema:url') };
       for (const [key, source] of [['p', 'gs:pdfPage'], ['pp', 'gs:pdfPrintedPage']] as const) if (e[source] != null) rec[key] = e[source];
       if (e['gs:host']) rec.h = e['gs:host'];
@@ -284,9 +313,9 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
     if (JSON.stringify(dk) !== JSON.stringify([k])) failures.push('kind of ' + cid + ': decorations differ from type mapping');
     const pv = ev.some(e => e.r === 'd') ? 'g' : 's', dp = deco.objects(d['@id'], RDF + 'type').map(str);
     if (!dp.includes(NS + (pv === 'g' ? 'SourceGroundedDefinition' : 'SynthesizedDefinition'))) failures.push('provenance of ' + cid + ': decorations differ from evidence');
-    if (clean(n['skos:definition']) !== clean(d['rdf:value'])) failures.push('definition text of ' + cid + ' differs from its active definition');
+    const definition = upstreamDefinitionText(n, d);
     concepts.push({
-      id: cid, l: n['skos:prefLabel'], a: aslist(n['skos:altLabel']), d: clean(n['skos:definition']), x: clean(n['gs:editorialExplanation']),
+      id: cid, l: n['skos:prefLabel'], a: aslist(n['skos:altLabel']), d: definition, x: clean(n['gs:editorialExplanation']),
       st: get(n, 'gs:editorialStatus'), t, f: fields, pf, cu: sort(curatedOf[cid] || []), k, pv,
       b: sort(ids(n['skos:broader']).map(x => local(x, CONCEPTS))), n: sort(ids(n['skos:narrower']).map(x => local(x, CONCEPTS))), r: sort(ids(n['skos:related']).map(x => local(x, CONCEPTS))),
       di: d['@id'], ds: get(d, 'gs:editorialStatus'), dq: get(d, 'gs:definitionSequence'), dc: d['dcterms:creator'] ? ids(d['dcterms:creator'])[0] : null, dl: get(d, 'dcterms:language'), ev,
@@ -294,8 +323,8 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
     });
   }
   const cidx: Row = Object.fromEntries(concepts.map((c, i) => [c.id, i]));
-  check(concepts.length === 397, concepts.length + ' concepts extracted');
-  check(nEv === 541, nEv + ' evidence records extracted');
+  check(concepts.length === 420, concepts.length + ' concepts extracted');
+  check(nEv === 564, nEv + ' evidence records extracted');
   check(concepts.every(c => c.f.includes(c.pf)), "every concept's primary field is among its field memberships");
   check(!failures.some(f => /^(kind of|provenance of|definition text|concept IRI)/u.test(f)), 'kinds and definition provenance agree with the materialized decorations');
   for (const c of concepts) {
@@ -406,7 +435,7 @@ export async function buildApp(root = resolve(dirname(fileURLToPath(import.meta.
       for (let i = 0; i < Math.max(av.length, bv.length); i++) if ((av[i] || 0) !== (bv[i] || 0)) return (av[i] || 0) - (bv[i] || 0);
       return 0;
     });
-  check(releases.length === 23 && releases.at(-1)?.v === release && releases.at(-1)?.n === 397, '23 releases ending at the pinned release with 397 concepts');
+  check(releases.length === 30 && releases.at(-1)?.v === release && releases.at(-1)?.n === 420, '30 releases ending at the pinned release with 420 concepts');
   const hrels = hist.releases(cfg.i2idl.localClone, cfg.i2idl.graphPath) as Value[];
   check(JSON.stringify(hrels.map(h => h.version)) === JSON.stringify(releases.map(r => r.v)), 'change history covers exactly the releases in the release feed');
   const nFacts = hrels.reduce((n, h) => n + h.events.length, 0), graphFacts = chg.subjects(RDF + 'type', NS + 'ChangeEvent').reduce((n, s) => n + chg.objects(s, NS + 'changeCount').reduce((a, o) => a + Number(str(o)), 0), 0);
