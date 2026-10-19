@@ -40,17 +40,20 @@ export function ConceptPicker({ value, onPick, placeholder = "Find a term…", e
       });
     };
     place();
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(place) : null;
+    resize?.observe(pop.current);
     window.addEventListener("scroll", place, true);
     window.addEventListener("resize", place);
     window.visualViewport?.addEventListener("resize", place);
     window.visualViewport?.addEventListener("scroll", place);
     return () => {
+      resize?.disconnect();
       window.removeEventListener("scroll", place, true);
       window.removeEventListener("resize", place);
       window.visualViewport?.removeEventListener("resize", place);
       window.visualViewport?.removeEventListener("scroll", place);
     };
-  }, [open, q]);
+  }, [open, q, pos?.width]);
   const pick = (id) => {
     onPick(id);
     setOpen(false);
