@@ -13,6 +13,8 @@ import { ForI2IDL } from "./fori2idl.jsx";
 import { Annotate } from "./annotate.jsx";
 import { Semantic } from "./semantic.jsx";
 import { Icon } from "../icons.jsx";
+import { isChatGPTApp } from "../chatgpt-host.js";
+import { ChatGPTTaskView } from "./chatgpt.jsx";
 
 export function ViewFor({ route, engine }) {
   switch (route.view) {
@@ -23,7 +25,7 @@ export function ViewFor({ route, engine }) {
     case "packs": return <Packs route={route} />;
     case "insights": return <Insights route={route} />;
     case "agents": return <Agents route={route} />;
-    case "ask": return engine ? <Ask engine={engine} /> : <Elsewhere what="Ask Claude" />;
+    case "ask": return isChatGPTApp() ? <ChatGPTTaskView mode="ask" /> : engine ? <Ask engine={engine} /> : <Elsewhere what="Ask Claude" />;
     case "fori2idl": return <ForI2IDL />;
     case "annotate": return <Annotate />;
     case "semantic": return <Semantic route={route} />;

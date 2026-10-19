@@ -2,12 +2,17 @@ import { useCaps } from "./caps.js";
 import { Icon } from "./icons.jsx";
 import { CopyBtn, Modal, useUI } from "./ui.jsx";
 import { connectWorkbench, disconnectWorkbench, workbenchConnectionStatus, usePersonalApiKey, clearPersonalApiKey } from "./interego-caps.js";
+import { isChatGPTApp } from "./chatgpt-host.js";
 const { useState } = React;
 const CONTROLS_URL = "https://foxxi-bridge.interego.xwisee.com/i2idlx/capabilities.ttl";
 const ASK_PROMPT = "Discover the I2IDL-X Ask operation through Interego from " + CONTROLS_URL + ", follow it with my question, then answer using the returned glossary context and instructions. My question is: [add your question]";
 const ORCHESTRATE_PROMPT = "Discover I2IDL-X Orchestrate through Interego from " + CONTROLS_URL + ", follow it with example set to true, and execute the returned recipe with your own model. Preflight the available checks and report the actual results in its check ledger.";
 
 export function AIClientTaskLinks() {
+  if (isChatGPTApp()) return <div className="stack" style={{ gap: 10 }}>
+    <p className="small">Use ChatGPT beside this workbench to ask questions and execute an orchestration recipe.</p>
+    <div className="row wrap"><a className="btn primary" href="#ask">Ask ChatGPT</a><a className="btn" href="#orchestrate">Run with ChatGPT</a></div>
+  </div>;
   return <div className="stack" style={{ gap: 10 }}>
     <p className="small">Connect the Interego MCP app in ChatGPT, Claude, or your other AI client. Copy a prompt into that conversation and add your question to the Ask prompt.</p>
     <div className="row wrap">

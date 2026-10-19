@@ -170,7 +170,7 @@ export function Lexicon({ route }) {
               </React.Fragment>
             );
           })}
-          {!results.length ? <div className="empty"><Icon name="search" /><div><b>No terms match.</b></div><div className="small">Try fewer words, or <a href="#ask">ask Claude</a> — it searches definitions too.</div></div> : null}
+          {!results.length ? <div className="empty"><Icon name="search" /><div><b>No terms match.</b></div><div className="small">Try fewer words, or <a href="#ask">ask about these terms</a> — it searches definitions too.</div></div> : null}
         </div>
       </div>
       <div className="lex-main" onScroll={hover.now}>

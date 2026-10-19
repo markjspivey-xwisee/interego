@@ -108,7 +108,7 @@ export function ForI2IDL() {
           <Tile icon="review" o="team" title="Review with a paper trail" href="#review" body={<>Votes compose under Interego's ratification algebra. A ratified crosswalk becomes a prefilled issue in your repository; your editors still decide.</>} />
           <Tile icon="pack" o="i2idl" title="Packs that carry your attribution" href="#packs" body={<>Handouts, Markdown, CSV, JSON-LD and flashcards export with I2IDL's CC BY attribution and each source's own terms, warning before non-commercial material leaves.</>} />
           <Tile icon="edit" o="derived" title="Annotate any text" href="#annotate" body={<>Paste a syllabus or a spec: every I2IDL term in it is found, linked to its IRI, and can be tagged on xAPI statements as Foxxi <code>conceptIds</code>.</>} />
-          <Tile icon="agent" o="interego" title="Agents that cite your IRIs" href="#ask" body={<>Agents follow the catalog's controls within your published limits; Ask Claude answers from your release and cites terms as links to their entries.</>} />
+          <Tile icon="agent" o="interego" title="Agents that cite your IRIs" href="#ask" body={<>Agents follow the catalog's controls within your published limits; Ask answers from your release and cites terms as links to their entries.</>} />
           <Tile icon="tree" o="proposed" title="A classification scheme for the industry's data" href="#semantic" body={<>Each of your concepts says what kind of thing it names. Data an LRS vendor, a university or a badge issuer links to your IRIs is then typed in BFO 2020, gist, DOLCE-UltraLite, gUFO, PROV-O, schema.org, CTDL, ESCO and Open Badges, and a contradiction — a quiz that is also a teacher — is caught.</>} />
         </div>
       </section>

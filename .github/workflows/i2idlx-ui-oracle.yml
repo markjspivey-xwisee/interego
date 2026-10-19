@@ -245,6 +245,10 @@ jobs:
           grep -F 'FAIL 47 of 48 v0.0.93 migration tool results reproduced exactly; actual digest mismatch:' "$RUNNER_TEMP/replay-negative.log"
       - name: Hosted path without credentials or model capabilities
         run: python3 -I tools/i2idlx-hosted-visitor-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: MCP App transport and honest conversation receipts
+        run: node --experimental-vm-modules "$I2IDLX_ROOT/app/tools/chatgpt-host-check.mjs"
+      - name: ChatGPT App GUI with a simulated parent host at three viewport sizes
+        run: python3 -I tools/i2idlx-chatgpt-app-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Capability directory typed inputs, results, freshness and credential boundary
         run: python3 -I "$I2IDLX_ROOT/tools/check_capability_directory.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Export actual public home renders for visual inspection

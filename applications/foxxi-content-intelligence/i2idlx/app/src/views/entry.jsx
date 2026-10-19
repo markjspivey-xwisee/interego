@@ -126,7 +126,7 @@ function EntryHead({ c, onBack }) {
         <a className="btn sm" href={"#cmp-" + c.id}><Icon name="compare" />Compare</a>
         <a className="btn sm" href={"#map-" + c.id}><Icon name="graph" />Neighborhood</a>
         <CiteButton c={c} />
-        {ask ? <button className="btn sm" onClick={() => ask.open(`Explain “${c.l}” for someone new to the field, then say how it differs from its closest related terms.`, [c.id])}><Icon name="sparkle" />Ask Claude</button> : null}
+        {ask ? <button className="btn sm" onClick={() => ask.open(`Explain “${c.l}” for someone new to the field, then say how it differs from its closest related terms.`, [c.id])}><Icon name="sparkle" />Ask about this term</button> : null}
         <ShareButton c={c} />
         <a className="btn sm ghost" href={META.human + "#" + c.id} target="_blank" rel="noopener"><Icon name="external" />Open on i2idl.org</a>
       </div>

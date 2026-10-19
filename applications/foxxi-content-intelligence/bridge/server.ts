@@ -461,6 +461,7 @@ import { glossaryLoader } from '../src/i2idl-glossary.js';
 import { askCourse } from '../src/course-ask.js';
 import { attachDecorationRoutes } from '../src/decorations/routes.js';
 import { attachWorkbenchRoutes, workbenchEncryptionKeypair, workbenchOwnerAnchors } from '../src/i2idlx-workbench.js';
+import { attachI2idlxMcpApp } from '../src/i2idlx-mcp-app.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import {
   attachScormSequencingRoutes, parseManifest, createSession, processNavigation,
@@ -12587,6 +12588,15 @@ attachWorkbenchRoutes(app, {
   siteDirectory: process.env.FOXXI_I2IDLX_SITE_DIR || undefined,
   distDirectory: process.env.FOXXI_I2IDLX_DIST_DIR || undefined,
   appDataFile: process.env.FOXXI_I2IDLX_APP_DATA_FILE || undefined,
+});
+
+// Dedicated public ChatGPT/MCP App; the original /mcp and protected operations are unchanged.
+attachI2idlxMcpApp(app, {
+  baseUrl: bridgeBaseUrl,
+  siteDirectory: process.env.FOXXI_I2IDLX_SITE_DIR || undefined,
+  distDirectory: process.env.FOXXI_I2IDLX_DIST_DIR || undefined,
+  appDataFile: process.env.FOXXI_I2IDLX_APP_DATA_FILE || undefined,
+  fetch: guardedFetchFn(globalThis.fetch) as typeof fetch,
 });
 
 attachCapabilityDirectoryRoutes(app, {

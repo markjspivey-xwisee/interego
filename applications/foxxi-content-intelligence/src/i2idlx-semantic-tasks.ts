@@ -90,7 +90,12 @@ function clashes(data: Row, graph: Store, ns: string) {
     return result;
   });
 }
-export function attachSemanticTaskRoutes(app: Express, config: SemanticTaskConfig): void {
+export type SemanticOperation = 'classify' | 'validate' | 'peer-term' | 'source-version';
+export interface SemanticTaskResponse { status: number; body: Record<string, unknown>; retryAfter?: string }
+export type SemanticTaskExecutor = (operation: SemanticOperation, body: unknown) => Promise<SemanticTaskResponse>;
+// REST and MCP share the same process-wide concurrency bound.
+let semanticCheckActive = false;
+export function createSemanticTaskExecutor(config: SemanticTaskConfig): SemanticTaskExecutor {
   const directory = config.distDirectory ?? fileURLToPath(new URL('../i2idlx/dist-ts/', import.meta.url));
   const files = { ontology: 'i2idlx.ttl', alignments: 'i2idlx-alignments.ttl', referents: 'i2idlx-referents.ttl', shapes: 'i2idlx-shapes.ttl' } as const;
   async function graphs() {
@@ -103,25 +108,9 @@ export function attachSemanticTaskRoutes(app: Express, config: SemanticTaskConfi
     }));
     return Object.fromEntries(entries) as Record<keyof typeof files, { graph: Store; sha256: string }>;
   }
-  let active = false;
-  const route = (slug: string, allowed: string[], execute: (args: Row, data: Row) => Promise<{ result: Row; evidence: Row; status?: string }>) => {
-    app.post('/i2idlx/api/' + slug, async (req, res: Response) => {
-      if (active) { res.status(429).set('Retry-After', '1').json({ error: 'A semantic check is already running; retry after it completes.' }); return; }
-      active = true;
-      try {
-        const args = argsOf(req.body, allowed), data = await loadPublicTaskData(config), output = await execute(args, data);
-        const response = { task: slug, execution: 'deterministic-read-only', status: output.status ?? 'performed', sampling_performed: false,
-          writes_performed: false, source: { ...provenance(data), upstream_freshness: slug === 'source-version' ? 'checked' : 'not_checked' }, evidence: output.evidence, result: output.result };
-        if (Buffer.byteLength(JSON.stringify(response), 'utf8') > MAX_OUTPUT) throw new CheckError('Check output exceeds capacity; narrow the draft.', 413);
-        res.set('Cache-Control', 'no-store').json(response);
-      } catch (error) {
-        res.status(error instanceof CheckError ? error.status : 503).set('Cache-Control', 'no-store').json({
-          task: slug, status: 'unavailable', sampling_performed: false, writes_performed: false,
-          error: error instanceof CheckError ? error.message : 'Pinned semantic check unavailable; no successful result was fabricated.',
-        });
-      } finally { active = false; }
-    });
-  };
+  type Execute = (args: Row, data: Row) => Promise<{ result: Row; evidence: Row; status?: string }>;
+  const operations = new Map<SemanticOperation, { allowed: string[]; execute: Execute }>();
+  const route = (slug: SemanticOperation, allowed: string[], execute: Execute) => { operations.set(slug, { allowed, execute }); };
   route('classify', ['graph_content'], async (args, data) => {
     const ns = iriBase(data), input = graphInput(args, ns), refs = membership(data, input, ns);
     if (refs.some(r => !r.exists_in_snapshot)) throw new CheckError('A classified concept is not present in the pinned glossary.');
@@ -190,5 +179,31 @@ export function attachSemanticTaskRoutes(app: Express, config: SemanticTaskConfi
       reconciliation: pinned.release === current ? 'same_release' : 'review_required', automatically_upgraded: false },
       evidence: { checked_at: new Date().toISOString(), source_url: 'https://id.i2idl.org/scheme.ttl', http_status: response.status,
         sha256: createHash('sha256').update(content).digest('hex') } };
+  });
+  return async (slug, body) => {
+    if (semanticCheckActive) return { status: 429, retryAfter: '1', body: { error: 'A semantic check is already running; retry after it completes.' } };
+    semanticCheckActive = true;
+    try {
+      const operation = operations.get(slug);
+      if (!operation) throw new CheckError('Unsupported semantic check.');
+      const args = argsOf(body, operation.allowed), data = await loadPublicTaskData(config), output = await operation.execute(args, data);
+      const response = { task: slug, execution: 'deterministic-read-only', status: output.status ?? 'performed', sampling_performed: false,
+        writes_performed: false, source: { ...provenance(data), upstream_freshness: slug === 'source-version' ? 'checked' : 'not_checked' }, evidence: output.evidence, result: output.result };
+      if (Buffer.byteLength(JSON.stringify(response), 'utf8') > MAX_OUTPUT) throw new CheckError('Check output exceeds capacity; narrow the draft.', 413);
+      return { status: 200, body: response };
+    } catch (error) {
+      return { status: error instanceof CheckError ? error.status : 503, body: {
+        task: slug, status: 'unavailable', sampling_performed: false, writes_performed: false,
+        error: error instanceof CheckError ? error.message : 'Pinned semantic check unavailable; no successful result was fabricated.',
+      } };
+    } finally { semanticCheckActive = false; }
+  };
+}
+export function attachSemanticTaskRoutes(app: Express, config: SemanticTaskConfig): void {
+  const execute = createSemanticTaskExecutor(config);
+  for (const operation of ['classify', 'validate', 'peer-term', 'source-version'] as const) app.post('/i2idlx/api/' + operation, async (req, res: Response) => {
+    const output = await execute(operation, req.body);
+    if (output.retryAfter) res.set('Retry-After', output.retryAfter);
+    res.status(output.status).set('Cache-Control', 'no-store').json(output.body);
   });
 }

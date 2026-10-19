@@ -178,79 +178,82 @@ function result(config: ClientTaskConfig, task: string, request: Row, instructio
   return { task, execution: 'client-required', status: 'instructions-only', sampling_performed: false, writes_performed: false,
     request, instructions: clientRules + '\n\n' + instructions, context, ...extra, _affordances: follow(config) };
 }
-function send(res: ExpressResponse, value: unknown): void {
+function boundedTask(value: Record<string, unknown>): Record<string, unknown> {
   if (Buffer.byteLength(JSON.stringify(value), 'utf8') > MAX_OUTPUT_BYTES) throw new TaskError('Selected public context exceeds task capacity; narrow concept_ids or your question.', 413);
-  res.set('Cache-Control', 'no-store').json(value);
+  return value;
+}
+/** Same bounded public task implementation for REST and the ChatGPT MCP App. */
+export async function executeClientTask(config: ClientTaskConfig, operation: 'ask' | 'orchestrate', body: unknown): Promise<Record<string, unknown>> {
+  if (operation === 'ask') {
+    const args = argumentsOf(body), question = inputText(args.question, 'question', 4000), data = await loadPublicTaskData(config);
+    const context = contextFor(data, question, args.concept_ids);
+    const module = await import(new URL('../i2idlx/app/src/ask-rules.js', import.meta.url).href);
+    if (typeof module.askInstructions !== 'function') throw new TaskError('Shared Ask instructions unavailable.', 503);
+    const meta = object(data.meta) ? data.meta : {}, scheme = object(meta.scheme) ? meta.scheme : {};
+    const instructions: string = module.askInstructions({ schemeTitle: text(scheme.title), release: text(meta.release),
+      conceptCount: rows(data.concepts).length, context: strings(args.concept_ids, 14).join(', '),
+      indexComplete: false, index: context.concepts.map(c => c.id + ': ' + c.label).join('\n') });
+    return boundedTask(result(config, 'ask', { question }, instructions + '\n\nAnswer the supplied question in this client using the returned exact entries. The index in this bounded packet lists selected entries only. A truncated definition is a source excerpt, not the complete definition; follow current catalog controls to read the original before relying on missing text.', context));
+  }
+  if (operation === 'orchestrate') {
+    const args = argumentsOf(body), scenario = await import(new URL('../i2idlx/app/src/orc/scenario.js', import.meta.url).href);
+    if (!object(scenario.ORG) || !Array.isArray(scenario.AGENTS) || scenario.AGENTS.length !== 8 || !Array.isArray(scenario.STEPS)) throw new TaskError('Eight-role workflow source unavailable.', 503);
+    const example = args.example === true;
+    if (example && (args.brief !== undefined || args.records !== undefined)) throw new TaskError('Choose example:true OR supply brief and records.');
+    const brief = example ? text(scenario.ORG.goal) : inputText(args.brief, 'brief', 6000);
+    let records: Row[];
+    if (example) records = rows(scenario.RECORDS).map(r => pick(r, ['id', 'title', 'description', 'source', 'sourceTypes']));
+    else {
+      if (!Array.isArray(args.records) || args.records.length < 1 || args.records.length > 20) throw new TaskError('records must contain 1 to 20 inventory entries.');
+      records = args.records.map((r: unknown) => {
+        if (!object(r)) throw new TaskError('Each record must be an object.');
+        if (r.sourceTypes !== undefined && (!Array.isArray(r.sourceTypes) || r.sourceTypes.length > 10 || r.sourceTypes.some(t => typeof t !== 'string' || Buffer.byteLength(t, 'utf8') > 200))) throw new TaskError('Record sourceTypes must contain at most 10 bounded names.');
+        return { id: inputText(r.id, 'record id', 120), title: inputText(r.title, 'record title', 400),
+          description: inputText(r.description, 'record description', 2400), sourceTypes: strings(r.sourceTypes, 10) };
+      });
+      if (new Set(records.map(r => r.id)).size !== records.length) throw new TaskError('Record identifiers must be unique.');
+    }
+    const data = await loadPublicTaskData(config), query = records.map(r => r.title).join('\n') + '\n' + brief + '\n' + records.map(r => r.description).join('\n');
+    const context = contextFor(data, query, args.concept_ids);
+    const roles = rows(scenario.AGENTS).map(a => ({ ...pick(a, ['id', 'name', 'charter'], 6000), execution: 'client-model-role', status: 'pending' }));
+    const steps = rows(scenario.STEPS).map(s => ({ ...pick(s, ['id', 'agent', 'title', 'task'], 6000),
+      after: strings(s.after), conditional: s.conditional === true, browser_tool_names: strings(s.tools), status: 'pending',
+      execution: ['check', 'recheck'].includes(text(s.id)) ? 'deterministic-check' : s.id === 'stage' ? 'validation-and-publication-draft' : 'client-model-draft',
+      ...(s.id === 'fix' ? { condition: { check: 'classification', when: 'clashes_present', whenFalse: 'skip_with_evidence', whenUnknown: 'blocked' } } : {}),
+      ...(s.id === 'recheck' ? { condition: { step: 'fix', when: 'draft_graph_changed', whenFalse: 'skip_with_evidence', whenUnknown: 'blocked' } } : {}),
+    }));
+    const ledger = checkLedger(config);
+    const instructions = [
+      'Use the existing eight-role Interpretant workflow below as a recipe. Conductor coordinates, Scout discovers, Lexicographer classifies, Ontologist checks, Crosswalker proposes, Standards and Practice reviewers review, and Curator builds the glossary.',
+      'Preflight the current callable operations and their input contracts before starting dependent work. If a required deterministic operation, prepared runtime or evidence asset is unavailable, mark that check blocked and stop its dependent steps. Do not install packages, modify the user environment or improvise a local RDF/SHACL runtime to fill the gap.',
+      'Follow step dependencies. A conditional step whose condition is false may be skipped with its evaluated reason and evidence; that explicit skip satisfies the dependency, but pending, blocked or failed steps do not. A missing classification check cannot justify skipping fix/recheck or advancing to publication. You may enact roles sequentially; claim separate agents only if your client actually creates them. Give each completed role a 2–4 sentence handoff, ending with a 4–6 sentence report to the human.',
+      'Classify what each record IS AN INSTANCE OF, not what it is about. Read definitions first, cite [[concept-id]], and flag gaps rather than force a fit. Preserve Hypothetical status for draft capability links/crosswalks.',
+      'Original workflow browser_tool_names describe sandbox methods, not callable MCP tools. Adapt academy/badge/CTDL-specific wording to the supplied brief only when the inventory supports it.',
+      'For classifier/standards claims, invoke current discovered read-only controls or report that checks were not run. Propose review votes, packs and exact publication calls as drafts only. Do not claim ratification, sandbox changes, staging or publication from this task packet.',
+      'Maintain the supplied pending check ledger in your report. Model classifications/reviews are drafts; deterministic checks require actual returned evidence and source pins. Report each check as pending, passed, failed, blocked or conditionally skipped, and keep the exact graph checked distinct from later drafts. A classifier with zero category conflicts does not establish SHACL conformance or full OWL consistency.',
+      'This context is a pinned snapshot; freshness starts not_checked. Report an upstream comparison only if actually invoked, retain both versions on a mismatch, and state which snapshot the draft uses. Never treat a bounded search miss as proof that the whole glossary lacks a concept.',
+      'At stage, show the proposed exact governed write and ask the human for authorization before any external write. This endpoint does not grant publication authorization or maintain an approval gate.',
+      'Use at most two parallel roles, twelve workflow steps and six tool rounds per step; pause and report unresolved work when that bound is reached.',
+      'Before actual tool rounds, give one short action update. Ground handoffs in returned evidence and actual tool results; keep unexecuted steps explicitly pending.',
+    ].join('\n');
+    return boundedTask(result(config, 'orchestrate', { brief, records, example, ...(example ? { scenario: pick(scenario.ORG, ['name', 'note', 'ns']) } : {}) },
+      instructions, context, { workflow: { source: 'i2idlx/app/src/orc/scenario.js', roles, steps, ledger,
+        preflight: { status: 'pending', requiredBeforeDependentSteps: true, environmentChangesAllowed: false,
+          unavailablePolicy: 'Block the affected check and dependent steps; report the missing operation or evidence, without ad hoc installs.' },
+        dependencyPolicy: { satisfiedBy: ['completed', 'skipped_with_condition_evidence'], blockedBy: ['pending', 'blocked', 'failed'],
+          note: 'A completed diagnostic may report clashes and hand them to fix. Final readiness still requires the corrected graph to pass every applicable required check.' },
+        maxParallelRoles: 2, maxToolRoundsPerStep: 6,
+        gate: 'Draft exact calls and require human authorization before any external write; no server gate or run is created.' } }));
+  }
+  throw new TaskError('Unsupported client task.');
+}
+export function clientTaskFailure(error: unknown): { status: number; body: Record<string, unknown> } {
+  return { status: error instanceof TaskError ? error.status : 503,
+    body: { error: error instanceof TaskError ? error.message : 'Public client task unavailable.', code: 'unavailable' } };
 }
 export function attachClientTaskRoutes(app: Express, config: ClientTaskConfig): void {
-  const refuse = (res: ExpressResponse, error: unknown) => {
-    res.status(error instanceof TaskError ? error.status : 503).set('Cache-Control', 'no-store').json({
-      error: error instanceof TaskError ? error.message : 'Public client task unavailable.', code: 'unavailable',
-    });
-  };
-  app.post('/i2idlx/api/ask', async (req, res) => {
-    try {
-      const args = argumentsOf(req.body), question = inputText(args.question, 'question', 4000), data = await loadPublicTaskData(config);
-      const context = contextFor(data, question, args.concept_ids);
-      const module = await import(new URL('../i2idlx/app/src/ask-rules.js', import.meta.url).href);
-      if (typeof module.askInstructions !== 'function') throw new TaskError('Shared Ask instructions unavailable.', 503);
-      const meta = object(data.meta) ? data.meta : {}, scheme = object(meta.scheme) ? meta.scheme : {};
-      const instructions: string = module.askInstructions({ schemeTitle: text(scheme.title), release: text(meta.release),
-        conceptCount: rows(data.concepts).length, context: strings(args.concept_ids, 14).join(', '),
-        indexComplete: false, index: context.concepts.map(c => c.id + ': ' + c.label).join('\n') });
-      send(res, result(config, 'ask', { question }, instructions + '\n\nAnswer the supplied question in this client using the returned exact entries. The index in this bounded packet lists selected entries only. A truncated definition is a source excerpt, not the complete definition; follow current catalog controls to read the original before relying on missing text.', context));
-    } catch (error) { refuse(res, error); }
-  });
-  app.post('/i2idlx/api/orchestrate', async (req, res) => {
-    try {
-      const args = argumentsOf(req.body), scenario = await import(new URL('../i2idlx/app/src/orc/scenario.js', import.meta.url).href);
-      if (!object(scenario.ORG) || !Array.isArray(scenario.AGENTS) || scenario.AGENTS.length !== 8 || !Array.isArray(scenario.STEPS)) throw new TaskError('Eight-role workflow source unavailable.', 503);
-      const example = args.example === true;
-      if (example && (args.brief !== undefined || args.records !== undefined)) throw new TaskError('Choose example:true OR supply brief and records.');
-      const brief = example ? text(scenario.ORG.goal) : inputText(args.brief, 'brief', 6000);
-      let records: Row[];
-      if (example) records = rows(scenario.RECORDS).map(r => pick(r, ['id', 'title', 'description', 'source', 'sourceTypes']));
-      else {
-        if (!Array.isArray(args.records) || args.records.length < 1 || args.records.length > 20) throw new TaskError('records must contain 1 to 20 inventory entries.');
-        records = args.records.map((r: unknown) => {
-          if (!object(r)) throw new TaskError('Each record must be an object.');
-          if (r.sourceTypes !== undefined && (!Array.isArray(r.sourceTypes) || r.sourceTypes.length > 10 || r.sourceTypes.some(t => typeof t !== 'string' || Buffer.byteLength(t, 'utf8') > 200))) throw new TaskError('Record sourceTypes must contain at most 10 bounded names.');
-          return { id: inputText(r.id, 'record id', 120), title: inputText(r.title, 'record title', 400),
-            description: inputText(r.description, 'record description', 2400), sourceTypes: strings(r.sourceTypes, 10) };
-        });
-        if (new Set(records.map(r => r.id)).size !== records.length) throw new TaskError('Record identifiers must be unique.');
-      }
-      const data = await loadPublicTaskData(config), query = records.map(r => r.title).join('\n') + '\n' + brief + '\n' + records.map(r => r.description).join('\n');
-      const context = contextFor(data, query, args.concept_ids);
-      const roles = rows(scenario.AGENTS).map(a => ({ ...pick(a, ['id', 'name', 'charter'], 6000), execution: 'client-model-role', status: 'pending' }));
-      const steps = rows(scenario.STEPS).map(s => ({ ...pick(s, ['id', 'agent', 'title', 'task'], 6000),
-        after: strings(s.after), conditional: s.conditional === true, browser_tool_names: strings(s.tools), status: 'pending',
-        execution: ['check', 'recheck'].includes(text(s.id)) ? 'deterministic-check' : s.id === 'stage' ? 'validation-and-publication-draft' : 'client-model-draft',
-        ...(s.id === 'fix' ? { condition: { check: 'classification', when: 'clashes_present', whenFalse: 'skip_with_evidence', whenUnknown: 'blocked' } } : {}),
-        ...(s.id === 'recheck' ? { condition: { step: 'fix', when: 'draft_graph_changed', whenFalse: 'skip_with_evidence', whenUnknown: 'blocked' } } : {}),
-      }));
-      const ledger = checkLedger(config);
-      const instructions = [
-        'Use the existing eight-role Interpretant workflow below as a recipe. Conductor coordinates, Scout discovers, Lexicographer classifies, Ontologist checks, Crosswalker proposes, Standards and Practice reviewers review, and Curator builds the glossary.',
-        'Preflight the current callable operations and their input contracts before starting dependent work. If a required deterministic operation, prepared runtime or evidence asset is unavailable, mark that check blocked and stop its dependent steps. Do not install packages, modify the user environment or improvise a local RDF/SHACL runtime to fill the gap.',
-        'Follow step dependencies. A conditional step whose condition is false may be skipped with its evaluated reason and evidence; that explicit skip satisfies the dependency, but pending, blocked or failed steps do not. A missing classification check cannot justify skipping fix/recheck or advancing to publication. You may enact roles sequentially; claim separate agents only if your client actually creates them. Give each completed role a 2–4 sentence handoff, ending with a 4–6 sentence report to the human.',
-        'Classify what each record IS AN INSTANCE OF, not what it is about. Read definitions first, cite [[concept-id]], and flag gaps rather than force a fit. Preserve Hypothetical status for draft capability links/crosswalks.',
-        'Original workflow browser_tool_names describe sandbox methods, not callable MCP tools. Adapt academy/badge/CTDL-specific wording to the supplied brief only when the inventory supports it.',
-        'For classifier/standards claims, invoke current discovered read-only controls or report that checks were not run. Propose review votes, packs and exact publication calls as drafts only. Do not claim ratification, sandbox changes, staging or publication from this task packet.',
-        'Maintain the supplied pending check ledger in your report. Model classifications/reviews are drafts; deterministic checks require actual returned evidence and source pins. Report each check as pending, passed, failed, blocked or conditionally skipped, and keep the exact graph checked distinct from later drafts. A classifier with zero category conflicts does not establish SHACL conformance or full OWL consistency.',
-        'This context is a pinned snapshot; freshness starts not_checked. Report an upstream comparison only if actually invoked, retain both versions on a mismatch, and state which snapshot the draft uses. Never treat a bounded search miss as proof that the whole glossary lacks a concept.',
-        'At stage, show the proposed exact governed write and ask the human for authorization before any external write. This endpoint does not grant publication authorization or maintain an approval gate.',
-        'Use at most two parallel roles, twelve workflow steps and six tool rounds per step; pause and report unresolved work when that bound is reached.',
-        'Before actual tool rounds, give one short action update. Ground handoffs in returned evidence and actual tool results; keep unexecuted steps explicitly pending.',
-      ].join('\n');
-      send(res, result(config, 'orchestrate', { brief, records, example, ...(example ? { scenario: pick(scenario.ORG, ['name', 'note', 'ns']) } : {}) },
-        instructions, context, { workflow: { source: 'i2idlx/app/src/orc/scenario.js', roles, steps, ledger,
-          preflight: { status: 'pending', requiredBeforeDependentSteps: true, environmentChangesAllowed: false,
-            unavailablePolicy: 'Block the affected check and dependent steps; report the missing operation or evidence, without ad hoc installs.' },
-          dependencyPolicy: { satisfiedBy: ['completed', 'skipped_with_condition_evidence'], blockedBy: ['pending', 'blocked', 'failed'],
-            note: 'A completed diagnostic may report clashes and hand them to fix. Final readiness still requires the corrected graph to pass every applicable required check.' },
-          maxParallelRoles: 2, maxToolRoundsPerStep: 6,
-          gate: 'Draft exact calls and require human authorization before any external write; no server gate or run is created.' } }));
-    } catch (error) { refuse(res, error); }
+  for (const operation of ['ask', 'orchestrate'] as const) app.post('/i2idlx/api/' + operation, async (req, res: ExpressResponse) => {
+    try { res.set('Cache-Control', 'no-store').json(await executeClientTask(config, operation, req.body)); }
+    catch (error) { const failure = clientTaskFailure(error); res.status(failure.status).set('Cache-Control', 'no-store').json(failure.body); }
   });
 }

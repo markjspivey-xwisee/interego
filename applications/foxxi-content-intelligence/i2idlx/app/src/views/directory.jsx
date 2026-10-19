@@ -3,12 +3,13 @@ import { META, ACTIONS, conceptsByAction, roleById, systemLabel } from "../data.
 import { Icon } from "../icons.jsx";
 import { ConceptChip, CodeBlock, MethodTag, Seg } from "../ui.jsx";
 import { useStored } from "../util.js";
+import { backendUrl, workbenchHosted } from "../backend-url.js";
 import { actionIri, actionName, actionId, actionInputs, initialPayload, parsePayload, validatePayload, fieldValue, editField, describeCapability, capabilityCall, resultLabel, isCredentialField, credentialPaths, redactCredentials, directoryRequestBody, localSigningPayload } from "../capability-directory.js";
 
 const { useState, useEffect, useMemo } = React;
 const pretty = (value) => JSON.stringify(value, null, 2);
 const embedded = () => Object.entries(ACTIONS).map(([iri, action]) => ({ iri, ...action }));
-const hosted = () => /^\/i2idlx(?:\/|$)/.test(window.location.pathname);
+const hosted = workbenchHosted;
 const safeLink = (value) => /^https?:\/\//.test(value || "") ? value : null;
 const timeLabel = (value) => value ? new Date(value).toLocaleString() : "No timestamp supplied";
 
@@ -21,7 +22,7 @@ export function Directory() {
     if (!hosted()) { setError("The live runner is available in the hosted workbench."); return; }
     setLoading(true); setError("");
     try {
-      const response = await fetch("/i2idlx/directory", { cache: "no-store", credentials: "same-origin" });
+      const response = await fetch(backendUrl("/i2idlx/directory"), { cache: "no-store", credentials: "same-origin" });
       if (!response.ok) throw new Error("Directory returned HTTP " + response.status + ".");
       const data = await response.json();
       if (data.schema !== 1 || !Array.isArray(data.actions) || data.actions.some((a) => !actionIri(a))) throw new Error("Directory returned an unsupported inventory.");
@@ -97,7 +98,7 @@ function ActionRow({ a, live }) {
     setBusy(true); setResult(null);
     const start = performance.now();
     try {
-      const response = await fetch("/i2idlx/directory/run", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: directoryRequestBody(a, parsed.value, mode) });
+      const response = await fetch(backendUrl("/i2idlx/directory/run"), { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: directoryRequestBody(a, parsed.value, mode) });
       let data;
       try { data = await response.json(); } catch { throw new Error("Runner returned HTTP " + response.status + " without a JSON result."); }
       if (!data || data.action_iri !== a.iri || typeof data.executed !== "boolean") throw new Error("Runner returned an unbound or unsupported result.");

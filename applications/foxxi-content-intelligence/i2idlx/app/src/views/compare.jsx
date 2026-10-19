@@ -49,7 +49,7 @@ export function Compare({ route }) {
       {cs.length >= 2 ? <RelationBanner cs={cs} sharedRel={sharedRel} sharedFields={sharedFields} /> : null}
       {cs.length >= 2 && ask ? (
         <div className="row wrap">
-          <button className="btn sm" onClick={() => ask.open(`Contrast ${cs.map((c) => `“${c.l}”`).join(" and ")}: where do they overlap, where do they differ, and when should a course designer use each? Cite the glossary.`, cs.map((c) => c.id))}><Icon name="sparkle" />Ask Claude to contrast them</button>
+          <button className="btn sm" onClick={() => ask.open(`Contrast ${cs.map((c) => `“${c.l}”`).join(" and ")}: where do they overlap, where do they differ, and when should a course designer use each? Cite the glossary.`, cs.map((c) => c.id))}><Icon name="sparkle" />Ask to contrast them</button>
         </div>
       ) : null}
       {cs.length ? (

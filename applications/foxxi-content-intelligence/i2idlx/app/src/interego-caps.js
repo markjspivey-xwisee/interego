@@ -1,7 +1,8 @@
 // Optional Interego capabilities for the Railway-hosted workbench.
 // A host may provide signRequest + sample through its existing MCP connection.
 // No host identity claim is trusted: /session verifies the signature and returns the account.
-const hosted = () => /^\/i2idlx(?:\/|$)/.test(window.location.pathname);
+import { backendUrl, workbenchHosted } from "./backend-url.js";
+const hosted = workbenchHosted;
 let connected = null, personalSample = null;
 const announce = () => window.dispatchEvent(new Event("interego-workbench:changed"));
 const failure = (message, code = "unavailable") => Object.assign(new Error(message), { code });
@@ -92,7 +93,7 @@ function dbAdapter(call, poll) {
 }
 export async function connectWorkbench() {
   if (!hosted()) throw failure("Interego connection is available on the hosted workbench.");
-  const catalog = await json(await fetch("/i2idlx/capabilities", { cache: "no-store" }));
+  const catalog = await json(await fetch(backendUrl("/i2idlx/capabilities"), { cache: "no-store" }));
   const sessionLink = catalog._affordances.find((a) => a.action === "urn:iep:action:foxxi:i2idlx-session");
   if (!sessionLink) throw failure("Workbench did not advertise a verified session operation.");
   const base = catalog.audience;
