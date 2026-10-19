@@ -243,6 +243,14 @@ def main():
                         frame.get_by_role("textbox", name="Pack name", exact=True).fill("Embedded browser acceptance " + tag)
                         picker = frame.locator('.pk input[role="combobox"]')
                         picker.fill("learning record store")
+                        frame.get_by_role("listbox").wait_for()
+                        bounds = frame.get_by_role("listbox").evaluate("""element => {
+                            const r = element.getBoundingClientRect();
+                            return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,
+                                    width:innerWidth,height:innerHeight};
+                        }""")
+                        check(tag + ":pack_picker_inside_viewport", bounds["left"] >= 0 and bounds["top"] >= 0
+                              and bounds["right"] <= bounds["width"] and bounds["bottom"] <= bounds["height"])
                         frame.get_by_role("option", name="Learning Record Store (LRS)", exact=True).click()
                         frame.locator(".pkterm").first.wait_for()
                         check(tag + ":pack_add_local_term", frame.locator(".pkterm").count() == 1
