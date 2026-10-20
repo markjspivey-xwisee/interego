@@ -17,6 +17,7 @@ import sys
 
 LAST_GRAPH_COMMIT = "b75261de5ad7851c1f61607091cc00e486bbbb5f"
 APP_URL = "http://i2idlx-frame.test/i2idlx/"
+DEPLOYMENT_APP_URL = "https://i2idlx-backend.test/i2idlx/"
 HOST_URL = "http://chatgpt-app.test/simulated-host"
 HOST_HTML = r"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -124,13 +125,16 @@ window.addEventListener('message', event => {
 </body></html>"""
 
 
-def embedded_html(source):
-    """Mirror the resource flag, before any workbench script executes."""
-    flag = "<script>window.__I2IDLX_CHATGPT_APP__=true;</script>"
-    if re.search(r"<head\b[^>]*>", source, re.I):
-        return re.sub(r"(<head\b[^>]*>)", lambda match: match.group(1) + flag,
-                      source, count=1, flags=re.I)
-    return flag + source
+def embedded_html(source, app_url=DEPLOYMENT_APP_URL):
+    """Mirror buildWorkbenchAppResource: override the share bootstrap before the final bundle."""
+    scripts = list(re.finditer(r"<script\b[^>]*>[\s\S]*?</script\s*>", source, re.I))
+    if not scripts:
+        raise ValueError("Workbench app bundle is unavailable")
+    flag = ("<script>window.__I2IDLX_CHATGPT_APP__=true;window.__APP_URL__="
+            + json.dumps(app_url).replace("<", "\\u003c") + ";</script>\n")
+    at = scripts[-1].start()
+    return source[:at] + flag + source[at:]
+
 
 
 def main():
@@ -182,7 +186,7 @@ def main():
                 return route.fulfill(status=200, content_type="text/html", body=html)
             if url in ("http://chatgpt-app.test/favicon.ico", "http://i2idlx-frame.test/favicon.ico"):
                 return route.fulfill(status=204, body="")
-            if url == "https://foxxi-bridge.interego.xwisee.com/i2idlx/directory":
+            if url == DEPLOYMENT_APP_URL + "directory":
                 # The real embedded directory performs this public GET on mount.
                 # Exercise its offline fallback, rather than fabricate a live inventory.
                 report["simulated_directory_failures"].append({"url": url, "status": 503})
@@ -237,6 +241,7 @@ def main():
                         page.frame_locator("#workbench").get_by_role("textbox", name="Ask ChatGPT", exact=True).wait_for()
                         frame = page.frame(name="workbench")
                         frame.get_by_text("ChatGPT connected", exact=True).wait_for()
+                        check(tag + ":injected_deployment_url_preserved", frame.evaluate("window.__APP_URL__") == DEPLOYMENT_APP_URL)
                         init = host_requests(page, "ui/initialize")
                         check(tag + ":initialize_handshake", len(init) == 1
                               and init[0]["params"]["protocolVersion"] == "2026-01-26"

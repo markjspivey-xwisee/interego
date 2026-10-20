@@ -15,7 +15,8 @@ let state = {
 };
 
 export const isChatGPTApp = () => typeof window !== "undefined" && !!window.__I2IDLX_CHATGPT_APP__;
-if (isChatGPTApp()) window.__APP_URL__ = "https://foxxi-bridge.interego.xwisee.com/i2idlx/";
+// The resource renderer injects this deployment's __APP_URL__ before the bundle.
+// Keep it intact for API requests and links shared from staging or local Apps.
 export const getHostState = () => ({ ...state, hostContext: { ...state.hostContext } });
 
 export function subscribeHost(listener) {

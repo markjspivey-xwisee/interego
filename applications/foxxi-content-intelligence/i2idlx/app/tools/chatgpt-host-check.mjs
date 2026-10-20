@@ -4,20 +4,22 @@ import fs from "node:fs/promises";
 import vm from "node:vm";
 
 const source = await fs.readFile(new URL("../src/chatgpt-host.js", import.meta.url), "utf8");
+const backendSource = await fs.readFile(new URL("../src/backend-url.js", import.meta.url), "utf8");
 const plain = (value) => JSON.parse(JSON.stringify(value));
 let checks = 0;
 function check(condition, description) { assert.ok(condition, description); checks++; }
 
-async function fixture({ embedded = true, caps, hostContext, hostVersion = "26.1017.11052", auto = true } = {}) {
+async function fixture({ embedded = true, appUrl = embedded ? "https://bridge.example/i2idlx/" : undefined, caps, hostContext, hostVersion = "26.1017.11052", auto = true } = {}) {
   const handlers = new Set(), sent = [], timers = new Map(), css = new Map(), nodes = new Map(), events = [];
   let timerId = 0;
   const root = { dataset: {}, style: { setProperty: (k, v) => css.set(k, v), removeProperty: (k) => css.delete(k) } };
   const document = { documentElement: root, body: { getBoundingClientRect: () => ({ height: 700 }) },
     head: { append: (node) => nodes.set(node.id, node) }, getElementById: (id) => nodes.get(id), createElement: () => ({}) };
   const window = { __I2IDLX_CHATGPT_APP__: embedded,
+    ...(appUrl === undefined ? {} : { __APP_URL__: appUrl }), location: { pathname: "/i2idlx/" },
     addEventListener: (_, handler) => handlers.add(handler), removeEventListener: (_, handler) => handlers.delete(handler),
     dispatchEvent: event => { events.push(event.type); return true; } };
-  const context = vm.createContext({ window, document, console, Event: class { constructor(type) { this.type = type; } },
+  const context = vm.createContext({ window, document, console, URL, Event: class { constructor(type) { this.type = type; } },
     setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, ms }); return id; },
     clearTimeout: (id) => timers.delete(id) });
   function receive(message, from = window.parent) {
@@ -38,6 +40,12 @@ async function fixture({ embedded = true, caps, hostContext, hostVersion = "26.1
     flush: async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); } };
 }
 
+async function backend(f) {
+  const module = new vm.SourceTextModule(backendSource, { context: f.context });
+  await module.link(specifier => { assert.equal(specifier, "./chatgpt-host.js"); return f.module; });
+  await module.evaluate(); return module.namespace;
+}
+
 {
   const f = await fixture({ embedded: false });
   check(!f.api.isChatGPTApp(), "Normal website is not a ChatGPT app");
@@ -51,7 +59,7 @@ async function fixture({ embedded = true, caps, hostContext, hostVersion = "26.1
   const f = await fixture();
   const snapshots = [], unsubscribe = f.api.subscribeHost((state) => snapshots.push(state));
   await Promise.all([f.api.connectHost(), f.api.connectHost()]);
-  check(f.window.__APP_URL__ === "https://foxxi-bridge.interego.xwisee.com/i2idlx/", "Embedded app shares the deployed workbench URL");
+  check(f.window.__APP_URL__ === "https://bridge.example/i2idlx/", "Embedded app preserves the resource's injected deployment URL");
   check(f.sent.filter((m) => m.method === "ui/initialize").length === 1, "Concurrent callers share one handshake");
   assert.deepEqual(f.sent[0].params, { appInfo: { name: "I2IDL-X Workbench", version: "1.0.0" }, appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] }, protocolVersion: "2026-01-26" }); checks++;
   check(f.sent[1].method === "ui/notifications/initialized", "Initialized follows successful negotiation");
@@ -101,6 +109,34 @@ async function fixture({ embedded = true, caps, hostContext, hostVersion = "26.1
   check(f.api.getHostState().status === "unavailable" && f.timers.size === 0, "Teardown rejects pending operations and clears timers");
   unsubscribe(); check(snapshots.some((s) => s.status === "connecting") && snapshots.some((s) => s.status === "ready"), "Subscribers see connection lifecycle");
   check(!f.sent.some((m) => m.method === "sampling/createMessage"), "No sampling or invented subscription model API");
+}
+for (const appUrl of ["https://staging-foxxi.example/i2idlx/", "http://127.0.0.1:4317/i2idlx/"]) {
+  const f = await fixture({ appUrl }), api = await backend(f);
+  check(f.window.__APP_URL__ === appUrl, "Loading host and backend modules preserves the injected source URL: " + appUrl);
+  const origin = new URL(appUrl).origin;
+  assert.equal(api.backendUrl("/i2idlx/capabilities"), origin + "/i2idlx/capabilities"); checks++;
+  assert.equal(api.backendUrl("/i2idlx/directory?view=public"), origin + "/i2idlx/directory?view=public"); checks++;
+  assert.equal(api.backendUrl("api/interventions"), appUrl + "api/interventions"); checks++;
+  await f.api.connectHost();
+  check(f.window.__APP_URL__ === appUrl, "Host initialization keeps share links on their original deployment: " + appUrl);
+  assert.equal(api.backendUrl("/i2idlx/api/intervention-ask"), origin + "/i2idlx/api/intervention-ask"); checks++;
+  assert.throws(() => api.backendUrl("https://other.example/i2idlx/directory"), /deployment origin/); checks++;
+}
+{
+  const f = await fixture({ embedded: false }), api = await backend(f);
+  assert.equal(api.backendUrl("/i2idlx/capabilities"), "/i2idlx/capabilities"); checks++;
+  assert.equal(api.backendUrl("api/interventions"), "api/interventions"); checks++;
+  check(f.window.__APP_URL__ === undefined, "Ordinary website paths do not invent a deployment URL");
+}
+{
+  const f = await fixture({ appUrl: "" }), api = await backend(f);
+  assert.throws(() => api.backendUrl("/i2idlx/capabilities"), /Invalid URL/); checks++;
+  check(f.window.__APP_URL__ === "", "Missing deployment configuration never falls back to production");
+}
+for (const appUrl of ["file:///tmp/i2idlx/", "ftp://bridge.example/i2idlx/", "https://user:secret@bridge.example/i2idlx/"]) {
+  const f = await fixture({ appUrl }), api = await backend(f);
+  assert.throws(() => api.backendUrl("/i2idlx/capabilities"), /HTTP\(S\) without credentials/); checks++;
+  check(f.sent.length === 0 && f.window.__APP_URL__ === appUrl, "Malformed deployment configuration is refused without requests or production fallback");
 }
 {
   const f = await fixture({ caps: { updateModelContext: { text: {} } } }); await f.api.connectHost();
