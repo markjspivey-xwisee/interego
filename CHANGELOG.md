@@ -3011,7 +3011,7 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
   A branch tip is not a durable anchor. Either point it at the merge-base (a commit already
   on `master`, which always resolves) or move it to the squash commit afterwards.
 
-<!-- documented-through: 2037e1a -->
+<!-- documented-through: 919e47344169eaf0a097da0051544c8b28e84a8f -->
 
 ### 2026-09-16 — General LLM telemetry and private HyperMarkdown reports
 
@@ -3371,6 +3371,20 @@ same request meant two different things depending on whether its addressee happe
 - The Discord README's command table omitted `/workspace who` and `/workspace ask` entirely — the
   two commands that make per-agent addressing reachable — so the feature was invisible to anyone
   reading it. Both are listed, along with why a Discord `@mention` is not an address.
+
+## 2026-08-09 — Railway freshness compares repository build inputs (historical PR #304)
+
+PR #304 (`919e4734`) adds `tools/deploy-bundle-scope.ts` and `tools/railway-fleet-audit.ts`. Both the scoped deploy check and fleet audit refine a BEHIND row to `equivalent` only when a confident Dockerfile-derived scope has no changed repository inputs. The scope includes the Dockerfile, build workflow, `.dockerignore` and `.gitattributes`; unknown COPY forms, ADD, untracked build artifacts and failed Git reads cannot clear the row. Other disagreement and singleton checks retain their existing predicate.
+
+Regressions cover matrix and COPY parsing, comment/continuation handling, generated-source refusal and real historical diffs; the positive control rejects content-identical comparison ranges. Bridge checks now trigger on `.dockerignore` changes. The lint and test-module floors account for the added files. Equivalence concerns repository build inputs, not identical rebuilt image bytes or immutable external dependencies.
+
+## 2026-08-09 — Post-deploy verification and fleet auditing (historical PR #303)
+
+PR #303 (`2ecd0031`) replaces the final fleet-wide check in a single-service rollout with `tools/railway-deploy-check.ts`, which selects the deployed service and applies the existing disagreement and singleton predicates. The fleet-wide question moves to `.github/workflows/railway-fleet-audit.yml`, run daily and manually. Regressions check the disagreement axes, singleton settings and the predicate's equivalence across subsets of a mixed fleet.
+
+`tools/railway-singleton-settings.ts` adds a plan-by-default command; explicit apply updates declared replica and overlap settings, then verifies readback. It refuses automatic draining changes and does not trigger a deployment. The lint and test-module floors account for the new tools and suite. These entries describe the historical source changes, not independently verified production redeployments.
+
+This backfill covers only PRs #303 and #304 immediately after the already documented PR #302. The continuous marker advances only through PR #304's existing default-branch commit; later gaps remain measured backlog.
 
 ## 2026-08-09 — an entry naming an agent it was not signed by, and a request nobody could read
 
