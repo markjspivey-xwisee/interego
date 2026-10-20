@@ -20,16 +20,18 @@ export function ConceptPicker({ value, onPick, placeholder = "Find a term…", e
   const res = q.trim() ? search(q, 20).filter((r) => !ex.has(r.c.id)).slice(0, 8) : [];
   useLayoutEffect(() => {
     if (!open || !box.current || !pop.current) return;
+    const anchor = box.current, popup = pop.current, viewport = window.visualViewport;
+    let active = true;
     const place = () => {
-      const r = box.current.getBoundingClientRect(), margin = 12, gap = 4;
-      const viewport = window.visualViewport;
+      if (!active || box.current !== anchor || pop.current !== popup || !anchor.isConnected || !popup.isConnected) return;
+      const r = anchor.getBoundingClientRect(), margin = 12, gap = 4;
       const width = viewport?.width || window.innerWidth;
       const height = viewport?.height || window.innerHeight;
       const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
       const popupWidth = Math.min(Math.max(r.width, 260), Math.max(0, width - margin * 2));
       const below = Math.max(0, top + height - r.bottom - gap - margin);
       const above = Math.max(0, r.top - top - gap - margin);
-      const desired = pop.current.scrollHeight + 2;
+      const desired = popup.scrollHeight + 2;
       const up = below < Math.min(desired, 160) && above > below;
       const maxHeight = Math.max(40, Math.min(height * .6, height - margin * 2, up ? above : below));
       const popupHeight = Math.min(desired, maxHeight);
@@ -41,17 +43,18 @@ export function ConceptPicker({ value, onPick, placeholder = "Find a term…", e
     };
     place();
     const resize = typeof ResizeObserver === "function" ? new ResizeObserver(place) : null;
-    resize?.observe(pop.current);
+    resize?.observe(popup);
     window.addEventListener("scroll", place, true);
     window.addEventListener("resize", place);
-    window.visualViewport?.addEventListener("resize", place);
-    window.visualViewport?.addEventListener("scroll", place);
+    viewport?.addEventListener("resize", place);
+    viewport?.addEventListener("scroll", place);
     return () => {
+      active = false;
       resize?.disconnect();
       window.removeEventListener("scroll", place, true);
       window.removeEventListener("resize", place);
-      window.visualViewport?.removeEventListener("resize", place);
-      window.visualViewport?.removeEventListener("scroll", place);
+      viewport?.removeEventListener("resize", place);
+      viewport?.removeEventListener("scroll", place);
     };
   }, [open, q, pos?.width]);
   const pick = (id) => {

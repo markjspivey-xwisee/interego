@@ -435,24 +435,28 @@ const TYPESAFE: SharedLiveExternal = {
 
 /**
  * Native Interego CSS backed by its existing PGSL engine, exercised by both durable-LRS
- * application suites and a direct engine suite. The application suites start their own CSS
- * subprocesses through native-css-fixture.ts; the engine service and connection budget are
- * shared by all three. Foxxi reaches CSS over HTTP and owns no SQL schema or database connection.
+ * application suites, a direct engine suite and the metadata inventory SQL fixture. The
+ * application suites start their own CSS subprocesses through native-css-fixture.ts; all four
+ * share the engine service and connection budget. The inventory fixture temporarily owns a
+ * synthetic table before the native suites run. Foxxi reaches CSS over HTTP and owns no SQL
+ * schema or database connection.
  *
  * TEST_NATIVE_CSS_ROOT plus TEST_NATIVE_PG_URL configure that real subprocess. An explicitly
- * supplied TEST_NATIVE_POD_URL selects an external native pod instead. REQUIRE_LRS_NATIVE_TESTS
- * supplies neither an address nor a server: it makes missing fixture prerequisites a failure,
- * so the required CI job cannot pass by silently skipping its external checks.
+ * supplied TEST_NATIVE_POD_URL selects an external native pod instead. The inventory accepts
+ * only the isolated loopback PG URL. REQUIRE_LRS_NATIVE_TESTS and REQUIRE_INVENTORY_PG_TESTS
+ * supply neither an address nor a server: each makes its own suite's missing prerequisites a
+ * failure, so the required CI job cannot pass by silently skipping its external checks.
  */
 const FOXXI_LRS_NATIVE: SharedLiveExternal = {
   id: 'foxxi-lrs-native-css-pgsl',
   address: 'the isolated native PGSL engine at TEST_NATIVE_PG_URL, reached directly by the core '
-    + 'suite and through application-owned CSS subprocesses from TEST_NATIVE_CSS_ROOT; optional '
+    + 'and inventory suites and through application-owned CSS subprocesses from TEST_NATIVE_CSS_ROOT; optional '
     + 'TEST_NATIVE_POD_URL retargets only the application suites',
-  contention: 'the direct engine suite and separate CSS children share one isolated PGSL service '
-    + 'and its connection budget. The HTTP recovery suite also kills bridge children, then reads '
+  contention: 'the direct engine and inventory suites and separate CSS children share one isolated PGSL service '
+    + 'and its connection budget; the inventory must exclusively own its synthetic public.pgsl_kv table. '
+    + 'The HTTP recovery suite also kills bridge children, then reads '
     + 'through native CSS again; loopback listeners do not make these dependencies in-process',
-  armedBy: ['TEST_NATIVE_POD_URL', 'TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL', 'REQUIRE_LRS_NATIVE_TESTS'],
+  armedBy: ['TEST_NATIVE_POD_URL', 'TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL', 'REQUIRE_LRS_NATIVE_TESTS', 'REQUIRE_INVENTORY_PG_TESTS'],
   offSwitch: [],
   retargetedBy: ['TEST_NATIVE_POD_URL', 'TEST_NATIVE_CSS_ROOT', 'TEST_NATIVE_PG_URL'],
   switchExceptions: [
@@ -468,12 +472,49 @@ const FOXXI_LRS_NATIVE: SharedLiveExternal = {
       why: 'This suite tests native engine transactions directly through TEST_NATIVE_PG_URL. '
         + 'It neither selects nor dials an external CSS pod, so the application pod retarget is irrelevant.',
     },
+    {
+      name: 'TEST_NATIVE_CSS_ROOT',
+      module: 'tests/pgsl-store-inventory-pg.test.ts',
+      why: 'The inventory executes SQL directly against the isolated loopback PG16 fixture. '
+        + 'It does not start CSS, so a CSS runtime directory is not one of its prerequisites.',
+    },
+    {
+      name: 'TEST_NATIVE_POD_URL',
+      module: 'tests/pgsl-store-inventory-pg.test.ts',
+      why: 'The inventory fixture refuses non-loopback database targets and does not dial a CSS '
+        + 'pod. The optional application-pod retarget cannot select its isolated SQL fixture.',
+    },
+    {
+      name: 'REQUIRE_LRS_NATIVE_TESTS',
+      module: 'tests/pgsl-store-inventory-pg.test.ts',
+      why: 'The metadata SQL fixture has its own REQUIRE_INVENTORY_PG_TESTS prerequisite guard. '
+        + 'The native LRS requirement selects different engine and application contract suites.',
+    },
+    {
+      name: 'REQUIRE_INVENTORY_PG_TESTS',
+      module: 'tests/pgsl-store-native-commit.test.ts',
+      why: 'The native engine contract suite uses REQUIRE_LRS_NATIVE_TESTS for its own missing '
+        + 'prerequisites; the inventory-only guard does not select native resource commit tests.',
+    },
+    {
+      name: 'REQUIRE_INVENTORY_PG_TESTS',
+      module: 'applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts',
+      why: 'The application native LRS suite uses REQUIRE_LRS_NATIVE_TESTS and its CSS fixture. '
+        + 'The separate inventory-only prerequisite guard does not select application LRS tests.',
+    },
+    {
+      name: 'REQUIRE_INVENTORY_PG_TESTS',
+      module: 'applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts',
+      why: 'The application HTTP durability suite requires its native CSS runtime through '
+        + 'REQUIRE_LRS_NATIVE_TESTS, independently of the metadata inventory SQL fixture guard.',
+    },
   ],
   armedInCi: ['.github/workflows/bridge-typecheck.yml'],
   touchedBy: [
     'applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts',
     'applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts',
     'tests/pgsl-store-native-commit.test.ts',
+    'tests/pgsl-store-inventory-pg.test.ts',
   ],
   fingerprints: [
     helperImport('native-css-fixture'),
@@ -481,6 +522,7 @@ const FOXXI_LRS_NATIVE: SharedLiveExternal = {
     envRead('TEST_NATIVE_CSS_ROOT'),
     envRead('TEST_NATIVE_PG_URL'),
     envRead('REQUIRE_LRS_NATIVE_TESTS'),
+    envRead('REQUIRE_INVENTORY_PG_TESTS'),
   ],
 };
 
@@ -565,6 +607,14 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
   readonly readIn: string;
   readonly why: string;
 }[] = [
+  {
+    name: 'RAILWAY_PROJECT_TOKEN',
+    readIn: 'tools/pgsl-store-inventory.ts',
+    why: 'The inventory unit and SQL fixture suites import this operator\'s aggregate helpers. '
+      + 'Its token read lives only inside main(), whose CLI entry-point guard is false on import; '
+      + 'the suites supply a fake GraphQL client or an isolated loopback PG client and never call main(). '
+      + 'The explicit manual workflow supplies the secret only to the operator command, not these tests.',
+  },
   {
     name: 'I2IDLX_PROGRESS_FILE',
     readIn: 'applications/foxxi-content-intelligence/i2idlx/typescript/progress.ts',

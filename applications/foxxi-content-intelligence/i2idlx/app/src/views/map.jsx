@@ -58,9 +58,14 @@ function WholeMap({ focus }) {
   const { hover } = useUI();
 
   useEffect(() => {
-    const svg = d3.select(svgRef.current);
+    const element = svgRef.current, group = gRef.current;
+    if (!element || !group) return;
+    let active = true;
+    const live = () => active && svgRef.current === element && gRef.current === group && element.isConnected && group.isConnected;
+    const svg = d3.select(element);
     const zoom = d3.zoom().scaleExtent([0.5, 8]).on("zoom", (e) => {
-      gRef.current.setAttribute("transform", e.transform.toString());
+      if (!live()) return;
+      group.setAttribute("transform", e.transform.toString());
       const bucket = Math.round(e.transform.k * 4) / 4;
       setK((old) => (old === bucket ? old : bucket));
       hover.now();
@@ -68,23 +73,34 @@ function WholeMap({ focus }) {
     svg.call(zoom).on("dblclick.zoom", null);
     zoomRef.current = zoom;
     const ro = new ResizeObserver(() => {
-      const r = svgRef.current.getBoundingClientRect();
+      if (!live()) return;
+      const r = element.getBoundingClientRect();
       if (r.width && r.height) setS(Math.min(r.width / LAYOUT.w, r.height / LAYOUT.h));
     });
-    ro.observe(svgRef.current);
-    return () => { svg.on(".zoom", null); ro.disconnect(); };
+    ro.observe(element);
+    return () => {
+      active = false;
+      svg.interrupt(); svg.on(".zoom", null); ro.disconnect();
+      if (zoomRef.current === zoom) zoomRef.current = null;
+    };
   }, []);
 
   const centerOn = useCallback((id, scale = 2.4) => {
     const p = LAYOUT.xy[id];
-    if (!p || !svgRef.current) return;
-    const { width, height } = svgRef.current.getBoundingClientRect();
+    const element = svgRef.current, zoom = zoomRef.current;
+    if (!p || !element || !element.isConnected || !zoom) return;
+    const { width, height } = element.getBoundingClientRect();
     const vb = fitBox(width, height);
     // convert layout coords to the svg's user space (viewBox = layout box)
     const t = d3.zoomIdentity.translate(vb.cx - p[0] * scale, vb.cy - p[1] * scale).scale(scale);
-    d3.select(svgRef.current).transition().duration(600).call(zoomRef.current.transform, t);
+    d3.select(element).transition().duration(600).call(zoom.transform, t);
   }, []);
-  useEffect(() => { if (focus) { setSel(focus); setTimeout(() => centerOn(focus), 50); } }, [focus]);
+  useEffect(() => {
+    if (!focus) return;
+    setSel(focus);
+    const timer = setTimeout(() => centerOn(focus), 50);
+    return () => clearTimeout(timer);
+  }, [focus, centerOn]);
 
   const nb = useMemo(() => {
     const id = hoverId || sel;

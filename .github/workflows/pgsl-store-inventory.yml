@@ -1,0 +1,35 @@
+name: Pod store metadata inventory
+
+# Manual diagnostic only. No schedule, GC, rebuild, data writes or infrastructure mutation.
+on:
+  workflow_dispatch:
+    inputs:
+      max_control_records:
+        description: 'Maximum C metadata records (1–50000); capped lexicographic prefix, not a representative sample'
+        required: true
+        default: '10000'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pgsl-store-metadata-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    name: Read-only metadata through existing access
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v6
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      - name: Bounded metadata inventory (no payloads or access changes)
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          CONTROL_LIMIT: ${{ inputs.max_control_records }}
+        run: node --import=tsx tools/pgsl-store-inventory.ts --max-control-records "$CONTROL_LIMIT"
