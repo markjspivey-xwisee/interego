@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-20 — Native commits reuse identical artifact references
+
+A native commit now reuses one verified encrypted artifact reference when multiple record keys name the same canonical plaintext digest, including the LRS statement and query-index aliases. Reuse stays within that commit's fixed owner scope, encryption keys and recipients. Each later commit still encrypts afresh, and verified staging, head CAS, receipts, historical snapshots and operation replay retain their existing checks.
+
+Record keys and canonical digests are captured before I/O. Revalidation immediately before staging or reuse refuses changed caller data before publishing the authoritative head. The cache retains digests and verified references while plaintext buffers remain transient; plaintext already larger than the existing encrypted-resource cap is refused before I/O. The 43 targeted native-commit tests and the typecheck gate pass, covering alias readback after restart, lost acknowledgements, provenance differences, caller mutation, record-key capture, capacity, later-commit encryption and corrupt staging. Workspace and PGSL builds pass. This reduces new duplicate writes; existing resource retention and reclamation require separate work.
+
 ## 2026-10-20 — Dashboard discovery keeps pod names stable after failures
 
 The observation dashboard now converts cached pod URLs back to validated immediate child-container names when root discovery returns an HTTP error or throws. Previously, the HTTP-error path returned absolute URLs where the poller expected names; subsequent sweeps could prepend the store origin again, retain malformed pods and issue unnecessary registry and manifest reads. Relative and absolute discovery links use the same origin and child-path checks, and the poller refuses malformed cached names before making requests.
