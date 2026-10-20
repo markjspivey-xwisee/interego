@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-20 — Workbench layout callbacks stop when their view is removed
+
+The concept picker's positioning callbacks and whole-map resize and zoom callbacks now verify that their effect is active and still owns connected DOM nodes. React can clear refs before queued browser callbacks or passive-effect cleanup run; the old callbacks dereferenced those cleared refs and could throw during navigation. Cleanup disables retained callbacks first, removes listeners from the visual viewport where they were registered, interrupts map transitions and cancels delayed focus work.
+
+Five deterministic lifecycle checks execute the actual component callback bodies with retained observers, listeners and timers. Both picker and map callbacks reproduce the null `getBoundingClientRect` exception before the repair; all five groups pass afterwards, including live placement and zoom, null or replaced refs, disconnected nodes and post-cleanup callbacks. The existing navigation check still passes all twelve opaque-App tabs and normal Site history. The MCP App validation step runs the lifecycle check beside the navigation check. A complete browser oracle on the new artifact remains separate verification.
+
 ## 2026-10-20 — Native commits reuse identical artifact references
 
 A native commit now reuses one verified encrypted artifact reference when multiple record keys name the same canonical plaintext digest, including the LRS statement and query-index aliases. Reuse stays within that commit's fixed owner scope, encryption keys and recipients. Each later commit still encrypts afresh, and verified staging, head CAS, receipts, historical snapshots and operation replay retain their existing checks.
