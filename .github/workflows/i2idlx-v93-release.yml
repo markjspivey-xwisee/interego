@@ -36,7 +36,7 @@ jobs:
         env:
           # Fill this with the validated candidate's exact SHA in the final receipt
           # commit. The placeholder deliberately fails closed if it is not filled.
-          EXPECTED_PREDECESSOR: 22cc714451f9e0677a9ce645031dd7b535580249
+          EXPECTED_PREDECESSOR: f6b97baca5d54aeeef73bd428f721f6f0bc6e9eb
           PUSH_PREDECESSOR: ${{ github.event.before }}
         run: |
           node --input-type=module <<'NODE'
@@ -163,6 +163,7 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
           const endpoint = 'https://foxxi-bridge.interego.xwisee.com/i2idlx/mcp';
           let sequence = 0;
           async function rpc(method, params = {}, modern = false) {
@@ -188,8 +189,13 @@ jobs:
           assert.ok(initialized.capabilities.tools && initialized.capabilities.resources);
           assert.ok((await rpc('server/discover', {}, true)).supportedVersions.includes('2026-07-28'));
           const tools = (await rpc('tools/list')).tools;
-          assert.equal(tools.length, 8);
+          assert.deepEqual(tools.map(tool => tool.name).sort(), [
+            'i2idlx_ask', 'i2idlx_classify', 'i2idlx_intervention_ask', 'i2idlx_interventions',
+            'i2idlx_orchestrate', 'i2idlx_peer_term', 'i2idlx_search', 'i2idlx_source_version',
+            'i2idlx_validate', 'i2idlx_workbench',
+          ].sort());
           assert.ok(tools.every(tool => tool.annotations.readOnlyHint && !tool.annotations.destructiveHint));
+          assert.ok(tools.find(tool => tool.name === 'i2idlx_workbench').inputSchema.properties.view.enum.includes('interventions'));
           const workbench = await call('i2idlx_workbench');
           assert.equal(workbench.source.release, 'v0.0.93');
           assert.equal(workbench.source.concept_count, 420);
@@ -210,9 +216,80 @@ jobs:
           const recipe = await call('i2idlx_orchestrate', { example: true });
           assert.equal(recipe.workflow.steps.length, 12);
           assert.ok(recipe.workflow.ledger.checks.every(check => check.status === 'pending'));
-          assert.ok([workbench, ask, recipe].every(packet => packet.writes_performed === false && packet.sampling_performed === false));
+
+          // Exercise actual publicly stored material without creating content or attempts.
+          // An empty catalog or unreadable first source is a failed check, never a skipped pass.
+          const catalog = await call('i2idlx_interventions');
+          assert.equal(catalog.bounded, true);
+          assert.equal(catalog.limit, 40);
+          assert.ok(Array.isArray(catalog.items) && catalog.items.length > 0 && catalog.items.length <= 40,
+            'A real public intervention source must be available for stored-source acceptance.');
+          assert.ok(catalog.items.every(item => ['authored-course', 'package'].includes(item.source)
+            && typeof item.id === 'string' && item.id.length
+            && typeof item.title === 'string' && item.title.length
+            && typeof item.kind === 'string' && item.kind.length));
+          const selected = catalog.items[0];
+          const stored = await call('i2idlx_intervention_ask', {
+            source: selected.source, intervention_id: selected.id, lens: 'analyze',
+            question: 'Explain the purpose and main content of ' + selected.title + '.',
+          });
+          assert.equal(stored.task, 'intervention-ask');
+          assert.equal(stored.execution, 'client-required');
+          assert.equal(stored.source_context.source, selected.source);
+          assert.equal(stored.source_context.id, selected.id);
+          assert.equal(stored.source_context.kind, selected.kind);
+          assert.ok(stored.source_context.sections.length > 0);
+          assert.ok(stored.source_context.sections.every(section => typeof section.body === 'string'
+            && section.body.trim().length && typeof section.citation_id === 'string'
+            && section.citation_id.startsWith('intervention:')));
+          assert.equal(stored.pinned_glossary.context.publication.release, 'v0.0.93');
+          assert.match(stored.source_context.evidence.source_projection_sha256, /^[0-9a-f]{64}$/);
+
+          // Use real committed reference prose to verify generalization beyond courses.
+          // This is packet preparation over documentation, not a learner or model result.
+          const referencePath = 'applications/foxxi-content-intelligence/i2idlx/CHATGPT-APP.md';
+          const referenceText = readFileSync(referencePath, 'utf8').split(/\r?\n/).slice(0, 28).join('\n').trim();
+          assert.ok(referenceText.length && Buffer.byteLength(referenceText, 'utf8') <= 6000);
+          assert.match(process.env.GITHUB_SHA, /^[0-9a-f]{40}$/);
+          const referenceUri = 'https://github.com/' + process.env.GITHUB_REPOSITORY
+            + '/blob/' + process.env.GITHUB_SHA + '/' + referencePath;
+          const material = {
+            id: 'release-workbench-reference', title: 'Interpretant inside ChatGPT', kind: 'Reference material',
+            source_uri: referenceUri, version: process.env.GITHUB_SHA,
+            sections: [{ id: 'opening', title: 'Opening documentation', body: referenceText }],
+          };
+          const reference = await call('i2idlx_intervention_ask', {
+            source: 'supplied', lens: 'analyze',
+            question: 'What does this reference say about the connected ChatGPT model and task context?',
+            intervention: material,
+          });
+          assert.equal(reference.source_context.kind, 'Reference material');
+          assert.equal(reference.source_context.source_uri, referenceUri);
+          assert.equal(reference.source_context.version, process.env.GITHUB_SHA);
+          assert.equal(reference.source_context.sections.length, 1);
+          assert.equal(reference.source_context.sections[0].body, referenceText);
+          assert.equal(reference.pinned_glossary.context.publication.release, 'v0.0.93');
+          for (const context of [stored, reference]) {
+            assert.equal(context.assessment_performed, false);
+            assert.equal(context.conversation_context.server_session_created, false);
+            assert.equal(context.conversation_context.persisted, false);
+          }
+
+          const hiddenField = await rpc('tools/call', { name: 'i2idlx_intervention_ask', arguments: {
+            source: 'supplied', question: 'Explain this reference.',
+            intervention: { ...material, answer_key: 'RELEASE_PRIVATE_FIELD_MUST_NOT_BE_RETURNED' },
+          } });
+          assert.equal(hiddenField.isError, true);
+          assert.equal(hiddenField.structuredContent.source_context, undefined);
+          assert.equal(hiddenField.structuredContent.writes_performed, false);
+          assert.equal(hiddenField.structuredContent.sampling_performed, false);
+          assert.ok(!JSON.stringify(hiddenField).includes('RELEASE_PRIVATE_FIELD_MUST_NOT_BE_RETURNED'));
+          assert.ok([workbench, ask, recipe, catalog, stored, reference].every(packet => packet.writes_performed === false && packet.sampling_performed === false));
           console.log(JSON.stringify({ ok: true, checks: ['legacy initialization', 'modern discovery',
-            'eight read-only tools', 'v93 workbench', 'verified GUI resource', 'exact Ask context',
-            'pending twelve-step example recipe', 'no server model or writes'],
+            'ten exact read-only tools', 'intervention view declaration', 'v93 workbench', 'verified GUI resource', 'exact Ask context',
+            'pending twelve-step example recipe', 'real stored intervention context',
+            'committed reference as a non-course intervention', 'hidden assessment field rejected', 'no server model or writes'],
+            stored_source: { source: selected.source, id: selected.id, sections: stored.source_context.sections.length },
+            supplied_reference_source: referenceUri,
             real_chatgpt_acceptance: false, model_calls: 0 }));
           NODE
