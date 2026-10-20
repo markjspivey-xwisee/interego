@@ -5,7 +5,7 @@ import ts from 'typescript';
 
 // Execute the shipped discovery/poll functions without starting the HTTP server.
 // The regression requires consecutive failed discovery cycles, not a string assertion.
-const source = readFileSync(new URL('../examples/dashboard/server.ts', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../examples/dashboard/server.ts', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('server.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const names = new Set(['podNameFromUrl', 'knownPodNames', 'discoverPods', 'pollOne']);
 const functions = ast.statements.filter(node => ts.isFunctionDeclaration(node) && node.name && names.has(node.name.text))

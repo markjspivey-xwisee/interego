@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-20 — Dashboard discovery keeps pod names stable after failures
+
+The observation dashboard now converts cached pod URLs back to validated immediate child-container names when root discovery returns an HTTP error or throws. Previously, the HTTP-error path returned absolute URLs where the poller expected names; subsequent sweeps could prepend the store origin again, retain malformed pods and issue unnecessary registry and manifest reads. Relative and absolute discovery links use the same origin and child-path checks, and the poller refuses malformed cached names before making requests.
+
+Four integration regressions execute the shipped discovery and polling functions across repeated HTTP failures, network failures with contaminated cached URLs, relative and absolute child links, and invalid names that must cause no reads. All four pass with the repair and fail against the original behavior. The repair does not establish production traffic attribution or physical storage reclamation; deployment and live observations remain separate.
+
 ## 2026-10-18 — Native LRS point operations verify selected record paths
 
 Foxxi's native LRS now checks the exact statement, tenant-registry, attachment and void-target paths needed by a point write instead of reconstructing every tenant's index. Point statement and State/Profile reads use the same selected native proofs. A voided statement expands its verified relation to the actual voider and restarts on a changed head; an unvisited path cannot count as an absent record. Native write-authority checks and commits still await the existing verified native receipts, while ignored commit-result maps no longer trigger a second complete traversal. Adapters without the optional selected-read API keep the complete-read path.
