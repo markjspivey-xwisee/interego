@@ -98,7 +98,7 @@ function ContextPreview({ packet }) {
       <div className="row wrap"><span className="tag">{source.kind || packet.request?.source || 'Intervention'}</span>{source.version ? <span className="tag">{source.version}</span> : null}</div>
       {uri ? <div className="small">Source: {href ? <a href={href} target="_blank" rel="noopener">{uri}</a> : <span>{uri}</span>}</div> : null}
       {source.rights ? <p className="small muted">{source.rights}</p> : null}
-      {source.provenance ? <p className="small muted">{typeof source.provenance === 'string' ? source.provenance : source.provenance.note || source.provenance.origin || ''}</p> : null}
+      {source.provenance ? <p className="small muted">{typeof source.provenance === 'string' ? source.provenance : source.provenance.attribution || source.provenance.note || source.provenance.origin || ''}</p> : null}
     </div>
     {passages.map((part, index) => <article className="note stack" key={part.id || index} style={{ gap: 8 }}>
       <div className="row wrap"><code style={{ overflowWrap: 'anywhere', maxWidth: '100%' }}>{part.citation || part.citation_id || part.id || 'Passage ' + (index + 1)}</code><b>{part.title || part.section_title || 'Passage ' + (index + 1)}</b></div>
