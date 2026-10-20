@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-20 — Bounded read-only pod-store metadata inventory
+
+A manual-only diagnostic reports database and public relation sizes, tuple estimates, aggregate WAL/slot retention, grouped session state, and a capped prefix of control-plane resource categories. Represented resource bytes come from the existing resource-head size metadata; no lattice bodies, learner payloads, private identifiers, raw application names or SQL error messages are emitted. Physical relation/TOAST/index totals and logical representation sizes remain distinct, and truncated or unavailable sections are explicit.
+
+The operator reuses the existing Railway project token and an already provisioned Postgres proxy; missing access is refused. Every section confirms a read-only transaction, statement/lock timeouts bound the queries, session-local settings refuse temporary-file spills, and the complete command has a sixty-second deadline. It does not create access, change stored data or persistent configuration, run garbage collection, compact storage, resize volumes or claim production reclamation.
+
 ## 2026-10-20 — Workbench layout callbacks stop when their view is removed
 
 The concept picker's positioning callbacks and whole-map resize and zoom callbacks now verify that their effect is active and still owns connected DOM nodes. React can clear refs before queued browser callbacks or passive-effect cleanup run; the old callbacks dereferenced those cleared refs and could throw during navigation. Cleanup disables retained callbacks first, removes listeners from the visual viewport where they were registered, interrupts map transitions and cancels delayed focus work.

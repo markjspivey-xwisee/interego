@@ -373,6 +373,11 @@ jobs:
       - name: Build @interego/* packages
         if: steps.dist.outputs.cache-hit != 'true'
         run: npm run build
+      - name: Require inventory SQL on the existing isolated PostgreSQL16 fixture
+        env:
+          REQUIRE_INVENTORY_PG_TESTS: '1'
+          TEST_NATIVE_PG_URL: postgresql://foxxi_test:isolated_fixture_only@127.0.0.1:5432/native_interego_test
+        run: npx vitest run tests/pgsl-store-inventory-pg.test.ts
       - name: Require native atomic store and encrypted SDK contracts
         env:
           REQUIRE_LRS_NATIVE_TESTS: '1'

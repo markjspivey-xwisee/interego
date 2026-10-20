@@ -590,6 +590,7 @@ def main():
                     page.on("pageerror", lambda error: report["page_errors"].append({"viewport":"opaque-srcdoc", "error":str(error)}))
                     try:
                         page.goto(HOST_URL + "?opaque-srcdoc", wait_until="domcontentloaded")
+                        page.frame_locator("#workbench").get_by_role("textbox", name="Ask ChatGPT", exact=True).wait_for()
                         frame = page.frame(name="workbench")
                         frame.get_by_text("ChatGPT connected", exact=True).wait_for()
                         # Wait for the launch receipt before the first user click.
