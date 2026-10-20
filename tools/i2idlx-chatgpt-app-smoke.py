@@ -77,6 +77,7 @@ window.addEventListener('message', event => {
     }
     if (value.params.name === 'i2idlx_interventions') {
       return respond(event.source,value.id,{
+        content:[{type:'text',text:'SIMULATED intervention catalog; no live source lookup.'}],
         structuredContent:{simulated:true,bounded:true,items:[
           {source:'authored-course',id:'simulated-course',title:'TEST FIXTURE: existing course',kind:'SCORM course'},
           {source:'package',id:'a'.repeat(64),title:'TEST FIXTURE: existing package',kind:'Uploaded package'}
