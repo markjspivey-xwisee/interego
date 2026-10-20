@@ -7,9 +7,13 @@ import { UI, useToasts, useHoverCards, Modal, Avatar } from "./ui.jsx";
 import { Palette } from "./palette.jsx";
 import { useAskEngine } from "./views/ask.jsx";
 import { ViewFor } from "./views/router.jsx";
+import { InterventionChat } from "./views/intervention.jsx";
 import { Orchestrate } from "./views/orchestrate.jsx";
+import { ChatGPTTaskView, ChatGPTConnection, ChatGPTRouteBridge, openChatGPTAsk } from "./views/chatgpt.jsx";
+import { isChatGPTApp } from "./chatgpt-host.js";
 import { LensToggle, LayersModal } from "./origin.jsx";
 import { useRoute, go, isTyping, useStored, cx } from "./util.js";
+import { installFragmentNavigation } from "./navigation.js";
 
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
@@ -25,11 +29,13 @@ const NAV = [
   { v: "agents", l: "Agents", h: "agents", icon: "agent" },
   { v: "orchestrate", l: "Orchestrate", h: "orchestrate", icon: "route" },
   { v: "ask", l: "Ask", h: "ask", icon: "sparkle" },
+  { v: "interventions", l: "Interventions", h: "interventions", icon: "route" },
 ];
 
 function useTheme() {
   const [theme, setTheme] = useStored("theme", "system");
   useEffect(() => {
+    if (isChatGPTApp()) return; // The App follows the surrounding ChatGPT appearance.
     const el = document.documentElement;
     if (theme === "system") el.removeAttribute("data-theme");
     else el.setAttribute("data-theme", theme);
@@ -50,7 +56,9 @@ function Shell() {
   const engine = useAskEngine();
   const gPending = useRef(0);
 
-  const ask = useMemo(() => (engine.available ? {
+  useEffect(() => isChatGPTApp() ? installFragmentNavigation(document, go) : undefined, []);
+
+  const ask = useMemo(() => (isChatGPTApp() ? { open: openChatGPTAsk } : engine.available ? {
     open: (prompt, ids = []) => {
       engine.setCtx(ids);
       go("ask");
@@ -86,7 +94,7 @@ function Shell() {
 
   const nav = (
     <nav className="nav" aria-label="Views">
-      {NAV.filter((n) => n.v !== "ask" || engine.available).map((n) => (
+      {NAV.map((n) => (
         <a key={n.v} href={"#" + n.h} aria-current={route.view === n.v ? "page" : undefined}>
           <Icon name={n.icon} />{n.l}{n.v === "review" && needVotes ? <span className="count" title={`${needVotes} items have no votes yet`}>{needVotes}</span> : null}
           {n.v === "packs" && caps.ws.packs.length ? <span className="count">{caps.ws.packs.length}</span> : null}
@@ -97,6 +105,7 @@ function Shell() {
   const nextTheme = { system: "light", light: "dark", dark: "system" }[theme];
   return (
     <UI.Provider value={ui}>
+      {isChatGPTApp() ? <ChatGPTRouteBridge /> : null}
       <div className={"app lens-" + lens}>
         <header className="topbar">
           <a className="brand" href="#home" aria-label="Interpretant home">
@@ -106,20 +115,21 @@ function Shell() {
           <button className="searchbtn" onClick={() => setPal(true)} aria-label="Search terms"><Icon name="search" /><span className="ph">Search {C.length} terms…</span><kbd>/</kbd></button>
           {nav}
           <div className="tools">
-            <WorkbenchConnection />
+            {isChatGPTApp() ? <ChatGPTConnection /> : <WorkbenchConnection />}
             <LensToggle lens={lens} setLens={(v) => { setLens(v); toast(v === "i2idl" ? "Showing only what I2IDL publishes" : "Showing I2IDL with the I2IDL-X layers", { icon: "layers" }); }} />
             <a className={cx("btn sm fori2idl", route.view === "fori2idl" && "on")} href="#for-i2idl" title="What I2IDL-X does with I2IDL's linked data, mapped to I2IDL's own roadmap"><Icon name="flag" /><span>For I2IDL</span></a>
-            <button className="btn ghost icon" onClick={() => setTheme(nextTheme)} title={`Theme: ${theme} (switch to ${nextTheme})`} aria-label="Switch theme">
+            {!isChatGPTApp() ? <button className="btn ghost icon" onClick={() => setTheme(nextTheme)} title={`Theme: ${theme} (switch to ${nextTheme})`} aria-label="Switch theme">
               <Icon name={theme === "dark" ? "moon" : theme === "light" ? "sun" : "monitor"} />
-            </button>
+            </button> : null}
             <button className="btn ghost icon" onClick={() => setHelp(true)} title="Shortcuts and about" aria-label="Help"><Icon name="help" /></button>
             {caps.me ? <span title={caps.me.name || "You"}><Avatar p={caps.me} size={26} /></span> : null}
           </div>
         </header>
         <div className="navbar2">{nav}</div>
         {caps.dbError ? <div className="note warn small" role="status">Some pod data could not be verified. Team review results are unavailable; unconfirmed workspace edits remain held.</div> : null}
-        <main className={cx("view", route.view === "orchestrate" && "view-fixed")} id="main">
-          {route.view === "orchestrate" ? <Orchestrate /> : <ViewFor route={route} engine={engine} />}
+        <main className={cx("view", route.view === "orchestrate" && !isChatGPTApp() && "view-fixed")} id="main">
+          <div hidden={route.view !== "interventions"}><InterventionChat /></div>
+          {route.view === "interventions" ? null : isChatGPTApp() && ["ask", "orchestrate"].includes(route.view) ? <ChatGPTTaskView key={route.view} mode={route.view} /> : route.view === "orchestrate" ? <Orchestrate /> : <ViewFor route={route} engine={engine} />}
         </main>
       </div>
       {pal ? <Palette onClose={() => setPal(false)} ask={ask} current={current} setTheme={setTheme} /> : null}
@@ -144,7 +154,7 @@ function Help({ onClose }) {
           <b>Rights</b>
           <p className="muted">{META.scheme.rights} I2IDL-original definitions, explanations and modeling: {META.license.holder}, <a href={META.license.url} target="_blank" rel="noopener">{META.license.name}</a> (<a href={META.license.file} target="_blank" rel="noopener">DATA-LICENSE</a>). Every evidence record shows its source's own rights; exports carry the attribution for each source they use.</p>
           <b>What is shared here</b>
-          <p className="muted">Votes, notes and “I use this” marks are encrypted and visible to admitted, verified team members; packs, stars and recent terms are private to you. Ask and Orchestrate use your connected client's model subscription, with your own API key as an optional fallback.</p>
+          <p className="muted">{isChatGPTApp() ? "Ask and Orchestrate send requests to your ChatGPT conversation. Answers and actual check results appear there. Packs, stars, recent terms and form drafts use this browser's storage when available; they are not saved to an Interego pod by this App. Shared review still requires a separately verified Interego identity." : 'Votes, notes and "I use this" marks are encrypted and visible to admitted, verified team members; packs, stars and recent terms are private to you. Ask and Orchestrate use your connected client\'s model subscription, with your own API key as an optional fallback.'}</p>
           <b>What's whose</b>
           <p className="muted">Every element carries a label: <b>I2IDL</b> for the glossary as I2IDL publishes it; <b>I2IDL-X · derived</b>, <b>· added</b> or <b>· proposed</b> for the layer on top; <b>Interego</b>, <b>Foxxi</b> or <b>Your team</b> for the rest. The <b>I2IDL only</b> lens hides every layer. Click any label for details.</p>
           <b>Independence</b>

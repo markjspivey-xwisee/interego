@@ -1,8 +1,29 @@
 import { useCaps } from "./caps.js";
 import { Icon } from "./icons.jsx";
-import { Modal, useUI } from "./ui.jsx";
+import { CopyBtn, Modal, useUI } from "./ui.jsx";
 import { connectWorkbench, disconnectWorkbench, workbenchConnectionStatus, usePersonalApiKey, clearPersonalApiKey } from "./interego-caps.js";
+import { isChatGPTApp } from "./chatgpt-host.js";
 const { useState } = React;
+const CONTROLS_URL = "https://foxxi-bridge.interego.xwisee.com/i2idlx/capabilities.ttl";
+const ASK_PROMPT = "Discover the I2IDL-X Ask operation through Interego from " + CONTROLS_URL + ", follow it with my question, then answer using the returned glossary context and instructions. My question is: [add your question]";
+const ORCHESTRATE_PROMPT = "Discover I2IDL-X Orchestrate through Interego from " + CONTROLS_URL + ", follow it with example set to true, and execute the returned recipe with your own model. Preflight the available checks and report the actual results in its check ledger.";
+
+export function AIClientTaskLinks() {
+  if (isChatGPTApp()) return <div className="stack" style={{ gap: 10 }}>
+    <p className="small">Use ChatGPT beside this workbench to ask questions and execute an orchestration recipe.</p>
+    <div className="row wrap"><a className="btn primary" href="#ask">Ask ChatGPT</a><a className="btn" href="#orchestrate">Run with ChatGPT</a></div>
+  </div>;
+  return <div className="stack" style={{ gap: 10 }}>
+    <p className="small">Connect the Interego MCP app in ChatGPT, Claude, or your other AI client. Copy a prompt into that conversation and add your question to the Ask prompt.</p>
+    <div className="row wrap">
+      <CopyBtn text={ASK_PROMPT} label="Copy Ask prompt" />
+      <CopyBtn text={ORCHESTRATE_PROMPT} label="Copy Orchestrate prompt" />
+      <a href={CONTROLS_URL} target="_blank" rel="noreferrer">Discoverable controls</a>
+    </div>
+    <details className="small"><summary>Read or select the prompts</summary><p>{ASK_PROMPT}</p><p>{ORCHESTRATE_PROMPT}</p></details>
+  </div>;
+}
+
 export function WorkbenchConnection() {
   const caps = useCaps(), { toast } = useUI();
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [key, setKey] = useState(""), [model, setModel] = useState("");
@@ -27,8 +48,8 @@ export function WorkbenchConnection() {
           : <button className="btn primary" disabled={busy} onClick={connect}>{busy ? "Verifying…" : "Connect Interego or browser wallet"}</button>}
         <div className="small muted">Your connected MCP client can invoke the public task operations below. Browser pod identity requires a host signing adapter or a browser wallet with an existing account. This page does not create accounts.</div>
         <b>Ask and Orchestrate in your AI client</b>
-        <p className="small">Connect the Interego MCP app in ChatGPT, Claude, or your other AI client. Ask it: “Discover the I2IDL-X Ask operation through Interego, follow it with my question, then answer using the returned glossary context and instructions.” For the eight-role walkthrough, ask: “Discover I2IDL-X Orchestrate, follow it with example set to true, and execute the returned recipe with your own model. Report which checks you actually run.”</p>
-        <p className="tiny muted">These operations return public context and a task for your client. This server runs no model and publishes nothing. <a href="/i2idlx/capabilities" target="_blank" rel="noreferrer">Connection controls</a></p>
+        <AIClientTaskLinks />
+        <p className="tiny muted">Your AI client receives the public context and executes the reasoning in that conversation. The server supplies read-only classifier, SHACL, peer-term and source-version checks; it runs no model and publishes nothing. Copying this prompt does not connect the browser to your model.</p>
         <b>Run inside this page</b>
         <p className="small">{status.subscription ? "Your connected client supplies the model through your existing subscription." : "No browser model is connected here. The MCP workflow above works in your connected AI conversation. Running inside this page requires a host that supplies the sampling adapter, or your own API key below. Browsing and local packs remain available."}</p>
         <label className="stack small">Your OpenAI API key<input className="input" type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} /></label>

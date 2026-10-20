@@ -1,3 +1,5 @@
+import { identityCopy } from "../identity-copy.js";
+import { isChatGPTApp } from "../chatgpt-host.js";
 // Packs: build a course glossary from any terms — order, notes, smart suggestions, rights check, exports.
 import { C, META, COLLECTIONS, KINDS, byId, indexOf, kindById, fieldById, reuseClass, RIGHTS, curatedById } from "../data.js";
 import { useCaps } from "../caps.js";
@@ -29,7 +31,7 @@ export function Packs({ route }) {
       <div className="pk">
         <aside className="stack" style={{ gap: 10 }}>
           <div className="row"><h1 className="h-display grow" style={{ fontSize: 24 }}>Packs</h1><button className="btn sm primary" onClick={create}><Icon name="plus" />New</button></div>
-          <p className="small muted">Course glossaries you build from the release. {wsSource === "sandbox" ? "Packs here belong to this run's sandbox." : wsSource === "held" ? "Your account's packs could not be loaded; changes are kept in this browser and saved to your account on a later visit." : signedIn && canWrite === false ? "Kept in this browser: this page does not let you save to your account." : signedIn ? "Saved privately to your account." : "Saved in this browser; sign in to keep them with your account."}</p>
+          <p className="small muted">Course glossaries you build from the release. {wsSource === "sandbox" ? "Packs here belong to this run's sandbox." : wsSource === "held" ? "Your account's packs could not be loaded; changes are kept in this browser and saved to your account on a later visit." : signedIn && canWrite === false ? "Kept in this browser: this page does not let you save to your account." : signedIn ? "Saved privately to your account." : identityCopy("packs")}</p>
           <OriginStrip items={[["i2idl", "definitions and attribution"], ["team", "your packs"]]} />
           <div className="pklist">
             {packs.map((p) => (
@@ -170,7 +172,7 @@ function ExportPanel({ pack, onXapi }) {
   const rs = rightsSummary(pack.items.map((i) => byId.get(i.id)).filter(Boolean));
   const restricted = [...rs.nc, ...rs.permission];
   const dl = async () => {
-    try { await save(filenameFor(pack, fmt), out); toast("Saved " + filenameFor(pack, fmt), { icon: "download" }); }
+    try { await save(filenameFor(pack, fmt), out); toast((isChatGPTApp() ? "Download requested: " : "Saved ") + filenameFor(pack, fmt), { icon: "download" }); }
     catch (e) { if (e && e.code !== "declined") toast("Saving isn't available here — use Copy instead.", { icon: "warn" }); }
   };
   return (
@@ -191,6 +193,7 @@ function ExportPanel({ pack, onXapi }) {
           <CopyBtn small label="Copy" text={out} />
           {fmt === "xapi" ? <button className="btn sm" onClick={onXapi}><Icon name="code" />Statement builder</button> : null}
         </div>
+        {isChatGPTApp() && !downloads ? <p className="small muted" role="status">Downloads aren't available in this ChatGPT view. Use Copy to export the current format.</p> : null}
         <div className="preview">{fmt === "html" ? <iframe title="Handout preview" sandbox="" srcDoc={out} /> : <pre>{out.length > 6000 ? out.slice(0, 6000) + "\n…" : out}</pre>}</div>
       </div>
       <div className="card pad stack" style={{ gap: 8 }}>

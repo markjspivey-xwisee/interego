@@ -46,6 +46,50 @@ test('definition overrides win over collection defaults without retyping the can
   assert.equal(g.getQuads(I2IDL + 'competency', RDF + 'type', NS + 'CompetenceReferent', null).length, 0);
 });
 
+test('v0.0.93 additions have reviewed definition-based referents with distinct operational consequences', () => {
+  const ids = [
+    'learning-management-systems', 'technology-integration', 'electronic-learning', 'instructional-design',
+    'instructional-systems', 'learning-objectives', 'learning-strategies', 'blended-learning', 'gamification',
+    'game-based-learning', 'adaptive-testing', 'assessment-literacy', 'performance-based-assessment',
+    'learning-trajectories', 'transfer-of-training', 'assistive-technology', 'access-to-internet',
+    'information-literacy', 'media-literacy', 'technological-literacy', 'natural-language-processing',
+    'instructional-effectiveness', 'educational-indicators',
+  ];
+  const base = fixture(), layer = new Layer(base.root, base.ns, base.iri,
+    Object.fromEntries(ids.map(id => [id, { iri: I2IDL + id, type: 'concept' }])), [],
+    'v0.0.93', '0754254be64f0562bab7e68d69583f2cc90aa945');
+  const assignments = layer.assignments();
+  assert.equal(Object.keys(assignments).length, 23);
+  for (const id of ids) {
+    assert.equal(assignments[id]![2], 'definition', id + ' must not acquire a generic type fallback');
+    assert.notEqual(assignments[id]![0], 'notion', id + ' has a definition-supported category');
+    assert.ok(assignments[id]![1].trim().length > 0, id + ' must retain its interpretation rationale');
+  }
+  const classes = (id: string) => layer.referent_classes(assignments[id]![0]);
+  assert.ok(classes('learning-management-systems').includes('schema:SoftwareApplication'));
+  assert.ok(!classes('learning-management-systems').includes('prov:Activity'));
+  assert.ok(classes('instructional-systems').includes('dul:Situation'));
+  assert.ok(!classes('instructional-systems').includes('schema:SoftwareApplication'));
+  assert.ok(classes('learning-objectives').includes('schema:CreativeWork'));
+  assert.ok(classes('blended-learning').includes('prov:Plan'));
+  assert.ok(classes('game-based-learning').includes('prov:Plan'));
+  assert.ok(classes('electronic-learning').includes('prov:Activity'));
+  assert.ok(classes('adaptive-testing').includes('gist:Determination'));
+  assert.ok(classes('performance-based-assessment').includes('gist:Determination'));
+  for (const id of ['assessment-literacy', 'information-literacy', 'media-literacy', 'technological-literacy']) {
+    assert.ok(classes(id).includes('obo:BFO_0000016'));
+    assert.ok(!classes(id).includes('prov:Activity'));
+  }
+  assert.ok(classes('instructional-effectiveness').includes('gist:Aspect'));
+  assert.ok(classes('educational-indicators').includes('schema:QuantitativeValue'));
+  assert.ok(classes('access-to-internet').includes('dul:Situation'));
+  assert.ok(!classes('access-to-internet').includes('gist:PhysicalIdentifiableItem'));
+  const referents = parseTurtle(layer.referents_ttl('2026-10-19T00:00:00Z'));
+  assert.equal(referents.getQuads(null, NS + 'referentCategory', null, null).length, 23);
+  assert.equal(referents.getQuads(null, OWL + 'equivalentClass', null, null).length, 0);
+  for (const id of ids) assert.equal(referents.getQuads(I2IDL + id, RDF + 'type', null, null).length, 0);
+});
+
 test('only executable class mappings generate OWL bridges with the intended direction', () => {
   const target = 'schema:SoftwareApplication', targetIri = 'https://schema.org/SoftwareApplication';
   const layer = fixture([

@@ -19,10 +19,41 @@ export function ConceptPicker({ value, onPick, placeholder = "Find a term…", e
   const ex = new Set(exclude);
   const res = q.trim() ? search(q, 20).filter((r) => !ex.has(r.c.id)).slice(0, 8) : [];
   useLayoutEffect(() => {
-    if (!open || !box.current) return;
-    const r = box.current.getBoundingClientRect();
-    setPos({ left: r.left, top: r.bottom + 4, width: Math.max(r.width, 260) });
-  }, [open, q]);
+    if (!open || !box.current || !pop.current) return;
+    const place = () => {
+      const r = box.current.getBoundingClientRect(), margin = 12, gap = 4;
+      const viewport = window.visualViewport;
+      const width = viewport?.width || window.innerWidth;
+      const height = viewport?.height || window.innerHeight;
+      const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
+      const popupWidth = Math.min(Math.max(r.width, 260), Math.max(0, width - margin * 2));
+      const below = Math.max(0, top + height - r.bottom - gap - margin);
+      const above = Math.max(0, r.top - top - gap - margin);
+      const desired = pop.current.scrollHeight + 2;
+      const up = below < Math.min(desired, 160) && above > below;
+      const maxHeight = Math.max(40, Math.min(height * .6, height - margin * 2, up ? above : below));
+      const popupHeight = Math.min(desired, maxHeight);
+      setPos({
+        left: Math.max(left + margin, Math.min(r.left, left + width - popupWidth - margin)),
+        top: Math.max(top + margin, Math.min(up ? r.top - gap - popupHeight : r.bottom + gap, top + height - popupHeight - margin)),
+        width: popupWidth, maxHeight,
+      });
+    };
+    place();
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(place) : null;
+    resize?.observe(pop.current);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    window.visualViewport?.addEventListener("resize", place);
+    window.visualViewport?.addEventListener("scroll", place);
+    return () => {
+      resize?.disconnect();
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+      window.visualViewport?.removeEventListener("resize", place);
+      window.visualViewport?.removeEventListener("scroll", place);
+    };
+  }, [open, q, pos?.width]);
   const pick = (id) => {
     onPick(id);
     setOpen(false);
@@ -41,7 +72,7 @@ export function ConceptPicker({ value, onPick, placeholder = "Find a term…", e
           }} aria-label={placeholder} role="combobox" aria-expanded={open && res.length > 0} />
       </div>
       {open && res.length ? (
-        <div className="pop" ref={pop} style={pos ? { left: pos.left, top: pos.top, width: pos.width, maxWidth: "calc(100vw - 24px)" } : { left: -9999 }} role="listbox">
+        <div className="pop" ref={pop} style={pos ? { ...pos, minWidth: 0, maxWidth: "calc(100vw - 24px)" } : { left: -9999 }} role="listbox">
           {res.map((r, k) => (
             <button key={r.c.id} className={"opt" + (k === i ? " on" : "")} role="option" aria-selected={k === i} onMouseDown={(e) => { e.preventDefault(); pick(r.c.id); }}>
               <span className={"dot kd-" + r.c.k} /><span className="grow"><HL text={r.c.l} q={q} /></span>

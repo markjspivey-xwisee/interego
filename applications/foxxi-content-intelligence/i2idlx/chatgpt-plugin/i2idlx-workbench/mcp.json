@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "i2idlx-workbench": {
+      "type": "streamable-http",
+      "url": "https://foxxi-bridge.interego.xwisee.com/i2idlx/mcp",
+      "extensions": { "com.openai": { "auth": { "type": "none" } } }
+    }
+  }
+}

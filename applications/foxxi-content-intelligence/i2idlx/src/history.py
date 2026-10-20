@@ -23,7 +23,7 @@ KINDS = [
     ("label-changed", "Preferred label changed", "The concept's skos:prefLabel differs from the previous release."),
     ("alt-label-added", "Alternative label added", "A skos:altLabel was added to the concept."),
     ("alt-label-removed", "Alternative label removed", "A skos:altLabel was removed from the concept."),
-    ("definition-revised", "Definition revised", "The concept's skos:definition text differs from the previous release."),
+    ("definition-revised", "Definition revised", "The concept's definition text (skos:definition or active rdf:value) differs from the previous release."),
     ("explanation-revised", "Editorial explanation revised", "The concept's gs:editorialExplanation differs from the previous release."),
     ("type-changed", "Type changed", "The concept's gs:typeCollection differs from the previous release."),
     ("field-changed", "Primary field changed", "The concept's gs:fieldCollection differs from the previous release."),
@@ -35,7 +35,7 @@ KINDS = [
     ("collection-added", "Collection added", "A skos:Collection first appears in the release."),
     ("collection-removed", "Collection removed", "A skos:Collection of the previous release is absent."),
     ("collection-revised", "Collection revised", "A collection's label, facet or description differs from the previous release."),
-    ("source-added", "Source added", "A source (dcterms:BibliographicResource) first appears in the release."),
+    ("source-added", "Source added", "A bibliographic resource or cited CreativeWork source first appears in the release."),
     ("source-removed", "Source removed", "A source of the previous release is absent."),
     ("source-revised", "Source revised", "A source's title, URL or rights statement differs from the previous release."),
     ("evidence-added", "Evidence added", "An evidence record (source + citation) was added to a concept's active definition."),
@@ -66,12 +66,14 @@ def snapshot(doc: dict) -> dict:
     """The comparable facts of one release of public/glossary.jsonld."""
     g = [n for n in doc.get("@graph", []) if isinstance(n, dict)]
     by = {n.get("@id"): n for n in g}
+    referenced_sources = {source for n in g for evidence in aslist(n.get("gs:evidence"))
+                          if isinstance(evidence, dict) for source in ids(evidence.get("dcterms:source"))}
     s = {"version": "?", "concepts": {}, "sources": {}, "collections": {}}
     for n in g:
         ts = aslist(n.get("@type"))
         if "skos:ConceptScheme" in ts:
             s["version"] = n.get("gs:publicationVersion", "?")
-        elif "dcterms:BibliographicResource" in ts:
+        elif "dcterms:BibliographicResource" in ts or ("schema:CreativeWork" in ts and n.get("@id") in referenced_sources):
             s["sources"][n["@id"]] = {k: v for k, v in n.items() if k != "@id"}
         elif "skos:Collection" in ts:
             s["collections"][n["@id"]] = {
@@ -93,7 +95,8 @@ def snapshot(doc: dict) -> dict:
             ev[key + (k,)] = e.get("gs:evidenceRelation")
         s["concepts"][n["@id"]] = {
             "label": n.get("skos:prefLabel"), "alt": set(aslist(n.get("skos:altLabel"))),
-            "definition": n.get("skos:definition"), "explanation": n.get("gs:editorialExplanation"),
+            "definition": n.get("skos:definition") if n.get("skos:definition") is not None else (dn or {}).get("rdf:value"),
+            "explanation": n.get("gs:editorialExplanation"),
             "type": (ids(n.get("gs:typeCollection")) or [None])[0],
             "field": (ids(n.get("gs:fieldCollection")) or [None])[0],
             "status": n.get("gs:editorialStatus"),

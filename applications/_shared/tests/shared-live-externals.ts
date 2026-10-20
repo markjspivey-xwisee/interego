@@ -566,6 +566,24 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
   readonly why: string;
 }[] = [
   {
+    name: 'I2IDLX_PROGRESS_FILE',
+    readIn: 'applications/foxxi-content-intelligence/i2idlx/typescript/progress.ts',
+    why: 'an optional local JSONL diagnostic path read by the native reasoning and validation '
+      + 'helpers now imported by the public semantic checks and their tests. When set, progress() '
+      + 'appends timing and memory observations to that exact local file; unset, it writes nothing. '
+      + 'The collected modules do not read this variable themselves. It selects diagnostics, not a '
+      + 'network destination or a reasoning verdict; complete build runners configure their own path.',
+  },
+  {
+    name: 'I2IDLX_JAVA',
+    readIn: 'applications/foxxi-content-intelligence/i2idlx/typescript/reasoning.ts',
+    why: 'the local Java executable selected inside hermit(), defaulting to java. Semantic-check '
+      + 'and fixture imports reach this read through the native reasoning module, but the public '
+      + 'classifier and SHACL routes never call hermit() or launch Java. Complete DL build checks '
+      + 'call it explicitly only after verifying the pinned ROBOT jar; this name selects a local '
+      + 'subprocess executable rather than a network service. No collected module reads it directly.',
+  },
+  {
     name: 'TYPESAFE_API_KEY',
     readIn: 'applications/_shared/judgment-kit/jev-client.ts',
     why: 'the credential jev-client.ts sends to api.typesafe.ai, read once when a client is '

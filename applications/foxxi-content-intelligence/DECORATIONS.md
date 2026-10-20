@@ -61,9 +61,12 @@ credentials. `{+bridge}` is filled by the serving bridge, for the controls that 
 LTI-X's alignments are the reading Foxxi uses for a launch from another LMS: the `sub` with the
 platform's issuer as an xAPI account, the context as the statement's grouping activity.
 
-**What I2IDL lacks is said.** I2IDL v0.0.86 has no term for an LMS, LTI, an experience index, a
-course catalog, the service that launches activities, evidence or a transcript. Each is a gap row,
-so a missing mapping reads as a term I2IDL lacks, not one nobody looked for.
+**Gaps record the release inspected.** The original v0.0.86 review recorded gaps for an LMS,
+LTI, an experience index, a course catalog, the service that launches activities, evidence and a
+transcript. The v0.0.93 review resolves the LMS gap with the new `learning-management-systems`
+concept. LMS-X 0.1.1 proposes a `relatedMatch` for its LMS description; it does not equate a
+deployed instance with a vocabulary concept. The other gap rows retain their original release
+scope. The 23 additions contain no direct counterpart for those remaining gaps.
 
 ## 3. Development
 

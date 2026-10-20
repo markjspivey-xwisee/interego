@@ -10,6 +10,7 @@ import { useCaps } from "../caps.js";
 import { useStored } from "../util.js";
 import { createWorld, callTool, decideGate, TOOLS } from "./world.js";
 import { ORG, RECORDS, AGENTS, STEPS, stepById, agentById } from "./scenario.js";
+import { recordedReleaseOf } from "./prov.js";
 
 const { useState, useRef, useCallback, useMemo, useEffect } = React;
 const CANCEL = { cancelled: true };
@@ -84,6 +85,7 @@ const LIVE_ERRORS = {
 
 export function useOrchestra(trace) {
   const caps = useCaps();
+  const recordedRelease = recordedReleaseOf(trace);
   const world = useRef(createWorld());
   const [version, setVersion] = useState(0);
   const bump = useCallback(() => setVersion((v) => v + 1), []);
@@ -105,7 +107,7 @@ export function useOrchestra(trace) {
   // Can this view run a live team? Needs the sample capability with page tools.
   useEffect(() => {
     if (!caps.resolved) return;
-    if (!caps.sample) { setLive({ available: false, reason: "Use Connect to attach a model through your AI client's Interego connection, or add your own API key. The recorded sandbox example remains available." }); return; }
+    if (!caps.sample) { setLive({ available: false, reason: "Run Orchestrate in your connected AI conversation using the prompt in Connect. Running it inside this page requires an explicit host sampling adapter or your own API key. The recorded sandbox example remains available." }); return; }
     let on = true;
     caps.sample.limits().then((l) => {
       if (!on) return;
@@ -325,7 +327,7 @@ export function useOrchestra(trace) {
     setState("running");
     try {
       if (which === "recorded") {
-        add({ id: nid(), type: "note", tone: "muted", text: `Recorded run, ${new Date(trace.recordedAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}: each role was a separate Claude agent acting through these tools. The page re-runs every call as it replays, so the workbench shows each one happen.` });
+        add({ id: nid(), type: "note", tone: "muted", text: `Original Claude transcript, ${new Date(trace.recordedAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}, recorded against I2IDL ${recordedRelease || "(release not supplied)"}. Each role was a separate Claude agent in that recording. This page deterministically re-executes its tool calls against the current embedded I2IDL ${META.release}; it makes no new model calls in recorded mode. Messages and tool inputs remain historical, while the tool results shown here are current and any differences from the recording stay marked. You decide the sandbox approval gate for this replay.` });
         await replay(r);
       } else {
         add({ id: nid(), type: "note", tone: "muted", text: `Live run on your connected model account (${opts.tier === "quick" ? "fast" : "thorough"}): one your connected model call per step, each with only that step's tools. Nothing leaves the sandbox without your approval.` });
@@ -371,7 +373,7 @@ export function useOrchestra(trace) {
   }, [bump, add]);
 
   return {
-    world: world.current, version, bump, log, steps, state, mode, message, progress, runId, speed, setSpeed, live, presenter, trace,
+    world: world.current, version, bump, log, steps, state, mode, message, progress, runId, speed, setSpeed, live, presenter, trace, recordedRelease,
     start, pause, resume, next, stop, decide,
   };
 }

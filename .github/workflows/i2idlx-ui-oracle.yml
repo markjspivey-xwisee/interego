@@ -43,10 +43,12 @@ jobs:
     timeout-minutes: 25
     env:
       I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
-      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data-v0.0.93
       INTEREGO_CORE_SRC: ${{ github.workspace }}/packages/core/src
       INTEREGO_TSX: ${{ github.workspace }}/node_modules/.bin/tsx
-      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
+      I2IDLX_BUILT_DATE: '2026-10-08'
+      I2IDLX_MODIFIED: '2026-10-19'
+      I2IDLX_NOW: '2026-10-19T00:51:00+00:00'
       PYTHONHASHSEED: '0'
       TZ: UTC
     steps:
@@ -201,8 +203,8 @@ jobs:
         run: |
           mkdir -p .cache
           git clone https://github.com/blakeplock/i2idl-linked-data "$I2IDL_CLONE"
-          git -C "$I2IDL_CLONE" checkout --detach 9f865995d879165d8fa49422915a5e53d2ecebf9
-          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 9f865995d879165d8fa49422915a5e53d2ecebf9
+          git -C "$I2IDL_CLONE" checkout --detach 0754254be64f0562bab7e68d69583f2cc90aa945
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 0754254be64f0562bab7e68d69583f2cc90aa945
       - name: Rebundle current app using existing native graph and reasoning outputs
         run: |
           npx tsx "$I2IDLX_ROOT/typescript/build-app.ts" "$I2IDLX_ROOT" --dist "$I2IDLX_ROOT/dist-ts" --out "$I2IDLX_ROOT/app/build-ts" --site "$I2IDLX_ROOT/site-ts"
@@ -223,10 +225,32 @@ jobs:
         run: python3 -I "$I2IDLX_ROOT/tools/smoke_app.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" --shots "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Original control, SPARQL, classification and exported-record cross-check
         run: python3 -I "$I2IDLX_ROOT/tools/check_app_logic.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
-      - name: Replay original orchestration trace and validate every staged write
-        run: python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT"
+      - name: Require all current replay outputs to match the reviewed v93 migration fixture
+        run: >-
+          python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT"
+          --migration "$I2IDLX_ROOT/examples/orchestra/kestrel-point-v93-replay-expectations.json"
+      - name: Require a wrong expected replay digest to fail the migration gate
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const fixture = JSON.parse(fs.readFileSync(process.env.I2IDLX_ROOT + '/examples/orchestra/kestrel-point-v93-replay-expectations.json', 'utf8'));
+          fixture.results.find(row => row.id === 'c8').expectedSha256 = '0'.repeat(64);
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'invalid-replay-expectations.json'), JSON.stringify(fixture));
+          JS
+          if python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT" --migration "$RUNNER_TEMP/invalid-replay-expectations.json" > "$RUNNER_TEMP/replay-negative.log" 2>&1; then
+            echo 'The migration gate accepted a deliberately incorrect expected digest.' >&2
+            exit 1
+          fi
+          grep -F 'FAIL 47 of 48 v0.0.93 migration tool results reproduced exactly; actual digest mismatch:' "$RUNNER_TEMP/replay-negative.log"
       - name: Hosted path without credentials or model capabilities
         run: python3 -I tools/i2idlx-hosted-visitor-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
+      - name: MCP App transport and honest conversation receipts
+        run: |
+          node --experimental-vm-modules "$I2IDLX_ROOT/app/tools/chatgpt-host-check.mjs"
+          node "$I2IDLX_ROOT/app/tools/navigation-check.mjs"
+      - name: ChatGPT App GUI with a simulated parent host at three viewport sizes
+        run: python3 -I tools/i2idlx-chatgpt-app-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Capability directory typed inputs, results, freshness and credential boundary
         run: python3 -I "$I2IDLX_ROOT/tools/check_capability_directory.py" "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Export actual public home renders for visual inspection

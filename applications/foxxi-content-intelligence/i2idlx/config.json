@@ -15,9 +15,9 @@
   "referents": "i2idlx-referents"
  },
  "i2idl": {
-  "release": "v0.0.86",
+  "release": "v0.0.93",
   "repo": "https://github.com/blakeplock/i2idl-linked-data",
-  "localClone": "../../../../i2idl-linked-data",
+  "localClone": "../../../../i2idl-linked-data-v0.0.93",
   "graphPath": "public/glossary.jsonld"
  },
  "foxxiManifest": "https://foxxi-bridge.interego.xwisee.com/affordances",

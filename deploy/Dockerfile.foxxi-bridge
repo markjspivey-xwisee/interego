@@ -135,8 +135,8 @@ RUN npm ci --prefix applications/foxxi-content-intelligence/i2idlx/app
 ENV I2IDL_CLONE=/tmp/i2idlx-canonical-source
 # Preserve the handoff's agreed publication baseline instead of stamping every rebuild as new.
 ENV I2IDLX_BUILT_DATE=2026-10-08
-ENV I2IDLX_MODIFIED=2026-10-13
-ENV I2IDLX_NOW=2026-10-13T20:30:00+00:00
+ENV I2IDLX_MODIFIED=2026-10-19
+ENV I2IDLX_NOW=2026-10-19T00:51:00+00:00
 RUN npx tsx applications/foxxi-content-intelligence/i2idlx/typescript/prepare-source.ts \
   /app/applications/foxxi-content-intelligence/i2idlx /tmp/i2idlx-canonical-source
 # Use exactly the golden gate's retained snapshots. Only missing xAPI TTLs and

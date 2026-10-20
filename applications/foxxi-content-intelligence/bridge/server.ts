@@ -461,6 +461,9 @@ import { glossaryLoader } from '../src/i2idl-glossary.js';
 import { askCourse } from '../src/course-ask.js';
 import { attachDecorationRoutes } from '../src/decorations/routes.js';
 import { attachWorkbenchRoutes, workbenchEncryptionKeypair, workbenchOwnerAnchors } from '../src/i2idlx-workbench.js';
+import { attachI2idlxMcpApp } from '../src/i2idlx-mcp-app.js';
+import { InterventionTaskError } from '../src/i2idlx-intervention-tasks.js';
+import { publicAuthoredIntervention, publicPackageIntervention } from '../src/i2idlx-intervention-sources.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import {
   attachScormSequencingRoutes, parseManifest, createSession, processNavigation,
@@ -12587,6 +12590,83 @@ attachWorkbenchRoutes(app, {
   siteDirectory: process.env.FOXXI_I2IDLX_SITE_DIR || undefined,
   distDirectory: process.env.FOXXI_I2IDLX_DIST_DIR || undefined,
   appDataFile: process.env.FOXXI_I2IDLX_APP_DATA_FILE || undefined,
+});
+
+// Dedicated public ChatGPT/MCP App; the original /mcp and protected operations are unchanged.
+let interventionReadBusy = false;
+attachI2idlxMcpApp(app, {
+  baseUrl: bridgeBaseUrl,
+  siteDirectory: process.env.FOXXI_I2IDLX_SITE_DIR || undefined,
+  distDirectory: process.env.FOXXI_I2IDLX_DIST_DIR || undefined,
+  appDataFile: process.env.FOXXI_I2IDLX_APP_DATA_FILE || undefined,
+  fetch: guardedFetchFn(globalThis.fetch) as typeof fetch,
+  listInterventions: async () => {
+    // Same public course set as the existing course listing. Hydration updates
+    // only its cache; package metadata uses GET-only about(), never aboutNow().
+    await hydrateAgentCourses();
+    const items: Array<{ source: 'authored-course' | 'package'; id: string; title: string; kind: string; source_uri: string }> = [];
+    for (const course of agentScormCourses.values()) {
+      if (items.length >= 20) break;
+      items.push({ source: 'authored-course', id: course.courseId, title: course.title, kind: 'SCORM course',
+        source_uri: `${bridgeBaseUrl.replace(/\/+$/, '')}/agent/scorm/course/${encodeURIComponent(course.courseId)}` });
+    }
+    for (const sha of await hostedPackages.list(20)) {
+      const about = await hostedPackages.about(sha);
+      items.push({ source: 'package', id: sha, title: about?.title || `Hosted package ${sha.slice(0, 12)}`, kind: 'Hosted package',
+        source_uri: `${bridgeBaseUrl.replace(/\/+$/, '')}/scorm/packages/${sha}` });
+    }
+    return items;
+  },
+  readIntervention: async request => {
+    if (interventionReadBusy) throw new InterventionTaskError('Intervention retrieval is busy; retry shortly.', 429);
+    interventionReadBusy = true;
+    try {
+      if (request.source === 'authored-course') {
+        // A read must not call resolveCourseForRead: that older helper can write
+        // an ownership record. Resolve only an already known public course owner.
+        let course = agentScormCourses.get(request.intervention_id);
+        if (!courseAuthors.has(request.intervention_id)) await loadCourseAuthors();
+        const owner = courseAuthors.get(request.intervention_id) ?? course?.authoredBy;
+        if (!owner || (request.author_did && request.author_did !== owner)) {
+          throw new InterventionTaskError('The authored course is not publicly indexed here under the supplied owner.', 404);
+        }
+        if (!course) {
+          const pod = resolveSubjectPodUrl(owner);
+          course = await loadCourseFromLattice(pod, owner, actorForPod(pod, MESH_ACTOR_LABELS), request.intervention_id)
+            .catch(() => null) as AgentScormCourse | null ?? undefined;
+        }
+        if (!course || course.courseId !== request.intervention_id || course.authoredBy !== owner) {
+          throw new InterventionTaskError('The public authored course is unavailable.', 404);
+        }
+        return publicAuthoredIntervention(course, bridgeBaseUrl);
+      }
+      // Hosted packages are already public, content-addressed resources of this
+      // deployment. No caller-selected pod, URL, analysis write or launch is used.
+      if (!PACKAGE_SHA.test(request.intervention_id) || request.author_did) {
+        throw new InterventionTaskError('A hosted package is named by its 64-character lowercase SHA-256.');
+      }
+      const zip = await hostedPackages.open(request.intervention_id);
+      if (!zip) throw new InterventionTaskError('That public package is not hosted here.', 404);
+      const entries = zip.getEntries().filter(entry => !entry.isDirectory);
+      let inflated = 0;
+      if (entries.length > 3000 || new Set(entries.map(entry => entry.entryName)).size !== entries.length || entries.some(entry => {
+        inflated += entry.header.size;
+        return !isPackagePath(entry.entryName) || entry.header.size > 2_000_000 || inflated > 20_000_000;
+      })) throw new InterventionTaskError('Package exceeds the bounded intervention reader capacity.', 413);
+      const files = filesOfZip(zip);
+      let bytesRead = 0;
+      const packageIri = `${bridgeBaseUrl.replace(/\/+$/, '')}/scorm/packages/${request.intervention_id}`;
+      const imported = readAnyPackage({ names: files.names, read: name => {
+        const content = files.read(name);
+        bytesRead += content?.length ?? 0;
+        if ((content?.length ?? 0) > 2_000_000 || bytesRead > 60_000_000) {
+          throw new InterventionTaskError('Package text exceeds the intervention reader capacity.', 413);
+        }
+        return content;
+      } }, { fileUrl: path => `${packageIri}/files/${path.split('/').map(encodeURIComponent).join('/')}` });
+      return publicPackageIntervention(imported, request.intervention_id, bridgeBaseUrl);
+    } finally { interventionReadBusy = false; }
+  },
 });
 
 attachCapabilityDirectoryRoutes(app, {

@@ -1,0 +1,125 @@
+name: I2IDL-X historical orchestration oracle
+
+# Historical evidence stays tied to its original implementation, source and trace.
+# This job rebuilds that environment; it does not replay a v0.0.86 trace against
+# current glossary data or depend on a prior workflow's expiring artifacts.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/i2idlx/**'
+      - 'applications/foxxi-content-intelligence/src/**'
+      - 'applications/foxxi-content-intelligence/affordances.ts'
+      - 'packages/core/**'
+      - 'packages/pgsl/**'
+      - 'packages/solid/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.base.json'
+      - '.github/workflows/i2idlx-orchestra-history.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: i2idlx-orchestra-history-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  historical:
+    name: Immutable v0.0.86 trace and original staged-write oracle
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+        working-directory: archive
+    env:
+      I2IDLX_ARCHIVE: ${{ github.workspace }}/archive
+      I2IDLX_RELATIVE_ROOT: applications/foxxi-content-intelligence/i2idlx
+      I2IDLX_ROOT: ${{ github.workspace }}/archive/applications/foxxi-content-intelligence/i2idlx
+      I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data-v0.0.86-history
+      INTEREGO_CORE_SRC: ${{ github.workspace }}/archive/packages/core/src
+      INTEREGO_TSX: ${{ github.workspace }}/archive/node_modules/.bin/tsx
+      I2IDLX_REASONER_JAR: ${{ github.workspace }}/archive/applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
+      I2IDLX_BUILT_DATE: '2026-10-08'
+      I2IDLX_MODIFIED: '2026-10-13'
+      I2IDLX_NOW: '2026-10-13T20:30:00+00:00'
+      I2IDLX_HERMIT: '1'
+      PYTHONHASHSEED: '0'
+      TZ: UTC
+    steps:
+      - name: Check out the immutable original implementation in isolation
+        uses: actions/checkout@v6
+        with:
+          repository: markjspivey-xwisee/interego
+          ref: f933fcf5f1e8df56aad0d7721b5f4c927514fce0
+          path: archive
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Require the exact implementation and unaltered historical recording
+        run: |
+          test "$(git rev-parse HEAD)" = f933fcf5f1e8df56aad0d7721b5f4c927514fce0
+          trace="$I2IDLX_RELATIVE_ROOT/examples/orchestra/kestrel-point-run.json"
+          test "$(git rev-parse "HEAD:$trace")" = 8b46443e9a5c4c4a35ffcc6a9e70884a4f1012f5
+          test "$(git hash-object "$trace")" = 8b46443e9a5c4c4a35ffcc6a9e70884a4f1012f5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            archive/package-lock.json
+            archive/applications/foxxi-content-intelligence/i2idlx/app/package-lock.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install locked original dependencies and independent SHACL oracle
+        timeout-minutes: 6
+        run: |
+          npm ci --prefix "$I2IDLX_ARCHIVE"
+          npm run build --prefix "$I2IDLX_ARCHIVE"
+          npm ci --prefix "$I2IDLX_ROOT/app"
+          python3 -m pip install 'pyshacl==0.30.1' 'rdflib==7.1.4'
+      - name: Prepare and verify the complete original canonical source and pinned inputs
+        timeout-minutes: 8
+        run: |
+          timeout --signal=TERM --kill-after=15s 240s npx --no-install tsx "$I2IDLX_ROOT/typescript/prepare-source.ts" "$I2IDLX_ROOT" "$I2IDL_CLONE"
+          test "$(git -C "$I2IDL_CLONE" rev-parse HEAD)" = 9f865995d879165d8fa49422915a5e53d2ecebf9
+          test "$(git -C "$I2IDL_CLONE" rev-parse --is-shallow-repository)" = false
+          timeout --signal=TERM --kill-after=15s 180s npx --no-install tsx "$I2IDLX_ROOT/typescript/prepare-build-inputs.ts" "$I2IDLX_ROOT"
+      - name: Rebuild the entire original native graph, application and site with Java
+        timeout-minutes: 11
+        run: |
+          timeout --signal=TERM --kill-after=20s 600s npx --no-install tsx "$I2IDLX_ROOT/typescript/build.ts" "$I2IDLX_ROOT" --out "$I2IDLX_ROOT/dist" --app-out "$I2IDLX_ROOT/app/build" --site-out "$I2IDLX_ROOT/site"
+          test -s "$I2IDLX_ROOT/app/build/data.json"
+          test -s "$I2IDLX_ROOT/dist/i2idlx-shapes.ttl"
+          test -s "$I2IDLX_ROOT/site/app.html"
+      - name: Replay the unchanged original oracle and validate all four staged writes
+        timeout-minutes: 2
+        run: |
+          trace="$I2IDLX_RELATIVE_ROOT/examples/orchestra/kestrel-point-run.json"
+          test "$(git hash-object "$trace")" = 8b46443e9a5c4c4a35ffcc6a9e70884a4f1012f5
+          git diff --exit-code -- "$trace" "$I2IDLX_RELATIVE_ROOT/tools/check_orchestra.py" "$I2IDLX_RELATIVE_ROOT/app/tools/orc_check.js" "$I2IDLX_RELATIVE_ROOT/app/src/orc/world.js" "$I2IDLX_RELATIVE_ROOT/app/src/orc/scenario.js"
+          python3 -I "$I2IDLX_ROOT/tools/check_orchestra.py" "$I2IDLX_ROOT" | tee "$RUNNER_TEMP/i2idlx-historical-orchestra.log"
+          grep -Fx 'PASS 48 of 48 recorded tool results reproduced exactly' "$RUNNER_TEMP/i2idlx-historical-orchestra.log"
+          node "$I2IDLX_ROOT/app/build/orc-check.cjs" "$I2IDLX_ROOT/app/build/data.json" "$I2IDLX_ROOT/examples/orchestra/kestrel-point-run.json" > "$RUNNER_TEMP/i2idlx-historical-orchestra.json"
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import assert from 'node:assert/strict';
+          const report = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'i2idlx-historical-orchestra.json'), 'utf8'));
+          assert.equal(report.calls, 48);
+          assert.equal(report.matched, 48);
+          assert.deepEqual(report.mismatches, []);
+          assert.equal(report.errors, 0);
+          assert.equal(report.calls_staged.length, 4);
+          assert.equal(report.final.staged, 4);
+          assert.equal(report.final.approved, 4);
+          process.stdout.write('Historical v0.0.86 oracle: 48/48 exact results; four original staged writes passed SHACL.\n');
+          JS
+          printf '%s\n' 'Historical oracle verified immutable f933fcf5, canonical v0.0.86 at 9f865995, original trace blob 8b46443e, 48/48 results and four staged-write SHACL checks. No publication or deployment performed.' >> "$GITHUB_STEP_SUMMARY"

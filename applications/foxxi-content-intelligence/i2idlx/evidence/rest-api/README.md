@@ -4,7 +4,9 @@ Upstream source: `blakeplock/i2idl-linked-data`, release **v0.0.89**, commit
 `d16b105e46c2dd5fb685a24830b01e207b4efd93`. `upstream.json` binds the exact
 OpenAPI bytes and supporting implementation/documentation hashes. Its API
 contract version is **1.0.0**, independently of glossary publication versions.
-The existing canonical glossary pin at v0.0.86 is unchanged.
+At this capture, the canonical glossary pin was v0.0.86. The workbench now pins
+v0.0.93 independently. The OpenAPI and supporting implementation blobs are identical
+between the v0.0.89 tooling snapshot and v0.0.93; this retained evidence is not retagged.
 
 The upstream OpenAPI 3.1 document covers eight GET routes and their HEAD/OPTIONS
 semantics. The ninth GET route, `/api/v1/concepts/{id}/context`, is separately

@@ -14,6 +14,10 @@ import {
 import { readDelegationCredential, verifyAgentDelegation } from '@interego/solid';
 import type { VerifyPrivateCaller } from './private-performance-auth.js';
 import { attachClientTaskRoutes } from './i2idlx-client-tasks.js';
+import { attachSemanticTaskRoutes } from './i2idlx-semantic-tasks.js';
+import { semanticCheckOperations } from './i2idlx-semantic-affordances.js';
+import { foxxiAffordances } from '../affordances.js';
+import { affordancesManifestTurtle } from '../../_shared/affordance-mcp/index.js';
 
 export class WorkbenchError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -316,7 +320,23 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
     if (auth.payload.i2idlx_operation !== operation || auth.payload.bridge_audience !== base) throw new WorkbenchError('Signed request is not bound to this operation and workbench.', 403);
     return auth;
   };
-  attachClientTaskRoutes(app, { baseUrl: base, appDataFile: config.appDataFile });
+  attachSemanticTaskRoutes(app, config);
+  const checkOperations = semanticCheckOperations(base);
+  attachClientTaskRoutes(app, { baseUrl: base, appDataFile: config.appDataFile, checkOperations });
+  // Derive both discovery representations from the actual vertical declarations.
+  // The generic Interego follower parses Turtle and resolves the action subject;
+  // the existing JSON clients retain their original shape and receive its link.
+  const actions = foxxiAffordances.filter(a => a.action.startsWith('urn:iep:action:foxxi:i2idlx-') && a.externallyRouted);
+  const descriptorUrl = base + '/i2idlx/capabilities.ttl';
+  const descriptor = affordancesManifestTurtle(descriptorUrl, actions, base, {
+    verticalLabel: 'I2IDL-X workbench capabilities',
+    rdfsComment: 'Public deterministic checks and client model task packets; signed private workbench operations retain their own authorization requirements.',
+  });
+  const descriptorLink = '<' + descriptorUrl + '>; rel="describedby"; type="text/turtle"';
+  const sendDescriptor = (res: express.Response) => {
+    res.set('Cache-Control', 'no-store').set('X-Content-Type-Options', 'nosniff').type('text/turtle').send(descriptor);
+  };
+  app.get('/i2idlx/capabilities.ttl', (_req, res) => sendDescriptor(res));
   app.get('/i2idlx/challenge', (_req, res) => {
     for (const [nonce, expires] of challenges) if (expires <= Date.now()) challenges.delete(nonce);
     if (challenges.size >= 4096) { res.status(429).json({ error: 'Too many pending sign-in challenges.' }); return; }
@@ -325,18 +345,18 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
     challenges.set(nonce, expires);
     reply(res, { nonce, expires_at: new Date(expires).toISOString(), audience: base });
   });
-  app.get('/i2idlx/capabilities', (_req, res) => reply(res, {
-    audience: base, shared: !!config.sharedPodUrl && config.participantIds.length > 0 && !!config.encryptionKeypair(), ai: { project_paid: false, subscription: 'connected MCP client executes advertised Ask/Orchestrate task packets; browser sampling requires an explicit host adapter', api_key: 'client memory only' },
-    connection: 'Connect Interego in your AI client, discover I2IDL-X Ask/Orchestrate, then follow their advertised actions and execute returned instructions with your own model. Browser pod identity is a separate optional connection.',
-    _affordances: [
-      { action: 'urn:iep:action:foxxi:i2idlx-challenge', href: base + '/i2idlx/challenge', method: 'GET' },
-      { action: 'urn:iep:action:foxxi:i2idlx-session', href: base + '/i2idlx/api/session', method: 'POST' },
-      { action: 'urn:iep:action:foxxi:i2idlx-read', href: base + '/i2idlx/api/read', method: 'POST' },
-      { action: 'urn:iep:action:foxxi:i2idlx-write', href: base + '/i2idlx/api/write', method: 'POST' },
-      { action: 'urn:iep:action:foxxi:i2idlx-ask', href: base + '/i2idlx/api/ask', method: 'POST' },
-      { action: 'urn:iep:action:foxxi:i2idlx-orchestrate', href: base + '/i2idlx/api/orchestrate', method: 'POST' },
-    ],
-  }));
+  app.get('/i2idlx/capabilities', (req, res) => {
+    res.set('Link', descriptorLink).vary('Accept');
+    // Supports existing descriptor-based act calls without changing default JSON.
+    if (req.accepts(['application/json', 'text/turtle']) === 'text/turtle') { sendDescriptor(res); return; }
+    reply(res, {
+      audience: base, shared: !!config.sharedPodUrl && config.participantIds.length > 0 && !!config.encryptionKeypair(), ai: { project_paid: false, subscription: 'connected MCP client executes advertised Ask/Orchestrate task packets; browser sampling requires an explicit host adapter', api_key: 'client memory only' },
+      connection: 'Connect Interego in your AI client, discover I2IDL-X Ask/Orchestrate, then follow their advertised actions and execute returned instructions with your own model. Browser pod identity is a separate optional connection.',
+      descriptor_url: descriptorUrl,
+      checkOperations,
+      _affordances: actions.map(a => ({ action: a.action, href: a.targetTemplate.replace('{base}', base), method: a.method })),
+    });
+  });
   app.post('/i2idlx/api/session', async (req, res) => {
     try {
       const auth = await binding(req.body, 'session'), nonce = auth.payload.nonce;

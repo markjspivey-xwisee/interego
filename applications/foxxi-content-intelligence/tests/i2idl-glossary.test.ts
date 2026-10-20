@@ -34,6 +34,54 @@ describe('I2IDL\'s release, read as published', () => {
     expect(byId('feedback').provenance).toBe('synthesis');
   });
 
+  it('reads v0.0.93 active definitions and evidence-referenced CreativeWork source rights', () => {
+    const sourceIri = 'https://id.i2idl.org/sources/eric-thesaurus-2025';
+    const definitionIri = 'https://id.i2idl.org/definitions/learning-management-systems';
+    const definition = 'Software platforms used to administer, deliver, organize, track, and report on learning activities, courses, and associated outcomes.';
+    const source = {
+      '@id': sourceIri, '@type': ['schema:CreativeWork'],
+      'dcterms:title': 'ERIC Thesaurus (2025)',
+      'dcterms:publisher': 'Institute of Education Sciences, U.S. Department of Education',
+      'schema:url': 'https://eric.ed.gov/?download',
+      'dcterms:rights': 'Public domain, confirmed by ERIC Help Desk (2026-10-15)',
+      'dcterms:issued': '2025',
+    };
+    const v93 = parseI2idlGlossary({ '@graph': [
+      {
+        '@id': 'https://id.i2idl.org/scheme', '@type': ['skos:ConceptScheme'],
+        'dcterms:title': 'I2IDL Digital Learning Glossary', 'gs:publicationVersion': 'v0.0.93',
+      },
+      {
+        '@id': `${I2}learning-management-systems`, '@type': ['skos:Concept', 'schema:DefinedTerm'],
+        'dcterms:identifier': 'learning-management-systems', 'skos:prefLabel': 'Learning Management Systems',
+        'gs:activeDefinition': { '@id': definitionIri },
+      },
+      {
+        '@id': definitionIri, '@type': ['gs:Definition'], 'rdf:value': definition,
+        'gs:evidence': [{
+          'dcterms:source': { '@id': sourceIri, 'dcterms:title': 'ERIC Thesaurus (2025)' },
+          'gs:sourceLabel': 'ERIC Thesaurus (2025)', 'gs:evidenceRelation': 'supporting',
+          'gs:citationDetail': 'ERIC Thesaurus 2025 descriptor: Learning Management Systems',
+          'schema:url': 'https://eric.ed.gov/?ti=all',
+        }],
+      },
+      source,
+      { '@id': 'https://example.org/unreferenced', '@type': ['schema:CreativeWork'], 'dcterms:title': 'Unrelated work' },
+    ] });
+    expect(v93.release).toBe('v0.0.93');
+    expect(v93.concepts).toHaveLength(1);
+    expect(v93.byIri.get(`${I2}learning-management-systems`)).toMatchObject({
+      label: 'Learning Management Systems', definition, definitionIri, provenance: 'synthesis',
+      evidence: [{ source: sourceIri, relation: 'supporting', citation: 'ERIC Thesaurus 2025 descriptor: Learning Management Systems', url: 'https://eric.ed.gov/?ti=all' }],
+    });
+    expect(v93.sources.size).toBe(1);
+    expect(v93.sources.get(sourceIri)).toEqual({
+      iri: sourceIri, title: 'ERIC Thesaurus (2025)', label: 'ERIC Thesaurus (2025)',
+      url: 'https://eric.ed.gov/?download', rights: 'Public domain, confirmed by ERIC Help Desk (2026-10-15)', reuse: 'open',
+    });
+    expect(source['@type']).toEqual(['schema:CreativeWork']);
+  });
+
   it('classes reuse by the most restrictive source a definition directly rests on', () => {
     expect(['CC BY 4.0', 'Apache 2.0', 'CC BY-SA 3.0 IGO', 'CC BY-NC-SA 4.0', 'Used with permission', 'IEEE terms apply'].map(reuseClassOf))
       .toEqual(['open', 'open', 'sharealike', 'nc', 'permission', 'permission']);

@@ -40,6 +40,20 @@ describe('without a person required (the default)', () => {
     expect(autoMergeDecision({ ...all, tokenPresent: false }).reasons[1]).toContain('ship nothing');
     expect(autoMergeDecision({ ...all, selectionResult: 'failure' }).reasons[2]).toContain('did not pass (job result: failure)');
   });
+  it('an unarmed candidate still reports every failed review and suite condition', () => {
+    const d = autoMergeDecision({
+      ...all, armed: false, selectionResult: 'failure', verdict: 'block',
+      base: { tested: 'aaaaaaaa1', current: 'bbbbbbbb2' },
+      suite: { result: 'failure', gates: true },
+    });
+    expect(d.merge).toBe(false);
+    expect(d.reasons).toHaveLength(7);
+    expect(d.reasons[0]).toContain('not armed');
+    expect(d.reasons[2]).toContain('did not pass');
+    expect(d.reasons[3]).toContain('found a secret');
+    expect(d.reasons[5]).toContain('master moved');
+    expect(d.reasons[6]).toContain('the whole suite on this head did not pass');
+  });
   it('names the label an automatic merge carries', () => {
     expect(AUTO_MERGED_LABEL).toBe('jev-harness:auto-merged');
   });

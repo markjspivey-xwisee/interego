@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  NativeCommitConflictError, createNativeByteArtifact, validateNativeArtifact,
+  NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, createNativeByteArtifact, validateNativeArtifact,
   type NativeArtifact, type NativeArtifactReference, type NativeCommitClient,
   type NativeCommitReceipt, type NativeCommitRequest, type NativeCommitScope,
   type NativeSnapshot, type NativeSnapshotReference,
 } from '@interego/pgsl';
 import { deriveEncryptionKeyPair, type IRI } from '@interego/core';
+import { openStore, InMemoryFdb, CodecRegistry, LdpStore } from '../../../packages/pgsl-store/src/index.js';
 import { NATIVE_CSS_FIXTURE_CAPABILITY, startNativeCssFixture, type NativeCssFixture } from './support/native-css-fixture.js';
 import { NativeInteregoLrsDatabase, InvalidLrsQueryError } from '../src/native-lrs-store.js';
 import { ConflictError, assertLrsPrimaryConfiguration, configuredLrsBackend, createConfiguredNativeLrsDatabase, type StoredStatement } from '../src/statement-store.js';
@@ -26,12 +27,33 @@ function primary(): TestPrimary {
 /** Adapter-level unit seam. Real encryption/CSS/engine recovery is tested separately. */
 class TestNativeClient implements NativeCommitClient {
   beforeCommit?: (request: NativeCommitRequest) => Promise<void>;
+  beforeSelection?: (keys: readonly string[]) => Promise<void>;
+  transformSelection?: (head: NativeSnapshot, keys: readonly string[]) => NativeSnapshot;
   readyFailure = false;
   readFailures = false;
+  forbidFullReads = false;
+  fullReads = 0;
+  selectedReads: string[][] = [];
+  artifactReads: string[] = [];
+  blockedArtifactReads = new Set<string>();
+  commits: NativeCommitRequest[] = [];
   historicalReads = 0;
   constructor(readonly storage = primary()) {}
   async ready(): Promise<void> { if (this.readyFailure) throw new Error('native media unavailable'); }
-  async readHead(): Promise<NativeSnapshot> { if (this.readFailures) throw new Error('native head unreadable'); return this.storage.head; }
+  async readHead(): Promise<NativeSnapshot> {
+    this.fullReads++;
+    if (this.readFailures) throw new Error('native head unreadable');
+    if (this.forbidFullReads) throw new Error('unexpected full native index scan');
+    return this.storage.head;
+  }
+  async readHeadRecords(keys: readonly string[]): Promise<NativeSnapshot> {
+    this.selectedReads.push([...keys]);
+    if (this.readFailures) throw new Error('native head unreadable');
+    await this.beforeSelection?.(keys);
+    const records = new Map([...this.storage.head.records].filter(([key]) => keys.includes(key)));
+    const snapshot = { ...this.storage.head, records, selectedRecordKeys: [...keys] };
+    return this.transformSelection?.(snapshot, keys) ?? snapshot;
+  }
   async readSnapshotAt(ref: NativeSnapshotReference): Promise<NativeSnapshot> {
     this.historicalReads++;
     const head = this.storage.histories.get(ref.commitUrl);
@@ -39,15 +61,20 @@ class TestNativeClient implements NativeCommitClient {
     return head;
   }
   async readArtifact(ref: NativeArtifactReference): Promise<NativeArtifact> {
+    this.artifactReads.push(ref.resourceUrl);
     if (this.readFailures) throw new Error('native artifact unavailable');
+    if (this.blockedArtifactReads.has(ref.resourceUrl)) throw new Error('unrelated artifact must not be fetched');
     const value = this.storage.artifacts.get(ref.resourceUrl);
     if (!value) throw new Error('native artifact missing');
     return validateNativeArtifact(value);
   }
   async commit(request: NativeCommitRequest): Promise<NativeCommitReceipt> {
+    this.commits.push(request);
     await this.beforeCommit?.(request);
     if (request.expected.revision !== this.storage.head.revision) throw new NativeCommitConflictError();
-    const records = new Map(request.expected.records);
+    // A selected expected snapshot proves a revision, not the complete map.
+    // Native CAS changes that durable head without discarding unselected paths.
+    const records = new Map(this.storage.head.records);
     for (const change of request.changes) {
       if (!change.artifact) { records.delete(change.key); continue; }
       const artifact = validateNativeArtifact({ topUri: change.artifact.topUri, nodes: change.artifact.pgsl.nodes });
@@ -61,7 +88,11 @@ class TestNativeClient implements NativeCommitClient {
     const snapshot: NativeSnapshot = { scope, revision, reference, operationId: request.operationId, records };
     const previousHead = this.storage.head.reference;
     this.storage.head = snapshot; this.storage.histories.set(reference.commitUrl, snapshot);
-    return { scope, operationId: request.operationId, previousHead, head: reference, createdAt: new Date().toISOString(), replayed: false, snapshot, resourceReceipt: null };
+    const resultSnapshot = request.resultRecordKeys === undefined ? snapshot : {
+      ...snapshot, selectedRecordKeys: [...request.resultRecordKeys],
+      records: new Map([...snapshot.records].filter(([key]) => request.resultRecordKeys!.includes(key))),
+    };
+    return { scope, operationId: request.operationId, previousHead, head: reference, createdAt: new Date().toISOString(), replayed: false, snapshot: resultSnapshot, resourceReceipt: null };
   }
 }
 const database = (client: NativeCommitClient, options: { allowClear?: boolean; now?: () => number } = {}) =>
@@ -125,6 +156,179 @@ describe('native Interego xAPI artifact adapter', () => {
     expect(await restarted.forTenant('alice').get(value.id)).toEqual(value);
     expect(await restarted.listTenants()).toEqual(['alice']);
   });
+  it('keeps point writes, statement reads and resource reads on selected paths without fetching another tenant', async () => {
+    const client = new TestNativeClient(), db = database(client), store = db.forTenant('alice');
+    const unrelated = record();
+    await db.forTenant('bob').put(unrelated);
+    await db.forTenant('bob').putResource('state', 'private', { private: true });
+    const unrelatedEntries = [...client.storage.head.records].filter(([key]) => key.startsWith(db.prefix('bob')));
+    for (const [, reference] of unrelatedEntries) client.blockedArtifactReads.add(reference.resourceUrl);
+    const fullReadsBefore = client.fullReads;
+    client.selectedReads = []; client.artifactReads = []; client.commits = []; client.forbidFullReads = true;
+
+    const first = record(), second = record();
+    await store.putBatchWithAttachments([first, second], new Map());
+    expect(await store.get(first.id)).toEqual(first);
+    expect(await store.get(randomUUID())).toBeNull();
+    await store.putResource('state', 'settings', { version: 1 });
+    expect(await store.getResource('state', 'settings')).toEqual({ version: 1 });
+    const readsBeforeResource = client.selectedReads.length;
+    expect(await store.getResource('state', 'missing')).toBeNull();
+    expect(client.selectedReads.slice(readsBeforeResource)).toEqual([[db.key('alice', 'state', 'missing')]]);
+
+    expect(client.fullReads).toBe(fullReadsBefore);
+    expect(client.selectedReads.length).toBeGreaterThan(0);
+    const writePaths = client.selectedReads[0]!;
+    expect(new Set(writePaths)).toEqual(new Set([
+      db.key('alice', 'registry', 'tenant'), db.key('alice', 'statement', first.id), db.key('alice', 'statement', second.id),
+    ]));
+    expect(client.selectedReads.every(keys => keys.every(key => !key.startsWith(db.prefix('bob'))))).toBe(true);
+    expect(client.artifactReads.every(url => !client.blockedArtifactReads.has(url))).toBe(true);
+    expect(client.commits.length).toBeGreaterThan(0);
+    expect(client.commits.every(request => request.resultRecordKeys?.length === 0)).toBe(true);
+    // A partial expected snapshot must never replace the complete durable head.
+    for (const [key, reference] of unrelatedEntries) expect(client.storage.head.records.get(key)).toEqual(reference);
+    expect(client.storage.head.records.has(db.queryKey('alice', first))).toBe(true);
+    expect(client.storage.head.records.has(db.queryKey('alice', second))).toBe(true);
+  });
+  it('does not confuse unselected paths with verified absence or accept incomplete selected-read coverage', async () => {
+    const client = new TestNativeClient(), db = database(client), store = db.forTenant('alice'), value = record();
+    await store.put(value);
+    const omitted = db.key('alice', 'statement', value.id);
+    const partial = await client.readHeadRecords([db.key('alice', 'registry', 'tenant')]);
+    await expect(db.read(partial, 'alice', 'statement', value.id)).rejects.toThrow();
+
+    client.transformSelection = head => { const { selectedRecordKeys: _coverage, ...withoutProof } = head; return withoutProof; };
+    await expect(store.get(value.id)).rejects.toThrow();
+
+    client.transformSelection = (head, keys) => ({ ...head, records: new Map(), selectedRecordKeys: keys.filter(key => key !== omitted) });
+    await expect(store.get(value.id)).rejects.toThrow();
+    const commitsBefore = client.commits.length;
+    const conflict = structuredClone(value); conflict.statement.object = { id: 'https://example.test/must-not-replace' };
+    await expect(store.put(conflict)).rejects.toThrow();
+    expect(client.commits).toHaveLength(commitsBefore);
+
+    const resourceKey = db.key('alice', 'state', 'private');
+    client.transformSelection = (head, keys) => ({ ...head, records: new Map(), selectedRecordKeys: keys.filter(key => key !== resourceKey) });
+    await expect(store.getResource('state', 'private')).rejects.toThrow();
+    client.transformSelection = undefined;
+    expect(await store.get(value.id)).toEqual(value);
+  });
+  it('falls back to a complete verified head for large selections while deduplicating bounded requests', async () => {
+    const client = new TestNativeClient(), db = database(client), value = record();
+    await db.forTenant('alice').put(value);
+    const key = db.key('alice', 'statement', value.id), fullReadsBefore = client.fullReads;
+    client.selectedReads = [];
+    const repeated = await db.readHead(new Array(1001).fill(key));
+    expect(repeated.records.has(key)).toBe(true);
+    expect(client.selectedReads).toEqual([[key]]);
+    expect(client.fullReads).toBe(fullReadsBefore);
+    const manyKeys = Array.from({ length: 1001 }, (_, index) => 'unique-synthetic-path-' + index);
+    const full = await db.readHead(manyKeys);
+    expect(full.selectedRecordKeys).toBeUndefined();
+    expect(full.records.has(key)).toBe(true);
+    expect(client.selectedReads).toEqual([[key]]);
+    expect(client.fullReads).toBe(fullReadsBefore + 1);
+  });
+  it('keeps immutable replay and collision checks on selected statement paths and never acknowledges a refused CAS', async () => {
+    const client = new TestNativeClient(), db = database(client), store = db.forTenant('alice'), value = record();
+    await db.ready(); client.forbidFullReads = true;
+    await store.put(value);
+    const firstReference = client.storage.head.records.get(db.key('alice', 'statement', value.id));
+    const replay = await store.putWithAttachments(structuredClone(value), new Map());
+    expect(replay.records).toEqual([value]); expect(replay.inserted).toEqual([]);
+    const changed = structuredClone(value); changed.statement.object = { id: 'https://example.test/conflict' };
+    await expect(store.put(changed)).rejects.toBeInstanceOf(ConflictError);
+    expect(client.storage.head.records.get(db.key('alice', 'statement', value.id))).toEqual(firstReference);
+    client.beforeCommit = async request => { if (request.changes.length) throw new Error('synthetic durable CAS refused'); };
+    const refused = record();
+    await expect(store.put(refused)).rejects.toThrow('synthetic durable CAS refused');
+    expect(await store.get(refused.id)).toBeNull();
+    expect(await store.get(value.id)).toEqual(value);
+  });
+  it('retries a void lookup when its selected head changes before reading the voider', async () => {
+    const storage = primary(), client = new TestNativeClient(storage), otherClient = new TestNativeClient(storage);
+    const db = database(client), otherDb = database(otherClient), store = db.forTenant('alice'), other = otherDb.forTenant('alice');
+    await Promise.all([db.ready(), otherDb.ready()]);
+    const target = record(), firstVoider = voider(target.id), newerVoider = voider(target.id);
+    await store.put(target); await store.put(firstVoider);
+    client.selectedReads = []; client.forbidFullReads = true;
+    let replaced = false;
+    client.beforeSelection = async keys => {
+      if (!replaced && keys.includes(db.key('alice', 'statement', firstVoider.id))) {
+        replaced = true;
+        await other.put(newerVoider);
+      }
+    };
+    const result = await store.get(target.id);
+    expect(replaced).toBe(true);
+    expect(result?.voidingStatementId).toBe(newerVoider.id);
+    expect(result?.statement).toEqual(target.statement);
+    expect(client.selectedReads.length).toBeGreaterThan(2);
+  });
+  it('supports full-snapshot native clients that do not advertise selected reads', async () => {
+    const underlying = new TestNativeClient();
+    const legacy: NativeCommitClient = {
+      ready: () => underlying.ready(), readHead: () => underlying.readHead(),
+      readSnapshotAt: reference => underlying.readSnapshotAt(reference),
+      readArtifact: reference => underlying.readArtifact(reference), commit: request => underlying.commit(request),
+    };
+    const store = database(legacy).forTenant('alice'), target = record(), appliedVoid = voider(target.id);
+    await store.put(target); await store.put(appliedVoid);
+    expect((await store.get(target.id))?.voidingStatementId).toBe(appliedVoid.id);
+    await store.putResource('state', 'settings', { version: 1 });
+    expect(await store.getResource('state', 'settings')).toEqual({ version: 1 });
+    expect(underlying.fullReads).toBeGreaterThan(0);
+    expect(underlying.selectedReads).toEqual([]);
+  });
+  it('reduces verified native transport reads over the real encrypted client and local resource engine', async () => {
+    // The native encryption, HAMT proofs, resource CAS and PGSL engine run here.
+    // Only their persistence driver and HTTP transport are local test seams.
+    const driver = new InMemoryFdb(), engine = openStore(driver), ldp = new LdpStore(engine, new CodecRegistry());
+    const methods: string[] = [], keys = deriveEncryptionKeyPair('11'.repeat(32), owner);
+    const transport: typeof globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const method = init?.method ?? 'GET'; methods.push(method);
+      if (method === 'OPTIONS') return new Response(null, { status: 204,
+        headers: { 'Accept-Put': NATIVE_COMMIT_MEDIA_TYPE, 'Interego-Native-Commit': '1' } });
+      if (method === 'GET') {
+        const result = await ldp.readResource('css', url);
+        return result ? new Response(Buffer.from(result.bytes).toString('utf8'), { headers: {
+          'Content-Type': result.contentType, ETag: '"' + result.revision + '-json"',
+          'Interego-Revision': result.revision, 'Interego-Body-Digest': result.bodyDigest,
+        } }) : new Response(null, { status: 404 });
+      }
+      expect(method).toBe('PUT');
+      const command = JSON.parse(String(init?.body)) as { expectedRevision: string | null; bodyBase64: string; contentType: string };
+      const result = await ldp.commitResource('css', url, Buffer.from(command.bodyBase64, 'base64'), command.contentType,
+        { expectedRevision: command.expectedRevision });
+      if (result.status === 'conflict') return new Response(null, { status: 412 });
+      return new Response(JSON.stringify({ ...result, version: 1, resource: url, expectedRevision: command.expectedRevision }), {
+        headers: { 'Content-Type': 'application/json', ETag: '"' + result.revision + '-json"' },
+      });
+    };
+    const client = new NativeCommitStore({ scope, fetch: transport, senderKeyPair: keys,
+      ownerPublicKey: keys.publicKey, recipientPublicKeys: [keys.publicKey] });
+    await client.commit({ operationId: randomUUID(), expected: await client.readHead(), resultRecordKeys: [],
+      changes: Array.from({ length: 96 }, (_, index) => ({ key: 'unrelated-native-record-' + index,
+        artifact: createNativeByteArtifact({ owner, contentType: 'application/octet-stream', bytes: Buffer.from('synthetic-' + index) }) })),
+    });
+    const db = database(client), store = db.forTenant('alice'), value = record();
+    await store.put(value); await store.putResource('state', 'settings', { version: 1 });
+    methods.length = 0;
+    const complete = await client.readHead(), fullGets = methods.filter(method => method === 'GET').length;
+    expect(complete.records.size).toBeGreaterThan(96);
+    methods.length = 0;
+    expect(await store.get(value.id)).toEqual(value);
+    const statementGets = methods.filter(method => method === 'GET').length;
+    methods.length = 0;
+    expect(await store.getResource('state', 'settings')).toEqual({ version: 1 });
+    const resourceGets = methods.filter(method => method === 'GET').length;
+    expect(statementGets).toBeLessThan(fullGets / 2);
+    expect(resourceGets).toBeLessThan(fullGets / 2);
+    expect(methods.every(method => method === 'GET')).toBe(true);
+    await db.close(); await driver.close();
+  }, 30_000);
   it('keeps exact immutable statement envelopes while allowing idempotent authored-field retries', async () => {
     const store = database(new TestNativeClient()).forTenant('alice'), first = record();
     await store.put(first);

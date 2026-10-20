@@ -137,8 +137,9 @@ export function parseI2idlGlossary(doc: unknown): I2idlGlossary {
   }
   const sources = new Map<string, I2idlSource>();
   for (const n of graph) {
-    if (!typesOf(n).includes('dcterms:BibliographicResource')) continue;
     const iri = str(n['@id']);
+    // Evidence also names sources published with other types, such as schema:CreativeWork.
+    if (!typesOf(n).includes('dcterms:BibliographicResource') && !shortLabel.has(iri)) continue;
     const rights = str(n['dcterms:rights']);
     const title = clean(str(n['dcterms:title']));
     sources.set(iri, {
