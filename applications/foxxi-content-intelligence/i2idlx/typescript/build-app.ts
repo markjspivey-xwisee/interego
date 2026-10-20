@@ -172,7 +172,7 @@ function mentions(concepts: Row[], cidx: Row): { suggestions: Row[]; forms: Valu
 /** Sharing a hosted workbench stays on its serving origin; the old Claude artifact is retained as an archive. */
 export function shareUrlBootstrap(archivedUrl: string): string {
   const archived = JSON.stringify(archivedUrl).replace(/<\//g, '<\\/').replace(/<!--/g, '<\\!--');
-  return 'window.__ARCHIVED_APP_URL__ = ' + archived + '; window.__APP_URL__ = window.claude ? window.__ARCHIVED_APP_URL__ : new URL("/i2idlx/", window.location.href).href;';
+  return 'window.__ARCHIVED_APP_URL__ = ' + archived + '; window.__APP_URL__ = window.claude ? window.__ARCHIVED_APP_URL__ : /^https?:/.test(window.location.href) ? new URL("/i2idlx/", window.location.href).href : (window.__APP_URL__ || "");';
 }
 export interface BuildAppOptions { distDir?: string; outputDir?: string; siteDir?: string; dataOnly?: boolean; now?: string; }
 /** The active definition is canonical; skos:definition is an optional, checked mirror. */

@@ -13,6 +13,7 @@ import { ChatGPTTaskView, ChatGPTConnection, ChatGPTRouteBridge, openChatGPTAsk 
 import { isChatGPTApp } from "./chatgpt-host.js";
 import { LensToggle, LayersModal } from "./origin.jsx";
 import { useRoute, go, isTyping, useStored, cx } from "./util.js";
+import { installFragmentNavigation } from "./navigation.js";
 
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
@@ -54,6 +55,8 @@ function Shell() {
   const [lens, setLens] = useStored("lens", "x");
   const engine = useAskEngine();
   const gPending = useRef(0);
+
+  useEffect(() => isChatGPTApp() ? installFragmentNavigation(document, go) : undefined, []);
 
   const ask = useMemo(() => (isChatGPTApp() ? { open: openChatGPTAsk } : engine.available ? {
     open: (prompt, ids = []) => {

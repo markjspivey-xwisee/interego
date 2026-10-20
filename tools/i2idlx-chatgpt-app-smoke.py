@@ -8,6 +8,7 @@ Requires the existing UI oracle's cached CDN assets and Playwright + Chromium.
 """
 
 import argparse
+import html as html_escape
 import json
 import pathlib
 import re
@@ -171,7 +172,12 @@ def main():
                 report["blocked_mutations"].append({"method": request.method, "url": url})
                 return route.abort("blockedbyclient")
             if url.startswith(HOST_URL):
-                return route.fulfill(status=200, content_type="text/html", body=HOST_HTML)
+                host_html = HOST_HTML
+                if "opaque-srcdoc" in url:
+                    host_html = HOST_HTML.replace(
+                        'sandbox="allow-scripts allow-same-origin" src="http://i2idlx-frame.test/i2idlx/#ask"',
+                        'sandbox="allow-scripts" srcdoc="' + html_escape.escape(html, quote=True) + '"')
+                return route.fulfill(status=200, content_type="text/html", body=host_html)
             if url.startswith(APP_URL):
                 return route.fulfill(status=200, content_type="text/html", body=html)
             if url in ("http://chatgpt-app.test/favicon.ico", "http://i2idlx-frame.test/favicon.ico"):
@@ -247,7 +253,15 @@ def main():
                         check(tag + ":no_automatic_question", len(host_requests(page, "ui/message")) == 0)
 
                         def visit(route, selector):
-                            frame.evaluate("value => {location.hash = value}", "#" + route)
+                            head, _, rest = route.partition("-")
+                            views = {"home":"home", "browse":"lexicon", "c":"lexicon", "whole":"map", "cmp":"compare",
+                                     "annotate":"annotate", "packs":"packs", "review":"review", "insights":"insights",
+                                     "semantic":"semantic", "for":"fori2idl", "agents":"agents", "ask":"ask",
+                                     "orchestrate":"orchestrate", "interventions":"interventions"}
+                            ids = rest.split("~") if head in ("c", "cmp") and rest else []
+                            page.evaluate("""data => document.getElementById('workbench').contentWindow.postMessage({
+                                jsonrpc:'2.0',method:'ui/notifications/tool-result',params:{content:[],structuredContent:data}
+                            }, '*')""", {"initial_view":views[head], "concept_ids":ids})
                             frame.locator(selector).first.wait_for()
                             check(tag + ":route:" + route, True)
                             check(tag + ":page_fits_width:" + route, frame.evaluate(
@@ -565,6 +579,41 @@ def main():
                     finally:
                         context.close()
 
+                # User clicks in an opaque srcdoc frame must keep the App document.
+                # Bare anchors otherwise resolve against the host page and navigate
+                # the iframe away from the Workbench.
+                for width, height in [(375, 812), (1440, 900)]:
+                    context = browser.new_context(viewport={"width": width, "height": height}, service_workers="block")
+                    context.route("**/*", route_handler)
+                    page = context.new_page()
+                    page.set_default_timeout(20_000)
+                    page.on("pageerror", lambda error: report["page_errors"].append({"viewport":"opaque-srcdoc", "error":str(error)}))
+                    try:
+                        page.goto(HOST_URL + "?opaque-srcdoc", wait_until="domcontentloaded")
+                        frame = page.frame(name="workbench")
+                        frame.get_by_text("ChatGPT connected", exact=True).wait_for()
+                        # Wait for the launch receipt before the first user click.
+                        frame.get_by_role("textbox", name="Ask ChatGPT", exact=True).wait_for()
+                        for fragment, selector in [
+                            ("browse", ".lex-list .li"), ("whole", ".mapwrap svg circle"),
+                            ("cmp", ".cmp"), ("annotate", ".an textarea"),
+                            ("review", ".rcard"), ("packs", ".pk"),
+                            ("insights", ".chart svg"), ("semantic", ".matrix tbody tr"),
+                            ("agents", ".qcard"), ("orchestrate", 'input[type="checkbox"]'),
+                            ("ask", 'textarea[aria-label="Ask ChatGPT"]'),
+                            ("interventions", 'textarea[aria-label="Intervention question"]'),
+                        ]:
+                            frame.locator('nav[aria-label="Views"] a[href="#' + fragment + '"]:visible').first.click()
+                            frame.locator(selector).first.wait_for()
+                            check(str(width) + ":opaque_click:" + fragment, frame.url == "about:srcdoc")
+                        frame.locator('a.brand[href="#home"]').click()
+                        frame.locator(".hero h1").wait_for()
+                        frame.locator('.wotd a[href^="#c-"]').first.click()
+                        frame.locator("#hw").wait_for()
+                        check(str(width) + ":opaque_concept_link", frame.url == "about:srcdoc")
+                    finally:
+                        context.close()
+
                 # Absence of the host's message capability must leave sending disabled.
                 context = browser.new_context(viewport={"width": 768, "height": 1024}, service_workers="block")
                 context.route("**/*", route_handler)
@@ -580,7 +629,7 @@ def main():
                     check("missing_message_capability_disables_send", frame.get_by_role("button", name="Ask ChatGPT", exact=True).is_disabled())
                     check("missing_message_capability_no_false_handoff", len(host_requests(page, "ui/message")) == 0
                           and frame.get_by_role("region", name="Requests sent to ChatGPT").count() == 0)
-                    frame.evaluate("location.hash = '#packs'")
+                    frame.locator('nav[aria-label="Views"] a[href="#packs"]:visible').first.click()
                     frame.get_by_role("button", name="New pack", exact=True).click()
                     frame.get_by_text("Downloads aren't available in this ChatGPT view. Use Copy to export the current format.", exact=True).wait_for()
                     check("missing_download_capability_no_save_action", frame.get_by_role("button", name=re.compile(r"^Save ")).count() == 0)

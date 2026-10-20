@@ -48,6 +48,16 @@ test('a legacy Claude artifact retains its original share URL', () => {
   assert.equal(window.__APP_URL__, archive);
   assert.equal(window.__ARCHIVED_APP_URL__, archive);
 });
+test('opaque App documents retain a supplied share URL without resolving against about:srcdoc', () => {
+  for (const href of ['about:srcdoc', 'about:blank', 'data:text/html,workbench']) {
+    const window = { location: { href }, __APP_URL__: 'https://bridge.example/i2idlx/' };
+    vm.runInNewContext(shareUrlBootstrap(archive), { window, URL });
+    assert.equal(window.__APP_URL__, 'https://bridge.example/i2idlx/');
+  }
+  const window = { location: { href: 'about:srcdoc' } } as { location: { href: string }; __APP_URL__?: string };
+  assert.doesNotThrow(() => vm.runInNewContext(shareUrlBootstrap(archive), { window, URL }));
+  assert.equal(window.__APP_URL__, '');
+});
 test('archived metadata cannot terminate its inline script', () => {
   const script = shareUrlBootstrap('https://example.org/</script><!--retained');
   assert.ok(!script.includes('</script>'));
