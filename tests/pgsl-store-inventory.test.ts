@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { collectInventory, controlLimit, existingConnection, projectRows, safeFailure, SQL,
+import { collectInventory, controlLimit, existingConnection, inventoryExitCode, projectRows, safeFailure, SQL,
   type InventoryClient, type Query } from '../tools/pgsl-store-inventory.js';
 import { cpKey, subspaceRange, SUBSPACE_PAYLOAD_OFFSET } from '../packages/pgsl-store/src/keyspace.js';
 
@@ -20,6 +20,44 @@ function client(overrides: (query: Query) => Record<string, unknown>[] | undefin
 }
 
 describe('bounded metadata-only pod-store inventory', () => {
+  it('succeeds for complete or deliberately capped reports while missing, unavailable or unknown measurements fail', async () => {
+    const capped = await collectInventory(client().api, { maxControlRecords: 20 });
+    const before = structuredClone(capped);
+    expect(inventoryExitCode(capped)).toBe(0);
+    expect(capped).toEqual(before); // Report status, cap flags and limitations remain visible.
+    expect(capped.status).toBe('partial');
+
+    const complete = await collectInventory(client(q => q.text === SQL.control_categories ? [] : undefined).api);
+    expect(complete.status).toBe('ok');
+    expect(inventoryExitCode(complete)).toBe(0);
+    for (const name of ['database', 'relations', 'sessions', 'wal', 'slots', 'control_categories']) {
+      const missing = structuredClone(complete);
+      delete (missing.sections as Record<string, unknown>)[name];
+      expect(inventoryExitCode(missing)).toBe(2);
+      const unavailable = structuredClone(capped);
+      (unavailable.sections as Record<string, unknown>)[name] = { status: 'unavailable' };
+      expect(inventoryExitCode(unavailable)).toBe(2);
+    }
+    for (const name of ['relations', 'sessions', 'control_categories']) {
+      const bounded = structuredClone(complete);
+      bounded.status = 'partial';
+      (bounded.sections as Record<string, Record<string, unknown>>)[name]!.truncated = true;
+      expect(inventoryExitCode(bounded)).toBe(0);
+    }
+    for (const name of ['database', 'wal', 'slots', 'unknown']) {
+      const invalid = structuredClone(complete);
+      invalid.status = 'partial';
+      (invalid.sections as Record<string, unknown>)[name] = { status: 'ok', truncated: true };
+      expect(inventoryExitCode(invalid)).toBe(2);
+    }
+    const uncappedPartial = { ...complete, status: 'partial' };
+    const malformedCap = structuredClone(capped);
+    (malformedCap.sections as Record<string, Record<string, unknown>>).control_categories!.truncated = 'true';
+    for (const invalid of [null, {}, { status: 'ok', sections: {} }, uncappedPartial,
+      { ...capped, status: 'ok' }, malformedCap,
+      { ...complete, status: 'error' }, { ...complete, status: undefined }]) expect(inventoryExitCode(invalid)).toBe(2);
+  });
+
   it('uses read-only transactions and confirmed mode before every metadata SELECT, then rolls back', async () => {
     const h = client();
     const report = await collectInventory(h.api, { maxControlRecords: 20 });

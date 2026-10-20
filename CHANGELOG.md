@@ -8,6 +8,10 @@ App requests now resolve against the injected deployment URL, with same-origin H
 
 The release receipt also triggers the required SHACL agreement and shared-input closure workflows when the receipt itself changes. The changelog gate records the measured inherited backlog without moving the documented-through marker or claiming a historical backfill.
 
+## 2026-10-20 — Inventory distinguishes capped coverage from query failure
+
+A successful bounded metadata inventory now exits zero when every required section succeeds, including a deliberately capped sample. The JSON retains its partial status and truncation flags; missing, unavailable or unrecognized measurements and errors keep a nonzero exit.
+
 ## 2026-10-20 — Bounded read-only pod-store metadata inventory
 
 A manual-only diagnostic reports database and public relation sizes, tuple estimates, aggregate WAL/slot retention, grouped session state, and a capped prefix of control-plane resource categories. Represented resource bytes come from the existing resource-head size metadata; no lattice bodies, learner payloads, private identifiers, raw application names or SQL error messages are emitted. Physical relation/TOAST/index totals and logical representation sizes remain distinct, and truncated or unavailable sections are explicit.

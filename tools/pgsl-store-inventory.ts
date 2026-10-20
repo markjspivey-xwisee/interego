@@ -145,6 +145,26 @@ export const SQL = {
       FROM sizes GROUP BY category ORDER BY category`,
 };
 
+/** Capped coverage is a successful bounded diagnostic; missing measurements still fail closed. */
+export function inventoryExitCode(report: unknown): 0 | 2 {
+  if (!object(report) || !object(report.sections)) return 2;
+  const required = ['database', 'relations', 'sessions', 'wal', 'slots', 'control_categories'];
+  const capped = ['relations', 'sessions', 'control_categories'];
+  const sections = report.sections;
+  if (Object.keys(sections).length !== required.length) return 2;
+  let truncated = false;
+  for (const name of required) {
+    const section = sections[name];
+    if (!object(section) || section.status !== 'ok') return 2;
+    if (section.truncated !== undefined && typeof section.truncated !== 'boolean') return 2;
+    if (section.truncated === true) {
+      if (!capped.includes(name)) return 2;
+      truncated = true;
+    }
+  }
+  return (report.status === 'ok' && !truncated) || (report.status === 'partial' && truncated) ? 0 : 2;
+}
+
 /** Separate READ ONLY transactions isolate optional permission/time-limit failures. */
 export async function collectInventory(client: InventoryClient, options: { maxControlRecords?: number; remainingMs?: () => number } = {}): Promise<Row> {
   const limit = controlLimit(options.maxControlRecords);
@@ -262,7 +282,7 @@ async function main(): Promise<void> {
     await client.connect();
     const report = await collectInventory(client, { maxControlRecords: limit, remainingMs });
     process.stdout.write(JSON.stringify(report, null, 2) + '\n');
-    if (report.status !== 'ok') process.exitCode = 2;
+    process.exitCode = inventoryExitCode(report);
   } finally {
     try { if (client) await client.end(); }
     finally { clearTimeout(hardStop); }
