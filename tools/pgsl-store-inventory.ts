@@ -160,6 +160,7 @@ export async function collectInventory(client: InventoryClient, options: { maxCo
   for (const section of ['database', 'relations', 'sessions', 'wal', 'slots', 'control_categories'] as const) {
     if (section === 'control_categories' && version < 160000) { sections[section] = { status: 'unavailable', reason: 'requires_postgresql_16_json_validation' }; continue; }
     let begun = false;
+    let rollbackFailed = false;
     try {
       await query('BEGIN READ ONLY'); begun = true;
       const budget = Math.max(1, Math.min(QUERY_MS, Math.floor(remaining())));
@@ -184,9 +185,10 @@ export async function collectInventory(client: InventoryClient, options: { maxCo
     finally {
       if (begun) {
         try { await query('ROLLBACK'); }
-        catch { throw new InventoryError('rollback_unconfirmed'); }
+        catch { rollbackFailed = true; }
       }
     }
+    if (rollbackFailed) throw new InventoryError('rollback_unconfirmed');
   }
   return { status: Object.values(sections).every(s => object(s) && s.status === 'ok' && s.truncated !== true) ? 'ok' : 'partial', sections,
     notes: [
@@ -251,7 +253,7 @@ async function main(): Promise<void> {
       return json.data;
     };
     const config = await existingConnection(gql);
-    // @ts-ignore optional node-postgres driver, already in the locked workspace dependency tree.
+    // node-postgres is already in the locked workspace dependency tree.
     const pg = await import('pg');
     const Client = pg.Client ?? pg.default?.Client;
     if (!Client) throw new InventoryError('postgres_driver_unavailable');

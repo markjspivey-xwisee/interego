@@ -103,6 +103,15 @@ describe('bounded metadata-only pod-store inventory', () => {
     expect(controlLimit('50000')).toBe(50000);
   });
 
+  it('stops after an unconfirmed rollback instead of starting another diagnostic transaction', async () => {
+    const h = client(q => {
+      if (q.text === 'ROLLBACK') throw new Error('private connection failure');
+      return undefined;
+    });
+    await expect(collectInventory(h.api)).rejects.toThrow('rollback_unconfirmed');
+    expect(h.calls.filter(q => q.text === 'BEGIN READ ONLY')).toHaveLength(1);
+  });
+
   it('reuses exactly one existing proxy and never requests an infrastructure mutation', async () => {
     const queries: string[] = [];
     const gql = async (query: string) => {

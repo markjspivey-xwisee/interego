@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-// @ts-ignore optional driver already used by the existing isolated PG16 CI fixture.
 import { Client } from 'pg';
 import { collectInventory, SQL, type Query } from '../tools/pgsl-store-inventory.js';
 import { cpKey, subspaceRange, SUBSPACE_PAYLOAD_OFFSET } from '../packages/pgsl-store/src/keyspace.js';
