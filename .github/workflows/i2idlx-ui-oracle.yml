@@ -249,6 +249,7 @@ jobs:
         run: |
           node --experimental-vm-modules "$I2IDLX_ROOT/app/tools/chatgpt-host-check.mjs"
           node "$I2IDLX_ROOT/app/tools/navigation-check.mjs"
+          node "$I2IDLX_ROOT/app/tools/layout-lifecycle-check.mjs"
       - name: ChatGPT App GUI with a simulated parent host at three viewport sizes
         run: python3 -I tools/i2idlx-chatgpt-app-smoke.py "$I2IDLX_ROOT" "$I2IDLX_ROOT/.cache/ui-oracle-assets" "$I2IDLX_ROOT/.cache/ui-oracle-shots"
       - name: Capability directory typed inputs, results, freshness and credential boundary

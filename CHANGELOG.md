@@ -6,6 +6,24 @@ A manual-only diagnostic reports database and public relation sizes, tuple estim
 
 The operator reuses the existing Railway project token and an already provisioned Postgres proxy; missing access is refused. Every section confirms a read-only transaction, statement/lock timeouts bound the queries, session-local settings refuse temporary-file spills, and the complete command has a sixty-second deadline. It does not create access, change stored data or persistent configuration, run garbage collection, compact storage, resize volumes or claim production reclamation.
 
+## 2026-10-20 — Workbench layout callbacks stop when their view is removed
+
+The concept picker's positioning callbacks and whole-map resize and zoom callbacks now verify that their effect is active and still owns connected DOM nodes. React can clear refs before queued browser callbacks or passive-effect cleanup run; the old callbacks dereferenced those cleared refs and could throw during navigation. Cleanup disables retained callbacks first, removes listeners from the visual viewport where they were registered, interrupts map transitions and cancels delayed focus work.
+
+Five deterministic lifecycle checks execute the actual component callback bodies with retained observers, listeners and timers. Both picker and map callbacks reproduce the null `getBoundingClientRect` exception before the repair; all five groups pass afterwards, including live placement and zoom, null or replaced refs, disconnected nodes and post-cleanup callbacks. The existing navigation check still passes all twelve opaque-App tabs and normal Site history. The MCP App validation step runs the lifecycle check beside the navigation check. A complete browser oracle on the new artifact remains separate verification.
+
+## 2026-10-20 — Native commits reuse identical artifact references
+
+A native commit now reuses one verified encrypted artifact reference when multiple record keys name the same canonical plaintext digest, including the LRS statement and query-index aliases. Reuse stays within that commit's fixed owner scope, encryption keys and recipients. Each later commit still encrypts afresh, and verified staging, head CAS, receipts, historical snapshots and operation replay retain their existing checks.
+
+Record keys and canonical digests are captured before I/O. Revalidation immediately before staging or reuse refuses changed caller data before publishing the authoritative head. The cache retains digests and verified references while plaintext buffers remain transient; plaintext already larger than the existing encrypted-resource cap is refused before I/O. The 43 targeted native-commit tests and the typecheck gate pass, covering alias readback after restart, lost acknowledgements, provenance differences, caller mutation, record-key capture, capacity, later-commit encryption and corrupt staging. Workspace and PGSL builds pass. This reduces new duplicate writes; existing resource retention and reclamation require separate work.
+
+## 2026-10-20 — Dashboard discovery keeps pod names stable after failures
+
+The observation dashboard now converts cached pod URLs back to validated immediate child-container names when root discovery returns an HTTP error or throws. Previously, the HTTP-error path returned absolute URLs where the poller expected names; subsequent sweeps could prepend the store origin again, retain malformed pods and issue unnecessary registry and manifest reads. Relative and absolute discovery links use the same origin and child-path checks, and the poller refuses malformed cached names before making requests.
+
+Four integration regressions execute the shipped discovery and polling functions across repeated HTTP failures, network failures with contaminated cached URLs, relative and absolute child links, and invalid names that must cause no reads. All four pass with the repair and fail against the original behavior. The repair does not establish production traffic attribution or physical storage reclamation; deployment and live observations remain separate.
+
 ## 2026-10-18 — Native LRS point operations verify selected record paths
 
 Foxxi's native LRS now checks the exact statement, tenant-registry, attachment and void-target paths needed by a point write instead of reconstructing every tenant's index. Point statement and State/Profile reads use the same selected native proofs. A voided statement expands its verified relation to the actual voider and restarts on a changed head; an unvisited path cannot count as an absent record. Native write-authority checks and commits still await the existing verified native receipts, while ignored commit-result maps no longer trigger a second complete traversal. Adapters without the optional selected-read API keep the complete-read path.

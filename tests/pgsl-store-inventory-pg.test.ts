@@ -8,8 +8,10 @@ const url = process.env['TEST_NATIVE_PG_URL'];
 if (process.env['REQUIRE_INVENTORY_PG_TESTS'] === '1' && !url) throw new Error('isolated inventory PostgreSQL fixture is required');
 if (url) {
   const parsed = new URL(url);
-  if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)
-    || parsed.pathname !== '/native_interego_test') throw new Error('inventory test accepts only the isolated loopback fixture');
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol)
+    || !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)
+    || parsed.pathname !== '/native_interego_test' || parsed.search || parsed.hash)
+    throw new Error('inventory test accepts only the isolated loopback fixture');
 }
 const suite = url ? describe : describe.skip;
 const range = subspaceRange('C');

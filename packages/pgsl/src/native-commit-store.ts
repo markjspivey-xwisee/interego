@@ -262,7 +262,10 @@ export class NativeCommitStore implements NativeCommitClient {
     return { bytes, revision };
   }
   private encrypt(artifact: NativeArtifact): Uint8Array {
-    const bytes = Buffer.from(JSON.stringify(createEncryptedEnvelope(Buffer.from(serializeArtifact(artifact)).toString('utf8'), this.recipients, this.options.senderKeyPair)));
+    return this.encryptPlaintext(serializeArtifact(artifact));
+  }
+  private encryptPlaintext(plaintext: Uint8Array): Uint8Array {
+    const bytes = Buffer.from(JSON.stringify(createEncryptedEnvelope(Buffer.from(plaintext).toString('utf8'), this.recipients, this.options.senderKeyPair)));
     if (bytes.length > this.limit) fail('Encrypted native artifact exceeds capacity.', 413);
     return bytes;
   }
@@ -328,8 +331,11 @@ export class NativeCommitStore implements NativeCommitClient {
     this.decrypt(existing.bytes, topUri);
   }
   private async persist(artifact: NativeArtifactInput): Promise<NativeArtifactReference> {
-    const native = { topUri: artifact.topUri, nodes: artifact.pgsl.nodes }, bytes = this.encrypt(native), bodyDigest = digest(bytes);
-    const reference = { resourceUrl: this.resourceUrl('artifact', bodyDigest), bodyDigest, plaintextDigest: digest(serializeArtifact(native)), topUri: artifact.topUri };
+    return this.persistPlaintext(artifact.topUri, serializeArtifact({ topUri: artifact.topUri, nodes: artifact.pgsl.nodes }));
+  }
+  private async persistPlaintext(topUri: IRI, plaintext: Uint8Array): Promise<NativeArtifactReference> {
+    const bytes = this.encryptPlaintext(plaintext), bodyDigest = digest(bytes);
+    const reference = { resourceUrl: this.resourceUrl('artifact', bodyDigest), bodyDigest, plaintextDigest: digest(plaintext), topUri };
     await this.stage(reference.resourceUrl, bytes, reference.topUri);
     return reference;
   }
@@ -579,18 +585,34 @@ export class NativeCommitStore implements NativeCommitClient {
     const selectedRecordKeys = request.resultRecordKeys === undefined ? undefined : recordSelection(request.resultRecordKeys);
     bounded(request.operationId, 200, 'operation ID');
     if (canonical(request.expected.scope) !== canonical(this.scope) || !Array.isArray(request.changes) || request.changes.length > 1000) fail('Native mutation scope or capacity is invalid.', 400);
-    const changes = [...request.changes].sort((a, b) => compareStrings(a.key, b.key)), keys = new Set<string>();
+    // Bind keys and canonical digests before I/O without retaining every plaintext buffer.
+    const changes = request.changes.map(change => {
+      if (!change.artifact) return { key: change.key, artifact: null };
+      const native = { topUri: change.artifact.topUri, nodes: change.artifact.pgsl.nodes }, plaintext = serializeArtifact(native);
+      if (plaintext.length > this.limit) fail('Encrypted native artifact exceeds capacity.', 413);
+      return { key: change.key, artifact: { ...native, plaintextDigest: digest(plaintext) } };
+    }).sort((a, b) => compareStrings(a.key, b.key)), keys = new Set<string>();
     for (const change of changes) {
       bounded(change.key, 4096, 'record key'); if (keys.has(change.key)) fail('Native mutation repeats a record key.', 400); keys.add(change.key);
-      if (change.artifact) validateNativeArtifact({ topUri: change.artifact.topUri, nodes: change.artifact.pgsl.nodes });
     }
-    const logicalDigest = digest(canonical({ scope: this.scope, changes: changes.map(c => ({ key: c.key, plaintextDigest: c.artifact ? digest(serializeArtifact({ topUri: c.artifact.topUri, nodes: c.artifact.pgsl.nodes })) : null })) }));
+    const logicalDigest = digest(canonical({ scope: this.scope, changes: changes.map(c => ({ key: c.key, plaintextDigest: c.artifact?.plaintextDigest ?? null })) }));
     const current = await this.current(), prior = await this.operation(request.operationId, current);
     if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null, selectedRecordKeys); }
     if (current.revision !== request.expected.revision || canonical(current.reference) !== canonical(request.expected.reference)) throw new NativeCommitConflictError();
     await this.ready();
     const indexChanges = new Map<string, NativeArtifactReference | null>();
-    for (const change of changes) indexChanges.set('record:' + change.key, change.artifact ? await this.persist(change.artifact) : null);
+    // Digest reuse is local to this commit's fixed scope, encryption keys and recipients.
+    const staged = new Map<string, NativeArtifactReference>();
+    for (const change of changes) {
+      let reference: NativeArtifactReference | null = null;
+      if (change.artifact) {
+        const plaintext = serializeArtifact(change.artifact);
+        if (digest(plaintext) !== change.artifact.plaintextDigest) fail('Native artifact changed during commit.', 400);
+        reference = staged.get(change.artifact.plaintextDigest) ?? await this.persistPlaintext(change.artifact.topUri, plaintext);
+        staged.set(change.artifact.plaintextDigest, reference);
+      }
+      indexChanges.set('record:' + change.key, reference);
+    }
     if (current.reference) {
       const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
       const topUri = tuple(pgsl, [OPERATION, current.operationId!, current.logicalDigest, current.reference.revision, current.reference.commitUrl, current.reference.topUri]);

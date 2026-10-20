@@ -110,6 +110,25 @@ function broadcast(event: DashEvent): void {
 
 // ── Pod Discovery & Polling ─────────────────────────────────
 
+/** Only immediate child containers of this store can be dashboard pods. */
+function podNameFromUrl(value: string): string | undefined {
+  try {
+    const base = new URL(CSS_URL);
+    const url = new URL(value, base);
+    if (url.origin !== base.origin || url.username || url.password || url.search || url.hash
+      || !url.pathname.startsWith(base.pathname)) return undefined;
+    const match = /^([^/]+)\/$/.exec(url.pathname.slice(base.pathname.length));
+    if (!match || match[1]!.startsWith('.')) return undefined;
+    // Encoded separators must not turn one apparent name into several path segments.
+    if (/[/\\]/.test(decodeURIComponent(match[1]!))) return undefined;
+    return match[1];
+  } catch { return undefined; }
+}
+
+function knownPodNames(): string[] {
+  return [...new Set([...pods.keys()].map(podNameFromUrl).filter((name): name is string => name !== undefined))];
+}
+
 /**
  * Discover pods by listing the CSS root as an LDP container.
  * CSS returns child containers — each is a potential pod.
@@ -130,34 +149,23 @@ async function discoverPods(): Promise<string[]> {
     } finally {
       clearTimeout(timer);
     }
-    if (!resp.ok) return [...pods.keys()];
+    // Map keys are absolute URLs; pollOne takes a name. Returning keys here used to
+    // prepend CSS_URL again after every failed root listing and retain the bogus pods.
+    if (!resp.ok) return knownPodNames();
 
     const turtle = await resp.text();
     const podNames: string[] = [];
 
-    // Parse LDP contains links from Turtle
+    // Accept relative and absolute child-container links through the same URL check.
     const containsMatches = turtle.matchAll(/<([^>]+)>/g);
     for (const match of containsMatches) {
-      const url = match[1]!;
-      // Child containers that look like pods (relative URLs ending with /)
-      if (url.endsWith('/') && !url.startsWith('http') && !url.startsWith('.')) {
-        podNames.push(url.replace(/\/$/, ''));
-      }
-    }
-
-    // Also check for full URLs
-    const fullUrlMatches = turtle.matchAll(/ldp:contains\s+<([^>]+)>/g);
-    for (const match of fullUrlMatches) {
-      const url = match[1]!;
-      if (url.startsWith(CSS_URL)) {
-        const name = url.slice(CSS_URL.length).replace(/\/$/, '');
-        if (name && !name.includes('/')) podNames.push(name);
-      }
+      const name = podNameFromUrl(match[1]!);
+      if (name !== undefined) podNames.push(name);
     }
 
     return [...new Set(podNames)];
   } catch {
-    return [...pods.keys()].map(u => u.replace(CSS_URL, '').replace(/\/$/, ''));
+    return knownPodNames();
   }
 }
 
@@ -393,6 +401,9 @@ async function getPodNamesCached(): Promise<string[]> {
  * Poll all pods and emit changes.
  */
 async function pollOne(name: string): Promise<void> {
+  // Defence in depth for callers and cached lists: never turn an absolute URL,
+  // nested path, or malformed name into another stored pod and two network reads.
+  if (podNameFromUrl(`${name}/`) !== name) return;
   const podUrl = `${CSS_URL}${name}/`;
 
   const [registry, descriptors] = await Promise.all([

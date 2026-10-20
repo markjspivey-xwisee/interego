@@ -1,7 +1,7 @@
 /**
  * Bounded metadata only: no node bodies, credentials, resource keys or learner payloads.
  * Uses the existing Railway project token and an ALREADY provisioned Postgres proxy.
- * It cannot create a proxy, compact a table, or change data/configuration.
+ * It cannot create a proxy, compact a table, or change stored data/persistent configuration.
  *
  * RAILWAY_PROJECT_TOKEN=... node --import=tsx tools/pgsl-store-inventory.ts
  */
@@ -195,6 +195,7 @@ export async function collectInventory(client: InventoryClient, options: { maxCo
       'Tuple counts are PostgreSQL estimates. Measurements use separate read-only transactions.',
       'Other public tables are grouped; their latest vacuum/analyze timestamps do not describe every member.',
       'Per-slot retained WAL intervals overlap. Do not add their sum or maximum to the physical WAL directory size.',
+      'WAL directory and slot measurements describe the cluster; database_bytes describes only the connected database.',
       'C categories are a capped lexicographic prefix, not a representative sample or extrapolated total.',
       'Partial status includes deliberately capped coverage as well as unavailable sections; inspect section status and truncated flags.',
       'Categories describe fixed resource path patterns, not verified application ownership or safe deletion scope.',
