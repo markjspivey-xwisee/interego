@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-20 — Source-grounded intervention chat and configured backend routing
+
+The pinned v0.0.93 ChatGPT workbench prepares cited conversation context from public authored courses, readable hosted instructional packages, or supplied reference material. Public projections exclude assessment questions and answer keys. The Interventions view previews source sections, retains source inputs across navigation and follow-up questions, clears stale previews when inputs change, and delivers Ask through the standard MCP Apps ui/message bridge. Answers appear in the surrounding ChatGPT conversation; the server makes no model call and creates no stored chat session, learner attempt or completion record.
+
+App requests now resolve against the injected deployment URL, with same-origin HTTP(S) validation, rejection of missing, malformed or credential-bearing bases, and no hardcoded production fallback. Standalone routing and the configured share-link base are preserved. All 155 actual-module host checks passed, including staging HTTPS and local HTTP origins with an explicit port and malformed-base refusals. The browser fixture now uses different frame and deployment origins and checks that the handshake preserves the injected base. Exact-head browser acceptance and deployment remain separate verification; the v0.0.93 source pin is unchanged.
+
+The release receipt also triggers the required SHACL agreement and shared-input closure workflows when the receipt itself changes. The changelog gate records the measured inherited backlog without moving the documented-through marker or claiming a historical backfill.
+
 ## 2026-10-20 — Inventory distinguishes capped coverage from query failure
 
 A successful bounded metadata inventory now exits zero when every required section succeeds, including a deliberately capped sample. The JSON retains its partial status and truncation flags; missing, unavailable or unrecognized measurements and errors keep a nonzero exit.

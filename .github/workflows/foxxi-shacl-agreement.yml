@@ -21,6 +21,7 @@ on:
       - 'applications/foxxi-content-intelligence/tests/support/**'
       - 'applications/foxxi-content-intelligence/tools/shacl-agreement/**'
       - '.github/workflows/foxxi-shacl-agreement.yml'
+      - '.github/workflows/i2idlx-v93-release.yml'
   push:
     branches: [master]
     paths:
@@ -28,6 +29,7 @@ on:
       - 'applications/foxxi-content-intelligence/tests/support/**'
       - 'applications/foxxi-content-intelligence/tools/shacl-agreement/**'
       - '.github/workflows/foxxi-shacl-agreement.yml'
+      - '.github/workflows/i2idlx-v93-release.yml'
 
 permissions:
   contents: read

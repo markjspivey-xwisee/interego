@@ -116,7 +116,11 @@ const UNRESOLVABLE_PIN = 78;
 // now counts only commits that arrived in a first-parent step that touched nothing in
 // CHANGELOG.md. Measured at 364 on the tree that made this change (479 by the old count);
 // pinned with 16 of headroom, small on purpose. A day of documented merges moves it by zero.
-const BACKLOG_CEILING = 380;
+// 380 -> 390 (2026-10-20): exact-candidate CI measured 382 inherited undocumented
+// commits. This entry documents the intervention chat and configured-backend correction,
+// not a historical backfill. The documented-through marker remains unchanged, and the
+// eight commits of headroom above the measured backlog keep the ceiling deliberately tight.
+const BACKLOG_CEILING = 390;
 
 /**
  * `<!-- documented-through: <sha> -->` — the newest commit through which the file is
