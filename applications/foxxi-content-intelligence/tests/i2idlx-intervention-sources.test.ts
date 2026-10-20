@@ -35,12 +35,12 @@ describe('read-only intervention source projections', () => {
   });
 
   it('projects package pages and immutable source links without reading separate question banks', () => {
-    const topic = {
+    const topic: ImportedPackage['topics'][number] = {
       id: 'intro', title: 'Introduction',
       pages: [{ path: 'intro/first page.html', title: 'First page', body: 'Observe the task before choosing an intervention.' }],
+      get questions() { throw new Error('question bank must not be read'); },
     };
-    Object.defineProperty(topic, 'questions', { get() { throw new Error('question bank must not be read'); } });
-    const result = publicPackageIntervention({ title: 'Task support', topics: [topic], unread: [] } as ImportedPackage, sha, base);
+    const result = publicPackageIntervention({ title: 'Task support', topics: [topic], unread: [] }, sha, base);
     expect(result).toEqual({
       id: sha, title: 'Task support', kind: 'Hosted package',
       source_uri: `https://bridge.example/scorm/packages/${sha}`, version: `sha256:${sha}`,
