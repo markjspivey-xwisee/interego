@@ -16,6 +16,7 @@ on:
       - 'applications/foxxi-content-intelligence/i2idlx/src/layer.py'
       - 'applications/foxxi-content-intelligence/i2idlx/config.json'
       - '.github/workflows/i2idlx-reasoning-probe.yml'
+      - '.github/workflows/i2idlx-v93-release.yml'
 
 permissions:
   contents: read
