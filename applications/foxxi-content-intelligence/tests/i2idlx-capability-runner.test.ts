@@ -146,7 +146,10 @@ describe('current workbench capability directory and bounded examples', () => {
       for (const name of ['foxxi.i2idlx_interventions', 'foxxi.i2idlx_intervention_ask']) {
         const intervention = data.actions.find(a => a.n === name)!;
         expect(intervention.ro).toBe(true); expect(intervention.execution.mode).toBe('prepare-only');
-        expect((await run(base, intervention.iri, {})).status).toBe(403);
+        const payload = name === 'foxxi.i2idlx_intervention_ask'
+          ? { question: 'Explain the fixture source.', source: 'authored-course', intervention_id: 'fixture-course' }
+          : {};
+        expect((await run(base, intervention.iri, payload)).status).toBe(403);
       }
       expect((await run(base, 'urn:not-advertised', {})).status).toBe(404);
       expect(io.calls.length).toBe(before);
