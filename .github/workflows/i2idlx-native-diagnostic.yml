@@ -13,6 +13,7 @@ on:
       - 'package-lock.json'
       - 'tsconfig.base.json'
       - '.github/workflows/i2idlx-native-diagnostic.yml'
+      - '.github/workflows/i2idlx-v93-release.yml'
       - '.github/workflows/i2idlx-golden-parity.yml'
       - '.github/workflows/i2idlx-ui-oracle.yml'
       - 'tools/i2idlx-hosted-visitor-smoke.py'

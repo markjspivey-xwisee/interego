@@ -16,6 +16,7 @@ on:
       - 'package-lock.json'
       - 'tsconfig.base.json'
       - '.github/workflows/i2idlx-typescript.yml'
+      - '.github/workflows/i2idlx-v93-release.yml'
 
 permissions:
   contents: read

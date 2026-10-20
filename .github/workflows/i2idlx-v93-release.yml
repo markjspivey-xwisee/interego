@@ -36,7 +36,7 @@ jobs:
         env:
           # Fill this with the validated candidate's exact SHA in the final receipt
           # commit. The placeholder deliberately fails closed if it is not filled.
-          EXPECTED_PREDECESSOR: ebf9bcd363e3a27a0349e2106de5e8a7f36fc361
+          EXPECTED_PREDECESSOR: 9ee4bd614db3068b121636b63a286d51d0a21c4b
           PUSH_PREDECESSOR: ${{ github.event.before }}
         run: |
           node --input-type=module <<'NODE'

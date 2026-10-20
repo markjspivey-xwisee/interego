@@ -26,6 +26,7 @@ on:
       - '.github/workflows/i2idlx-native-diagnostic.yml'
       - '.github/workflows/i2idlx-golden-parity.yml'
       - '.github/workflows/i2idlx-ui-oracle.yml'
+      - '.github/workflows/i2idlx-v93-release.yml'
       - 'tools/i2idlx-hosted-visitor-smoke.py'
 
 permissions:
