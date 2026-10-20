@@ -32,7 +32,7 @@ export function ChatGPTRouteBridge() {
     if (!result || result === seen.current) return;
     seen.current = result;
     const data = result.structuredContent;
-    const views = { home: "home", lexicon: "browse", map: "whole", compare: "cmp", annotate: "annotate", review: "review", packs: "packs", insights: "insights", semantic: "semantic", agents: "agents", ask: "ask", orchestrate: "orchestrate", fori2idl: "for-i2idl" };
+    const views = { home: "home", lexicon: "browse", map: "whole", compare: "cmp", annotate: "annotate", review: "review", packs: "packs", insights: "insights", semantic: "semantic", agents: "agents", ask: "ask", interventions: "interventions", orchestrate: "orchestrate", fori2idl: "for-i2idl" };
     if (!data || !views[data.initial_view]) return;
     const ids = (Array.isArray(data.concept_ids) ? data.concept_ids : []).filter(id => byId.has(id)).slice(0, 14);
     if (data.initial_view === "ask") openChatGPTAsk(data.query || "", ids);
@@ -144,6 +144,7 @@ export function ChatGPTTaskView({ mode = "ask" }) {
       <h1 className="h-display" style={{ fontSize: 34 }}>{orchestration ? "Turn an inventory into a learning graph." : "Explore the glossary with ChatGPT."}</h1>
       <p className="lede">{orchestration ? "Prepare a workflow here, then run it with ChatGPT beside the workbench. Classification and validation use the live Foxxi tools." : "Ask about concepts, compare definitions, or explore a learning problem. ChatGPT answers in the conversation beside this workbench."}</p>
       <div className="row wrap"><span className="tag">{META.release}</span><span className="tag">{C.length} concepts</span><span className="small muted">Uses your connected ChatGPT conversation. No API key required.</span></div>
+      {!orchestration ? <a className="btn" href="#interventions"><Icon name="route" />Chat with or about an intervention</a> : null}
     </header>
     <div className="stack" style={{ gap: 18, marginTop: 24 }}>
       {orchestration ? <>

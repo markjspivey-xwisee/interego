@@ -28,7 +28,10 @@ one variant per archive, including hidden files. See
 [the packaging notes](chatgpt-plugin/README.md).
 
 The App keeps Lexicon, Map, Compare, Annotate, Review, Packs, Insights,
-Semantics and Agents. Ask and Orchestrate prepare explicit requests and send
+Semantics and Agents. It also provides an **Interventions** view for public
+authored courses, hosted packages and any supplied intervention material; see
+[intervention chat](INTERVENTION-CHAT.md) for its source and conversation contract.
+Ask, Orchestrate and intervention chat prepare explicit requests and send
 them through the standard MCP Apps `ui/message` bridge to the surrounding
 ChatGPT conversation. This is not an awaitable sampling API. Answers and the
 actual execution ledger are in the conversation; the GUI records delivery

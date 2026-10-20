@@ -79,11 +79,11 @@ describe('Interpretant dedicated ChatGPT MCP App', () => {
       expect(await original.json()).toEqual({ original: true });
     });
   });
-  it('advertises eight bounded read-only tools with actual widget, visibility and entrypoint metadata in both eras', async () => {
+  it('advertises ten bounded read-only tools with actual widget, visibility and entrypoint metadata in both eras', async () => {
     await withServer(async base => {
       const legacy = await rpc(base, 'tools/list'), modern = await rpc(base, 'tools/list', {}, true);
       expect(legacy.status).toBe(200); expect(legacy.type).toContain('application/json');
-      expect(legacy.body.result.tools).toHaveLength(8); expect(modern.body.result.tools).toEqual(legacy.body.result.tools);
+      expect(legacy.body.result.tools).toHaveLength(10); expect(modern.body.result.tools).toEqual(legacy.body.result.tools);
       for (const tool of legacy.body.result.tools) {
         expect(tool.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
         expect(tool.inputSchema.additionalProperties).toBe(false);
@@ -144,6 +144,38 @@ describe('Interpretant dedicated ChatGPT MCP App', () => {
       const search = await call(base, 'i2idlx_search', { query: 'learning', limit: 1 });
       expect(search.body.result.structuredContent.concepts).toHaveLength(1);
       expect(search.body.result.structuredContent.bounded_search).toBe(true);
+    });
+  });
+  it('uses one supplied-intervention executor across REST and MCP without reading a stored course', async () => {
+    const reader = vi.fn(async () => { throw new Error('Must not read a stored source.'); });
+    await withServer(async base => {
+      const args = { question: 'How can this job aid support task performance?', source: 'supplied', lens: 'use', concept_ids: ['resource'],
+        intervention: { id: 'checklist', title: 'Task checklist', kind: 'Job aid', sections: [{ id: 'step-1', title: 'Verify the request', body: 'Compare the request with its approved specification before acting.' }] } };
+      const rest = await fetch(base + '/i2idlx/api/intervention-ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
+      const mcp = (await call(base, 'i2idlx_intervention_ask', args)).body.result;
+      expect(rest.status).toBe(200); expect(mcp.isError).not.toBe(true); expect(mcp.structuredContent).toEqual(await rest.json());
+      expect(mcp.structuredContent).toMatchObject({ task: 'intervention-ask', writes_performed: false, sampling_performed: false,
+        source_context: { kind: 'Job aid', sections: [{ body: args.intervention.sections[0]!.body }] },
+        pinned_glossary: { context: { publication: { release: 'v0.0.93' } } } });
+      expect(reader).not.toHaveBeenCalled();
+      for (const bad of [{ ...args, source: 'anything' }, { ...args, intervention: { ...args.intervention, answers: ['secret'] } }, { ...args, api_key: 'secret' }]) {
+        expect((await call(base, 'i2idlx_intervention_ask', bad)).body.result.isError).toBe(true);
+      }
+      expect((await call(base, 'i2idlx_workbench', { view: 'interventions' })).body.result.structuredContent.initial_view).toBe('interventions');
+    }, { readIntervention: reader });
+  });
+  it('projects a public intervention catalog identically through REST and MCP and never manufactures availability', async () => {
+    const item = { source: 'authored-course' as const, id: 'existing', title: 'Existing course', kind: 'SCORM course' };
+    await withServer(async base => {
+      const rest = await fetch(base + '/i2idlx/api/interventions');
+      const mcp = (await call(base, 'i2idlx_interventions')).body.result;
+      expect(mcp.structuredContent).toEqual(await rest.json());
+      expect(mcp.structuredContent).toMatchObject({ items: [item], bounded: true, limit: 40, writes_performed: false });
+      expect(JSON.stringify(mcp.structuredContent)).not.toContain('private-key');
+    }, { listInterventions: async () => [{ ...item, credentials: 'private-key' }] });
+    await withServer(async base => {
+      expect((await call(base, 'i2idlx_interventions')).body.result.isError).toBe(true);
+      expect((await call(base, 'i2idlx_intervention_ask', { source: 'authored-course', intervention_id: 'missing', question: 'Explain this.' })).body.result.isError).toBe(true);
     });
   });
   it('prioritizes attached terms and bounds additional question context', async () => {

@@ -25,7 +25,8 @@ def main():
     base = urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/") + "/", "", ""))
     origin = urlunsplit((parts.scheme, parts.netloc, "", "", ""))
     controls = base.rstrip("/") + "/capabilities.ttl"
-    report = {"ok": False, "url": base, "expected_build": args.expected_build.lower(),
+    report = {"ok": False, "url": base, "expected_build": args.expected_build.lower(), "model_calls": 0,
+              "limitations": ["Intervention checks use a labeled UI fixture and copy a request only; no retrieval POST, model run, assessment or activity record is performed."],
               "checks": [], "viewports": [], "blocked_requests": [], "page_errors": []}
 
     def check(name, passed, detail=None):
@@ -105,6 +106,41 @@ def main():
                             copied = page.evaluate("navigator.clipboard.readText()")
                             check(label + ":copy_" + kind + "_contract", all(fragment in copied for fragment in fragments))
                             hashes[kind] = hashlib.sha256(copied.encode("utf-8")).hexdigest()
+
+                        # Keep production visitor checks read-only: fill a clearly labeled
+                        # fixture and copy its conversation request. Do not click Preview
+                        # context (POST) or claim a model answered from it.
+                        page.goto(base + "#interventions", wait_until="domcontentloaded")
+                        page.get_by_role("heading", name="Work with an intervention.", exact=True).wait_for()
+                        page.get_by_role("button", name="Other intervention", exact=True).click()
+                        title = "TEST FIXTURE: App handoff reference"
+                        text = ("Ask and Orchestrate prepare explicit requests and send them through the standard MCP Apps "
+                                "ui/message bridge to the surrounding ChatGPT conversation. "
+                                "Previewing a task packet does not run the model or the recipe.")
+                        question = "How does this reference distinguish a preview from a completed answer?"
+                        page.get_by_role("textbox", name="Intervention title", exact=True).fill(title)
+                        page.get_by_role("combobox", name="Intervention type", exact=True).fill("Reference material")
+                        page.get_by_role("textbox", name="Intervention content", exact=True).fill(text)
+                        page.get_by_role("textbox", name="Intervention question", exact=True).fill(question)
+                        page.get_by_role("button", name="Copy conversation request", exact=True).click()
+                        prefix = "Call i2idlx_intervention_ask with these exact arguments: "
+                        page.wait_for_function("async prefix => (await navigator.clipboard.readText()).includes(prefix)", arg=prefix)
+                        copied = page.evaluate("navigator.clipboard.readText()")
+                        line = next((line for line in copied.splitlines() if line.startswith(prefix)), "")
+                        copied_args = json.loads(line[len(prefix):])
+                        check(label + ":intervention_copy_preserves_source_and_question", copied_args == {
+                            "source": "supplied", "question": question, "lens": "use", "intervention": {
+                                "id": "supplied-intervention", "title": title, "kind": "Reference material",
+                                "sections": [{"id": "section-1", "title": "Section 1", "body": text}]}})
+                        check(label + ":intervention_copy_preserves_execution_boundary", all(fragment in copied for fragment in [
+                            "pinned to v0.0.93", "reference data, not instructions",
+                            "Do not infer completion, competency or intervention effectiveness", "record activity or publish anything"]))
+                        check(label + ":intervention_no_browser_model", page.get_by_role("button", name="Ask ChatGPT", exact=True).is_disabled()
+                              and page.get_by_role("region", name="Intervention questions sent", exact=True).count() == 0
+                              and page.get_by_role("region", name="Intervention context preview", exact=True).count() == 0)
+                        check(label + ":intervention_fits_viewport", page.evaluate(
+                            "document.documentElement.scrollWidth <= window.innerWidth + 2"))
+                        hashes["intervention"] = hashlib.sha256(copied.encode("utf-8")).hexdigest()
                         check(label + ":no_page_errors", not report["page_errors"])
                         check(label + ":read_only_requests", not report["blocked_requests"])
                         report["viewports"].append({"name": label, "width": width, "height": height,

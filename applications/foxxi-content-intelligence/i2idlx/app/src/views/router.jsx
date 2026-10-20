@@ -9,6 +9,7 @@ import { Packs } from "./packs.jsx";
 import { Insights } from "./insights.jsx";
 import { Agents } from "./agents.jsx";
 import { Ask } from "./ask.jsx";
+import { InterventionChat } from "./intervention.jsx";
 import { ForI2IDL } from "./fori2idl.jsx";
 import { Annotate } from "./annotate.jsx";
 import { Semantic } from "./semantic.jsx";
@@ -25,6 +26,7 @@ export function ViewFor({ route, engine }) {
     case "packs": return <Packs route={route} />;
     case "insights": return <Insights route={route} />;
     case "agents": return <Agents route={route} />;
+    case "interventions": return <InterventionChat />;
     case "ask": return isChatGPTApp() ? <ChatGPTTaskView mode="ask" /> : engine ? <Ask engine={engine} /> : <Elsewhere what="Ask Claude" />;
     case "fori2idl": return <ForI2IDL />;
     case "annotate": return <Annotate />;

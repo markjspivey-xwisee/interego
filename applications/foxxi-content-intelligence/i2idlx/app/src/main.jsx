@@ -7,6 +7,7 @@ import { UI, useToasts, useHoverCards, Modal, Avatar } from "./ui.jsx";
 import { Palette } from "./palette.jsx";
 import { useAskEngine } from "./views/ask.jsx";
 import { ViewFor } from "./views/router.jsx";
+import { InterventionChat } from "./views/intervention.jsx";
 import { Orchestrate } from "./views/orchestrate.jsx";
 import { ChatGPTTaskView, ChatGPTConnection, ChatGPTRouteBridge, openChatGPTAsk } from "./views/chatgpt.jsx";
 import { isChatGPTApp } from "./chatgpt-host.js";
@@ -27,6 +28,7 @@ const NAV = [
   { v: "agents", l: "Agents", h: "agents", icon: "agent" },
   { v: "orchestrate", l: "Orchestrate", h: "orchestrate", icon: "route" },
   { v: "ask", l: "Ask", h: "ask", icon: "sparkle" },
+  { v: "interventions", l: "Interventions", h: "interventions", icon: "route" },
 ];
 
 function useTheme() {
@@ -123,7 +125,8 @@ function Shell() {
         <div className="navbar2">{nav}</div>
         {caps.dbError ? <div className="note warn small" role="status">Some pod data could not be verified. Team review results are unavailable; unconfirmed workspace edits remain held.</div> : null}
         <main className={cx("view", route.view === "orchestrate" && !isChatGPTApp() && "view-fixed")} id="main">
-          {isChatGPTApp() && ["ask", "orchestrate"].includes(route.view) ? <ChatGPTTaskView key={route.view} mode={route.view} /> : route.view === "orchestrate" ? <Orchestrate /> : <ViewFor route={route} engine={engine} />}
+          <div hidden={route.view !== "interventions"}><InterventionChat /></div>
+          {route.view === "interventions" ? null : isChatGPTApp() && ["ask", "orchestrate"].includes(route.view) ? <ChatGPTTaskView key={route.view} mode={route.view} /> : route.view === "orchestrate" ? <Orchestrate /> : <ViewFor route={route} engine={engine} />}
         </main>
       </div>
       {pal ? <Palette onClose={() => setPal(false)} ask={ask} current={current} setTheme={setTheme} /> : null}

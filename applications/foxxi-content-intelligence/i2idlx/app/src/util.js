@@ -43,6 +43,7 @@ export function parseHash(h) {
     case "insights": return { view: "insights", section: rest || null };
     case "agents": return { view: "agents", section: rest || null };
     case "ask": return { view: "ask" };
+    case "interventions": return { view: "interventions" };
     case "for": return { view: "fori2idl", section: rest || null };
     case "annotate": return { view: "annotate" };
     case "semantic": return { view: "semantic", section: rest || null };
