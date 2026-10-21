@@ -152,6 +152,28 @@ export async function databaseAccessFingerprint(client: CopyClient): Promise<str
   invariant(result.rows.length === 2, 'database/public schema access metadata is incomplete');
   return JSON.stringify(result.rows);
 }
+async function reviewDatabaseAccess(source: CopyClient, target: CopyClient): Promise<{ fingerprint: string; grantRelayUsage: boolean }> {
+  const fingerprint = await databaseAccessFingerprint(source);
+  const original = JSON.parse(fingerprint) as Row[], destination = JSON.parse(await databaseAccessFingerprint(target)) as Row[];
+  const stripReviewedUsage = (rows: Row[]): { rows: Row[]; hasUsage: boolean } => {
+    let hasUsage = false;
+    const stripped = rows.map(row => {
+      if (row.scope !== 'public-schema') return row;
+      invariant(Array.isArray(row.acl), 'public schema ACL is missing');
+      const relay = (row.acl as Row[]).filter(acl => acl.grantee === 'relay_pgsl');
+      invariant(relay.length <= 1 && relay.every(acl => row.owner === 'pg_database_owner'
+        && acl.grantor === 'pg_database_owner' && acl.privilege === 'USAGE' && acl.grantable === false),
+      'unreviewed relay public schema permissions');
+      hasUsage = relay.length === 1;
+      return { ...row, acl: (row.acl as Row[]).filter(acl => acl.grantee !== 'relay_pgsl') };
+    });
+    return { rows: stripped, hasUsage };
+  };
+  const from = stripReviewedUsage(original), to = stripReviewedUsage(destination);
+  invariant(JSON.stringify(from.rows) === JSON.stringify(to.rows) && (!to.hasUsage || from.hasUsage),
+    'database/public schema access differs');
+  return { fingerprint, grantRelayUsage: from.hasUsage && !to.hasUsage };
+}
 async function schema(client: CopyClient, empty: boolean): Promise<Row[]> {
   const current = await client.query('SELECT current_user AS role');
   const owner = String(current.rows[0]!.role);
@@ -265,7 +287,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     invariant(Math.floor(Number(from.version) / 10000) === 16 && Math.floor(Number(to.version) / 10000) === 16, 'requires reviewed PostgreSQL 16');
     invariant(JSON.stringify(from.locale) === JSON.stringify(to.locale), 'database locales differ');
     await schema(target, true);
-    invariant(await databaseAccessFingerprint(source) === await databaseAccessFingerprint(target), 'database/public schema access differs');
+    const access = await reviewDatabaseAccess(source, target);
     releaseCollector = await acquireCollectorLock(source, 'pgsl_kv');
     await sq('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     fenced = true;
@@ -310,6 +332,9 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     invariant(inputBytes * 1.2 + inputKeyBytes * 2 + actual.length * 160 < maxDatabase, 'retained storage estimate exceeds target reserve');
     log({ kind: 'preflight', actualRows: actual.length, serializedBytes: inputBytes, largestValue, missingDerived: missing });
     await copyRelayRole({ ...source, query: sq, end: () => source.end() }, { ...target, query: tq, end: () => target.end() });
+    if (access.grantRelayUsage) await tq('GRANT USAGE ON SCHEMA public TO relay_pgsl');
+    invariant(await databaseAccessFingerprint({ ...target, query: tq, end: () => target.end() }) === access.fingerprint,
+      'copied database/public schema permissions differ');
     await createTables({ ...target, query: tq, end: () => target.end() }, definitions);
     const boundedRows = async (client: { query: typeof sq }, table: string, keys: string[], consume: (key: Buffer, value: Buffer) => void | Promise<void>) => {
       const meta = await client.query('SELECT k,octet_length(v) AS bytes FROM public.' + quote(table) + ' WHERE k=ANY($1::bytea[]) ORDER BY k', [keys.map(k => Buffer.from(k, 'hex'))]);

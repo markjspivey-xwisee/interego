@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { Client } from 'pg@8';
-import { copyLiveDatabase, holdsPreparedFence } from '../tools/pgsl-live-copy.ts';
+import { copyLiveDatabase, holdsPreparedFence, databaseAccessFingerprint } from '../tools/pgsl-live-copy.ts';
 import { nodeKey, cpKey, ovKey } from '../packages/pgsl-store/src/keyspace.ts';
 const urls={source:new URL(Bun.env.PGSL_COPY_FIXTURE_URL),target:new URL(Bun.env.PGSL_COPY_FIXTURE_TARGET_URL)};
 for(const url of Object.values(urls)){assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));assert.equal(url.pathname,'/postgres');assert.equal(url.username,'copy_fixture');}
@@ -29,6 +29,7 @@ try {
   await source.query('CREATE TABLE public.pgsl_kv(k bytea NOT NULL,v bytea NOT NULL,CONSTRAINT pgsl_kv_live_pkey PRIMARY KEY(k))');
   await source.query('CREATE TABLE public.relay_pgsl_published(k bytea NOT NULL,v bytea NOT NULL,CONSTRAINT relay_pgsl_published_pkey PRIMARY KEY(k))');
   await source.query('GRANT SELECT,INSERT,UPDATE,DELETE ON public.relay_pgsl_published TO relay_pgsl');
+  await source.query('GRANT USAGE ON SCHEMA public TO relay_pgsl');
   await source.query('ALTER TABLE public.pgsl_kv SET (autovacuum_vacuum_scale_factor=0.02,autovacuum_vacuum_threshold=5000,autovacuum_analyze_scale_factor=0.02,autovacuum_analyze_threshold=5000)');
   const atomHash='a'.repeat(40),fragHash='b'.repeat(40),orphanHash='c'.repeat(40);
   const atomUri='https://fixture.example/ns/pgsl/atom/'+atomHash,fragUri='https://fixture.example/ns/pgsl/fragment/'+fragHash;
@@ -50,13 +51,16 @@ try {
   assert.ok(Object.values(session.receipt.missingDerived).reduce((a,b)=>a+b,0)>0);
   assert.deepEqual((await target.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows,(await source.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows);
   assert.ok(!JSON.stringify(session.receipt).includes('SCRAM-SHA-256'));
+  assert.equal(await databaseAccessFingerprint(source),await databaseAccessFingerprint(target));
+  const publicAccess=JSON.parse(await databaseAccessFingerprint(target)).find(row=>row.scope==='public-schema');
+  assert.deepEqual(publicAccess.acl.filter(row=>row.grantee==='relay_pgsl'),[{grantee:'relay_pgsl',grantor:'pg_database_owner',privilege:'USAGE',grantable:false}]);
   assert.deepEqual((await target.query("SELECT reloptions FROM pg_class WHERE oid='public.pgsl_kv'::regclass")).rows,
     (await source.query("SELECT reloptions FROM pg_class WHERE oid='public.pgsl_kv'::regclass")).rows);
   const relayUrl=new URL(urls.target);relayUrl.pathname='/'+databases[1].name;relayUrl.username='relay_pgsl';relayUrl.password='fixture_private_password';
   const relay=new Client({connectionString:relayUrl.href});await relay.connect();clients.push(relay);
   assert.equal((await relay.query('SELECT count(*)::int n FROM public.relay_pgsl_published')).rows[0].n,2);
   assert.equal((await relay.query("SELECT has_table_privilege(current_user,'public.pgsl_kv','SELECT') AS allowed")).rows[0].allowed,false);
-  results.push('SCRAM role authentication and exact limited relay ACL survive on a different PG16 server');
+  results.push('SCRAM authentication, limited table ACL and explicit schema USAGE/grantor survive on a different PG16 server');
   const writer=await connect('source',databases[0].name);await writer.query("SET lock_timeout='100ms'");
   await assert.rejects(writer.query('INSERT INTO public.relay_pgsl_published VALUES($1,$2)',[Buffer.from('blocked'),Buffer.from('blocked')]),(error)=>error.code==='55P03');
   await session.abortBeforeCutover();await writer.query('SELECT 1');
@@ -68,10 +72,10 @@ try {
   assert.equal((await occupied.query('SELECT count(*)::int n FROM sentinel')).rows[0].n,0);
   results.push('nonempty target refuses without touching unrelated table');
   const aclTarget=await fresh();
-  await source.query('GRANT USAGE ON SCHEMA public TO relay_pgsl');
-  await assert.rejects(copyLiveDatabase(source,aclTarget,options),/database\/public schema access differs/);
+  await source.query('GRANT CREATE ON SCHEMA public TO relay_pgsl');
+  await assert.rejects(copyLiveDatabase(source,aclTarget,options),/unreviewed relay public schema permissions/);
   assert.equal((await aclTarget.query("SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'")).rows[0].n,0);
-  await source.query('REVOKE USAGE ON SCHEMA public FROM relay_pgsl');
+  await source.query('REVOKE CREATE ON SCHEMA public FROM relay_pgsl');
   await source.query('GRANT CONNECT ON DATABASE "'+databases[0].name+'" TO relay_pgsl');
   await assert.rejects(copyLiveDatabase(source,aclTarget,options),/database\/public schema access differs/);
   await source.query('REVOKE CONNECT ON DATABASE "'+databases[0].name+'" FROM relay_pgsl');
