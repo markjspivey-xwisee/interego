@@ -20,6 +20,7 @@
  */
 
 import { gatewayTransport } from '../src/gateway-transport.js';
+import { meshPollingAllowed, pollingMode, pollingInterval } from '../src/on-demand-work.js';
 import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
 import { format } from 'node:util';
 
@@ -1743,7 +1744,8 @@ function resolveSubjectPodUrl(didOrWebId: string | undefined, explicit?: string)
   return resolveSubjectPodUrlPure({ tenantPodUrl, identity: didOrWebId, explicit, safeUrl: safePublicUrlOrUndefined });
 }
 
-const MESH_PROJECT_INTERVAL_MS = Number(process.env.FOXXI_MESH_PROJECT_INTERVAL_MS ?? 60_000);
+const MESH_PROJECT_INTERVAL_MS = pollingInterval(process.env.FOXXI_MESH_PROJECT_INTERVAL_MS);
+const MESH_POLLING_MODE = pollingMode(process.env.FOXXI_MESH_PROJECT_MODE);
 /**
  * Manifest entries read per pod per sweep, newest first.
  *
@@ -2047,8 +2049,10 @@ async function landMeshBatch(events: ProjectedMeshEvent[]): Promise<number> {
 }
 
 /** PULL cycle: discover every mesh pod, project, land sequentially, refresh trajectories. */
-async function runMeshProjectionCycle(): Promise<{ pods: number; projected: number; agents: number }> {
-  if (meshProjectionRunning) return { pods: 0, projected: 0, agents: 0 };
+async function runMeshProjectionCycle(demandedPod?: string): Promise<{ pods: number; projected: number; agents: number }> {
+  // Background projection is opt-in. Health, telemetry and ordinary signed reads
+  // never wake it. An explicit own-record read projects only that enrolled pod.
+  if (!meshPollingAllowed(MESH_POLLING_MODE, demandedPod !== undefined) || meshProjectionRunning) return { pods: 0, projected: 0, agents: 0 };
   // ★★ CLAIM THE FLAG BEFORE THE FIRST await, NOT AFTER IT. Putting the register read between the
   // check and the assignment broke single-flight: every tick passed the check (nobody had set the
   // flag yet) and parked on the read, so a stalled pod queued one whole sweep per minute and they
@@ -2063,7 +2067,8 @@ async function runMeshProjectionCycle(): Promise<{ pods: number; projected: numb
     // nothing configured would never notice its first enrolment.
     await hydrateDurableEnrolment();
   } catch { /* keep the set we already have; hydrate already logs */ }
-  const pods = meshPods();
+  const pods = demandedPod === undefined ? meshPods()
+    : meshPods().filter(pod => podPrincipalKey(pod) === podPrincipalKey(demandedPod));
   if (pods.length === 0) { meshProjectionRunning = false; return { pods: 0, projected: 0, agents: 0 }; }
   const events: ProjectedMeshEvent[] = [];
   const stepsByAgent = new Map<string, TrajectoryStepInput[]>();
@@ -7019,12 +7024,14 @@ app.post('/agent/mesh/enrolment', async (req, res) => {
       retirementRule: {
         retiredWhen: `the pod ROOT returns 404/410 on ${MESH_DEAD_CYCLES} consecutive projector cycles — i.e. there is no pod there any more. A pod that exists and holds nothing is never retired: having written no steps yet is the state every agent starts in.`,
         unreachableIsNotAbsent: 'A 5xx, a timeout or a DNS failure is UNKNOWN and resets nothing, so a store restart cannot un-enrol a fleet.',
-        nextCheckWithinMs: MESH_PROJECT_INTERVAL_MS,
+        nextCheckWithinMs: MESH_POLLING_MODE === 'continuous' ? MESH_PROJECT_INTERVAL_MS : null,
+        pollingMode: MESH_POLLING_MODE,
         // A retirement is published as a row with a reason, not as the row's absence, so this is
         // answerable after the fact as well as before it.
         published: `${base}/agent/mesh/enrolment`,
       },
-      sweptEveryMs: MESH_PROJECT_INTERVAL_MS,
+      sweptEveryMs: MESH_POLLING_MODE === 'continuous' ? MESH_PROJECT_INTERVAL_MS : null,
+      pollingMode: MESH_POLLING_MODE,
       register: `${base}/agent/mesh/enrolment`,
       pods: meshPods(),
     });
@@ -7156,7 +7163,7 @@ app.get('/agent/mesh/enrolment', (_req, res) => {
 
 <${self}> a iep:EvidenceSource, dcat:Dataset, dcat:Catalog ;
     rdfs:label "Foxxi mesh projector — enrolled pods" ;
-    rdfs:comment "The pods whose TRAJECTORY STEPS the Foxxi mesh projector sweeps into per-agent lens:<agent> views. A pod NOT listed here has its steps read by nothing, so writing more of them cannot change a review of that subject. Every ${MESH_PROJECT_INTERVAL_MS}ms." ;
+    rdfs:comment "The pods whose TRAJECTORY STEPS the Foxxi mesh projector sweeps into per-agent lens:<agent> views. A pod NOT listed here has its steps read by nothing, so writing more of them cannot change a review of that subject. Background polling mode ${MESH_POLLING_MODE}; automatic sweeps run only in continuous mode. A signed self-review refreshes its own enrolled pod on demand." ;
     iep:store <${self}> ;
     dcat:accessURL <${self}> ;
     iep:populatedBy <${base}/agent/mesh-event> ;
@@ -7380,6 +7387,9 @@ app.post('/agent/review-record', async (req, res) => {
     // and two discarded it — the same failure, two answers, by surface.
     if (!target.ok) { res.status(target.status ?? 400).json({ kind: 'refusal', 'iep:refusalStatus': target.status ?? 400, error: target.error }); return; }
     const subjectPodUrl = target.podUrl;
+    // A signed self-review is an explicit consumer of the mesh view. Refresh
+    // only its own enrolled pod; unrelated authentication/status calls do no work.
+    if (target.isSelf) await runMeshProjectionCycle(subjectPodUrl);
     // ★ AFTER the pod is resolved, and FROM it — see readIsSelf. Deciding this from `subjectDid`
     // (which defaults to the caller) while the data came from `subject_pod_url` is the bypass.
     const isSelf = target.isSelf;
@@ -12706,31 +12716,14 @@ app.listen(PORT, () => {
   void hydratePublicMemories(true).catch(e => bridgeWarn('[foxxi-bridge][memories] boot warm:', (e as Error).message));
   // Load the durable course→author registry so a bare course URL resolves after a restart.
   void loadCourseAuthors().catch(e => bridgeWarn('[foxxi-bridge][courses] registry boot load:', (e as Error).message));
-  // Agent-mesh projection: kick an initial cycle + schedule the poller.
-  /**
-   * ── ★★ THE POLLER STARTS EVEN WITH NOTHING CONFIGURED ───────────────────────
-   *
-   * This used to be gated on `MESH_PODS.length > 0`, which was right while the only way in was an
-   * environment variable. It is WRONG now that an agent can enrol itself at runtime: a fleet with
-   * nothing configured would accept an enrolment, answer "you are enrolled", and never sweep the
-   * pod — because the interval that does the sweeping was never scheduled.
-   *
-   * That is precisely the failure this whole path exists to remove, rebuilt one layer along: a
-   * system that reports a state it is not acting on. `runMeshProjectionCycle` already returns
-   * immediately when the live set is empty, so an idle poller costs one comparison a minute.
-   */
-  const configured = MESH_PODS.length;
-  // ★ HYDRATE THE DURABLE REGISTER BEFORE THE FIRST CYCLE, so an enrolment made before this restart
-  // is honoured immediately rather than a cycle later — and so the boot log reports the set the
-  // projector will actually read, not just the configured seed.
-  void hydrateDurableEnrolment()
-    .catch((e) => { bridgeError('[foxxi-bridge][mesh] durable register hydrate failed:', (e as Error).message); return { count: 0, stale: true }; })
-    .then((durable) => {
-      bridgeLog(`[foxxi-bridge][mesh] sweeping ${meshPods().length} pod(s) every ${MESH_PROJECT_INTERVAL_MS}ms into per-agent lens:<agent> views (on-read, never written back to the agent pod) — ${configured} seeded from config, ${durable.count} durably enrolled on the pod${durable.stale ? ' (REGISTER UNREADABLE at boot — durable enrolments are missing until a later cycle reads it)' : ''}; agents enrol their own pod at POST /agent/mesh/enrolment (cap ${MESH_ENROLMENT_CAP})`);
-      return runMeshProjectionCycle();
-    })
-    .catch(e => bridgeError('[foxxi-bridge][mesh] initial cycle:', (e as Error).message));
-  setInterval(() => {
-    void runMeshProjectionCycle().catch(e => bridgeError('[foxxi-bridge][mesh] cycle:', (e as Error).message));
-  }, MESH_PROJECT_INTERVAL_MS);
+  // Default demand mode performs no boot or idle mesh scan. Only an explicit
+  // signed self-review asks for its own pod; continuous polling is operator opt-in.
+  bridgeLog(`[foxxi-bridge][mesh] background polling mode ${MESH_POLLING_MODE}`);
+  if (MESH_POLLING_MODE === 'continuous') {
+    void runMeshProjectionCycle().catch(e => bridgeError('[foxxi-bridge][mesh] initial cycle:', (e as Error).message));
+    const timer = setInterval(() => {
+      void runMeshProjectionCycle().catch(e => bridgeError('[foxxi-bridge][mesh] cycle:', (e as Error).message));
+    }, MESH_PROJECT_INTERVAL_MS);
+    timer.unref();
+  }
 });

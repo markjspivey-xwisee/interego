@@ -7,6 +7,7 @@ import { createEncryptedEnvelope, openEncryptedEnvelope, mintNodeId, isPgslNodeI
   type EncryptionKeyPair, type EncryptedEnvelope, type IRI } from '@interego/core';
 import { createPGSL, ingest, mintAtom } from './lattice.js';
 import type { PGSLInstance, Node, NodeProvenance } from './types.js';
+import { immutableArtifactCache } from './immutable-artifact-cache.js';
 
 export const NATIVE_COMMIT_MEDIA_TYPE = 'application/vnd.interego.native-commit+json';
 const JSON_TYPE = 'application/json';
@@ -74,6 +75,9 @@ export interface NativeCommitStoreOptions {
   /** Explicit opt-in for an application's bounded rolling checkpoint format.
    * Existing immutable clients refuse this format after a CAS migration. */
   readonly atomicCheckpoint?: boolean;
+  /** Reuse verified immutable artifacts within this client. Heads and staging
+   * readbacks remain fresh. Disabled by default for integrity-audit callers. */
+  readonly cacheImmutableReads?: boolean;
   /** Already resolved and authorized through the adapter's capability/Type Index contract. */
   readonly scope: NativeCommitScope;
   readonly fetch: typeof globalThis.fetch;
@@ -211,6 +215,7 @@ export class NativeCommitStore implements NativeCommitClient {
   private readonly scope: NativeCommitScope;
   private readonly recipients: readonly string[];
   private readonly limit: number;
+  private readonly artifactCacheNamespace = {};
   constructor(private readonly options: NativeCommitStoreOptions) {
     const pod = uri(options.scope.pod), head = uri(options.scope.headUrl), container = uri(options.scope.artifactContainer);
     if (!pod.pathname.endsWith('/') || !container.pathname.endsWith('/') || head.origin !== pod.origin || container.origin !== pod.origin
@@ -341,10 +346,18 @@ export class NativeCommitStore implements NativeCommitClient {
   }
   async readArtifact(reference: NativeArtifactReference): Promise<NativeArtifact> {
     this.checkReference(reference);
-    const stored = await this.readRepresentation(reference.resourceUrl);
-    if (!stored || digest(stored.bytes) !== reference.bodyDigest) return fail('Committed native artifact is unavailable or changed.');
-    const artifact = this.decrypt(stored.bytes, reference.topUri);
+    // All bindings are part of the key; an alias with a changed plaintext or
+    // top URI must not borrow the verification of a different reference.
+    const key = JSON.stringify([reference.resourceUrl, reference.bodyDigest, reference.plaintextDigest, reference.topUri]);
+    const cached = this.options.cacheImmutableReads === true
+      ? immutableArtifactCache.get(this.artifactCacheNamespace, key) : undefined;
+    const bytes = cached ?? (await this.readRepresentation(reference.resourceUrl))?.bytes;
+    if (!bytes || digest(bytes) !== reference.bodyDigest) return fail('Committed native artifact is unavailable or changed.');
+    // Cache ciphertext, never caller-visible mutable node maps. Decryption and
+    // both content bindings are checked on every read, including a warm hit.
+    const artifact = this.decrypt(bytes, reference.topUri);
     if (digest(serializeArtifact(artifact)) !== reference.plaintextDigest) fail('Native artifact plaintext binding changed.');
+    if (!cached && this.options.cacheImmutableReads === true) immutableArtifactCache.set(this.artifactCacheNamespace, key, bytes);
     return artifact;
   }
   private referenceTuple(pgsl: PGSLInstance, tag: string, key: string, reference: NativeArtifactReference): IRI {

@@ -7,18 +7,20 @@ async function sourceModule(path) {
  return import('data:text/javascript;base64,'+Buffer.from(stripTypeScriptTypes(source,{mode:'transform'})).toString('base64'));
 }
 const { gatewayTransport }=await sourceModule('../applications/foxxi-content-intelligence/src/gateway-transport.ts');
-const { PollingDemand,pollingMode,onDemandRefresh }=await sourceModule('../applications/foxxi-content-intelligence/src/on-demand-work.ts');
+const { pollingMode,onDemandRefresh,meshPollingAllowed,pollingInterval }=await sourceModule('../applications/foxxi-content-intelligence/src/on-demand-work.ts');
 
-test('idle demand makes no polling eligible; verified use expires again',()=>{
- let now=1000;const demand=new PollingDemand('demand',300000,()=>now);
- assert.equal(demand.shouldPoll(),false);
- demand.authenticatedActivity(); assert.equal(demand.shouldPoll(),true);
- now+=300000;assert.equal(demand.shouldPoll(),false);
- demand.authenticatedActivity(); assert.equal(demand.shouldPoll(),true);
- const off=new PollingDemand('off',300000,()=>now);off.authenticatedActivity();assert.equal(off.shouldPoll(),false);
- assert.equal(new PollingDemand('continuous').shouldPoll(),true);
+test('background mesh work requires operator opt-in; explicit demand stays scoped by caller',()=>{
  assert.equal(pollingMode(undefined),'demand');
  assert.throws(()=>pollingMode('typo'));
+ assert.equal(meshPollingAllowed('demand'),false);
+ assert.equal(meshPollingAllowed('demand',true),true);
+ assert.equal(meshPollingAllowed('off'),false);
+ assert.equal(meshPollingAllowed('off',true),false);
+ assert.equal(meshPollingAllowed('continuous'),true);
+ for(const invalid of ['0','-1','NaN','Infinity','1','2147483648']) assert.throws(()=>pollingInterval(invalid));
+ assert.equal(pollingInterval(undefined),60000);
+ assert.equal(pollingInterval('86400000'),86400000);
+ assert.equal(pollingInterval('2147483647'),2147483647);
 });
 
 test('federation refresh is lazy, single-flight and rate bounded after failure',async()=>{

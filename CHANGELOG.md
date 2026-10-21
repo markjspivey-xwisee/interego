@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-20 — Demand-driven mesh projection and bounded native reads
+
+The Foxxi bridge now defaults to demand-driven mesh projection: boot and idle periods do not scan enrolled pods. A verified self-review refreshes only that caller's enrolled pod; continuous projection requires explicit operator configuration. Federation calibration refreshes lazily, awaits the first result, coalesces concurrent requests and applies a retry cooldown. Invalid or overflowing polling intervals are refused.
+
+An explicitly configured private gateway transports requests for the exact public gateway origin through the same authorization service, preserving the public resource identity. Native LRS clients reuse verified immutable ciphertext within a process-wide 32 MiB and 128-entry budget; mutable heads and publication verification remain fresh. Unchanged lattice snapshots skip encrypted rewrites only after an exact body-bound write receipt and a matching current validator. Failed or unconfirmed writes never establish that checkpoint.
+
 ## 2026-10-20 — Source-grounded intervention chat and configured backend routing
 
 The pinned v0.0.93 ChatGPT workbench prepares cited conversation context from public authored courses, readable hosted instructional packages, or supplied reference material. Public projections exclude assessment questions and answer keys. The Interventions view previews source sections, retains source inputs across navigation and follow-up questions, clears stale previews when inputs change, and delivers Ask through the standard MCP Apps ui/message bridge. Answers appear in the surrounding ChatGPT conversation; the server makes no model call and creates no stored chat session, learner attempt or completion record.

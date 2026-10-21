@@ -168,7 +168,7 @@ describe('body-bound CAS write confirmation', () => {
         if (method === 'HEAD') return new Response(null, { status: 200, headers: { etag: '"other-writer"' } });
         const actual = variant === 'truncated' ? body.slice(0, -1) : variant === 'oversized' ? body + 'x'
           : variant === 'other-body' ? 'x'.repeat(body.length) : body;
-        const headers = variant === 'missing-etag' ? {} : { etag: variant === 'weak-etag' ? 'W/"weak"' : '"other-writer"' };
+        const headers: Record<string, string> = variant === 'missing-etag' ? {} : { etag: variant === 'weak-etag' ? 'W/"weak"' : '"other-writer"' };
         return new Response(actual, { status: 200, headers });
       }) as typeof fetch;
       const { pgsl, top } = instanceWith([variant]);

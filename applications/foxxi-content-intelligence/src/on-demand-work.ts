@@ -7,20 +7,6 @@ export function pollingMode(value: string | undefined): PollingMode {
   throw new Error('polling mode must be off, demand or continuous');
 }
 
-export class PollingDemand {
-  private lastActivityAt = Number.NEGATIVE_INFINITY;
-  constructor(readonly mode: PollingMode, readonly idleMs = 300_000,
-    private readonly now: () => number = Date.now) {
-    if (!Number.isFinite(idleMs) || idleMs <= 0) throw new Error('polling idle window must be positive');
-  }
-  /** Call only after signature/delegation verification succeeds, never on health checks. */
-  authenticatedActivity(): void { this.lastActivityAt = this.now(); }
-  shouldPoll(): boolean {
-    return this.mode === 'continuous'
-      || (this.mode === 'demand' && this.now() - this.lastActivityAt < this.idleMs);
-  }
-}
-
 /** Coalesce on-demand refreshes and apply a retry interval even when a source fails. */
 export function onDemandRefresh(work: () => Promise<void>, ttlMs = 60_000,
   now: () => number = Date.now): () => Promise<void> {
@@ -33,4 +19,18 @@ export function onDemandRefresh(work: () => Promise<void>, ttlMs = 60_000,
     active = Promise.resolve().then(work).finally(() => { active = undefined; });
     return active;
   };
+}
+
+/** Only explicit mesh consumers or operator-selected continuous mode may scan. */
+export function meshPollingAllowed(mode: PollingMode, explicitRead = false): boolean {
+  return mode !== 'off' && (explicitRead || mode === 'continuous');
+}
+
+/** Node turns zero, NaN and overflowing intervals into a 1ms loop; reject them. */
+export function pollingInterval(value: string | undefined): number {
+  const interval = value === undefined ? 60_000 : Number(value);
+  if (!Number.isInteger(interval) || interval < 1000 || interval > 2_147_483_647) {
+    throw new Error('mesh polling interval must be an integer from 1000 to 2147483647ms');
+  }
+  return interval;
 }
