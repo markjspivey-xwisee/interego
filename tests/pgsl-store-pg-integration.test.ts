@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client, types } from 'pg';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   openPgStore,
   PgWritePressureError,
@@ -508,7 +508,7 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
     } finally { await fixture.close(); }
   }, 15_000);
 
-  it('refuses more than 4096 zero-byte positive operations before issuing any mutation SQL', async () => {
+  it('charges empty positive operations against an explicitly small input budget before issuing mutation SQL', async () => {
     const fixture = await pressureFixture('operation_bound');
     const seed = Buffer.from('existing');
     const sequence = `${fixture.table}_writes`, counter = `${fixture.table}_count`;
@@ -680,5 +680,88 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
       await fixture.close();
     }
   }, 15_000);
+
+  it('keeps identical CAS a conditional row-lock proof above the ceiling, so legacy resource deletion still works without retirement updates', async () => {
+    const fixture = await pressureFixture('proof_delete');
+    const key = Buffer.from('proof'), value = Buffer.from('original');
+    const sequence = `${fixture.table}_updates`, counter = `${fixture.table}_count`;
+    try {
+      const normal = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER });
+      const registry = new CodecRegistry().register(rdfCodec);
+      const seeded = new LdpStore(openStore(normal), registry);
+      await seeded.writeResource('css', '/deletable.bin', Buffer.from('resource'), 'application/octet-stream');
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [key, value]);
+      await fixture.client.query(`CREATE SEQUENCE ${sequence}`);
+      await fixture.client.query(`CREATE FUNCTION ${counter}() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN PERFORM nextval('${sequence}'); RETURN NEW; END; $$`);
+      await fixture.client.query(`CREATE TRIGGER count_proof_updates BEFORE UPDATE ON ${fixture.table}
+        FOR EACH ROW EXECUTE FUNCTION ${counter}()`);
+      const blocked = await fixture.open({ maxDatabaseBytes: 1, writeReserveBytes: 0 });
+      expect(await blocked.transact(tx => tx.compareAndSet(key, Buffer.from('wrong'), Buffer.from('wrong')))).toBe(false);
+      expect(await blocked.transact(tx => tx.compareAndSet(key, value, value))).toBe(true);
+      expect(await blocked.transact(tx => tx.compareAndSet(Buffer.from('absent'), value, value))).toBe(false);
+      await expect(blocked.transact(async tx => {
+        expect(await tx.compareAndSet(key, value, value)).toBe(true);
+        tx.set(Buffer.from('growth'), Buffer.from('still forbidden'));
+      })).rejects.toMatchObject({ code: 'PGSL_WRITE_PRESSURE' });
+      expect(await fixture.value(Buffer.from('growth'))).toBeUndefined();
+      const deleting = new LdpStore(openStore(blocked), registry);
+      expect(await deleting.deleteResource('css', '/deletable.bin')).toBe(true);
+      expect(await deleting.stat('css', '/deletable.bin')).toBeNull();
+      await blocked.transact(async tx => { expect(await tx.compareAndSet(key, value, value)).toBe(true); tx.clear(key); });
+      expect(await fixture.value(key)).toBeUndefined();
+      expect((await fixture.client.query<{ is_called: boolean }>(`SELECT is_called FROM ${sequence}`)).rows[0]?.is_called).toBe(false);
+    } finally {
+      await fixture.client.query(`DROP FUNCTION IF EXISTS ${counter}() CASCADE`);
+      await fixture.client.query(`DROP SEQUENCE IF EXISTS ${sequence}`);
+      await fixture.close();
+    }
+  }, 20_000);
+
+  it('admits a previously supported large replacement including retired old-value bytes under the bounded default', async () => {
+    const fixture = await pressureFixture('large_replace');
+    const key = Buffer.from('large');
+    const before = randomBytes(22 * 1024 * 1024), after = randomBytes(22 * 1024 * 1024);
+    try {
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [key, before]);
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER });
+      expect(await adapter.transact(tx => tx.compareAndSet(key, before, after))).toBe(true);
+      expect(await fixture.value(key)).toEqual(after);
+    } finally { await fixture.close(); }
+  }, 45_000);
+
+  it('stores the upload contract maximum 48 MiB opaque package through the actual chunked LDP transaction under default bounds', async () => {
+    const fixture = await pressureFixture('package_max');
+    const bytes = randomBytes(48 * 1024 * 1024);
+    try {
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER });
+      const ldp = new LdpStore(openStore(adapter), new CodecRegistry().register(rdfCodec));
+      await ldp.writeStream('css', '/maximum-package.zip', (async function* () { yield bytes; })(), 'application/zip');
+      expect((await ldp.stat('css', '/maximum-package.zip'))?.size).toBe(bytes.length);
+      const actual = createHash('sha256');
+      for await (const part of ldp.readStream('css', '/maximum-package.zip')) actual.update(part);
+      expect(actual.digest('hex')).toBe(createHash('sha256').update(bytes).digest('hex'));
+    } finally { await fixture.close(); }
+  }, 60_000);
+
+  it('admits native 8 MiB opaque revisions and more than 4096 RDF projection writes without lowering the existing representation contracts', async () => {
+    const fixture = await pressureFixture('native_rdf');
+    try {
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER });
+      const ldp = new LdpStore(openStore(adapter), new CodecRegistry().register(rdfCodec));
+      const first = randomBytes(8 * 1024 * 1024), second = randomBytes(8 * 1024 * 1024);
+      const committed = await ldp.commitResource('css', '/native.json', first, 'application/json', { expectedRevision: null });
+      expect(committed.status).toBe('committed');
+      if (committed.status !== 'committed') throw new Error('first native revision was not committed');
+      const replaced = await ldp.commitResource('css', '/native.json', second, 'application/json', { expectedRevision: committed.revision });
+      expect(replaced.status).toBe('committed');
+      expect(Buffer.from((await ldp.readResource('css', '/native.json'))!.bytes)).toEqual(second);
+      // 1000 unique statement atoms produce at least 5000 node/index KV writes.
+      const rdf = Buffer.from(Array.from({ length: 1000 }, (_, i) => `<urn:s:${i}> <urn:p> "${i}" .\n`).join(''));
+      expect(rdf.length).toBeLessThan(8 * 1024 * 1024);
+      await ldp.writeResource('css', '/many.ttl', rdf, 'text/turtle');
+      expect(Buffer.from((await ldp.readResource('css', '/many.ttl'))!.bytes)).toEqual(rdf);
+    } finally { await fixture.close(); }
+  }, 60_000);
 
 });
