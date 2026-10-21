@@ -398,7 +398,7 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
     const key = Buffer.from('seed'), replacement = Buffer.from('replacement');
     try {
       await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [key, Buffer.from('original')]);
-      const adapter = await fixture.open({ maxDatabaseBytes: 1, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 });
+      const adapter = await fixture.open({ maxDatabaseBytes: 1, maxTransactionInputBytes: 4096, writeReserveBytes: 0 });
       expect(Buffer.from((await adapter.transact(tx => tx.get(key)))!).toString()).toBe('original');
       await expect(adapter.transact(async tx => {
         tx.clear(key);
