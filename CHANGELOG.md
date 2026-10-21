@@ -2,7 +2,7 @@
 
 ## 2026-10-21 — Refuse PostgreSQL writes before the physical database ceiling
 
-An opt-in database-wide physical admission guard serializes positive PGSL writes across pools and replicas, measures PostgreSQL database files, reserves bounded input headroom and rechecks physical size before committing. A pressure refusal or transaction bound failure rolls back the whole transaction. Reads and delete-only cleanup remain available above the ceiling. The intended64GB deployment uses a48GB database limit, retaining separate volume headroom for WAL and operations; ordinary VACUUM does not automatically reopen admission. Real PostgreSQL regressions exercise writer serialization, partial-write rollback, delete/read availability, cumulative input bounds and a fresh final size check.
+An opt-in database-wide physical admission guard serializes positive PGSL writes across pools and replicas, measures PostgreSQL database files, reserves bounded input headroom and rechecks physical size before committing. A pressure refusal or transaction bound failure rolls back the whole transaction. Reads and delete-only cleanup remain available above the ceiling. The intended 64 GB deployment uses a 48 GB database limit, retaining separate volume headroom for WAL and operations; ordinary VACUUM does not automatically reopen admission. Real PostgreSQL regressions exercise writer serialization, partial-write rollback, delete/read availability, cumulative input bounds and a fresh final size check.
 
 ## 2026-10-21 — Retain URL roots and bound shared-store collector reads
 

@@ -45,7 +45,7 @@ export interface PgStoreOptions {
   ensureSchema?: boolean;
   /** Opt-in physical database ceiling; env PGSL_PG_MAX_DATABASE_BYTES. */
   maxDatabaseBytes?: number;
-  /** Cumulative positive k+v input bound (default 16 MiB when enabled). */
+  /** Cumulative positive k+v plus replaced-value bound (default 16 MiB when enabled). */
   maxTransactionInputBytes?: number;
   /** Additional physical headroom (default 64 MiB when enabled). */
   writeReserveBytes?: number;
@@ -146,7 +146,6 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
   if (opts.ensureSchema !== false) {
     await pool.query(`CREATE TABLE IF NOT EXISTS ${table} (k bytea PRIMARY KEY, v bytea NOT NULL)`);
   }
-  const buf = (u: Uint8Array): Buffer => Buffer.from(u.buffer, u.byteOffset, u.byteLength);
 
   return {
     async transact<T>(fn: (txn: FdbTxn) => Promise<T>): Promise<T> {
@@ -163,10 +162,12 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
         let refusal: PgWritePressureError | undefined;
         const planPositive = (key: Key, value: Value): void => {
           if (!pressure) return;
+          if (refusal) throw refusal;
           inputBytes += key.byteLength + value.byteLength;
           positiveOperations++;
           if (!Number.isSafeInteger(inputBytes) || inputBytes > pressure.inputMaximum || positiveOperations > 4096) {
             refusal ??= new PgWritePressureError('transaction input or 4096-operation bound exceeded');
+            throw refusal;
           }
         };
         const databaseBytes = async (): Promise<number> => {
@@ -202,6 +203,23 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           })();
           checkPressure(await admission);
         };
+        const reserveExisting = async (key: Buffer): Promise<void> => {
+          if (!pressure) return;
+          // Retirement triggers can copy OLD.v into a rollback journal. Count
+          // its uncompressed byte length too, without loading its payload.
+          const prior = await client.query<{ bytes: number }>(
+            `SELECT octet_length(v) AS bytes FROM ${table} WHERE k = $1 FOR UPDATE`, [key]);
+          const retiredBytes = prior.rows[0]?.bytes ?? 0;
+          if (!Number.isSafeInteger(retiredBytes) || retiredBytes < 0) {
+            throw new PgWritePressureError('replaced value size is unavailable');
+          }
+          inputBytes += retiredBytes;
+          if (!Number.isSafeInteger(inputBytes) || inputBytes > pressure.inputMaximum) {
+            refusal ??= new PgWritePressureError('transaction input including replaced values exceeds its byte bound');
+            throw refusal;
+          }
+          await admit();
+        };
         const flush = (): Promise<void> => {
           const operations = pending.splice(0);
           flushing = flushing.then(async () => {
@@ -214,16 +232,21 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
           const txn: FdbTxn = {
             get: async (key: Key) => {
+              const capturedKey = Buffer.from(key);
               await flush();
               const r = await client.query<{ v: Buffer }>(
-                `SELECT v FROM ${table} WHERE k = $1`, [buf(key)]);
+                `SELECT v FROM ${table} WHERE k = $1`, [capturedKey]);
               return r.rows[0] ? new Uint8Array(r.rows[0].v) : undefined;
             },
             set: (key: Key, value: Key) => {
-              planPositive(key, value);
-              pending.push(() => client.query(
-                `INSERT INTO ${table}(k, v) VALUES ($1, $2) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v`,
-                [buf(key), buf(value)]));
+              const capturedKey = Buffer.from(key), capturedValue = Buffer.from(value);
+              planPositive(capturedKey, capturedValue);
+              pending.push(async () => {
+                await reserveExisting(capturedKey);
+                return client.query(
+                  `INSERT INTO ${table}(k, v) VALUES ($1, $2) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v`,
+                  [capturedKey, capturedValue]);
+              });
             },
             /**
              * ★ THE CONDITION IS IN THE STATEMENT, NOT IN AN EARLIER SELECT.
@@ -247,34 +270,40 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
              * compare against a row this transaction has already moved past.
              */
             compareAndSet: async (key: Key, expected: Value | null, value: Value): Promise<boolean> => {
-              planPositive(key, value);
+              const capturedKey = Buffer.from(key), capturedValue = Buffer.from(value);
+              const capturedExpected = expected === null ? null : Buffer.from(expected);
+              planPositive(capturedKey, capturedValue);
               await flush();
-              const r = expected === null
+              await reserveExisting(capturedKey);
+              const r = capturedExpected === null
                 ? await client.query(
                   `INSERT INTO ${table}(k, v) VALUES ($1, $2) ON CONFLICT (k) DO NOTHING`,
-                  [buf(key), buf(value)])
+                  [capturedKey, capturedValue])
                 : await client.query(
                   `UPDATE ${table} SET v = $2 WHERE k = $1 AND v = $3`,
-                  [buf(key), buf(value), buf(expected)]);
+                  [capturedKey, capturedValue, capturedExpected]);
               return r.rowCount === 1;
             },
             clear: (key: Key) => {
-              pending.push(() => client.query(`DELETE FROM ${table} WHERE k = $1`, [buf(key)]));
+              const capturedKey = Buffer.from(key);
+              pending.push(() => client.query(`DELETE FROM ${table} WHERE k = $1`, [capturedKey]));
             },
             clearRange: (begin: Key, end: Key) => {
-              pending.push(() => client.query(`DELETE FROM ${table} WHERE k >= $1 AND k < $2`, [buf(begin), buf(end)]));
+              const capturedBegin = Buffer.from(begin), capturedEnd = Buffer.from(end);
+              pending.push(() => client.query(`DELETE FROM ${table} WHERE k >= $1 AND k < $2`, [capturedBegin, capturedEnd]));
             },
             getRange: async (begin: Key, end: Key, opts?: { readonly limit?: number }): Promise<KeyValue[]> => {
+              const capturedBegin = Buffer.from(begin), capturedEnd = Buffer.from(end);
+              const lim = opts?.limit;
               await flush();
               // ★ THE BOUND GOES IN THE SQL, not around the result. Fetching every row and slicing
               // in the client bounds the RESPONSE and not the query — the scan, the transfer and the
               // memory are all still linear in the range, which is most of what makes an unbounded
               // read expensive at this layer.
-              const lim = opts?.limit;
               const bounded = typeof lim === 'number' && Number.isFinite(lim) && lim > 0;
               const r = await client.query<{ k: Buffer; v: Buffer }>(
                 `SELECT k, v FROM ${table} WHERE k >= $1 AND k < $2 ORDER BY k${bounded ? ' LIMIT $3' : ''}`,
-                bounded ? [buf(begin), buf(end), Math.floor(lim)] : [buf(begin), buf(end)],
+                bounded ? [capturedBegin, capturedEnd, Math.floor(lim)] : [capturedBegin, capturedEnd],
               );
               return r.rows.map(row => ({
                 key: new Uint8Array(row.k),
