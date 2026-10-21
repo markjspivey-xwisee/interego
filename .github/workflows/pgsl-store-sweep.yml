@@ -1,0 +1,46 @@
+name: PGSL private in-place sweep fixture
+on:
+  push:
+    branches: ['fix/pgsl-private-sweep-*', 'recovery/pgsl-private-sweep-*']
+    paths:
+      - 'tools/pgsl-store-sweep.mjs'
+      - 'packages/pgsl-store/src/gc.ts'
+      - 'tests/pgsl-store-sweep.fixture.mjs'
+      - '.github/workflows/pgsl-store-sweep.yml'
+  pull_request:
+    paths:
+      - 'tools/pgsl-store-sweep.mjs'
+      - 'packages/pgsl-store/src/gc.ts'
+      - 'tests/pgsl-store-sweep.fixture.mjs'
+      - '.github/workflows/pgsl-store-sweep.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  sweep-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gc_sweep_fixture
+          POSTGRES_PASSWORD: fixture_only
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGSL_SWEEP_FIXTURE_URL: postgresql://gc_sweep_fixture:fixture_only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Verify journal retention, writer rollback and TOAST-page reuse
+        run: bun tests/pgsl-store-sweep.fixture.mjs
