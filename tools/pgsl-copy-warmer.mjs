@@ -46,6 +46,7 @@ export async function runWarmer({source,target,readers,sourceSystemId,targetSyst
  const pause=async()=>{await new Promise(resolve=>setTimeout(resolve,pollMs));alive();};
  try{
   await log({kind:'readonly-warmer-stage',phase:'session-start'});await attempt('session-start',async()=>{for(const c of clients){alive();await c.query('BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY');await c.query("SET LOCAL statement_timeout='30s'");await c.query('SET LOCAL temp_file_limit=0');await c.query("SET LOCAL lock_timeout='1s'");await c.query("SET LOCAL idle_in_transaction_session_timeout='0'");const r=await c.query("SELECT current_setting('transaction_read_only') AS ro");ok(r.rows[0]?.ro==='on','read-only transaction is absent');}});
+  await attempt('session-start',()=>readers[0].query("SET LOCAL work_mem='64MB'"));
   await guard();
   monitor=setInterval(()=>{if(monitorBusy||stopped)return;monitorBusy=true;void guard().catch(e=>{guardianFailure=diagnosed('guard',e);stop('identity or source fence lost');}).finally(()=>{monitorBusy=false;});},Math.min(pollMs,2000));
   const plannedReader={query:async(sql,params)=>{try{await guard();const r=await read(readers[0],sql,params,'plan-query');await guard();return r;}catch(error){planningFailure??=diagnosed('plan-query',error);throw error;}}};

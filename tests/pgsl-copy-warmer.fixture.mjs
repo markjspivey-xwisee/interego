@@ -7,6 +7,7 @@ import {candidateReader,partitionRows,runWarmer,diagnosticOf} from '../tools/pgs
 const urls={source:new URL(Bun.env.PGSL_COPY_FIXTURE_URL),target:new URL(Bun.env.PGSL_COPY_FIXTURE_TARGET_URL)};
 for(const u of Object.values(urls)){assert.ok(['127.0.0.1','localhost','[::1]'].includes(u.hostname));assert.equal(u.username,'iegoadmin');assert.equal(u.pathname,'pgsl_prod'.replace(/^/,'/'));}
 const clients=[],checks=[];
+const SORT_SQL="SELECT i FROM generate_series(1,40000) AS s(i) ORDER BY md5(i::text)||md5((i+1)::text)||md5((i+2)::text)||md5((i+3)::text)";
 async function connect(kind,app){const c=new Client({connectionString:urls[kind].href,application_name:app});c.on('error',()=>{});await c.connect();clients.push(c);return c;}
 const source=await connect('source','fixture-admin'),target=await connect('target','fixture-admin');
 for(const c of [source,target]){await c.query('CREATE TABLE pgsl_kv(k bytea PRIMARY KEY,v bytea NOT NULL)');await c.query('CREATE TABLE relay_pgsl_published(k bytea PRIMARY KEY,v bytea NOT NULL)');}
@@ -24,15 +25,16 @@ async function fence(){await sf.query('BEGIN READ ONLY');await sf.query('LOCK TA
 await fence();
 let generation=0;
 async function instance(hooks={}){
- const number=++generation,sql=[],warm=[];
+ const number=++generation,sql=[],warm=[],trace=[];let sortDone=false;
  const make=async(kind,role)=>{const c=await connect(kind,'warmer-fixture-'+number+'-'+role),raw=c.query.bind(c);c.query=async(query,params)=>{
-  assert.match(query,/^\s*(SELECT|WITH|BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY|SET LOCAL|ROLLBACK)\b/);assert.ok(!/\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|VACUUM|CHECKPOINT|FOR UPDATE)\b/i.test(query));sql.push(query);
+  assert.match(query,/^\s*(SELECT|WITH|BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY|SET LOCAL|ROLLBACK)\b/);assert.ok(!/\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|VACUUM|CHECKPOINT|FOR UPDATE)\b/i.test(query));sql.push(query);trace.push({role,query});
+  if(hooks.largeSort&&query.includes('AS atom_header')&&!sortDone){sortDone=true;const sorted=await raw(SORT_SQL);assert.equal(sorted.rows.length,40000);}
   if(hooks.planError&&query.includes('AS atom_header')){const error=new Error('sentinel_private_payload_sql_password');error.code='53400';error.detail='sentinel_private_payload_sql_password';throw error;}
   if(query.includes('pg_catalog.md5(v)')){const sum=(await source.query('SELECT coalesce(sum(octet_length(v)),0)::int AS n FROM pgsl_kv WHERE k=ANY($1::bytea[])',params)).rows[0].n;assert.ok(params[0].length<=128&&sum<=1024);warm.push(params[0].map(k=>k.toString('hex')));}
   const r=await raw(query,params);if(hooks.identityWrong&&kind==='target'&&query.includes('pg_control_system()'))r.rows[0].system_id='wrong';return r;
  };return c;};
  const sc=await make('source','control'),tc=await make('target','target'),readers=[];for(let i=0;i<4;i++)readers.push(await make('source','reader'+i));
- return {source:sc,target:tc,readers,sourceSystemId,targetSystemId,sql,warm,options:{windowBytes:8192,batchBytes:1024,maxWindowRows:4096,maxWindows:1,deadlineMs:10000,pollMs:50}};
+ return {source:sc,target:tc,readers,sourceSystemId,targetSystemId,sql,warm,trace,options:{windowBytes:8192,batchBytes:1024,maxWindowRows:4096,maxWindows:1,deadlineMs:10000,pollMs:50}};
 }
 try{
  const sentinel='sentinel_private_payload_sql_password';
@@ -43,7 +45,14 @@ try{
  checks.push('planner failures retain only allowlisted stage/SQLSTATE and discard payload/SQL/password messages');
  const split=partitionRows(Array.from({length:300},(_,i)=>({k:Buffer.from('k'+i),bytes:i===0?2000:8})),1024,128);assert.equal(split.skipped,1);assert.ok(split.groups.every(g=>g.length<=128&&g.reduce((n,r)=>n+r.bytes,0)<=1024));
  checks.push('payload groups enforce row/byte bounds and skip oversized individual values');
- const first=await instance(),result=await runWarmer(first);assert.equal(result.windows,1);assert.ok(first.sql.includes('SELECT pg_catalog.pg_stat_clear_snapshot()'));assert.ok(result.rows>0&&result.bytes>0&&first.warm.length>0);assert.ok(result.skippedLarge>0);assert.deepEqual((await source.query('SELECT k,v FROM pgsl_kv ORDER BY k')).rows,before);assert.equal((await target.query('SELECT count(*)::int n FROM pgsl_kv')).rows[0].n,0);
+ const low=await connect('source','fixture-low-sort');await low.query('BEGIN READ ONLY');await low.query("SET LOCAL work_mem='64kB'");await low.query('SET LOCAL temp_file_limit=0');await assert.rejects(low.query(SORT_SQL),e=>e.code==='53400');await low.query('ROLLBACK');await low.end();
+ const originalWorkMem=(await source.query("SELECT current_setting('work_mem') AS v")).rows[0].v;
+ const first=await instance({largeSort:true});let checkedSettings=false;first.log=async e=>{if(e.kind==='readonly-warmer-stage'&&e.phase==='retained-plan'){
+  const all=[first.source,first.target,...first.readers];for(let i=0;i<all.length;i++){const v=(await all[i].query("SELECT current_setting('work_mem') AS wm,current_setting('temp_file_limit') AS tf,current_setting('transaction_read_only') AS ro")).rows[0];assert.equal(v.wm,i===2?'64MB':originalWorkMem);assert.equal(v.tf,'0');assert.equal(v.ro,'on');}checkedSettings=true;
+ }};
+ const result=await runWarmer(first);assert.ok(checkedSettings);assert.deepEqual(first.trace.filter(x=>x.query==="SET LOCAL work_mem='64MB'").map(x=>x.role),['reader0']);assert.equal((await source.query("SELECT current_setting('work_mem') AS v")).rows[0].v,originalWorkMem);
+ checks.push('real sort spills with low work_mem/temp0 but planner-only64MB succeeds; every other session/default stays unchanged');
+assert.equal(result.windows,1);assert.ok(first.sql.includes('SELECT pg_catalog.pg_stat_clear_snapshot()'));assert.ok(result.rows>0&&result.bytes>0&&first.warm.length>0);assert.ok(result.skippedLarge>0);assert.deepEqual((await source.query('SELECT k,v FROM pgsl_kv ORDER BY k')).rows,before);assert.equal((await target.query('SELECT count(*)::int n FROM pgsl_kv')).rows[0].n,0);
  checks.push('actual PostgreSQL md5(bytea) warming returns only bounded key/digest results and changes neither database');
  const wrong=await instance();wrong.targetSystemId='wrong-cluster';await assert.rejects(runWarmer(wrong));assert.equal(wrong.warm.length,0);
  await sf.query('ROLLBACK');const absent=await instance();await assert.rejects(runWarmer(absent),/warmer refused/,'absent source fence must refuse');assert.equal(absent.warm.length,0);await fence();
