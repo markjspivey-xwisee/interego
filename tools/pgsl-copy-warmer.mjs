@@ -1,10 +1,10 @@
 import { collectLive,readerFromPg } from '../packages/pgsl-store/src/gc.js';
 const PHASES=new Set(['bootstrap','configuration','connect-source','connect-target','connect-reader','session-start','guard','guard-query','retained-plan','plan-query','window-metadata','warm-query','completion','runtime','cleanup']);
-const CODES=new Set(['E_PROOF','E_IDENTITY','E_FENCE','E_FENCE_CHANGED','E_CURSOR','E_READONLY','E_STOP','E_RUNTIME','08000','08001','08003','08006','08P01','28P01','28000','53300','53400','53100','53200','57014','55P03','57P01','57P02','57P03','25P02','25006','42501','42P01','42703','42883','22023','54000','54001','XX000']);
+const CODES=new Set(['E_PROOF','E_IDENTITY','E_FENCE','E_FENCE_CHANGED','E_CURSOR','E_READONLY','E_STOP','E_RUNTIME','E_PLAN_EMPTY','E_PLAN_KEYS','E_PLAN_DANGLING','E_PLAN_UNREADABLE','08000','08001','08003','08006','08P01','28P01','28000','53300','53400','53100','53200','57014','55P03','57P01','57P02','57P03','25P02','25006','42501','42P01','42703','42883','22023','54000','54001','XX000']);
 export function diagnosticOf(error,fallback='runtime'){return {phase:PHASES.has(error?.safePhase)?error.safePhase:PHASES.has(fallback)?fallback:'runtime',code:CODES.has(error?.code)?error.code:'E_RUNTIME'};}
 function diagnosed(phase,error){const d=diagnosticOf(error,phase),e=new Error('read-only warmer refused');e.safePhase=d.phase;e.code=d.code;return e;}
 async function attempt(phase,fn){try{return await fn();}catch(e){throw diagnosed(phase,e);}}
-const ok=(v,m)=>{if(!v){const e=new Error('read-only warmer refused: '+m);e.code=m==='physical identity differs'?'E_IDENTITY':m==='exact source copy fence is absent'?'E_FENCE':m==='source copy fence changed'?'E_FENCE_CHANGED':m.includes('cursor')?'E_CURSOR':m==='read-only transaction is absent'?'E_READONLY':m.startsWith('stopped:')?'E_STOP':'E_PROOF';throw e;}};
+const ok=(v,m)=>{if(!v){const e=new Error('read-only warmer refused: '+m);e.code=m==='retained key plan is empty'?'E_PLAN_EMPTY':m==='retained key plan exceeds memory bound'?'E_PLAN_KEYS':m==='retained key plan has dangling roots'?'E_PLAN_DANGLING':m==='retained key plan has unreadable nodes'?'E_PLAN_UNREADABLE':m==='physical identity differs'?'E_IDENTITY':m==='exact source copy fence is absent'?'E_FENCE':m==='source copy fence changed'?'E_FENCE_CHANGED':m.includes('cursor')?'E_CURSOR':m==='read-only transaction is absent'?'E_READONLY':m.startsWith('stopped:')?'E_STOP':'E_PROOF';throw e;}};
 const TABLES=['public.pgsl_kv','public.relay_pgsl_published'];
 const IDENT="SELECT current_database() AS db,current_user AS role,(SELECT system_identifier::text FROM pg_control_system()) AS system_id";
 const FENCE="SELECT a.pid,a.xact_start::text AS xact_start,(SELECT count(DISTINCT l.relation)::int FROM pg_locks l WHERE l.pid=a.pid AND l.granted AND l.mode='ShareLock' AND l.relation=ANY($1::oid[])) AS held FROM pg_stat_activity a WHERE a.datname=current_database() AND a.usename=current_user AND a.application_name='pgsl-copy-source-fence' AND a.backend_type='client backend'";
@@ -26,7 +26,7 @@ export async function runWarmer({source,target,readers,sourceSystemId,targetSyst
  const windowBytes=options.windowBytes??536870912,batchBytes=options.batchBytes??8388608,maxWindowRows=options.maxWindowRows??65536,maxWindows=options.maxWindows??Number.MAX_SAFE_INTEGER,deadlineMs=options.deadlineMs??3600000,pollMs=options.pollMs??2000;
  for(const n of [windowBytes,batchBytes,maxWindowRows,maxWindows,deadlineMs,pollMs])ok(Number.isSafeInteger(n)&&n>0,'invalid bound');
  ok(windowBytes<=536870912&&batchBytes<=8388608&&maxWindowRows<=65536&&deadlineMs<=3600000,'bounds exceed review');
- const clients=[source,target,...readers];let stopped=null,guardianFailure=null,monitor,monitorBusy=false,binding=null,oids=null,lastCursor=null,keys=null;
+ const clients=[source,target,...readers];let stopped=null,guardianFailure=null,planningFailure=null,monitor,monitorBusy=false,binding=null,oids=null,lastCursor=null,keys=null;
  const totals={windows:0,waves:0,rows:0,bytes:0,skippedLarge:0,skippedPassed:0};
  const stop=reason=>{if(stopped)return;stopped=reason;for(const c of clients)void c.end().catch(()=>{});};
  const alive=()=>ok(!stopped,'stopped: '+stopped);
@@ -48,8 +48,8 @@ export async function runWarmer({source,target,readers,sourceSystemId,targetSyst
   await log({kind:'readonly-warmer-stage',phase:'session-start'});await attempt('session-start',async()=>{for(const c of clients){alive();await c.query('BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY');await c.query("SET LOCAL statement_timeout='30s'");await c.query('SET LOCAL temp_file_limit=0');await c.query("SET LOCAL lock_timeout='1s'");await c.query("SET LOCAL idle_in_transaction_session_timeout='0'");const r=await c.query("SELECT current_setting('transaction_read_only') AS ro");ok(r.rows[0]?.ro==='on','read-only transaction is absent');}});
   await guard();
   monitor=setInterval(()=>{if(monitorBusy||stopped)return;monitorBusy=true;void guard().catch(e=>{guardianFailure=diagnosed('guard',e);stop('identity or source fence lost');}).finally(()=>{monitorBusy=false;});},Math.min(pollMs,2000));
-  const plannedReader={query:async(sql,params)=>{await guard();const r=await read(readers[0],sql,params,'plan-query');await guard();return r;}};
-  await log({kind:'readonly-warmer-stage',phase:'retained-plan'});let live=await attempt('retained-plan',async()=>{const value=await collectLive(candidateReader(plannedReader),{traversalBatchSize:4096});ok(value.keys.size>0&&value.keys.size<=4000000&&value.stats.danglingRoots.length===0&&value.stats.unreadableNodes===0,'retained key plan differs');return value;});
+  const plannedReader={query:async(sql,params)=>{try{await guard();const r=await read(readers[0],sql,params,'plan-query');await guard();return r;}catch(error){planningFailure??=diagnosed('plan-query',error);throw error;}}};
+  await log({kind:'readonly-warmer-stage',phase:'retained-plan'});let live=await attempt('retained-plan',async()=>{const value=await collectLive(candidateReader(plannedReader),{traversalBatchSize:4096});ok(value.keys.size>0,'retained key plan is empty');ok(value.keys.size<=4000000,'retained key plan exceeds memory bound');ok(value.stats.danglingRoots.length===0,'retained key plan has dangling roots');ok(value.stats.unreadableNodes===0,'retained key plan has unreadable nodes');return value;});
   keys=[...live.keys].sort();live=null;await log({kind:'readonly-warmer-planned',retainedKeys:keys.length});
   let previousEnd=null;
   while(totals.windows<maxWindows){
@@ -72,6 +72,6 @@ export async function runWarmer({source,target,readers,sourceSystemId,targetSyst
    previousEnd=end;totals.windows++;await log({kind:'readonly-warmer-window',windowBytes:windowSize,endPosition:upperBound(keys,end),...totals});
   }
   await guard();return {...totals,reason:'completed'};
- }catch(e){if(stopped==='operator stop'||stopped==='deadline')return {...totals,reason:stopped};throw guardianFailure??diagnosed('runtime',e);}
+ }catch(e){if(stopped==='operator stop'||stopped==='deadline')return {...totals,reason:stopped};throw guardianFailure??planningFailure??diagnosed('runtime',e);}
  finally{clearTimeout(timer);if(monitor)clearInterval(monitor);await guardQueue.catch(()=>{});signal?.removeEventListener('abort',abort);keys=null;for(const c of clients){await c.query('ROLLBACK').catch(()=>{});await c.end().catch(()=>{});}}
 }
