@@ -669,8 +669,13 @@ const learningEngineerWebIds = new Set(
 );
 
 // Published directory preparation is lazy: no boot load or background timer.
-const directoryUsersCache = createDirectoryDemand(async () => {
-  const directory = await fetchSection(TENANT_TYPES.TenantDirectory, fetcherConfig()) as {
+const directoryUsersCache = createDirectoryDemand(async (signal) => {
+  const directory = await fetchSection(TENANT_TYPES.TenantDirectory, {
+    ...fetcherConfig(),
+    fetch: (input, init) => globalThis.fetch(input, {
+      ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
+    }),
+  }) as {
     users?: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>;
   };
   if (!Array.isArray(directory.users)) throw new Error('tenant directory users unavailable');
@@ -5850,8 +5855,7 @@ const instrumentedHandlers = Object.fromEntries(
               // an anonymous caller forge an xAPI statement attributed to any victim.
               // Only a cryptographically-verified token sets the actor; otherwise the
               // call is attributed to 'anonymous' (callerActor's unset-webId path).
-              const addressMap = trustedAddressMap(directoryUsersCache.read());
-              const verified = verifySessionToken(bearerToken, addressMap);
+              const verified = await directoryUsersCache.verifySession(bearerToken);
               if (verified.ok) {
                 callerCtx.webId = verified.callerDid;
                 callerCtx.role = learningEngineerWebIds.has(verified.callerDid) ? 'learning-engineer'

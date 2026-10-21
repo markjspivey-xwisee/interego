@@ -19,8 +19,9 @@ const operatorToken = () => mintSessionToken({ userId: OPERATOR.user_id, webId: 
 const servers: Server[] = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve())))); });
 
-async function fixture(load: () => Promise<ReadonlyArray<DirectoryUser>>, now: () => number = () => 0) {
-  const directory = createDirectoryDemand(load, 60_000, now);
+async function fixture(load: (signal: AbortSignal) => Promise<ReadonlyArray<DirectoryUser>>,
+  now: () => number = () => 0, timeoutMs = 10_000) {
+  const directory = createDirectoryDemand(load, 60_000, now, timeoutMs);
   const app = express();
   app.use(directory.middleware);
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
@@ -67,14 +68,36 @@ describe('directory refresh runs only for an explicit wallet-authenticated consu
     let users: ReadonlyArray<DirectoryUser> = [OPERATOR];
     const { request } = await fixture(async () => { calls++; return users; }, () => now);
     const auth = 'Bearer ' + await operatorToken();
-    for (const [path, status] of [['/xapi/admin/config', 200], ['/cmi5/launch', 400],
-      ['/lti/nrps/members', 200], ['/ims/oneroster/v1p2/users', 200]] as const) {
+    for (const [path, status] of [['/XAPI/admin/config', 200], ['/CMI5/launch', 400],
+      ['/LTI/nrps/members', 200], ['/IMS/oneroster/v1p2/users', 200]] as const) {
       expect((await request(path, auth)).status).toBe(status);
     }
     expect(calls).toBe(1);
     users = []; now = 60_000;
     expect((await request('/xapi/admin/config', auth)).status).toBe(401);
     expect(calls).toBe(2);
+  });
+
+  it('prepares a cold MCP caller at actual tool attribution, without a REST directory middleware match', async () => {
+    let calls = 0, now = 0;
+    let users: ReadonlyArray<DirectoryUser> = [OPERATOR];
+    const { directory } = await fixture(async () => { calls++; return users; }, () => now);
+    expect(directoryConsumerPath('/mcp')).toBe(false);
+    expect((await directory.verifySession('junk-token')).ok).toBe(false);
+    expect(calls).toBe(0);
+    const token = await operatorToken();
+    const first = await directory.verifySession(token);
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(first.callerDid).toBe(OPERATOR.web_id);
+    expect(calls).toBe(1);
+    now = 60_000;
+    const afterIdle = await directory.verifySession(token);
+    expect(afterIdle.ok).toBe(true);
+    if (afterIdle.ok) expect(afterIdle.callerDid).toBe(OPERATOR.web_id);
+    expect(calls).toBe(2);
+    users = []; now = 120_000;
+    expect((await directory.verifySession(token)).ok).toBe(false);
+    expect(calls).toBe(3);
   });
 
   it('coalesces a burst of real authenticated requests into one directory read', async () => {
@@ -101,6 +124,35 @@ describe('directory refresh runs only for an explicit wallet-authenticated consu
     now = 120_000; fail = false;
     expect((await request('/xapi/admin/config', auth)).status).toBe(200);
     expect(calls).toBe(3);
+  });
+
+  it('a newer explicitly observed revocation wins over an earlier in-flight refresh', async () => {
+    let finish: ((users: ReadonlyArray<DirectoryUser>) => void) | undefined;
+    const { directory } = await fixture(() => new Promise(resolve => { finish = resolve; }));
+    const pending = directory.verifySession(await operatorToken());
+    await Promise.resolve();
+    expect(finish).toBeTypeOf('function');
+    directory.observe([]);
+    finish!([OPERATOR]);
+    expect((await pending).ok).toBe(false);
+    expect(directory.read()).toEqual([]);
+  });
+
+  it('bounds a stalled directory request, aborts HTTP, and ignores a late successful result', async () => {
+    let finish: ((users: ReadonlyArray<DirectoryUser>) => void) | undefined;
+    let signal: AbortSignal | undefined;
+    let calls = 0, now = 0;
+    const { directory, request } = await fixture(received => {
+      signal = received; calls++;
+      return new Promise(resolve => { finish = resolve; });
+    }, () => now, 20);
+    expect((await request('/xapi/admin/config', 'Bearer ' + await operatorToken())).status).toBe(401);
+    expect(signal?.aborted).toBe(true);
+    now = 60_000;
+    expect((await request('/xapi/admin/config', 'Bearer ' + await operatorToken())).status).toBe(401);
+    expect(calls).toBe(1); // Even a loader ignoring abort cannot overlap a new refresh.
+    finish!([OPERATOR]); await Promise.resolve(); await Promise.resolve();
+    expect(directory.read()).toEqual([]);
   });
 
   it('preserves Basic, cmi5 Basic/Bearer and real OAuth authentication on a cold cache without directory IO', async () => {
