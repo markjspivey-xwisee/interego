@@ -46,6 +46,7 @@ import {
   SUBSPACE_PAYLOAD_OFFSET, cbKey, ciKey, cpKey, lftKey, lvKey, nodeAddrBytes, nodeKey, prKey, rgtKey, subspaceRange, type SubspaceTag,
 } from './keyspace.js';
 import type { StoredNode } from './node.js';
+import { ATOM_HEADER_BYTES, atomTopologyFromPrefix } from './gc-atom-header.js';
 
 const dec = new TextDecoder();
 const nodeDec = new TextDecoder('utf-8', { fatal: true });
@@ -117,7 +118,7 @@ export function readerFromFdb(fdb: FdbLike, pageSize = 1000): KvReader {
 
 /** A reader over a `pg` client (or pool); traversal fetches at most 32 nodes per query. */
 export function readerFromPg(client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<{
-  k: Buffer; v?: Buffer; topology?: unknown; value_bytes?: unknown; needs_js_parse?: unknown;
+  k: Buffer; v?: Buffer; topology?: unknown; value_bytes?: unknown; needs_js_parse?: unknown; atom_header?: Buffer | null;
 }> }> }, table = 'pgsl_kv', pageSize = 5000): KvReader {
   const t = table.replace(/[^a-zA-Z0-9_]/g, '');
   return {
@@ -159,29 +160,40 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
         const batch = keys.slice(i, i + TRAVERSAL_BATCH_SIZE).map(k => Buffer.from(k));
         try {
           const result = await client.query(`SELECT source.k, octet_length(source.v) AS value_bytes,
-            position(decode('5c75', 'hex') in source.v) > 0 AS needs_js_parse,
-            json_build_object('kind', n.kind, 'level', n.level,
-              'items', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n.items END,
-              'left', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."left" END,
-              'right', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."right" END) AS topology
+              substring(source.v FROM 1 FOR ${ATOM_HEADER_BYTES}) AS atom_header,
+              false AS needs_js_parse, NULL::json AS topology
+            FROM ${t} AS source
+            WHERE source.k = ANY($1::bytea[]) AND get_byte(source.k, ${SUBSPACE_PAYLOAD_OFFSET}) = 1
+            UNION ALL
+            SELECT source.k, octet_length(source.v) AS value_bytes, NULL::bytea AS atom_header,
+              position(decode('5c75', 'hex') in source.v) > 0 AS needs_js_parse,
+              json_build_object('kind', n.kind, 'level', n.level,
+                'items', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n.items END,
+                'left', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."left" END,
+                'right', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."right" END) AS topology
             FROM ${t} AS source
             CROSS JOIN LATERAL json_to_record(CASE
               WHEN position(decode('5c75', 'hex') in source.v) > 0 THEN '{}'::json
               ELSE convert_from(source.v, 'UTF8')::json END)
               AS n(kind json, level json, items json, "left" json, "right" json)
-            WHERE source.k = ANY($1::bytea[])`, [batch]);
+            WHERE source.k = ANY($1::bytea[]) AND get_byte(source.k, ${SUBSPACE_PAYLOAD_OFFSET}) <> 1`, [batch]);
           for (const row of result.rows) {
             if (!Buffer.isBuffer(row.k) || !Number.isSafeInteger(row.value_bytes) || (row.value_bytes as number) < 0
               || typeof row.needs_js_parse !== 'boolean') {
               throw new Error('invalid topology record');
             }
             let topology: NodeTopology | null;
-            if (row.needs_js_parse) {
+            const atomTopology = row.atom_header === null || row.atom_header === undefined ? null
+              : atomTopologyFromPrefix(new Uint8Array(row.k), new Uint8Array(row.atom_header), row.value_bytes as number);
+            if (atomTopology) topology = atomTopology;
+            else if (row.needs_js_parse || row.atom_header !== null && row.atom_header !== undefined) {
               const exceptional = await client.query(`SELECT k, v FROM ${t} WHERE k = ANY($1::bytea[])`, [[row.k]]);
               const value = exceptional.rows[0];
               if (exceptional.rows.length !== 1 || !value || !Buffer.isBuffer(value.k) || !value.k.equals(row.k)
                 || !Buffer.isBuffer(value.v) || value.v.length !== row.value_bytes) throw new Error('invalid exceptional topology record');
-              topology = nodeTopology(JSON.parse(nodeDec.decode(value.v)));
+              const decoded = JSON.parse(nodeDec.decode(value.v)) as StoredNode;
+              if (!value.k.equals(Buffer.from(nodeKey(nodeAddrFromUrn(decoded.uri))))) throw new Error('node body/key binding changed');
+              topology = nodeTopology(decoded);
             } else topology = nodeTopology(row.topology);
             out.set(hex(new Uint8Array(row.k)), { topology, byteLength: row.value_bytes as number });
           }
@@ -299,8 +311,12 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
   const enqueue = (addr: NodeAddr): void => { const h = hex(nodeAddrBytes(addr)); if (!live.has(h)) { live.set(h, { addr, node: null }); frontier.push(addr); } };
   for (const urn of roots) { try { enqueue(nodeAddrFromUrn(urn)); } catch { dangling.push(urn); } }
   for (const a of rootAddrs) enqueue(addrOfBytes(unhex(a)));
-  while (frontier.length > 0) {
-    const batch = frontier.splice(0, TRAVERSAL_BATCH_SIZE);
+  let frontierOffset = 0;
+  while (frontierOffset < frontier.length) {
+    // Shifting a six-figure frontier once per 32 nodes is quadratic work.
+    // A cursor plus occasional compaction preserves order with bounded storage.
+    const batch = frontier.slice(frontierOffset, frontierOffset + TRAVERSAL_BATCH_SIZE);
+    frontierOffset += batch.length;
     const batchKeys = batch.map(a => nodeKey(a));
     const values = reader.getManyTopology ? await reader.getManyTopology(batchKeys) : await reader.getMany(batchKeys);
     for (const addr of batch) {
@@ -326,7 +342,11 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
         for (const side of [node.left, node.right]) if (side) { try { enqueue(nodeAddrFromUrn(side)); } catch { /* not a node urn */ } }
       }
     }
-    log(`traversed ${live.size} live nodes, frontier ${frontier.length}`);
+    log(`traversed ${live.size} live nodes, frontier ${frontier.length - frontierOffset}`);
+    if (frontierOffset >= 16_384) {
+      frontier.splice(0, frontierOffset);
+      frontierOffset = 0;
+    }
   }
 
   // Reconstruct the rows compose() wrote for each live node.

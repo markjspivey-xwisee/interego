@@ -1,0 +1,30 @@
+name: PGSL collector topology regressions
+on:
+  pull_request:
+    paths:
+      - 'packages/pgsl-store/src/gc.ts'
+      - 'packages/pgsl-store/src/gc-atom-header.ts'
+      - 'packages/pgsl-store/src/addressing.ts'
+      - 'packages/pgsl-store/src/keyspace.ts'
+      - 'tests/gc-recovery-regression.test.mjs'
+      - '.github/workflows/pgsl-gc-topology.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/pgsl-store/src/gc.ts'
+      - 'packages/pgsl-store/src/gc-atom-header.ts'
+      - 'tests/gc-recovery-regression.test.mjs'
+      - '.github/workflows/pgsl-gc-topology.yml'
+permissions:
+  contents: read
+jobs:
+  collector-topology:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.2
+      - name: Exercise actual collector source with bounded transport fixtures
+        run: node --test tests/gc-recovery-regression.test.mjs

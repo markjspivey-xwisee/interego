@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-20 — Bounded atom topology reads for the shared-store collector
+
+The PostgreSQL collector now reads a bounded header for canonical opaque atoms instead of scanning and parsing their complete payloads to discover that they have no outgoing edges. The header is bound to the stored atom key; unfamiliar historical encodings use the complete JSON fallback, and malformed bindings still refuse collection. Fragment topology and all retention roots remain unchanged. The breadth-first queue uses a cursor with occasional compaction, avoiding a full frontier shift for every 32 nodes. A dedicated Node regression workflow exercises the actual collector source and a 20,000-leaf closure. This change improves measurement; it does not itself retire data, remove the existing rebuild headroom guard, or claim physical reclamation.
+
 ## 2026-10-20 — Source-grounded intervention chat and configured backend routing
 
 The pinned v0.0.93 ChatGPT workbench prepares cited conversation context from public authored courses, readable hosted instructional packages, or supplied reference material. Public projections exclude assessment questions and answer keys. The Interventions view previews source sections, retains source inputs across navigation and follow-up questions, clears stale previews when inputs change, and delivers Ask through the standard MCP Apps ui/message bridge. Answers appear in the surrounding ChatGPT conversation; the server makes no model call and creates no stored chat session, learner attempt or completion record.
