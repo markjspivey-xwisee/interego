@@ -111,7 +111,7 @@ test('PostgreSQL 16 reads a bounded TOAST slice for an 8 MiB opaque leaf', {skip
     {maxBuffer:2*1024*1024,timeout:60000})).stdout.trim();
   const identity=JSON.parse(await psql("SELECT row_to_json(r) FROM (SELECT current_database() AS db,current_user AS usr,inet_server_addr()::text AS addr) r"));
   assert.equal(identity.db,'gc_topology_test');assert.equal(identity.usr,'gc_topology_fixture');
-  assert.ok(['127.0.0.1','::1'].includes(identity.addr),'requires the isolated loopback fixture');
+  assert.ok(['127.0.0.1','[::1]','localhost'].includes(new URL(process.env.GC_TEST_PG_URL).hostname),'requires the isolated loopback fixture');
   const table='gc_topology_fixture',keySql="decode('"+key.toString('hex')+"','hex')";
   let created=false;
   try {
