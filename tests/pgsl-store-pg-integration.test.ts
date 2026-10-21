@@ -726,7 +726,7 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
       await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [key, before]);
       const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER });
       expect(await adapter.transact(tx => tx.compareAndSet(key, before, after))).toBe(true);
-      expect(await fixture.value(key)).toEqual(after);
+      expect(createHash('sha256').update((await fixture.value(key))!).digest('hex')).toBe(createHash('sha256').update(after).digest('hex'));
     } finally { await fixture.close(); }
   }, 45_000);
 
@@ -755,7 +755,7 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
       if (committed.status !== 'committed') throw new Error('first native revision was not committed');
       const replaced = await ldp.commitResource('css', '/native.json', second, 'application/json', { expectedRevision: committed.revision });
       expect(replaced.status).toBe('committed');
-      expect(Buffer.from((await ldp.readResource('css', '/native.json'))!.bytes)).toEqual(second);
+      expect(createHash('sha256').update((await ldp.readResource('css', '/native.json'))!.bytes).digest('hex')).toBe(createHash('sha256').update(second).digest('hex'));
       // 1000 unique statement atoms produce at least 5000 node/index KV writes.
       const rdf = Buffer.from(Array.from({ length: 1000 }, (_, i) => `<urn:s:${i}> <urn:p> "${i}" .\n`).join(''));
       expect(rdf.length).toBeLessThan(8 * 1024 * 1024);
