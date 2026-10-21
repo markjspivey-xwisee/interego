@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-21 — Retain URL roots and bound shared-store collector reads
+
+The collector recognizes both legacy URNs and dereferenceable node URLs in control-plane records and current overlays, using the same address codec as fragment traversal. URL-only current heads therefore retain their complete node closure. The PostgreSQL reader takes a bounded header for canonical opaque atoms instead of scanning and parsing their complete payloads to discover that they have no outgoing edges. The header is bound to the stored atom key; unfamiliar historical encodings use the complete JSON fallback, and malformed bindings refuse collection. The breadth-first queue uses a cursor with occasional compaction. Actual-source regressions cover root forms, stale overlays, malformed bindings, and a 20,000-leaf closure; an isolated PostgreSQL 16 fixture verifies reduced TOAST reads for an 8 MiB uncompressed atom. This does not itself retire data, remove the rebuild headroom guard, or claim physical reclamation.
+
 ## 2026-10-20 — Source-grounded intervention chat and configured backend routing
 
 The pinned v0.0.93 ChatGPT workbench prepares cited conversation context from public authored courses, readable hosted instructional packages, or supplied reference material. Public projections exclude assessment questions and answer keys. The Interventions view previews source sections, retains source inputs across navigation and follow-up questions, clears stale previews when inputs change, and delivers Ask through the standard MCP Apps ui/message bridge. Answers appear in the surrounding ChatGPT conversation; the server makes no model call and creates no stored chat session, learner attempt or completion record.

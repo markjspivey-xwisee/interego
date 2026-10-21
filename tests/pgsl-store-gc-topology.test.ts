@@ -125,9 +125,10 @@ describe('pgsl collector topology traversal', () => {
   });
 
   it('fetches only exceptional Unicode-escape rows and validates their original bytes in JavaScript', async () => {
-    const normalKey = Buffer.from('normal-large-node'), escapedKey = Buffer.from('escaped-node');
+    const normalKey = Buffer.from(nodeKey(nodeAddrFromUrn(publicAtomAddress('normal-large-node'))));
     for (const value of ['\u0000', '\ud800', 'literal \\u text']) {
-      const bytes = Buffer.from(JSON.stringify({ kind: 'atom', level: 0, value }));
+      const uri = publicAtomAddress(value), escapedKey = Buffer.from(nodeKey(nodeAddrFromUrn(uri)));
+      const bytes = Buffer.from(JSON.stringify({ uri, kind: 'atom', level: 0, value }));
       let rawReads = 0;
       const reader = readerFromPg({ async query(sql, params) {
         if (sql.includes('octet_length')) return { rows: [

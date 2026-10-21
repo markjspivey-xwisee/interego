@@ -1,0 +1,48 @@
+name: PGSL collector topology regressions
+on:
+  pull_request:
+    paths:
+      - 'packages/pgsl-store/src/gc.ts'
+      - 'packages/pgsl-store/src/gc-atom-header.ts'
+      - 'packages/pgsl-store/src/addressing.ts'
+      - 'packages/pgsl-store/src/keyspace.ts'
+      - 'tests/gc-recovery-regression.test.mjs'
+      - '.github/workflows/pgsl-gc-topology.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/pgsl-store/src/gc.ts'
+      - 'packages/pgsl-store/src/gc-atom-header.ts'
+      - 'tests/gc-recovery-regression.test.mjs'
+      - '.github/workflows/pgsl-gc-topology.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  collector-topology:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gc_topology_fixture
+          POSTGRES_PASSWORD: fixture_only
+          POSTGRES_DB: gc_topology_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      GC_TEST_PG_URL: postgresql://gc_topology_fixture:fixture_only@127.0.0.1:5432/gc_topology_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.2
+      - name: Exercise actual collector source and isolated PostgreSQL TOAST slicing
+        run: node --test tests/gc-recovery-regression.test.mjs
