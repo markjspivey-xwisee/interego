@@ -24,8 +24,7 @@ const options={maxInputBytes:1_000_000,maxTargetDatabaseBytes:100_000_000,maxVal
 const results=[];
 try {
   const opaqueBytes=Buffer.from(Array.from({length:65537},(_,i)=>i%256));
-  assert.deepEqual(decodePayloadBase64(opaqueBytes.toString('base64').replace(/.{76}/g,'try {
-  const source\n'),opaqueBytes.length),opaqueBytes);
+  assert.deepEqual(decodePayloadBase64(opaqueBytes.toString('base64').replace(/.{76}/g,chunk=>chunk+'\n'),opaqueBytes.length),opaqueBytes);
   assert.deepEqual(decodePayloadBase64('',0),Buffer.alloc(0));
   for(const [encoded,bytes]of [['AA==',2],['AB==',1],['A?==',1],['AA==',0],[Buffer.from('AA=='),1]])
     assert.throws(()=>decodePayloadBase64(encoded,bytes),/base64 payload/);
