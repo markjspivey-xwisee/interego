@@ -15,7 +15,7 @@ for (const file of ['addressing', 'keyspace', 'gc-atom-header', 'gc']) {
 }
 const { atomTopologyFromPrefix, ATOM_HEADER_BYTES } = await import(new URL('gc-atom-header.mjs', out));
 const { readerFromPg, collectLive, hex } = await import(new URL('gc.mjs', out));
-const { nodeKey, cpKey, subspaceRange } = await import(new URL('keyspace.mjs', out));
+const { nodeKey, cpKey, ovKey, subspaceRange } = await import(new URL('keyspace.mjs', out));
 const hash = '1234567890abcdef1234567890abcdef12345678';
 const address = {kind:'atom', hash:new Uint8Array(Buffer.from(hash,'hex'))};
 const key = Buffer.from(nodeKey(address));
@@ -103,6 +103,39 @@ test('wide breadth-first closure survives repeated queue compaction without drop
   assert.equal(live.stats.danglingRoots.length,0);assert.equal(live.stats.unreadableNodes,0);
   assert.equal(live.keys.size,size*5+4);
   assert.equal(batches,1+Math.ceil(size/32));assert.equal(maxBatch,32);
+});
+
+
+test('URL-form C and current O roots retain the same complete closure as legacy URNs', async () => {
+  const fragmentHash='f'.repeat(40), legacy='urn:pgsl:fragment:'+fragmentHash;
+  const url='https://pod.example/ns/pgsl/fragment/'+fragmentHash;
+  const leaf='https://pod.example/ns/pgsl/atom/'+hash;
+  const fragmentKey=nodeKey({kind:'fragment',hash:Buffer.from(fragmentHash,'hex')});
+  const topologies=new Map([
+    [hex(fragmentKey),{topology:{kind:'fragment',level:1,items:[leaf]},byteLength:128}],
+    [hex(key),{topology:{kind:'atom',level:0},byteLength:64}],
+  ]);
+  const read=async (controlIds,overlayId,hasControl=true) => collectLive({
+    scan:async(begin,end,onRow)=>{
+      if(hasControl && hex(begin)===hex(subspaceRange('C').begin))
+        onRow(cpKey('ldp test-pod','current'),Buffer.from(JSON.stringify({nested:{heads:controlIds}})));
+      if(overlayId && hex(begin)===hex(subspaceRange('O').begin))
+        onRow(ovKey('test-pod','current'),Buffer.from(overlayId));
+    },
+    getMany:async()=>{throw new Error('topology reader expected');},
+    getManyTopology:async keys=>new Map(keys.map(k=>[hex(k),topologies.get(hex(k))])),
+  });
+  const baseline=await read([legacy]);
+  for(const result of [await read([url]),await read([],url),await read([legacy,url],url)]) {
+    assert.deepEqual([...result.keys].filter(k=>k!==hex(ovKey('test-pod','current'))).sort(),[...baseline.keys].sort());
+    assert.equal(result.stats.liveNodes,2);assert.equal(result.stats.liveAtoms,1);
+    assert.equal(result.stats.liveFragments,1);assert.equal(result.stats.liveNodeBytes,192);
+    assert.equal(result.stats.danglingRoots.length,0);assert.equal(result.stats.unreadableNodes,0);
+    assert.ok(result.keys.has(hex(fragmentKey)));assert.ok(result.keys.has(hex(key)));
+  }
+  const stale=await read([],url,false);
+  assert.equal(stale.stats.staleOverlays,1);assert.equal(stale.stats.liveNodes,0);
+  assert.equal(stale.keys.has(hex(ovKey('test-pod','current'))),false);
 });
 
 test('PostgreSQL 16 reads a bounded TOAST slice for an 8 MiB opaque leaf', {skip:!process.env.GC_TEST_PG_URL}, async t => {

@@ -50,7 +50,12 @@ import { ATOM_HEADER_BYTES, atomTopologyFromPrefix } from './gc-atom-header.js';
 
 const dec = new TextDecoder();
 const nodeDec = new TextDecoder('utf-8', { fatal: true });
-const NODE_URN = /^urn:pgsl:(atom|fragment):[0-9a-f]{40}$/;
+// Root recognition must use the same dual-read codec as fragment edges.
+// Otherwise a current URL-form head would be omitted from the live closure.
+function isNodeIdentifier(value: string): boolean {
+  if (!value.startsWith('urn:pgsl:') && !value.includes('/ns/pgsl/')) return false;
+  try { nodeAddrFromUrn(value); return true; } catch { return false; }
+}
 const ADDR_BYTES = 21;
 const HASH_BYTES = 20;
 // Large opaque atoms are commonly ~700 KiB. A 2,000-node fetch can allocate
@@ -240,7 +245,7 @@ function addrOfBytes(b: Uint8Array): NodeAddr {
 }
 
 function urnsIn(value: unknown, out: Set<string>): void {
-  if (typeof value === 'string') { if (NODE_URN.test(value)) out.add(value); return; }
+  if (typeof value === 'string') { if (isNodeIdentifier(value)) out.add(value); return; }
   if (Array.isArray(value)) { for (const v of value) urnsIn(v, out); return; }
   if (value && typeof value === 'object') for (const v of Object.values(value as Record<string, unknown>)) urnsIn(v, out);
 }
@@ -282,7 +287,7 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
     }
     keep('O', k);
     const urn = dec.decode(v);
-    if (NODE_URN.test(urn)) roots.add(urn);
+    if (isNodeIdentifier(urn)) roots.add(urn);
   });
   for (const tag of ['A', 'X'] as const) {
     await reader.scan(subspaceRange(tag).begin, subspaceRange(tag).end, (k) => {

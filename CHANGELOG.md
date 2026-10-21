@@ -1,8 +1,8 @@
 # Changelog
 
-## 2026-10-20 — Bounded atom topology reads for the shared-store collector
+## 2026-10-21 — Retain URL roots and bound shared-store collector reads
 
-The PostgreSQL collector now reads a bounded header for canonical opaque atoms instead of scanning and parsing their complete payloads to discover that they have no outgoing edges. The header is bound to the stored atom key; unfamiliar historical encodings use the complete JSON fallback, and malformed bindings still refuse collection. Fragment topology and all retention roots remain unchanged. The breadth-first queue uses a cursor with occasional compaction, avoiding a full frontier shift for every 32 nodes. A dedicated Node regression workflow exercises the actual collector source and a 20,000-leaf closure. This change improves measurement; it does not itself retire data, remove the existing rebuild headroom guard, or claim physical reclamation.
+The collector recognizes both legacy URNs and dereferenceable node URLs in control-plane records and current overlays, using the same address codec as fragment traversal. URL-only current heads therefore retain their complete node closure. The PostgreSQL reader takes a bounded header for canonical opaque atoms instead of scanning and parsing their complete payloads to discover that they have no outgoing edges. The header is bound to the stored atom key; unfamiliar historical encodings use the complete JSON fallback, and malformed bindings refuse collection. The breadth-first queue uses a cursor with occasional compaction. Actual-source regressions cover root forms, stale overlays, malformed bindings, and a 20,000-leaf closure; an isolated PostgreSQL 16 fixture verifies reduced TOAST reads for an 8 MiB uncompressed atom. This does not itself retire data, remove the rebuild headroom guard, or claim physical reclamation.
 
 ## 2026-10-20 — Source-grounded intervention chat and configured backend routing
 
