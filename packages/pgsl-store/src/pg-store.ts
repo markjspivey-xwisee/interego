@@ -211,7 +211,8 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
             `SELECT octet_length(v) AS bytes FROM ${table} WHERE k = $1 FOR UPDATE`, [key]);
           const retiredBytes = prior.rows[0]?.bytes ?? 0;
           if (!Number.isSafeInteger(retiredBytes) || retiredBytes < 0) {
-            throw new PgWritePressureError('replaced value size is unavailable');
+            refusal ??= new PgWritePressureError('replaced value size is unavailable');
+            throw refusal;
           }
           inputBytes += retiredBytes;
           if (!Number.isSafeInteger(inputBytes) || inputBytes > pressure.inputMaximum) {

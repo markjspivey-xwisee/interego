@@ -8,10 +8,11 @@
  * container). node-postgres is pure JS, so no native build is needed.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { Client } from 'pg';
+import { Client, types } from 'pg';
 import { randomBytes } from 'node:crypto';
 import {
   openPgStore,
+  PgWritePressureError,
   openStore,
   publicAtomAddress,
   CodecRegistry,
@@ -637,6 +638,45 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
     } finally {
       await fixture.client.query(`DROP FUNCTION IF EXISTS ${journal}() CASCADE`);
       await fixture.client.query(`DROP TABLE IF EXISTS ${retired}`);
+      await fixture.close();
+    }
+  }, 15_000);
+
+
+  it('keeps a caught CAS size-decoder refusal sticky and rolls back earlier flushed writes after the decoder recovers', async () => {
+    const fixture = await pressureFixture('decoder_refusal');
+    const existing = Buffer.from('existing'), first = Buffer.from('first');
+    const originalParser = types.getTypeParser(23, 'text');
+    let refusals = 0;
+    try {
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [existing, Buffer.from('original')]);
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 });
+      await expect(adapter.transact(async tx => {
+        tx.set(first, Buffer.from('must roll back'));
+        expect(Buffer.from((await tx.get(first))!).toString()).toBe('must roll back');
+        try {
+          // Fault only the int4 decoder used by octet_length(v); the queries,
+          // transaction, CAS target and rollback all use actual PostgreSQL.
+          types.setTypeParser(23, 'text', () => NaN);
+          try {
+            await tx.compareAndSet(existing, Buffer.from('original'), Buffer.from('replacement'));
+          } catch (error) {
+            if (!(error instanceof PgWritePressureError)) throw error;
+            refusals++;
+          }
+        } finally {
+          // Restore before callback completion so the final size check can
+          // succeed. The prior refusal itself must still prevent COMMIT.
+          types.setTypeParser(23, 'text', originalParser);
+        }
+        expect(refusals).toBe(1);
+        return 'acknowledged';
+      })).rejects.toBeInstanceOf(PgWritePressureError);
+      expect(refusals).toBe(1);
+      expect(await fixture.value(first)).toBeUndefined();
+      expect((await fixture.value(existing))?.toString()).toBe('original');
+    } finally {
+      types.setTypeParser(23, 'text', originalParser);
       await fixture.close();
     }
   }, 15_000);
