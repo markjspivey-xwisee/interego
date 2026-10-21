@@ -4,12 +4,14 @@ on:
     branches: ['recovery/pgsl-live-copy-*']
     paths:
       - 'tools/pgsl-live-copy.ts'
+      - 'tools/tsconfig.pgsl-live-copy.json'
       - 'tools/pgsl-live-copy.railway.mjs'
       - 'tests/pgsl-live-copy.fixture.mjs'
       - '.github/workflows/pgsl-live-copy.yml'
   pull_request:
     paths:
       - 'tools/pgsl-live-copy.ts'
+      - 'tools/tsconfig.pgsl-live-copy.json'
       - 'tools/pgsl-live-copy.railway.mjs'
       - 'tests/pgsl-live-copy.fixture.mjs'
       - '.github/workflows/pgsl-live-copy.yml'
@@ -55,6 +57,20 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install only the locked compiler and Node declarations
+        run: |
+          node --input-type=module <<'TYPE_DEPS'
+          import {readFileSync} from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          const lock=JSON.parse(readFileSync('package-lock.json','utf8'));
+          const deps=['typescript','@types/node'].map(name=>name+'@'+lock.packages['node_modules/'+name].version);
+          execFileSync('npm',['install','--prefix',process.env.RUNNER_TEMP+'/pgsl-copy-types','--no-audit','--no-fund','--ignore-scripts','--package-lock=false',...deps],{stdio:'inherit'});
+          TYPE_DEPS
+      - name: Typecheck the exact copier and its real dependencies
+        run: node "$RUNNER_TEMP/pgsl-copy-types/node_modules/typescript/bin/tsc" --noEmit -p tools/tsconfig.pgsl-live-copy.json --typeRoots "$RUNNER_TEMP/pgsl-copy-types/node_modules/@types"
       - name: Check the self-contained Railway artifact
         run: bun build tools/pgsl-live-copy.railway.mjs --target bun --external 'pg@8' --outdir "$RUNNER_TEMP/copy-build"
       - name: Prove fenced copying and independent raw-byte validation
