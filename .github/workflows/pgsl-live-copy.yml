@@ -1,0 +1,44 @@
+name: PGSL private live copy fixture
+on:
+  push:
+    branches: ['recovery/pgsl-live-copy-*']
+    paths:
+      - 'tools/pgsl-live-copy.ts'
+      - 'tests/pgsl-live-copy.fixture.ts'
+      - '.github/workflows/pgsl-live-copy.yml'
+  pull_request:
+    paths:
+      - 'tools/pgsl-live-copy.ts'
+      - 'tests/pgsl-live-copy.fixture.ts'
+      - '.github/workflows/pgsl-live-copy.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  live-copy-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: copy_fixture
+          POSTGRES_PASSWORD: fixture_only
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGSL_COPY_FIXTURE_URL: postgresql://copy_fixture:fixture_only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Prove fenced copying and independent raw-byte validation
+        run: bun tests/pgsl-live-copy.fixture.ts
