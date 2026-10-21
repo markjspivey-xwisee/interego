@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-21 — Lock conditional proofs before flushing queued deletion
+
+Identical-value PostgreSQL CAS acquires the shared mutation lock before flushing deletions queued in that proof call. This prevents a queued deletion from taking a row lock before a concurrent guarded writer takes the database lock. A deterministic real PostgreSQL trigger gate verifies the competing writer waits on admission and both callbacks finish without retry. This correction preserves pressure-safe deletion and the existing physical growth checks; it does not claim that arbitrary earlier read-flushed deletes have universal lock ordering.
+
 ## 2026-10-21 — Preserve native uploads and conditional deletion under write pressure
 
 Identical-value conditional writes now prove and lock the matching row without replacing it, preserving legacy resource deletion above the physical ceiling and avoiding retirement-journal churn. Bounded default admission now allows 256 MiB of aggregate new/replaced input and 1,048,576 positive operations, preserving the existing 48 MiB package upload and 8 MiB native representation contracts plus RDF projection overhead. Explicit smaller input budgets still bound empty operations. The database ceiling, serialized mutation ordering, reserved physical headroom and fresh precommit check remain enforced. Real PostgreSQL regressions cover conditional proof mismatch and deletion, large replacement, maximum opaque package storage, native revisions and more than 4096 RDF projection writes.

@@ -285,8 +285,8 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
               const capturedKey = Buffer.from(key), capturedValue = Buffer.from(value);
               const capturedExpected = expected === null ? null : Buffer.from(expected);
               if (capturedExpected !== null && capturedExpected.equals(capturedValue)) {
-                await flush();
                 await lockMutation();
+                await flush();
                 // READ COMMITTED rechecks the predicate after waiting. A proof
                 // needs a row lock, not a replacement tuple or retirement journal.
                 const proof = await client.query(
