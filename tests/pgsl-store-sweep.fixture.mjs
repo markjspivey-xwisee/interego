@@ -1,15 +1,17 @@
 import {readFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
+import {randomUUID} from 'node:crypto';
+import {setTimeout as delay} from 'node:timers/promises';
 import assert from 'node:assert/strict';
 import {Client} from 'pg@8';
 import {installSweep,sweepStore} from '../tools/pgsl-store-sweep.mjs';
 import {openPgStore} from '../packages/pgsl-store/src/pg-store.ts';
 import {readerFromPg,collectLive} from '../packages/pgsl-store/src/gc.ts';
 import {nodeKey,cpKey,ovKey} from '../packages/pgsl-store/src/keyspace.ts';
-const url=new URL(Bun.env.PGSL_SWEEP_FIXTURE_URL);
+const url=new URL(process.env.PGSL_SWEEP_FIXTURE_URL);
 assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));assert.equal(url.pathname,'/postgres');assert.equal(url.username,'gc_sweep_fixture');
 const admin=new Client({connectionString:url.href});await admin.connect();
-const prefix='sweep_'+crypto.randomUUID().replaceAll('-','').slice(0,12),databases=[],clients=[],results=[];
+const prefix='sweep_'+randomUUID().replaceAll('-','').slice(0,12),databases=[],clients=[],results=[];
 const connect=async name=>{const u=new URL(url);u.pathname='/'+name;const c=new Client({connectionString:u.href});await c.connect();clients.push(c);return c;};
 const fresh=async()=>{
  const name=prefix+'_'+databases.length;await admin.query('CREATE DATABASE "'+name+'"');databases.push(name);
@@ -102,7 +104,7 @@ try{
      assert.ok(await tx.get(new Uint8Array(key(21))),'dedup-selected node survives rollback');
      tx.set(new Uint8Array(cp('ldp fixture','arrived-during-sweep')),new Uint8Array(body(uri(21))));
     });
-    await Bun.sleep(1000);
+    await delay(1000);
    }}),/sweep aborted/);
    assert.equal(triggered,true);await writing;assert.equal(await exists(c,key(21)),true);assert.equal(await exists(c,key(22)),true);
    assert.equal(await exists(c,cp('ldp fixture','arrived-during-sweep')),true);

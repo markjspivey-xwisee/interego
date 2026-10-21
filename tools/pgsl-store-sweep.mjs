@@ -12,7 +12,7 @@ import { nodeAddrFromUrn } from '../packages/pgsl-store/src/addressing.js';
 import { SUBSPACE_PAYLOAD_OFFSET } from '../packages/pgsl-store/src/keyspace.js';
 import { collectorVolumeHeadroom } from './pgsl-store-gc-volume.mjs';
 
-const HOUR = 3_600_000, GiB = 1_073_741_824;
+const GiB = 1_073_741_824;
 const utf8 = new TextDecoder('utf-8', { fatal: true });
 const rootTags = new Set(['C', 'O', 'A', 'X', 'P']);
 function names(table) {
