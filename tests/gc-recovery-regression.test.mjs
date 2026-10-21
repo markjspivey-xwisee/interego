@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const root = new URL('../', import.meta.url);
 const out = new URL('./.gc-test-runtime/', root);
@@ -50,7 +50,7 @@ test('unknown large historical encoding takes the existing full JSON fallback', 
   const body=Buffer.from(JSON.stringify({kind:'atom',uri:'urn:pgsl:atom:'+hash,level:0,value:'x'.repeat(4096)}));
   assert.equal(atomTopologyFromPrefix(key,body.subarray(0,512),body.length),null);
   const calls=[];
-  const reader=readerFromPg({query:async (sql,params)=>{calls.push(sql);return {rows:calls.length===1
+  const reader=readerFromPg({query:async sql=>{calls.push(sql);return {rows:calls.length===1
     ? [{...pgResult(body.subarray(0,512)),value_bytes:body.length}]
     : [{k:key,v:body}]};}});
   const values=await reader.getManyTopology([key]);
@@ -103,4 +103,42 @@ test('wide breadth-first closure survives repeated queue compaction without drop
   assert.equal(live.stats.danglingRoots.length,0);assert.equal(live.stats.unreadableNodes,0);
   assert.equal(live.keys.size,size*5+4);
   assert.equal(batches,1+Math.ceil(size/32));assert.equal(maxBatch,32);
+});
+
+test('PostgreSQL 16 reads a bounded TOAST slice for an 8 MiB opaque leaf', {skip:!process.env.GC_TEST_PG_URL}, async t => {
+  const run=promisify(execFile);
+  const psql=async sql => (await run('psql',['-XAt','-v','ON_ERROR_STOP=1',process.env.GC_TEST_PG_URL,'-c',sql],
+    {maxBuffer:2*1024*1024,timeout:60000})).stdout.trim();
+  const identity=JSON.parse(await psql("SELECT row_to_json(r) FROM (SELECT current_database() AS db,current_user AS usr,inet_server_addr()::text AS addr) r"));
+  assert.equal(identity.db,'gc_topology_test');assert.equal(identity.usr,'gc_topology_fixture');
+  assert.ok(['127.0.0.1','::1'].includes(identity.addr),'requires the isolated loopback fixture');
+  const table='gc_topology_fixture',keySql="decode('"+key.toString('hex')+"','hex')";
+  let created=false;
+  try {
+    await psql('CREATE TABLE '+table+' (k bytea PRIMARY KEY,v bytea NOT NULL)');
+    created=true;
+    await psql('ALTER TABLE '+table+' ALTER COLUMN v SET STORAGE EXTERNAL');
+    const header=JSON.stringify({uri:'urn:pgsl:atom:'+hash,kind:'atom',level:0}).slice(0,-1)+',"value":"';
+    const tail='","provenance":{"opaque":true}}';
+    await psql('INSERT INTO '+table+" VALUES ("+keySql+",convert_to('"+header+"' || repeat('x',8388608) || '"+tail+"','UTF8'))");
+    const calls=[];
+    const reader=readerFromPg({query:async(sql,params)=>{
+      calls.push(sql);
+      const literal="ARRAY["+params[0].map(k=>"decode('"+Buffer.from(k).toString('hex')+"','hex')").join(',')+"]::bytea[]";
+      const expanded=sql.replaceAll('$1::bytea[]',literal);
+      const rows=JSON.parse(await psql("SELECT coalesce(json_agg(row_to_json(r)),'[]'::json) FROM ("+expanded+") r"));
+      return {rows:rows.map(r=>({...r,k:Buffer.from(r.k.slice(2),'hex'),atom_header:r.atom_header===null?null:Buffer.from(r.atom_header.slice(2),'hex')}))};
+    }},table);
+    const values=await reader.getManyTopology([key]);
+    assert.deepEqual(values.get(hex(key)).topology,{kind:'atom',level:0});
+    assert.equal(calls.length,1,'canonical atom must not fetch the complete value');
+    const expanded=calls[0].replaceAll('$1::bytea[]',"ARRAY["+keySql+"]::bytea[]");
+    const plan=JSON.parse(await psql('EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) '+expanded))[0];
+    const old=JSON.parse(await psql("EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) SELECT position(decode('5c75','hex') IN v),convert_from(v,'UTF8')::json->>'kind' FROM "+table+" WHERE k="+keySql))[0];
+    const blocks=p=>(p.Plan['Shared Hit Blocks']??0)+(p.Plan['Shared Read Blocks']??0);
+    assert.ok(blocks(plan)<blocks(old),'bounded slice should touch fewer shared buffers than full value parsing');
+    t.diagnostic('new shared buffers='+blocks(plan)+', previous full-value probe='+blocks(old));
+  } finally {
+    if(created)await psql('DROP TABLE '+table);
+  }
 });
