@@ -643,7 +643,7 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
   }, 15_000);
 
 
-  it('keeps a caught CAS size-decoder refusal sticky and rolls back earlier flushed writes after the decoder recovers', async () => {
+  it.each([NaN, null, undefined])('keeps a caught CAS size-decoder refusal (%s) sticky and rolls back earlier flushed writes after the decoder recovers', async (invalidSize) => {
     const fixture = await pressureFixture('decoder_refusal');
     const existing = Buffer.from('existing'), first = Buffer.from('first');
     const originalParser = types.getTypeParser(23, 'text');
@@ -657,7 +657,7 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
         try {
           // Fault only the int4 decoder used by octet_length(v); the queries,
           // transaction, CAS target and rollback all use actual PostgreSQL.
-          types.setTypeParser(23, 'text', () => NaN);
+          types.setTypeParser(23, 'text', () => invalidSize);
           try {
             await tx.compareAndSet(existing, Buffer.from('original'), Buffer.from('replacement'));
           } catch (error) {

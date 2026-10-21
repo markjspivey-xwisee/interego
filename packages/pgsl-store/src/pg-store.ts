@@ -209,8 +209,8 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           // its uncompressed byte length too, without loading its payload.
           const prior = await client.query<{ bytes: number }>(
             `SELECT octet_length(v) AS bytes FROM ${table} WHERE k = $1 FOR UPDATE`, [key]);
-          const retiredBytes = prior.rows[0]?.bytes ?? 0;
-          if (!Number.isSafeInteger(retiredBytes) || retiredBytes < 0) {
+          const retiredBytes = prior.rows.length === 0 ? 0 : prior.rows[0]?.bytes;
+          if (typeof retiredBytes !== 'number' || !Number.isSafeInteger(retiredBytes) || retiredBytes < 0) {
             refusal ??= new PgWritePressureError('replaced value size is unavailable');
             throw refusal;
           }
