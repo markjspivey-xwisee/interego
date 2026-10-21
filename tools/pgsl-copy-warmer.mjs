@@ -32,7 +32,7 @@ export async function runWarmer({source,target,readers,sourceSystemId,targetSyst
   alive();const a=(await read(source,IDENT)).rows[0],b=(await read(target,IDENT)).rows[0];
   ok(a?.system_id===sourceSystemId&&b?.system_id===targetSystemId&&a.db==='pgsl_prod'&&b.db==='pgsl_prod'&&a.role==='iegoadmin'&&b.role==='iegoadmin','physical identity differs');
   if(!oids){const r=await read(source,"SELECT 'public.pgsl_kv'::regclass::oid::text AS kv,'public.relay_pgsl_published'::regclass::oid::text AS relay");oids=[r.rows[0].kv,r.rows[0].relay];ok(oids.length===2&&oids[0]!==oids[1],'source relations differ');}
-  const f=(await read(source,FENCE,[oids])).rows;ok(f.length===1&&f[0].xact_start&&f[0].held===2,'exact source copy fence is absent');
+  await read(source,'SELECT pg_catalog.pg_stat_clear_snapshot()');const f=(await read(source,FENCE,[oids])).rows;ok(f.length===1&&f[0].xact_start&&f[0].held===2,'exact source copy fence is absent');
   const current=JSON.stringify({pid:f[0].pid,xact:f[0].xact_start,oids});if(binding)ok(binding===current,'source copy fence changed');else binding=current;
   const c=await read(target,'SELECT k FROM public.pgsl_kv ORDER BY k DESC LIMIT 1');ok(c.rows.length<=1&&(!c.rows.length||Buffer.isBuffer(c.rows[0].k)),'target cursor differs');
   const cursor=c.rows.length?c.rows[0].k.toString('hex'):null;ok(lastCursor===null||cursor!==null&&cursor>=lastCursor,'target cursor moved backwards');lastCursor=cursor;return cursor;
@@ -40,7 +40,7 @@ export async function runWarmer({source,target,readers,sourceSystemId,targetSyst
  let guardQueue=Promise.resolve();const guard=()=>{const task=guardQueue.then(actualGuard);guardQueue=task.catch(()=>{});return task;};
  const pause=async()=>{await new Promise(resolve=>setTimeout(resolve,pollMs));alive();};
  try{
-  for(const c of clients){alive();await c.query('BEGIN READ ONLY');await c.query("SET LOCAL statement_timeout='30s'");await c.query('SET LOCAL temp_file_limit=0');await c.query("SET LOCAL lock_timeout='1s'");await c.query("SET LOCAL idle_in_transaction_session_timeout='0'");const r=await c.query("SELECT current_setting('transaction_read_only') AS ro");ok(r.rows[0]?.ro==='on','read-only transaction is absent');}
+  for(const c of clients){alive();await c.query('BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY');await c.query("SET LOCAL statement_timeout='30s'");await c.query('SET LOCAL temp_file_limit=0');await c.query("SET LOCAL lock_timeout='1s'");await c.query("SET LOCAL idle_in_transaction_session_timeout='0'");const r=await c.query("SELECT current_setting('transaction_read_only') AS ro");ok(r.rows[0]?.ro==='on','read-only transaction is absent');}
   await guard();
   monitor=setInterval(()=>{if(monitorBusy||stopped)return;monitorBusy=true;void guard().catch(()=>stop('identity or source fence lost')).finally(()=>{monitorBusy=false;});},Math.min(pollMs,2000));
   const plannedReader={query:async(sql,params)=>{await guard();const r=await read(readers[0],sql,params);await guard();return r;}};

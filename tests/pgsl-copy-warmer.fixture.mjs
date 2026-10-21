@@ -26,7 +26,7 @@ let generation=0;
 async function instance(hooks={}){
  const number=++generation,sql=[],warm=[];
  const make=async(kind,role)=>{const c=await connect(kind,'warmer-fixture-'+number+'-'+role),raw=c.query.bind(c);c.query=async(query,params)=>{
-  assert.match(query,/^\s*(SELECT|WITH|BEGIN READ ONLY|SET LOCAL|ROLLBACK)\b/);assert.ok(!/\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|VACUUM|CHECKPOINT|FOR UPDATE)\b/i.test(query));sql.push(query);
+  assert.match(query,/^\s*(SELECT|WITH|BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY|SET LOCAL|ROLLBACK)\b/);assert.ok(!/\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|VACUUM|CHECKPOINT|FOR UPDATE)\b/i.test(query));sql.push(query);
   if(query.includes('pg_catalog.md5(v)')){const sum=(await source.query('SELECT coalesce(sum(octet_length(v)),0)::int AS n FROM pgsl_kv WHERE k=ANY($1::bytea[])',params)).rows[0].n;assert.ok(params[0].length<=128&&sum<=1024);warm.push(params[0].map(k=>k.toString('hex')));}
   const r=await raw(query,params);if(hooks.identityWrong&&kind==='target'&&query.includes('pg_control_system()'))r.rows[0].system_id='wrong';return r;
  };return c;};
@@ -36,7 +36,7 @@ async function instance(hooks={}){
 try{
  const split=partitionRows(Array.from({length:300},(_,i)=>({k:Buffer.from('k'+i),bytes:i===0?2000:8})),1024,128);assert.equal(split.skipped,1);assert.ok(split.groups.every(g=>g.length<=128&&g.reduce((n,r)=>n+r.bytes,0)<=1024));
  checks.push('payload groups enforce row/byte bounds and skip oversized individual values');
- const first=await instance(),result=await runWarmer(first);assert.equal(result.windows,1);assert.ok(result.rows>0&&result.bytes>0&&first.warm.length>0);assert.ok(result.skippedLarge>0);assert.deepEqual((await source.query('SELECT k,v FROM pgsl_kv ORDER BY k')).rows,before);assert.equal((await target.query('SELECT count(*)::int n FROM pgsl_kv')).rows[0].n,0);
+ const first=await instance(),result=await runWarmer(first);assert.equal(result.windows,1);assert.ok(first.sql.includes('SELECT pg_catalog.pg_stat_clear_snapshot()'));assert.ok(result.rows>0&&result.bytes>0&&first.warm.length>0);assert.ok(result.skippedLarge>0);assert.deepEqual((await source.query('SELECT k,v FROM pgsl_kv ORDER BY k')).rows,before);assert.equal((await target.query('SELECT count(*)::int n FROM pgsl_kv')).rows[0].n,0);
  checks.push('actual PostgreSQL md5(bytea) warming returns only bounded key/digest results and changes neither database');
  const wrong=await instance();wrong.targetSystemId='wrong-cluster';await assert.rejects(runWarmer(wrong));assert.equal(wrong.warm.length,0);
  await sf.query('ROLLBACK');const absent=await instance();await assert.rejects(runWarmer(absent),/warmer refused/,'absent source fence must refuse');assert.equal(absent.warm.length,0);await fence();
