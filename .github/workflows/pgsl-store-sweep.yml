@@ -5,12 +5,16 @@ on:
     paths:
       - 'tools/pgsl-store-sweep.mjs'
       - 'packages/pgsl-store/src/gc.ts'
+      - 'packages/pgsl-store/src/gc-atom-header.ts'
+      - 'deploy/Dockerfile.pgsl-sweep'
       - 'tests/pgsl-store-sweep.fixture.mjs'
       - '.github/workflows/pgsl-store-sweep.yml'
   pull_request:
     paths:
       - 'tools/pgsl-store-sweep.mjs'
       - 'packages/pgsl-store/src/gc.ts'
+      - 'packages/pgsl-store/src/gc-atom-header.ts'
+      - 'deploy/Dockerfile.pgsl-sweep'
       - 'tests/pgsl-store-sweep.fixture.mjs'
       - '.github/workflows/pgsl-store-sweep.yml'
 permissions:
@@ -44,3 +48,5 @@ jobs:
           bun-version: 1.4.0
       - name: Verify journal retention, writer rollback and TOAST-page reuse
         run: bun tests/pgsl-store-sweep.fixture.mjs
+      - name: Build the private cron image
+        run: docker build -f deploy/Dockerfile.pgsl-sweep -t pgsl-sweep-fixture .

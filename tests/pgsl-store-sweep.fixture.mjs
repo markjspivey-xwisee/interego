@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {Client} from 'pg@8';
 import {installSweep,sweepStore} from '../tools/pgsl-store-sweep.mjs';
+import {readerFromPg,collectLive} from '../packages/pgsl-store/src/gc.ts';
 import {nodeKey,cpKey,ovKey} from '../packages/pgsl-store/src/keyspace.ts';
 const url=new URL(Bun.env.PGSL_SWEEP_FIXTURE_URL);
 assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));assert.equal(url.pathname,'/postgres');assert.equal(url.username,'gc_sweep_fixture');
@@ -50,6 +51,11 @@ try{
   await c.query("UPDATE public.pgsl_kv_gc_roots SET retired_at=clock_timestamp()-interval '2 hours'");
   const unknown=Buffer.from('unrelated-keyspace');await put(c,unknown,Buffer.from('private unrelated bytes'));
   await assert.rejects(sweepStore(opts(f)),/refusing sweep/);assert.equal(await exists(c,unknown),true);await c.query('DELETE FROM public.pgsl_kv WHERE k=$1',[unknown]);
+  const malformed=Buffer.from('pgsl\0N');
+  await put(c,malformed,Buffer.from('unknown node layout'));
+  await assert.rejects(sweepStore(opts(f)),/malformed node key/);
+  assert.equal(await exists(c,malformed),true);assert.equal(await exists(c,key(11)),true);
+  await c.query('DELETE FROM public.pgsl_kv WHERE k=$1',[malformed]);
   await assert.rejects(sweepStore({...opts(f),measureFreeBytes:async()=>0}),/sweep aborted/);assert.equal(await exists(c,key(11)),true);
   results.push('corrupt roots, unknown namespace and insufficient space abort without deleting user rows');
  }
@@ -76,6 +82,41 @@ try{
   const afterSweep=await size();for(let i=55;i<79;i++)await atom(c,i,256*1024);
   assert.ok(await size()<=Math.max(before,afterSweep)+2*1024*1024,'ordinary VACUUM must make old TOAST pages reusable');
   results.push('ordinary VACUUM permits bounded TOAST-page reuse without rewriting table');
+ }
+ {
+  const f=await fresh(),c=f.client;await atom(c,100);
+  const sizes=new Map(),children=[];
+  for(let i=101;i<141;i++){
+   const v=Buffer.from(JSON.stringify({uri:uri(i,false,'fragment'),kind:'fragment',level:1,items:Array(4000).fill(uri(100))}));
+   const k=key(i,'fragment');await put(c,k,v);sizes.set(k.toString('hex'),v.length);children.push(uri(i,false,'fragment'));
+  }
+  const root=Buffer.from(JSON.stringify({uri:uri(141,false,'fragment'),kind:'fragment',level:2,items:children}));
+  const rootKey=key(141,'fragment');await put(c,rootKey,root);sizes.set(rootKey.toString('hex'),root.length);
+  await put(c,cp('ldp fixture','wide-closure'),body(uri(141,false,'fragment')));
+  let largestBatch=0,fragmentQueries=0;
+  const observed={query:async(sql,params)=>{
+   if(sql.includes('AS atom_header')){
+    const fragments=params[0].filter(k=>k[6]===2);
+    if(fragments.length){
+     fragmentQueries++;largestBatch=Math.max(largestBatch,fragments.length);
+     assert.ok(fragments.reduce((total,k)=>total+sizes.get(k.toString('hex')),0)<=8*1024**2,'fragment topology input byte bound');
+    }
+   }
+   return c.query(sql,params);
+  }};
+  const live=await collectLive(readerFromPg(observed,'pgsl_kv',5000,4096),{traversalBatchSize:4096});
+  assert.equal(live.stats.liveNodes,42);assert.equal(live.stats.unreadableNodes,0);
+  assert.ok(largestBatch>32,'wide fragment queries must use the opt-in batch');
+  assert.ok(fragmentQueries>=3,'stored fragment bytes must split the wide frontier');
+  results.push('large fragment frontier uses metadata-sized batches over32 keys while each topology query stays within8MiB');
+ }
+ {
+  const f=await fresh(),c=f.client;await atom(c,200);await atom(c,201);
+  await put(c,cp('ldp fixture','vacuum-failure'),body(uri(200)));await installSweep(c);await age(c);
+  const wrapped={query:(sql,params)=>sql.startsWith('VACUUM ')?Promise.reject(Error('fixture vacuum unavailable')):c.query(sql,params)};
+  const r=await sweepStore({...opts(f),client:wrapped});
+  assert.equal(r.status,'swept');assert.equal(r.vacuumed,false);assert.equal(await exists(c,key(201)),false);
+  results.push('post-commit VACUUM failure reports committed deletes accurately and permits retry');
  }
  console.log(JSON.stringify({kind:'sweep_fixture_pass',passed:results.length,results}));
 }finally{

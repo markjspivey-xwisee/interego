@@ -27,12 +27,15 @@ BEGIN
   IF TG_TABLE_SCHEMA <> 'public' OR TG_TABLE_NAME <> '${n.table}' THEN
     RAISE EXCEPTION 'invalid root journal trigger target';
   END IF;
-  IF (TG_OP = 'DELETE' OR NEW.k IS DISTINCT FROM OLD.k OR NEW.v IS DISTINCT FROM OLD.v)
-     AND octet_length(OLD.k) >= 6 AND substring(OLD.k FROM 1 FOR 5) = decode('7067736c00','hex')
+  -- Exclude immutable node/index keys before inspecting NEW.v: a node can be a
+  -- 38MiB TOAST value, and journaling it must not detoast or compare its body.
+  IF octet_length(OLD.k) >= 6 AND substring(OLD.k FROM 1 FOR 5) = decode('7067736c00','hex')
      AND (get_byte(OLD.k,5) IN (67,79,65,88) OR
        (get_byte(OLD.k,5) = 80 AND
         (octet_length(OLD.k) <> 31 OR substring(OLD.k FROM 28 FOR 4) <> decode('00000002','hex')))) THEN
-    INSERT INTO ${n.roots}(k,v,retired_at) VALUES(OLD.k,OLD.v,clock_timestamp());
+    IF TG_OP = 'DELETE' OR NEW.k IS DISTINCT FROM OLD.k OR NEW.v IS DISTINCT FROM OLD.v THEN
+      INSERT INTO ${n.roots}(k,v,retired_at) VALUES(OLD.k,OLD.v,clock_timestamp());
+    END IF;
   END IF;
   IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END
@@ -198,6 +201,11 @@ export async function sweepStore({client,watchdog,table='pgsl_kv',measureFreeByt
         WHEN substring(k FROM 1 FOR 5)<>decode('7067736c00','hex') THEN true
         ELSE get_byte(k,5) NOT IN(78,73,66,76,82,86,79,87,80,65,88,67) END LIMIT 1`);
     if(unknown.rows.length)throw Error('refusing sweep: unknown key namespace');
+    const malformedNodes=await client.query(`SELECT 1 FROM ${n.relation}
+      WHERE substring(k FROM 1 FOR 6)=decode('7067736c004e','hex')
+        AND (octet_length(k)<>27 OR CASE WHEN octet_length(k)>6 THEN get_byte(k,6) ELSE -1 END NOT IN(1,2))
+      LIMIT 1`);
+    if(malformedNodes.rows.length)throw Error('refusing sweep: malformed node key');
     const live=await collectLive(retainedReader(client,n,identity.rows[0].cutoff,check),{traversalBatchSize:4096});
     check();
     if(!live.keys.size||live.stats.danglingRoots.length||live.stats.unreadableNodes)throw Error('refusing sweep: incomplete retained root closure');
@@ -251,9 +259,16 @@ export async function sweepStore({client,watchdog,table='pgsl_kv',measureFreeByt
   }
   // PostgreSQL ordinary VACUUM returns dead heap/TOAST pages to the internal free
   // space map. TRUNCATE false avoids a tail AccessExclusive lock on live traffic.
-  await client.query(`SET statement_timeout='60s'`);
-  await client.query(`VACUUM (ANALYZE,TRUNCATE FALSE) ${n.relation}`);
-  return{status:'swept',deletedKeys,deletedBytes};
+  let vacuumed=false;
+  try {
+    await client.query(`SET statement_timeout='60s'`);
+    await client.query(`VACUUM (ANALYZE,TRUNCATE FALSE) ${n.relation}`);
+    vacuumed=true;
+  } catch {
+    // DELETE is already committed. Report this honestly so the next private run
+    // can retry ordinary VACUUM without implying that committed work rolled back.
+  }
+  return{status:'swept',deletedKeys,deletedBytes,vacuumed};
 }
 
 async function main(){

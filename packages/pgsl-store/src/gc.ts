@@ -162,17 +162,37 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
       // with the native JS semantics. This conservative discriminator can
       // produce harmless false positives, without poisoning a rebuild's SQL
       // transaction or exporting the rest of its 32-node batch.
-      // Only atom header probes may use the large private-network batch. Full
-      // fragment topology remains in batches of 32, even for a 4096-node frontier.
-      const ordered = topologyBatchSize > TRAVERSAL_BATCH_SIZE
-        ? [...keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] === 1), ...keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] !== 1)] : keys;
-      for (let i = 0; i < ordered.length;) {
-        const atom = ordered[i]![SUBSPACE_PAYLOAD_OFFSET] === 1;
-        const limit = atom ? topologyBatchSize : Math.min(topologyBatchSize, TRAVERSAL_BATCH_SIZE);
-        let end = Math.min(i + limit, ordered.length);
-        if (topologyBatchSize > TRAVERSAL_BATCH_SIZE) while (end > i + 1 && (ordered[end - 1]![SUBSPACE_PAYLOAD_OFFSET] === 1) !== atom) end--;
-        const batch = ordered.slice(i, end).map(k => Buffer.from(k));
-        i = end;
+      // The default stays at 32. Private maintenance may probe atom prefixes in
+      // larger groups; fragment groups are sized with TOAST metadata first and
+      // limited to 8MiB of stored JSON, so a wide frontier stays memory-bounded.
+      const batches: Buffer[][] = [];
+      try {
+        if (topologyBatchSize <= TRAVERSAL_BATCH_SIZE) {
+          for (let i = 0; i < keys.length; i += topologyBatchSize) batches.push(keys.slice(i, i + topologyBatchSize).map(k => Buffer.from(k)));
+        } else {
+          const atoms = keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] === 1);
+          for (let i = 0; i < atoms.length; i += topologyBatchSize) batches.push(atoms.slice(i, i + topologyBatchSize).map(k => Buffer.from(k)));
+          const fragments = keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] !== 1);
+          for (let i = 0; i < fragments.length; i += topologyBatchSize) {
+            const requested = fragments.slice(i, i + topologyBatchSize).map(k => Buffer.from(k));
+            const sizes = await client.query(`SELECT k,octet_length(v) AS value_bytes FROM ${t} WHERE k=ANY($1::bytea[]) ORDER BY k`, [requested]);
+            const wanted = new Set(requested.map(k => k.toString('hex')));
+            let group: Buffer[] = [], bytes = 0;
+            for (const row of sizes.rows) {
+              if (!Buffer.isBuffer(row.k) || !wanted.delete(row.k.toString('hex')) || !Number.isSafeInteger(row.value_bytes)
+                || (row.value_bytes as number) < 0 || (row.value_bytes as number) > 8 * 1024 * 1024) throw new Error('unbounded fragment topology');
+              if (group.length && bytes + (row.value_bytes as number) > 8 * 1024 * 1024) {
+                batches.push(group); group = []; bytes = 0;
+              }
+              group.push(row.k); bytes += row.value_bytes as number;
+            }
+            if (group.length) batches.push(group);
+          }
+        }
+      } catch {
+        throw new Error('refusing collection: PostgreSQL node topology could not be read');
+      }
+      for (const batch of batches) {
         try {
           const result = await client.query(`SELECT source.k, octet_length(source.v) AS value_bytes,
               substring(source.v FROM 1 FOR ${ATOM_HEADER_BYTES}) AS atom_header,
