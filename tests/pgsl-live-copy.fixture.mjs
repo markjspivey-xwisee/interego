@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
 import { Client } from 'pg@8';
-import { copyLiveDatabase } from '../tools/pgsl-live-copy.ts';
+import { copyLiveDatabase, holdsPreparedFence } from '../tools/pgsl-live-copy.ts';
 import { nodeKey, cpKey, ovKey } from '../packages/pgsl-store/src/keyspace.ts';
 const urls={source:new URL(Bun.env.PGSL_COPY_FIXTURE_URL),target:new URL(Bun.env.PGSL_COPY_FIXTURE_TARGET_URL)};
 for(const url of Object.values(urls)){assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));assert.equal(url.pathname,'/postgres');assert.equal(url.username,'copy_fixture');}
 const admins={source:new Client({connectionString:urls.source.href}),target:new Client({connectionString:urls.target.href})};
 await admins.source.connect();await admins.target.connect();
+const systemId=async(client)=>(await client.query('SELECT system_identifier::text AS id FROM pg_control_system()')).rows[0].id;
+assert.notEqual(await systemId(admins.source),await systemId(admins.target),'fixture requires two independently initialized PG16 servers');
 const prefix='copy_'+crypto.randomUUID().replaceAll('-','').slice(0,12);
 const databases=[],clients=[];
 const connect=async(kind,name)=>{
@@ -16,8 +20,8 @@ const fresh=async(kind='target')=>{
   const name=prefix+'_'+databases.length;assert.match(name,/^copy_[a-f0-9]+_\d+$/);
   await admins[kind].query('CREATE DATABASE "'+name+'"');databases.push({kind,name});return connect(kind,name);
 };
-const options={fixtureSameServer:true,maxInputBytes:1_000_000,maxTargetDatabaseBytes:100_000_000,maxValueBytes:4_000_000,payloadBatchBytes:1024};
-const results:string[]=[];
+const options={maxInputBytes:1_000_000,maxTargetDatabaseBytes:100_000_000,maxValueBytes:4_000_000,payloadBatchBytes:1024};
+const results=[];
 try {
   const source=await fresh('source');
   await admins.source.query("SET password_encryption='scram-sha-256'");
@@ -84,12 +88,45 @@ try {
   await assert.rejects(copyLiveDatabase(lostSource,wrapper,options),/live copy refused:/);assert.equal(killed,true);
   results.push('source disconnect cannot return ready');
   const handoffSource=await connect('source',databases[0].name),handoffTarget=await fresh();
-  const prepared=await copyLiveDatabase(handoffSource,handoffTarget,options);
-  await prepared.prepareVolumeCutover();assert.equal(prepared.state,'prepared-for-volume-cutover');
+  let allowTargetEnd,enteredTargetEnd;
+  const paused=new Promise(resolve=>{allowTargetEnd=resolve;}),entered=new Promise(resolve=>{enteredTargetEnd=resolve;});
+  const handoffWrapper={query:(sql,params)=>handoffTarget.query(sql,params),end:async()=>{enteredTargetEnd();await paused;await handoffTarget.end();}};
+  const prepared=await copyLiveDatabase(handoffSource,handoffWrapper,options);
+  const preparation=prepared.prepareVolumeCutover();
+  assert.equal(prepared.state,'preparing-volume-cutover');
+  await entered;
+  await assert.rejects(prepared.abortBeforeCutover(),/prepared cutover requires operator recovery/);
+  await assert.rejects(prepared.prepareVolumeCutover(),/copy is not ready/);
+  await assert.rejects(writer.query('INSERT INTO public.relay_pgsl_published VALUES($1,$2)',[Buffer.from('still-blocked'),Buffer.from('still-blocked')]),error=>error.code==='55P03');
+  allowTargetEnd();await preparation;assert.equal(prepared.state,'prepared-for-volume-cutover');
+  results.push('concurrent abort and duplicate prepare cannot release the writer fence');
   await assert.rejects(prepared.abortBeforeCutover(),/prepared cutover requires operator recovery/);
   await admins.source.query('SELECT pg_terminate_backend($1)',[handoffSource.processID]);await Bun.sleep(25);
   assert.equal(prepared.state,'source-disconnected-after-preparation');
   results.push('source disconnect is expected only after explicit verified volume preparation');
+  const wrapperSource=await readFile(new URL('../tools/pgsl-live-copy.railway.mjs',import.meta.url),'utf8');
+  const start=wrapperSource.indexOf('const modules=')+'const modules='.length;
+  const end=wrapperSource.indexOf(';\nconst required=',start);
+  const bundled=JSON.parse(wrapperSource.slice(start,end));
+  const coreSource=await readFile(new URL('../tools/pgsl-live-copy.ts',import.meta.url),'utf8');
+  assert.equal(bundled['live-copy.ts'],coreSource.replaceAll('../packages/pgsl-store/src/gc.js','./gc.ts')
+    .replaceAll('../packages/pgsl-store/src/addressing.js','./addressing.ts').replaceAll('../packages/pgsl-store/src/keyspace.js','./keyspace.ts'));
+  const watchdogSource=wrapperSource.slice(wrapperSource.indexOf('let overdueReported=false;'),wrapperSource.indexOf('const awaitPreparedStop='));
+  for(const state of ['preparing-volume-cutover','prepared-for-volume-cutover','verified-source-fenced']){
+    const calls={source:0,target:0,stop:0,exit:0},events=[];
+    const watchdog=vm.runInNewContext(watchdogSource+'\nwatchdog',{
+      session:{state},holdsPreparedFence,Date:{now:()=>100},validUntil:1,phase:state,
+      log:event=>events.push(event),server:{stop:()=>{calls.stop++;}},
+      source:{end:async()=>{calls.source++;}},target:{end:async()=>{calls.target++;}},
+      process:{exit:()=>{calls.exit++;}},setInterval:fn=>fn,setTimeout:fn=>fn()
+    });
+    watchdog();await Promise.resolve();
+    if(holdsPreparedFence(state)){
+      assert.deepEqual(calls,{source:0,target:0,stop:0,exit:0});
+      assert.equal(events[0].kind,'prepared-handoff-overdue-fence-held');
+    }else assert.deepEqual(calls,{source:1,target:1,stop:1,exit:1});
+  }
+  results.push('actual Railway watchdog retains preparing/prepared fences after expiry; embedded core matches tested source');
   console.log(JSON.stringify({kind:'fixture_pass',passed:results.length,results}));
 } finally {
   for(const client of clients)await client.end().catch(()=>{});

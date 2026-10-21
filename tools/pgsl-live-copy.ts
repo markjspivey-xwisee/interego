@@ -24,6 +24,9 @@ export interface CopyOptions {
   /** Only the isolated fixture may use different databases in one server. */
   readonly fixtureSameServer?: boolean;
 }
+/** Preparation starts synchronously; deadline/error cleanup must retain its writer fence. */
+export const holdsPreparedFence = (state: string | undefined): boolean =>
+  state === 'preparing-volume-cutover' || state === 'prepared-for-volume-cutover';
 const TABLES = ['pgsl_kv', 'relay_pgsl_published'] as const;
 const PREFIX = Buffer.from('pgsl\0');
 const TAGS = new Set('NIBLRVOWPAXC');
@@ -223,7 +226,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     if (state === 'prepared-for-volume-cutover') { if (heartbeat) clearInterval(heartbeat); state = 'source-disconnected-after-preparation'; log({ kind: state }); return; }
     if (state === 'aborted' || state === 'source-disconnected-after-preparation') return;
     failure ??= new Error('live copy refused: source fence connection was lost');
-    if (state === 'verified-source-fenced') { state = 'failed-source-fence-lost'; if (heartbeat) clearInterval(heartbeat); }
+    if (state === 'verified-source-fenced' || state === 'preparing-volume-cutover' || state === 'preparation-failed-source-fenced') { state = 'failed-source-fence-lost'; if (heartbeat) clearInterval(heartbeat); }
     void target.end().catch(() => undefined);
   };
   source.on?.('error', loseFence); source.on?.('end', loseFence);
@@ -398,12 +401,21 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
       receipt, get state() { return state; },
       async prepareVolumeCutover() {
         invariant(state === 'verified-source-fenced', 'copy is not ready for volume cutover');
-        await sq('SELECT 1');
-        await target.end();
-        await sq('SELECT 1');
-        state = 'prepared-for-volume-cutover';
-        log({ kind: state, targetSystemId: to.system_id });
-        return { ...receipt, kind: state };
+        // Claim the transition before yielding so abort and duplicate prepare cannot release the fence.
+        state = 'preparing-volume-cutover';
+        try {
+          await sq('SELECT 1');
+          invariant(state === 'preparing-volume-cutover', 'source fence failed during preparation');
+          await target.end();
+          await sq('SELECT 1');
+          invariant(state === 'preparing-volume-cutover', 'source fence failed during preparation');
+          state = 'prepared-for-volume-cutover';
+          log({ kind: state, targetSystemId: to.system_id });
+          return { ...receipt, kind: state };
+        } catch {
+          if (state === 'preparing-volume-cutover') state = 'preparation-failed-source-fenced';
+          throw new Error('live copy refused: volume preparation failed');
+        }
       },
       async abortBeforeCutover() {
         invariant(state === 'verified-source-fenced', 'prepared cutover requires operator recovery, not automatic cleanup');
