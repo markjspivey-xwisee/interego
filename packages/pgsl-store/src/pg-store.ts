@@ -45,7 +45,7 @@ export interface PgStoreOptions {
   ensureSchema?: boolean;
   /** Opt-in physical database ceiling; env PGSL_PG_MAX_DATABASE_BYTES. */
   maxDatabaseBytes?: number;
-  /** Cumulative positive k+v plus replaced-value bound (default 16 MiB when enabled). */
+  /** Cumulative positive k+v plus replaced-value bound (default 256 MiB when enabled). */
   maxTransactionInputBytes?: number;
   /** Additional physical headroom (default 64 MiB when enabled). */
   writeReserveBytes?: number;
@@ -81,7 +81,7 @@ function byteLimit(value: number | string | undefined, name: string, zero = fals
 function writePressure(opts: PgStoreOptions): WritePressure | undefined {
   const maximum = byteLimit(opts.maxDatabaseBytes ?? process.env.PGSL_PG_MAX_DATABASE_BYTES, 'PGSL_PG_MAX_DATABASE_BYTES');
   const inputMaximum = byteLimit(opts.maxTransactionInputBytes ?? process.env.PGSL_PG_MAX_TRANSACTION_INPUT_BYTES,
-    'PGSL_PG_MAX_TRANSACTION_INPUT_BYTES') ?? 16 * 1024 * 1024;
+    'PGSL_PG_MAX_TRANSACTION_INPUT_BYTES') ?? 256 * 1024 * 1024;
   const reserve = byteLimit(opts.writeReserveBytes ?? process.env.PGSL_PG_WRITE_RESERVE_BYTES,
     'PGSL_PG_WRITE_RESERVE_BYTES', true) ?? 64 * 1024 * 1024;
   if (maximum === undefined) return undefined;
@@ -159,14 +159,16 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
         let inputBytes = 0;
         let positiveOperations = 0;
         let admission: Promise<number> | undefined;
+        let mutationLock: Promise<void> | undefined;
         let refusal: PgWritePressureError | undefined;
         const planPositive = (key: Key, value: Value): void => {
           if (!pressure) return;
           if (refusal) throw refusal;
-          inputBytes += key.byteLength + value.byteLength;
+          // Even an empty key/value consumes one operation's finite input budget.
+          inputBytes += Math.max(1, key.byteLength + value.byteLength);
           positiveOperations++;
-          if (!Number.isSafeInteger(inputBytes) || inputBytes > pressure.inputMaximum || positiveOperations > 4096) {
-            refusal ??= new PgWritePressureError('transaction input or 4096-operation bound exceeded');
+          if (!Number.isSafeInteger(inputBytes) || inputBytes > pressure.inputMaximum || positiveOperations > 1_048_576) {
+            refusal ??= new PgWritePressureError('transaction input or 1048576-operation bound exceeded');
             throw refusal;
           }
         };
@@ -191,6 +193,15 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
             throw refusal;
           }
         };
+        const lockMutation = (): Promise<void> => {
+          if (!pressure) return Promise.resolve();
+          // Lock-only CAS may precede a positive write in the same transaction.
+          // Preserve lock ordering without applying a physical growth check.
+          mutationLock ??= client.query(
+            'SELECT pg_advisory_xact_lock(1346851660, hashtext(current_database()))',
+          ).then(() => undefined);
+          return mutationLock;
+        };
         const admit = async (): Promise<void> => {
           if (!pressure || positiveOperations === 0) return;
           if (refusal) throw refusal;
@@ -198,7 +209,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
             // Same database-wide transaction lock across tables, pools, and
             // replicas. It is released only by COMMIT/ROLLBACK, never before
             // the fresh final physical-size check.
-            await client.query('SELECT pg_advisory_xact_lock(1346851660, hashtext(current_database()))');
+            await lockMutation();
             return databaseBytes();
           })();
           checkPressure(await admission);
@@ -273,6 +284,17 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
             compareAndSet: async (key: Key, expected: Value | null, value: Value): Promise<boolean> => {
               const capturedKey = Buffer.from(key), capturedValue = Buffer.from(value);
               const capturedExpected = expected === null ? null : Buffer.from(expected);
+              if (capturedExpected !== null && capturedExpected.equals(capturedValue)) {
+                await flush();
+                await lockMutation();
+                // READ COMMITTED rechecks the predicate after waiting. A proof
+                // needs a row lock, not a replacement tuple or retirement journal.
+                const proof = await client.query(
+                  `SELECT 1 FROM ${table} WHERE k = $1 AND v = $2 FOR UPDATE`,
+                  [capturedKey, capturedExpected],
+                );
+                return proof.rowCount === 1;
+              }
               planPositive(capturedKey, capturedValue);
               await flush();
               await reserveExisting(capturedKey);
