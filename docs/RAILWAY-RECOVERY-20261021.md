@@ -90,7 +90,15 @@ configured ceiling and ordinary reads/writes after rollout.
 Foxxi remains online on fd209c9ecb456cf309387c80c4da8bda0d10df84,
 deployment 7e0c0cad-24ff-4923-b78c-58dda258c004. Recent sampled flows used the
 private gateway on port8080; old mesh/Native-LRS scan requests were absent.
-A smaller boot/five-minute directory refresh remains under investigation.
+The remaining boot/five-minute directory refresh is addressed by PR658:
+https://github.com/markjspivey-xwisee/interego/pull/658
+Exact head: e2537475922b48b29a9a315d49ed237f407de391.
+Independent source review, the106 focused tests, ESLint and bridge/MCP typechecks
+passed. The PR is ready for review, open and unmerged; broader root suites were
+still finishing at20:23 UTC. Recheck exact-head checks before merging. Deploy
+and verify the resulting Foxxi build after storage recovery. It removes the
+timer, requests only the configured directory when needed, and bounds refresh
+waits while preserving existing authentication gates.
 
 Hallowmarch PR32 merged as d86c7fc31bbb008006e5658b4b3586d82d78cd8c.
 Tested head 9d6fa85a795a78c51fa5a6135a9d9c66efafa80f passed all11 broad jobs
