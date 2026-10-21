@@ -85,7 +85,7 @@ async function schema(client: CopyClient, empty: boolean): Promise<Row[]> {
   else invariant(relation.rows.length === 2 && relation.rows.every((r, i) => r.schema === 'public'
     && r.relname === [...TABLES].sort()[i] && r.relkind === 'r' && r.relpersistence === 'p'
     && r.relrowsecurity === false && r.relacl === null && r.relreplident === 'd'), 'source schema differs from the reviewed two-table allowlist');
-  const extras = await client.query("SELECT (SELECT count(*) FROM pg_namespace WHERE nspname NOT IN ('public','pg_catalog','information_schema') AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp_%')::int AS schemas,(SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%')::int AS routines,(SELECT count(*) FROM pg_extension WHERE extname<>'plpgsql')::int AS extensions,(SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal)::int AS triggers,(SELECT count(*) FROM pg_largeobject_metadata)::int AS large_objects,(SELECT count(*) FROM pg_default_acl)::int AS default_acls,(SELECT count(*) FROM pg_foreign_server)::int AS foreign_servers,(SELECT count(*) FROM pg_publication)::int AS publications,(SELECT count(*) FROM pg_subscription)::int AS subscriptions");
+  const extras = await client.query("SELECT (SELECT count(*) FROM pg_namespace WHERE nspname NOT IN ('public','pg_catalog','information_schema') AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp_%')::int AS schemas,(SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%')::int AS routines,(SELECT count(*) FROM pg_extension WHERE extname<>'plpgsql')::int AS extensions,(SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal)::int AS triggers,(SELECT count(*) FROM pg_largeobject_metadata)::int AS large_objects,(SELECT count(*) FROM pg_default_acl)::int AS default_acls,(SELECT count(*) FROM pg_foreign_server)::int AS foreign_servers,(SELECT count(*) FROM pg_publication)::int AS publications,(SELECT count(*) FROM pg_subscription)::int AS subscriptions,(SELECT count(*) FROM pg_policy)::int AS policies,(SELECT count(*) FROM pg_description d JOIN pg_class c ON d.classoid='pg_class'::regclass AND d.objoid=c.oid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public')::int AS comments");
   invariant(extras.rows.length === 1 && Object.values(extras.rows[0]!).every(value => Number(value) === 0), 'unhandled database objects would be lost');
   if (empty) return [];
   for (const table of TABLES) {
@@ -139,6 +139,11 @@ function candidateReader(source: CopyClient) {
     return source.query(sql, params);
   } });
 }
+function validateControl(key: Buffer, value: Buffer): void {
+  const tag = tagOf(key);
+  if (tag === 'C') JSON.parse(fatalUtf8.decode(value));
+  if (tag === 'O') nodeAddrFromUrn(fatalUtf8.decode(value));
+}
 interface Summary { rows: number; bytes: number; digest: string; }
 export interface LiveCopySession {
   readonly receipt: Row;
@@ -162,6 +167,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     if (state === 'prepared-for-volume-cutover') { if (heartbeat) clearInterval(heartbeat); state = 'source-disconnected-after-preparation'; log({ kind: state }); return; }
     if (state === 'aborted' || state === 'source-disconnected-after-preparation') return;
     failure ??= new Error('live copy refused: source fence connection was lost');
+    if (state === 'verified-source-fenced') { state = 'failed-source-fence-lost'; if (heartbeat) clearInterval(heartbeat); }
     void target.end().catch(() => undefined);
   };
   source.on?.('error', loseFence); source.on?.('end', loseFence);
@@ -267,7 +273,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
       };
       for (let offset = 0; offset < keys.length; offset += 4096) {
         await boundedRows({ query: sq }, table, keys.slice(offset, offset + 4096), async (key, value) => {
-          if (validate && tagOf(key) === 'N') nodeTopology(key, value, candidate.keys);
+          if (validate) { validateControl(key, value); if (tagOf(key) === 'N') nodeTopology(key, value, candidate.keys); }
           frame(digest, key, value); rows++; bytes += value.length;
           if (pending.length && (pending.length >= 256 || pendingBytes + value.length > maxBatch)) await insert();
           pending.push(key, value); pendingBytes += value.length;
@@ -279,16 +285,18 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     const relayKeys: string[] = [];
     let relayCursor = Buffer.alloc(0);
     for (;;) {
-      const rows = await sq('SELECT k FROM public.relay_pgsl_published WHERE k>$1 ORDER BY k LIMIT 4096', [relayCursor]);
+      const rows = await sq('SELECT k,octet_length(v) AS bytes FROM public.relay_pgsl_published WHERE k>$1 ORDER BY k LIMIT 4096', [relayCursor]);
       if (!rows.rows.length) break;
-      for (const row of rows.rows) { invariant(Buffer.isBuffer(row.k), 'invalid relay key'); relayKeys.push(row.k.toString('hex')); }
+      for (const row of rows.rows) { invariant(Buffer.isBuffer(row.k) && Number.isSafeInteger(row.bytes) && (row.bytes as number) <= maxValue, 'invalid relay row size'); relayKeys.push(row.k.toString('hex')); inputBytes += row.bytes as number; }
       relayCursor = rows.rows.at(-1)!.k as Buffer;
     }
     // Empty bytea is a legal relay key and must be copied too.
-    const emptyRelay = await sq("SELECT k FROM public.relay_pgsl_published WHERE k=''::bytea");
-    if (emptyRelay.rows.length) relayKeys.unshift('');
+    const emptyRelay = await sq("SELECT k,octet_length(v) AS bytes FROM public.relay_pgsl_published WHERE k=''::bytea");
+    if (emptyRelay.rows.length) { relayKeys.unshift(''); inputBytes += Number(emptyRelay.rows[0]!.bytes); }
+    invariant(inputBytes <= maxInput, 'combined retained tables exceed the input budget');
     const copiedKv = await copy('pgsl_kv', actual, true);
     const copiedRelay = await copy('relay_pgsl_published', relayKeys, false);
+    await tq('ANALYZE public.pgsl_kv,public.relay_pgsl_published');
     await sq('SELECT 1'); // prove the source fence survived the last target write
     await tq('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'); targetFenced = true;
     await tq('LOCK TABLE public.pgsl_kv,public.relay_pgsl_published IN SHARE MODE NOWAIT');
@@ -303,6 +311,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
         const keys = meta.rows.map(row => { invariant(Buffer.isBuffer(row.k), 'invalid target key'); return row.k.toString('hex'); });
         await boundedRows({ query: tq }, table, keys, (key, value) => {
           frame(digest, key, value); rows++; bytes += value.length;
+          if (table === 'pgsl_kv') validateControl(key, value);
           if (table === 'pgsl_kv' && tagOf(key) === 'N') topologies.set(key.toString('hex'), nodeTopology(key, value, candidate.keys));
         });
         cursor = Buffer.from(keys.at(-1)!, 'hex');

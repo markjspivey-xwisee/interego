@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { Client } from 'pg@8';
 import { copyLiveDatabase } from '../tools/pgsl-live-copy.ts';
 import { nodeKey, cpKey, ovKey } from '../packages/pgsl-store/src/keyspace.ts';
-const url=new URL(Bun.env.PGSL_COPY_FIXTURE_URL!);
+const url=new URL(Bun.env.PGSL_COPY_FIXTURE_URL);
 assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));
 assert.equal(url.pathname,'/postgres');assert.equal(url.username,'copy_fixture');
 const admin=new Client({connectionString:url.href});await admin.connect();
 const prefix='copy_'+crypto.randomUUID().replaceAll('-','').slice(0,12);
-const databases:string[]=[],clients:Client[]=[];
-const connect=async(name:string)=>{
+const databases=[],clients=[];
+const connect=async(name)=>{
   const conn=new URL(url);conn.pathname='/'+name;const client=new Client({connectionString:conn.href});
   await client.connect();clients.push(client);return client;
 };
@@ -28,7 +28,7 @@ try {
   const fragKey=Buffer.from(nodeKey({kind:'fragment',hash:Buffer.from(fragHash,'hex')}));
   const atomBody=Buffer.from(JSON.stringify({uri:atomUri,kind:'atom',level:0,value:'__ENCRYPTED__',provenance:{ciphertext:'opaque'}}));
   const fragmentBody=Buffer.from(JSON.stringify({uri:fragUri,kind:'fragment',level:1,items:[atomUri]}));
-  const insert=async(table:string,k:Buffer,v:Buffer)=>source.query('INSERT INTO public.'+table+'(k,v) VALUES($1,$2)',[k,v]);
+  const insert=async(table,k,v)=>source.query('INSERT INTO public.'+table+'(k,v) VALUES($1,$2)',[k,v]);
   await insert('pgsl_kv',atomKey,atomBody);await insert('pgsl_kv',fragKey,fragmentBody);
   await insert('pgsl_kv',Buffer.from(cpKey('ldp fixture','current')),Buffer.from(JSON.stringify({topUri:fragUri})));
   await insert('pgsl_kv',Buffer.from(ovKey('fixture','current')),Buffer.from(fragUri));
@@ -37,12 +37,12 @@ try {
   await insert('relay_pgsl_published',Buffer.from('unrelated-user-row'),Buffer.from('retain every unrelated relay byte'));
   const target=await fresh(),session=await copyLiveDatabase(source,target,options);
   assert.equal(session.state,'verified-source-fenced');
-  assert.equal((session.receipt.kv as any).rows,4);assert.equal((session.receipt.relay as any).rows,2);
+  assert.equal((session.receipt.kv).rows,4);assert.equal((session.receipt.relay).rows,2);
   assert.equal(session.receipt.liveNodes,2);
-  assert.ok(Object.values(session.receipt.missingDerived as Record<string,number>).reduce((a,b)=>a+b,0)>0);
+  assert.ok(Object.values(session.receipt.missingDerived).reduce((a,b)=>a+b,0)>0);
   assert.deepEqual((await target.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows,(await source.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows);
-  const writer=await connect(databases[0]!);await writer.query("SET lock_timeout='100ms'");
-  await assert.rejects(writer.query('INSERT INTO public.relay_pgsl_published VALUES($1,$2)',[Buffer.from('blocked'),Buffer.from('blocked')]),(error:any)=>error.code==='55P03');
+  const writer=await connect(databases[0]);await writer.query("SET lock_timeout='100ms'");
+  await assert.rejects(writer.query('INSERT INTO public.relay_pgsl_published VALUES($1,$2)',[Buffer.from('blocked'),Buffer.from('blocked')]),(error)=>error.code==='55P03');
   await session.abortBeforeCutover();await writer.query('SELECT 1');
   results.push('URL roots, encrypted address, missing derived indexes, raw relay bytes, held writer fence');
   await assert.rejects(copyLiveDatabase(source,source,options),/destination is the source server/);
@@ -64,14 +64,14 @@ try {
   assert.equal((await source.query('SELECT v FROM public.pgsl_kv WHERE k=$1',[unknownKey])).rows[0].v.toString(),'private unrelated data');
   await source.query('DELETE FROM public.pgsl_kv WHERE k=$1',[unknownKey]);
   results.push('unknown keyspace refuses instead of dropping user data');
-  const lostSource=await connect(databases[0]!),lostTarget=await fresh();let killed=false;
-  const wrapper={query:async(sql:string,params?:unknown[])=>{
+  const lostSource=await connect(databases[0]),lostTarget=await fresh();let killed=false;
+  const wrapper={query:async(sql,params)=>{
     if(!killed&&sql.startsWith('INSERT INTO public."pgsl_kv"')){killed=true;await admin.query('SELECT pg_terminate_backend($1)',[lostSource.processID]);await Bun.sleep(25);}
     return lostTarget.query(sql,params);
   },end:()=>lostTarget.end()};
   await assert.rejects(copyLiveDatabase(lostSource,wrapper,options),/live copy refused:/);assert.equal(killed,true);
   results.push('source disconnect cannot return ready');
-  const handoffSource=await connect(databases[0]!),handoffTarget=await fresh();
+  const handoffSource=await connect(databases[0]),handoffTarget=await fresh();
   const prepared=await copyLiveDatabase(handoffSource,handoffTarget,options);
   await prepared.prepareVolumeCutover();assert.equal(prepared.state,'prepared-for-volume-cutover');
   await assert.rejects(prepared.abortBeforeCutover(),/prepared cutover requires operator recovery/);

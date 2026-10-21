@@ -4,12 +4,14 @@ on:
     branches: ['recovery/pgsl-live-copy-*']
     paths:
       - 'tools/pgsl-live-copy.ts'
-      - 'tests/pgsl-live-copy.fixture.ts'
+      - 'tools/pgsl-live-copy.railway.mjs'
+      - 'tests/pgsl-live-copy.fixture.mjs'
       - '.github/workflows/pgsl-live-copy.yml'
   pull_request:
     paths:
       - 'tools/pgsl-live-copy.ts'
-      - 'tests/pgsl-live-copy.fixture.ts'
+      - 'tools/pgsl-live-copy.railway.mjs'
+      - 'tests/pgsl-live-copy.fixture.mjs'
       - '.github/workflows/pgsl-live-copy.yml'
 permissions:
   contents: read
@@ -40,5 +42,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
+      - name: Check the self-contained Railway artifact
+        run: bun build tools/pgsl-live-copy.railway.mjs --target bun --external 'pg@8' --outdir "$RUNNER_TEMP/copy-build"
       - name: Prove fenced copying and independent raw-byte validation
-        run: bun tests/pgsl-live-copy.fixture.ts
+        run: bun tests/pgsl-live-copy.fixture.mjs
