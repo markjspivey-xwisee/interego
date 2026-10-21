@@ -49,7 +49,7 @@ try{
    assert.equal(modules[name],source,'bundled source equality: '+name);
   }
   const disabled=spawnSync(process.execPath,[new URL('tools/pgsl-store-sweep.railway.mjs',root).pathname],{
-   env:{...process.env,PGSL_SWEEP_ACTION:'off',PGSL_PG_CONNSTR:'invalid-do-not-connect',RAILWAY_PROJECT_TOKEN:'fixture-secret-not-logged'},
+   env:{...process.env,PGSL_SWEEP_ACTION:'off',PGSL_PG_CONNSTR:'invalid-do-not-connect',RAILWAY_PROJECT_TOKEN:'fixture-hidden'},
    encoding:'utf8',timeout:10000});
   assert.equal(disabled.status,0);assert.equal(disabled.stderr,'');assert.equal(disabled.stdout.trim(),'Private PGSL sweep is disabled.');
   results.push('self-contained function matches source exactly and default off never opens invalid DB credentials');
