@@ -39,11 +39,11 @@ try{
  const first=await instance(),result=await runWarmer(first);assert.equal(result.windows,1);assert.ok(result.rows>0&&result.bytes>0&&first.warm.length>0);assert.ok(result.skippedLarge>0);assert.deepEqual((await source.query('SELECT k,v FROM pgsl_kv ORDER BY k')).rows,before);assert.equal((await target.query('SELECT count(*)::int n FROM pgsl_kv')).rows[0].n,0);
  checks.push('actual PostgreSQL md5(bytea) warming returns only bounded key/digest results and changes neither database');
  const wrong=await instance();wrong.targetSystemId='wrong-cluster';await assert.rejects(runWarmer(wrong));assert.equal(wrong.warm.length,0);
- await sf.query('ROLLBACK');const absent=await instance();await assert.rejects(runWarmer(absent),/warmer refused/);assert.equal(absent.warm.length,0);await fence();
+ await sf.query('ROLLBACK');const absent=await instance();await assert.rejects(runWarmer(absent),/warmer refused/,'absent source fence must refuse');assert.equal(absent.warm.length,0);await fence();
  checks.push('wrong physical identity or absent source SHARE fence stops before warming');
- const changed=await instance();let rebound=false;changed.log=async e=>{if(e.kind==='readonly-warmer-wave'&&!rebound){rebound=true;await sf.query('ROLLBACK');await fence();}};await assert.rejects(runWarmer(changed),/warmer refused/);assert.ok(rebound);
+ const changed=await instance();let rebound=false;changed.log=async e=>{if(e.kind==='readonly-warmer-wave'&&!rebound){rebound=true;await sf.query('ROLLBACK');await fence();}};await assert.rejects(runWarmer(changed),/warmer refused/,'rebound source fence must refuse');assert.ok(rebound);
  checks.push('same source PID with a new transaction cannot replace the captured fence');
- const hooks={identityWrong:false},swap=await instance(hooks);swap.log=e=>{if(e.kind==='readonly-warmer-wave')hooks.identityWrong=true;};await assert.rejects(runWarmer(swap),/warmer refused/);
+ const hooks={identityWrong:false},swap=await instance(hooks);swap.log=e=>{if(e.kind==='readonly-warmer-wave')hooks.identityWrong=true;};await assert.rejects(runWarmer(swap),/warmer refused/,'changed target identity must refuse');
  checks.push('target identity change during warming stops permanently');
  const quiet=await instance();quiet.options={...quiet.options,maxWindows:2,deadlineMs:1500};const quietResult=await runWarmer(quiet);assert.equal(quietResult.reason,'deadline');assert.equal(quietResult.windows,1);
  checks.push('no target progress does not repeat a warmed window; deadline ends owned sessions');

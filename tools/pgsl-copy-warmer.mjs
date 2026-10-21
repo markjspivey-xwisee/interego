@@ -66,7 +66,7 @@ export async function runWarmer({source,target,readers,sourceSystemId,targetSyst
    }
    previousEnd=end;totals.windows++;await log({kind:'readonly-warmer-window',windowBytes:windowSize,endPosition:upperBound(keys,end),...totals});
   }
-  return {...totals,reason:'completed'};
+  await guard();return {...totals,reason:'completed'};
  }catch(e){if(stopped==='operator stop'||stopped==='deadline')return {...totals,reason:stopped};throw new Error('read-only warmer refused: identity, fence, query or plan failed');}
- finally{clearTimeout(timer);if(monitor)clearInterval(monitor);signal?.removeEventListener('abort',abort);keys=null;for(const c of clients){await c.query('ROLLBACK').catch(()=>{});await c.end().catch(()=>{});}}
+ finally{clearTimeout(timer);if(monitor)clearInterval(monitor);await guardQueue.catch(()=>{});signal?.removeEventListener('abort',abort);keys=null;for(const c of clients){await c.query('ROLLBACK').catch(()=>{});await c.end().catch(()=>{});}}
 }
