@@ -244,16 +244,26 @@ async function createTables(target: CopyClient, definitions: Row[]): Promise<voi
   }
   await target.query('GRANT SELECT,INSERT,UPDATE,DELETE ON public.relay_pgsl_published TO relay_pgsl');
 }
+/** Preserve the driver's opaque fields while proving the one required row key to the topology reader. */
+function topologyQuery(query: CopyClient['query']): Parameters<typeof readerFromPg>[0]['query'] {
+  return async (sql, params) => {
+    const result = await query(sql, params);
+    return { rows: result.rows.map(row => {
+      invariant(Buffer.isBuffer(row.k), 'topology query returned an invalid key');
+      return { ...row, k: row.k };
+    }) };
+  };
+}
 function candidateReader(source: CopyClient) {
   // Sizing only: atoms are leaves under the N-key contract. Complete bodies are
   // independently validated during copy, before any ready receipt is possible.
-  return readerFromPg({ query(sql: string, params?: unknown[]) {
+  return readerFromPg({ query: topologyQuery((sql: string, params?: unknown[]) => {
     if (sql.includes('AS atom_header') && sql.includes('UNION ALL')) {
       sql = sql.replace(/substring\(source\.v FROM 1 FOR \d+\) AS atom_header/, 'NULL::bytea AS atom_header')
         .replace('false AS needs_js_parse, NULL::json AS topology', "false AS needs_js_parse, json_build_object('kind','atom','level',0) AS topology");
     }
     return source.query(sql, params);
-  } }, 'pgsl_kv', 5000, 4096);
+  }) }, 'pgsl_kv', 5000, 4096);
 }
 function validateControl(key: Buffer, value: Buffer): void {
   const tag = tagOf(key);
@@ -404,7 +414,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
       return { rows, bytes, digest: digest.digest('hex') };
     };
     const relayKeys: string[] = [];
-    let relayCursor = Buffer.alloc(0);
+    let relayCursor: Buffer = Buffer.alloc(0);
     for (;;) {
       const rows = await sq('SELECT k,octet_length(v) AS bytes FROM public.relay_pgsl_published WHERE k>$1 ORDER BY k LIMIT 4096', [relayCursor]);
       if (!rows.rows.length) break;
@@ -440,7 +450,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
       invariant(rows === expected.rows && bytes === expected.bytes && digest.digest('hex') === expected.digest, 'target byte digest differs for ' + table);
     };
     await verify('pgsl_kv', copiedKv); await verify('relay_pgsl_published', copiedRelay);
-    const targetReader = readerFromPg({ query: tq });
+    const targetReader = readerFromPg({ query: topologyQuery(tq) });
     targetReader.getManyTopology = async keys => new Map(keys.filter(key => topologies.has(hex(key))).map(key => [hex(key), topologies.get(hex(key))!]));
     const independent = await collectLive(targetReader, { traversalBatchSize: 4096 });
     invariant(independent.stats.danglingRoots.length === 0 && independent.stats.unreadableNodes === 0
