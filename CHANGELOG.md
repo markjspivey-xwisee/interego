@@ -4,6 +4,10 @@
 
 The private sweep worker bounds each PostgreSQL connection attempt to five seconds and closes both clients when either connection fails, including a cleanup rejection from the other client. Failure remains a nonzero exit with sanitized diagnostics before any SQL runs. Injected entry-point fixtures cover both connection failures; the existing real PostgreSQL retention and reclamation cases remain unchanged.
 
+## 2026-10-21 — Preserve native uploads and conditional deletion under write pressure
+
+Identical-value conditional writes now prove and lock the matching row without replacing it, preserving legacy resource deletion above the physical ceiling and avoiding retirement-journal churn. Bounded default admission now allows 256 MiB of aggregate new/replaced input and 1,048,576 positive operations, preserving the existing 48 MiB package upload and 8 MiB native representation contracts plus RDF projection overhead. Explicit smaller input budgets still bound empty operations. The database ceiling, serialized mutation ordering, reserved physical headroom and fresh precommit check remain enforced. Real PostgreSQL regressions cover conditional proof mismatch and deletion, large replacement, maximum opaque package storage, native revisions and more than 4096 RDF projection writes.
+
 ## 2026-10-21 — Private reclamation preserves current and recent roots
 
 A private PostgreSQL maintenance worker journals mutable roots and retains every current root, all native historical C resources, and one hour of retired mutable roots. Its first hour performs no deletion. Fenced mark-and-sweep deletion and ordinary VACUUM reuse heap and TOAST pages without a second payload table. Queued traffic, incomplete closure, malformed input, insufficient reserve, or a work deadline rolls the deletion transaction back. The Bun Function defaults to off; installation, production measurement and scheduling remain explicit recovery-owner rollout steps. A trusted-master workflow can forward the existing project token only to the named private worker without deployment. The legacy GitHub collector is now manual-only, so it cannot start alongside the private cron.
