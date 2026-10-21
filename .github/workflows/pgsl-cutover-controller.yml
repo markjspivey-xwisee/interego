@@ -9,6 +9,9 @@ on:
       - '.github/workflows/pgsl-cutover-controller.yml'
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   controller:
     runs-on: ubuntu-latest
