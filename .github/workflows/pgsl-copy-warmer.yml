@@ -1,0 +1,49 @@
+name: PGSL private read-only warmer fixture
+on:
+  push:
+    branches: ['recovery/pgsl-copy-warmer-*']
+  pull_request:
+    paths:
+      - 'tools/pgsl-copy-warmer*'
+      - 'tests/pgsl-copy-warmer.fixture.mjs'
+      - '.github/workflows/pgsl-copy-warmer.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  warmer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      source:
+        image: postgres:16
+        env:
+          POSTGRES_USER: iegoadmin
+          POSTGRES_PASSWORD: fixture_only
+          POSTGRES_DB: pgsl_prod
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      target:
+        image: postgres:16
+        env:
+          POSTGRES_USER: iegoadmin
+          POSTGRES_PASSWORD: fixture_only
+          POSTGRES_DB: pgsl_prod
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGSL_COPY_FIXTURE_URL: postgresql://iegoadmin:fixture_only@127.0.0.1:5432/pgsl_prod
+      PGSL_COPY_FIXTURE_TARGET_URL: postgresql://iegoadmin:fixture_only@127.0.0.1:5433/pgsl_prod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Compile the self-contained private warmer
+        run: bun build tools/pgsl-copy-warmer.railway.mjs --target bun --external 'pg@8' --outdir "$RUNNER_TEMP/warmer-build"
+      - name: Prove read-only bounds, fence binding and terminal lifecycle
+        run: bun tests/pgsl-copy-warmer.fixture.mjs

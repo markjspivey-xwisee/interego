@@ -64,7 +64,7 @@ export async function runWarmer({source,target,readers,sourceSystemId,targetSyst
      for(let n=0;n<r.rows.length;n++){ok(Buffer.isBuffer(r.rows[n].k)&&r.rows[n].k.equals(group[n].k)&&typeof r.rows[n].warm_digest==='string'&&/^[0-9a-f]{32}$/.test(r.rows[n].warm_digest),'warming result differs');r.rows[n]={};}return {rows:group.length,bytes:sum};
     }));for(const r of waveResults){if(r.status==='rejected')throw r.reason;totals.rows+=r.value.rows;totals.bytes+=r.value.bytes;}totals.waves++;await guard();await log({kind:'readonly-warmer-wave',...totals});
    }
-   previousEnd=end;totals.windows++;await log({kind:'readonly-warmer-window',windowBytes:windowSize,...totals});
+   previousEnd=end;totals.windows++;await log({kind:'readonly-warmer-window',windowBytes:windowSize,endPosition:upperBound(keys,end),...totals});
   }
   return {...totals,reason:'completed'};
  }catch(e){if(stopped==='operator stop'||stopped==='deadline')return {...totals,reason:stopped};throw new Error('read-only warmer refused: identity, fence, query or plan failed');}
