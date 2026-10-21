@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
+import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 import {Client} from 'pg@8';
 import {createCutoverController,hashTable,metadata,RECOVERY_ROLE,receiptKey} from '../tools/pgsl-cutover-controller.mjs';
@@ -60,7 +60,11 @@ try{
  const rescueUrl=new URL(urls.target);rescueUrl.username=RECOVERY_ROLE;
  let rescue=await connectReal(rescueUrl);const flags=(await rescue.query("SELECT rolcanlogin FROM pg_roles WHERE rolname IN ('iegoadmin','relay_pgsl')")).rows;assert.ok(flags.every(x=>!x.rolcanlogin));await rescue.end();
  checks.push('durable source connection block and target NOLOGIN quarantine preserve exact fence backend');
- controller=make();assert.equal((await controller.run('status')).phase,'fenced');assert.equal((await controller.run('prepare')).phase,'prepared');assert.equal(workerPrepares,1);
+ controller=make();assert.equal((await controller.run('status')).phase,'fenced');
+ await sf.query('ROLLBACK');await assert.rejects(controller.run('prepare'),/copy fence|writer fences/);assert.equal(durable.phase,'fenced');
+ await sf.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await sf.query('LOCK TABLE pgsl_kv,relay_pgsl_published IN SHARE MODE NOWAIT');
+ checks.push('preparation refuses a missing SHARE fence and keeps both persistent quarantines');
+ assert.equal((await controller.run('prepare')).phase,'prepared');assert.equal(workerPrepares,1);
  controller=make();assert.equal((await controller.run('prepare')).phase,'prepared');assert.equal(workerPrepares,1);
  await assert.rejects(controller.run('verify-activate'),/physical database identity/);
  checks.push('prepare survives controller restart and original source is never accepted as target');
@@ -79,9 +83,19 @@ try{
  swapped=false;await assert.rejects(make().run('verify-activate'),/physical database identity/);
  checks.push('even an activated retry requires current physical target identity');
  const wrapper=await readFile(new URL('../tools/pgsl-cutover-controller.railway.mjs',import.meta.url),'utf8');
- const begin=wrapper.indexOf('const coreSource=')+'const coreSource='.length,end=wrapper.indexOf(';\\nconst required=',begin);
+ const begin=wrapper.indexOf('const coreSource=')+'const coreSource='.length;
  const delimiter=wrapper.indexOf(';\nconst required=',begin);assert.ok(delimiter>begin);assert.equal(JSON.parse(wrapper.slice(begin,delimiter)),await readFile(new URL('../tools/pgsl-cutover-controller.mjs',import.meta.url),'utf8'));
  assert.ok(wrapper.includes("IfNoneMatch:'*'")&&wrapper.includes('IfMatch:etag'));checks.push('Railway wrapper embeds the tested controller and uses conditional durable journal writes');
+ let handle,releaseBody,releaseAction,calls=0;
+ const action=new Promise(resolve=>{releaseAction=resolve;});
+ const httpSource=wrapper.slice(wrapper.indexOf('Bun.serve({'),wrapper.indexOf("console.log(JSON.stringify({kind:'cutover-controller-ready'"));
+ vm.runInNewContext('let running,last;'+httpSource,{Bun:{env:{},serve:config=>{handle=config.fetch;}},authorized:()=>true,readJournal:async()=>null,sourceSystemId,targetSystemId,URL,Response,Date,Number,console:{log:()=>{}},controller:{run:async()=>{calls++;return action;}}});
+ const one=handle({method:'POST',url:'http://controller/run',json:()=>new Promise(resolve=>{releaseBody=resolve;})});
+ const two=await handle({method:'POST',url:'http://controller/run',json:async()=>({mode:'prepare'})});
+ assert.equal(two.status,409);assert.equal(calls,0);
+ releaseBody({mode:'preflight'});assert.equal((await one).status,202);assert.equal(calls,1);
+ const statusBody=await (await handle({method:'GET',url:'http://controller/status'})).json();assert.equal(statusBody.running.mode,'preflight');
+ releaseAction({phase:'preflight-ready'});checks.push('actual HTTP wrapper reserves admission before asynchronous body parsing');
  console.log(JSON.stringify({kind:'cutover_fixture_pass',checks}));
 }finally{
  for(const c of clients)await c.end().catch(()=>{});

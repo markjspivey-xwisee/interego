@@ -42,8 +42,9 @@ Bun.serve({port:Number(Bun.env.PORT??8080),hostname:'::',idleTimeout:255,async f
  }
  if(request.method==='POST'&&path==='/run'){
   if(running)return Response.json({error:'operation already running',running},{status:409});
-  let body;try{body=await request.json();}catch{return new Response('invalid body',{status:400});}
-  if(!['preflight','fence','prepare','verify-activate'].includes(body.mode))return new Response('unknown mode',{status:400});
+  running={mode:'parsing',startedAt:new Date().toISOString()};
+  let body;try{body=await request.json();}catch{running=undefined;return new Response('invalid body',{status:400});}
+  if(!['preflight','fence','prepare','verify-activate'].includes(body.mode)){running=undefined;return new Response('unknown mode',{status:400});}
   const mode=body.mode;running={mode,startedAt:new Date().toISOString()};
   void controller.run(mode).then(result=>{last={ok:true,mode,result};console.log(JSON.stringify({kind:'cutover-controller-result',...last}));})
    .catch(()=>{last={ok:false,mode,error:'operation failed; retain quarantine and inspect the durable journal'};console.log(JSON.stringify({kind:'cutover-controller-result',...last}));})
