@@ -67,6 +67,15 @@ try {
   await assert.rejects(copyLiveDatabase(source,occupied,options),/destination contains user relations/);
   assert.equal((await occupied.query('SELECT count(*)::int n FROM sentinel')).rows[0].n,0);
   results.push('nonempty target refuses without touching unrelated table');
+  const aclTarget=await fresh();
+  await source.query('GRANT USAGE ON SCHEMA public TO relay_pgsl');
+  await assert.rejects(copyLiveDatabase(source,aclTarget,options),/database\/public schema access differs/);
+  assert.equal((await aclTarget.query("SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'")).rows[0].n,0);
+  await source.query('REVOKE USAGE ON SCHEMA public FROM relay_pgsl');
+  await source.query('GRANT CONNECT ON DATABASE "'+databases[0].name+'" TO relay_pgsl');
+  await assert.rejects(copyLiveDatabase(source,aclTarget,options),/database\/public schema access differs/);
+  await source.query('REVOKE CONNECT ON DATABASE "'+databases[0].name+'" FROM relay_pgsl');
+  results.push('database and public-schema ACL differences refuse before target DDL');
   const badTarget=await fresh();
   const invalidUtf8=Buffer.concat([Buffer.from('{"uri":"'+atomUri+'","kind":"atom","level":0,"value":"'),Buffer.from([0xff]),Buffer.from('"}')]);
   await source.query('UPDATE public.pgsl_kv SET v=$2 WHERE k=$1',[atomKey,invalidUtf8]);

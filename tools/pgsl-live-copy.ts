@@ -135,6 +135,23 @@ async function copyRelayRole(source: CopyClient, target: CopyClient): Promise<vo
   invariant(copied.rows.length === 1 && JSON.stringify(copied.rows[0]) === JSON.stringify(role), 'copied relay role differs');
 }
 
+/** Compare permissions before target DDL; unexpected cluster/schema grants must never disappear. */
+export async function databaseAccessFingerprint(client: CopyClient): Promise<string> {
+  const result = await client.query(`SELECT 'database' AS scope,pg_get_userbyid(d.datdba) AS owner,
+    (SELECT json_agg(json_build_object('grantee',CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,
+      'grantor',pg_get_userbyid(a.grantor),'privilege',a.privilege_type,'grantable',a.is_grantable)
+      ORDER BY CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,pg_get_userbyid(a.grantor),a.privilege_type)
+      FROM aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a) AS acl
+    FROM pg_database d WHERE datname=current_database()
+    UNION ALL SELECT 'public-schema',pg_get_userbyid(n.nspowner),
+    (SELECT json_agg(json_build_object('grantee',CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,
+      'grantor',pg_get_userbyid(a.grantor),'privilege',a.privilege_type,'grantable',a.is_grantable)
+      ORDER BY CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,pg_get_userbyid(a.grantor),a.privilege_type)
+      FROM aclexplode(coalesce(n.nspacl,acldefault('n',n.nspowner))) a)
+    FROM pg_namespace n WHERE nspname='public' ORDER BY scope`);
+  invariant(result.rows.length === 2, 'database/public schema access metadata is incomplete');
+  return JSON.stringify(result.rows);
+}
 async function schema(client: CopyClient, empty: boolean): Promise<Row[]> {
   const current = await client.query('SELECT current_user AS role');
   const owner = String(current.rows[0]!.role);
@@ -248,6 +265,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     invariant(Math.floor(Number(from.version) / 10000) === 16 && Math.floor(Number(to.version) / 10000) === 16, 'requires reviewed PostgreSQL 16');
     invariant(JSON.stringify(from.locale) === JSON.stringify(to.locale), 'database locales differ');
     await schema(target, true);
+    invariant(await databaseAccessFingerprint(source) === await databaseAccessFingerprint(target), 'database/public schema access differs');
     releaseCollector = await acquireCollectorLock(source, 'pgsl_kv');
     await sq('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     fenced = true;
