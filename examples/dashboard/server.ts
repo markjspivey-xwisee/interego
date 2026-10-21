@@ -16,6 +16,7 @@
  *   PORT      — Dashboard port (default: 4000)
  */
 
+import { clientDemandPoller } from './polling-demand.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve, dirname } from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -454,7 +455,7 @@ async function pollOne(name: string): Promise<void> {
   pods.set(podUrl, state);
 }
 
-async function pollPods(): Promise<void> {
+async function collectPods(): Promise<void> {
   const podNames = await getPodNamesCached();
 
   // Poll in chunks of POLL_CONCURRENCY so we don't burst every pod at
@@ -462,6 +463,8 @@ async function pollPods(): Promise<void> {
   // slots, and 12+ concurrent reads against /{user}/agents exhausts it
   // within the 6s lock expiry (see commit history for the incident).
   for (let i = 0; i < podNames.length; i += POLL_CONCURRENCY) {
+    // Closing the final view stops the next batch; only already-started reads finish.
+    if (sseClients.size === 0) break;
     const batch = podNames.slice(i, i + POLL_CONCURRENCY);
     await Promise.all(
       batch.map(name => pollOne(name).catch(err => log(`pollOne(${name}) failed: ${(err as Error).message}`))),
@@ -475,6 +478,9 @@ async function pollPods(): Promise<void> {
     timestamp: new Date().toISOString(),
   });
 }
+
+// The startup call, interval and first-view refresh share one work flight.
+const pollPods = clientDemandPoller(collectPods, () => sseClients.size);
 
 // ── HTTP Server ─────────────────────────────────────────────
 
@@ -532,6 +538,8 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       relay: RELAY_URL || null,
       identity: IDENTITY_URL || null,
       build: process.env['INTEREGO_BUILD_SHA'] ?? 'unset',
+      polling: 'viewer-demand',
+      viewers: sseClients.size,
     });
     return;
   }
@@ -578,8 +586,10 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
       },
       timestamp: new Date().toISOString(),
     })}\n\n`);
+    const firstViewer = sseClients.size === 0;
     sseClients.add(res);
     req.on('close', () => sseClients.delete(res));
+    if (firstViewer) void pollPods().catch(err => log(`View refresh failed: ${(err as Error).message}`));
     return;
   }
 
@@ -937,7 +947,7 @@ server.listen(DASH_PORT, async () => {
     log(`NOTE: set PUBLIC_BASE_URL to enable OAuth sign-in flow (e.g. https://interego-dashboard.<host>).`);
   }
 
-  // Initial poll
+  // No startup discovery unless a viewer has already connected.
   await pollPods().catch(err => log(`Initial poll failed: ${(err as Error).message}`));
 
   // Start polling loop
