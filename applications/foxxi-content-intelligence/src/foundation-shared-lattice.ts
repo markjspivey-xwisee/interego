@@ -354,7 +354,9 @@ async function casPersist(a: {
     const precond = { ...(s.etag ? { ifMatch: s.etag } : (s.absent ? { ifNoneMatch: '*' as const } : {})), confirmBody: true };
     const w = await promoteInstanceEncryptedCAS(instance, a.holonUri, a.resourceUrl, a.recipients, kpFull, doFetch, precond);
     if (w.status === 'ok') {
-      s.etag = w.etag; s.absent = false;
+      // A later HEAD may belong to another writer. Without proof of our exact
+      // body, leave the precondition unknown so the next compose reloads/merges.
+      s.etag = w.confirmedEtag; s.absent = false;
       s.checkpoint = w.confirmedEtag ? { digest: fingerprint, etag: w.confirmedEtag } : undefined;
       unreadable.delete(a.label);
       return { ok: true, pgsl: instance };

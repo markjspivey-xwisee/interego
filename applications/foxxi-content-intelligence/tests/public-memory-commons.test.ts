@@ -17,7 +17,7 @@ process.env.FOXXI_WALLET_SEED ||= 'public-memory-commons-regression-seed';
 import { describe, it, expect } from 'vitest';
 import {
   composeIntoSharedLattice, resolvePublicNode,
-  dereferenceTerm, isResident,
+  dereferenceTerm, isResident, persistedLatticeArtifacts,
 } from '../src/foundation-shared-lattice.js';
 
 /** An in-memory pod: GET a lattice/key resource = 404 (absent, so instances start fresh
@@ -27,6 +27,7 @@ function makePodFetch(failedHolonPuts = 0) {
   const requests: Array<{ method: string; url: string }> = [];
   const etags = new Map<string, number>();
   const bodies = new Map<string, string>();
+  let replacementAfterPut: string | undefined;
   const fetchFn = (async (url: string | URL, opts: { method?: string; body?: unknown } = {}) => {
     const u = String(url);
     const method = (opts.method ?? 'GET').toUpperCase();
@@ -40,6 +41,10 @@ function makePodFetch(failedHolonPuts = 0) {
         if (failedHolonPuts-- > 0) return new Response(null, { status: 503 });
         bodies.set(u, String(opts.body));
         etags.set(u, (etags.get(u) ?? 0) + 1);
+        if (replacementAfterPut !== undefined) {
+          bodies.set(u, replacementAfterPut); replacementAfterPut = undefined;
+          etags.set(u, (etags.get(u) ?? 0) + 1);
+        }
         return new Response(null, { status: 201 });
       }
       return new Response(null, { status: 200 });                              // container / descriptor
@@ -48,7 +53,11 @@ function makePodFetch(failedHolonPuts = 0) {
   }) as unknown as typeof fetch;
   const holonPuts = () => requests.filter(r => r.method === 'PUT' && r.url.endsWith('.holon.json')).map(r => r.url);
   const descriptorPuts = () => requests.filter(r => r.method === 'PUT' && r.url.endsWith('.ttl')).map(r => r.url);
-  return { fetchFn, holonPuts, descriptorPuts, advanceEtag: (u: string) => etags.set(u, (etags.get(u) ?? 0) + 1) };
+  return { fetchFn, holonPuts, descriptorPuts,
+    advanceEtag: (u: string) => etags.set(u, (etags.get(u) ?? 0) + 1),
+    bodyAt: (u: string) => bodies.get(u),
+    replaceAfterNextHolonPut: (body: string) => { replacementAfterPut = body; },
+  };
 }
 
 const RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
@@ -171,6 +180,26 @@ describe('shared lattice duplicate encrypted snapshots', () => {
     pod.advanceEtag(pod.holonPuts()[0]!);
     expect((await composeIntoSharedLattice(args))?.persisted).toBe(true);
     expect(pod.holonPuts()).toHaveLength(2);
+  }, 30000);
+
+  it('reloads and preserves a foreign body when its ETag follows an unconfirmed PUT', async () => {
+    const foreign = makePodFetch(), remoteContent = { id: 'foreign-only', result: 'preserve' };
+    const remote = { ...argsFor('foreign-receipt-source', foreign.fetchFn),
+      terms: ['urn:test:foreign-only'], content: remoteContent };
+    expect((await composeIntoSharedLattice(remote))?.persisted).toBe(true);
+    const foreignBody = foreign.bodyAt(foreign.holonPuts()[0]!)!;
+    const pod = makePodFetch(), args = argsFor('foreign-receipt-destination', pod.fetchFn);
+    // Another authorized writer wins after our PUT and before its readback.
+    // That readback and the later HEAD both name the foreign body's ETag.
+    pod.replaceAfterNextHolonPut(foreignBody);
+    expect((await composeIntoSharedLattice(args))?.persisted).toBe(true);
+    const secondContent = { id: 'local-second', result: 2 };
+    expect((await composeIntoSharedLattice({ ...args,
+      terms: ['urn:test:local-second'], content: secondContent }))?.persisted).toBe(true);
+    const durable = await persistedLatticeArtifacts(args.podUrl, 'xapi:Statement', 'shared-lattice', pod.fetchFn);
+    expect(durable?.map(artifact => artifact.content)).toEqual(expect.arrayContaining([
+      remoteContent, args.content, secondContent,
+    ]));
   }, 30000);
 
   it('retries unconfirmed writes and skips only after a later acknowledged body', async () => {
