@@ -187,7 +187,7 @@ try{
   }finally{resume();await writing.catch(()=>{});await adapter.close();}
   results.push('existing real-adapter dedup reader makes ACCESS EXCLUSIVE NOWAIT defer before deletion');
  }
- console.log(JSON.stringify({kind:'sweep_fixture_pass',passed:results.length,results}));
+ process.stdout.write(JSON.stringify({kind:'sweep_fixture_pass',passed:results.length,results})+'\n');
 }finally{
  for(const c of clients){await c.query('ROLLBACK').catch(()=>{});await c.end().catch(()=>{});}
  for(const name of databases){await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()',[name]);await admin.query('DROP DATABASE "'+name+'"');}
