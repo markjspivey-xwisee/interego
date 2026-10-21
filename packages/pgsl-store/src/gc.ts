@@ -173,6 +173,7 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
           const atoms = keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] === 1);
           for (let i = 0; i < atoms.length; i += topologyBatchSize) batches.push(atoms.slice(i, i + topologyBatchSize).map(k => Buffer.from(k)));
           const fragments = keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] !== 1);
+          let fragmentBytes = 0;
           for (let i = 0; i < fragments.length; i += topologyBatchSize) {
             const requested = fragments.slice(i, i + topologyBatchSize).map(k => Buffer.from(k));
             const sizes = await client.query(`SELECT k,octet_length(v) AS value_bytes FROM ${t} WHERE k=ANY($1::bytea[]) ORDER BY k`, [requested]);
@@ -181,6 +182,8 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
             for (const row of sizes.rows) {
               if (!Buffer.isBuffer(row.k) || !wanted.delete(row.k.toString('hex')) || !Number.isSafeInteger(row.value_bytes)
                 || (row.value_bytes as number) < 0 || (row.value_bytes as number) > 8 * 1024 * 1024) throw new Error('unbounded fragment topology');
+              fragmentBytes += row.value_bytes as number;
+              if (fragmentBytes > 64 * 1024 * 1024) throw new Error('unbounded fragment frontier');
               if (group.length && bytes + (row.value_bytes as number) > 8 * 1024 * 1024) {
                 batches.push(group); group = []; bytes = 0;
               }

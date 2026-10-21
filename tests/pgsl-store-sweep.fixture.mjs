@@ -118,6 +118,17 @@ try{
   assert.equal(r.status,'swept');assert.equal(r.vacuumed,false);assert.equal(await exists(c,key(201)),false);
   results.push('post-commit VACUUM failure reports committed deletes accurately and permits retry');
  }
+ {
+  const requested=Array.from({length:9},(_,i)=>key(300+i,'fragment'));
+  let queries=0;
+  const bounded=readerFromPg({query:async(sql)=>{
+   queries++;assert.ok(sql.startsWith('SELECT k,octet_length(v)'), 'aggregate refusal must happen before any fragment JSON query');
+   return{rows:requested.map(k=>({k,value_bytes:8*1024**2}))};
+  }},'pgsl_kv',5000,4096);
+  await assert.rejects(bounded.getManyTopology(requested),/refusing collection/);
+  assert.equal(queries,1);
+  results.push('aggregate fragment frontier over64MiB refuses before exporting topology');
+ }
  console.log(JSON.stringify({kind:'sweep_fixture_pass',passed:results.length,results}));
 }finally{
  for(const c of clients){await c.query('ROLLBACK').catch(()=>{});await c.end().catch(()=>{});}

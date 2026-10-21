@@ -183,6 +183,8 @@ export async function sweepStore({client,watchdog,table='pgsl_kv',measureFreeByt
     }catch{await cancel('watchdog, deadline or WAL measurement failed');}
   };
   try {
+    // Cover writes occurring while the external volume sample is acquired too.
+    walStart=(await watchdog.query('SELECT pg_current_wal_lsn()::text AS wal')).rows[0].wal;
     freeAtStart=await measureFreeBytes();
     if(!Number.isSafeInteger(freeAtStart)||freeAtStart<minFreeBytes+2*batchBytes)throw Error('sweep aborted: insufficient fresh headroom');
     await client.query('BEGIN');
@@ -192,7 +194,7 @@ export async function sweepStore({client,watchdog,table='pgsl_kv',measureFreeByt
     await client.query(`LOCK TABLE ${n.relation} IN SHARE ROW EXCLUSIVE MODE NOWAIT`);
     const identity=await client.query(`SELECT pg_backend_pid() AS pid,to_regclass($1)::oid AS oid,
       pg_current_wal_lsn()::text AS wal,clock_timestamp()-interval '1 hour' AS cutoff`,[n.relation]);
-    ({pid,oid}=identity.rows[0]);walStart=identity.rows[0].wal;
+    ({pid,oid}=identity.rows[0]);
     timer=setInterval(()=>{monitorTask=monitorTask.then(monitor);},100);
     timer.unref();
     await verifyJournal(client,n);
