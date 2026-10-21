@@ -183,7 +183,7 @@ describe.skipIf(!RUN)('pgsl-store: FULL stack over REAL PostgreSQL', () => {
         expect((await client.query<{ count: string }>(`SELECT count(*)::text AS count FROM ${table}`)).rows).toEqual(count.rows);
         await client.query(`UPDATE ${table} SET v=$2 WHERE k=$1`, [corruptKey, Buffer.from(original)]);
       }
-      await client.query(`UPDATE ${table} SET v=$2 WHERE k=$1`, [corruptKey, Buffer.from('{"kind":"wrong","level":0}')]);
+      await client.query(`UPDATE ${table} SET v=$2 WHERE k=$1`, [corruptKey, Buffer.from(JSON.stringify({ uri: nodes[0]!.uri, kind: 'wrong', level: 0 }))]);
       const malformedShape = await collectLive(observed);
       expect(malformedShape.stats.unreadableNodes).toBe(1);
     } finally {
