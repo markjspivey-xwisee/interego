@@ -35,6 +35,14 @@ const quote = (value: string): string => '"' + value.replaceAll('"', '""') + '"'
 function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error('live copy refused: ' + message);
 }
+export function decodePayloadBase64(encoded: unknown, bytes: number): Buffer {
+  invariant(typeof encoded === 'string' && Number.isSafeInteger(bytes) && bytes >= 0, 'invalid base64 payload');
+  const compact = encoded.replaceAll('\n', '');
+  invariant(compact.length === Math.ceil(bytes / 3) * 4, 'base64 payload length differs');
+  const value = Buffer.from(compact, 'base64');
+  invariant(value.length === bytes && value.toString('base64') === compact, 'base64 payload bytes differ');
+  return value;
+}
 function tagOf(key: Uint8Array): string | null {
   return key.length >= 6 && Buffer.from(key.subarray(0, 5)).equals(PREFIX)
     ? String.fromCharCode(key[5]!) : null;
@@ -366,23 +374,24 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     const boundedRows = async (client: { query: typeof sq }, table: string, keys: string[], consume: (key: Buffer, value: Buffer) => void | Promise<void>) => {
       const meta = await client.query('SELECT k,octet_length(v) AS bytes FROM public.' + quote(table) + ' WHERE k=ANY($1::bytea[]) ORDER BY k', [keys.map(k => Buffer.from(k, 'hex'))]);
       invariant(meta.rows.length === keys.length, 'planned source rows changed');
-      let group: Buffer[] = [], bytes = 0;
+      let group: Buffer[] = [], lengths: number[] = [], bytes = 0;
       const flush = async () => {
         if (!group.length) return;
-        const rows = await client.query('SELECT k,v FROM public.' + quote(table) + ' WHERE k=ANY($1::bytea[]) ORDER BY k', [group]);
+        const rows = await client.query("SELECT k,encode(v,'base64') AS v_base64 FROM public." + quote(table) + ' WHERE k=ANY($1::bytea[]) ORDER BY k', [group]);
         invariant(rows.rows.length === group.length, 'payload batch lost rows');
         for (let i = 0; i < rows.rows.length; i++) {
           const row = rows.rows[i]!;
-          invariant(Buffer.isBuffer(row.k) && row.k.equals(group[i]!) && Buffer.isBuffer(row.v), 'payload row/key mismatch');
-          await consume(row.k, row.v);
+          invariant(Buffer.isBuffer(row.k) && row.k.equals(group[i]!), 'payload row/key mismatch');
+          const value = decodePayloadBase64(row.v_base64, lengths[i]!);
+          await consume(row.k, value);
           rows.rows[i] = {}; // release opaque bytes immediately
         }
-        group = []; bytes = 0;
+        group = []; lengths = []; bytes = 0;
       };
       for (const row of meta.rows) {
         invariant(Buffer.isBuffer(row.k) && Number.isSafeInteger(row.bytes) && (row.bytes as number) <= maxValue, 'invalid payload plan');
         if (group.length && (group.length >= 128 || bytes + (row.bytes as number) > maxBatch)) await flush();
-        group.push(row.k); bytes += row.bytes as number;
+        group.push(row.k); lengths.push(row.bytes as number); bytes += row.bytes as number;
       }
       await flush();
     };

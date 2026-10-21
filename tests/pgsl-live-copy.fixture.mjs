@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { Client } from 'pg@8';
-import { copyLiveDatabase, holdsPreparedFence, databaseAccessFingerprint } from '../tools/pgsl-live-copy.ts';
+import { copyLiveDatabase, holdsPreparedFence, databaseAccessFingerprint, decodePayloadBase64 } from '../tools/pgsl-live-copy.ts';
 import { nodeKey, cpKey, ovKey } from '../packages/pgsl-store/src/keyspace.ts';
 const urls={source:new URL(Bun.env.PGSL_COPY_FIXTURE_URL),target:new URL(Bun.env.PGSL_COPY_FIXTURE_TARGET_URL)};
 for(const url of Object.values(urls)){assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));assert.equal(url.pathname,'/postgres');assert.equal(url.username,'copy_fixture');}
@@ -23,6 +23,13 @@ const fresh=async(kind='target')=>{
 const options={maxInputBytes:1_000_000,maxTargetDatabaseBytes:100_000_000,maxValueBytes:4_000_000,payloadBatchBytes:1024};
 const results=[];
 try {
+  const opaqueBytes=Buffer.from(Array.from({length:65537},(_,i)=>i%256));
+  assert.deepEqual(decodePayloadBase64(opaqueBytes.toString('base64').replace(/.{76}/g,'try {
+  const source\n'),opaqueBytes.length),opaqueBytes);
+  assert.deepEqual(decodePayloadBase64('',0),Buffer.alloc(0));
+  for(const [encoded,bytes]of [['AA==',2],['AB==',1],['A?==',1],['AA==',0],[Buffer.from('AA=='),1]])
+    assert.throws(()=>decodePayloadBase64(encoded,bytes),/base64 payload/);
+  results.push('canonical multiline base64 preserves all byte values and empty payloads; malformed/short encodings refuse');
   const source=await fresh('source');
   await source.query('ALTER DATABASE "'+databases[0].name+'" SET idle_in_transaction_session_timeout=\'5min\'');
   await admins.source.query("SET password_encryption='scram-sha-256'");
@@ -49,9 +56,11 @@ try {
   await insert('relay_pgsl_published',Buffer.from('unrelated-user-row'),Buffer.from('retain every unrelated relay byte'));
   const rawSourceQuery=source.query.bind(source);let widestTopologyQuery=0;
   source.query=async(sql,params)=>{if(sql.includes('AS atom_header'))widestTopologyQuery=Math.max(widestTopologyQuery,params[0].length);return rawSourceQuery(sql,params);};
+  await insert('relay_pgsl_published',Buffer.from('all-byte-values'),opaqueBytes);
+  await insert('relay_pgsl_published',Buffer.from('empty-value'),Buffer.alloc(0));
   const target=await fresh(),session=await copyLiveDatabase(source,target,options);
   assert.equal(session.state,'verified-source-fenced');
-  assert.equal((session.receipt.kv).rows,67);assert.equal((session.receipt.relay).rows,2);
+  assert.equal((session.receipt.kv).rows,67);assert.equal((session.receipt.relay).rows,4);
   assert.equal(session.receipt.liveNodes,65);
   assert.ok(widestTopologyQuery>32,'copy must opt into bounded large topology traversal');
   assert.ok(Object.values(session.receipt.missingDerived).reduce((a,b)=>a+b,0)>0);
@@ -65,7 +74,7 @@ try {
     (await source.query("SELECT reloptions FROM pg_class WHERE oid='public.pgsl_kv'::regclass")).rows);
   const relayUrl=new URL(urls.target);relayUrl.pathname='/'+databases[1].name;relayUrl.username='relay_pgsl';relayUrl.password='fixture_private_password';
   const relay=new Client({connectionString:relayUrl.href});await relay.connect();clients.push(relay);
-  assert.equal((await relay.query('SELECT count(*)::int n FROM public.relay_pgsl_published')).rows[0].n,2);
+  assert.equal((await relay.query('SELECT count(*)::int n FROM public.relay_pgsl_published')).rows[0].n,4);
   assert.equal((await relay.query("SELECT has_table_privilege(current_user,'public.pgsl_kv','SELECT') AS allowed")).rows[0].allowed,false);
   results.push('SCRAM, table/schema ACLs and database timeout default survive on a different PG16 server');
   const writer=await connect('source',databases[0].name);await writer.query("SET lock_timeout='100ms'");
@@ -133,6 +142,8 @@ try {
   const coreSource=await readFile(new URL('../tools/pgsl-live-copy.ts',import.meta.url),'utf8');
   assert.equal(bundled['live-copy.ts'],coreSource.replaceAll('../packages/pgsl-store/src/gc.js','./gc.ts')
     .replaceAll('../packages/pgsl-store/src/addressing.js','./addressing.ts').replaceAll('../packages/pgsl-store/src/keyspace.js','./keyspace.ts'));
+  assert.ok(wrapperSource.includes('validUntil=Date.now()+120*60*1000'),'copy deadline is 120 minutes');
+  assert.ok(!wrapperSource.includes('validUntil=Date.now()+60*60*1000'));
   const watchdogSource=wrapperSource.slice(wrapperSource.indexOf('let overdueReported=false;'),wrapperSource.indexOf('const awaitPreparedStop='));
   for(const state of ['preparing-volume-cutover','prepared-for-volume-cutover','preparation-failed-source-fenced','verified-source-fenced']){
     const calls={source:0,target:0,stop:0,exit:0},events=[];
