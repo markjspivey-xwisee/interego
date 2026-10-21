@@ -1,0 +1,28 @@
+name: Foxxi idle network regressions
+on:
+  pull_request:
+    paths:
+      - 'applications/foxxi-content-intelligence/src/gateway-transport.ts'
+      - 'applications/foxxi-content-intelligence/src/on-demand-work.ts'
+      - 'applications/foxxi-content-intelligence/bridge/server.ts'
+      - 'applications/agentic-performance-practice/compatibility/foxxi-performance-routes.ts'
+      - 'tests/foxxi-idle-network.test.mjs'
+      - '.github/workflows/foxxi-idle-network.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'applications/foxxi-content-intelligence/src/gateway-transport.ts'
+      - 'applications/foxxi-content-intelligence/src/on-demand-work.ts'
+      - 'tests/foxxi-idle-network.test.mjs'
+permissions:
+  contents: read
+jobs:
+  idle-network:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.2
+      - run: node --test tests/foxxi-idle-network.test.mjs
