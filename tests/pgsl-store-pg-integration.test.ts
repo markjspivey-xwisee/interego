@@ -463,6 +463,7 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
       });
       await Promise.race([enteredPromise, first.then(() => { throw new Error('writer completed before its barrier'); })]);
       second = two.transact(async tx => { tx.set(secondKey, Buffer.from('second')); await tx.get(secondKey); });
+      void second.catch(() => undefined); // Keep an early SQL failure handled until the final await.
       // Observe a real PostgreSQL lock wait rather than assuming timer order.
       let waiting = false;
       const deadline = performance.now() + 5000;
@@ -514,7 +515,7 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
       await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [seed, Buffer.from('preserved')]);
       await fixture.client.query(`CREATE SEQUENCE ${sequence}`);
       await fixture.client.query(`CREATE FUNCTION ${counter}() RETURNS trigger LANGUAGE plpgsql AS $$
-        BEGIN PERFORM nextval('${sequence}'); RETURN NEW; END $$`);
+        BEGIN PERFORM nextval('${sequence}'); RETURN NEW; END; $$`);
       await fixture.client.query(`CREATE TRIGGER pressure_count BEFORE INSERT OR UPDATE ON ${fixture.table}
         FOR EACH ROW EXECUTE FUNCTION ${counter}()`);
       const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 });
