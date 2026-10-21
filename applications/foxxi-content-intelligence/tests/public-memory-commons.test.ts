@@ -23,24 +23,32 @@ import {
 /** An in-memory pod: GET a lattice/key resource = 404 (absent, so instances start fresh
  *  and no owner key is added), PUT = accepted with a bumped etag, HEAD = current etag.
  *  Records every request so a test can assert WHICH resource a compose wrote to. */
-function makePodFetch() {
+function makePodFetch(failedHolonPuts = 0) {
   const requests: Array<{ method: string; url: string }> = [];
   const etags = new Map<string, number>();
-  const fetchFn = (async (url: string | URL, opts: { method?: string } = {}) => {
+  const bodies = new Map<string, string>();
+  const fetchFn = (async (url: string | URL, opts: { method?: string; body?: unknown } = {}) => {
     const u = String(url);
     const method = (opts.method ?? 'GET').toUpperCase();
     requests.push({ method, url: u });
-    if (method === 'GET') return new Response(null, { status: 404 });          // absent
+    if (method === 'GET') return bodies.has(u)
+      ? new Response(bodies.get(u)!, { status: 200, headers: { etag: `"v${etags.get(u) ?? 0}"` } })
+      : new Response(null, { status: 404 });
     if (method === 'HEAD') return new Response(null, { status: 200, headers: { etag: `"v${etags.get(u) ?? 0}"` } });
     if (method === 'PUT') {
-      if (u.endsWith('.holon.json')) { etags.set(u, (etags.get(u) ?? 0) + 1); return new Response(null, { status: 201 }); }
+      if (u.endsWith('.holon.json')) {
+        if (failedHolonPuts-- > 0) return new Response(null, { status: 503 });
+        bodies.set(u, String(opts.body));
+        etags.set(u, (etags.get(u) ?? 0) + 1);
+        return new Response(null, { status: 201 });
+      }
       return new Response(null, { status: 200 });                              // container / descriptor
     }
     return new Response(null, { status: 200 });
   }) as unknown as typeof fetch;
   const holonPuts = () => requests.filter(r => r.method === 'PUT' && r.url.endsWith('.holon.json')).map(r => r.url);
   const descriptorPuts = () => requests.filter(r => r.method === 'PUT' && r.url.endsWith('.ttl')).map(r => r.url);
-  return { fetchFn, holonPuts, descriptorPuts };
+  return { fetchFn, holonPuts, descriptorPuts, advanceEtag: (u: string) => etags.set(u, (etags.get(u) ?? 0) + 1) };
 }
 
 const RDFS = 'http://www.w3.org/2000/01/rdf-schema#';
@@ -138,5 +146,40 @@ describe('public-memory commons — resource isolation', () => {
     // locally — the classic shape. Nothing here is latency-sensitive; the assertions are about WHICH
     // resource was written, so a larger budget weakens nothing and stops a false red on a gate that
     // is now a deploy precondition.
+  }, 30000);
+});
+
+describe('shared lattice duplicate encrypted snapshots', () => {
+  const argsFor = (label: string, fetch: typeof globalThis.fetch) => ({
+    podUrl: `https://pod.test-${label}.example/agent/`, agentDid: 'did:test:duplicate',
+    label, terms: ['urn:test:event'], content: { id: 'same-event', result: 1 },
+    contentType: 'xapi:Statement', publishDescriptor: false, fetch,
+  });
+
+  it('acknowledges an identical artifact with one encrypted PUT and writes changed content', async () => {
+    const pod = makePodFetch(), args = argsFor('same-snapshot', pod.fetchFn);
+    expect((await composeIntoSharedLattice(args))?.persisted).toBe(true);
+    expect((await composeIntoSharedLattice(args))?.persisted).toBe(true);
+    expect(pod.holonPuts()).toHaveLength(1);
+    expect((await composeIntoSharedLattice({ ...args, content: { ...args.content, result: 2 } }))?.persisted).toBe(true);
+    expect(pod.holonPuts()).toHaveLength(2);
+  }, 30000);
+
+  it('does not skip after another writer changes the resource ETag', async () => {
+    const pod = makePodFetch(), args = argsFor('changed-etag', pod.fetchFn);
+    expect((await composeIntoSharedLattice(args))?.persisted).toBe(true);
+    pod.advanceEtag(pod.holonPuts()[0]!);
+    expect((await composeIntoSharedLattice(args))?.persisted).toBe(true);
+    expect(pod.holonPuts()).toHaveLength(2);
+  }, 30000);
+
+  it('retries unconfirmed writes and skips only after a later acknowledged body', async () => {
+    const pod = makePodFetch(4), args = argsFor('unconfirmed-snapshot', pod.fetchFn);
+    expect((await composeIntoSharedLattice(args))?.persisted).toBe(false);
+    expect(pod.holonPuts()).toHaveLength(4);
+    expect((await composeIntoSharedLattice(args))?.persisted).toBe(true);
+    expect(pod.holonPuts()).toHaveLength(5);
+    expect((await composeIntoSharedLattice(args))?.persisted).toBe(true);
+    expect(pod.holonPuts()).toHaveLength(5);
   }, 30000);
 });

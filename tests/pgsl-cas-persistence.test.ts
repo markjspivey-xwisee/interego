@@ -132,3 +132,63 @@ describe('CAS persistence', () => {
     expect(values.has('b2')).toBe(true);
   });
 });
+
+describe('body-bound CAS write confirmation', () => {
+  it('uses a strong PUT response ETag without any extra read', async () => {
+    const methods: string[] = [];
+    const transport = (async (_url: unknown, init?: RequestInit) => {
+      methods.push(init?.method ?? 'GET');
+      return new Response(null, { status: 201, headers: { etag: '"put-body"' } });
+    }) as typeof fetch;
+    const { pgsl, top } = instanceWith(['atomic-response']);
+    const result = await promoteInstanceEncryptedCAS(pgsl, top, URL_, [kp.publicKey], kp, transport, { ifNoneMatch: '*', confirmBody: true });
+    expect(result.confirmedEtag).toBe('"put-body"');
+    expect(methods).toEqual(['PUT']);
+  });
+
+  it('confirms exact ciphertext with the ETag on that same GET when opted in', async () => {
+    let body = ''; const methods: string[] = [];
+    const transport = (async (_url: unknown, init?: RequestInit) => {
+      const method = init?.method ?? 'GET'; methods.push(method);
+      if (method === 'PUT') { body = String(init?.body); return new Response(null, { status: 201 }); }
+      return new Response(body, { status: 200, headers: { etag: '"confirmed-body"' } });
+    }) as typeof fetch;
+    const { pgsl, top } = instanceWith(['verified-readback']);
+    const result = await promoteInstanceEncryptedCAS(pgsl, top, URL_, [kp.publicKey], kp, transport, { ifNoneMatch: '*', confirmBody: true });
+    expect(result.confirmedEtag).toBe('"confirmed-body"');
+    expect(methods).toEqual(['PUT', 'GET']);
+  });
+
+  it('never confirms another body, a missing/weak validator or incomplete/oversized bytes', async () => {
+    for (const variant of ['other-body', 'truncated', 'oversized', 'missing-etag', 'weak-etag']) {
+      let body = '';
+      const transport = (async (_url: unknown, init?: RequestInit) => {
+        const method = init?.method ?? 'GET';
+        if (method === 'PUT') { body = String(init?.body); return new Response(null, { status: 201 }); }
+        if (method === 'HEAD') return new Response(null, { status: 200, headers: { etag: '"other-writer"' } });
+        const actual = variant === 'truncated' ? body.slice(0, -1) : variant === 'oversized' ? body + 'x'
+          : variant === 'other-body' ? 'x'.repeat(body.length) : body;
+        const headers = variant === 'missing-etag' ? {} : { etag: variant === 'weak-etag' ? 'W/"weak"' : '"other-writer"' };
+        return new Response(actual, { status: 200, headers });
+      }) as typeof fetch;
+      const { pgsl, top } = instanceWith([variant]);
+      const result = await promoteInstanceEncryptedCAS(pgsl, top, URL_, [kp.publicKey], kp, transport, { ifNoneMatch: '*', confirmBody: true });
+      expect(result.status).toBe('ok');
+      expect(result.etag).toBe('"other-writer"');
+      expect(result.confirmedEtag).toBeUndefined();
+    }
+  });
+
+  it('keeps default no-PUT-ETag callers on their existing HEAD-only path', async () => {
+    const methods: string[] = [];
+    const transport = (async (_url: unknown, init?: RequestInit) => {
+      methods.push(init?.method ?? 'GET');
+      return new Response(null, { status: init?.method === 'PUT' ? 201 : 200, headers: init?.method === 'HEAD' ? { etag: '"hint-only"' } : {} });
+    }) as typeof fetch;
+    const { pgsl, top } = instanceWith(['legacy-no-body-confirmation']);
+    const result = await promoteInstanceEncryptedCAS(pgsl, top, URL_, [kp.publicKey], kp, transport, { ifNoneMatch: '*' });
+    expect(result.etag).toBe('"hint-only"');
+    expect(result.confirmedEtag).toBeUndefined();
+    expect(methods).toEqual(['PUT', 'HEAD']);
+  });
+});
