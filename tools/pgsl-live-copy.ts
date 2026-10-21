@@ -26,7 +26,8 @@ export interface CopyOptions {
 }
 /** Preparation starts synchronously; deadline/error cleanup must retain its writer fence. */
 export const holdsPreparedFence = (state: string | undefined): boolean =>
-  state === 'preparing-volume-cutover' || state === 'prepared-for-volume-cutover';
+  state === 'preparing-volume-cutover' || state === 'prepared-for-volume-cutover'
+  || state === 'preparation-failed-source-fenced';
 const TABLES = ['pgsl_kv', 'relay_pgsl_published'] as const;
 const PREFIX = Buffer.from('pgsl\0');
 const TAGS = new Set('NIBLRVOWPAXC');

@@ -112,7 +112,7 @@ try {
   assert.equal(bundled['live-copy.ts'],coreSource.replaceAll('../packages/pgsl-store/src/gc.js','./gc.ts')
     .replaceAll('../packages/pgsl-store/src/addressing.js','./addressing.ts').replaceAll('../packages/pgsl-store/src/keyspace.js','./keyspace.ts'));
   const watchdogSource=wrapperSource.slice(wrapperSource.indexOf('let overdueReported=false;'),wrapperSource.indexOf('const awaitPreparedStop='));
-  for(const state of ['preparing-volume-cutover','prepared-for-volume-cutover','verified-source-fenced']){
+  for(const state of ['preparing-volume-cutover','prepared-for-volume-cutover','preparation-failed-source-fenced','verified-source-fenced']){
     const calls={source:0,target:0,stop:0,exit:0},events=[];
     const watchdog=vm.runInNewContext(watchdogSource+'\nwatchdog',{
       session:{state},holdsPreparedFence,Date:{now:()=>100},validUntil:1,phase:state,
