@@ -1,0 +1,88 @@
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
+import {Client} from 'pg@8';
+import {createCutoverController,hashTable,metadata,RECOVERY_ROLE,receiptKey} from '../tools/pgsl-cutover-controller.mjs';
+const urls={source:new URL(Bun.env.PGSL_COPY_FIXTURE_URL),target:new URL(Bun.env.PGSL_COPY_FIXTURE_TARGET_URL)};
+for(const u of Object.values(urls)){assert.ok(['127.0.0.1','localhost','[::1]'].includes(u.hostname));assert.equal(u.username,'iegoadmin');assert.equal(u.pathname,'/pgsl_prod');}
+const clients=[];
+async function connectReal(u,app='cutover-fixture'){const c=new Client({connectionString:u.href,application_name:app});c.on('error',()=>{});await c.connect();clients.push(c);return c;}
+const adminUrl=base=>{const u=new URL(base);u.pathname='/postgres';return u;};
+const sa=await connectReal(adminUrl(urls.source)),ta=await connectReal(adminUrl(urls.target));
+const getId=async c=>(await c.query('SELECT system_identifier::text AS id FROM pg_control_system()')).rows[0].id;
+const sourceSystemId=await getId(sa),targetSystemId=await getId(ta);assert.notEqual(sourceSystemId,targetSystemId);
+let s=await connectReal(urls.source),t=await connectReal(urls.target);
+for(const c of [s,t]){
+ await c.query("CREATE ROLE relay_pgsl LOGIN PASSWORD 'fixture_relay'");
+ await c.query('CREATE TABLE pgsl_kv(k bytea PRIMARY KEY,v bytea NOT NULL)');
+ await c.query('CREATE TABLE relay_pgsl_published(k bytea PRIMARY KEY,v bytea NOT NULL)');
+ await c.query('GRANT SELECT,INSERT,UPDATE,DELETE ON relay_pgsl_published TO relay_pgsl');
+ await c.query('SET ROLE pg_database_owner');await c.query('GRANT USAGE ON SCHEMA public TO relay_pgsl');await c.query('RESET ROLE');
+ await c.query("ALTER DATABASE pgsl_prod SET idle_in_transaction_session_timeout='5min'");
+ for(let i=0;i<140;i++)await c.query('INSERT INTO pgsl_kv VALUES($1,$2)',[Buffer.from('row'+String(i).padStart(4,'0')),Buffer.from('opaque '+i)]);
+ await c.query('INSERT INTO relay_pgsl_published VALUES($1,$2)',[Buffer.alloc(0),Buffer.from('empty-key-is-valid')]);
+}
+assert.deepEqual(await metadata(s),await metadata(t));
+const kv=await hashTable(s,'pgsl_kv'),relay=await hashTable(s,'relay_pgsl_published');
+await s.end();await t.end();await ta.end();
+const sf=await connectReal(urls.source,'pgsl-copy-source-fence'),tc=await connectReal(urls.target,'pgsl-copy-target');
+await sf.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await sf.query('LOCK TABLE public.pgsl_kv,public.relay_pgsl_published IN SHARE MODE NOWAIT');
+const now=Date.now(),identity=(system_id)=>({db:'pgsl_prod',role:'iegoadmin',system_id,version:'160015',locale:{encoding:6,collate:'en_US.utf8',ctype:'en_US.utf8',provider:'c',icu:null}});
+const receipt={kind:'verified-source-fenced',source:identity(sourceSystemId),target:identity(targetSystemId),kv,relay,targetDatabaseBytes:20000000,liveNodes:1,retainedKeyPromises:140,actualCopiedKeys:140,missingDerived:{},verifiedAt:new Date(now).toISOString()};
+let workerState='verified-source-fenced',stale=false,wrongId=false,swapped=false,durable=null,failAfterDrop=true,workerPrepares=0;
+const journal={get:async()=>durable&&structuredClone(durable),put:async v=>{if(v.phase==='activated'&&failAfterDrop){failAfterDrop=false;throw new Error('fixture crash after role drop');}durable=structuredClone(v);}};
+const worker=async(method,path,body)=>{
+ if(method==='GET')return {phase:workerState,state:workerState,validUntil:new Date(stale?now-1:now+1200000).toISOString(),receipt:wrongId?{...receipt,target:identity(sourceSystemId)}:receipt};
+ assert.equal(path,'/prepare-volume-cutover');assert.deepEqual(body,{targetSystemId,action:'atomic-original-service-volume-swap'});
+ workerPrepares++;await tc.end();workerState='prepared-for-volume-cutover';return {...receipt,kind:workerState};
+};
+const sourceUrl='postgresql://iegoadmin:fixture_only@source.railway.internal:5432/pgsl_prod';
+const connect=async(value,app)=>{
+ const u=new URL(value),base=u.hostname==='target.railway.internal'||swapped?urls.target:urls.source;
+ const real=new URL(base);real.pathname=u.pathname;real.username=u.username;real.password=u.password;
+ return connectReal(real,app);
+};
+const make=()=>createCutoverController({connect,worker,journal,sourceUrl,targetHost:'target.railway.internal',sourceSystemId,targetSystemId,now:()=>now});
+let controller=make();const checks=[];
+try{
+ stale=true;await assert.rejects(controller.run('preflight'),/fresh/);stale=false;
+ wrongId=true;await assert.rejects(controller.run('preflight'),/identities/);wrongId=false;
+ assert.equal(durable,null);checks.push('stale or identity-mismatched receipt changes nothing');
+ const first=await controller.run('preflight');assert.equal(first.phase,'preflight-ready');assert.equal(durable,null);
+ const otherFence=await connectReal(urls.source,'pgsl-copy-source-fence');await otherFence.query('BEGIN');await otherFence.query('LOCK TABLE pgsl_kv,relay_pgsl_published IN SHARE MODE');
+ await assert.rejects(controller.run('fence'),/exactly one copy fence/);await otherFence.end();
+ assert.equal((await sa.query("SELECT datallowconn FROM pg_database WHERE datname='pgsl_prod'")).rows[0].datallowconn,true);
+ checks.push('ambiguous fence refuses before persistent database mutation');
+ const oldApp=await connectReal(urls.source,'fixture-old-app');await oldApp.query('SELECT 1');
+ assert.equal((await controller.run('fence')).phase,'fenced');
+ assert.equal((await sa.query("SELECT datallowconn FROM pg_database WHERE datname='pgsl_prod'")).rows[0].datallowconn,false);
+ assert.equal((await sa.query("SELECT count(*)::int n FROM pg_stat_activity WHERE datname='pgsl_prod' AND application_name='pgsl-copy-source-fence'")).rows[0].n,1);
+ const rescueUrl=new URL(urls.target);rescueUrl.username=RECOVERY_ROLE;
+ let rescue=await connectReal(rescueUrl);const flags=(await rescue.query("SELECT rolcanlogin FROM pg_roles WHERE rolname IN ('iegoadmin','relay_pgsl')")).rows;assert.ok(flags.every(x=>!x.rolcanlogin));await rescue.end();
+ checks.push('durable source connection block and target NOLOGIN quarantine preserve exact fence backend');
+ controller=make();assert.equal((await controller.run('status')).phase,'fenced');assert.equal((await controller.run('prepare')).phase,'prepared');assert.equal(workerPrepares,1);
+ controller=make();assert.equal((await controller.run('prepare')).phase,'prepared');assert.equal(workerPrepares,1);
+ await assert.rejects(controller.run('verify-activate'),/physical database identity/);
+ checks.push('prepare survives controller restart and original source is never accepted as target');
+ swapped=true;rescue=await connectReal(rescueUrl);await rescue.query("UPDATE pgsl_kv SET v=$1 WHERE k=$2",[Buffer.from('tampered'),Buffer.from('row0000')]);await rescue.end();
+ await assert.rejects(controller.run('verify-activate'),/full byte receipt/);
+ rescue=await connectReal(rescueUrl);assert.ok((await rescue.query("SELECT rolcanlogin FROM pg_roles WHERE rolname IN ('iegoadmin','relay_pgsl')")).rows.every(x=>!x.rolcanlogin));
+ await rescue.query('UPDATE pgsl_kv SET v=$1 WHERE k=$2',[Buffer.from('opaque 0'),Buffer.from('row0000')]);await rescue.end();
+ checks.push('full byte mismatch leaves target application roles quarantined');
+ await assert.rejects(controller.run('verify-activate'),/fixture crash after role drop/);
+ assert.equal(durable.phase,'activation-ready');
+ let live=await connectReal(urls.target);await live.query('INSERT INTO pgsl_kv VALUES($1,$2)',[Buffer.from('legitimate-new-write'),Buffer.from('accepted after LOGIN')]);await live.end();
+ controller=make();assert.equal((await controller.run('verify-activate')).phase,'activated');
+ assert.equal(durable.phase,'activated');assert.equal(durable.receiptKey,receiptKey(receipt));
+ live=await connectReal(urls.target);assert.equal((await live.query('SELECT count(*)::int n FROM pg_roles WHERE rolname=$1',[RECOVERY_ROLE])).rows[0].n,0);await live.end();
+ checks.push('activation-ready survives crash after LOGIN and role drop; cleanup tolerates later legitimate writes');
+ swapped=false;await assert.rejects(make().run('verify-activate'),/physical database identity/);
+ checks.push('even an activated retry requires current physical target identity');
+ const wrapper=await readFile(new URL('../tools/pgsl-cutover-controller.railway.mjs',import.meta.url),'utf8');
+ const begin=wrapper.indexOf('const coreSource=')+'const coreSource='.length,end=wrapper.indexOf(';\\nconst required=',begin);
+ const delimiter=wrapper.indexOf(';\nconst required=',begin);assert.ok(delimiter>begin);assert.equal(JSON.parse(wrapper.slice(begin,delimiter)),await readFile(new URL('../tools/pgsl-cutover-controller.mjs',import.meta.url),'utf8'));
+ assert.ok(wrapper.includes("IfNoneMatch:'*'")&&wrapper.includes('IfMatch:etag'));checks.push('Railway wrapper embeds the tested controller and uses conditional durable journal writes');
+ console.log(JSON.stringify({kind:'cutover_fixture_pass',checks}));
+}finally{
+ for(const c of clients)await c.end().catch(()=>{});
+}
