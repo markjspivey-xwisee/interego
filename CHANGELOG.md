@@ -1,8 +1,8 @@
 # Changelog
 
-## 2026-10-21 — Private sweep connection failures release both clients
+## 2026-10-21 — Lock conditional proofs before flushing queued deletion
 
-The private sweep worker bounds each PostgreSQL connection attempt to five seconds and closes both clients when either connection fails, including a cleanup rejection from the other client. Failure remains a nonzero exit with sanitized diagnostics before any SQL runs. Injected entry-point fixtures cover both connection failures; the existing real PostgreSQL retention and reclamation cases remain unchanged.
+Identical-value PostgreSQL CAS acquires the shared mutation lock before flushing deletions queued in that proof call. This prevents a queued deletion from taking a row lock before a concurrent guarded writer takes the database lock. A deterministic real PostgreSQL trigger gate verifies the competing writer waits on admission and both callbacks finish without retry. This correction preserves pressure-safe deletion and the existing physical growth checks; it does not claim that arbitrary earlier read-flushed deletes have universal lock ordering.
 
 ## 2026-10-21 — Preserve native uploads and conditional deletion under write pressure
 
@@ -13,6 +13,10 @@ Identical-value conditional writes now prove and lock the matching row without r
 A private PostgreSQL maintenance worker journals mutable roots and retains every current root, all native historical C resources, and one hour of retired mutable roots. Its first hour performs no deletion. Fenced mark-and-sweep deletion and ordinary VACUUM reuse heap and TOAST pages without a second payload table. Queued traffic, incomplete closure, malformed input, insufficient reserve, or a work deadline rolls the deletion transaction back. The Bun Function defaults to off; installation, production measurement and scheduling remain explicit recovery-owner rollout steps. A trusted-master workflow can forward the existing project token only to the named private worker without deployment. The legacy GitHub collector is now manual-only, so it cannot start alongside the private cron.
 
 Real PostgreSQL 16 fixtures cover retained roots, reader races, failure rollback and TOAST-page reuse; they do not establish production mark throughput. This entry documents this maintenance change. The inherited undocumented backlog measured 398 commits in exact-candidate CI, so the visible ceiling becomes 408 with ten commits of headroom; the continuous documented-through marker stays unchanged and no historical backfill is claimed.
+
+## 2026-10-21 — Private sweep connection failures release both clients
+
+The private sweep worker bounds each PostgreSQL connection attempt to five seconds and closes both clients when either connection fails, including a cleanup rejection from the other client. Failure remains a nonzero exit with sanitized diagnostics before any SQL runs. Injected entry-point fixtures cover both connection failures; the existing real PostgreSQL retention and reclamation cases remain unchanged.
 
 ## 2026-10-21 — Retain URL roots and bound shared-store collector reads
 
