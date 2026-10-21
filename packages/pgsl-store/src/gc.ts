@@ -124,8 +124,9 @@ export function readerFromFdb(fdb: FdbLike, pageSize = 1000): KvReader {
 /** A reader over a `pg` client (or pool); traversal fetches at most 32 nodes per query. */
 export function readerFromPg(client: { query(sql: string, params?: unknown[]): Promise<{ rows: Array<{
   k: Buffer; v?: Buffer; topology?: unknown; value_bytes?: unknown; needs_js_parse?: unknown; atom_header?: Buffer | null;
-}> }> }, table = 'pgsl_kv', pageSize = 5000): KvReader {
+}> }> }, table = 'pgsl_kv', pageSize = 5000, topologyBatchSize = TRAVERSAL_BATCH_SIZE): KvReader {
   const t = table.replace(/[^a-zA-Z0-9_]/g, '');
+  if (!Number.isSafeInteger(topologyBatchSize) || topologyBatchSize < 1 || topologyBatchSize > 4096) throw new Error('invalid topology batch size');
   return {
     async scan(begin, end, onRow) {
       let from = Buffer.from(begin);
@@ -161,8 +162,40 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
       // with the native JS semantics. This conservative discriminator can
       // produce harmless false positives, without poisoning a rebuild's SQL
       // transaction or exporting the rest of its 32-node batch.
-      for (let i = 0; i < keys.length; i += TRAVERSAL_BATCH_SIZE) {
-        const batch = keys.slice(i, i + TRAVERSAL_BATCH_SIZE).map(k => Buffer.from(k));
+      // The default stays at 32. Private maintenance may probe atom prefixes in
+      // larger groups; fragment groups are sized with TOAST metadata first and
+      // limited to 8MiB of stored JSON, so a wide frontier stays memory-bounded.
+      const batches: Buffer[][] = [];
+      try {
+        if (topologyBatchSize <= TRAVERSAL_BATCH_SIZE) {
+          for (let i = 0; i < keys.length; i += topologyBatchSize) batches.push(keys.slice(i, i + topologyBatchSize).map(k => Buffer.from(k)));
+        } else {
+          const atoms = keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] === 1);
+          for (let i = 0; i < atoms.length; i += topologyBatchSize) batches.push(atoms.slice(i, i + topologyBatchSize).map(k => Buffer.from(k)));
+          const fragments = keys.filter(k => k[SUBSPACE_PAYLOAD_OFFSET] !== 1);
+          let fragmentBytes = 0;
+          for (let i = 0; i < fragments.length; i += topologyBatchSize) {
+            const requested = fragments.slice(i, i + topologyBatchSize).map(k => Buffer.from(k));
+            const sizes = await client.query(`SELECT k,octet_length(v) AS value_bytes FROM ${t} WHERE k=ANY($1::bytea[]) ORDER BY k`, [requested]);
+            const wanted = new Set(requested.map(k => k.toString('hex')));
+            let group: Buffer[] = [], bytes = 0;
+            for (const row of sizes.rows) {
+              if (!Buffer.isBuffer(row.k) || !wanted.delete(row.k.toString('hex')) || !Number.isSafeInteger(row.value_bytes)
+                || (row.value_bytes as number) < 0 || (row.value_bytes as number) > 8 * 1024 * 1024) throw new Error('unbounded fragment topology');
+              fragmentBytes += row.value_bytes as number;
+              if (fragmentBytes > 64 * 1024 * 1024) throw new Error('unbounded fragment frontier');
+              if (group.length && bytes + (row.value_bytes as number) > 8 * 1024 * 1024) {
+                batches.push(group); group = []; bytes = 0;
+              }
+              group.push(row.k); bytes += row.value_bytes as number;
+            }
+            if (group.length) batches.push(group);
+          }
+        }
+      } catch {
+        throw new Error('refusing collection: PostgreSQL node topology could not be read');
+      }
+      for (const batch of batches) {
         try {
           const result = await client.query(`SELECT source.k, octet_length(source.v) AS value_bytes,
               substring(source.v FROM 1 FOR ${ATOM_HEADER_BYTES}) AS atom_header,
@@ -172,7 +205,7 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
             UNION ALL
             SELECT source.k, octet_length(source.v) AS value_bytes, NULL::bytea AS atom_header,
               position(decode('5c75', 'hex') in source.v) > 0 AS needs_js_parse,
-              json_build_object('kind', n.kind, 'level', n.level,
+              json_build_object('uri', n.uri, 'kind', n.kind, 'level', n.level,
                 'items', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n.items END,
                 'left', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."left" END,
                 'right', CASE WHEN n.kind #>> '{}' = 'fragment' THEN n."right" END) AS topology
@@ -180,12 +213,16 @@ export function readerFromPg(client: { query(sql: string, params?: unknown[]): P
             CROSS JOIN LATERAL json_to_record(CASE
               WHEN position(decode('5c75', 'hex') in source.v) > 0 THEN '{}'::json
               ELSE convert_from(source.v, 'UTF8')::json END)
-              AS n(kind json, level json, items json, "left" json, "right" json)
+              AS n(uri text, kind json, level json, items json, "left" json, "right" json)
             WHERE source.k = ANY($1::bytea[]) AND get_byte(source.k, ${SUBSPACE_PAYLOAD_OFFSET}) <> 1`, [batch]);
           for (const row of result.rows) {
             if (!Buffer.isBuffer(row.k) || !Number.isSafeInteger(row.value_bytes) || (row.value_bytes as number) < 0
               || typeof row.needs_js_parse !== 'boolean') {
               throw new Error('invalid topology record');
+            }
+            if (!row.needs_js_parse && row.topology && typeof row.topology === 'object' && 'uri' in row.topology) {
+              const storedUri = (row.topology as { uri?: unknown }).uri;
+              if (typeof storedUri !== 'string' || !row.k.equals(Buffer.from(nodeKey(nodeAddrFromUrn(storedUri))))) throw new Error('node body/key binding changed');
             }
             let topology: NodeTopology | null;
             const atomTopology = row.atom_header === null || row.atom_header === undefined ? null
@@ -254,8 +291,10 @@ function urnsIn(value: unknown, out: Set<string>): void {
  * Compute the live set. Reads only. Runs in memory proportional to the live set plus the
  * scanned subspaces' keys, which on the production store is a few million short keys.
  */
-export async function collectLive(reader: KvReader, opts: { readonly log?: (line: string) => void } = {}): Promise<LiveSet> {
+export async function collectLive(reader: KvReader, opts: { readonly log?: (line: string) => void; readonly traversalBatchSize?: number } = {}): Promise<LiveSet> {
   const log = opts.log ?? (() => undefined);
+  const traversalBatchSize = opts.traversalBatchSize ?? TRAVERSAL_BATCH_SIZE;
+  if (!Number.isSafeInteger(traversalBatchSize) || traversalBatchSize < 1 || traversalBatchSize > 4096) throw new Error('invalid traversal batch size');
   const keys = new Set<string>();
   const kept: Record<SubspaceTag, number> = { N: 0, I: 0, B: 0, L: 0, R: 0, V: 0, O: 0, W: 0, P: 0, A: 0, X: 0, C: 0 };
   const scanned: Partial<Record<SubspaceTag, number>> = {};
@@ -320,7 +359,7 @@ export async function collectLive(reader: KvReader, opts: { readonly log?: (line
   while (frontierOffset < frontier.length) {
     // Shifting a six-figure frontier once per 32 nodes is quadratic work.
     // A cursor plus occasional compaction preserves order with bounded storage.
-    const batch = frontier.slice(frontierOffset, frontierOffset + TRAVERSAL_BATCH_SIZE);
+    const batch = frontier.slice(frontierOffset, frontierOffset + traversalBatchSize);
     frontierOffset += batch.length;
     const batchKeys = batch.map(a => nodeKey(a));
     const values = reader.getManyTopology ? await reader.getManyTopology(batchKeys) : await reader.getMany(batchKeys);

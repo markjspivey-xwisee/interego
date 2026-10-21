@@ -1,0 +1,9 @@
+FROM oven/bun:1.4.0-slim
+WORKDIR /app
+# Isolated package avoids installing the application's workspace dependencies.
+RUN printf '%s\n' '{"private":true,"dependencies":{"pg":"8.22.0"}}' > package.json \
+    && bun install --production
+COPY tools/pgsl-store-sweep.mjs tools/pgsl-store-gc-volume.mjs ./tools/
+COPY packages/pgsl-store/src/gc.ts packages/pgsl-store/src/gc-atom-header.ts packages/pgsl-store/src/addressing.ts packages/pgsl-store/src/keyspace.ts ./packages/pgsl-store/src/
+USER bun
+CMD ["bun","tools/pgsl-store-sweep.mjs"]

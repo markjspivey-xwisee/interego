@@ -99,9 +99,11 @@ describe('environment-bound Railway volume measurements', () => {
   });
 });
 
-it('the scheduled policy checks hourly, expires hour-old rollback copies and preserves rebuild thresholds and dry runs', () => {
+it('manual recovery preserves one-hour rollback retirement and guards without a competing schedule', () => {
   const workflow = readFileSync(new URL('../.github/workflows/pgsl-store-gc.yml', import.meta.url), 'utf8');
-  expect(workflow).toContain("cron: '17 * * * *'");
+  expect(workflow).toContain('workflow_dispatch:');
+  expect(workflow).not.toMatch(/^\s+schedule:/m);
+  expect(workflow).not.toMatch(/^\s+-\s+cron:/m);
   expect(workflow).toContain('hourly|weekly) node tools/pgsl-store-gc-remote.mjs --drop-previous-older-than-hours 1 --rebuild-above 0.5 --min-rows 2000000');
   expect(workflow).toContain('dry-run) node tools/pgsl-store-gc-remote.mjs 2>&1');
   expect(workflow).toContain('cancel-in-progress: false');
