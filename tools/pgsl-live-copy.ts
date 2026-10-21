@@ -21,8 +21,6 @@ export interface CopyOptions {
   readonly maxTargetDatabaseBytes?: number;
   readonly maxValueBytes?: number;
   readonly payloadBatchBytes?: number;
-  /** Only the isolated fixture may use different databases in one server. */
-  readonly fixtureSameServer?: boolean;
 }
 /** Preparation starts synchronously; deadline/error cleanup must retain its writer fence. */
 export const holdsPreparedFence = (state: string | undefined): boolean =>
@@ -174,6 +172,25 @@ async function reviewDatabaseAccess(source: CopyClient, target: CopyClient): Pro
     'database/public schema access differs');
   return { fingerprint, grantRelayUsage: from.hasUsage && !to.hasUsage };
 }
+/** Replay the one catalogued database default, only after proving the destination is distinct and empty. */
+export async function preserveReviewedDatabaseDefault(source: CopyClient, target: CopyClient): Promise<void> {
+  const from = await identity(source), to = await identity(target);
+  invariant(from.system_id !== to.system_id, 'destination is the source server/database');
+  invariant(Math.floor(Number(from.version) / 10000) === 16 && Math.floor(Number(to.version) / 10000) === 16,
+    'requires reviewed PostgreSQL 16');
+  invariant(JSON.stringify(from.locale) === JSON.stringify(to.locale), 'database locales differ');
+  await schema(target, true);
+  const read = async (client: CopyClient): Promise<Row[]> => {
+    const rows = await client.query("SELECT CASE WHEN d.datname=current_database() THEN '@current' ELSE coalesce(d.datname,'*') END AS database,coalesce(r.rolname,'*') AS role,s.setconfig FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid=s.setdatabase LEFT JOIN pg_roles r ON r.oid=s.setrole WHERE s.setdatabase IN (0,(SELECT oid FROM pg_database WHERE datname=current_database())) ORDER BY 1,2");
+    return rows.rows;
+  };
+  const expected = [{ database: '@current', role: '*', setconfig: ['idle_in_transaction_session_timeout=5min'] }];
+  invariant(JSON.stringify(await read(source)) === JSON.stringify(expected), 'database defaults differ from the reviewed source');
+  const present = await read(target);
+  invariant(present.length === 0 || JSON.stringify(present) === JSON.stringify(expected), 'target has unreviewed database defaults');
+  if (!present.length) await target.query('ALTER DATABASE ' + quote(String(to.db)) + " SET idle_in_transaction_session_timeout='5min'");
+  invariant(JSON.stringify(await read(target)) === JSON.stringify(expected), 'target database default copy differs');
+}
 async function schema(client: CopyClient, empty: boolean): Promise<Row[]> {
   const current = await client.query('SELECT current_user AS role');
   const owner = String(current.rows[0]!.role);
@@ -282,12 +299,12 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
   };
   try {
     const from = await identity(source), to = await identity(target);
-    invariant(from.system_id !== to.system_id || options.fixtureSameServer === true
-      && from.database_oid !== to.database_oid && from.db !== to.db, 'destination is the source server/database');
+    invariant(from.system_id !== to.system_id, 'destination is the source server/database');
     invariant(Math.floor(Number(from.version) / 10000) === 16 && Math.floor(Number(to.version) / 10000) === 16, 'requires reviewed PostgreSQL 16');
     invariant(JSON.stringify(from.locale) === JSON.stringify(to.locale), 'database locales differ');
     await schema(target, true);
     const access = await reviewDatabaseAccess(source, target);
+    await preserveReviewedDatabaseDefault(source, target);
     releaseCollector = await acquireCollectorLock(source, 'pgsl_kv');
     await sq('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     fenced = true;

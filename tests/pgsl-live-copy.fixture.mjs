@@ -24,6 +24,7 @@ const options={maxInputBytes:1_000_000,maxTargetDatabaseBytes:100_000_000,maxVal
 const results=[];
 try {
   const source=await fresh('source');
+  await source.query('ALTER DATABASE "'+databases[0].name+'" SET idle_in_transaction_session_timeout=\'5min\'');
   await admins.source.query("SET password_encryption='scram-sha-256'");
   await admins.source.query("CREATE ROLE relay_pgsl LOGIN NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD 'fixture_private_password'");
   await source.query('CREATE TABLE public.pgsl_kv(k bytea NOT NULL,v bytea NOT NULL,CONSTRAINT pgsl_kv_live_pkey PRIMARY KEY(k))');
@@ -52,6 +53,7 @@ try {
   assert.deepEqual((await target.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows,(await source.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows);
   assert.ok(!JSON.stringify(session.receipt).includes('SCRAM-SHA-256'));
   assert.equal(await databaseAccessFingerprint(source),await databaseAccessFingerprint(target));
+  assert.deepEqual((await target.query("SELECT setconfig FROM pg_db_role_setting WHERE setdatabase=(SELECT oid FROM pg_database WHERE datname=current_database()) AND setrole=0")).rows,[{setconfig:['idle_in_transaction_session_timeout=5min']}]);
   const publicAccess=JSON.parse(await databaseAccessFingerprint(target)).find(row=>row.scope==='public-schema');
   assert.deepEqual(publicAccess.acl.filter(row=>row.grantee==='relay_pgsl'),[{grantee:'relay_pgsl',grantor:'pg_database_owner',privilege:'USAGE',grantable:false}]);
   assert.deepEqual((await target.query("SELECT reloptions FROM pg_class WHERE oid='public.pgsl_kv'::regclass")).rows,
@@ -60,7 +62,7 @@ try {
   const relay=new Client({connectionString:relayUrl.href});await relay.connect();clients.push(relay);
   assert.equal((await relay.query('SELECT count(*)::int n FROM public.relay_pgsl_published')).rows[0].n,2);
   assert.equal((await relay.query("SELECT has_table_privilege(current_user,'public.pgsl_kv','SELECT') AS allowed")).rows[0].allowed,false);
-  results.push('SCRAM authentication, limited table ACL and explicit schema USAGE/grantor survive on a different PG16 server');
+  results.push('SCRAM, table/schema ACLs and database timeout default survive on a different PG16 server');
   const writer=await connect('source',databases[0].name);await writer.query("SET lock_timeout='100ms'");
   await assert.rejects(writer.query('INSERT INTO public.relay_pgsl_published VALUES($1,$2)',[Buffer.from('blocked'),Buffer.from('blocked')]),(error)=>error.code==='55P03');
   await session.abortBeforeCutover();await writer.query('SELECT 1');
