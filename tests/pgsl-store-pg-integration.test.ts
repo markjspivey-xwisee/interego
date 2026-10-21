@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client } from 'pg';
+import { randomBytes } from 'node:crypto';
 import {
   openPgStore,
   openStore,
@@ -346,4 +347,191 @@ describe.skipIf(!RUN)('pgsl-store: FULL stack over REAL PostgreSQL', () => {
     // write would satisfy the counts above and none of the point.
     expect((await store.get(id))!.record.turns).toHaveLength(1);
   });
+});
+
+
+describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL', () => {
+  async function pressureFixture(label: string) {
+    const client = new Client({ host: '127.0.0.1' });
+    const suffix = `${process.pid}_${Date.now()}_${label}`;
+    const table = `pgsl_pressure_${suffix}`;
+    const filler = `${table}_filler`;
+    const pools: FdbLike[] = [];
+    await client.connect();
+    await client.query(`CREATE TABLE ${table} (k bytea PRIMARY KEY, v bytea NOT NULL)`);
+    await client.query(`CREATE TABLE ${filler} (v bytea NOT NULL)`);
+    const connectionString = (applicationName: string): string => {
+      const url = new URL('postgresql://127.0.0.1');
+      url.port = process.env.PGPORT ?? '5432';
+      url.username = process.env.PGUSER ?? 'postgres';
+      url.password = process.env.PGPASSWORD ?? '';
+      url.pathname = '/' + (process.env.PGDATABASE ?? 'pgsl');
+      url.searchParams.set('application_name', applicationName);
+      return url.href;
+    };
+    return {
+      client, table, filler, suffix,
+      async open(options: { maxDatabaseBytes: number; maxTransactionInputBytes?: number; writeReserveBytes?: number },
+        applicationName = `pgsl-pressure-${suffix}-${pools.length}`) {
+        const adapter = await openPgStore({ table, ensureSchema: false, connectionString: connectionString(applicationName), ...options });
+        pools.push(adapter);
+        return adapter;
+      },
+      async databaseBytes() {
+        const result = await client.query<{ bytes: string }>('SELECT pg_database_size(current_database())::text AS bytes');
+        return Number(result.rows[0]!.bytes);
+      },
+      async value(key: Uint8Array) {
+        const result = await client.query<{ v: Buffer }>(`SELECT v FROM ${table} WHERE k=$1`, [Buffer.from(key)]);
+        return result.rows[0]?.v;
+      },
+      async close() {
+        await Promise.all(pools.map(pool => pool.close()));
+        await client.query(`DROP TABLE IF EXISTS ${table}, ${filler}`);
+        await client.end();
+      },
+    };
+  }
+
+  it('refuses positive writes above the physical ceiling without committing an earlier delete, while reads and delete-only reclamation remain available', async () => {
+    const fixture = await pressureFixture('reclaim');
+    const key = Buffer.from('seed'), replacement = Buffer.from('replacement');
+    try {
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [key, Buffer.from('original')]);
+      const adapter = await fixture.open({ maxDatabaseBytes: 1, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 });
+      expect(Buffer.from((await adapter.transact(tx => tx.get(key)))!).toString()).toBe('original');
+      await expect(adapter.transact(async tx => {
+        tx.clear(key);
+        tx.set(replacement, Buffer.from('must never be acknowledged'));
+        await tx.get(replacement);
+        return 'acknowledged';
+      })).rejects.toMatchObject({ code: 'PGSL_WRITE_PRESSURE' });
+      expect((await fixture.value(key))?.toString()).toBe('original');
+      expect(await fixture.value(replacement)).toBeUndefined();
+      await expect(adapter.transact(tx => tx.compareAndSet(key, Buffer.from('original'), Buffer.from('forbidden replacement'))))
+        .rejects.toMatchObject({ code: 'PGSL_WRITE_PRESSURE' });
+      await expect(adapter.transact(tx => tx.compareAndSet(replacement, null, Buffer.from('forbidden create'))))
+        .rejects.toMatchObject({ code: 'PGSL_WRITE_PRESSURE' });
+      expect((await fixture.value(key))?.toString()).toBe('original');
+      expect(await fixture.value(replacement)).toBeUndefined();
+      await adapter.transact(async tx => { tx.clear(key); });
+      expect(await fixture.value(key)).toBeUndefined();
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [replacement, Buffer.from('reclaim this too')]);
+      await adapter.transact(async tx => { tx.clearRange(Buffer.from([0]), Buffer.from([255])); });
+      expect(await fixture.value(replacement)).toBeUndefined();
+    } finally { await fixture.close(); }
+  }, 15_000);
+
+  it('rolls a flushed write back when cumulative transaction input exceeds its bound, then releases the writer lock', async () => {
+    const fixture = await pressureFixture('rollback');
+    const first = Buffer.from('first'), second = Buffer.from('second'), survivor = Buffer.from('survivor');
+    try {
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 });
+      await expect(adapter.transact(async tx => {
+        tx.set(first, Buffer.alloc(512, 1));
+        expect((await tx.get(first))?.length).toBe(512);
+        tx.set(second, Buffer.alloc(4096, 2));
+        await tx.get(second);
+        return 'acknowledged';
+      })).rejects.toMatchObject({ code: 'PGSL_WRITE_PRESSURE' });
+      expect(await fixture.value(first)).toBeUndefined();
+      expect(await fixture.value(second)).toBeUndefined();
+      const anotherPool = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 });
+      await anotherPool.transact(async tx => { tx.set(survivor, Buffer.from('committed')); });
+      expect((await fixture.value(survivor))?.toString()).toBe('committed');
+    } finally { await fixture.close(); }
+  }, 15_000);
+
+  it('serializes positive writes from separate pools through COMMIT while a third pool can still read', async () => {
+    const fixture = await pressureFixture('concurrent');
+    const seed = Buffer.from('readable'), firstKey = Buffer.from('writer-one'), secondKey = Buffer.from('writer-two');
+    let releaseFirst = () => {};
+    let first: Promise<void> | undefined, second: Promise<void> | undefined;
+    try {
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [seed, Buffer.from('read while writing')]);
+      const options = { maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 };
+      const one = await fixture.open(options), twoName = `pgsl-pressure-waiter-${fixture.suffix}`;
+      const two = await fixture.open(options, twoName), reader = await fixture.open(options);
+      let entered = () => {};
+      const enteredPromise = new Promise<void>(resolve => { entered = resolve; });
+      const held = new Promise<void>(resolve => { releaseFirst = resolve; });
+      first = one.transact(async tx => {
+        tx.set(firstKey, Buffer.from('first'));
+        await tx.get(firstKey);
+        entered();
+        await held;
+      });
+      await Promise.race([enteredPromise, first.then(() => { throw new Error('writer completed before its barrier'); })]);
+      second = two.transact(async tx => { tx.set(secondKey, Buffer.from('second')); await tx.get(secondKey); });
+      // Observe a real PostgreSQL lock wait rather than assuming timer order.
+      let waiting = false;
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const activity = await fixture.client.query<{ waiting: boolean }>(
+          "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event_type='Lock' AND wait_event='advisory') AS waiting",
+          [twoName]);
+        if (activity.rows[0]?.waiting) { waiting = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      expect(waiting).toBe(true);
+      expect(await fixture.value(secondKey)).toBeUndefined();
+      expect(Buffer.from((await reader.transact(tx => tx.get(seed)))!).toString()).toBe('read while writing');
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect((await fixture.value(firstKey))?.toString()).toBe('first');
+      expect((await fixture.value(secondKey))?.toString()).toBe('second');
+    } finally {
+      releaseFirst();
+      await Promise.allSettled([first, second].filter((operation): operation is Promise<void> => operation !== undefined));
+      await fixture.close();
+    }
+  }, 15_000);
+
+  it('refreshes physical size before COMMIT and rolls back an admitted write if independent database growth consumes its headroom', async () => {
+    const fixture = await pressureFixture('refresh');
+    const key = Buffer.from('not-acknowledged');
+    try {
+      const ceiling = (await fixture.databaseBytes()) + 128 * 1024;
+      const adapter = await fixture.open({ maxDatabaseBytes: ceiling, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 });
+      await expect(adapter.transact(async tx => {
+        tx.set(key, Buffer.from('small admitted write'));
+        expect(Buffer.from((await tx.get(key))!).toString()).toBe('small admitted write');
+        // Random bytes force real heap/TOAST allocation, not a stubbed size.
+        await fixture.client.query(`INSERT INTO ${fixture.filler}(v) VALUES ($1)`, [randomBytes(1024 * 1024)]);
+        expect(await fixture.databaseBytes()).toBeGreaterThan(ceiling);
+        return 'acknowledged';
+      })).rejects.toMatchObject({ code: 'PGSL_WRITE_PRESSURE' });
+      expect(await fixture.value(key)).toBeUndefined();
+      expect((await fixture.client.query<{ count: string }>(`SELECT count(*)::text AS count FROM ${fixture.filler}`)).rows[0]?.count).toBe('1');
+    } finally { await fixture.close(); }
+  }, 15_000);
+
+  it('refuses more than 4096 zero-byte positive operations before issuing any mutation SQL', async () => {
+    const fixture = await pressureFixture('operation_bound');
+    const seed = Buffer.from('existing');
+    const sequence = `${fixture.table}_writes`, counter = `${fixture.table}_count`;
+    try {
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [seed, Buffer.from('preserved')]);
+      await fixture.client.query(`CREATE SEQUENCE ${sequence}`);
+      await fixture.client.query(`CREATE FUNCTION ${counter}() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN PERFORM nextval('${sequence}'); RETURN NEW; END $$`);
+      await fixture.client.query(`CREATE TRIGGER pressure_count BEFORE INSERT OR UPDATE ON ${fixture.table}
+        FOR EACH ROW EXECUTE FUNCTION ${counter}()`);
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 });
+      await expect(adapter.transact(async tx => {
+        for (let operation = 0; operation < 4097; operation++) tx.set(Buffer.alloc(0), Buffer.alloc(0));
+        return 'acknowledged';
+      })).rejects.toMatchObject({ code: 'PGSL_WRITE_PRESSURE' });
+      // nextval is deliberately not transactional: rollback would hide the KV
+      // effects, but could not hide an INSERT/UPDATE that reached this trigger.
+      expect((await fixture.client.query<{ is_called: boolean }>(`SELECT is_called FROM ${sequence}`)).rows[0]?.is_called).toBe(false);
+      expect((await fixture.value(seed))?.toString()).toBe('preserved');
+      expect(await fixture.value(Buffer.alloc(0))).toBeUndefined();
+    } finally {
+      await fixture.client.query(`DROP FUNCTION IF EXISTS ${counter}() CASCADE`);
+      await fixture.client.query(`DROP SEQUENCE IF EXISTS ${sequence}`);
+      await fixture.close();
+    }
+  }, 15_000);
+
 });

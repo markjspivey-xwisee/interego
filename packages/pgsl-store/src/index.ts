@@ -40,7 +40,7 @@ export {
   type ProjectedAtom,
 } from './project.js';
 export { openRealFdb, type FdbRealOptions } from './fdb-real.js';
-export { openPgStore, type PgStoreOptions } from './pg-store.js';
+export { openPgStore, PgWritePressureError, type PgStoreOptions } from './pg-store.js';
 export {
   CodecRegistry,
   type Codec,

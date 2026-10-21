@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-21 — Refuse PostgreSQL writes before the physical database ceiling
+
+An opt-in database-wide physical admission guard serializes positive PGSL writes across pools and replicas, measures PostgreSQL database files, reserves bounded input headroom and rechecks physical size before committing. A pressure refusal or transaction bound failure rolls back the whole transaction. Reads and delete-only cleanup remain available above the ceiling. The intended64GB deployment uses a48GB database limit, retaining separate volume headroom for WAL and operations; ordinary VACUUM does not automatically reopen admission. Real PostgreSQL regressions exercise writer serialization, partial-write rollback, delete/read availability, cumulative input bounds and a fresh final size check.
+
 ## 2026-10-21 — Retain URL roots and bound shared-store collector reads
 
 The collector recognizes both legacy URNs and dereferenceable node URLs in control-plane records and current overlays, using the same address codec as fragment traversal. URL-only current heads therefore retain their complete node closure. The PostgreSQL reader takes a bounded header for canonical opaque atoms instead of scanning and parsing their complete payloads to discover that they have no outgoing edges. The header is bound to the stored atom key; unfamiliar historical encodings use the complete JSON fallback, and malformed bindings refuse collection. The breadth-first queue uses a cursor with occasional compaction. Actual-source regressions cover root forms, stale overlays, malformed bindings, and a 20,000-leaf closure; an isolated PostgreSQL 16 fixture verifies reduced TOAST reads for an 8 MiB uncompressed atom. This does not itself retire data, remove the rebuild headroom guard, or claim physical reclamation.

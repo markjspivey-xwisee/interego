@@ -43,6 +43,50 @@ export interface PgStoreOptions {
   table?: string;
   /** Create the table if missing (default true). */
   ensureSchema?: boolean;
+  /** Opt-in physical database ceiling; env PGSL_PG_MAX_DATABASE_BYTES. */
+  maxDatabaseBytes?: number;
+  /** Cumulative positive k+v input bound (default 16 MiB when enabled). */
+  maxTransactionInputBytes?: number;
+  /** Additional physical headroom (default 64 MiB when enabled). */
+  writeReserveBytes?: number;
+}
+
+/** A refused write never commits any part of its transaction. Reads and deletes remain available. */
+export class PgWritePressureError extends Error {
+  readonly code = 'PGSL_WRITE_PRESSURE';
+  constructor(message: string) {
+    super(`pgsl-store: write refused: ${message}`);
+    this.name = 'PgWritePressureError';
+  }
+}
+
+interface WritePressure {
+  maximum: number;
+  inputMaximum: number;
+  reserve: number;
+}
+
+function byteLimit(value: number | string | undefined, name: string, zero = false): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string' && !/^(0|[1-9][0-9]*)$/.test(value)) {
+    throw new Error(`pgsl-store: ${name} must be a safe integer byte count`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < (zero ? 0 : 1)) {
+    throw new Error(`pgsl-store: ${name} must be a safe ${zero ? 'nonnegative' : 'positive'} integer byte count`);
+  }
+  return parsed;
+}
+
+function writePressure(opts: PgStoreOptions): WritePressure | undefined {
+  const maximum = byteLimit(opts.maxDatabaseBytes ?? process.env.PGSL_PG_MAX_DATABASE_BYTES, 'PGSL_PG_MAX_DATABASE_BYTES');
+  const inputMaximum = byteLimit(opts.maxTransactionInputBytes ?? process.env.PGSL_PG_MAX_TRANSACTION_INPUT_BYTES,
+    'PGSL_PG_MAX_TRANSACTION_INPUT_BYTES') ?? 16 * 1024 * 1024;
+  const reserve = byteLimit(opts.writeReserveBytes ?? process.env.PGSL_PG_WRITE_RESERVE_BYTES,
+    'PGSL_PG_WRITE_RESERVE_BYTES', true) ?? 64 * 1024 * 1024;
+  if (maximum === undefined) return undefined;
+  if (reserve >= maximum) throw new Error('pgsl-store: write reserve must be smaller than the database ceiling');
+  return { maximum, inputMaximum, reserve };
 }
 
 // deadlock_detected (rare under READ COMMITTED) + serialization_failure (kept for
@@ -83,6 +127,7 @@ interface PgClient {
 }
 
 export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
+  const pressure = writePressure(opts);
   // @ts-ignore optional dependency (pure-JS node-postgres), installed where used.
   const pg: PgModule = await import('pg');
   const Pool = pg.Pool ?? pg.default?.Pool;
@@ -108,9 +153,62 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
       const maxAttempts = 24;
       for (let attempt = 1; ; attempt++) {
         const client = await pool.connect();
-        const pending: Array<Promise<unknown>> = [];
-        const flush = async (): Promise<void> => {
-          if (pending.length) await Promise.all(pending.splice(0));
+        // Queue SQL, rather than starting it in set(): admission must run BEFORE a
+        // positive write. Serial flushing also preserves read-your-own-writes.
+        const pending: Array<() => Promise<unknown>> = [];
+        let flushing: Promise<void> = Promise.resolve();
+        let inputBytes = 0;
+        let positiveOperations = 0;
+        let admission: Promise<number> | undefined;
+        let refusal: PgWritePressureError | undefined;
+        const planPositive = (key: Key, value: Value): void => {
+          if (!pressure) return;
+          inputBytes += key.byteLength + value.byteLength;
+          positiveOperations++;
+          if (!Number.isSafeInteger(inputBytes) || inputBytes > pressure.inputMaximum || positiveOperations > 4096) {
+            refusal ??= new PgWritePressureError('transaction input or 4096-operation bound exceeded');
+          }
+        };
+        const databaseBytes = async (): Promise<number> => {
+          const result = await client.query<{ bytes: string }>(
+            'SELECT pg_database_size(current_database())::text AS bytes');
+          const size = Number(result.rows[0]?.bytes);
+          if (!Number.isSafeInteger(size) || size < 0) {
+            throw new PgWritePressureError('physical database size is unavailable');
+          }
+          return size;
+        };
+        const checkPressure = (size: number): void => {
+          if (refusal) throw refusal;
+          if (!pressure) return;
+          // Opaque atoms base64-expand the representation. Reserve beyond raw
+          // k+v for heap/TOAST/index allocation and WAL; this is conservative
+          // admission headroom, not an assertion that WAL has a fixed ratio.
+          const required = pressure.reserve + inputBytes * 4 + positiveOperations * 8192;
+          if (!Number.isSafeInteger(required) || size > pressure.maximum - required) {
+            refusal ??= new PgWritePressureError('physical database ceiling or write reserve reached');
+            throw refusal;
+          }
+        };
+        const admit = async (): Promise<void> => {
+          if (!pressure || positiveOperations === 0) return;
+          if (refusal) throw refusal;
+          admission ??= (async () => {
+            // Same database-wide transaction lock across tables, pools, and
+            // replicas. It is released only by COMMIT/ROLLBACK, never before
+            // the fresh final physical-size check.
+            await client.query('SELECT pg_advisory_xact_lock(1346851660, hashtext(current_database()))');
+            return databaseBytes();
+          })();
+          checkPressure(await admission);
+        };
+        const flush = (): Promise<void> => {
+          const operations = pending.splice(0);
+          flushing = flushing.then(async () => {
+            await admit();
+            for (const operation of operations) await operation();
+          });
+          return flushing;
         };
         try {
           await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
@@ -122,12 +220,10 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
               return r.rows[0] ? new Uint8Array(r.rows[0].v) : undefined;
             },
             set: (key: Key, value: Key) => {
-              pending.push(
-                client.query(
-                  `INSERT INTO ${table}(k, v) VALUES ($1, $2) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v`,
-                  [buf(key), buf(value)],
-                ),
-              );
+              planPositive(key, value);
+              pending.push(() => client.query(
+                `INSERT INTO ${table}(k, v) VALUES ($1, $2) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v`,
+                [buf(key), buf(value)]));
             },
             /**
              * ★ THE CONDITION IS IN THE STATEMENT, NOT IN AN EARLIER SELECT.
@@ -151,6 +247,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
              * compare against a row this transaction has already moved past.
              */
             compareAndSet: async (key: Key, expected: Value | null, value: Value): Promise<boolean> => {
+              planPositive(key, value);
               await flush();
               const r = expected === null
                 ? await client.query(
@@ -162,10 +259,10 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
               return r.rowCount === 1;
             },
             clear: (key: Key) => {
-              pending.push(client.query(`DELETE FROM ${table} WHERE k = $1`, [buf(key)]));
+              pending.push(() => client.query(`DELETE FROM ${table} WHERE k = $1`, [buf(key)]));
             },
             clearRange: (begin: Key, end: Key) => {
-              pending.push(client.query(`DELETE FROM ${table} WHERE k >= $1 AND k < $2`, [buf(begin), buf(end)]));
+              pending.push(() => client.query(`DELETE FROM ${table} WHERE k >= $1 AND k < $2`, [buf(begin), buf(end)]));
             },
             getRange: async (begin: Key, end: Key, opts?: { readonly limit?: number }): Promise<KeyValue[]> => {
               await flush();
@@ -187,6 +284,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           };
           const result = await fn(txn);
           await flush();
+          if (pressure && positiveOperations > 0) checkPressure(await databaseBytes());
           await client.query('COMMIT');
           return result;
         } catch (err) {
