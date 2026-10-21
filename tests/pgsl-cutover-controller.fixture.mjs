@@ -29,7 +29,7 @@ const sf=await connectReal(urls.source,'pgsl-copy-source-fence'),tc=await connec
 await sf.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await sf.query('LOCK TABLE public.pgsl_kv,public.relay_pgsl_published IN SHARE MODE NOWAIT');
 const now=Date.now(),identity=(system_id)=>({db:'pgsl_prod',role:'iegoadmin',system_id,version:'160015',locale:{encoding:6,collate:'en_US.utf8',ctype:'en_US.utf8',provider:'c',icu:null}});
 const receipt={kind:'verified-source-fenced',source:identity(sourceSystemId),target:identity(targetSystemId),kv,relay,targetDatabaseBytes:20000000,liveNodes:1,retainedKeyPromises:140,actualCopiedKeys:140,missingDerived:{},verifiedAt:new Date(now).toISOString()};
-let workerState='verified-source-fenced',stale=false,wrongId=false,swapped=false,durable=null,failAfterDrop=true,workerPrepares=0,checkpointFails=false,checkpointCount=0;
+let workerState='verified-source-fenced',stale=false,wrongId=false,swapped=false,durable=null,failAfterDrop=true,workerPrepares=0,checkpointFails=false,checkpointCount=0,flushFails=false;
 const journal={get:async()=>durable&&structuredClone(durable),put:async v=>{if(v.phase==='activated'&&failAfterDrop){failAfterDrop=false;throw new Error('fixture crash after role drop');}durable=structuredClone(v);}};
 const worker=async(method,path,body)=>{
  if(method==='GET')return {phase:workerState,state:workerState,validUntil:new Date(stale?now-1:now+1200000).toISOString(),receipt:wrongId?{...receipt,target:identity(sourceSystemId)}:receipt};
@@ -40,7 +40,7 @@ const sourceUrl='postgresql://iegoadmin:fixture_only@source.railway.internal:543
 const connect=async(value,app)=>{
  const u=new URL(value),base=u.hostname==='target.railway.internal'||swapped?urls.target:urls.source;
  const real=new URL(base);real.pathname=u.pathname;real.username=u.username;real.password=u.password;
- const client=await connectReal(real,app);const query=client.query.bind(client);client.query=async(sql,params)=>{if(sql==='CHECKPOINT'){checkpointCount++;if(checkpointFails){checkpointFails=false;throw new Error('fixture target checkpoint failure');}}return query(sql,params);};return client;
+ const client=await connectReal(real,app);const query=client.query.bind(client);client.query=async(sql,params)=>{if(sql.startsWith('SELECT pg_current_wal_flush_lsn()')&&flushFails){flushFails=false;return {rows:[{flushed:false}]};}if(sql==='CHECKPOINT'){checkpointCount++;if(checkpointFails){checkpointFails=false;throw new Error('fixture target checkpoint failure');}}return query(sql,params);};return client;
 };
 const make=()=>createCutoverController({connect,worker,journal,sourceUrl,targetHost:'target.railway.internal',sourceSystemId,targetSystemId,now:()=>now});
 let controller=make();const checks=[];
@@ -65,7 +65,8 @@ try{
  await sf.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await sf.query('LOCK TABLE pgsl_kv,relay_pgsl_published IN SHARE MODE NOWAIT');
  checks.push('preparation refuses a missing SHARE fence and keeps both persistent quarantines');
  checkpointFails=true;await assert.rejects(controller.run('prepare'),/fixture target checkpoint failure/);assert.equal(workerPrepares,0);assert.equal(durable.phase,'fenced');
- assert.equal((await controller.run('prepare')).phase,'prepared');assert.equal(workerPrepares,1);assert.equal(checkpointCount,2);checks.push('target CHECKPOINT failure prevents preparation and a successful retry durably flushes before handoff');
+ flushFails=true;await assert.rejects(controller.run('prepare'),/WAL durability barrier/);assert.equal(workerPrepares,0);assert.equal(durable.phase,'fenced');
+ assert.equal((await controller.run('prepare')).phase,'prepared');assert.equal(workerPrepares,1);assert.equal(checkpointCount,3);assert.equal(durable.targetDurability.flushed,true);checks.push('CHECKPOINT or WAL flush failure prevents preparation; successful retry proves target WAL durable before handoff');
  controller=make();assert.equal((await controller.run('prepare')).phase,'prepared');assert.equal(workerPrepares,1);
  await assert.rejects(controller.run('verify-activate'),/physical database identity/);
  checks.push('prepare survives controller restart and original source is never accepted as target');

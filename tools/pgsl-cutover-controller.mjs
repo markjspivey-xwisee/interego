@@ -81,15 +81,15 @@ export function createCutoverController({connect,worker,journal,sourceUrl,target
  }finally{await close(d);await close(b);await close(a);}};
  const prepare=async()=>{const v=await load();ok(['fenced','preparing','prepared'].includes(v.phase),'phase cannot prepare');let a,b;try{
   b=await open(target,'postgres',true);await identity(b,targetSystemId,'postgres');await targetRoles(b,true);
-  if(v.phase==='prepared')return {phase:'prepared',receiptKey:v.receiptKey,targetSystemId};
+  if(v.phase==='prepared'){ok(v.targetDurability?.flushed===true,'prepared target lacks durable WAL proof');return {phase:'prepared',receiptKey:v.receiptKey,targetSystemId};}
   a=await open(source);await identity(a,sourceSystemId,'postgres');await sourceBlocked(a,v.sourceFencePid,v.sourceTableOids);
   const s=await worker('GET','/status');ok(['verified-source-fenced','prepared-for-volume-cutover'].includes(s.state),'worker state cannot prepare');
   ok(receiptKey(validateReceipt(s,ids,now(),s.state==='verified-source-fenced'))===v.receiptKey,'worker receipt changed');
-  if(s.state!=='prepared-for-volume-cutover'){await b.query("SET statement_timeout='10min'");await b.query('CHECKPOINT');await b.query("SET statement_timeout='30s'");v.phase='preparing';await save(v);const r=await worker('POST','/prepare-volume-cutover',{targetSystemId,action:'atomic-original-service-volume-swap'});ok(r.kind==='prepared-for-volume-cutover'&&receiptKey(r)===v.receiptKey,'prepared receipt differs');}
-  v.phase='prepared';v.preparedAt=new Date(now()).toISOString();await save(v);return {phase:'prepared',receiptKey:v.receiptKey,targetSystemId};
+  if(s.state!=='prepared-for-volume-cutover'){const marker=(await b.query('SELECT pg_current_wal_insert_lsn()::text AS lsn')).rows[0]?.lsn;ok(typeof marker==='string'&&/^[0-9A-F]+\/[0-9A-F]+$/i.test(marker),'target WAL marker missing');await b.query("SET statement_timeout='10min'");await b.query('CHECKPOINT');await b.query("SET statement_timeout='30s'");ok((await b.query('SELECT pg_current_wal_flush_lsn() >= $1::pg_lsn AS flushed',[marker])).rows[0]?.flushed===true,'target WAL durability barrier failed');v.targetDurability={insertLsn:marker,flushed:true,at:new Date(now()).toISOString()};v.phase='preparing';await save(v);const r=await worker('POST','/prepare-volume-cutover',{targetSystemId,action:'atomic-original-service-volume-swap'});ok(r.kind==='prepared-for-volume-cutover'&&receiptKey(r)===v.receiptKey,'prepared receipt differs');}
+  ok(v.targetDurability?.flushed===true,'target durability proof missing');v.phase='prepared';v.preparedAt=new Date(now()).toISOString();await save(v);return {phase:'prepared',receiptKey:v.receiptKey,targetSystemId};
  }finally{await close(a);await close(b);}};
  const activate=async()=>{const v=await load();ok(['prepared','activation-ready','activated'].includes(v.phase),'verified preparation missing');if(v.phase==='activated'){let proof,db;try{proof=await open(source);await identity(proof,targetSystemId,'postgres');await targetRoles(proof,false);db=await open(source,'pgsl_prod');ok(j(await metadata(db))===j(v.baseline),'activated catalog differs');return {phase:'activated',receiptKey:v.receiptKey,...ids};}finally{await close(db);await close(proof);}}
-  let a,d,final;try{
+  ok(v.targetDurability?.flushed===true,'target durability proof missing');let a,d,final;try{
    try{a=await open(source,'postgres',true);}catch{a=await open(source);}await identity(a,targetSystemId,'postgres');
    const flags=(await a.query(ROLES)).rows;ok(flags.length===2&&flags.every(x=>x.rolcanlogin===flags[0].rolcanlogin),'mixed activation flags require operator recovery');
    if(flags.every(x=>!x.rolcanlogin)){
