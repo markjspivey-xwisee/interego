@@ -191,7 +191,9 @@ export async function sweepStore({client,watchdog,table='pgsl_kv',measureFreeByt
     transaction=true;
     await client.query(`SET LOCAL statement_timeout='30s'`);
     await client.query(`SET LOCAL idle_in_transaction_session_timeout='10s'`);
-    await client.query(`LOCK TABLE ${n.relation} IN SHARE ROW EXCLUSIVE MODE NOWAIT`);
+    // Dedup reads and later root writes share one adapter transaction. Fence
+    // readers too, so no writer can observe an orphan that this TX deletes.
+    await client.query(`LOCK TABLE ${n.relation} IN ACCESS EXCLUSIVE MODE NOWAIT`);
     const identity=await client.query(`SELECT pg_backend_pid() AS pid,to_regclass($1)::oid AS oid,
       pg_current_wal_lsn()::text AS wal,clock_timestamp()-interval '1 hour' AS cutoff`,[n.relation]);
     ({pid,oid}=identity.rows[0]);

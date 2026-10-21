@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {Client} from 'pg@8';
 import {installSweep,sweepStore} from '../tools/pgsl-store-sweep.mjs';
+import {openPgStore} from '../packages/pgsl-store/src/pg-store.ts';
 import {readerFromPg,collectLive} from '../packages/pgsl-store/src/gc.ts';
 import {nodeKey,cpKey,ovKey} from '../packages/pgsl-store/src/keyspace.ts';
 const url=new URL(Bun.env.PGSL_SWEEP_FIXTURE_URL);
@@ -13,7 +14,8 @@ const fresh=async()=>{
  const client=await connect(name),watchdog=await connect(name),writer=await connect(name);
  await client.query('CREATE TABLE public.pgsl_kv(k bytea PRIMARY KEY,v bytea NOT NULL)');
  await client.query('CREATE TABLE public.relay_pgsl_published(k bytea PRIMARY KEY,v bytea NOT NULL)');
- return{client,watchdog,writer};
+ const connectionString=new URL(url);connectionString.pathname='/'+name;
+ return{client,watchdog,writer,connectionString:connectionString.href};
 };
 const hash=i=>i.toString(16).padStart(40,'0'),uri=(i,url=false,kind='atom')=>url?'https://fixture.example/ns/pgsl/'+kind+'/'+hash(i):'urn:pgsl:'+kind+':'+hash(i);
 const key=(i,kind='atom')=>Buffer.from(nodeKey({kind,hash:Buffer.from(hash(i),'hex')}));
@@ -62,15 +64,23 @@ try{
  {
   const f=await fresh(),c=f.client;await atom(c,20);await atom(c,21,70_000);await atom(c,22,70_000);
   await put(c,cp('ldp fixture','writer'),body(uri(20)));await installSweep(c);await age(c);
+  const adapter=await openPgStore({connectionString:f.connectionString,ensureSchema:false});
   let writing,triggered=false;
-  await assert.rejects(sweepStore({...opts(f),batchBytes:70_500,onPhase:async phase=>{
-   if(phase!=='deleted'||triggered)return;triggered=true;
-   writing=f.writer.query('INSERT INTO public.pgsl_kv VALUES($1,$2)',[cp('ldp fixture','arrived-during-sweep'),body(uri(21))]);
-   await Bun.sleep(1000);
-  }}),/sweep aborted/);
-  assert.equal(triggered,true);await writing;assert.equal(await exists(c,key(21)),true);assert.equal(await exists(c,key(22)),true);
-  assert.equal(await exists(c,cp('ldp fixture','arrived-during-sweep')),true);
-  results.push('queued writer after one DELETE rolls back every batch before admitting its new root');
+  try {
+   await assert.rejects(sweepStore({...opts(f),batchBytes:70_500,onPhase:async phase=>{
+    if(phase!=='deleted'||triggered)return;triggered=true;
+    writing=adapter.transact(async tx=>{
+     // Actual READ COMMITTED adapter: its first SELECT must wait behind the
+     // maintenance fence, then observe the rolled-back orphan before dedup.
+     assert.ok(await tx.get(new Uint8Array(key(21))),'dedup-selected node survives rollback');
+     tx.set(new Uint8Array(cp('ldp fixture','arrived-during-sweep')),new Uint8Array(body(uri(21))));
+    });
+    await Bun.sleep(1000);
+   }}),/sweep aborted/);
+   assert.equal(triggered,true);await writing;assert.equal(await exists(c,key(21)),true);assert.equal(await exists(c,key(22)),true);
+   assert.equal(await exists(c,cp('ldp fixture','arrived-during-sweep')),true);
+  }finally{await adapter.close();}
+  results.push('queued real-adapter dedup read after one DELETE rolls back every batch before admitting its new root');
  }
  {
   const f=await fresh(),c=f.client;await atom(c,30);await put(c,cp('ldp fixture','reuse'),body(uri(30)));
@@ -129,6 +139,24 @@ try{
   await assert.rejects(bounded.getManyTopology(requested),/refusing collection/);
   assert.equal(queries,1);
   results.push('aggregate fragment frontier over64MiB refuses before exporting topology');
+ }
+ {
+  const f=await fresh(),c=f.client;await atom(c,400);await atom(c,401);
+  await put(c,cp('ldp fixture','existing-reader'),body(uri(400)));await installSweep(c);await age(c);
+  const adapter=await openPgStore({connectionString:f.connectionString,ensureSchema:false});
+  let resume,read;
+  const paused=new Promise(resolve=>{resume=resolve;}),selected=new Promise(resolve=>{read=resolve;});
+  const writing=adapter.transact(async tx=>{
+   assert.ok(await tx.get(new Uint8Array(key(401))));read();await paused;
+   tx.set(new Uint8Array(cp('ldp fixture','already-selected')),new Uint8Array(body(uri(401))));
+  });
+  try {
+   await selected;
+   await assert.rejects(sweepStore(opts(f)),error=>error.code==='55P03');
+   assert.equal(await exists(c,key(401)),true);resume();await writing;
+   assert.equal(await exists(c,cp('ldp fixture','already-selected')),true);
+  }finally{resume();await writing.catch(()=>{});await adapter.close();}
+  results.push('existing real-adapter dedup reader makes ACCESS EXCLUSIVE NOWAIT defer before deletion');
  }
  console.log(JSON.stringify({kind:'sweep_fixture_pass',passed:results.length,results}));
 }finally{
