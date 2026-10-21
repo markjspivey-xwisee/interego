@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {Client} from 'pg@8';
 import {collectLive} from '../packages/pgsl-store/src/gc.ts';
 import {nodeKey,cpKey} from '../packages/pgsl-store/src/keyspace.ts';
-import {candidateReader,partitionRows,runWarmer} from '../tools/pgsl-copy-warmer.mjs';
+import {candidateReader,partitionRows,runWarmer,diagnosticOf} from '../tools/pgsl-copy-warmer.mjs';
 const urls={source:new URL(Bun.env.PGSL_COPY_FIXTURE_URL),target:new URL(Bun.env.PGSL_COPY_FIXTURE_TARGET_URL)};
 for(const u of Object.values(urls)){assert.ok(['127.0.0.1','localhost','[::1]'].includes(u.hostname));assert.equal(u.username,'iegoadmin');assert.equal(u.pathname,'pgsl_prod'.replace(/^/,'/'));}
 const clients=[],checks=[];
@@ -27,6 +27,7 @@ async function instance(hooks={}){
  const number=++generation,sql=[],warm=[];
  const make=async(kind,role)=>{const c=await connect(kind,'warmer-fixture-'+number+'-'+role),raw=c.query.bind(c);c.query=async(query,params)=>{
   assert.match(query,/^\s*(SELECT|WITH|BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY|SET LOCAL|ROLLBACK)\b/);assert.ok(!/\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|VACUUM|CHECKPOINT|FOR UPDATE)\b/i.test(query));sql.push(query);
+  if(hooks.planError&&query.includes('AS atom_header')){const error=new Error('sentinel_private_payload_sql_password');error.code='53400';error.detail='sentinel_private_payload_sql_password';throw error;}
   if(query.includes('pg_catalog.md5(v)')){const sum=(await source.query('SELECT coalesce(sum(octet_length(v)),0)::int AS n FROM pgsl_kv WHERE k=ANY($1::bytea[])',params)).rows[0].n;assert.ok(params[0].length<=128&&sum<=1024);warm.push(params[0].map(k=>k.toString('hex')));}
   const r=await raw(query,params);if(hooks.identityWrong&&kind==='target'&&query.includes('pg_control_system()'))r.rows[0].system_id='wrong';return r;
  };return c;};
@@ -34,6 +35,12 @@ async function instance(hooks={}){
  return {source:sc,target:tc,readers,sourceSystemId,targetSystemId,sql,warm,options:{windowBytes:8192,batchBytes:1024,maxWindowRows:4096,maxWindows:1,deadlineMs:10000,pollMs:50}};
 }
 try{
+ const sentinel='sentinel_private_payload_sql_password';
+ assert.deepEqual(diagnosticOf({message:sentinel,code:sentinel,safePhase:sentinel},sentinel),{phase:'runtime',code:'E_RUNTIME'});
+ assert.deepEqual(diagnosticOf({code:'53400'},'retained-plan'),{phase:'retained-plan',code:'53400'});
+ const failure=await instance({planError:true});let failed;try{await runWarmer(failure);}catch(e){failed=diagnosticOf(e);}
+ assert.deepEqual(failed,{phase:'plan-query',code:'53400'});assert.ok(!JSON.stringify(failed).includes(sentinel));
+ checks.push('planner failures retain only allowlisted stage/SQLSTATE and discard payload/SQL/password messages');
  const split=partitionRows(Array.from({length:300},(_,i)=>({k:Buffer.from('k'+i),bytes:i===0?2000:8})),1024,128);assert.equal(split.skipped,1);assert.ok(split.groups.every(g=>g.length<=128&&g.reduce((n,r)=>n+r.bytes,0)<=1024));
  checks.push('payload groups enforce row/byte bounds and skip oversized individual values');
  const first=await instance(),result=await runWarmer(first);assert.equal(result.windows,1);assert.ok(first.sql.includes('SELECT pg_catalog.pg_stat_clear_snapshot()'));assert.ok(result.rows>0&&result.bytes>0&&first.warm.length>0);assert.ok(result.skippedLarge>0);assert.deepEqual((await source.query('SELECT k,v FROM pgsl_kv ORDER BY k')).rows,before);assert.equal((await target.query('SELECT count(*)::int n FROM pgsl_kv')).rows[0].n,0);
@@ -60,6 +67,11 @@ try{
  assert.equal(modules['warmer.mjs'],core.replace('../packages/pgsl-store/src/gc.js','./gc.ts'));
  assert.ok(wrapper.includes("PGSL_WARM_MAX_WINDOWS??'2'"));assert.ok(wrapper.includes("default_transaction_read_only=on"));
  for(const [name,path]of [['gc.ts','gc'],['gc-atom-header.ts','gc-atom-header'],['keyspace.ts','keyspace'],['addressing.ts','addressing']]){let actual=await readFile(new URL('../packages/pgsl-store/src/'+path+'.ts',import.meta.url),'utf8');actual=actual.replaceAll("'./addressing.js'","'./addressing.ts'").replaceAll("'./keyspace.js'","'./keyspace.ts'").replaceAll("'./gc-atom-header.js'","'./gc-atom-header.ts'");assert.equal(modules[name],actual);}
+ const child=Bun.spawn([process.execPath,new URL('../tools/pgsl-copy-warmer.railway.mjs',import.meta.url).pathname],{env:{...process.env,PGSL_WARM_ENABLE:'reviewed-readonly-prefetch',PGSL_PG_CONNSTR:sentinel,PGSL_COPY_TARGET_HOST:'target.railway.internal'},stdout:'pipe',stderr:'pipe'});
+ const childCode=await child.exited,stdout=await new Response(child.stdout).text(),stderr=await new Response(child.stderr).text();
+ assert.equal(childCode,1);assert.ok(!stdout.includes(sentinel)&&!stderr.includes(sentinel));
+ assert.ok(stdout.includes('"phase":"configuration"')&&stdout.includes('"code":"E_RUNTIME"'));
+ checks.push('actual wrapper suppresses invalid connection URL contents during startup failure');
  checks.push('self-contained artifact matches exact reviewed traversal modules and defaults to two windows');
  console.log(JSON.stringify({kind:'warmer_fixture_pass',passed:checks.length,checks}));
 }finally{await sf.query('ROLLBACK').catch(()=>{});for(const c of clients)await c.end().catch(()=>{});}
