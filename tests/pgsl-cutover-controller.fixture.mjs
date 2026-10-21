@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import {Client} from 'pg@8';
-import {createCutoverController,hashTable,metadata,RECOVERY_ROLE,receiptKey} from '../tools/pgsl-cutover-controller.mjs';
+import {createCutoverController,hashTable,metadata,RECOVERY_ROLE,receiptKey,frame,decodePayloadBase64} from '../tools/pgsl-cutover-controller.mjs';
 const urls={source:new URL(Bun.env.PGSL_COPY_FIXTURE_URL),target:new URL(Bun.env.PGSL_COPY_FIXTURE_TARGET_URL)};
 for(const u of Object.values(urls)){assert.ok(['127.0.0.1','localhost','[::1]'].includes(u.hostname));assert.equal(u.username,'iegoadmin');assert.equal(u.pathname,'/pgsl_prod');}
+const opaqueBytes=Buffer.from(Array.from({length:65537},(_,i)=>i%256));
+assert.deepEqual(decodePayloadBase64(opaqueBytes.toString('base64').replace(/.{76}/g,chunk=>chunk+'\n'),opaqueBytes.length),opaqueBytes);
+assert.deepEqual(decodePayloadBase64('',0),Buffer.alloc(0));
+for(const [encoded,bytes]of [['AA==',2],['AB==',1],['A?==',1],['AA==',0],[Buffer.from('AA=='),1]])assert.throws(()=>decodePayloadBase64(encoded,bytes),/base64 payload/);
 const clients=[];
 async function connectReal(u,app='cutover-fixture'){const c=new Client({connectionString:u.href,application_name:app});c.on('error',()=>{});await c.connect();clients.push(c);return c;}
 const adminUrl=base=>{const u=new URL(base);u.pathname='/postgres';return u;};
@@ -20,10 +25,16 @@ for(const c of [s,t]){
  await c.query('SET ROLE pg_database_owner');await c.query('GRANT USAGE ON SCHEMA public TO relay_pgsl');await c.query('RESET ROLE');
  await c.query("ALTER DATABASE pgsl_prod SET idle_in_transaction_session_timeout='5min'");
  for(let i=0;i<140;i++)await c.query('INSERT INTO pgsl_kv VALUES($1,$2)',[Buffer.from('row'+String(i).padStart(4,'0')),Buffer.from('opaque '+i)]);
+ await c.query('UPDATE pgsl_kv SET v=$2 WHERE k=$1',[Buffer.from('row0139'),opaqueBytes]);
+ await c.query('UPDATE pgsl_kv SET v=$2 WHERE k=$1',[Buffer.from('row0138'),Buffer.alloc(0)]);
  await c.query('INSERT INTO relay_pgsl_published VALUES($1,$2)',[Buffer.alloc(0),Buffer.from('empty-key-is-valid')]);
 }
 assert.deepEqual(await metadata(s),await metadata(t));
 const kv=await hashTable(s,'pgsl_kv'),relay=await hashTable(s,'relay_pgsl_published');
+for(const [table,summary]of [['pgsl_kv',kv],['relay_pgsl_published',relay]]){
+ const h=createHash('sha256');let bytes=0;const raw=await s.query('SELECT k,v FROM '+table+' ORDER BY k');for(const row of raw.rows){frame(h,row.k,row.v);bytes+=row.v.length;}
+ assert.deepEqual(summary,{rows:raw.rows.length,bytes,digest:h.digest('hex')},'base64 transport exactly matches raw independent bytes');
+}
 await s.end();await t.end();await ta.end();
 const sf=await connectReal(urls.source,'pgsl-copy-source-fence'),tc=await connectReal(urls.target,'pgsl-copy-target');
 await sf.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await sf.query('LOCK TABLE public.pgsl_kv,public.relay_pgsl_published IN SHARE MODE NOWAIT');

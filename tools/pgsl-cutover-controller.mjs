@@ -20,12 +20,13 @@ export function validateReceipt(s,ids,now=Date.now(),fresh=true){
 }
 export const receiptKey=r=>createHash('sha256').update(j({source:r.source.system_id,target:r.target.system_id,verifiedAt:r.verifiedAt,kv:r.kv,relay:r.relay})).digest('hex');
 export function frame(h,k,v){const b=Buffer.alloc(8);b.writeBigUInt64BE(BigInt(k.length));h.update(b);h.update(k);b.writeBigUInt64BE(BigInt(v.length));h.update(b);h.update(v);}
+export function decodePayloadBase64(encoded,bytes){ok(typeof encoded==='string'&&Number.isSafeInteger(bytes)&&bytes>=0,'invalid base64 payload');const compact=encoded.replaceAll('\n','');ok(compact.length===Math.ceil(bytes/3)*4,'base64 payload length differs');const value=Buffer.from(compact,'base64');ok(value.length===bytes&&value.toString('base64')===compact,'base64 payload bytes differ');return value;}
 export async function hashTable(c,table){
  ok(TABLES.includes(table),'unreviewed table');const h=createHash('sha256');let rows=0,bytes=0,cursor=null;
  for(;;){const meta=await c.query('SELECT k,octet_length(v) AS bytes FROM public.'+q(table)+(cursor===null?'':' WHERE k>$1')+' ORDER BY k LIMIT 128',cursor===null?[]:[cursor]);if(!meta.rows.length)break;
-  let group=[],size=0;const flush=async()=>{if(!group.length)return;const r=await c.query('SELECT k,v FROM public.'+q(table)+' WHERE k=ANY($1::bytea[]) ORDER BY k',[group]);ok(r.rows.length===group.length,'verification payload count differs');
-   for(let i=0;i<r.rows.length;i++){const x=r.rows[i];ok(Buffer.isBuffer(x.k)&&x.k.equals(group[i])&&Buffer.isBuffer(x.v),'verification payload/key differs');frame(h,x.k,x.v);rows++;bytes+=x.v.length;ok(bytes<=40000000000,'verification byte budget exceeded');r.rows[i]={};}group=[];size=0;};
-  for(const x of meta.rows){ok(Buffer.isBuffer(x.k)&&Number.isSafeInteger(x.bytes)&&x.bytes>=0&&x.bytes<=134217728,'verification value exceeds memory bound');if(group.length&&size+x.bytes>8388608)await flush();group.push(x.k);size+=x.bytes;}
+  let group=[],lengths=[],size=0;const flush=async()=>{if(!group.length)return;const r=await c.query("SELECT k,encode(v,'base64') AS v_base64 FROM public."+q(table)+' WHERE k=ANY($1::bytea[]) ORDER BY k',[group]);ok(r.rows.length===group.length,'verification payload count differs');
+   for(let i=0;i<r.rows.length;i++){const x=r.rows[i];ok(Buffer.isBuffer(x.k)&&x.k.equals(group[i]),'verification payload/key differs');const value=decodePayloadBase64(x.v_base64,lengths[i]);frame(h,x.k,value);rows++;bytes+=value.length;ok(bytes<=40000000000,'verification byte budget exceeded');r.rows[i]={};}group=[];lengths=[];size=0;};
+  for(const x of meta.rows){ok(Buffer.isBuffer(x.k)&&Number.isSafeInteger(x.bytes)&&x.bytes>=0&&x.bytes<=134217728,'verification value exceeds memory bound');if(group.length&&size+x.bytes>8388608)await flush();group.push(x.k);lengths.push(x.bytes);size+=x.bytes;}
   cursor=Buffer.from(meta.rows.at(-1).k);await flush();
  }return {rows,bytes,digest:h.digest('hex')};
 }
