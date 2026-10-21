@@ -608,6 +608,31 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
   readonly why: string;
 }[] = [
   {
+    name: 'PGSL_PG_MAX_DATABASE_BYTES',
+    readIn: 'packages/pgsl-store/src/pg-store.ts',
+    why: 'an optional physical database byte ceiling read when openPgStore() builds its adapter. '
+      + 'Collected suites reach this production read by importing the store, and the real PostgreSQL '
+      + 'fixture supplies isolated loopback connections and explicit option values. This setting '
+      + 'bounds admission arithmetic on the already configured database; it supplies no credential '
+      + 'and chooses no network destination. No collected test module reads the name directly.',
+  },
+  {
+    name: 'PGSL_PG_MAX_TRANSACTION_INPUT_BYTES',
+    readIn: 'packages/pgsl-store/src/pg-store.ts',
+    why: 'the cumulative new-key/value and replaced-value byte limit for positive PostgreSQL '
+      + 'transactions, read beside the optional physical ceiling in openPgStore(). Suites reach '
+      + 'this one production read through store imports and pass fixture limits as options; the '
+      + 'name controls local admission arithmetic rather than a database address or credential.',
+  },
+  {
+    name: 'PGSL_PG_WRITE_RESERVE_BYTES',
+    readIn: 'packages/pgsl-store/src/pg-store.ts',
+    why: 'the extra physical byte reserve used by the optional PostgreSQL write admission guard. '
+      + 'It is read only when openPgStore() constructs the adapter and selects no external '
+      + 'destination. Collected suites share this production read through imports, while real '
+      + 'PostgreSQL tests use isolated connections and explicit per-fixture option values.',
+  },
+  {
     name: 'RAILWAY_PROJECT_TOKEN',
     readIn: 'tools/pgsl-store-inventory.ts',
     why: 'The inventory unit and SQL fixture suites import this operator\'s aggregate helpers. '
