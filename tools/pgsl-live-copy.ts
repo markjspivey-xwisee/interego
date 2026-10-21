@@ -253,7 +253,7 @@ function candidateReader(source: CopyClient) {
         .replace('false AS needs_js_parse, NULL::json AS topology', "false AS needs_js_parse, json_build_object('kind','atom','level',0) AS topology");
     }
     return source.query(sql, params);
-  } });
+  } }, 'pgsl_kv', 5000, 4096);
 }
 function validateControl(key: Buffer, value: Buffer): void {
   const tag = tagOf(key);
@@ -322,7 +322,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     const n = subspaceRange('N');
     const malformed = await sq("SELECT count(*)::int AS n FROM public.pgsl_kv WHERE k >= $1 AND k < $2 AND (octet_length(k)<>27 OR CASE WHEN octet_length(k)>6 THEN get_byte(k,6) ELSE -1 END NOT IN (1,2))", [Buffer.from(n.begin), Buffer.from(n.end)]);
     invariant(malformed.rows[0]!.n === 0, 'malformed N keys require separate review');
-    const candidate = await collectLive(candidateReader({ ...source, query: sq, end: () => source.end() }), { log: line => log({ kind: 'closure', line }) });
+    const candidate = await collectLive(candidateReader({ ...source, query: sq, end: () => source.end() }), { traversalBatchSize: 4096, log: line => log({ kind: 'closure', line }) });
     invariant(candidate.keys.size > 0 && candidate.stats.danglingRoots.length === 0
       && candidate.stats.unreadableNodes === 0, 'candidate closure is incomplete');
     const wanted = [...candidate.keys].sort(), actual: string[] = [];
@@ -442,7 +442,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     await verify('pgsl_kv', copiedKv); await verify('relay_pgsl_published', copiedRelay);
     const targetReader = readerFromPg({ query: tq });
     targetReader.getManyTopology = async keys => new Map(keys.filter(key => topologies.has(hex(key))).map(key => [hex(key), topologies.get(hex(key))!]));
-    const independent = await collectLive(targetReader);
+    const independent = await collectLive(targetReader, { traversalBatchSize: 4096 });
     invariant(independent.stats.danglingRoots.length === 0 && independent.stats.unreadableNodes === 0
       && independent.keys.size === candidate.keys.size && [...candidate.keys].every(key => independent.keys.has(key)), 'independent full-body target closure differs');
     invariant(independent.stats.liveNodeBytes === candidate.stats.liveNodeBytes, 'validated node byte count differs');

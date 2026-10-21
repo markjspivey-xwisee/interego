@@ -37,18 +37,23 @@ try {
   const atomKey=Buffer.from(nodeKey({kind:'atom',hash:Buffer.from(atomHash,'hex')}));
   const fragKey=Buffer.from(nodeKey({kind:'fragment',hash:Buffer.from(fragHash,'hex')}));
   const atomBody=Buffer.from(JSON.stringify({uri:atomUri,kind:'atom',level:0,value:'__ENCRYPTED__',provenance:{ciphertext:'opaque'}}));
-  const fragmentBody=Buffer.from(JSON.stringify({uri:fragUri,kind:'fragment',level:1,items:[atomUri]}));
+  const extraUris=Array.from({length:63},(_,i)=>'https://fixture.example/ns/pgsl/atom/'+(i+1).toString(16).padStart(40,'0'));
+  const fragmentBody=Buffer.from(JSON.stringify({uri:fragUri,kind:'fragment',level:1,items:[atomUri,...extraUris]}));
   const insert=async(table,k,v)=>source.query('INSERT INTO public.'+table+'(k,v) VALUES($1,$2)',[k,v]);
   await insert('pgsl_kv',atomKey,atomBody);await insert('pgsl_kv',fragKey,fragmentBody);
+  for(let i=0;i<extraUris.length;i++)await insert('pgsl_kv',Buffer.from(nodeKey({kind:'atom',hash:Buffer.from((i+1).toString(16).padStart(40,'0'),'hex')})),Buffer.from(JSON.stringify({uri:extraUris[i],kind:'atom',level:0,value:'opaque-'+i})));
   await insert('pgsl_kv',Buffer.from(cpKey('ldp fixture','current')),Buffer.from(JSON.stringify({topUri:fragUri})));
   await insert('pgsl_kv',Buffer.from(ovKey('fixture','current')),Buffer.from(fragUri));
   await insert('pgsl_kv',Buffer.from(nodeKey({kind:'atom',hash:Buffer.from(orphanHash,'hex')})),Buffer.from('unreferenced invalid private JSON'));
   await insert('relay_pgsl_published',Buffer.alloc(0),Buffer.from([0xff,0,0xfe]));
   await insert('relay_pgsl_published',Buffer.from('unrelated-user-row'),Buffer.from('retain every unrelated relay byte'));
+  const rawSourceQuery=source.query.bind(source);let widestTopologyQuery=0;
+  source.query=async(sql,params)=>{if(sql.includes('AS atom_header'))widestTopologyQuery=Math.max(widestTopologyQuery,params[0].length);return rawSourceQuery(sql,params);};
   const target=await fresh(),session=await copyLiveDatabase(source,target,options);
   assert.equal(session.state,'verified-source-fenced');
-  assert.equal((session.receipt.kv).rows,4);assert.equal((session.receipt.relay).rows,2);
-  assert.equal(session.receipt.liveNodes,2);
+  assert.equal((session.receipt.kv).rows,67);assert.equal((session.receipt.relay).rows,2);
+  assert.equal(session.receipt.liveNodes,65);
+  assert.ok(widestTopologyQuery>32,'copy must opt into bounded large topology traversal');
   assert.ok(Object.values(session.receipt.missingDerived).reduce((a,b)=>a+b,0)>0);
   assert.deepEqual((await target.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows,(await source.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows);
   assert.ok(!JSON.stringify(session.receipt).includes('SCRAM-SHA-256'));
@@ -123,6 +128,8 @@ try {
   const start=wrapperSource.indexOf('const modules=')+'const modules='.length;
   const end=wrapperSource.indexOf(';\nconst required=',start);
   const bundled=JSON.parse(wrapperSource.slice(start,end));
+  const gcSource=await readFile(new URL('../packages/pgsl-store/src/gc.ts',import.meta.url),'utf8');
+  assert.equal(bundled['gc.ts'],gcSource.replaceAll('./addressing.js','./addressing.ts').replaceAll('./keyspace.js','./keyspace.ts').replaceAll('./gc-atom-header.js','./gc-atom-header.ts'));
   const coreSource=await readFile(new URL('../tools/pgsl-live-copy.ts',import.meta.url),'utf8');
   assert.equal(bundled['live-copy.ts'],coreSource.replaceAll('../packages/pgsl-store/src/gc.js','./gc.ts')
     .replaceAll('../packages/pgsl-store/src/addressing.js','./addressing.ts').replaceAll('../packages/pgsl-store/src/keyspace.js','./keyspace.ts'));
