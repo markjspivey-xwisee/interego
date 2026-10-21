@@ -111,10 +111,11 @@ try{
   results.push('large fragment frontier uses metadata-sized batches over32 keys while each topology query stays within8MiB');
  }
  {
-  const f=await fresh(),c=f.client;await atom(c,200);await atom(c,201);
+  const f=await fresh(),c=f.client;await atom(c,200);await atom(c,201,70_000);
   await put(c,cp('ldp fixture','vacuum-failure'),body(uri(200)));await installSweep(c);await age(c);
+  await assert.rejects(sweepStore(opts(f)),/orphan value exceeds deletion batch bound/);assert.equal(await exists(c,key(201)),true);
   const wrapped={query:(sql,params)=>sql.startsWith('VACUUM ')?Promise.reject(Error('fixture vacuum unavailable')):c.query(sql,params)};
-  const r=await sweepStore({...opts(f),client:wrapped});
+  const r=await sweepStore({...opts(f),client:wrapped,batchBytes:128*1024});
   assert.equal(r.status,'swept');assert.equal(r.vacuumed,false);assert.equal(await exists(c,key(201)),false);
   results.push('post-commit VACUUM failure reports committed deletes accurately and permits retry');
  }

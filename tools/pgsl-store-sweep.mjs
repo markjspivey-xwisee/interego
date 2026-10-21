@@ -232,7 +232,7 @@ export async function sweepStore({client,watchdog,table='pgsl_kv',measureFreeByt
       const batch=[];let bytes=0;
       for(const row of rows.rows){
         const size=Number(row.bytes);
-        if(!Number.isSafeInteger(size)||size<0||size>128*1024*1024)throw Error('refusing sweep: orphan value exceeds deletion bound');
+        if(!Number.isSafeInteger(size)||size<0||size>batchBytes)throw Error('refusing sweep: orphan value exceeds deletion batch bound');
         if(batch.length&&(bytes+size>batchBytes||deletedBytes+bytes+size>maxDeleteBytes))break;
         if(!batch.length&&deletedBytes+size>maxDeleteBytes)break;
         batch.push(row.k);bytes+=size;if(bytes>=batchBytes)break;
