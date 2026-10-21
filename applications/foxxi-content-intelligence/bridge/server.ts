@@ -19,6 +19,7 @@
  *   FOXXI_AUDIENCE=both      → expose both (default)
  */
 
+import { gatewayTransport } from '../src/gateway-transport.js';
 import { randomUUID, createHash, createHmac, randomBytes } from 'node:crypto';
 import { format } from 'node:util';
 
@@ -55,7 +56,10 @@ import express, { type RequestHandler } from 'express';
   const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
   const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
   const writeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
-  const originalFetch = globalThis.fetch.bind(globalThis);
+  const originalFetch = gatewayTransport(globalThis.fetch.bind(globalThis), {
+    publicPodUrl: tenantPodUrl,
+    internalGatewayUrl: process.env.FOXXI_GATE_INTERNAL_URL,
+  });
   // Installed UNCONDITIONALLY (not only when the write-secret is set) so the
   // write-SSRF choke point below always applies.
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
