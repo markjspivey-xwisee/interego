@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-21 — Private sweep connection failures release both clients
+
+The private sweep worker bounds each PostgreSQL connection attempt to five seconds and closes both clients when either connection fails, including a cleanup rejection from the other client. Failure remains a nonzero exit with sanitized diagnostics before any SQL runs. Injected entry-point fixtures cover both connection failures; the existing real PostgreSQL retention and reclamation cases remain unchanged.
+
 ## 2026-10-21 — Private reclamation preserves current and recent roots
 
 A private PostgreSQL maintenance worker journals mutable roots and retains every current root, all native historical C resources, and one hour of retired mutable roots. Its first hour performs no deletion. Fenced mark-and-sweep deletion and ordinary VACUUM reuse heap and TOAST pages without a second payload table. Queued traffic, incomplete closure, malformed input, insufficient reserve, or a work deadline rolls the deletion transaction back. The Bun Function defaults to off; installation, production measurement and scheduling remain explicit recovery-owner rollout steps. A trusted-master workflow can forward the existing project token only to the named private worker without deployment. The legacy GitHub collector is now manual-only, so it cannot start alongside the private cron.
