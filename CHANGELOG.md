@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-21 — Private reclamation preserves current and recent roots
+
+A private PostgreSQL maintenance worker journals mutable roots and retains every current root, all native historical C resources, and one hour of retired mutable roots. Its first hour performs no deletion. Fenced mark-and-sweep deletion and ordinary VACUUM reuse heap and TOAST pages without a second payload table. Queued traffic, incomplete closure, malformed input, insufficient reserve, or a work deadline rolls the deletion transaction back. The Bun Function defaults to off; installation, production measurement and scheduling remain explicit recovery-owner rollout steps. A trusted-master workflow can forward the existing project token only to the named private worker without deployment. The legacy GitHub collector is now manual-only, so it cannot start alongside the private cron.
+
+Real PostgreSQL 16 fixtures cover retained roots, reader races, failure rollback and TOAST-page reuse; they do not establish production mark throughput. This entry documents this maintenance change. The inherited undocumented backlog measured 398 commits in exact-candidate CI, so the visible ceiling becomes 408 with ten commits of headroom; the continuous documented-through marker stays unchanged and no historical backfill is claimed.
+
 ## 2026-10-21 — Retain URL roots and bound shared-store collector reads
 
 The collector recognizes both legacy URNs and dereferenceable node URLs in control-plane records and current overlays, using the same address codec as fragment traversal. URL-only current heads therefore retain their complete node closure. The PostgreSQL reader takes a bounded header for canonical opaque atoms instead of scanning and parsing their complete payloads to discover that they have no outgoing edges. The header is bound to the stored atom key; unfamiliar historical encodings use the complete JSON fallback, and malformed bindings refuse collection. The breadth-first queue uses a cursor with occasional compaction. Actual-source regressions cover root forms, stale overlays, malformed bindings, and a 20,000-leaf closure; an isolated PostgreSQL 16 fixture verifies reduced TOAST reads for an 8 MiB uncompressed atom. This does not itself retire data, remove the rebuild headroom guard, or claim physical reclamation.

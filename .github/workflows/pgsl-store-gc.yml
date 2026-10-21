@@ -1,11 +1,14 @@
 name: Pod store collector
 
-# Every hour, measure how much of the pod store's Postgres table is unreferenced history, rebuild
+# Manual recovery only. Scheduled reclamation uses the private Railway sweep worker after its
+# migration, measurement and one-hour warmup gates. This workflow never runs automatically.
+#
+# Measure how much of the pod store's Postgres table is unreferenced history, rebuild
 # the table from its live set when that share has crossed a line, and drop the copy a rebuild
 # left behind after one hour AND a complete current live-set check. Any mode can still be
 # dispatched by hand.
 #
-# ── WHY THIS RUNS ON A SCHEDULE ────────────────────────────────────────────────────────────
+# ── HISTORICAL RECOVERY CONTEXT ───────────────────────────────────────────────────────────
 #
 # The store is grow-only and content-addressed; every overwrite leaves the old nodes behind
 # (packages/pgsl-store/src/gc.ts says what "live" means). On 2026-09-20 that history reached
@@ -27,8 +30,6 @@ name: Pod store collector
 # opens a temporary TCP route with the project token for the run and deletes it afterwards.
 
 on:
-  schedule:
-    - cron: '17 * * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -86,8 +87,7 @@ jobs:
       # supersedes the last and the review is always the latest reading with the earlier ones
       # behind it in the chain. Only after a run that succeeded: a failed run measured nothing. The
       # automatic run's log carries the rebuild decision and any rebuild, so the review says so too.
-      # Scheduled reviews remain daily at hour 06 UTC; hourly measurements must not
-      # multiply this separate immutable audit history. Manual review behavior is unchanged.
+      # This workflow is manual-only; review publication remains an explicit dispatch effect.
       - name: Record the measurement as this quarter's monitoring review
         if: ${{ contains(fromJSON('["hourly","weekly","dry-run"]'), github.event.inputs.mode || 'hourly') }}
         env:
