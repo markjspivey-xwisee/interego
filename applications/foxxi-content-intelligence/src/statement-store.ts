@@ -602,6 +602,7 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
       redirect: 'manual', signal: init?.signal ?? AbortSignal.timeout(15000) });
   };
   const client = new NativeCommitStore({ scope: config.scope, fetch: transport, senderKeyPair,
+    cacheImmutableReads: true,
     ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
   return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
     scopeIdentity: JSON.stringify(config.scope),

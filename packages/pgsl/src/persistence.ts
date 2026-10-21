@@ -438,10 +438,50 @@ export interface CasWriteResult {
   /** 'ok' = written. 'conflict' = the precondition failed (412) — someone wrote since
    *  we loaded; the caller must reload + merge + retry. 'error' = other failure. */
   readonly status: 'ok' | 'conflict' | 'error';
-  /** The resource's etag AFTER a successful write (fetched via HEAD — the pod's PUT
-   *  response carries no etag). Undefined on conflict/error. */
+  /** Validator for the next CAS: preferably body-bound, otherwise a later HEAD
+   *  used only as a precondition hint. Undefined on conflict/error. */
   readonly etag?: string;
+  /** Strong ETag bound to this exact ciphertext by the PUT response or a verified
+   * same-response GET. Unlike a later HEAD, this can confirm a duplicate-write cache. */
+  readonly confirmedEtag?: string;
   readonly httpStatus: number;
+}
+
+/** Weak validators do not bind the exact stored ciphertext. */
+function strongWriteEtag(value: string | null): string | undefined {
+  return value !== null && /^"[\x21\x23-\x7e\x80-\xff]*"$/.test(value) ? value : undefined;
+}
+
+/** Confirm only exact ciphertext, streaming at most its known byte count.
+ * This optional read is bounded in bytes and time and never exports the body. */
+async function confirmEncryptedWriteBody(resourceUrl: string, body: string, fetchFn: typeof fetch): Promise<string | undefined> {
+  try {
+    const r = await fetchFn(resourceUrl, {
+      method: 'GET', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(30_000),
+    });
+    const etag = strongWriteEtag(r.headers.get('etag'));
+    const expectedBytes = Buffer.byteLength(body, 'utf8');
+    if (!r.ok || !etag || !r.body) { await r.body?.cancel().catch(() => undefined); return undefined; }
+    const declared = r.headers.get('content-length');
+    if (declared !== null && Number(declared) !== expectedBytes) { await r.body.cancel().catch(() => undefined); return undefined; }
+    const expectedDigest = createHash('sha256').update(body, 'utf8').digest('hex');
+    const actual = createHash('sha256');
+    const reader = r.body.getReader();
+    let bytes = 0;
+    try {
+      for (;;) {
+        const next = await reader.read();
+        if (next.done) break;
+        bytes += next.value.byteLength;
+        if (bytes > expectedBytes) return undefined;
+        actual.update(next.value);
+      }
+      return bytes === expectedBytes && actual.digest('hex') === expectedDigest ? etag : undefined;
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+  } catch { return undefined; }
 }
 
 /**
@@ -451,8 +491,9 @@ export interface CasWriteResult {
  * (update) or If-None-Match: * (create) so a concurrent writer cannot be silently
  * clobbered: on a precondition failure the pod returns 412 and this returns
  * status 'conflict' rather than swallowing it (the plain promote treats 412 as
- * success). On success it HEAD-refreshes the new etag, because the pod's PUT
- * response (201/205) carries none.
+ * success). A PUT response ETag confirms its own body. With confirmBody enabled,
+ * a missing strong PUT ETag permits one byte/time-bounded exact ciphertext GET
+ * confirmation. Otherwise a later HEAD is only a CAS hint, never body proof.
  */
 export async function promoteInstanceEncryptedCAS(
   pgsl: PGSLInstance,
@@ -461,7 +502,7 @@ export async function promoteInstanceEncryptedCAS(
   recipientPublicKeys: readonly string[],
   senderKeyPair: EncryptionKeyPair,
   fetchFn: typeof fetch,
-  precondition: { ifMatch?: string; ifNoneMatch?: '*' },
+  precondition: { ifMatch?: string; ifNoneMatch?: '*'; confirmBody?: boolean },
 ): Promise<CasWriteResult> {
   const top = pgsl.nodes.get(topUri);
   if (!top) throw new Error(`Node not found: ${topUri}`);
@@ -473,15 +514,21 @@ export async function promoteInstanceEncryptedCAS(
   else if (precondition.ifNoneMatch) headers['If-None-Match'] = precondition.ifNoneMatch;
 
   let r: Response;
-  try { r = await fetchFn(resourceUrl, { method: 'PUT', headers, body: JSON.stringify(envelope) }); }
+  const body = JSON.stringify(envelope);
+  try { r = await fetchFn(resourceUrl, { method: 'PUT', headers, body }); }
   catch { return { status: 'error', httpStatus: 0 }; }
   if (r.status === 412) return { status: 'conflict', httpStatus: 412 };
   if (!r.ok) return { status: 'error', httpStatus: r.status };
-  // Success: the PUT carries no etag, so HEAD to capture the new one for the next CAS.
-  let etag: string | undefined;
-  try { const h = await fetchFn(resourceUrl, { method: 'HEAD', headers: { Accept: 'application/json' } }); etag = h.headers.get('etag') ?? undefined; }
-  catch { /* etag stays undefined; the next write will re-read it */ }
-  return { status: 'ok', etag, httpStatus: r.status };
+  // A PUT response validator binds this body. A later HEAD may already name
+  // another writer's body, so it remains only a CAS hint and cannot mark it clean.
+  const confirmedEtag = strongWriteEtag(r.headers.get('etag'))
+    ?? (precondition.confirmBody ? await confirmEncryptedWriteBody(resourceUrl, body, fetchFn) : undefined);
+  let etag = confirmedEtag;
+  if (!etag) {
+    try { const h = await fetchFn(resourceUrl, { method: 'HEAD', headers: { Accept: 'application/json' } }); etag = h.headers.get('etag') ?? undefined; }
+    catch { /* etag stays undefined; the next write will re-read it */ }
+  }
+  return { status: 'ok', etag, httpStatus: r.status, ...(confirmedEtag ? { confirmedEtag } : {}) };
 }
 
 /** Promote a node to tier 3 — pin to IPFS, return CID. */

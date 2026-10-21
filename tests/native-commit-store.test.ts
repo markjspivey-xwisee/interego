@@ -534,3 +534,83 @@ describe('strict native encrypted PGSL commits', () => {
     expect(transport.methods.every(m => !m.startsWith('DELETE '))).toBe(true);
   }, 60_000);
 });
+
+describe('opt-in immutable native artifact reuse', () => {
+  it('reuses verified ciphertext but returns independent decrypted node maps', async () => {
+    const transport = new NativeTransport(), saved = await put(transport, 'cached', 'exact immutable content');
+    const reference = saved.snapshot.records.get('statement:cached')!;
+    const reader = transport.client({ cacheImmutableReads: true });
+    transport.methods.length = 0;
+    const first = await reader.readArtifact(reference);
+    expect(Buffer.from(readNativeByteArtifact(first).bytes).toString()).toBe('exact immutable content');
+    expect(transport.methods).toEqual(['GET ' + reference.resourceUrl]);
+    (first.nodes as Map<IRI, unknown>).clear();
+    const second = await reader.readArtifact(reference);
+    expect(Buffer.from(readNativeByteArtifact(second).bytes).toString()).toBe('exact immutable content');
+    expect(transport.methods).toEqual(['GET ' + reference.resourceUrl]);
+    expect(second.nodes).not.toBe(first.nodes);
+  });
+
+  it('does not share cached authority or content across reader instances', async () => {
+    const transport = new NativeTransport(), saved = await put(transport, 'private-cache');
+    const reference = saved.snapshot.records.get('statement:private-cache')!;
+    await transport.client({ cacheImmutableReads: true }).readArtifact(reference);
+    transport.methods.length = 0;
+    const restarted = transport.client({ cacheImmutableReads: true });
+    await restarted.readArtifact(reference);
+    expect(transport.methods).toEqual(['GET ' + reference.resourceUrl]);
+    const denied = transport.client({ cacheImmutableReads: true, fetch: async () => new Response(null, { status: 403 }) });
+    await expect(denied.readArtifact(reference)).rejects.toThrow('unreadable');
+  });
+
+  it('requires all reference bindings and does not retain a failed initial verification', async () => {
+    const transport = new NativeTransport(), saved = await put(transport, 'verified-cache');
+    const reference = saved.snapshot.records.get('statement:verified-cache')!;
+    const reader = transport.client({ cacheImmutableReads: true });
+    await expect(reader.readArtifact({ ...reference, plaintextDigest: sha('wrong plaintext') })).rejects.toThrow('plaintext binding');
+    await expect(reader.readArtifact({ ...reference, topUri: mintNodeId('atom', 'd'.repeat(40)) })).rejects.toThrow();
+    const original = transport.rows.get(reference.resourceUrl)!;
+    transport.rows.set(reference.resourceUrl, { ...original, bytes: Buffer.from('{}') });
+    transport.methods.length = 0;
+    await expect(reader.readArtifact(reference)).rejects.toThrow('unavailable or changed');
+    transport.rows.set(reference.resourceUrl, original);
+    await reader.readArtifact(reference);
+    expect(transport.methods).toEqual(['GET ' + reference.resourceUrl, 'GET ' + reference.resourceUrl]);
+    transport.rows.set(reference.resourceUrl, { ...original, bytes: Buffer.from('{}') });
+    await expect(transport.client({ cacheImmutableReads: true }).readArtifact(reference)).rejects.toThrow('unavailable or changed');
+  });
+
+  it('keeps head reads fresh while reusing exact immutable index artifacts', async () => {
+    const transport = new NativeTransport(); await put(transport, 'head-one');
+    const reader = transport.client({ cacheImmutableReads: true });
+    transport.methods.length = 0;
+    const first = await reader.readHead();
+    const firstReads = [...transport.methods];
+    const indexReads = firstReads.filter(method => method.includes('/artifact-'));
+    expect(indexReads.length).toBeGreaterThan(0);
+    transport.methods.length = 0;
+    expect((await reader.readHead()).revision).toBe(first.revision);
+    expect(transport.methods).toContain('GET ' + scope.headUrl);
+    expect(transport.methods.filter(method => method.includes('/artifact-'))).toEqual([]);
+    await put(transport, 'head-two');
+    const changed = await reader.readHead();
+    expect(changed.revision).not.toBe(first.revision);
+    expect(changed.records.has('statement:head-two')).toBe(true);
+  });
+
+  it('never substitutes a cached artifact for a required staging readback', async () => {
+    const transport = new NativeTransport(); let corrupted = false;
+    const client = transport.client({ cacheImmutableReads: true, fetch: async (url, init) => {
+      const response = await transport.fetch(url, init);
+      if (!corrupted && init?.method === 'PUT' && String(url).includes('/artifact-')) {
+        corrupted = true;
+        const row = transport.rows.get(String(url))!;
+        transport.rows.set(String(url), { ...row, bytes: Buffer.from('{}') });
+      }
+      return response;
+    } });
+    await expect(client.commit({ operationId: 'staging-cache', expected: await client.readHead(),
+      changes: [{ key: 'key', artifact: artifact('must read back') }] })).rejects.toThrow();
+    expect(transport.headWrites()).toBe(0);
+  });
+});

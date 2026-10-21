@@ -21,6 +21,7 @@
  */
 
 import type { Express, Request, Response } from 'express';
+import { onDemandRefresh } from '../../foxxi-content-intelligence/src/on-demand-work.js';
 import { PRIVATE_PERFORMANCE_SCHEMA } from './private-performance-schema.js';
 import { EvidenceError, privateEvidenceContext } from '../src/private-outcomes.js';
 import { PrivatePerformanceStore, type PrivateStoreConfig } from '../src/private-performance-store.js';
@@ -378,7 +379,7 @@ export function attachPerformanceRoutes(app: Express, config: {
   let lastCalibrationDescriptorIri: string | null = null;
   async function maybePublishCalibrationFlipDescriptor(): Promise<void> {
     if (!podConfigured || !publishConfig) return;
-    const profile = calibrationProfiles().tenant;
+    const profile = (await calibrationProfiles()).tenant;
     const flips: Array<{ cause: string; intervention: string; samples: number; closureRate: number }> = [];
     for (const cell of profile.cells) {
       const key = cellKey(String(cell.causeFactor), String(cell.intervention));
@@ -444,7 +445,7 @@ export function attachPerformanceRoutes(app: Express, config: {
   let cachedPeerProfile = buildCalibrationProfile(expandOutcomeCorpus(SAMPLE_PEER_OUTCOMES));
   let lastFederationRefreshAt = 0;
   let federationOutcomeCount = 0;
-  async function refreshFederationPeerProfile(): Promise<void> {
+  const refreshFederationPeerProfile = onDemandRefresh(async (): Promise<void> => {
     if (federationPods.length === 0) return; // keep seed fallback
     try {
       const outcomes = await federationLoader.loadAll(federationPods);
@@ -456,10 +457,8 @@ export function attachPerformanceRoutes(app: Express, config: {
     } catch (err) {
       console.error('[foxxi-bridge] federation refresh failed:', (err as Error).message);
     }
-  }
-  // Kick the initial load (best-effort) + schedule a periodic refresh.
-  void refreshFederationPeerProfile();
-  setInterval(() => { void refreshFederationPeerProfile(); }, 60_000).unref?.();
+  });
+  // Peer discovery is requested by calibration consumers, never by an idle timer.
 
   const liveOutcomes: OutcomeRecord[] = [];
   // Bound the shared live-outcome array + reject exact replays. verifySignature
@@ -484,7 +483,8 @@ export function attachPerformanceRoutes(app: Express, config: {
     }
     return true;
   };
-  const calibrationProfiles = () => {
+  const calibrationProfiles = async () => {
+    await refreshFederationPeerProfile();
     const tenant = buildCalibrationProfile([...seedRecords, ...liveOutcomes]);
     const federated = composeCalibrationProfiles([tenant, federationView(cachedPeerProfile)]);
     return { tenant, federated };
@@ -664,7 +664,7 @@ export function attachPerformanceRoutes(app: Express, config: {
           } else {
             replan = { replanned: decision.replanned, reasoning: decision.reasoning, persisted: false, note: 'Private empirical review only; no new plan or counted episode was minted.' };
           }
-        } else calibration = calibrate(diagnosis, plan, calibrationProfiles().federated);
+        } else calibration = calibrate(diagnosis, plan, (await calibrationProfiles()).federated);
         const scaffold = scaffoldFromPlan(plan, situation.competency);
         const admission = admissionOffer(plan, diagnosis, situation, base);
         res.json({
@@ -696,7 +696,7 @@ export function attachPerformanceRoutes(app: Express, config: {
     // Every plan carries its own track record (downward causation): how
     // often this kind of recommendation has actually closed the gap, and
     // whether a sibling intervention out-performs it. Federated, live.
-    const calibration = calibrate(diagnosis, plan, calibrationProfiles().federated);
+    const calibration = calibrate(diagnosis, plan, (await calibrationProfiles()).federated);
 
     // Publish the situation as a real iep:ContextDescriptor on the pod.
     // The descriptor lives at a dereferenceable URL; the graph it
@@ -747,9 +747,9 @@ export function attachPerformanceRoutes(app: Express, config: {
   // the cause turned out to be. The federated profile composes a peer
   // organization's published evidence; one org's lesson calibrates the
   // next.
-  app.post('/performance/calibration', (_req: Request, res: Response) => {
+  app.post('/performance/calibration', async (_req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    const { tenant, federated } = calibrationProfiles();
+    const { tenant, federated } = await calibrationProfiles();
     res.json({
       tenant: { profile: tenant, readout: calibrationReadout(tenant) },
       federated: { profile: federated, readout: calibrationReadout(federated) },
@@ -857,7 +857,7 @@ export function attachPerformanceRoutes(app: Express, config: {
         recorded: true,
         outcome,
         liveOutcomes: liveOutcomes.length,
-        totalSamples: calibrationProfiles().tenant.totalSamples,
+        totalSamples: (await calibrationProfiles()).tenant.totalSamples,
       },
       published,
       affordances: {
