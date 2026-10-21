@@ -764,4 +764,68 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
     } finally { await fixture.close(); }
   }, 60_000);
 
+  it('takes the mutation lock before flushing queued deletes for an identical CAS, avoiding inversion with a concurrent writer', async () => {
+    const fixture = await pressureFixture('proof_order');
+    const target = Buffer.from('target'), proof = Buffer.from('proof'), original = Buffer.from('original');
+    const gate = `${fixture.table}_gate`;
+    const deleterName = `proof-deleter-${fixture.suffix}`, writerName = `proof-writer-${fixture.suffix}`;
+    let gateHeld = false, deleteAttempts = 0, writeAttempts = 0;
+    let deleting: Promise<boolean> | undefined, writing: Promise<void> | undefined;
+    const unlock = async () => {
+      if (gateHeld) {
+        await fixture.client.query('SELECT pg_advisory_unlock(1346851661, hashtext($1))', [fixture.table]);
+        gateHeld = false;
+      }
+    };
+    const waitForLock = async (applicationName: string): Promise<string | null> => {
+      const deadline = performance.now() + 5000;
+      while (performance.now() < deadline) {
+        const result = await fixture.client.query<{ wait_event_type: string | null; wait_event: string | null }>(
+          'SELECT wait_event_type, wait_event FROM pg_stat_activity WHERE application_name=$1', [applicationName]);
+        const row = result.rows[0];
+        if (row?.wait_event_type === 'Lock') return row.wait_event;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw new Error('expected a PostgreSQL lock wait');
+    };
+    try {
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2),($3,$4)`, [target, original, proof, original]);
+      await fixture.client.query(`CREATE FUNCTION ${gate}() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN PERFORM pg_advisory_xact_lock(1346851661, hashtext(TG_TABLE_NAME)); RETURN OLD; END; $$`);
+      await fixture.client.query(`CREATE TRIGGER hold_delete BEFORE DELETE ON ${fixture.table}
+        FOR EACH ROW EXECUTE FUNCTION ${gate}()`);
+      await fixture.client.query('SELECT pg_advisory_lock(1346851661, hashtext($1))', [fixture.table]);
+      gateHeld = true;
+      const options = { maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 };
+      const deleter = await fixture.open(options, deleterName), writer = await fixture.open(options, writerName);
+      deleting = deleter.transact(async tx => {
+        deleteAttempts++;
+        tx.clear(target);
+        return tx.compareAndSet(proof, original, original);
+      });
+      void deleting.catch(() => undefined);
+      expect(await waitForLock(deleterName)).toBe('advisory');
+      writing = writer.transact(async tx => {
+        writeAttempts++;
+        tx.set(target, Buffer.from('replacement'));
+        await tx.get(target);
+      });
+      void writing.catch(() => undefined);
+      // The writer must wait at the shared admission lock, not at the row
+      // locked by DELETE while the deleter later waits for that same admission.
+      expect(await waitForLock(writerName)).toBe('advisory');
+      await unlock();
+      expect(await deleting).toBe(true);
+      await writing;
+      expect(deleteAttempts).toBe(1);
+      expect(writeAttempts).toBe(1);
+      expect((await fixture.value(target))?.toString()).toBe('replacement');
+    } finally {
+      await unlock();
+      await Promise.allSettled([deleting, writing].filter(operation => operation !== undefined));
+      await fixture.client.query(`DROP FUNCTION IF EXISTS ${gate}() CASCADE`);
+      await fixture.close();
+    }
+  }, 20_000);
+
 });
