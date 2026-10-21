@@ -2,26 +2,30 @@ import assert from 'node:assert/strict';
 import { Client } from 'pg@8';
 import { copyLiveDatabase } from '../tools/pgsl-live-copy.ts';
 import { nodeKey, cpKey, ovKey } from '../packages/pgsl-store/src/keyspace.ts';
-const url=new URL(Bun.env.PGSL_COPY_FIXTURE_URL);
-assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));
-assert.equal(url.pathname,'/postgres');assert.equal(url.username,'copy_fixture');
-const admin=new Client({connectionString:url.href});await admin.connect();
+const urls={source:new URL(Bun.env.PGSL_COPY_FIXTURE_URL),target:new URL(Bun.env.PGSL_COPY_FIXTURE_TARGET_URL)};
+for(const url of Object.values(urls)){assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));assert.equal(url.pathname,'/postgres');assert.equal(url.username,'copy_fixture');}
+const admins={source:new Client({connectionString:urls.source.href}),target:new Client({connectionString:urls.target.href})};
+await admins.source.connect();await admins.target.connect();
 const prefix='copy_'+crypto.randomUUID().replaceAll('-','').slice(0,12);
 const databases=[],clients=[];
-const connect=async(name)=>{
-  const conn=new URL(url);conn.pathname='/'+name;const client=new Client({connectionString:conn.href});
+const connect=async(kind,name)=>{
+  const conn=new URL(urls[kind]);conn.pathname='/'+name;const client=new Client({connectionString:conn.href});
   await client.connect();clients.push(client);return client;
 };
-const fresh=async()=>{
+const fresh=async(kind='target')=>{
   const name=prefix+'_'+databases.length;assert.match(name,/^copy_[a-f0-9]+_\d+$/);
-  await admin.query('CREATE DATABASE "'+name+'"');databases.push(name);return connect(name);
+  await admins[kind].query('CREATE DATABASE "'+name+'"');databases.push({kind,name});return connect(kind,name);
 };
 const options={fixtureSameServer:true,maxInputBytes:1_000_000,maxTargetDatabaseBytes:100_000_000,maxValueBytes:4_000_000,payloadBatchBytes:1024};
 const results:string[]=[];
 try {
-  const source=await fresh();
+  const source=await fresh('source');
+  await admins.source.query("SET password_encryption='scram-sha-256'");
+  await admins.source.query("CREATE ROLE relay_pgsl LOGIN NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD 'fixture_private_password'");
   await source.query('CREATE TABLE public.pgsl_kv(k bytea NOT NULL,v bytea NOT NULL,CONSTRAINT pgsl_kv_live_pkey PRIMARY KEY(k))');
   await source.query('CREATE TABLE public.relay_pgsl_published(k bytea NOT NULL,v bytea NOT NULL,CONSTRAINT relay_pgsl_published_pkey PRIMARY KEY(k))');
+  await source.query('GRANT SELECT,INSERT,UPDATE,DELETE ON public.relay_pgsl_published TO relay_pgsl');
+  await source.query('ALTER TABLE public.pgsl_kv SET (autovacuum_vacuum_scale_factor=0.02,autovacuum_vacuum_threshold=5000,autovacuum_analyze_scale_factor=0.02,autovacuum_analyze_threshold=5000)');
   const atomHash='a'.repeat(40),fragHash='b'.repeat(40),orphanHash='c'.repeat(40);
   const atomUri='https://fixture.example/ns/pgsl/atom/'+atomHash,fragUri='https://fixture.example/ns/pgsl/fragment/'+fragHash;
   const atomKey=Buffer.from(nodeKey({kind:'atom',hash:Buffer.from(atomHash,'hex')}));
@@ -41,7 +45,15 @@ try {
   assert.equal(session.receipt.liveNodes,2);
   assert.ok(Object.values(session.receipt.missingDerived).reduce((a,b)=>a+b,0)>0);
   assert.deepEqual((await target.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows,(await source.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows);
-  const writer=await connect(databases[0]);await writer.query("SET lock_timeout='100ms'");
+  assert.ok(!JSON.stringify(session.receipt).includes('SCRAM-SHA-256'));
+  assert.deepEqual((await target.query("SELECT reloptions FROM pg_class WHERE oid='public.pgsl_kv'::regclass")).rows,
+    (await source.query("SELECT reloptions FROM pg_class WHERE oid='public.pgsl_kv'::regclass")).rows);
+  const relayUrl=new URL(urls.target);relayUrl.pathname='/'+databases[1].name;relayUrl.username='relay_pgsl';relayUrl.password='fixture_private_password';
+  const relay=new Client({connectionString:relayUrl.href});await relay.connect();clients.push(relay);
+  assert.equal((await relay.query('SELECT count(*)::int n FROM public.relay_pgsl_published')).rows[0].n,2);
+  assert.equal((await relay.query("SELECT has_table_privilege(current_user,'public.pgsl_kv','SELECT') AS allowed")).rows[0].allowed,false);
+  results.push('SCRAM role authentication and exact limited relay ACL survive on a different PG16 server');
+  const writer=await connect('source',databases[0].name);await writer.query("SET lock_timeout='100ms'");
   await assert.rejects(writer.query('INSERT INTO public.relay_pgsl_published VALUES($1,$2)',[Buffer.from('blocked'),Buffer.from('blocked')]),(error)=>error.code==='55P03');
   await session.abortBeforeCutover();await writer.query('SELECT 1');
   results.push('URL roots, encrypted address, missing derived indexes, raw relay bytes, held writer fence');
@@ -64,23 +76,23 @@ try {
   assert.equal((await source.query('SELECT v FROM public.pgsl_kv WHERE k=$1',[unknownKey])).rows[0].v.toString(),'private unrelated data');
   await source.query('DELETE FROM public.pgsl_kv WHERE k=$1',[unknownKey]);
   results.push('unknown keyspace refuses instead of dropping user data');
-  const lostSource=await connect(databases[0]),lostTarget=await fresh();let killed=false;
+  const lostSource=await connect('source',databases[0].name),lostTarget=await fresh();let killed=false;
   const wrapper={query:async(sql,params)=>{
-    if(!killed&&sql.startsWith('INSERT INTO public."pgsl_kv"')){killed=true;await admin.query('SELECT pg_terminate_backend($1)',[lostSource.processID]);await Bun.sleep(25);}
+    if(!killed&&sql.startsWith('INSERT INTO public."pgsl_kv"')){killed=true;await admins.source.query('SELECT pg_terminate_backend($1)',[lostSource.processID]);await Bun.sleep(25);}
     return lostTarget.query(sql,params);
   },end:()=>lostTarget.end()};
   await assert.rejects(copyLiveDatabase(lostSource,wrapper,options),/live copy refused:/);assert.equal(killed,true);
   results.push('source disconnect cannot return ready');
-  const handoffSource=await connect(databases[0]),handoffTarget=await fresh();
+  const handoffSource=await connect('source',databases[0].name),handoffTarget=await fresh();
   const prepared=await copyLiveDatabase(handoffSource,handoffTarget,options);
   await prepared.prepareVolumeCutover();assert.equal(prepared.state,'prepared-for-volume-cutover');
   await assert.rejects(prepared.abortBeforeCutover(),/prepared cutover requires operator recovery/);
-  await admin.query('SELECT pg_terminate_backend($1)',[handoffSource.processID]);await Bun.sleep(25);
+  await admins.source.query('SELECT pg_terminate_backend($1)',[handoffSource.processID]);await Bun.sleep(25);
   assert.equal(prepared.state,'source-disconnected-after-preparation');
   results.push('source disconnect is expected only after explicit verified volume preparation');
   console.log(JSON.stringify({kind:'fixture_pass',passed:results.length,results}));
 } finally {
   for(const client of clients)await client.end().catch(()=>{});
-  for(const name of databases){await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()',[name]);await admin.query('DROP DATABASE "'+name+'"');}
-  await admin.end();
+  for(const {kind,name}of databases){await admins[kind].query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()',[name]);await admins[kind].query('DROP DATABASE "'+name+'"');}
+  for(const admin of Object.values(admins)){await admin.query('DROP ROLE IF EXISTS relay_pgsl');await admin.end();}
 }

@@ -79,12 +79,67 @@ async function identity(client: CopyClient): Promise<Row> {
   invariant(result.rows.length === 1, 'database identity unavailable');
   return result.rows[0]!;
 }
+function validRelayAcl(acl: unknown, owner: string): boolean {
+  if (!Array.isArray(acl) || acl.length !== 11) return false;
+  const ownerRights = new Set(['INSERT','SELECT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']);
+  const relayRights = new Set(['INSERT','SELECT','UPDATE','DELETE']);
+  for (const entry of acl as Row[]) {
+    if (entry.grantor !== owner || entry.grantable !== false) return false;
+    const rights = entry.grantee === owner ? ownerRights : entry.grantee === 'relay_pgsl' ? relayRights : null;
+    if (!rights?.delete(String(entry.privilege))) return false;
+  }
+  return ownerRights.size === 0 && relayRights.size === 0;
+}
+async function copyRelayRole(source: CopyClient, target: CopyClient): Promise<void> {
+  const query = "SELECT r.rolname,r.rolsuper,r.rolinherit,r.rolcreaterole,r.rolcreatedb,r.rolcanlogin,r.rolreplication,r.rolbypassrls,r.rolconnlimit,r.rolvaliduntil::text,r.rolconfig,a.rolpassword FROM pg_roles r JOIN pg_authid a ON a.oid=r.oid WHERE r.rolname='relay_pgsl'";
+  const original = await source.query(query);
+  invariant(original.rows.length === 1, 'reviewed relay role is missing');
+  const role = original.rows[0]!;
+  invariant(role.rolsuper === false && role.rolinherit === true && role.rolcreaterole === false
+    && role.rolcreatedb === false && role.rolcanlogin === true && role.rolreplication === false
+    && role.rolbypassrls === false && role.rolconnlimit === -1 && role.rolvaliduntil === null
+    && (role.rolconfig === null || Array.isArray(role.rolconfig) && role.rolconfig.length === 0), 'relay role has unreviewed attributes or settings');
+  const memberships = await source.query("SELECT count(*)::int AS n FROM pg_auth_members m JOIN pg_roles parent ON parent.oid=m.roleid JOIN pg_roles child ON child.oid=m.member WHERE parent.rolname='relay_pgsl' OR child.rolname='relay_pgsl'");
+  invariant(memberships.rows[0]!.n === 0, 'relay role memberships require separate preservation');
+  invariant(typeof role.rolpassword === 'string'
+    && /^SCRAM-SHA-256\$\d+:[A-Za-z0-9+/]+={0,2}\$[A-Za-z0-9+/]+={0,2}:[A-Za-z0-9+/]+={0,2}$/.test(role.rolpassword), 'relay password is not a reviewed SCRAM verifier');
+  const targetMemberships = await target.query("SELECT count(*)::int AS n FROM pg_auth_members m JOIN pg_roles parent ON parent.oid=m.roleid JOIN pg_roles child ON child.oid=m.member WHERE parent.rolname='relay_pgsl' OR child.rolname='relay_pgsl'");
+  invariant(targetMemberships.rows[0]!.n === 0, 'target relay role memberships differ');
+  const existing = await target.query(query);
+  if (existing.rows.length) {
+    invariant(existing.rows.length === 1 && JSON.stringify(existing.rows[0]) === JSON.stringify(role), 'existing target relay role differs');
+    return;
+  }
+  // Suppress statement/parameter/error-statement logging for this transaction.
+  // The verifier travels only in process memory and a private DB
+  // session; it is never returned, logged, or written into the code artifact.
+  await target.query('BEGIN');
+  try {
+    await target.query("SET LOCAL log_statement='none'");
+    await target.query("SET LOCAL log_min_duration_statement='-1'");
+    await target.query("SET LOCAL log_min_duration_sample='-1'");
+    await target.query("SET LOCAL log_parameter_max_length='0'");
+    await target.query("SET LOCAL log_parameter_max_length_on_error='0'");
+    await target.query("SET LOCAL log_min_error_statement='panic'");
+    await target.query("CREATE ROLE relay_pgsl LOGIN NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS CONNECTION LIMIT -1 PASSWORD '" + role.rolpassword + "'");
+    await target.query('COMMIT');
+  } catch {
+    await target.query('ROLLBACK').catch(() => undefined);
+    throw new Error('live copy refused: relay credential copy failed');
+  }
+  const copied = await target.query(query);
+  invariant(copied.rows.length === 1 && JSON.stringify(copied.rows[0]) === JSON.stringify(role), 'copied relay role differs');
+}
+
 async function schema(client: CopyClient, empty: boolean): Promise<Row[]> {
-  const relation = await client.query("SELECT n.nspname AS schema,c.relname,c.relkind,c.relpersistence,c.relrowsecurity,c.relacl,c.relreplident,c.reloptions,tc.reloptions AS toast_options FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_class tc ON tc.oid=c.reltoastrelid WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND c.relkind IN ('r','p','m','v','S','f') ORDER BY n.nspname,c.relname");
+  const current = await client.query('SELECT current_user AS role');
+  const owner = String(current.rows[0]!.role);
+  const relation = await client.query("SELECT n.nspname AS schema,c.relname,pg_get_userbyid(c.relowner) AS owner,(SELECT json_agg(json_build_object('grantee',pg_get_userbyid(a.grantee),'grantor',pg_get_userbyid(a.grantor),'privilege',a.privilege_type,'grantable',a.is_grantable) ORDER BY a.grantee,a.privilege_type) FROM aclexplode(c.relacl) a) AS acl,c.relkind,c.relpersistence,c.relrowsecurity,c.relacl,c.relreplident,c.reloptions,tc.reloptions AS toast_options FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace LEFT JOIN pg_class tc ON tc.oid=c.reltoastrelid WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND c.relkind IN ('r','p','m','v','S','f') ORDER BY n.nspname,c.relname");
   if (empty) invariant(relation.rows.length === 0, 'destination contains user relations');
   else invariant(relation.rows.length === 2 && relation.rows.every((r, i) => r.schema === 'public'
     && r.relname === [...TABLES].sort()[i] && r.relkind === 'r' && r.relpersistence === 'p'
-    && r.relrowsecurity === false && r.relacl === null && r.relreplident === 'd'), 'source schema differs from the reviewed two-table allowlist');
+    && r.relrowsecurity === false && r.owner === owner && r.relreplident === 'd'
+    && (r.relname === 'pgsl_kv' ? r.relacl === null : validRelayAcl(r.acl, owner))), 'source schema differs from the reviewed two-table allowlist');
   const extras = await client.query("SELECT (SELECT count(*) FROM pg_namespace WHERE nspname NOT IN ('public','pg_catalog','information_schema') AND nspname NOT LIKE 'pg_toast%' AND nspname NOT LIKE 'pg_temp_%')::int AS schemas,(SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%')::int AS routines,(SELECT count(*) FROM pg_extension WHERE extname<>'plpgsql')::int AS extensions,(SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal)::int AS triggers,(SELECT count(*) FROM pg_largeobject_metadata)::int AS large_objects,(SELECT count(*) FROM pg_default_acl)::int AS default_acls,(SELECT count(*) FROM pg_foreign_server)::int AS foreign_servers,(SELECT count(*) FROM pg_publication)::int AS publications,(SELECT count(*) FROM pg_subscription)::int AS subscriptions,(SELECT count(*) FROM pg_policy)::int AS policies,(SELECT count(*) FROM pg_description d JOIN pg_class c ON d.classoid='pg_class'::regclass AND d.objoid=c.oid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public')::int AS comments");
   invariant(extras.rows.length === 1 && Object.values(extras.rows[0]!).every(value => Number(value) === 0), 'unhandled database objects would be lost');
   if (empty) return [];
@@ -127,6 +182,7 @@ async function createTables(target: CopyClient, definitions: Row[]): Promise<voi
       }
     }
   }
+  await target.query('GRANT SELECT,INSERT,UPDATE,DELETE ON public.relay_pgsl_published TO relay_pgsl');
 }
 function candidateReader(source: CopyClient) {
   // Sizing only: atoms are leaves under the N-key contract. Complete bodies are
@@ -231,6 +287,7 @@ export async function copyLiveDatabase(source: CopyClient, target: CopyClient, o
     invariant(inputBytes <= maxInput, 'retained input exceeds the reviewed 64 GB target budget');
     invariant(inputBytes * 1.2 + inputKeyBytes * 2 + actual.length * 160 < maxDatabase, 'retained storage estimate exceeds target reserve');
     log({ kind: 'preflight', actualRows: actual.length, serializedBytes: inputBytes, largestValue, missingDerived: missing });
+    await copyRelayRole({ ...source, query: sq, end: () => source.end() }, { ...target, query: tq, end: () => target.end() });
     await createTables({ ...target, query: tq, end: () => target.end() }, definitions);
     const boundedRows = async (client: { query: typeof sq }, table: string, keys: string[], consume: (key: Buffer, value: Buffer) => void | Promise<void>) => {
       const meta = await client.query('SELECT k,octet_length(v) AS bytes FROM public.' + quote(table) + ' WHERE k=ANY($1::bytea[]) ORDER BY k', [keys.map(k => Buffer.from(k, 'hex'))]);

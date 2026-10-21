@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     services:
-      postgres:
+      postgres_source:
         image: postgres:16
         env:
           POSTGRES_USER: copy_fixture
@@ -35,8 +35,21 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      postgres_target:
+        image: postgres:16
+        env:
+          POSTGRES_USER: copy_fixture
+          POSTGRES_PASSWORD: fixture_only
+          POSTGRES_DB: postgres
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       PGSL_COPY_FIXTURE_URL: postgresql://copy_fixture:fixture_only@127.0.0.1:5432/postgres
+      PGSL_COPY_FIXTURE_TARGET_URL: postgresql://copy_fixture:fixture_only@127.0.0.1:5433/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
