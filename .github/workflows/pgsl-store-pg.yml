@@ -16,6 +16,12 @@ on:
       # that can observe a Postgres isolation level, and the guard would be checked only
       # when some unrelated pgsl-store file happened to move.
       - 'deploy/mcp-relay/engagement-store.ts'
+  pull_request:
+    paths:
+      - 'packages/pgsl-store/**'
+      - 'tests/pgsl-store-pg-integration.test.ts'
+      - '.github/workflows/pgsl-store-pg.yml'
+      - 'deploy/mcp-relay/engagement-store.ts'
   workflow_dispatch:
 
 jobs:
