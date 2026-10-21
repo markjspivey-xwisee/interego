@@ -1,3 +1,5 @@
+import {readFile} from 'node:fs/promises';
+import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {Client} from 'pg@8';
 import {installSweep,sweepStore} from '../tools/pgsl-store-sweep.mjs';
@@ -27,6 +29,30 @@ const age=c=>c.query("UPDATE public.pgsl_kv_gc_state SET installed_at=clock_time
 const opts=f=>({...f,measureFreeBytes:async()=>64*1024**3,minFreeBytes:1024**3,maxDeleteBytes:64*1024**2,batchBytes:64*1024,maxSeconds:30});
 try{
  {
+  const root=new URL('../',import.meta.url);
+  const bundle=await readFile(new URL('tools/pgsl-store-sweep.railway.mjs',root),'utf8');
+  const modules=JSON.parse(bundle.match(/const modules=(\{.*\});\n/)[1]);
+  const sources={
+   'addressing.ts':['packages/pgsl-store/src/addressing.ts',[]],
+   'keyspace.ts':['packages/pgsl-store/src/keyspace.ts',[["'./addressing.js'","'./addressing.ts'"]]],
+   'gc-atom-header.ts':['packages/pgsl-store/src/gc-atom-header.ts',[["'./addressing.js'","'./addressing.ts'"],["'./keyspace.js'","'./keyspace.ts'"]]],
+   'gc.ts':['packages/pgsl-store/src/gc.ts',[["'./addressing.js'","'./addressing.ts'"],["'./keyspace.js'","'./keyspace.ts'"],["'./gc-atom-header.js'","'./gc-atom-header.ts'"]]],
+   'volume.mjs':['tools/pgsl-store-gc-volume.mjs',[]],
+   'sweep.mjs':['tools/pgsl-store-sweep.mjs',[["'../packages/pgsl-store/src/gc.js'","'./gc.ts'"],["'../packages/pgsl-store/src/keyspace.js'","'./keyspace.ts'"],["'../packages/pgsl-store/src/addressing.js'","'./addressing.ts'"],["'./pgsl-store-gc-volume.mjs'","'./volume.mjs'"],["from 'pg'","from 'pg@8.22.0'"]]],
+  };
+  assert.deepEqual(Object.keys(modules).sort(),Object.keys(sources).sort());
+  for(const[name,[path,rewrites]]of Object.entries(sources)){
+   let source=await readFile(new URL(path,root),'utf8');
+   for(const[from,to]of rewrites)source=source.replaceAll(from,to);
+   assert.equal(modules[name],source,'bundled source equality: '+name);
+  }
+  const disabled=spawnSync(process.execPath,[new URL('tools/pgsl-store-sweep.railway.mjs',root).pathname],{
+   env:{...process.env,PGSL_SWEEP_ACTION:'off',PGSL_PG_CONNSTR:'invalid-do-not-connect',RAILWAY_PROJECT_TOKEN:'fixture-secret-not-logged'},
+   encoding:'utf8',timeout:10000});
+  assert.equal(disabled.status,0);assert.equal(disabled.stderr,'');assert.equal(disabled.stdout.trim(),'Private PGSL sweep is disabled.');
+  results.push('self-contained function matches source exactly and default off never opens invalid DB credentials');
+ }
+ {
   const f=await fresh(),c=f.client;for(let i=1;i<=4;i++)await atom(c,i);
   await put(c,key(5,'fragment'),Buffer.from(JSON.stringify({uri:uri(5,true,'fragment'),kind:'fragment',level:1,items:[uri(4,true)]})));
   await put(c,cp('ldp fixture','current'),body(uri(1)));
@@ -35,6 +61,7 @@ try{
   await c.query('INSERT INTO public.relay_pgsl_published VALUES($1,$2)',[Buffer.alloc(0),Buffer.from([0xff,0,0xfe])]);
   const relay=(await c.query('SELECT k,v FROM public.relay_pgsl_published ORDER BY k')).rows;
   await installSweep(c);assert.equal((await sweepStore(opts(f))).status,'warming');assert.equal(await exists(c,key(3)),true);
+  const measured=await sweepStore({...opts(f),dryRun:true});assert.equal(measured.status,'measured');assert.equal(measured.deletedKeys,0);assert.ok(measured.markMilliseconds>=0);assert.equal(await exists(c,key(3)),true);
   await age(c);await c.query('UPDATE public.pgsl_kv SET v=$2 WHERE k=$1',[cp('ldp fixture','current'),body(uri(5,true,'fragment'))]);
   const r=await sweepStore(opts(f));assert.equal(r.status,'swept');assert.ok(r.deletedKeys>=1);
   for(const [i,kind]of [[1,'atom'],[2,'atom'],[4,'atom'],[5,'fragment']])assert.equal(await exists(c,key(i,kind)),true,'retained node '+i);

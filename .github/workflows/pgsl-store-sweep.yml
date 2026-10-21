@@ -4,6 +4,7 @@ on:
     branches: ['fix/pgsl-private-sweep-*', 'recovery/pgsl-private-sweep-*']
     paths:
       - 'tools/pgsl-store-sweep.mjs'
+      - 'tools/pgsl-store-sweep.railway.mjs'
       - 'packages/pgsl-store/src/gc.ts'
       - 'packages/pgsl-store/src/gc-atom-header.ts'
       - 'deploy/Dockerfile.pgsl-sweep'
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'tools/pgsl-store-sweep.mjs'
+      - 'tools/pgsl-store-sweep.railway.mjs'
       - 'packages/pgsl-store/src/gc.ts'
       - 'packages/pgsl-store/src/gc-atom-header.ts'
       - 'deploy/Dockerfile.pgsl-sweep'
@@ -50,3 +52,9 @@ jobs:
         run: bun tests/pgsl-store-sweep.fixture.mjs
       - name: Build the private cron image
         run: docker build -f deploy/Dockerfile.pgsl-sweep -t pgsl-sweep-fixture .
+      - name: Retain reviewed function source as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgsl-private-sweep-function
+          path: tools/pgsl-store-sweep.railway.mjs
+          if-no-files-found: error

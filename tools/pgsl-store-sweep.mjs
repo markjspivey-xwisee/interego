@@ -148,19 +148,20 @@ function retainedReader(client,n,cutoff,check) {
 }
 export async function sweepStore({client,watchdog,table='pgsl_kv',measureFreeBytes,
   maxDeleteBytes=8*GiB,batchBytes=64*1024*1024,maxSeconds=300,minFreeBytes=2*GiB,
-  onPhase=async()=>{}}) {
+  dryRun=false,onPhase=async()=>{}}) {
   const n=names(table);
+  if(typeof dryRun!=='boolean')throw Error('refusing sweep: invalid measurement mode');
   if(typeof measureFreeBytes!=='function'||!watchdog)throw Error('refusing sweep: independent watchdog and headroom provider required');
   for(const value of [maxDeleteBytes,batchBytes,maxSeconds,minFreeBytes])if(!Number.isSafeInteger(value)||value<=0)throw Error('refusing sweep: invalid bounded capacity');
   if(batchBytes>128*1024*1024||maxDeleteBytes>16*GiB||maxSeconds>600||minFreeBytes<GiB)throw Error('refusing sweep: capacity exceeds maintenance bounds');
   await verifyJournal(client,n);
   const state=await client.query(`SELECT installed_at,clock_timestamp()-installed_at>=interval '1 hour' AS ready FROM ${n.state} WHERE singleton`);
   if(state.rows.length!==1)throw Error('refusing sweep: root journal installation state unavailable');
-  if(!state.rows[0].ready)return{status:'warming',deletedKeys:0,deletedBytes:0};
+  if(!state.rows[0].ready&&!dryRun)return{status:'warming',deletedKeys:0,deletedBytes:0};
   const release=await acquireCollectorLock(client,table);
   let aborted,transaction=false,stopped=false,timer,monitorTask=Promise.resolve();
   let deletedKeys=0,deletedBytes=0,pid,oid,walStart,freeAtStart;
-  const deadline=Date.now()+maxSeconds*1000;
+  const startedAt=Date.now(),deadline=startedAt+maxSeconds*1000;
   const check=()=>{if(aborted)throw aborted;if(Date.now()>deadline)throw Error('sweep aborted: maintenance deadline');};
   const cancel=async(reason)=>{
     if(aborted||stopped)return;
@@ -217,6 +218,13 @@ export async function sweepStore({client,watchdog,table='pgsl_kv',measureFreeByt
     const keys=[...live.keys];
     for(let i=0;i<keys.length;i+=4000){check();await client.query('INSERT INTO pgsl_sweep_live SELECT unnest($1::bytea[]) ON CONFLICT DO NOTHING',[keys.slice(i,i+4000).map(k=>Buffer.from(k,'hex'))]);}
     await onPhase('marked');check();
+    if(dryRun){
+      await monitor();check();
+      stopped=true;clearInterval(timer);await monitorTask;check();
+      await client.query('ROLLBACK');transaction=false;
+      return{status:'measured',liveKeys:live.keys.size,liveNodes:live.stats.liveNodes,
+        liveNodeBytes:live.stats.liveNodeBytes,markMilliseconds:Date.now()-startedAt,deletedKeys:0,deletedBytes:0};
+    }
     // Only key+length metadata is materialized, never a second payload table.
     await client.query(`CREATE TEMP TABLE pgsl_sweep_candidates ON COMMIT DROP AS
       SELECT source.k,octet_length(source.v)::bigint AS bytes
@@ -275,7 +283,10 @@ export async function sweepStore({client,watchdog,table='pgsl_kv',measureFreeByt
   return{status:'swept',deletedKeys,deletedBytes,vacuumed};
 }
 
-async function main(){
+export async function runPrivateSweep(){
+  const action=process.env.PGSL_SWEEP_ACTION??(process.argv.includes('--install')?'install':'off');
+  if(action==='off'){console.log('Private PGSL sweep is disabled.');return;}
+  if(!['install','measure','run'].includes(action))throw Error('unsupported private sweep action');
   const connectionString=process.env.PGSL_PG_CONNSTR,token=process.env.RAILWAY_PROJECT_TOKEN;
   const table=process.env.PGSL_SWEEP_TABLE??'pgsl_kv';
   if(!connectionString)throw Error('PGSL_PG_CONNSTR is required');
@@ -285,7 +296,7 @@ async function main(){
   const watchdog=new Client({connectionString,application_name:'pgsl-private-sweep-watchdog',statement_timeout:3000});
   await client.connect();await watchdog.connect();
   try{
-    if(process.argv.includes('--install')){await installSweep(client,{table});console.log('Root journal installed; deletion disabled for its first hour.');return;}
+    if(action==='install'){await installSweep(client,{table});console.log('Root journal installed; deletion disabled for its first hour.');return;}
     if(!token)throw Error('project-scoped Railway token is required for fresh volume headroom');
     const serviceId=process.env.PGSL_SWEEP_POSTGRES_SERVICE_ID;
     if(!serviceId)throw Error('exact postgres service ID is required');
@@ -305,9 +316,9 @@ async function main(){
       }
       return sample.capacityBytes-sample.usedBytes;
     };
-    console.log(JSON.stringify(await sweepStore({client,watchdog,table,measureFreeBytes})));
+    console.log(JSON.stringify(await sweepStore({client,watchdog,table,measureFreeBytes,dryRun:action==='measure'})));
   }finally{await watchdog.end();await client.end();}
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
-  main().catch(()=>{console.error('Private PGSL sweep failed; no database payload or credentials are logged.');process.exitCode=1;});
+  runPrivateSweep().catch(()=>{console.error('Private PGSL sweep failed; no database payload or credentials are logged.');process.exitCode=1;});
 }
