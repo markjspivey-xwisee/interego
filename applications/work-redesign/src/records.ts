@@ -242,7 +242,14 @@ export interface WorkflowPayload {
   readonly capturedBy: SignedAct; readonly taskIris: readonly string[]; readonly retiredTaskIris: readonly string[];
   readonly document?: { readonly title: string; readonly sha256: string; readonly chars: number; readonly textStored: boolean };
   readonly documentText?: string; readonly draftedBy?: DraftedBy; readonly draftSha256?: string;
-  readonly revision?: { readonly op: 'add' | 'retire'; readonly taskIri: string; readonly by: SignedAct };
+  readonly revision?: {
+    readonly op: 'add' | 'retire'; readonly taskIri: string; readonly by: SignedAct;
+    /**
+     * Set when this version finishes a retirement whose own workflow write did not land: the
+     * retired task version, and who retired it when. `by` is whoever sent the call that finished it.
+     */
+    readonly repairs?: { readonly taskDescriptorUrl: string; readonly retiredBy: string | null; readonly retiredAt: string | null };
+  };
 }
 
 export interface PartyVerdict {

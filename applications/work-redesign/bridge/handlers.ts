@@ -98,6 +98,8 @@ const TASK_MOVED = 'The task changed since you read it.';
 const DECISION_MOVED = 'The decision changed since you read it.';
 const STALE_PLAN = 'A task was re-classified or revised after this plan was proposed; propose again.';
 const RETIRED_IN_PLAN = 'A task in this plan was retired; propose again.';
+const RETIREMENT_UNFINISHED = 'This task was retired, but its workflow still lists it as current: retire it again to finish.';
+const ADD_UNLISTED = 'The task was recorded, but its workflow does not list it: add it again.';
 const CLOCK_SKEW = 'The clock reads earlier than the start of what is being withdrawn; retry.';
 const UNKNOWN_KIND = 'This task kind is not registered, or was retired.';
 const KIND_FIX = 'an admin declares task kinds in the registry';
@@ -180,6 +182,37 @@ function headIn<K extends RecordKind>(g: GraphHeads, kind: K): Head<K> | null {
   const loaded = g.heads[0];
   if (!loaded || !loaded.record || loaded.record.recordKind !== kind) throw decline(409, INTEGRITY, `${g.graphIri} does not hold a ${kind} record`);
   return { loaded, record: loaded.record as RecordOf<K>, graph: g };
+}
+
+const bindingOf = (l: { readonly descriptorUrl: string; readonly graphDigest: string }): Obj => ({ descriptorUrl: l.descriptorUrl, graphDigest: l.graphDigest });
+
+/**
+ * A retirement writes the task, then its workflow. A retired task whose workflow's current
+ * version still lists it as a task, or never lists it as retired, is one whose second write did
+ * not land.
+ */
+const retirementUnfinished = (task: RecordOf<'Task'>, wf: RecordOf<'Workflow'> | null | undefined): boolean =>
+  task.status === 'retired' && !!wf && (wf.payload.taskIris.includes(task.entityIri) || !wf.payload.retiredTaskIris.includes(task.entityIri));
+
+/** The call that finishes such a retirement: retire the task again, bound to its retired version. */
+const finishRetirementVia = (taskIri: string, retired: { readonly descriptorUrl: string; readonly graphDigest: string }): Record<string, unknown> =>
+  ({ ...via('revise_task'), op: 'retire', taskIri, ...bindingOf(retired) });
+
+/** Refuse (409) work on a workflow that still lists a retired task, naming the call that finishes the retirement. */
+function unfinishedRetirement(task: Head<'Task'>, workflowIri: string): BridgeRefusal {
+  const r = task.record.payload.retirement;
+  return refuse(409, RETIREMENT_UNFINISHED,
+    `${task.record.entityIri} was retired${r ? ` by ${r.by.did} at ${r.at}` : ''} (${task.loaded.descriptorUrl}), but the current version of ${workflowIri} still lists it`,
+    finishRetirementVia(task.record.entityIri, task.loaded));
+}
+
+/**
+ * A call that wrote its task and then failed on the workflow: says what landed and what to do
+ * next, at the status the failure itself deserves.
+ */
+function partlyWritten(e: unknown, error: string, landed: string, resolvedBy: Record<string, unknown>): BridgeRefusal {
+  const f = failureOf(e);
+  return refuse(f['iep:refusalStatus'] ?? 500, error, `${landed}. The workflow write: ${f.error} ${f['iep:refusalReason'] ?? ''}`.trim(), resolvedBy);
 }
 
 interface Registry {
@@ -377,6 +410,16 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
   interface Written { readonly descriptorUrl: string; readonly graphUrl: string; readonly recordId: string; readonly graphDigest: string }
 
+  /** The durable replay check: 409 when a version of this graph was already authorised by this signer and nonce. */
+  async function refuseReused(call: Signed, g: GraphHeads): Promise<void> {
+    for (const v of await call.view.history(g)) {
+      const by = v.record?.authorisedBy;
+      if (by && by.signer === call.actor && by.nonce === call.nonce) {
+        throw decline(409, REPLAYED, `${call.actor} already used the nonce ${call.nonce} on ${g.graphIri} (version ${v.record?.version ?? '?'})`);
+      }
+    }
+  }
+
   /**
    * Publish one version of `entity`: superseding `head` when given, else starting the graph.
    * Every version records the (signer, nonce) of the envelope that authorised it, and a write is
@@ -390,14 +433,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     readonly signers: readonly RecordSigner[]; readonly head: Head<K> | null; readonly tag?: string;
     readonly validFrom?: string; readonly validUntil?: string; readonly confidence?: number; readonly derivedFrom?: readonly string[];
   }): Promise<Written> {
-    if (w.head) {
-      for (const v of await call.view.history(w.head.graph)) {
-        const by = v.record?.authorisedBy;
-        if (by && by.signer === call.actor && by.nonce === call.nonce) {
-          throw decline(409, REPLAYED, `${call.actor} already used the nonce ${call.nonce} on ${w.head.graph.graphIri} (version ${v.record?.version ?? '?'})`);
-        }
-      }
-    }
+    if (w.head) await refuseReused(call, w.head.graph);
     const version = w.head ? w.head.record.version + 1 : 1;
     const graphIri = graphIriOf(w.entity);
     const recordId = recordIdFor(ENTITY_KIND[w.kind], graphIri, version, w.tag === undefined ? call.nonce : `${call.nonce}:${w.tag}`);
@@ -441,6 +477,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     for (const taskIri of wf.record.payload.taskIris) {
       const task = await headOf(call, taskIri, 'Task');
       if (!task) throw decline(409, INTEGRITY, `the workflow lists ${taskIri}, which has no trusted record`);
+      // A retired task the workflow still lists: nothing is proposed on a task list that is
+      // wrong, and the refusal names the call that corrects it (classifying it would be refused).
+      if (task.record.status === 'retired') throw new Declined(unfinishedRetirement(task, wf.record.entityIri));
       out.push({ taskIri, task, classification: await headOf(call, classificationEntity(wf.record.entityIri, taskIri), 'Classification') });
     }
     return out;
@@ -595,6 +634,21 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const c = ps.classifications.get(row.taskIri);
       if (!t || t.record.payload.textSha256 !== p.taskTextSha256[row.taskIri]) return STALE_PLAN;
       if (!c || c.loaded.descriptorUrl !== p.classificationHeads[row.taskIri]) return STALE_PLAN;
+    }
+    return null;
+  }
+
+  /**
+   * A plan that changes a task since retired. Checked before anything else about the plan, so a
+   * retired task is never reported as merely unratified: when the workflow still lists it, the
+   * refusal names the call that finishes the retirement; otherwise, propose again.
+   */
+  function retiredInPlan(ps: PlanState): BridgeRefusal | null {
+    for (const row of ps.plan.record.payload.tasks) {
+      const t = ps.tasks.get(row.taskIri);
+      if (!row.changed || !t || t.record.status !== 'retired') continue;
+      if (ps.workflow.record.payload.taskIris.includes(row.taskIri)) return unfinishedRetirement(t, ps.workflow.record.entityIri);
+      return refuse(409, RETIRED_IN_PLAN, `${row.taskIri} was retired after ${ps.plan.record.entityIri} was proposed`, via('propose_allocation'));
     }
     return null;
   }
@@ -926,18 +980,27 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         capturedBy: { did: call.actorDid, envelopeSha256: envelopeSha256(call.envelope) },
       };
       const tw = await write(call, { kind: 'Task', entity: taskIri, status: 'captured', payload, head: null, tag: 'task', signers: [signerOf(reg, call.actor, 'Curator', 'added the task')] });
-      const ww = await write(call, {
-        kind: 'Workflow', entity: r.workflowIri, status: 'captured', head: wf, tag: 'workflow',
-        payload: { ...wp, taskIris: [...wp.taskIris, taskIri], revision: { op: 'add', taskIri, by: { did: call.actorDid, envelope: call.envelope } } },
-        signers: [signerOf(reg, call.actor, 'Curator', 'added a task')],
-      });
+      let ww: Written;
+      try {
+        ww = await write(call, {
+          kind: 'Workflow', entity: r.workflowIri, status: 'captured', head: wf, tag: 'workflow',
+          payload: { ...wp, taskIris: [...wp.taskIris, taskIri], revision: { op: 'add', taskIri, by: { did: call.actorDid, envelope: call.envelope } } },
+          signers: [signerOf(reg, call.actor, 'Curator', 'added a task')],
+        });
+      } catch (e) {
+        // The task landed and the workflow did not: an orphan, which blocks nothing (no plan can
+        // name it, and the next add takes the next free index) but must not be reported as added.
+        return { ...partlyWritten(e, ADD_UNLISTED,
+          `${taskIri} was recorded (${tw.descriptorUrl}) but ${r.workflowIri} does not list it, so it shows as orphaned and no plan can name it; add the task again (it gets a new IRI), and retire ${taskIri} to clear it`,
+          { ...via('revise_task'), op: 'add', workflowIri: r.workflowIri }) };
+      }
       return { op: 'add', taskIri, workflowIri: r.workflowIri, status: 'captured', answeredDisputes: [], descriptorUrl: tw.descriptorUrl, recordId: tw.recordId, graphDigest: tw.graphDigest, workflowDescriptorUrl: ww.descriptorUrl, link: taskLink(taskIri), recorded: true };
     }
 
     // retire
     const task = await taskHead(call, r.taskIri);
     requireOperatorPerson(reg, call.actor);
-    if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${r.taskIri} was already retired`) };
+    if (task.record.status === 'retired') return finishRetirement(call, reg, task, r);
     if (r.descriptorUrl !== task.loaded.descriptorUrl || r.graphDigest !== task.loaded.graphDigest) {
       return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('list_records')) };
     }
@@ -952,12 +1015,57 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       signers: [signerOf(reg, call.actor, 'Curator', 'retired the task')],
     });
     const wp = wf.record.payload;
+    let ww: Written;
+    try {
+      ww = await write(call, {
+        kind: 'Workflow', entity: wf.record.entityIri, status: 'captured', head: wf, tag: 'workflow',
+        payload: { ...wp, taskIris: wp.taskIris.filter((t) => t !== r.taskIri), retiredTaskIris: [...wp.retiredTaskIris, r.taskIri], revision: { op: 'retire', taskIri: r.taskIri, by: { did: call.actorDid, envelope: call.envelope } } },
+        signers: [signerOf(reg, call.actor, 'Curator', 'retired a task')],
+      });
+    } catch (e) {
+      // The task is retired and the workflow still lists it. Retiring it again finishes the job (finishRetirement).
+      return { ...partlyWritten(e, RETIREMENT_UNFINISHED, `${r.taskIri} is retired (${tw.descriptorUrl}), but ${wf.record.entityIri} still lists it`, finishRetirementVia(r.taskIri, tw)) };
+    }
+    return { op: 'retire', taskIri: r.taskIri, workflowIri: wf.record.entityIri, status: 'retired', answeredDisputes: [], descriptorUrl: tw.descriptorUrl, recordId: tw.recordId, graphDigest: tw.graphDigest, workflowDescriptorUrl: ww.descriptorUrl, recorded: true };
+  }
+
+  /**
+   * Retire a task that is already retired. When its workflow still lists it (the retirement's
+   * own workflow write did not land), write only the workflow version that drops it: signed by
+   * this requester, derived from the retired task version, and naming the retirement it finishes
+   * (`revision.repairs`). Otherwise refuse as already retired. The envelope binds the retired
+   * version, or the version that retirement superseded (the original request retried with a fresh
+   * nonce); the envelope that retired the task cannot be the one that finishes it.
+   */
+  async function finishRetirement(call: Signed, reg: Registry, task: Head<'Task'>, r: { readonly taskIri: string; readonly descriptorUrl: string; readonly graphDigest: string }): Promise<unknown> {
+    const tp = task.record.payload;
+    const wf = await headOf(call, tp.workflowIri, 'Workflow');
+    if (!wf) throw decline(409, INTEGRITY, `the task's workflow ${tp.workflowIri} has no trusted record`);
+    if (!retirementUnfinished(task.record, wf.record)) return { ...refuse(409, RETIRED, `${r.taskIri} was already retired`) };
+    const versions = await call.view.history(task.graph);
+    const superseded = versions.length >= 2 ? versions[versions.length - 2] : undefined;
+    if (![task.loaded, superseded].some((v) => v !== undefined && v.descriptorUrl === r.descriptorUrl && v.graphDigest === r.graphDigest)) {
+      return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}, which retired the task; bind it to finish the retirement`, finishRetirementVia(r.taskIri, task.loaded)) };
+    }
+    await refuseReused(call, task.graph);
+    const retirement = tp.retirement;
+    const repairs = { taskDescriptorUrl: task.loaded.descriptorUrl, retiredBy: retirement?.by.did ?? null, retiredAt: retirement?.at ?? task.loaded.validUntil };
+    const wp = wf.record.payload;
     const ww = await write(call, {
       kind: 'Workflow', entity: wf.record.entityIri, status: 'captured', head: wf, tag: 'workflow',
-      payload: { ...wp, taskIris: wp.taskIris.filter((t) => t !== r.taskIri), retiredTaskIris: [...wp.retiredTaskIris, r.taskIri], revision: { op: 'retire', taskIri: r.taskIri, by: { did: call.actorDid, envelope: call.envelope } } },
-      signers: [signerOf(reg, call.actor, 'Curator', 'retired a task')],
+      payload: {
+        ...wp, taskIris: wp.taskIris.filter((t) => t !== r.taskIri),
+        retiredTaskIris: wp.retiredTaskIris.includes(r.taskIri) ? wp.retiredTaskIris : [...wp.retiredTaskIris, r.taskIri],
+        revision: { op: 'retire', taskIri: r.taskIri, by: { did: call.actorDid, envelope: call.envelope }, repairs },
+      },
+      signers: [signerOf(reg, call.actor, 'Curator', 'finished retiring a task')],
+      derivedFrom: [task.loaded.descriptorUrl],
     });
-    return { op: 'retire', taskIri: r.taskIri, workflowIri: wf.record.entityIri, status: 'retired', answeredDisputes: [], descriptorUrl: tw.descriptorUrl, recordId: tw.recordId, graphDigest: tw.graphDigest, workflowDescriptorUrl: ww.descriptorUrl, recorded: true };
+    return {
+      op: 'retire', taskIri: r.taskIri, workflowIri: wf.record.entityIri, status: 'retired', answeredDisputes: [],
+      descriptorUrl: task.loaded.descriptorUrl, recordId: task.loaded.recordId, graphDigest: task.loaded.graphDigest,
+      workflowDescriptorUrl: ww.descriptorUrl, repairs, repaired: true, recorded: true,
+    };
   }
 
   // ── Registry change validation ───────────────────────────────────────────────────────
@@ -1122,7 +1230,6 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (isObj(v)) return Object.entries(v).flatMap(([k, x]) => nullPaths(x, path === '' ? k : `${path}.${k}`));
     return [];
   };
-  const bindingOf = (l: LoadedRecord): Obj => ({ descriptorUrl: l.descriptorUrl, graphDigest: l.graphDigest });
   const WEEK_MS = 7 * 86_400_000;
 
   /**
@@ -1163,7 +1270,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       case 'wrd:revise-task': {
         const task = await found(arg('task_iri'), 'Task', 'task');
         const wf = await found(arg('workflow_iri'), 'Workflow', 'workflow');
-        if (task) Object.assign(t, { op: 'revise', taskIri: task.record.entityIri, ...bindingOf(task.loaded), description: task.record.payload.description, note: null });
+        const taskWf = task?.record.status === 'retired' ? await headOf(call, task.record.payload.workflowIri, 'Workflow') : null;
+        // A retired task its workflow still lists: the call to make is the retirement again, which finishes it.
+        if (task && retirementUnfinished(task.record, taskWf?.record)) Object.assign(t, { op: 'retire', taskIri: task.record.entityIri, ...bindingOf(task.loaded), why: null });
+        else if (task) Object.assign(t, { op: 'revise', taskIri: task.record.entityIri, ...bindingOf(task.loaded), description: task.record.payload.description, note: null });
         else if (wf) Object.assign(t, { op: 'add', workflowIri: wf.record.entityIri, ...bindingOf(wf.loaded), task: captureTask(false) });
         else Object.assign(t, { op: null, taskIri: null, descriptorUrl: null, graphDigest: null });
         Object.assign(context, { people, agents, taskKinds: kinds });
@@ -1546,6 +1656,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         return { ...refuse(409, 'This is a probe plan: Emergent work gets probes, not a point valuation; submit it as a probe decision.', `${planIri} changes Emergent work only`, via('submit_decision')) };
       }
       const ps = await planState(call, plan);
+      const retired = retiredInPlan(ps);
+      if (retired) return { ...retired };
       const entered = new Set(isObj(rawInputs['tasks']) ? Object.keys(rawInputs['tasks']) : []);
       for (const row of pp.tasks) {
         if (!row.changed && !entered.has(row.taskIri)) continue;
@@ -1658,6 +1770,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       const ps = await planState(call, plan);
       const changedRows = pp.tasks.filter((r) => r.changed);
+      const retired = retiredInPlan(ps);
+      if (retired) return { ...retired };
       const standing = standingOf(ps);
       if (standing) return { ...standing };
       const stale = staleness(ps);
@@ -1757,6 +1871,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       if (verdict === 'approve') {
         // Re-check at approval what submission checked: the people named may have disputed since.
         const ps = await planState(call, plan);
+        const retired = retiredInPlan(ps);
+        if (retired) return { ...retired };
         const standing = standingOf(ps);
         if (standing) return { ...standing };
         const stale = staleness(ps);
@@ -2283,6 +2399,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         effectiveGrant.set(t.record.entityIri, { active: g.active, why: g.active ? null : g.why });
       }
       const listedTasks = new Set(workflowsRec.flatMap((w) => [...w.record.payload.taskIris, ...w.record.payload.retiredTaskIris]));
+      const workflowByIri = new Map(workflowsRec.map((w) => [w.record.entityIri, w.record]));
       const acks = new Map(recordsOf(snap, 'Acknowledgement').map((a) => [`${a.record.payload.planIri}|${a.record.payload.taskIri}|${a.record.payload.personAddress}`, a.record]));
 
       const out: Obj = {
@@ -2310,7 +2427,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
             workflowIri: w.record.entityIri, title: p.title, unitLabel: p.unitLabel, ...(p.description ? { description: p.description } : {}), captureMode: p.captureMode,
             capturedBy: p.capturedBy.did, ...(p.document ? { document: p.document } : {}), ...(p.documentText !== undefined ? { documentText: p.documentText } : {}),
             draftedBy: p.draftedBy ?? (p.captureMode === 'document' ? NOT_DECLARED : null), ...(p.draftSha256 ? { draftSha256: p.draftSha256 } : {}),
-            taskIris: p.taskIris, retiredTaskIris: p.retiredTaskIris, head: headInfo(w.head), demo: w.record.demo === true,
+            taskIris: p.taskIris, retiredTaskIris: p.retiredTaskIris,
+            ...(p.revision ? { revision: { op: p.revision.op, taskIri: p.revision.taskIri, by: p.revision.by.did, ...(p.revision.repairs ? { repairs: p.revision.repairs } : {}) } } : {}),
+            head: headInfo(w.head), demo: w.record.demo === true,
           };
         });
       }
@@ -2352,6 +2471,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
             status: t.record.status, quoteStatus: p.quoteStatus, quotes: p.quotes, ...(p.revision ? { revision: { note: p.revision.note ?? null, answers: p.revision.answers, quotesCleared: p.revision.quotesCleared, by: p.revision.by.did } } : {}),
             ...(p.retirement ? { retirement: { why: p.retirement.why, at: p.retirement.at, by: p.retirement.by.did } } : {}),
             orphaned: !listedTasks.has(t.record.entityIri),
+            // Retired, but the workflow still lists it: retiring it again finishes the retirement.
+            retirementUnfinished: retirementUnfinished(t.record, workflowByIri.get(p.workflowIri)),
             classification: cls ? {
               regime: cls.record.payload.regime, method: cls.record.payload.method, rulesFired: cls.record.payload.rulesFired, notes: cls.record.payload.notes,
               answers: cls.record.payload.answers,
@@ -2379,7 +2500,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           for (const row of p.tasks) {
             const t = tasksRec.find((x) => x.record.entityIri === row.taskIri);
             const c = classificationByTask.get(row.taskIri);
-            if (row.changed && wf && !wf.record.payload.taskIris.includes(row.taskIri)) { stale = RETIRED_IN_PLAN; break; }
+            if (row.changed && (t?.record.status === 'retired' || (wf && !wf.record.payload.taskIris.includes(row.taskIri)))) { stale = RETIRED_IN_PLAN; break; }
             if (!t || t.record.payload.textSha256 !== p.taskTextSha256[row.taskIri] || !c || c.head.descriptorUrl !== p.classificationHeads[row.taskIri]) { stale = STALE_PLAN; break; }
           }
           const assignments = p.tasks.filter((r) => r.changed && r.proposed.personAddress).map((r) => {
