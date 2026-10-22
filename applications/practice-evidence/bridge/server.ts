@@ -233,7 +233,22 @@ async function main(): Promise<void> {
     }
   }
 
-  app.listen(PORT, HOST, () => { say(`  listening on ${HOST}:${PORT}`); });
+  // Express 5 hands a failed bind to this callback rather than throwing, so it is handled here:
+  // ignored, "listening" was printed and the process exited 0, which a container platform reads
+  // as a clean stop and does not restart. `::` falls back to 0.0.0.0 on a host without IPv6, as
+  // Node does for a listen with no host.
+  const listen = (host: string): void => {
+    app.listen(PORT, host, (err?: Error) => {
+      if (err) {
+        if (host === '::' && (err as NodeJS.ErrnoException).code === 'EAFNOSUPPORT') { listen('0.0.0.0'); return; }
+        warn(`practice-evidence bridge did not start: cannot listen on ${host}:${PORT}: ${err.message}`);
+        process.exitCode = 1;
+        return;
+      }
+      say(`  listening on ${host}:${PORT}`);
+    });
+  };
+  listen(HOST);
 }
 
 main().catch((e: unknown) => {

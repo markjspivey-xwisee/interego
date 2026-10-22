@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-22 — Container images for the work-redesign and practice-evidence bridges
+
+`deploy/Dockerfile.wrd-bridge` and `deploy/Dockerfile.pev-bridge` build the two bridges as single-stage images, and `deploy/images.json` adds `interego-wrd-bridge` and `interego-pev-bridge` to the build matrix with the prebuilt-packages recipe. Each image copies the packages, the shared vertical code and its own vertical, listens on every interface (`HOST=::`), and bakes in only non-secret defaults: the operator pod path on the gate and, for practice-evidence, lower pilot hourly budgets. Keys, admins, the pod credential and the model route stay unset until they are set on the service. No Railway service is added, so nothing deploys yet.
+
+Work-redesign now treats an empty variable as unset, as practice-evidence already did. An image's empty `ENV` lines make that the normal case, and before this an empty `BRIDGE_DEPLOYMENT_URL` gave work-redesign an empty base URL. A failed bind is now fatal and reported. Express 5 passes the bind error to the listen callback, so before this each bridge printed that it was listening and exited 0. A bind on `::` falls back to `0.0.0.0` on a host without IPv6, as Node does for a listen with no host.
+
 ## 2026-10-22 — Work-redesign: finish a retirement whose workflow write failed
 
 Retiring a task writes the task and then its workflow. If the workflow write failed, the task stayed retired while the workflow still listed it, a signed retry stopped at "already retired", and decisions on that workflow were blocked. Retiring such a task again now writes only the workflow version that drops it, signed by the requester and recording the retirement it finishes, and answers with a repaired flag; the envelope that performed the original retirement cannot be replayed to finish it, and a consistent workflow still receives the plain refusal. A failed workflow write after a retire or an add says what was written and which call comes next, readers that blocked on a retired-but-listed task name the repair, and the record listing marks unfinished retirements and the plans they make stale.

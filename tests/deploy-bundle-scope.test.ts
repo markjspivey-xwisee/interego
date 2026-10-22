@@ -365,11 +365,11 @@ describe('prebuildRecipe — a produced directory resolves to what the build act
     const recipe = prebuildRecipe(leg?.prebuild as string, WORKFLOW);
     expect(recipe?.installsFromLockfile).toBe(true);
     expect(recipe?.workspaces).toEqual(['@interego/core', '@interego/abac', '@interego/pgsl-store']);
-    // ★ The four bridges take the `dist` recipe as well (2026-09-22): the pull request's built
-    // packages restored into the context. The resolution applies to every leg identically —
-    // there is no service name anywhere in tools/deploy-bundle-scope.ts.
+    // ★ The bridges take the `dist` recipe as well (2026-09-22; wrd and pev joined 2026-10-22): the
+    // pull request's built packages restored into the context. The resolution applies to every leg
+    // identically — there is no service name anywhere in tools/deploy-bundle-scope.ts.
     const withPrebuild = [...matrixLegs()].filter(([, l]) => l.prebuild).map(([image]) => image).sort();
-    expect(withPrebuild).toEqual(['interego-agp-bridge', 'interego-css-pgsl', 'interego-foxxi-bridge', 'interego-jev-harness-bridge', 'interego-wsp-bridge']);
+    expect(withPrebuild).toEqual(['interego-agp-bridge', 'interego-css-pgsl', 'interego-foxxi-bridge', 'interego-jev-harness-bridge', 'interego-pev-bridge', 'interego-wrd-bridge', 'interego-wsp-bridge']);
     // The `dist` recipe runs the root `npm run build`, which the reader follows through the
     // manifest to the twenty workspaces it chains, core first; without the scripts it is unresolved.
     const scripts = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts;
