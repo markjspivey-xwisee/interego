@@ -1,0 +1,26 @@
+{
+  "observedAt": "2026-10-22T14:37:56.941Z",
+  "projectId": "b88ceabb-7461-4949-81d7-3d29132e7806",
+  "environmentId": "449996a2-3533-462f-98c6-4ab4c05dd777",
+  "postgresDeployment": "d3f5afd7-d638-42cc-8838-4dbee6e196e6",
+  "controllerDeployment": "dfe85efb-4ac6-4d37-93e8-a19c445bbd61",
+  "commandDeployment": "5fe99e1f-5914-42ea-9f2d-fb60a936ac01",
+  "receipt": {
+    "phase": "activated",
+    "receiptKey": "c17ca319bce3d839e50ee56b5400641152566e395a7c4c73df8b119ea623c6a6",
+    "sourceSystemId": "7660972292431302690",
+    "targetSystemId": "7698943519239290914",
+    "kv": {
+      "rows": 2770097,
+      "bytes": 33612850247,
+      "digest": "0095bbf186b9f07245bb452ba6beedca85db429aa492dbe534e4cd6d3738f972"
+    },
+    "relay": {
+      "rows": 5058,
+      "bytes": 14160622,
+      "digest": "805f03b4654a51859b81bc183cfde9f3ac652aeca9edf96322394cf25c43667d"
+    },
+    "verifiedAt": "2026-10-22T14:36:10.406Z",
+    "oldSourceRemainsConnectionBlocked": true
+  }
+}
