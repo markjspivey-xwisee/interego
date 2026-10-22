@@ -118,18 +118,36 @@ const listeners: TestListener[] = [];
 const refusalsSeen: Array<{ readonly tool: string; readonly status: number; readonly body: Obj }> = [];
 afterAll(async () => { for (const l of listeners) await l.close(); });
 
-async function world(extra: Partial<WrdDeps> = {}, affordances = wrdAffordances): Promise<World> {
+async function world(extra: Partial<WrdDeps> | ((pod: MemoryPod) => Partial<WrdDeps>) = {}, affordances = wrdAffordances): Promise<World> {
   const pod = memoryPod();
   const clock = demoClock();
   const handlers = createWrdHandlers({
     fetchFn: pod.fetchFn, defaultPodUrl: POD, now: () => clock.now(), platform: { wallet: PLATFORM, keyKind: 'configured' },
-    adminAddresses: [ADMIN.address], ...extra,
+    adminAddresses: [ADMIN.address], ...(typeof extra === 'function' ? extra(pod) : extra),
   });
   const app = createVerticalBridge({ verticalName: 'work-redesign', affordances, handlers, deploymentUrl: 'http://127.0.0.1' });
   const l = await listenLoopback(app);
   listeners.push(l);
   return { pod, clock, base: l.base, nonce: 0 };
 }
+
+/**
+ * The pod seen through a gate that, while shut, fails every write of a workflow record's
+ * resources (record slugs start `workflow-`) with `status`: a pod that fails part-way through a
+ * call that writes a task and then its workflow. Reads, and every other record, pass. A 503 is
+ * retried by the publish path until its budget runs out (a transient failure that outlasted the
+ * retries, ~15 s); a 403 is not retried.
+ */
+interface WorkflowWriteGate { shut: boolean; status: 403 | 503; refused: number }
+type PodFetch = NonNullable<WrdDeps['fetchFn']>;
+const gatedWorkflowWrites = (fetchFn: PodFetch, gate: WorkflowWriteGate): PodFetch => async (url, init) => {
+  const method = (init?.method ?? 'GET').toUpperCase();
+  if (gate.shut && method !== 'GET' && method !== 'HEAD' && /\/workflow-[0-9a-f]{16}/.test(String(url))) {
+    gate.refused += 1;
+    return new Response('the workflow write failed', { status: gate.status, statusText: gate.status === 503 ? 'Service Unavailable' : 'Forbidden' });
+  }
+  return fetchFn(url, init);
+};
 
 /** A second bridge process on the same pod and clock, with its own (empty) in-process nonce ledger: a restart. */
 async function restart(w: World): Promise<World> {
@@ -181,6 +199,8 @@ function refused(r: Res, status: number, error?: RegExp, reason?: RegExp): Obj {
 
 const list = async (w: World, query = ''): Promise<Obj> => ok(await http(w, 'GET', 'list_records', undefined, query), 'list_records');
 const taskRow = async (w: World, taskIri: string): Promise<Obj> => must(arr((await list(w))['tasks']).find((t) => t['taskIri'] === taskIri), `task ${taskIri}`);
+/** The head binding a ratify or revise payload carries. */
+const bound = (h: { descriptorUrl: string; graphDigest: string }): Obj => ({ descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest });
 const headOfRow = (row: Obj): { descriptorUrl: string; graphDigest: string; recordId: string } => {
   const h = obj(row['head'], 'head');
   return { descriptorUrl: String(h['descriptorUrl']), graphDigest: String(h['graphDigest']), recordId: String(h['recordId']) };
@@ -585,6 +605,144 @@ describe('work-redesign bridge', () => {
     expect(Date.parse(String(obj(t5Row['head'])['validUntil']))).toBeGreaterThan(Date.parse(String(obj(t5Row['head'])['validFrom'])));
     refused(await act(w, ANA, 'value_plan', { planIri: plan['planIri'], inputs: {} }), 409, /retired; propose again/);
     refused(await ratify(w, CY, t5), 409, /retired/);
+  }, 60_000);
+
+  it('a retirement whose workflow write failed is finished by retiring again: the retry repairs the workflow, naming the earlier retirement, and decision submission proceeds; a failed add leaves an orphan that blocks nothing', async () => {
+    const gate: WorkflowWriteGate = { shut: false, status: 403, refused: 0 };
+    const w = await world((pod) => ({ fetchFn: gatedWorkflowWrites(pod.fetchFn, gate) }));
+    const ap = await standardAp(w);
+    const wfRow = async (): Promise<Obj> => must(arr((await list(w))['workflows']).find((x) => x['workflowIri'] === ap.workflowIri), 'workflow row');
+    const add = async (): Promise<Res> => {
+      const h = headOfRow(await wfRow());
+      return act(w, ANA, 'revise_task', {
+        op: 'add', workflowIri: ap.workflowIri, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest,
+        task: { name: 'Reconcile supplier statements', description: 'Monthly.', currentLevel: 'person', personAddress: CY.address, taskKind: 'invoice-matching' },
+      });
+    };
+
+    // An add whose workflow write fails: the task record lands unlisted, and the answer says so instead of a bare 502.
+    gate.shut = true;
+    const lostAdd = refused(await add(), 502, /workflow does not list it/, /shows as orphaned.*403/);
+    gate.shut = false;
+    expect(gate.refused).toBeGreaterThan(0);
+    expect(obj(lostAdd['iep:resolvedBy'])).toMatchObject({ toolName: 'wrd.revise_task', op: 'add', workflowIri: ap.workflowIri });
+    const orphan = String(must(arr((await list(w))['tasks']).find((t) => t['orphaned'] === true), 'orphaned task')['taskIri']);
+    expect(arr((await wfRow())['taskIris'])).toHaveLength(4);
+    // Adding again takes the next free index; the orphan is in nobody's way.
+    const t5 = String(ok(await add(), 'add again')['taskIri']);
+    expect(t5).not.toBe(orphan);
+    expect(arr((await wfRow())['taskIris'])).toEqual([ap.t1, ap.t2, ap.t3, ap.t4, t5]);
+
+    // A retirement whose workflow write fails: the task is retired, the workflow still lists it, and the answer names the call that finishes it.
+    const t5Captured = headOfRow(await taskRow(w, t5));
+    const retire = (who: Wallet, h: { descriptorUrl: string; graphDigest: string }): Promise<Res> =>
+      act(w, who, 'revise_task', { op: 'retire', taskIri: t5, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, why: 'Moved to the treasury team' });
+    const refusedBefore = gate.refused;
+    gate.status = 503;
+    gate.shut = true;
+    const lost = refused(await retire(ANA, t5Captured), 502, /retired, but its workflow still lists it/, /503/);
+    gate.shut = false;
+    expect(gate.refused).toBeGreaterThan(refusedBefore);
+    const t5Retired = headOfRow(await taskRow(w, t5));
+    expect(obj(lost['iep:resolvedBy'])).toEqual({
+      action: 'urn:iep:action:wrd:revise-task', toolName: 'wrd.revise_task', op: 'retire', taskIri: t5, descriptorUrl: t5Retired.descriptorUrl, graphDigest: t5Retired.graphDigest,
+    });
+    expect(await taskRow(w, t5)).toMatchObject({ status: 'retired', retirementUnfinished: true, orphaned: false, head: { modalStatus: 'Retracted' } });
+    expect(arr((await wfRow())['taskIris'])).toContain(t5);
+
+    // While the workflow lists a retired task nothing is proposed on it, and the refusal points at the repair, not at
+    // classifying the task (which a retired task refuses: the dead end this replaces).
+    const blocked = refused(await propose(w, ap, P1_CHANGES(ap), 'P1'), 409, /retired, but its workflow still lists it/, new RegExp(`retired by did:ethr:${addr(ANA)}`));
+    expect(obj(blocked['iep:resolvedBy'])).toMatchObject({ toolName: 'wrd.revise_task', op: 'retire', taskIri: t5, descriptorUrl: t5Retired.descriptorUrl });
+    refused(await classify(w, ANA, t5, ANSWERS.evident), 409, /retired/);
+    refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:propose-allocation&workflow_iri=${encodeURIComponent(ap.workflowIri)}`), 409, /still lists it/);
+    // The template for the repair is the retirement, bound to the retired version.
+    const tpl = obj(ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(t5)}`))['template']);
+    expect(tpl).toMatchObject({ op: 'retire', taskIri: t5, descriptorUrl: t5Retired.descriptorUrl, graphDigest: t5Retired.graphDigest, why: null });
+
+    // A head that is neither the retired version nor the one it retired is refused, pointing at the retired one.
+    const moved = refused(await retire(ELI, { descriptorUrl: t5Retired.descriptorUrl, graphDigest: t5Captured.graphDigest }), 409, /changed since you read it/);
+    expect(obj(moved['iep:resolvedBy'])).toMatchObject({ op: 'retire', descriptorUrl: t5Retired.descriptorUrl });
+    // Retried by another operator with a fresh envelope over the version the first request bound: only the workflow is
+    // written, signed by the retrier, recorded as a repair naming the retirement it finishes.
+    const repairs = { taskDescriptorUrl: t5Retired.descriptorUrl, retiredBy: `did:ethr:${addr(ANA)}` };
+    const repaired = ok(await retire(ELI, t5Captured), 'repair');
+    expect(repaired).toMatchObject({ op: 'retire', taskIri: t5, status: 'retired', repaired: true, recorded: true, descriptorUrl: t5Retired.descriptorUrl, repairs });
+    const wf = await wfRow();
+    expect(wf['taskIris']).toEqual([ap.t1, ap.t2, ap.t3, ap.t4]);
+    expect(wf['retiredTaskIris']).toEqual([t5]);
+    expect(wf['revision']).toMatchObject({ op: 'retire', taskIri: t5, by: `did:ethr:${addr(ELI)}`, repairs });
+    expect(obj(wf['head'])['descriptorUrl']).toBe(repaired['workflowDescriptorUrl']);
+    expect(obj(wf['head'])['signedBy']).toEqual([`did:ethr:${addr(ELI)}`]);
+    expect(await taskRow(w, t5)).toMatchObject({ status: 'retired', retirementUnfinished: false, head: { descriptorUrl: t5Retired.descriptorUrl } });
+    // Once finished, retiring again is the plain refusal, and the template no longer offers it.
+    refused(await retire(ELI, t5Retired), 409, /was retired/, /already retired/);
+    expect(obj(ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(t5)}`))['template'])['op']).toBe('revise');
+
+    // The orphan is retired the ordinary way and is then listed as retired, no longer orphaned.
+    const o = headOfRow(await taskRow(w, orphan));
+    ok(await act(w, ANA, 'revise_task', { op: 'retire', taskIri: orphan, descriptorUrl: o.descriptorUrl, graphDigest: o.graphDigest, why: 'Recorded by an add whose workflow write failed' }));
+    expect(await taskRow(w, orphan)).toMatchObject({ status: 'retired', orphaned: false, retirementUnfinished: false });
+    expect((await wfRow())['retiredTaskIris']).toEqual([t5, orphan]);
+
+    // And the decision goes through.
+    const planIri = String(ok(await propose(w, ap, P1_CHANGES(ap), 'P1'), 'propose after the repair')['planIri']);
+    const valuation = ok(await act(w, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap) }), 'value');
+    await acknowledgeAll(w, planIri);
+    expect(await submitValued(w, planIri, valuation)).toMatchObject({ status: 'submitted', recorded: true });
+  }, 90_000);
+
+  it('a plan that changes a task whose retirement did not reach the workflow is refused at valuation, submission and approval with the call that finishes it; once finished, propose again', async () => {
+    const gate: WorkflowWriteGate = { shut: false, status: 403, refused: 0 };
+    const w = await world((pod) => ({ fetchFn: gatedWorkflowWrites(pod.fetchFn, gate) }));
+    const { ap, planIri, valuation } = await valuedP1(w);
+    await acknowledgeAll(w, planIri);
+    const decisionIri = String((await submitValued(w, planIri, valuation))['decisionIri']);
+    const t2Captured = headOfRow(await taskRow(w, ap.t2));
+    gate.shut = true;
+    refused(await act(w, ANA, 'revise_task', { op: 'retire', taskIri: ap.t2, ...bound(t2Captured), why: 'Coding moves to the shared-services centre' }), 502, /still lists it/);
+    gate.shut = false;
+    const t2Retired = headOfRow(await taskRow(w, ap.t2));
+    const finish = { toolName: 'wrd.revise_task', op: 'retire', taskIri: ap.t2, descriptorUrl: t2Retired.descriptorUrl, graphDigest: t2Retired.graphDigest };
+    // Never "must be ratified" (pointing at a ratification a retired task refuses): the refusal names the call that finishes the retirement.
+    const v = refused(await act(w, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap) }), 409, /still lists it/);
+    expect(obj(v['iep:resolvedBy'])).toMatchObject(finish);
+    const s = refused(await act(w, ANA, 'submit_decision', {
+      planIri, valuationIri: valuation['valuationIri'], valuationHash: valuation['valuationHash'], measurementPlan: { metric: 'weekly-cash-delta', comparisonBasis: 'before-after', windowWeeks: 8 },
+    }), 409, /still lists it/);
+    expect(obj(s['iep:resolvedBy'])).toMatchObject(finish);
+    const c = refused(await countersign(w, BO, decisionIri, 'approve', { objectionsConsidered: [], unacknowledgedConsidered: [] }), 409, /still lists it/);
+    expect(obj(c['iep:resolvedBy'])).toMatchObject(finish);
+    expect(arr((await list(w))['plans']).find((p) => p['planIri'] === planIri)?.['stale']).toBe('A task in this plan was retired; propose again.');
+    // Finished by retiring again, bound to the retired version this time; the envelope that retired it cannot be replayed to finish it.
+    expect(ok(await act(w, ANA, 'revise_task', { op: 'retire', taskIri: ap.t2, ...bound(t2Retired), why: 'Finishing the retirement' }))).toMatchObject({ repaired: true });
+    refused(await act(w, ANA, 'submit_decision', {
+      planIri, valuationIri: valuation['valuationIri'], valuationHash: valuation['valuationHash'], measurementPlan: { metric: 'weekly-cash-delta', comparisonBasis: 'before-after', windowWeeks: 8 },
+    }), 409, /retired; propose again/);
+    const after = refused(await countersign(w, BO, decisionIri, 'approve', { objectionsConsidered: [], unacknowledgedConsidered: [] }), 409, /retired; propose again/);
+    expect(obj(after['iep:resolvedBy'])['toolName']).toBe('wrd.propose_allocation');
+    expect(ok(await propose(w, ap, [must(P1_CHANGES(ap)[0])], 'P1 without T2'))['changedTasks']).toEqual([ap.t1]);
+  }, 90_000);
+
+  it('the envelope that retired a task cannot be replayed after a restart to finish the retirement', async () => {
+    const gate: WorkflowWriteGate = { shut: false, status: 403, refused: 0 };
+    const w = await world((pod) => ({ fetchFn: gatedWorkflowWrites(pod.fetchFn, gate) }));
+    await register(w);
+    const captured = ok(await act(w, ANA, 'capture_workflow', {
+      workflow: { title: 'Month-end accrual review', unitLabel: 'accrual' },
+      tasks: [{ name: 'Review accruals', description: 'Check open accruals.', currentLevel: 'person', personAddress: DEE.address, taskKind: 'gl-coding' }],
+    }));
+    const t = String(arr(captured['tasks'])[0]?.['taskIri']);
+    const h = headOfRow(await taskRow(w, t));
+    const original = await envelope(w, ANA, 'wrd:revise-task', { op: 'retire', taskIri: t, ...bound(h), why: 'Folded into the close checklist' });
+    gate.shut = true;
+    refused(await http(w, 'POST', 'revise_task', { envelope: original }), 502, /still lists it/);
+    gate.shut = false;
+    const fresh = await restart(w);
+    refused(await http(fresh, 'POST', 'revise_task', { envelope: original }), 409, /already used/);
+    expect(await taskRow(fresh, t)).toMatchObject({ status: 'retired', retirementUnfinished: true });
+    expect(ok(await act(fresh, ANA, 'revise_task', { op: 'retire', taskIri: t, ...bound(h), why: 'Folded into the close checklist' }))).toMatchObject({ repaired: true });
+    expect(await taskRow(fresh, t)).toMatchObject({ retirementUnfinished: false });
   }, 60_000);
 
   it('a disputed classification blocks changes to that task and returns both sets of answers', async () => {
