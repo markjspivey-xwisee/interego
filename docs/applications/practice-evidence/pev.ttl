@@ -1,0 +1,764 @@
+# ════════════════════════════════════════════════════════════════════════════════════════
+#  pev: — Practice Evidence (vertical application)
+#
+#  Vertical application ontology. Non-normative. Layer: application-over-L3. It composes the
+#  Interego protocol and extends no L1, L2 or L3 ontology. Every pev: term is declared here,
+#  in this vertical's own namespace, outside the protocol IRI space.
+#
+#  Byte copy published at docs/applications/practice-evidence/pev.ttl. SHACL shapes (the
+#  in-process subset only) are in pev-shapes.ttl, published extensionless at
+#  docs/applications/practice-evidence/pev/shapes.
+# ════════════════════════════════════════════════════════════════════════════════════════
+
+@prefix pev:  <https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix agp:  <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+
+<https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev> a owl:Ontology ;
+    dct:title "pev: — Practice Evidence (vertical application)" ;
+    dct:description "Conversation practice with evidence a reviewer can stand behind: a model or an independent judge agent chooses levels and quotes, the platform verifies every quote against the learner's own words and computes every result, and nothing leaves as evidence until a qualified person reviews it on a rubric a person ratified." ;
+    vann:preferredNamespacePrefix "pev" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#" ;
+    rdfs:comment "Vertical application ontology. Non-normative. Application-over-L3: no L1, L2 or L3 terms are extended. Calibration terms describe agreement with the reviewer, never accuracy." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> .
+
+# ── Classes ──────────────────────────────────────────────────────────────────────────────
+
+# Records: each is the class of a Context Descriptor's graph subject, and its dct:conformsTo.
+pev:Scenario a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Practice scenario" ;
+    rdfs:comment "A conversation a learner practises: the learner's goal and part, the situation, the person they practise with, that person's first line, when the conversation ends, a turn limit, and a rubric. Each content edit is a new version that supersedes the old one; a published version is Hypothetical until a reviewer ratifies it." .
+pev:Attempt a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Practice attempt" ;
+    rdfs:comment "One learner's practice of one scenario version: the transcript, the judgments, the reviews and every reopening, as one supersede chain on one graph. Practice evidence is rehearsal, not capability evidence." .
+pev:RoleRegistry a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Role registry" ;
+    rdfs:comment "The per-pod list of addresses and the roles they hold (reviewer, author, judge, agent, learner). Each change is signed by an admin and supersedes the previous registry record." .
+pev:ProjectionAudit a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Projection audit row" ;
+    rdfs:comment "A record that a statement was built for an attempt, or that building one was declined and why. Nothing is projected silently." .
+
+# Parts of a scenario.
+pev:Rubric a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Rubric version" ;
+    rdfs:comment "The criteria, their ordered levels and, for a pass gate, the weights, level values and pass rule. Identified by the sha256 of its canonical JSON, so any edit is a new version." .
+pev:Criterion a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Criterion" ;
+    rdfs:comment "One thing the rubric looks for, with two to six levels ordered from lowest to highest." .
+pev:Level a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Level" ;
+    rdfs:comment "One level of a criterion, with a descriptor of what the learner's own words show at that level." .
+pev:Counterpart a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Person practised with" ;
+    rdfs:comment "Who the learner practises with: who they are, what they want, what they know and how they react." .
+pev:Ratification a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Ratification" ;
+    rdfs:comment "A reviewer's signed statement that a published rubric version is fit to judge against. Until a version is ratified, results on it cannot leave as evidence." .
+
+# Parts of an attempt.
+pev:Turn a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Turn" ;
+    rdfs:comment "One line of the practice conversation, by the learner or by the person practised with, with the hash of its text." .
+pev:InferenceDisclosure a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Inference disclosure" ;
+    rdfs:comment "Which provider and model produced a line, a judgment or a draft, the model id the provider returned, where the key came from, the route, and measured usage when there was any." .
+pev:Judgment a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "Judgment" ;
+    rdfs:comment "One judge's levels, quotes and rationale for every criterion of an ended attempt. A judgment is never the last word and never computes a score." .
+pev:CriterionJudgment a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Criterion judgment" ;
+    rdfs:comment "The level a judge chose for one criterion, the quotes it gave, whether the platform could verify them, and the judge's rationale." .
+pev:Quote a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Quote" ;
+    rdfs:comment "Words a judge quoted as evidence, with the platform's check against the learner's own turns and, when found, where." .
+pev:Review a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "Review" ;
+    rdfs:comment "A qualified person's signed review of a judged attempt: a level for every criterion, stated explicitly. A countersign confirms the primary judgment's levels; an override sets other levels with a written why." .
+pev:ReviewedLevel a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Reviewed level" ;
+    rdfs:comment "The level a reviewer stated for one criterion, whether it came from the judge or from the reviewer, and the reviewer's why when they set it." .
+pev:Reopening a owl:Class ; rdfs:subClassOf prov:Activity ;
+    rdfs:label "Reopening" ;
+    rdfs:comment "A learner contesting a review, or an admin withdrawing one for cause. The attempt returns to the review queue; earlier reviews are kept." .
+pev:Redaction a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Redaction" ;
+    rdfs:comment "The removal of an attempt's text from the operator pod. Hashes and levels remain, so a copy the learner holds can still be checked." .
+
+# The role registry.
+pev:RoleAssignment a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Role assignment" ;
+    rdfs:comment "The roles one address holds on one pod." .
+
+# Vocabularies the records use as data.
+pev:WorkRead a owl:Class ; rdfs:subClassOf skos:Concept ;
+    rdfs:label "How knowable the work is" ;
+    rdfs:comment "The author's read of how knowable the practised work is, declared before the scenario is used. A pass gate on work not read as evident or knowable needs a written why." .
+pev:PlatformRule a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Platform rule" ;
+    rdfs:comment "A rule the platform applies, published as text so anyone can read the rule a result was computed by." .
+
+# ── How knowable the work is (records carry the notation as a literal) ──────────────────
+pev:EvidentWork a owl:NamedIndividual, pev:WorkRead ;
+    skos:notation "evident" ;
+    rdfs:label "Evident work" ;
+    rdfs:comment "Work whose good answer is evident to anyone in the role." ;
+    skos:closeMatch agp:Evident .
+pev:KnowableWork a owl:NamedIndividual, pev:WorkRead ;
+    skos:notation "knowable" ;
+    rdfs:label "Knowable work" ;
+    rdfs:comment "Work whose good answer can be known by analysis or expertise." ;
+    skos:closeMatch agp:Knowable .
+pev:EmergentWork a owl:NamedIndividual, pev:WorkRead ;
+    skos:notation "emergent" ;
+    rdfs:label "Emergent work" ;
+    rdfs:comment "Work whose good answer emerges only by probing and responding." ;
+    skos:closeMatch agp:Emergent .
+pev:TurbulentWork a owl:NamedIndividual, pev:WorkRead ;
+    skos:notation "turbulent" ;
+    rdfs:label "Turbulent work" ;
+    rdfs:comment "Work in which acting to stabilise comes before any analysis." ;
+    skos:closeMatch agp:Turbulent .
+pev:UnclassifiedWork a owl:NamedIndividual, pev:WorkRead ;
+    skos:notation "unclassified" ;
+    rdfs:label "Unclassified work" ;
+    rdfs:comment "Work the author has not placed in any of the other reads." .
+
+# ── Platform rules, published as data. practice.ts holds the same text and a test pins them equal.
+pev:LevelChoiceRule a owl:NamedIndividual, pev:PlatformRule ;
+    rdfs:label "Level-choice rule" ;
+    rdfs:comment "Choose the highest level whose descriptor the learner's own words fully meet. A level that is only partly met is not met." .
+pev:QuoteRule a owl:NamedIndividual, pev:PlatformRule ;
+    rdfs:label "Quote rule" ;
+    rdfs:comment "A quote counts only when, after the quote and the learner's turn are both normalised (Unicode NFC; curly quotes and apostrophes made straight; every run of whitespace made one space; both ends trimmed), it appears character for character, with case kept, inside one of the learner's own turns; it neither starts nor ends inside a word of that turn (a letter, digit or combining mark on both sides of either end); it is at least 12 characters long; and it holds at least two words, or one word of at least 12 letters or digits. The platform never repairs or paraphrases a quote. A level above the lowest needs at least one quote that checks out, and a quote that does not check out leaves its criterion unverified. A criterion judged at its lowest level with no quote is marked no-quote-needed: nothing was there to check, so it is not called verified." .
+pev:ScoringRule a owl:NamedIndividual, pev:PlatformRule ;
+    rdfs:label "Scoring rule" ;
+    rdfs:comment "For a pass gate the platform computes the points as the sum, over criteria, of the weight times the value of the chosen level, and the maximum as the sum of each weight times the value of that criterion's top level. The percent is points over maximum, rounded half up to one decimal. The pass rule is met when points times 100 is at least the minimum percent times the maximum and every required level is reached. An unverified criterion counts at its lowest level until a reviewer sets it. For feedback only none of this is computed: the result is the levels alone." .
+pev:EndProposalRule a owl:NamedIndividual, pev:PlatformRule ;
+    rdfs:label "End-proposal rule" ;
+    rdfs:comment "The person you practise with may propose that the conversation is over. Only the learner ends it, or the turn limit does." .
+
+# ── Object properties ────────────────────────────────────────────────────────────────────
+pev:hasCounterpart a owl:ObjectProperty ;
+    rdfs:label "has person practised with" ;
+    rdfs:comment "The person the learner practises with in this scenario version." ;
+    rdfs:domain pev:Scenario ;
+    rdfs:range pev:Counterpart .
+pev:hasRubric a owl:ObjectProperty ;
+    rdfs:label "has rubric" ;
+    rdfs:comment "The rubric version of this scenario version." ;
+    rdfs:domain pev:Scenario ;
+    rdfs:range pev:Rubric .
+pev:author a owl:ObjectProperty ;
+    rdfs:label "author" ;
+    rdfs:comment "An author who signed a record of this scenario version." ;
+    rdfs:domain pev:Scenario .
+pev:hasCriterion a owl:ObjectProperty ;
+    rdfs:label "has criterion" ;
+    rdfs:comment "A criterion of the rubric." ;
+    rdfs:domain pev:Rubric ;
+    rdfs:range pev:Criterion .
+pev:hasLevel a owl:ObjectProperty ;
+    rdfs:label "has level" ;
+    rdfs:comment "A level of the criterion." ;
+    rdfs:domain pev:Criterion ;
+    rdfs:range pev:Level .
+pev:requiresLevel a owl:ObjectProperty ;
+    rdfs:label "requires level" ;
+    rdfs:comment "A level the pass rule requires at least." ;
+    rdfs:domain pev:Rubric ;
+    rdfs:range pev:Level .
+pev:hasRatification a owl:ObjectProperty ;
+    rdfs:label "has ratification" ;
+    rdfs:comment "The reviewer's ratification of this scenario version." ;
+    rdfs:domain pev:Scenario ;
+    rdfs:range pev:Ratification .
+pev:ratifiedBy a owl:ObjectProperty ;
+    rdfs:label "ratified by" ;
+    rdfs:comment "The reviewer who ratified the rubric version." ;
+    rdfs:domain pev:Ratification .
+pev:scenario a owl:ObjectProperty ;
+    rdfs:label "scenario" ;
+    rdfs:comment "The scenario the attempt practises." ;
+    rdfs:domain pev:Attempt ;
+    rdfs:range pev:Scenario .
+pev:learner a owl:ObjectProperty ;
+    rdfs:label "learner" ;
+    rdfs:comment "The learner, identified only by the key they signed with." ;
+    rdfs:domain pev:Attempt .
+pev:hasTurn a owl:ObjectProperty ;
+    rdfs:label "has turn" ;
+    rdfs:comment "A turn of the conversation." ;
+    rdfs:domain pev:Attempt ;
+    rdfs:range pev:Turn .
+pev:disclosure a owl:ObjectProperty ;
+    rdfs:label "disclosure" ;
+    rdfs:comment "The inference disclosure behind a generated turn or a judgment." ;
+    rdfs:range pev:InferenceDisclosure .
+pev:declaredBy a owl:ObjectProperty ;
+    rdfs:label "declared by" ;
+    rdfs:comment "Who declared a disclosure that was not measured (the packet route)." ;
+    rdfs:domain pev:InferenceDisclosure .
+pev:hasJudgment a owl:ObjectProperty ;
+    rdfs:label "has judgment" ;
+    rdfs:comment "A judgment of the attempt." ;
+    rdfs:domain pev:Attempt ;
+    rdfs:range pev:Judgment .
+pev:hasCriterionJudgment a owl:ObjectProperty ;
+    rdfs:label "has criterion judgment" ;
+    rdfs:comment "The judgment of one criterion." ;
+    rdfs:domain pev:Judgment ;
+    rdfs:range pev:CriterionJudgment .
+pev:criterion a owl:ObjectProperty ;
+    rdfs:label "criterion" ;
+    rdfs:comment "The criterion a criterion judgment or a reviewed level is about." ;
+    rdfs:range pev:Criterion .
+pev:judgedLevel a owl:ObjectProperty ;
+    rdfs:label "judged level" ;
+    rdfs:comment "The level the judge chose." ;
+    rdfs:domain pev:CriterionJudgment ;
+    rdfs:range pev:Level .
+pev:finalLevel a owl:ObjectProperty ;
+    rdfs:label "final level" ;
+    rdfs:comment "The level the reviewer stated." ;
+    rdfs:domain pev:ReviewedLevel ;
+    rdfs:range pev:Level .
+pev:hasQuote a owl:ObjectProperty ;
+    rdfs:label "has quote" ;
+    rdfs:comment "A quote the judge gave for the criterion." ;
+    rdfs:domain pev:CriterionJudgment ;
+    rdfs:range pev:Quote .
+pev:judgeSigner a owl:ObjectProperty ;
+    rdfs:label "judge signer" ;
+    rdfs:comment "The key that signed a judgment recorded over the packet route." ;
+    rdfs:domain pev:Judgment .
+pev:hasReview a owl:ObjectProperty ;
+    rdfs:label "has review" ;
+    rdfs:comment "A review of the attempt; earlier reviews are kept." ;
+    rdfs:domain pev:Attempt ;
+    rdfs:range pev:Review .
+pev:reviewer a owl:ObjectProperty ;
+    rdfs:label "reviewer" ;
+    rdfs:comment "The person who reviewed. As a statement extension key, the reviewer's did." .
+pev:reviewedRecord a owl:ObjectProperty ;
+    rdfs:label "reviewed record" ;
+    rdfs:comment "The exact record (descriptor id) a review or a reopening acted on." .
+pev:hasReviewedLevel a owl:ObjectProperty ;
+    rdfs:label "has reviewed level" ;
+    rdfs:comment "The level the reviewer stated for one criterion." ;
+    rdfs:domain pev:Review ;
+    rdfs:range pev:ReviewedLevel .
+pev:hasReopening a owl:ObjectProperty ;
+    rdfs:label "has reopening" ;
+    rdfs:comment "A contest or a withdrawal for cause." ;
+    rdfs:domain pev:Attempt ;
+    rdfs:range pev:Reopening .
+pev:reopenedBy a owl:ObjectProperty ;
+    rdfs:label "reopened by" ;
+    rdfs:comment "Who contested or withdrew the review." ;
+    rdfs:domain pev:Reopening .
+pev:hasRedaction a owl:ObjectProperty ;
+    rdfs:label "has redaction" ;
+    rdfs:comment "The redaction of the attempt's text." ;
+    rdfs:domain pev:Attempt ;
+    rdfs:range pev:Redaction .
+pev:redactedBy a owl:ObjectProperty ;
+    rdfs:label "redacted by" ;
+    rdfs:comment "Who removed the text: the learner, or an admin with a why." ;
+    rdfs:domain pev:Redaction .
+pev:hasAssignment a owl:ObjectProperty ;
+    rdfs:label "has assignment" ;
+    rdfs:comment "One address's roles in the registry." ;
+    rdfs:domain pev:RoleRegistry ;
+    rdfs:range pev:RoleAssignment .
+pev:projectedAttempt a owl:ObjectProperty ;
+    rdfs:label "projected attempt" ;
+    rdfs:comment "The attempt a projection audit row is about." ;
+    rdfs:domain pev:ProjectionAudit ;
+    rdfs:range pev:Attempt .
+pev:projectedRecord a owl:ObjectProperty ;
+    rdfs:label "projected record" ;
+    rdfs:comment "The head record (descriptor URL) the projection read." ;
+    rdfs:domain pev:ProjectionAudit .
+pev:sourceRecord a owl:ObjectProperty ;
+    rdfs:label "source record" ;
+    rdfs:comment "As a statement extension key: the descriptor URL of the record a statement was built from." .
+
+# ── Datatype properties ──────────────────────────────────────────────────────────────────
+
+# Record-wide.
+pev:recordJson a owl:DatatypeProperty ;
+    rdfs:label "record JSON" ;
+    rdfs:comment "The whole record body as canonical JSON. The typed triples and this literal are written from the same object." ;
+    rdfs:range xsd:string .
+pev:recordJsonSha256 a owl:DatatypeProperty ;
+    rdfs:label "record JSON sha256" ;
+    rdfs:comment "sha256 of the recordJson literal; a record whose literal does not match is unreadable." ;
+    rdfs:range xsd:string .
+pev:keyKind a owl:DatatypeProperty ;
+    rdfs:label "platform key kind" ;
+    rdfs:comment "configured, ephemeral or demo-fixture: how the platform key that signed this record was obtained." ;
+    rdfs:range xsd:string .
+pev:platformSigner a owl:DatatypeProperty ;
+    rdfs:label "platform signer" ;
+    rdfs:comment "The address of the platform key that signed this record's authorship proof." ;
+    rdfs:range xsd:string .
+pev:serverHeldDemoKey a owl:DatatypeProperty ;
+    rdfs:label "server-held demo key" ;
+    rdfs:comment "True when an act was signed with a key the bridge held for a demo role; such outcomes are excluded from standing." ;
+    rdfs:range xsd:boolean .
+pev:evidenceKind a owl:DatatypeProperty ;
+    rdfs:label "evidence kind" ;
+    rdfs:comment "Always practice: rehearsal of a scenario, not capability evidence." ;
+    rdfs:range xsd:string .
+pev:envelopeForm a owl:DatatypeProperty ;
+    rdfs:label "envelope form" ;
+    rdfs:comment "pev-canonical or signed-request: the form of the signed envelope behind an act." ;
+    rdfs:range xsd:string .
+pev:envelopeSignature a owl:DatatypeProperty ;
+    rdfs:label "envelope signature" ;
+    rdfs:comment "The signature the actor made over the act's payload." ;
+    rdfs:range xsd:string .
+pev:envelopePayloadSha256 a owl:DatatypeProperty ;
+    rdfs:label "envelope payload sha256" ;
+    rdfs:comment "sha256 of exactly the text the actor signed." ;
+    rdfs:range xsd:string .
+
+# Scenario.
+pev:scenarioKey a owl:DatatypeProperty ;
+    rdfs:label "scenario key" ;
+    rdfs:comment "The author's stable key for the scenario." ;
+    rdfs:range xsd:string .
+pev:scenarioVersion a owl:DatatypeProperty ;
+    rdfs:label "scenario version" ;
+    rdfs:comment "The content version; any content edit increments it." ;
+    rdfs:range xsd:integer .
+pev:scenarioStatus a owl:DatatypeProperty ;
+    rdfs:label "scenario status" ;
+    rdfs:comment "draft, published or ratified." ;
+    rdfs:range xsd:string .
+pev:scenarioHash a owl:DatatypeProperty ;
+    rdfs:label "scenario hash" ;
+    rdfs:comment "sha256 of the canonical scenario, rubric included." ;
+    rdfs:range xsd:string .
+pev:learnerGoal a owl:DatatypeProperty ;
+    rdfs:label "what the learner practises" ;
+    rdfs:comment "What the learner is practising." ;
+    rdfs:range xsd:string .
+pev:learnerPart a owl:DatatypeProperty ;
+    rdfs:label "the learner's part" ;
+    rdfs:comment "The part the learner plays." ;
+    rdfs:range xsd:string .
+pev:situation a owl:DatatypeProperty ;
+    rdfs:label "situation" ;
+    rdfs:comment "The situation the conversation takes place in." ;
+    rdfs:range xsd:string .
+pev:firstLine a owl:DatatypeProperty ;
+    rdfs:label "first line" ;
+    rdfs:comment "The first line of the person practised with." ;
+    rdfs:range xsd:string .
+pev:endsWhen a owl:DatatypeProperty ;
+    rdfs:label "ends when" ;
+    rdfs:comment "When the conversation is over." ;
+    rdfs:range xsd:string .
+pev:turnLimit a owl:DatatypeProperty ;
+    rdfs:label "turn limit" ;
+    rdfs:comment "The most learner turns an attempt may hold." ;
+    rdfs:range xsd:integer .
+pev:assessmentUse a owl:DatatypeProperty ;
+    rdfs:label "assessment use" ;
+    rdfs:comment "feedback-only or pass-gate, declared by the author; silence is not a choice." ;
+    rdfs:range xsd:string .
+pev:workRegime a owl:DatatypeProperty ;
+    rdfs:label "work read" ;
+    rdfs:comment "How knowable the author read the work to be; one of the notations of pev:WorkRead." ;
+    rdfs:range xsd:string .
+pev:passGateWhy a owl:DatatypeProperty ;
+    rdfs:label "why a pass gate fits" ;
+    rdfs:comment "The author's written why for a pass gate on work not read as evident or knowable." ;
+    rdfs:range xsd:string .
+pev:draftAssistance a owl:DatatypeProperty ;
+    rdfs:label "draft assistance" ;
+    rdfs:comment "Canonical JSON of who or what helped draft this scenario, declared or measured." ;
+    rdfs:range xsd:string .
+pev:draftMeasured a owl:DatatypeProperty ;
+    rdfs:label "draft assistance measured" ;
+    rdfs:comment "True when a platform-signed receipt shows which model drafted the scenario." ;
+    rdfs:range xsd:boolean .
+pev:editedAfterDraft a owl:DatatypeProperty ;
+    rdfs:label "edited after draft" ;
+    rdfs:comment "True when the submitted scenario differs from the measured draft." ;
+    rdfs:range xsd:boolean .
+
+# The person practised with.
+pev:counterpartName a owl:DatatypeProperty ;
+    rdfs:label "name" ;
+    rdfs:comment "Their name." ;
+    rdfs:range xsd:string .
+pev:counterpartProfile a owl:DatatypeProperty ;
+    rdfs:label "who they are" ;
+    rdfs:comment "Who they are." ;
+    rdfs:range xsd:string .
+pev:counterpartWants a owl:DatatypeProperty ;
+    rdfs:label "what they want" ;
+    rdfs:comment "What they want." ;
+    rdfs:range xsd:string .
+pev:counterpartKnows a owl:DatatypeProperty ;
+    rdfs:label "what they know" ;
+    rdfs:comment "What they know." ;
+    rdfs:range xsd:string .
+pev:counterpartReactions a owl:DatatypeProperty ;
+    rdfs:label "how they react" ;
+    rdfs:comment "How they react." ;
+    rdfs:range xsd:string .
+
+# Rubric.
+pev:rubricHash a owl:DatatypeProperty ;
+    rdfs:label "rubric hash" ;
+    rdfs:comment "sha256 of the canonical rubric: the rubric version's identity." ;
+    rdfs:range xsd:string .
+pev:minPercent a owl:DatatypeProperty ;
+    rdfs:label "minimum percent" ;
+    rdfs:comment "The pass rule's minimum percent of the maximum points." ;
+    rdfs:range xsd:integer .
+pev:criterionId a owl:DatatypeProperty ;
+    rdfs:label "criterion id" ;
+    rdfs:comment "The criterion's id within its rubric." ;
+    rdfs:range xsd:string .
+pev:criterionContentHash a owl:DatatypeProperty ;
+    rdfs:label "criterion content hash" ;
+    rdfs:comment "sha256 of what the criterion means (ids, words, levels), independent of weights, values and the pass rule." ;
+    rdfs:range xsd:string .
+pev:weight a owl:DatatypeProperty ;
+    rdfs:label "weight" ;
+    rdfs:comment "A pass gate's weight for the criterion." ;
+    rdfs:range xsd:integer .
+pev:levelId a owl:DatatypeProperty ;
+    rdfs:label "level id" ;
+    rdfs:comment "The level's id within its criterion." ;
+    rdfs:range xsd:string .
+pev:levelDescriptor a owl:DatatypeProperty ;
+    rdfs:label "level descriptor" ;
+    rdfs:comment "What the learner's own words show at this level." ;
+    rdfs:range xsd:string .
+pev:levelValue a owl:DatatypeProperty ;
+    rdfs:label "level value" ;
+    rdfs:comment "A pass gate's value for the level; values strictly increase from lowest to highest." ;
+    rdfs:range xsd:integer .
+pev:levelOrder a owl:DatatypeProperty ;
+    rdfs:label "level order" ;
+    rdfs:comment "The level's position, 0 being the lowest." ;
+    rdfs:range xsd:integer .
+
+# Attempt.
+pev:lifecycleState a owl:DatatypeProperty ;
+    rdfs:label "lifecycle state" ;
+    rdfs:comment "in-conversation, ended, judged, countersigned, overridden, contested, review-retracted or redacted." ;
+    rdfs:range xsd:string .
+pev:attemptNumber a owl:DatatypeProperty ;
+    rdfs:label "attempt number" ;
+    rdfs:comment "Which attempt of this learner on this scenario this is." ;
+    rdfs:range xsd:integer .
+pev:coached a owl:DatatypeProperty ;
+    rdfs:label "coached" ;
+    rdfs:comment "Whether the learner said they were coached for this attempt." ;
+    rdfs:range xsd:boolean .
+pev:assistance a owl:DatatypeProperty ;
+    rdfs:label "assistance" ;
+    rdfs:comment "The learner's own note on any help they had." ;
+    rdfs:range xsd:string .
+pev:authorTest a owl:DatatypeProperty ;
+    rdfs:label "author test" ;
+    rdfs:comment "True for an author trying their own scenario; such attempts never count." ;
+    rdfs:range xsd:boolean .
+pev:learnerKind a owl:DatatypeProperty ;
+    rdfs:label "learner kind" ;
+    rdfs:comment "person or agent, from the role registry when the attempt started." ;
+    rdfs:range xsd:string .
+pev:endedBy a owl:DatatypeProperty ;
+    rdfs:label "ended by" ;
+    rdfs:comment "learner, learner-confirmed-counterpart-end or turn-limit." ;
+    rdfs:range xsd:string .
+pev:endProposedAtTurn a owl:DatatypeProperty ;
+    rdfs:label "end proposed at turn" ;
+    rdfs:comment "The turn at which the person practised with proposed the end; only the learner ends it." ;
+    rdfs:range xsd:integer .
+pev:transcriptHash a owl:DatatypeProperty ;
+    rdfs:label "transcript hash" ;
+    rdfs:comment "sha256 of the canonical transcript (index, speaker and text of every turn), fixed when the attempt ends." ;
+    rdfs:range xsd:string .
+pev:counterpartControlledBy a owl:DatatypeProperty ;
+    rdfs:label "other person's lines controlled by" ;
+    rdfs:comment "platform, learner-model or learner: the most learner-controlled route that wrote the other person's lines." ;
+    rdfs:range xsd:string .
+pev:judgmentCount a owl:DatatypeProperty ;
+    rdfs:label "judgment count" ;
+    rdfs:comment "How many judgments the attempt holds." ;
+    rdfs:range xsd:integer .
+pev:scorePoints a owl:DatatypeProperty ;
+    rdfs:label "points" ;
+    rdfs:comment "Platform-computed points for a pass gate." ;
+    rdfs:range xsd:integer .
+pev:maxPoints a owl:DatatypeProperty ;
+    rdfs:label "maximum points" ;
+    rdfs:comment "Platform-computed maximum points for a pass gate." ;
+    rdfs:range xsd:integer .
+pev:scorePercent a owl:DatatypeProperty ;
+    rdfs:label "percent" ;
+    rdfs:comment "Platform-computed percent, rounded half up to one decimal." ;
+    rdfs:range xsd:decimal .
+pev:meetsPassRule a owl:DatatypeProperty ;
+    rdfs:label "meets pass rule" ;
+    rdfs:comment "Whether the platform-computed result meets the pass rule." ;
+    rdfs:range xsd:boolean .
+pev:assessmentProvisional a owl:DatatypeProperty ;
+    rdfs:label "provisional" ;
+    rdfs:comment "True while no reviewer stands behind the result: provisional, not reviewed." ;
+    rdfs:range xsd:boolean .
+pev:scoreComputedBy a owl:DatatypeProperty ;
+    rdfs:label "computed by" ;
+    rdfs:comment "Always platform: a model never computes a result." ;
+    rdfs:range xsd:string .
+
+# Turn.
+pev:turnIndex a owl:DatatypeProperty ;
+    rdfs:label "turn index" ;
+    rdfs:comment "The turn's position in the conversation, 0 being the first line." ;
+    rdfs:range xsd:integer .
+pev:speaker a owl:DatatypeProperty ;
+    rdfs:label "speaker" ;
+    rdfs:comment "learner or counterpart." ;
+    rdfs:range xsd:string .
+pev:text a owl:DatatypeProperty ;
+    rdfs:label "text" ;
+    rdfs:comment "What was said. Absent once the attempt is redacted." ;
+    rdfs:range xsd:string .
+pev:textSha256 a owl:DatatypeProperty ;
+    rdfs:label "text sha256" ;
+    rdfs:comment "sha256 of the turn's text; stays after redaction." ;
+    rdfs:range xsd:string .
+pev:turnSource a owl:DatatypeProperty ;
+    rdfs:label "turn source" ;
+    rdfs:comment "authored-first-line, learner-signed, bridge-model, scripted or client-packet." ;
+    rdfs:range xsd:string .
+pev:endSignal a owl:DatatypeProperty ;
+    rdfs:label "end signal" ;
+    rdfs:comment "True when the person practised with proposed that the conversation is over." ;
+    rdfs:range xsd:boolean .
+
+# Inference disclosure.
+pev:provider a owl:DatatypeProperty ;
+    rdfs:label "provider" ;
+    rdfs:comment "Who provided the model." ;
+    rdfs:range xsd:string .
+pev:model a owl:DatatypeProperty ;
+    rdfs:label "model" ;
+    rdfs:comment "The model id as the provider returned it (declared on the packet route)." ;
+    rdfs:range xsd:string .
+pev:requestedModel a owl:DatatypeProperty ;
+    rdfs:label "requested model" ;
+    rdfs:comment "The model id that was requested." ;
+    rdfs:range xsd:string .
+pev:keySource a owl:DatatypeProperty ;
+    rdfs:label "key source" ;
+    rdfs:comment "none, bridge-env, per-request-byok or mcp-client." ;
+    rdfs:range xsd:string .
+pev:route a owl:DatatypeProperty ;
+    rdfs:label "route" ;
+    rdfs:comment "bridge-model, scripted or client-packet." ;
+    rdfs:range xsd:string .
+pev:promptTemplateHash a owl:DatatypeProperty ;
+    rdfs:label "prompt template hash" ;
+    rdfs:comment "sha256 of the prompt template that was used, or own-prompt when a judge declared its own." ;
+    rdfs:range xsd:string .
+pev:inputTokens a owl:DatatypeProperty ;
+    rdfs:label "input tokens" ;
+    rdfs:comment "Input tokens, when the provider measured them." ;
+    rdfs:range xsd:integer .
+pev:outputTokens a owl:DatatypeProperty ;
+    rdfs:label "output tokens" ;
+    rdfs:comment "Output tokens, when the provider measured them." ;
+    rdfs:range xsd:integer .
+pev:latencyMs a owl:DatatypeProperty ;
+    rdfs:label "latency in ms" ;
+    rdfs:comment "Measured wall-clock time of the call." ;
+    rdfs:range xsd:integer .
+pev:stopReason a owl:DatatypeProperty ;
+    rdfs:label "stop" ;
+    rdfs:comment "Why the model stopped, as the provider said." ;
+    rdfs:range xsd:string .
+
+# Judgment.
+pev:judgmentIndex a owl:DatatypeProperty ;
+    rdfs:label "judgment index" ;
+    rdfs:comment "The judgment's position; 0 is the primary judgment." ;
+    rdfs:range xsd:integer .
+pev:judgeId a owl:DatatypeProperty ;
+    rdfs:label "judge id" ;
+    rdfs:comment "The judge: model:<provider>/<model> for a model, or the signer's did." ;
+    rdfs:range xsd:string .
+pev:judgeKind a owl:DatatypeProperty ;
+    rdfs:label "judge kind" ;
+    rdfs:comment "model, agent or person." ;
+    rdfs:range xsd:string .
+pev:judgeChosenBy a owl:DatatypeProperty ;
+    rdfs:label "judge chosen by" ;
+    rdfs:comment "bridge-config, judge-registry, learner or reviewer: who chose this judge." ;
+    rdfs:range xsd:string .
+pev:repeatOf a owl:DatatypeProperty ;
+    rdfs:label "repeat of" ;
+    rdfs:comment "The earlier judgment by the same judge and prompt that this one repeats; repeats measure test-retest agreement." ;
+    rdfs:range xsd:integer .
+pev:verificationStatus a owl:DatatypeProperty ;
+    rdfs:label "verification status" ;
+    rdfs:comment "verified, unverified or no-quote-needed. verified: every quote checked out and a level above the lowest has one. unverified: a quote did not check out, or a level above the lowest has none. no-quote-needed: the lowest level with no quote, so nothing was checked." ;
+    rdfs:range xsd:string .
+pev:declaredConfidence a owl:DatatypeProperty ;
+    rdfs:label "declared confidence" ;
+    rdfs:comment "The probability the judge declared for its chosen level, normalised; absent when not declared." ;
+    rdfs:range xsd:decimal .
+pev:rationale a owl:DatatypeProperty ;
+    rdfs:label "rationale" ;
+    rdfs:comment "The judge's own words: not part of any result." ;
+    rdfs:range xsd:string .
+pev:rationaleSha256 a owl:DatatypeProperty ;
+    rdfs:label "rationale sha256" ;
+    rdfs:comment "sha256 of the rationale; stays after redaction." ;
+    rdfs:range xsd:string .
+
+# Quote.
+pev:quoteText a owl:DatatypeProperty ;
+    rdfs:label "quote text" ;
+    rdfs:comment "The words as the judge gave them. Absent once redacted." ;
+    rdfs:range xsd:string .
+pev:quoteSha256 a owl:DatatypeProperty ;
+    rdfs:label "quote sha256" ;
+    rdfs:comment "sha256 of the normalised quote." ;
+    rdfs:range xsd:string .
+pev:verified a owl:DatatypeProperty ;
+    rdfs:label "verified" ;
+    rdfs:comment "Whether the platform found the quote verbatim in a learner turn." ;
+    rdfs:range xsd:boolean .
+pev:startOffset a owl:DatatypeProperty ;
+    rdfs:label "start offset" ;
+    rdfs:comment "Start of the match in the normalised learner turn." ;
+    rdfs:range xsd:integer .
+pev:endOffset a owl:DatatypeProperty ;
+    rdfs:label "end offset" ;
+    rdfs:comment "End of the match in the normalised learner turn." ;
+    rdfs:range xsd:integer .
+pev:quoteWhy a owl:DatatypeProperty ;
+    rdfs:label "why it did not check out" ;
+    rdfs:comment "Why a quote or a criterion is unverified." ;
+    rdfs:range xsd:string .
+
+# Review.
+pev:reviewIndex a owl:DatatypeProperty ;
+    rdfs:label "review index" ;
+    rdfs:comment "The review's position on the attempt." ;
+    rdfs:range xsd:integer .
+pev:reviewOutcome a owl:DatatypeProperty ;
+    rdfs:label "review outcome" ;
+    rdfs:comment "countersigned or overridden." ;
+    rdfs:range xsd:string .
+pev:reviewedGraphDigest a owl:DatatypeProperty ;
+    rdfs:label "reviewed graph digest" ;
+    rdfs:comment "The canonical digest of the graph the reviewer signed for, the same digest the platform's proof binds." ;
+    rdfs:range xsd:string .
+pev:levelFrom a owl:DatatypeProperty ;
+    rdfs:label "level from" ;
+    rdfs:comment "judge when the reviewer confirmed a verified judge level, reviewer otherwise." ;
+    rdfs:range xsd:string .
+pev:overrideWhy a owl:DatatypeProperty ;
+    rdfs:label "why the reviewer set this level" ;
+    rdfs:comment "The reviewer's written why for a level they set." ;
+    rdfs:range xsd:string .
+pev:sawJudgeLevelsFirst a owl:DatatypeProperty ;
+    rdfs:label "saw the judge's levels first" ;
+    rdfs:comment "The reviewer's signed statement of whether they saw the judge's levels before choosing theirs. Agreement figures are agreement with the reviewer, anchored when this is true." ;
+    rdfs:range xsd:boolean .
+pev:withdrawn a owl:DatatypeProperty ;
+    rdfs:label "withdrawn" ;
+    rdfs:comment "True for a review an admin withdrew for cause." ;
+    rdfs:range xsd:boolean .
+
+# Reopening and redaction.
+pev:reopenKind a owl:DatatypeProperty ;
+    rdfs:label "reopening kind" ;
+    rdfs:comment "contest or retract-for-cause." ;
+    rdfs:range xsd:string .
+pev:reopenWhy a owl:DatatypeProperty ;
+    rdfs:label "why reopened" ;
+    rdfs:comment "The written why for the contest or the withdrawal." ;
+    rdfs:range xsd:string .
+pev:redactionRole a owl:DatatypeProperty ;
+    rdfs:label "redaction role" ;
+    rdfs:comment "learner or admin." ;
+    rdfs:range xsd:string .
+
+# Role registry.
+pev:address a owl:DatatypeProperty ;
+    rdfs:label "address" ;
+    rdfs:comment "An address (0x and 40 hex digits)." ;
+    rdfs:range xsd:string .
+pev:role a owl:DatatypeProperty ;
+    rdfs:label "role" ;
+    rdfs:comment "reviewer, author, judge, agent or learner." ;
+    rdfs:range xsd:string .
+
+# Projection audit.
+pev:projectionFormat a owl:DatatypeProperty ;
+    rdfs:label "projection format" ;
+    rdfs:comment "xapi or cmi5 (xAPI with cmi5-allowed context and no LMS launch)." ;
+    rdfs:range xsd:string .
+pev:projectionOutcome a owl:DatatypeProperty ;
+    rdfs:label "projection outcome" ;
+    rdfs:comment "projected or skipped." ;
+    rdfs:range xsd:string .
+pev:statementId a owl:DatatypeProperty ;
+    rdfs:label "statement id" ;
+    rdfs:comment "The deterministic id of the statement built." ;
+    rdfs:range xsd:string .
+pev:skipWhy a owl:DatatypeProperty ;
+    rdfs:label "why skipped" ;
+    rdfs:comment "Why no statement was built." ;
+    rdfs:range xsd:string .
+pev:lossyNote a owl:DatatypeProperty ;
+    rdfs:label "what the projection leaves out" ;
+    rdfs:comment "One thing the statement does not carry." ;
+    rdfs:range xsd:string .
+pev:registryCheckedAt a owl:DatatypeProperty ;
+    rdfs:label "registry checked at" ;
+    rdfs:comment "The review time at which the reviewer's role was checked." ;
+    rdfs:range xsd:dateTime .
+
+# Statement extension keys (also usable as properties).
+pev:practiceEvidence a owl:DatatypeProperty ;
+    rdfs:label "practice evidence" ;
+    rdfs:comment "True on every statement this vertical projects. Practice evidence is rehearsal of a known scenario; it is not capability evidence and no credential is issued from it." ;
+    rdfs:range xsd:boolean .
+pev:judgeModel a owl:DatatypeProperty ;
+    rdfs:label "primary judge model" ;
+    rdfs:comment "The primary judgment's model as provider/model: as the provider returned it on a model route, or as the judge declared it on the packet route (then pev:declaredBy names who declared it). The judge's identity is pev:judgeId." ;
+    rdfs:range xsd:string .
+pev:judgeRoute a owl:DatatypeProperty ;
+    rdfs:label "primary judge route" ;
+    rdfs:comment "The route of the primary judgment." ;
+    rdfs:range xsd:string .
+pev:criterionLevels a owl:DatatypeProperty ;
+    rdfs:label "criterion levels" ;
+    rdfs:comment "The reviewed level of every criterion, as a map from criterion id to level id." .
+pev:reviewCount a owl:DatatypeProperty ;
+    rdfs:label "review count" ;
+    rdfs:comment "How many reviews the attempt holds." ;
+    rdfs:range xsd:integer .
+pev:rubricRatifiedBy a owl:DatatypeProperty ;
+    rdfs:label "rubric ratified by" ;
+    rdfs:comment "The did of the reviewer who ratified the rubric version." ;
+    rdfs:range xsd:string .

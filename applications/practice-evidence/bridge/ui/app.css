@@ -1,0 +1,96 @@
+/* practice-evidence web client. No external fonts; light and dark follow the system. */
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f5; --panel: #ffffff; --text: #1d2027; --muted: #5f6675; --line: #d9dbe0;
+  --accent: #0a6b64; --accent-text: #ffffff; --ok: #1d6b35; --bad: #a3261b; --warn: #8a5a00;
+  --mark: #fff0a8; --me: #e6f2f0; --them: #f0f0f3; --scripted: #ece4fb;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171c; --panel: #1d2027; --text: #e8eaee; --muted: #a2a9b6; --line: #343944;
+    --accent: #45c2b8; --accent-text: #0d1114; --ok: #6fd08c; --bad: #ff8a7d; --warn: #f0c060;
+    --mark: #6b5a00; --me: #173733; --them: #262a33; --scripted: #33294a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+#bar, #tabs, #signing, #view { max-width: 60rem; margin: 0 auto; padding: 0 1rem; }
+#bar { padding-top: 0.75rem; }
+#tabs { display: flex; flex-wrap: wrap; gap: 0.25rem; border-bottom: 1px solid var(--line); padding-bottom: 0.25rem; margin-bottom: 0.75rem; }
+.tab { padding: 0.35rem 0.7rem; border-radius: 0.4rem; color: var(--text); text-decoration: none; }
+.tab.active { background: var(--accent); color: var(--accent-text); }
+h2 { font-size: 1.3rem; margin: 0.6rem 0; }
+h3 { font-size: 1.05rem; margin: 0.4rem 0; }
+h4 { font-size: 0.95rem; margin: 0.6rem 0 0.2rem; }
+a { color: var(--accent); }
+code, pre, .json { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em; }
+pre { white-space: pre-wrap; word-break: break-word; background: var(--them); padding: 0.6rem; border-radius: 0.4rem; max-height: 24rem; overflow: auto; }
+.brand { margin-right: 0.5rem; }
+.muted { color: var(--muted); }
+.label { font-weight: 600; }
+.warn { color: var(--warn); }
+.ok { color: var(--ok); }
+.bad-text { color: var(--bad); }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0.4rem 0; }
+.toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.inline { display: inline-flex; align-items: center; gap: 0.25rem; }
+.block { display: block; margin: 0.15rem 0; }
+.facts { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.4rem 0; }
+.chip { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 0.05rem 0.55rem; font-size: 0.82em; background: var(--panel); }
+.chip.ok { border-color: var(--ok); color: var(--ok); }
+.chip.bad { border-color: var(--bad); color: var(--bad); }
+.chip.warn { border-color: var(--warn); color: var(--warn); }
+.chip.scripted { background: var(--scripted); }
+.demo-banner { background: var(--warn); color: var(--bg); font-weight: 700; padding: 0.5rem 0.75rem; border-radius: 0.4rem; }
+.panel, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 0.6rem; padding: 0.75rem 1rem; margin: 0.75rem 0; }
+.card h3 .muted { font-weight: 400; }
+dl { display: grid; grid-template-columns: minmax(8rem, max-content) 1fr; gap: 0.15rem 0.75rem; margin: 0.4rem 0; }
+dt { color: var(--muted); }
+dd { margin: 0; }
+.rubric .criterion, .judgments .criterion, .review-form .criterion, .rubric-editor .criterion { border-top: 1px solid var(--line); padding: 0.4rem 0; }
+.levels { margin: 0.2rem 0 0.4rem 1.2rem; padding: 0; }
+button, .button { font: inherit; padding: 0.35rem 0.8rem; border-radius: 0.4rem; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; text-decoration: none; display: inline-block; }
+button.primary, .button { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { border-color: var(--bad); color: var(--bad); }
+button.active { outline: 2px solid var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+input, textarea, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 0.35rem; padding: 0.3rem 0.45rem; max-width: 100%; }
+textarea { width: 100%; }
+.field { display: flex; flex-direction: column; gap: 0.15rem; margin: 0.35rem 0; flex: 1 1 12rem; }
+.field .label { font-weight: 500; font-size: 0.9em; }
+fieldset { border: 1px solid var(--line); border-radius: 0.4rem; margin: 0.5rem 0; }
+fieldset.inline { display: inline-flex; gap: 0.75rem; }
+.bubbles { display: flex; flex-direction: column; gap: 0.5rem; }
+.bubble { max-width: 85%; padding: 0.5rem 0.75rem; border-radius: 0.75rem; }
+.bubble.me { align-self: flex-end; background: var(--me); }
+.bubble.them { align-self: flex-start; background: var(--them); }
+.bubble .who { font-size: 0.8em; color: var(--muted); }
+.bubble .text { white-space: pre-wrap; }
+.bubble .chip { margin-top: 0.3rem; }
+.banner { border: 1px solid var(--warn); border-radius: 0.5rem; padding: 0.5rem 0.75rem; margin: 0.5rem 0; }
+mark { background: var(--mark); color: inherit; padding: 0 0.1rem; border-radius: 0.15rem; }
+.quotes { list-style: none; padding-left: 0; }
+.quote.ok .mark { color: var(--ok); font-weight: 700; }
+.quote.bad .mark { color: var(--bad); font-weight: 700; }
+.rationale { border-left: 3px solid var(--line); padding-left: 0.6rem; margin: 0.3rem 0; }
+.rationale .label { color: var(--muted); font-size: 0.85em; }
+.next-step { font-style: italic; }
+.score { font-size: 1.4rem; font-weight: 700; margin: 0.2rem 0; }
+.state { font-size: 0.75em; font-weight: 600; border-radius: 999px; padding: 0.1rem 0.6rem; border: 1px solid var(--line); vertical-align: middle; }
+.state-countersigned, .state-overridden { border-color: var(--ok); color: var(--ok); }
+.state-judged, .state-contested, .state-review-retracted { border-color: var(--warn); color: var(--warn); }
+.state-redacted { border-color: var(--bad); color: var(--bad); }
+table { border-collapse: collapse; margin: 0.4rem 0; }
+th, td { border: 1px solid var(--line); padding: 0.25rem 0.45rem; text-align: left; vertical-align: top; font-size: 0.9em; }
+tr.differ td { color: var(--warn); }
+.scroll { overflow-x: auto; }
+.refusal { border: 1px solid var(--bad); border-radius: 0.5rem; padding: 0.5rem 0.75rem; margin: 0.5rem 0; }
+.refusal-head { font-weight: 700; color: var(--bad); margin: 0; }
+.refusal-inline { color: var(--bad); }
+.next { border-top: 1px solid var(--line); padding: 0.4rem 0; }
+.signing { border-color: var(--accent); }
+@media (max-width: 40rem) {
+  dl { grid-template-columns: 1fr; }
+  .bubble { max-width: 100%; }
+  fieldset.inline { display: block; }
+}
