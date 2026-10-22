@@ -235,6 +235,13 @@ export interface TaskPayload {
   readonly taskKind: string; readonly taskKindDefinition: string; readonly externalTaskTerm?: string;
   readonly quotes: readonly QuoteVerdict[]; readonly quoteStatus: 'verified' | 'partly-verified' | 'unverified' | 'none';
   readonly ratifications: readonly PartyVerdict[];
+  /**
+   * Who signed this task's description into being, and the digest of that envelope. The
+   * envelope itself (which may describe sixty tasks) is stored once, verbatim, on the workflow
+   * record the same call wrote: its `capturedBy`, or the `revision.by` of the version that added
+   * the task. envelopeSha256 of that stored envelope equals this digest.
+   */
+  readonly capturedBy?: { readonly did: string; readonly envelopeSha256: string };
   readonly revision?: { readonly by: SignedAct; readonly note?: string; readonly answers: ReadonlyArray<{ readonly party: string; readonly note: string; readonly at: string }>; readonly quotesCleared: boolean };
   readonly retirement?: { readonly by: SignedAct; readonly why: string; readonly at: string };
 }
