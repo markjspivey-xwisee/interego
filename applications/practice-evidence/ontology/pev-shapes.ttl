@@ -1,0 +1,200 @@
+# ════════════════════════════════════════════════════════════════════════════════════════
+#  pev: shapes — SHACL for the practice-evidence vertical (non-normative).
+#
+#  Authored within the EXECUTABLE subset of the in-process SHACL engine
+#  (packages/core/src/validation/shacl-engine.ts): sh:targetClass, single-predicate
+#  sh:path, sh:minCount / sh:maxCount, sh:datatype, sh:nodeKind, sh:class, sh:in,
+#  sh:pattern, sh:message, sh:severity. No sh:and / sh:or / sh:not, no sequence paths,
+#  no sh:sparql.
+#
+#  Rules that span several properties fall outside that subset and are enforced in code
+#  (and tested there): a judged attempt has a judgment and a reviewed one a review; a pass
+#  gate has weights, values and a pass rule while feedback-only has none; a turn has text
+#  unless the attempt is redacted; an override carries a why on every level the reviewer set.
+#
+#  Every record is published with these shapes as a gate (publish refuses a graph that does
+#  not conform, before any write). Published extensionless at
+#  docs/applications/practice-evidence/pev/shapes.
+# ════════════════════════════════════════════════════════════════════════════════════════
+
+@prefix pev:   <https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#> .
+@prefix pevsh: <https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev/shapes#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+
+# ── Scenario ─────────────────────────────────────────────────────────────────────────────
+
+pevsh:ScenarioShape a sh:NodeShape ;
+    sh:targetClass pev:Scenario ;
+    sh:property [ sh:path pev:scenarioKey ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:pattern "^[a-z0-9][a-z0-9-]{2,63}$" ] ;
+    sh:property [ sh:path pev:scenarioVersion ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path pev:scenarioStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "draft" "published" "ratified" ) ] ;
+    sh:property [ sh:path pev:assessmentUse ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "feedback-only" "pass-gate" ) ;
+        sh:message "A scenario must say how it will be used: feedback-only or pass-gate." ] ;
+    sh:property [ sh:path pev:workRegime ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "evident" "knowable" "emergent" "turbulent" "unclassified" ) ;
+        sh:message "A scenario must say how knowable the work is." ] ;
+    sh:property [ sh:path pev:passGateWhy ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path dct:title ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:learnerGoal ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:firstLine ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:endsWhen ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:turnLimit ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path pev:scenarioHash ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path pev:hasCounterpart ; sh:minCount 1 ; sh:maxCount 1 ; sh:class pev:Counterpart ] ;
+    sh:property [ sh:path pev:hasRubric ; sh:minCount 1 ; sh:maxCount 1 ; sh:class pev:Rubric ] ;
+    sh:property [ sh:path pev:author ; sh:minCount 1 ; sh:nodeKind sh:IRI ;
+        sh:message "A scenario version names at least one author who signed it." ] ;
+    sh:property [ sh:path pev:draftAssistance ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+        sh:message "A scenario says whether anything helped draft it; silence is not the same as unassisted." ] ;
+    sh:property [ sh:path pev:recordJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:recordJsonSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path pev:keyKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "configured" "ephemeral" "demo-fixture" ) ] .
+
+pevsh:RubricShape a sh:NodeShape ;
+    sh:targetClass pev:Rubric ;
+    sh:property [ sh:path pev:rubricHash ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path pev:hasCriterion ; sh:minCount 1 ; sh:maxCount 12 ; sh:class pev:Criterion ] ;
+    sh:property [ sh:path pev:minPercent ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+pevsh:CriterionShape a sh:NodeShape ;
+    sh:targetClass pev:Criterion ;
+    sh:property [ sh:path pev:criterionId ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[a-z0-9-]{1,40}$" ] ;
+    sh:property [ sh:path pev:criterionContentHash ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path dct:title ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:weight ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path pev:hasLevel ; sh:minCount 2 ; sh:maxCount 6 ; sh:class pev:Level ;
+        sh:message "A criterion has two to six levels." ] .
+
+pevsh:LevelShape a sh:NodeShape ;
+    sh:targetClass pev:Level ;
+    sh:property [ sh:path pev:levelId ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:levelValue ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path pev:levelOrder ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] .
+
+pevsh:CounterpartShape a sh:NodeShape ;
+    sh:targetClass pev:Counterpart ;
+    sh:property [ sh:path pev:counterpartName ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:counterpartProfile ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] .
+
+pevsh:RatificationShape a sh:NodeShape ;
+    sh:targetClass pev:Ratification ;
+    sh:property [ sh:path pev:ratifiedBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:envelopeSignature ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^0x[0-9a-fA-F]{130}$" ;
+        sh:message "A ratification carries the reviewer's own signature." ] .
+
+# ── Attempt ──────────────────────────────────────────────────────────────────────────────
+
+pevsh:AttemptShape a sh:NodeShape ;
+    sh:targetClass pev:Attempt ;
+    sh:property [ sh:path pev:lifecycleState ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in ( "in-conversation" "ended" "judged" "countersigned" "overridden" "contested" "review-retracted" "redacted" ) ] ;
+    sh:property [ sh:path pev:scenario ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:scenarioVersion ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path pev:rubricHash ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path pev:learner ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:learnerKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "person" "agent" ) ] ;
+    sh:property [ sh:path pev:attemptNumber ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path pev:coached ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ;
+        sh:message "An attempt records whether the learner was coached." ] ;
+    sh:property [ sh:path pev:authorTest ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path pev:counterpartControlledBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "platform" "learner-model" "learner" ) ] ;
+    sh:property [ sh:path pev:evidenceKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "practice" ) ;
+        sh:message "Practice evidence is rehearsal, not capability evidence." ] ;
+    sh:property [ sh:path pev:hasTurn ; sh:minCount 1 ; sh:class pev:Turn ] ;
+    sh:property [ sh:path pev:keyKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "configured" "ephemeral" "demo-fixture" ) ] ;
+    sh:property [ sh:path pev:recordJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:recordJsonSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] .
+
+pevsh:TurnShape a sh:NodeShape ;
+    sh:targetClass pev:Turn ;
+    sh:property [ sh:path pev:turnIndex ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path pev:speaker ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "learner" "counterpart" ) ] ;
+    sh:property [ sh:path pev:text ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:textSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path pev:turnSource ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:in ( "authored-first-line" "learner-signed" "bridge-model" "scripted" "client-packet" ) ] .
+
+pevsh:InferenceDisclosureShape a sh:NodeShape ;
+    sh:targetClass pev:InferenceDisclosure ;
+    sh:property [ sh:path pev:provider ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:model ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ;
+        sh:message "Every generated line and judgment names the model that produced it." ] ;
+    sh:property [ sh:path pev:keySource ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "none" "bridge-env" "per-request-byok" "mcp-client" ) ] ;
+    sh:property [ sh:path pev:route ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "bridge-model" "scripted" "client-packet" ) ] .
+
+pevsh:JudgmentShape a sh:NodeShape ;
+    sh:targetClass pev:Judgment ;
+    sh:property [ sh:path pev:judgmentIndex ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path pev:judgeId ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:judgeKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "model" "agent" "person" ) ] ;
+    sh:property [ sh:path pev:judgeChosenBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "bridge-config" "judge-registry" "learner" "reviewer" ) ] ;
+    sh:property [ sh:path pev:promptTemplateHash ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^([0-9a-f]{64}|own-prompt)$" ] ;
+    sh:property [ sh:path pev:hasCriterionJudgment ; sh:minCount 1 ; sh:class pev:CriterionJudgment ] ;
+    sh:property [ sh:path pev:disclosure ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+pevsh:CriterionJudgmentShape a sh:NodeShape ;
+    sh:targetClass pev:CriterionJudgment ;
+    sh:property [ sh:path pev:criterion ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:judgedLevel ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:verificationStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "verified" "unverified" ) ] ;
+    sh:property [ sh:path pev:rationaleSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] .
+
+pevsh:QuoteShape a sh:NodeShape ;
+    sh:targetClass pev:Quote ;
+    sh:property [ sh:path pev:quoteSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path pev:verified ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path pev:quoteText ; sh:maxCount 1 ; sh:datatype xsd:string ] .
+
+pevsh:ReviewShape a sh:NodeShape ;
+    sh:targetClass pev:Review ;
+    sh:property [ sh:path pev:reviewIndex ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:integer ] ;
+    sh:property [ sh:path pev:reviewOutcome ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "countersigned" "overridden" ) ] ;
+    sh:property [ sh:path pev:reviewer ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:reviewedRecord ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:reviewedGraphDigest ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^graph-nquads-sha256:[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path pev:envelopeSignature ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^0x[0-9a-fA-F]{130}$" ;
+        sh:message "A review carries the reviewer's own signature over the record it names." ] ;
+    sh:property [ sh:path pev:sawJudgeLevelsFirst ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
+    sh:property [ sh:path pev:hasReviewedLevel ; sh:minCount 1 ; sh:class pev:ReviewedLevel ;
+        sh:message "A review states a level for every criterion." ] .
+
+pevsh:ReviewedLevelShape a sh:NodeShape ;
+    sh:targetClass pev:ReviewedLevel ;
+    sh:property [ sh:path pev:criterion ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:finalLevel ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:levelFrom ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "judge" "reviewer" ) ] .
+
+pevsh:ReopeningShape a sh:NodeShape ;
+    sh:targetClass pev:Reopening ;
+    sh:property [ sh:path pev:reopenKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "contest" "retract-for-cause" ) ] ;
+    sh:property [ sh:path pev:reopenedBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] .
+
+pevsh:RedactionShape a sh:NodeShape ;
+    sh:targetClass pev:Redaction ;
+    sh:property [ sh:path pev:redactedBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:redactionRole ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "learner" "admin" ) ] .
+
+# ── Role registry and projection audit ───────────────────────────────────────────────────
+
+pevsh:RoleRegistryShape a sh:NodeShape ;
+    sh:targetClass pev:RoleRegistry ;
+    sh:property [ sh:path pev:recordJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:recordJsonSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
+    sh:property [ sh:path pev:keyKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "configured" "ephemeral" "demo-fixture" ) ] ;
+    sh:property [ sh:path pev:hasAssignment ; sh:class pev:RoleAssignment ] .
+
+pevsh:RoleAssignmentShape a sh:NodeShape ;
+    sh:targetClass pev:RoleAssignment ;
+    sh:property [ sh:path pev:address ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^0x[0-9a-fA-F]{40}$" ] ;
+    sh:property [ sh:path pev:role ; sh:minCount 1 ; sh:in ( "reviewer" "author" "judge" "agent" ) ] .
+
+pevsh:ProjectionAuditShape a sh:NodeShape ;
+    sh:targetClass pev:ProjectionAudit ;
+    sh:property [ sh:path pev:projectionFormat ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "xapi" "cmi5" ) ] ;
+    sh:property [ sh:path pev:projectionOutcome ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "projected" "skipped" ) ] ;
+    sh:property [ sh:path pev:projectedAttempt ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:recordJson ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+    sh:property [ sh:path pev:recordJsonSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] .
