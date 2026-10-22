@@ -172,3 +172,15 @@ Both writer ceilings were explicitly set to `PGSL_PG_MAX_DATABASE_BYTES=48000000
 - Relay deployment `ef4e51a5-2d4c-49a1-a862-115c95df24bc`, created 14:37:44.015 UTC.
 
 These writer deployments are pending; terminal success/native health are not yet recorded. Next: verify both, restore Foxxi and both stopped Hallow services (candidate 539ef75, existing volumes/identity, confirmed-native startup gate), then sweep install/measurement/one-hour warmup/cadence and proven-unused cleanup. The sweep API token and blocked public-proxy removal/security rotation remain as noted above.
+
+### Writer image-pull blocker and independent SQL audit — 2026-10-22 14:51 UTC
+
+Both fixed-image deployments above reached terminal **FAILED at CREATE_CONTAINER**, with no build/deploy application logs. The platform diagnosis is inability to connect to the registry; private-image credentials may be invalid. Do not infer an application startup fault or claim the 48 GB guard is live. The old relay image remains the only running relay; CSS has no healthy writer deployment.
+
+Authenticated GitHub package pages confirm both exact `4d41980040f08123bf787523938596d304a77e35` tags exist and both packages remain Private. Neither fixed tag had downloads at inspection. Do not rebuild a different source, make packages public, or weaken authentication to get past the pull failure.
+
+Independent read-only SQL audit deployment `70299af1-e412-4b06-a7ce-7a73718345a3` succeeded at **14:44:19.828 UTC**: compact system ID unchanged; iegoadmin and relay_pgsl LOGIN, temporary recovery role absent; exactly the original two tables, both owned by iegoadmin; pgsl_prod physical bytes 35,257,138,199. Both writers reference private host `postgres.railway.internal` and have configured ceiling `48000000000`, but configuration readback is not proof those guards run.
+
+A **read-only credential audit** was dispatched from the incident branch, workflow file commit `27d2be5ed50827cc8d542df54f2ad0c9c66bde12`, [run 39799326675](https://github.com/markjspivey-xwisee/interego/actions/runs/39799326675). It has no production mutation and prints only credential validity/scope flags, HTTP statuses and image digests. It checks existing Actions RAILWAY_PROJECT_TOKEN against this exact project/environment and GHCR_TOKEN against HEAD manifests of the two approved images. The default branch workflow is unchanged. Inspect the run before attempting credential transfer or re-deployment; never print secrets or substitute an expiring job GITHUB_TOKEN for persistent registry credentials.
+
+The existing scheduled recovery task was freshly inspected and is **already disabled** (last updated 2026-10-21 21:17 UTC). No new task was created or enabled. Application restore, sweep installation/measurement/deletion/cadence and resource cleanup remain incomplete. Preserve all retained volumes and native identities.
