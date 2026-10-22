@@ -23,8 +23,11 @@
  * written with their graph sealed to that key alone, as `<slug>-graph.envelope.jose.json`; the
  * descriptor, its proof and the manifest entry stay readable. A sealed graph is opened with the
  * same key on read, and every check above runs over the opened Turtle. A graph sealed to a key
- * this bridge does not hold is a `RecordUnreadable`, never an empty record. Plaintext records
- * (written before a key was set, and every holder copy) are read as before.
+ * this bridge does not hold is a `RecordSealed` (a `RecordUnreadable`), never an empty record, and
+ * a listing counts it apart and calls itself incomplete. An envelope that names this bridge's key
+ * but does not open with it (anyone can seal bytes to a public key) is a `RecordUnreadable` saying
+ * why: opening happens in this process, so only a failed request is a `PodTransportFailed`.
+ * Plaintext records (written before a key was set, and every holder copy) are read as before.
  *
  * Transport: every request goes through the substrate's SSRF guard (`guardedFetchFn`), which
  * re-checks every redirect hop and refuses a redirect on a write. Nothing here retries: the
@@ -33,8 +36,9 @@
  */
 import {
   assertSafeFetchTarget, canonicalGraphDigest, canonicalGraphDigestResult, createSignedAuthorship, guardedFetchFn,
-  makeWalletDelegationSigner, makeWalletDelegationVerifier, verifySignedAuthorship,
-  type AuthorshipProof, type ContextDescriptorData, type EncryptionKeyPair, type FetchFn, type IRI, type ManifestEntry, type Wallet,
+  makeWalletDelegationSigner, makeWalletDelegationVerifier, openEncryptedEnvelope, verifySignedAuthorship,
+  type AuthorshipProof, type ContextDescriptorData, type EncryptedEnvelope, type EncryptionKeyPair, type FetchFn, type IRI,
+  type ManifestEntry, type Wallet,
 } from '@interego/core';
 import {
   digestedGraphRegion, discover, fetchGraphContent, parseAuthorshipProofFromDescriptorTurtle,
@@ -42,7 +46,7 @@ import {
 } from '@interego/solid';
 import { PEV_SHAPES_NS, readShapesTurtle } from '../src/ontology.js';
 import {
-  graphIriOf, isWellFormedText, podBase, recordBodyFromGraph, registryIri, RECORD_CLASS,
+  fingerprintOfAttemptIri, graphIriOf, isWellFormedText, podBase, recordBodyFromGraph, registryIri, RECORD_CLASS,
   type PevRecordBody, type Role, type RoleRegistryBody,
 } from '../src/records.js';
 
@@ -404,6 +408,34 @@ export function readRecord(descriptorUrl: string, trusted: TrustedPlatform, fetc
   return pending;
 }
 
+/**
+ * Open a sealed graph with the record key, in this process. Null (the caller's RecordSealed) when
+ * this bridge has no key, or the envelope is not sealed to its key: another key wrote it. Anyone
+ * can seal bytes to a public key, so an envelope that names this bridge's key and still does not
+ * open, or opens to bytes that are not UTF-8 text, or whose fields do not decode, was altered or
+ * forged by someone who can write the pod: a RecordUnreadable saying which, never a failure of the
+ * pod and never "sealed to another key".
+ */
+function openSealed(descriptorUrl: string, env: EncryptedEnvelope, key: EncryptionKeyPair | undefined): string | null {
+  if (!key) return null;
+  const wrapped: unknown = (env as { readonly wrappedKeys?: unknown }).wrappedKeys;
+  const named = Array.isArray(wrapped)
+    && wrapped.some((w) => typeof w === 'object' && w !== null && (w as { readonly recipientPublicKey?: unknown }).recipientPublicKey === key.publicKey);
+  if (!named) return null;
+  const cannot = 'its graph envelope names this bridge\'s record key but cannot be opened';
+  let text: string | null;
+  try {
+    text = openEncryptedEnvelope(env, key);
+  } catch (e) {
+    // tweetnacl-util throws URIError on bytes that are not UTF-8, TypeError on a field that is not base64.
+    const why = e instanceof URIError ? 'it opens to bytes that are not UTF-8 text'
+      : `a field of it does not decode (${(e instanceof Error ? e.message : String(e)).slice(0, 80)})`;
+    throw new RecordUnreadable(descriptorUrl, `${cannot}: ${why}`);
+  }
+  if (text === null) throw new RecordUnreadable(descriptorUrl, `${cannot}: it does not authenticate under that key (altered, or sealed by someone else to this bridge's public key)`);
+  return text;
+}
+
 async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatform, fetchFn?: typeof fetch): Promise<ReadRecord> {
   const f = guarded(fetchFn);
   const origin = originOf(descriptorUrl);
@@ -427,10 +459,12 @@ async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatfor
   if (originOf(dist.accessURL) !== origin) throw new RecordUnreadable(descriptorUrl, 'the descriptor points its graph at another host');
   let opened: { readonly content: string | null; readonly encrypted: boolean };
   try {
-    // fetchGraphContent asks for `application/jose+json` first, opens an envelope with the record
-    // key (null when that key is not a recipient, or there is none), and passes plaintext through.
-    opened = await fetchGraphContent(dist.accessURL, { fetch: f, ...(trusted.recordKey ? { recipientKeyPair: trusted.recordKey } : {}) });
+    // fetchGraphContent asks for `application/jose+json` first, passes plaintext through, and hands
+    // an envelope to openSealed, which opens it here, in this process: whatever goes wrong there
+    // is a RecordUnreadable it throws itself, so only the request can reach the catch below.
+    opened = await fetchGraphContent(dist.accessURL, { fetch: f, openEnvelope: (env) => openSealed(descriptorUrl, env, trusted.recordKey) });
   } catch (e) {
+    if (e instanceof RecordUnreadable) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     if (/:\s*(404|410)\b/.test(msg)) throw new GraphMissing(descriptorUrl, dist.accessURL, proof?.descriptorId ?? null, descriptorTurtle);
     const refused = podRefusal(e);
@@ -559,14 +593,50 @@ export function isDeleted(v: ReadRecord | DeletedVersion): v is DeletedVersion {
   return 'contentDeleted' in v;
 }
 
+/** A keyed attempt IRI in a manifest and the key fingerprint it carries (see `iriKeyFingerprint`). */
+export interface KeyedIri { readonly graphIri: string; readonly fingerprint: string }
+
+/** Every keyed attempt IRI the manifest entries describe, each once, in manifest order. */
+export function keyedIrisOf(entries: readonly ManifestEntry[]): KeyedIri[] {
+  const seen = new Set<string>();
+  const out: KeyedIri[] = [];
+  for (const e of entries) {
+    for (const g of e.describes) {
+      const fingerprint = fingerprintOfAttemptIri(g);
+      if (fingerprint === null || seen.has(g)) continue;
+      seen.add(g);
+      out.push({ graphIri: g, fingerprint });
+    }
+  }
+  return out;
+}
+
+export interface HeadsOfKind {
+  readonly records: readonly ReadRecord[];
+  /** Heads that were read and failed the trust rule, or could not be read for any reason but a seal. */
+  readonly untrusted: number;
+  readonly forked: number;
+  /**
+   * Heads whose graph is sealed to a record key this bridge does not hold, or sealed while it
+   * holds none (`RecordSealed`). Counted apart: a sealed record is one this bridge cannot see, not
+   * one that failed a check, so an answer computed without it would read its absence as a fact.
+   */
+  readonly sealed: number;
+  /** False when the cap left graphs unread or any head was sealed: the records are not all there are. */
+  readonly complete: boolean;
+  /** The keyed attempt IRIs anywhere in the manifest this read walked (every kind). */
+  readonly keyedIris: readonly KeyedIri[];
+}
+
 /**
  * The trusted heads of every chain of one record kind on a pod, found through the manifest's
- * `dct:conformsTo`. Untrusted, unreadable and forked chains are skipped and counted.
+ * `dct:conformsTo`. Untrusted, unreadable and forked chains are skipped and counted; sealed heads
+ * are skipped and counted apart, and make the read incomplete.
  */
 export async function readHeadsOfKind(
   podUrl: string, kind: PevRecordBody['kind'], trusted: TrustedPlatform,
   o: { readonly max: number; readonly fetchFn?: typeof fetch; readonly cache?: ReadCache },
-): Promise<{ readonly records: readonly ReadRecord[]; readonly untrusted: number; readonly forked: number; readonly complete: boolean }> {
+): Promise<HeadsOfKind> {
   const cls = RECORD_CLASS[kind];
   const all = await listEntries(podUrl, o.fetchFn);
   const groups = new Map<string, ManifestEntry[]>();
@@ -578,10 +648,10 @@ export async function readHeadsOfKind(
     }
   }
   const graphs = [...groups.keys()].sort();
-  const complete = graphs.length <= o.max;
   const records: ReadRecord[] = [];
   let untrusted = 0;
   let forked = 0;
+  let sealed = 0;
   for (const g of graphs.slice(0, o.max)) {
     const group = groups.get(g) ?? [];
     const heads = headsOf(group, g);
@@ -592,11 +662,12 @@ export async function readHeadsOfKind(
       const r = misplace(read, placementProblem(read.body, podUrl, g) ?? seqProblem(read.body, group.length));
       if (isTrusted(r) && r.body.kind === kind) records.push(r); else untrusted += 1;
     } catch (e) {
+      if (e instanceof RecordSealed) { sealed += 1; continue; }
       if (e instanceof RecordUnreadable || e instanceof GraphMissing) { untrusted += 1; continue; }
       throw e;
     }
   }
-  return { records, untrusted, forked, complete };
+  return { records, untrusted, forked, sealed, complete: graphs.length <= o.max && sealed === 0, keyedIris: keyedIrisOf(all) };
 }
 
 export interface RoleRegistryView {

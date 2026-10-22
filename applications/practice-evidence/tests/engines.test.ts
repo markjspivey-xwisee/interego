@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Buffer } from 'node:buffer';
@@ -31,8 +32,8 @@ import {
   type JudgeCriterionInput, type JudgmentResult, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
 import {
-  actorOf, applyRoleChange, attemptIri, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, didOf, isWellFormedText, modalFor,
-  toWellFormedText,
+  actorOf, applyRoleChange, attemptIri, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, didOf, fingerprintOfAttemptIri, iriKeyFingerprint,
+  isWellFormedText, modalFor, toWellFormedText,
   modelAgentIri, NonceLedger, nextActionsFor, nextActionView, recordBodyFromGraph, recordGraphTurtle, recordIdFor,
   redactBody, registryIri, rubricIriOf, scenarioIri, signDraftReceipt, signEnvelope, signedRequestEnvelope, slugFor,
   standingReview, verifyDraftReceipt, REDACTION_NOTE, EXPORT_VERIFY_STEPS,
@@ -1541,14 +1542,28 @@ describe('descriptors', () => {
     expect([s1.includes(Buffer.from(k1.secretKey, 'base64').toString('hex')), s1 === Buffer.from(k1.publicKey, 'base64').toString('hex')]).toEqual([false, false]);
     const plain = attemptKey(POD, SCENARIO_IRI, learnerW.address);
     const keyed = attemptKey(POD, SCENARIO_IRI, learnerW.address, s1);
-    expect(keyed).toMatch(/^[0-9a-f]{16}$/);
-    expect(keyed).not.toBe(plain);
+    // A keyed key names its key's public fingerprint, then the 16 hex keyed with the secret.
+    const fp1 = iriKeyFingerprint(s1);
+    expect(fp1).toMatch(/^[0-9a-f]{8}$/);
+    expect(fp1).toBe(createHmac('sha256', Buffer.from(s1, 'hex')).update('pev-iri-key-fingerprint').digest('hex').slice(0, 8));
+    expect(keyed).toMatch(new RegExp(`^k${fp1}:[0-9a-f]{16}$`));
+    expect(keyed.slice(-16)).toBe(createHmac('sha256', Buffer.from(s1, 'hex')).update(`${POD}|${SCENARIO_IRI}|${learnerW.address.toLowerCase()}`).digest('hex').slice(0, 16));
+    expect(keyed.endsWith(plain)).toBe(false);
     expect(attemptKey(POD, SCENARIO_IRI, learnerW.address.toLowerCase(), s1)).toBe(keyed);
-    expect(attemptKey(POD, SCENARIO_IRI, learnerW.address, attemptIriSecret(k2))).not.toBe(keyed);
+    const other = attemptKey(POD, SCENARIO_IRI, learnerW.address, attemptIriSecret(k2));
+    expect([other.slice(-16) === keyed.slice(-16), other.startsWith(`k${fp1}:`)]).toEqual([false, false]);
+    // Every attempt keyed under one key names the same fingerprint, whoever it is, on any scenario:
+    // it names the key, and nothing of the learner, the scenario or the pod.
     expect(attemptKey(POD, SCENARIO_IRI, reviewerW.address, s1)).not.toBe(keyed);
+    expect([attemptKey(POD, SCENARIO_IRI, reviewerW.address, s1), attemptKey('https://other.example.test/p/', 'urn:pev:scenario:0', learnerW.address, s1)]
+      .map((k) => k.slice(0, 10))).toEqual([`k${fp1}:`, `k${fp1}:`]);
+    // The fingerprint is not part of the secret, the key pair or any segment.
+    expect([s1.includes(fp1), Buffer.from(k1.publicKey, 'base64').toString('hex').includes(fp1), keyed.slice(-16).includes(fp1)]).toEqual([false, false, false]);
     // The plain key is what anyone recomputes from a candidate address: sha256 of pod, scenario and address.
     expect(plain).toBe(sha256(`${POD}|${SCENARIO_IRI}|${learnerW.address.toLowerCase()}`).slice(0, 16));
-    expect(attemptIri(keyed, 2)).toMatch(/^urn:pev:attempt:[0-9a-f]{16}-2$/);
+    expect(attemptIri(keyed, 2)).toMatch(new RegExp(`^urn:pev:attempt:k${fp1}:[0-9a-f]{16}-2$`));
+    expect([fingerprintOfAttemptIri(attemptIri(keyed, 2)), fingerprintOfAttemptIri(attemptIri(plain, 2)), fingerprintOfAttemptIri('urn:pev:scenario:k0123abcd:0')])
+      .toEqual([fp1, null, null]);
   });
 
   it('tells well-formed text from text with a lone UTF-16 surrogate, and writes U+FFFD for one', () => {

@@ -36,8 +36,11 @@
  *                                   attempts), and the startup lines say so. Malformed → the bridge
  *                                   does not start. Plaintext records and plain attempt IRIs
  *                                   written earlier stay as they are, and readable. Losing it makes
- *                                   every encrypted record unreadable: back it up. Holder copies
- *                                   are never encrypted. Never logged.
+ *                                   every encrypted record unreadable: back it up. A keyed attempt
+ *                                   IRI names the key's public fingerprint, and a bridge with
+ *                                   another key, or none, writes nothing on a pod holding one
+ *                                   (409 record-key-mismatch). Holder copies are never encrypted.
+ *                                   Never logged.
  *   PEV_REQUIRE_RECORD_KEY=1        a deployment guard: the bridge does not start (exit 1) unless
  *                                   PEV_RECORD_KEY is set and well-formed, so a deployment whose
  *                                   key is blank or missing (an unresolved reference, a forgotten

@@ -7,12 +7,16 @@
  * from what the demo returned.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
+import { canonicalGraphDigest } from '@interego/core';
+import { parseAuthorshipProofFromDescriptorTurtle } from '@interego/solid';
+import { DEMO_ROLE_NAMES } from '../bridge/handlers.js';
 import { isTrusted, readRecord, PEV_COPIES_CONTAINER, PEV_RECORDS_CONTAINER } from '../bridge/pod-helpers.js';
 import {
   DEMO_LEARNER_POD, DEMO_LINES, DEMO_POD, FABRICATED_QUOTE, LIVE_MODE_NOTE, demoRecordKey, demoWallet, graphUrlOf, operatorPlaintext, runDemo,
   type DemoReport,
 } from '../demo/run.js';
 import { CMI5_CATEGORY_PREFIX, PRACTICE_MARKER, statementProblems, VERB_COMPLETED, type ProjectionFormat } from '../src/projections.js';
+import { didOf, recordGraphTurtle, type PevRecordBody } from '../src/records.js';
 
 type Out = Record<string, unknown>;
 const obj = (v: unknown): Out => (typeof v === 'object' && v !== null && !Array.isArray(v) ? v as Out : {});
@@ -121,7 +125,7 @@ describe('the offline demo runs end to end', () => {
     expect(report.turnLatencyMs.every((ms) => Number.isFinite(ms) && ms >= 0)).toBe(true);
   });
 
-  it('the operator pod holds every record graph only as an envelope sealed to the demo record key; the learner\'s copies are plaintext', async () => {
+  it('the operator pod holds every record graph only as an envelope sealed to the demo record key, each body salted; the learner\'s copies are plaintext', async () => {
     const keys = [...report.pod.store.keys()];
     const records = keys.filter((u) => u.startsWith(`${DEMO_POD}${PEV_RECORDS_CONTAINER}`));
     const graphs = records.filter((u) => !u.endsWith('.ttl'));
@@ -132,12 +136,35 @@ describe('the offline demo runs end to end', () => {
     // Each record whose graph is still on the pod opens with the record key and binds the platform signature.
     const trusted = { addresses: new Set([demoWallet('platform').address.toLowerCase()]), recordKey: demoRecordKey() };
     let opened = 0;
+    const salts: string[] = [];
+    const kinds = new Set<string>();
+    const candidates = DEMO_ROLE_NAMES.map((r) => demoWallet(r).address);
+    let audits = 0;
     for (const url of records.filter((u) => u.endsWith('.ttl') && graphs.includes(u.replace(/\.ttl$/, '-graph.envelope.jose.json')))) {
       const rec = await readRecord(url, trusted, report.pod.fetchFn);
       expect([isTrusted(rec), rec.authorship.contentBinding, rec.sealed], url).toEqual([true, 'bound', true]);
       opened += 1;
+      // Each body's content hash is public, on its descriptor; the sealed body carries 144 bits of
+      // fresh randomness, so knowing every other field of it confirms nothing.
+      kinds.add(rec.body.kind);
+      salts.push(String(rec.body.salt));
+      const published = parseAuthorshipProofFromDescriptorTurtle(report.pod.store.get(url)!)!.contentHash;
+      const { salt: _salt, ...guessable } = rec.body;
+      expect([canonicalGraphDigest(recordGraphTurtle(rec.body)) === published, canonicalGraphDigest(recordGraphTurtle(guessable as PevRecordBody)) === published], url)
+        .toEqual([true, false]);
+      // A projection audit holds nothing but public values, a few enumerable ones and who asked:
+      // the dictionary attack on its public hash, over every demo address, finds no one.
+      if (rec.body.kind === 'projection-audit') {
+        audits += 1;
+        const hits = candidates.filter((a) => canonicalGraphDigest(recordGraphTurtle({ ...guessable, requestedBy: didOf(a) } as PevRecordBody)) === published);
+        expect(hits, url).toEqual([]);
+      }
     }
     expect(opened).toBe(graphs.length);
+    expect([...kinds].sort()).toEqual(['attempt', 'projection-audit', 'role-registry', 'scenario']);
+    expect(audits).toBeGreaterThanOrEqual(3);
+    expect(salts.every((x) => /^[A-Za-z0-9_-]{24}$/.test(x) && !x.startsWith('demo-nonce'))).toBe(true);
+    expect(new Set(salts).size).toBe(salts.length);
   }, 120_000);
 
   it('has no live mode, and says what to run instead', async () => {

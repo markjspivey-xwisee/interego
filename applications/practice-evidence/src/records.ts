@@ -77,6 +77,15 @@ export interface RecordCommon {
    */
   readonly seq?: number;
   readonly prev?: RecordLink;
+  /**
+   * Fresh server randomness (`recordSalt()`, 144 bits), drawn for every version the bridge writes
+   * and kept only in the body (the `pev:recordJson` literal: no triple of its own). The record's
+   * content hash is on its public descriptor, and with a record key the body is sealed; a body
+   * whose every field is public or one of a few values (a projection audit's are, but for who
+   * asked) could otherwise be confirmed from that hash by guessing, for each candidate address,
+   * the one field left. With the salt nothing short of the key opens a body or confirms a guess.
+   */
+  readonly salt?: string;
 }
 
 export type DraftAssistance =
@@ -265,6 +274,11 @@ export function addressOfDid(did: string): string | null {
   return m ? (m[1] ?? null) : null;
 }
 export function freshNonce(): string { return randomBytes(18).toString('base64url'); }
+/**
+ * A record body's salt: 18 bytes (144 bits) from the operating system's random source, as
+ * base64url. Never from an injected nonce source, which tests make predictable.
+ */
+export function recordSalt(): string { return randomBytes(18).toString('base64url'); }
 export function actorOf(address: string, serverHeldDemoKey: boolean): Actor {
   return { address, did: didOf(address), serverHeldDemoKey };
 }
@@ -702,20 +716,22 @@ export function scenarioIri(podUrl: string, scenarioKey: string): string {
   return `urn:pev:scenario:${sha256(`${podBase(podUrl)}|${scenarioKey}`).slice(0, 16)}`;
 }
 /**
- * k16: the key shared by every attempt of one learner on one scenario on one pod.
+ * The key shared by every attempt of one learner on one scenario on one pod: the part of the
+ * attempt IRI before `-<n>`.
  *
- * Without `secret` it is a plain sha256 of the pod, the scenario and the learner's address, so
- * anyone who can read the pod's manifest and holds a candidate address can tell which attempts
- * are that learner's. With `secret` (`attemptIriSecret` of the bridge's record key) it is an
- * HMAC-SHA256 under that secret: only a holder of the record key can link an attempt IRI to an
- * address. Attempts started before the key was set keep their plain key, so a lookup tries the
- * keyed form first and then the plain one.
+ * Without `secret` it is k16, a plain sha256 of the pod, the scenario and the learner's address,
+ * so anyone who can read the pod's manifest and holds a candidate address can tell which attempts
+ * are that learner's. With `secret` (`attemptIriSecret` of the bridge's record key) it is
+ * `k<fingerprint>:<k16>`, where k16 is an HMAC-SHA256 under that secret, so only a holder of the
+ * record key can link an attempt IRI to an address, and the fingerprint (`iriKeyFingerprint`)
+ * names the key it was derived under. Attempts started before the key was set keep their plain
+ * key, so a lookup tries the keyed form first and then the plain one.
  */
 export function attemptKey(podUrl: string, scenarioIriValue: string, learnerAddress: string, secret?: string): string {
   const message = `${podBase(podUrl)}|${scenarioIriValue}|${learnerAddress.toLowerCase()}`;
   return secret === undefined
     ? sha256(message).slice(0, 16)
-    : createHmac('sha256', Buffer.from(secret, 'hex')).update(message, 'utf8').digest('hex').slice(0, 16);
+    : `k${iriKeyFingerprint(secret)}:${createHmac('sha256', Buffer.from(secret, 'hex')).update(message, 'utf8').digest('hex').slice(0, 16)}`;
 }
 /**
  * The attempt-IRI secret derived from the record key pair (an HMAC of its secret key under the
@@ -723,6 +739,23 @@ export function attemptKey(podUrl: string, scenarioIriValue: string, learnerAddr
  */
 export function attemptIriSecret(recordKey: { readonly secretKey: string }): string {
   return createHmac('sha256', Buffer.from(recordKey.secretKey, 'base64')).update('pev-attempt-iri', 'utf8').digest('hex');
+}
+/**
+ * The public identifier of an attempt-IRI secret: the first 8 hex of
+ * HMAC-SHA256(secret, 'pev-iri-key-fingerprint'). Every keyed attempt IRI carries it, so a bridge
+ * can tell that a pod holds attempts keyed under a record key it does not hold before it answers a
+ * lookup from their absence. It is a key identifier: an HMAC output under a secret key says
+ * nothing about the key, and the label is not the one any IRI segment is keyed with, so it says
+ * nothing about any learner either.
+ */
+export function iriKeyFingerprint(secret: string): string {
+  return createHmac('sha256', Buffer.from(secret, 'hex')).update('pev-iri-key-fingerprint', 'utf8').digest('hex').slice(0, 8);
+}
+/** A keyed attempt IRI: `urn:pev:attempt:k<fingerprint>:<k16>-<n>`. */
+const KEYED_ATTEMPT_IRI = /^urn:pev:attempt:k([0-9a-f]{8}):[0-9a-f]{16}-[1-9][0-9]*$/;
+/** The key fingerprint a keyed attempt IRI carries, or null for a plain (or any other) IRI. */
+export function fingerprintOfAttemptIri(iri: string): string | null {
+  return KEYED_ATTEMPT_IRI.exec(iri)?.[1] ?? null;
 }
 
 /** A UTF-16 code unit that is half of a surrogate pair with no other half. */

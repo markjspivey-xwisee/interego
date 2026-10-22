@@ -493,9 +493,12 @@ async function viewPractice(root) {
   S.pod = r.podUrl;
   S.bridge = r.bridge;
   renderHeader();
-  if (!r.scenarios.length) root.append(muted('No published scenarios on this pod yet. An author publishes one under Author.'));
+  // A scenario this bridge cannot open (sealed to another record key) is never shown as absent.
+  if (!r.scenarios.length) root.append(muted(r.complete === false ? 'This bridge opens no published scenario on this pod (see below).' : 'No published scenarios on this pod yet. An author publishes one under Author.'));
   for (const s of r.scenarios) root.append(scenarioCard(s));
   if (r.untrustedRecordsSkipped) root.append(muted(`${r.untrustedRecordsSkipped} record(s) on this pod are not signed by a platform key this bridge trusts; they are not shown.`));
+  if (r.sealedRecords) root.append(muted(r.sealedRecords.note));
+  if (r.recordKeyMismatch) root.append(muted(r.recordKeyMismatch.note));
 }
 
 function rubricTable(rubric, use) {
