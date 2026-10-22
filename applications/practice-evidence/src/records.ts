@@ -20,7 +20,7 @@
  * body) with `pev:recordJsonSha256`. One function writes both from the same object, so they cannot
  * disagree; read-back takes the body from the literal and refuses one whose hash does not match.
  */
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import {
   canonicalJson, sha256, sha256Hex, escapeTurtleLiteral, turtleIriRef, recoverMessageSigner, signMessageRaw,
   parseTrig, readStringValue, ContextDescriptor,
@@ -695,9 +695,40 @@ export function podBase(url: string): string { return `${url.replace(/\/+$/, '')
 export function scenarioIri(podUrl: string, scenarioKey: string): string {
   return `urn:pev:scenario:${sha256(`${podBase(podUrl)}|${scenarioKey}`).slice(0, 16)}`;
 }
-/** k16: the key shared by every attempt of one learner on one scenario on one pod. */
-export function attemptKey(podUrl: string, scenarioIriValue: string, learnerAddress: string): string {
-  return sha256(`${podBase(podUrl)}|${scenarioIriValue}|${learnerAddress.toLowerCase()}`).slice(0, 16);
+/**
+ * k16: the key shared by every attempt of one learner on one scenario on one pod.
+ *
+ * Without `secret` it is a plain sha256 of the pod, the scenario and the learner's address, so
+ * anyone who can read the pod's manifest and holds a candidate address can tell which attempts
+ * are that learner's. With `secret` (`attemptIriSecret` of the bridge's record key) it is an
+ * HMAC-SHA256 under that secret: only a holder of the record key can link an attempt IRI to an
+ * address. Attempts started before the key was set keep their plain key, so a lookup tries the
+ * keyed form first and then the plain one.
+ */
+export function attemptKey(podUrl: string, scenarioIriValue: string, learnerAddress: string, secret?: string): string {
+  const message = `${podBase(podUrl)}|${scenarioIriValue}|${learnerAddress.toLowerCase()}`;
+  return secret === undefined
+    ? sha256(message).slice(0, 16)
+    : createHmac('sha256', Buffer.from(secret, 'hex')).update(message, 'utf8').digest('hex').slice(0, 16);
+}
+/**
+ * The attempt-IRI secret derived from the record key pair (an HMAC of its secret key under the
+ * label `pev-attempt-iri`), hex. Every bridge holding the same PEV_RECORD_KEY derives the same one.
+ */
+export function attemptIriSecret(recordKey: { readonly secretKey: string }): string {
+  return createHmac('sha256', Buffer.from(recordKey.secretKey, 'base64')).update('pev-attempt-iri', 'utf8').digest('hex');
+}
+
+/** A UTF-16 code unit that is half of a surrogate pair with no other half. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+/**
+ * True when `s` is well-formed UTF-16: no lone surrogate. Text that is not cannot be encoded as
+ * UTF-8 without loss, so it cannot be sealed or hashed as what was sent.
+ */
+export function isWellFormedText(s: string): boolean { return !LONE_SURROGATE.test(s); }
+/** `s` with every lone surrogate replaced by U+FFFD, which is what a UTF-8 encoder writes for it. */
+export function toWellFormedText(s: string): string {
+  return isWellFormedText(s) ? s : s.replace(new RegExp(LONE_SURROGATE.source, 'g'), '�');
 }
 export function attemptIri(key: string, n: number): string { return `urn:pev:attempt:${key}-${n}`; }
 export function registryIri(podUrl: string): string { return `urn:pev:role-registry:${sha256(podBase(podUrl)).slice(0, 16)}`; }

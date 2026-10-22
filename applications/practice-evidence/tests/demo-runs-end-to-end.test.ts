@@ -8,7 +8,10 @@
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { isTrusted, readRecord, PEV_COPIES_CONTAINER, PEV_RECORDS_CONTAINER } from '../bridge/pod-helpers.js';
-import { DEMO_LEARNER_POD, DEMO_LINES, DEMO_POD, FABRICATED_QUOTE, LIVE_MODE_NOTE, demoRecordKey, demoWallet, runDemo, type DemoReport } from '../demo/run.js';
+import {
+  DEMO_LEARNER_POD, DEMO_LINES, DEMO_POD, FABRICATED_QUOTE, LIVE_MODE_NOTE, demoRecordKey, demoWallet, graphUrlOf, operatorPlaintext, runDemo,
+  type DemoReport,
+} from '../demo/run.js';
 import { CMI5_CATEGORY_PREFIX, PRACTICE_MARKER, statementProblems, VERB_COMPLETED, type ProjectionFormat } from '../src/projections.js';
 
 type Out = Record<string, unknown>;
@@ -95,12 +98,24 @@ describe('the offline demo runs end to end', () => {
     expect(levels.filter((l) => l['suppressed'] !== true && l['count'] !== 0)).toEqual([]);
   });
 
-  it('after the redaction no line of the first attempt remains anywhere on the operator pod, and the timings were measured', () => {
+  it('after the redaction no line of the first attempt remains on the operator pod, in the clear or encrypted, its earlier graphs are gone, and the timings were measured', () => {
     const operator = [...report.pod.store].filter(([url]) => url.startsWith(DEMO_POD));
     expect(operator.length).toBeGreaterThan(20);
-    for (const line of DEMO_LINES.ana) expect(operator.filter(([, body]) => body.includes(line)).map(([url]) => url)).toEqual([]);
+    // The graphs are sealed, so the pod's raw bytes would hold none of her lines whatever was
+    // deleted: search what the record key opens, every envelope included.
+    const seen = operatorPlaintext(report.pod.store, DEMO_POD, demoRecordKey());
+    expect(seen.unopened).toEqual([]);
+    for (const line of DEMO_LINES.ana) expect(seen.text.includes(line), line).toBe(false);
+    // The search does find her lines where they are still kept: in plaintext, on her own pod.
+    expect(DEMO_LINES.ana.every((line) => [...report.pod.store].some(([url, body]) => url.startsWith(DEMO_LEARNER_POD) && body.includes(line)))).toBe(true);
     const redacted = obj(report.attempts[1]);
     expect(redacted['state']).toBe('redacted');
+    // Each earlier version's graph, followed from its own descriptor, is gone; the redacted head's stays.
+    const versions = arr(redacted['versions']).map(obj);
+    expect(versions.map((v) => v['contentDeleted'])).toEqual([...Array<boolean>(8).fill(true), false]);
+    const graphs = versions.map((v) => graphUrlOf(report.pod.store, String(v['descriptorUrl'])));
+    expect(graphs.every((g) => g !== null && g.endsWith('-graph.envelope.jose.json'))).toBe(true);
+    expect(graphs.map((g) => report.pod.store.has(g!))).toEqual([...Array<boolean>(8).fill(false), true]);
     expect(arr(redacted['turns']).every((t) => !('text' in obj(t)) && typeof obj(t)['textSha256'] === 'string')).toBe(true);
     expect(report.turnLatencyMs).toHaveLength(5);
     expect(report.turnLatencyMs.every((ms) => Number.isFinite(ms) && ms >= 0)).toBe(true);

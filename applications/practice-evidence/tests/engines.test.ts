@@ -14,7 +14,7 @@ import { Buffer } from 'node:buffer';
 import { Parser } from 'n3';
 import { ethers } from 'ethers';
 import {
-  canonicalJson, importWallet, parseTrig, sha256, sha256Hex, signMessageRaw, validate, validateAgainstShape,
+  canonicalJson, deriveEncryptionKeyPair, importWallet, parseTrig, sha256, sha256Hex, signMessageRaw, validate, validateAgainstShape,
   type ContextDescriptorData,
 } from '@interego/core';
 import {
@@ -31,7 +31,8 @@ import {
   type JudgeCriterionInput, type JudgmentResult, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
 import {
-  actorOf, applyRoleChange, attemptIri, attemptKey, buildRecordDescriptor, checkEnvelope, didOf, modalFor,
+  actorOf, applyRoleChange, attemptIri, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, didOf, isWellFormedText, modalFor,
+  toWellFormedText,
   modelAgentIri, NonceLedger, nextActionsFor, nextActionView, recordBodyFromGraph, recordGraphTurtle, recordIdFor,
   redactBody, registryIri, rubricIriOf, scenarioIri, signDraftReceipt, signEnvelope, signedRequestEnvelope, slugFor,
   standingReview, verifyDraftReceipt, REDACTION_NOTE, EXPORT_VERIFY_STEPS,
@@ -40,7 +41,7 @@ import {
 } from '../src/records.js';
 import {
   auditCoverageOf, calibrationCells, cellJudge, criterionKind, inAuditSample, meanLevelDistance, outcomeRowsOf,
-  priorityOf, QUEUE_WEIGHTS, reviewQueue, scenarioResults, STANDING_EFFECT, suppressRow,
+  priorityOf, QUEUE_WEIGHTS, reviewQueue, scenarioResults, STANDING_EFFECT, suppressRow, suppressSmallCells,
   type QueueCandidate,
 } from '../src/calibration.js';
 import {
@@ -924,6 +925,14 @@ describe('calibration', () => {
     expect(agrees.unverifiedRate).toBe(1);
     expect(agrees.agreementRate).toBe(1);
     expect(cells.find((c) => c.criterionId === 'specific-observation')!.repeatAgreement).toBe(1);
+    // Shown to a reader who signed nothing, a cell of one outcome keeps its counts and loses its figures.
+    const shown = suppressSmallCells(cells, 5).find((c) => c.criterionId === 'asks-their-view')!;
+    expect([shown.samples, shown.repeatSamples, shown.blindSamples, shown.ratesSuppressed]).toEqual([1, 1, 1, true]);
+    expect([shown.agreementRate, shown.meanBrier, shown.meanLevelDistance, shown.normalisedLevelDistance, shown.unverifiedRate, shown.blindAgreementRate, shown.repeatAgreement])
+      .toEqual([null, null, null, null, null, null, null]);
+    expect([shown.status, shown.standing]).toEqual([asks.status, asks.standing]);
+    // k = 1 hides nothing.
+    expect(suppressSmallCells(cells, 1).map(({ ratesSuppressed, ...c }) => [ratesSuppressed, c])).toEqual(cells.map((c) => [false, c]));
   });
 
   it('yields no rows for a withdrawn review or an author test, and keeps rows after redaction', () => {
@@ -1478,6 +1487,35 @@ describe('descriptors', () => {
     expect(scenarioIri(POD, 'missed-deadline')).toBe(scenarioIri('https://pod.example.test/practice', 'missed-deadline'));
     expect(attemptKey(POD, SCENARIO_IRI, learnerW.address)).toBe(attemptKey(POD, SCENARIO_IRI, learnerW.address.toLowerCase()));
     expect(slugFor('projection-audit', 'urn:pev:projection:0123456789abcdef', 1, r1)).toBe('projection-0123456789abcdef');
+  });
+
+  it('keys attempt IRIs with a secret from the record key: unlinkable to an address without it, stable with it', () => {
+    const k1 = deriveEncryptionKeyPair(`0x${sha256('pev-engines:record-key-1')}`, 'pev-records');
+    const k2 = deriveEncryptionKeyPair(`0x${sha256('pev-engines:record-key-2')}`, 'pev-records');
+    const s1 = attemptIriSecret(k1);
+    expect(s1).toMatch(/^[0-9a-f]{64}$/);
+    // Every bridge holding the same PEV_RECORD_KEY derives the same secret, and another key another.
+    expect(attemptIriSecret(deriveEncryptionKeyPair(`0x${sha256('pev-engines:record-key-1')}`, 'pev-records'))).toBe(s1);
+    expect(attemptIriSecret(k2)).not.toBe(s1);
+    // The secret is not the record key's own secret or public key.
+    expect([s1.includes(Buffer.from(k1.secretKey, 'base64').toString('hex')), s1 === Buffer.from(k1.publicKey, 'base64').toString('hex')]).toEqual([false, false]);
+    const plain = attemptKey(POD, SCENARIO_IRI, learnerW.address);
+    const keyed = attemptKey(POD, SCENARIO_IRI, learnerW.address, s1);
+    expect(keyed).toMatch(/^[0-9a-f]{16}$/);
+    expect(keyed).not.toBe(plain);
+    expect(attemptKey(POD, SCENARIO_IRI, learnerW.address.toLowerCase(), s1)).toBe(keyed);
+    expect(attemptKey(POD, SCENARIO_IRI, learnerW.address, attemptIriSecret(k2))).not.toBe(keyed);
+    expect(attemptKey(POD, SCENARIO_IRI, reviewerW.address, s1)).not.toBe(keyed);
+    // The plain key is what anyone recomputes from a candidate address: sha256 of pod, scenario and address.
+    expect(plain).toBe(sha256(`${POD}|${SCENARIO_IRI}|${learnerW.address.toLowerCase()}`).slice(0, 16));
+    expect(attemptIri(keyed, 2)).toMatch(/^urn:pev:attempt:[0-9a-f]{16}-2$/);
+  });
+
+  it('tells well-formed text from text with a lone UTF-16 surrogate, and writes U+FFFD for one', () => {
+    expect(['plain', 'emoji \u{1F600} pair', ''].map(isWellFormedText)).toEqual([true, true, true]);
+    expect(['a \ud800 b', 'a \udc00 b', 'end \ud83d', '\ude00 start', 'two \udc00\ud800'].map(isWellFormedText)).toEqual([false, false, false, false, false]);
+    expect(toWellFormedText('a \ud800 b \u{1F600} \udc00')).toBe('a � b \u{1F600} �');
+    expect(toWellFormedText('fine')).toBe('fine');
   });
 });
 

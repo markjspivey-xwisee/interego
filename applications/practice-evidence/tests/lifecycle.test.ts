@@ -20,17 +20,17 @@ import {
 import { digestedGraphRegion, discover, parseAuthorshipProofFromDescriptorTurtle } from '@interego/solid';
 import { createPevHandlers, describeStartup, type PevDeps } from '../bridge/handlers.js';
 import {
-  cappedFetch, isDeleted, isTrusted, operatorPodFetch, publishPevRecord, readChain, readHead, readRecord, readRoleRegistry, RecordSealed,
-  PEV_COPIES_CONTAINER, PEV_RECORDS_CONTAINER,
+  cappedFetch, isDeleted, isTrusted, operatorPodFetch, publishPevRecord, readChain, readHead, readRecord, readRoleRegistry, RecordNotSealable, RecordSealed,
+  RecordUnreadable, PEV_COPIES_CONTAINER, PEV_RECORDS_CONTAINER,
 } from '../bridge/pod-helpers.js';
-import { DEMO_LINES, FABRICATED_QUOTE, demoKey, demoScenarioInput, inMemoryPod, scriptedPracticeModel } from '../demo/run.js';
+import { DEMO_LINES, FABRICATED_QUOTE, demoKey, demoScenarioInput, graphUrlOf, inMemoryPod, operatorPlaintext, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION, readShapesTurtle, toolNameOf } from '../src/ontology.js';
 import { scriptedTextModel, TextModelCallFailed, type TextModel, type TextModelRequest, type TextModelResult } from '../src/model.js';
 import {
   assess, coerceScenario, creditedLevels, COUNTERPART_PROMPT_TEMPLATE_HASH, JUDGE_PROMPT_TEMPLATE_HASH,
   type JudgmentResult, type ScenarioSpec,
 } from '../src/practice.js';
-import { modelAgentIri, recordLocal, registryIri, signEnvelope, signedRequestEnvelope } from '../src/records.js';
+import { attemptIriSecret, attemptKey, modelAgentIri, recordLocal, registryIri, signEnvelope, signedRequestEnvelope } from '../src/records.js';
 import { CMI5_CATEGORY_PREFIX, statementProblems, VERB_COMPLETED } from '../src/projections.js';
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -336,6 +336,9 @@ describe('practice: starting, speaking, the end proposal, packets, and what a mo
     expect([a1['attemptNumber'], a1['authorTest'], a1['learnerKind'], a1['rubricRatified'], a1['state']]).toEqual([1, false, 'person', true, 'in-conversation']);
     expect((a1['turns'] as Out[])[0]?.['source']).toBe('authored-first-line');
     S['a1'] = String(a1['attemptIri']);
+    // Without a record key an attempt IRI is a plain hash of the pod, the scenario and the learner's
+    // address: anyone who reads the manifest and holds her address can find her attempts.
+    expect(S['a1']).toBe(`urn:pev:attempt:${attemptKey(POD, S['md']!, W.ana.address)}-1`);
     const a2 = ok(await act(H, 'pev.start_attempt', W.ana, start(S['md']!, 2, { coached: true, assistance: 'My manager coached me last week.' })));
     expect(a2['attemptNumber']).toBe(2);
     S['a2'] = String(a2['attemptIri']);
@@ -810,6 +813,27 @@ describe('queue, calibration and results read the pod; person-judge figures stay
     const agent = cells.find((x) => x['judgeKind'] === 'agent')!;
     expect([agent['status'], (agent['standing'] as Out)['clears']]).toEqual(['Hypothetical', false]);
     expect(String(c['metricNote'])).toContain('not accuracy');
+    // Unsigned, so a figure over 1 to 4 outcomes is hidden and only its count stays: with one or
+    // two reviewed attempts a cell's agreement is those reviews' results read back.
+    expect([c['k'], String(c['smallCountRule'])]).toEqual([5, expect.stringContaining('1 to k − 1 reviewed outcomes is hidden')]);
+    const small = cells.filter((x) => Number(x['samples']) > 0 && Number(x['samples']) < 5);
+    expect(small.length).toBeGreaterThan(0);
+    for (const x of small) {
+      expect([x['agreementRate'], x['meanBrier'], x['meanLevelDistance'], x['normalisedLevelDistance'], x['unverifiedRate'], x['ratesSuppressed']])
+        .toEqual([null, null, null, null, null, true]);
+    }
+    for (const x of cells) {
+      const hidden = (n: unknown): boolean => Number(n) > 0 && Number(n) < 5;
+      if (hidden(x['blindSamples'])) expect(x['blindAgreementRate']).toBeNull();
+      if (hidden(x['repeatSamples'])) expect(x['repeatAgreement']).toBeNull();
+      if (hidden(x['auditSampleSamples'])) expect(x['auditSampleAgreementRate']).toBeNull();
+    }
+    // The same cells where nothing counts as small (k = 1) show every rate: the rule hid them, not the data.
+    const whole = ok((await make({ model: scriptedPracticeModel(), resultsK: 1 })['pev.calibration']!({})) as Out);
+    const same = (whole['cells'] as Out[]).filter((x) => small.some((y) => y['judgeId'] === x['judgeId'] && y['kind'] === x['kind'] && y['promptTemplateHash'] === x['promptTemplateHash']));
+    expect(same.length).toBe(small.length);
+    expect(same.every((x) => typeof x['agreementRate'] === 'number' && typeof x['meanLevelDistance'] === 'number' && x['ratesSuppressed'] === false)).toBe(true);
+    expect(same.map((x) => x['samples'])).toEqual(small.map((x) => x['samples']));
     refused((await H['pev.calibration']!({ group_by: 'per-person' })) as Out, 400, 'group-by-unknown');
     const pooled = ok((await H['pev.calibration']!({ group_by: 'criterion-content' })) as Out);
     expect((pooled['cells'] as Out[]).every((x) => (x['standing'] as Out)['evaluated'] === false)).toBe(true);
@@ -1157,6 +1181,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
   it('a whole practice flow runs with the key set: author, ratify, attempt, judge, review, project; the pod holds only envelopes', async () => {
     const md = demoScenarioInput('missed-deadline', 2);
     const p = ok(await act(keyed, 'pev.author_scenario', W.author, { scenario: md, status: 'published', draftAssistance: { used: false } }, {}, on));
+    V['scenario'] = String(p['scenarioIri']);
     const r = ok(await act(keyed, 'pev.ratify_scenario', W.reviewer, { scenarioIri: p['scenarioIri'], version: 1, scenarioHash: p['scenarioHash'] }, {}, on));
     expect([r['status'], r['modalStatus']]).toEqual(['ratified', 'Asserted']);
     const listed = ok((await keyed['pev.list_scenarios']!({})) as Out);
@@ -1179,6 +1204,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     expect(vault.store.get(String(o['descriptorUrl']))).toMatch(/iep:modalStatus iep:Asserted/);
     const x = ok(await act(keyed, 'pev.project_attempt', W.ana, { attemptIri: V['attempt'], format: 'xapi' }, {}, on));
     expect(statementProblems(x['statement'], 'xapi', 'pass-gate')).toEqual([]);
+    V['audit'] = String(x['auditDescriptorUrl']);
 
     const records = under(`${SEALED}${PEV_RECORDS_CONTAINER}`);
     const graphs = records.filter((u) => !u.endsWith('.ttl'));
@@ -1197,6 +1223,87 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     }
     expect(descriptors.length).toBe(graphs.length);
     V['override'] = String(o['descriptorUrl']);
+  }, SLOW);
+
+  it('no public byte on the pod names a learner or links an attempt to one: role entry, contest and a declined projection included', async () => {
+    // Ana's role entry, her contest and a second request for a statement each write a record.
+    ok(await act(keyed, 'pev.register_role', W.admin, { address: W.ana.address, role: 'learner', change: 'add' }, {}, on));
+    const v = ok(await act(keyed, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on));
+    const c = ok(await act(keyed, 'pev.contest_review', W.ana, { attemptIri: V['attempt'], target: v['currentTarget'], why: 'Sam agreed the date with me; please read turn five again.' }, {}, on));
+    expect(c['state']).toBe('contested');
+    const skip = refused(await act(keyed, 'pev.project_attempt', W.ana, { attemptIri: V['attempt'], format: 'xapi' }, {}, on), 409, 'attempt-not-countersigned');
+    // Each projection audit still says, in its sealed body, who asked.
+    for (const url of [V['audit']!, String((skip['skipAudit'] as Out)['descriptorUrl'])]) {
+      const rec = await readRecord(url, KEYED, vault.fetchFn);
+      expect([rec.sealed, rec.body.kind === 'projection-audit' ? rec.body.requestedBy.toLowerCase() : null]).toEqual([true, `did:ethr:${W.ana.address}`.toLowerCase()]);
+    }
+    // Everything anyone can read from the pod: every resource under it but the envelopes.
+    const open = [...vault.store].filter(([u]) => u.startsWith(SEALED) && !u.endsWith('.envelope.jose.json'));
+    expect(open.length).toBeGreaterThan(15);
+    const text = open.map(([u, b]) => `${u}\n${b}`).join('\n').toLowerCase();
+    const hex = (w: Wallet): string => w.address.slice(2).toLowerCase();
+    // Neither her address nor her DID, in any case, while the people named by design still are.
+    expect(text.includes(hex(W.ana))).toBe(false);
+    expect([W.author, W.reviewer, W.reviewer2, W.admin].map((w) => text.includes(hex(w)))).toEqual([true, true, true, true]);
+    // Her attempt's IRI is public, keyed with the record key: the plain hash of her address is nowhere.
+    const keyedKey = attemptKey(SEALED, V['scenario']!, W.ana.address, attemptIriSecret(RECORD_KEY));
+    expect(V['attempt']).toBe(`urn:pev:attempt:${keyedKey}-1`);
+    expect(text).toContain(keyedKey);
+    expect(text.includes(attemptKey(SEALED, V['scenario']!, W.ana.address))).toBe(false);
+  }, SLOW);
+
+  it('text with a lone UTF-16 surrogate is refused at input before any model call; a model\'s becomes U+FFFD; a seal failure is never the pod\'s', async () => {
+    const LONE = 'Half a pair \ud800 and nothing after it.';
+    let calls = 0;
+    const counting = make({ ...sealedDeps, recordKey: RECORD_KEY, model: scriptedTextModel(() => { calls += 1; return 'Go on.'; }) });
+    const iri = String(ok(await act(counting, 'pev.start_attempt', W.newcomer, { scenarioIri: V['scenario'], scenarioVersion: 1, coached: false }, {}, on))['attemptIri']);
+    const snap = JSON.stringify([...vault.store].sort());
+    const keysBefore = byok.keysSeen.length;
+    const say = refused(await act(counting, 'pev.say', W.newcomer, { attemptIri: iri, turnIndex: 1, text: LONE }, {}, on), 400, 'payload-shape');
+    expect(String(say['error'])).toMatch(/^text must be well-formed text/);
+    refused(await act(counting, 'pev.record_turns', W.newcomer, {
+      attemptIri: iri, turnIndex: 1, learnerText: 'The report came a day late.', counterpartText: LONE, counterpartDisclosure: { provider: 'own', model: 'own-model' },
+    }, {}, on), 400, 'payload-shape');
+    // Anywhere in a signed payload, and in a per-request model name, and in an unsigned packet's brief.
+    const deep = refused(await act(counting, 'pev.author_scenario', W.author, {
+      scenario: { ...(demoScenarioInput('missed-deadline', 2) as Out), title: LONE }, status: 'draft', draftAssistance: { used: false },
+    }, {}, on), 400, 'payload-shape');
+    expect(String(deep['error'])).toContain('payload.scenario.title');
+    refused(await act(counting, 'pev.say', W.newcomer, { attemptIri: iri, turnIndex: 1, text: 'Fine.', note: LONE }, {}, on), 400, 'payload-shape');
+    refused(await act(counting, 'pev.say', W.newcomer, { attemptIri: iri, turnIndex: 1, text: 'Fine.' }, { llm_api_key: BYOK_KEY, llm_model: 'model-\udc00' }, on), 400, 'payload-shape');
+    refused((await counting['pev.draft_scenario_packet']!({ brief: LONE })) as Out, 400, 'payload-shape');
+    expect([calls, byok.keysSeen.length - keysBefore]).toEqual([0, 0]);
+    expect(JSON.stringify([...vault.store].sort())).toBe(snap);
+    // What a model returns is not the caller's to fix: a lone surrogate is recorded as U+FFFD and sealed.
+    const lonely = make({ ...sealedDeps, recordKey: RECORD_KEY, model: scriptedTextModel(() => 'Fine \udc00 then.') });
+    const said = ok(await act(lonely, 'pev.say', W.newcomer, { attemptIri: iri, turnIndex: 1, text: 'The report came a day late.' }, {}, on));
+    expect((said['counterpartTurn'] as Out)['text']).toBe('Fine � then.');
+    const rec = await readRecord(String(said['descriptorUrl']), KEYED, vault.fetchFn);
+    expect([isTrusted(rec), rec.sealed]).toEqual([true, true]);
+    // Sealing is local: a graph that cannot be sealed is a RecordNotSealable before any request.
+    const proof = (await readRecord(V['override']!, KEYED, vault.fetchFn)).proof!;
+    const now = new Date(clock.t).toISOString();
+    const descriptor = ContextDescriptor.create('urn:pev:test:lone' as IRI).describes('urn:pev:test:lone-graph' as IRI).temporal({ validFrom: now })
+      .provenance({ wasAttributedTo: 'urn:pev:test:x' as IRI, generatedAtTime: now })
+      .agent({ identity: 'urn:pev:test:x' as IRI, isSoftwareAgent: true }, 'Author').hypothetical().selfAsserted('urn:pev:test:x' as IRI).build();
+    const requests = vault.requests.length;
+    const seal = publishPevRecord({
+      podUrl: SEALED, descriptor, graphTurtle: `<urn:pev:test:lone-graph> <urn:pev:test:says> "${LONE}" .`, slug: 'lone', authorshipProof: proof,
+      shapes: false, fetchFn: vault.fetchFn, sealTo: RECORD_KEY,
+    });
+    await expect(seal).rejects.toBeInstanceOf(RecordNotSealable);
+    expect(vault.requests.length).toBe(requests);
+    // The envelope's own encoder failing (here on a descriptor value) is the same local failure, not a pod's.
+    const odd = ContextDescriptor.create('urn:pev:test:lone-2' as IRI).describes('urn:pev:test:lone-graph' as IRI).temporal({ validFrom: now })
+      .provenance({ wasAttributedTo: 'urn:pev:test:x\ud800' as IRI, generatedAtTime: now })
+      .agent({ identity: 'urn:pev:test:x' as IRI, isSoftwareAgent: true }, 'Author').hypothetical().selfAsserted('urn:pev:test:x' as IRI).build();
+    const stored = JSON.stringify([...vault.store].sort());
+    const thrown = await publishPevRecord({
+      podUrl: SEALED, descriptor: odd, graphTurtle: '<urn:pev:test:lone-graph> <urn:pev:test:says> "fine" .', slug: 'lone-2', authorshipProof: proof,
+      shapes: false, fetchFn: vault.fetchFn, sealTo: RECORD_KEY,
+    }).then(() => null, (e: unknown) => e);
+    expect([thrown instanceof RecordNotSealable, String((thrown as Error).message)]).toEqual([true, expect.stringContaining('could not be encrypted')]);
+    expect(JSON.stringify([...vault.store].sort())).toBe(stored);
   }, SLOW);
 
   it('a bridge holding another record key, or none, reports the sealed records as unreadable and writes nothing', async () => {
@@ -1250,7 +1357,84 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     }
   }, SLOW);
 
+  it('a pod writer without the key who forges the manifest cannot make the bridge open another learner\'s record for anyone', async () => {
+    const MANIFEST = `${SEALED}.well-known/context-graphs`;
+    /** Rewrite one manifest entry property by property (`<url> a iep:ManifestEntry ; … .`). */
+    const entry = (manifest: string, url: string, edit: (props: string[]) => string[]): string => {
+      const at = manifest.indexOf(`<${url}> a iep:ManifestEntry`);
+      expect(at, url).toBeGreaterThanOrEqual(0);
+      const end = manifest.indexOf(' .\n', at);
+      return `${manifest.slice(0, at)}${edit(manifest.slice(at, end).split(' ;\n')).join(' ;\n')}${manifest.slice(end)}`;
+    };
+    const is = (p: string, prop: string): boolean => p.trim().startsWith(prop);
+    // The victim: Ana's attempt, sealed; her lines (the judge's quotes are cut from them) are the secret.
+    const anaView = ok(await act(keyed, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on));
+    const anaHead = String(anaView['headDescriptorUrl']);
+    const anaGraph = graphUrlOf(vault.store, anaHead)!;
+    expect(anaGraph.endsWith('-graph.envelope.jose.json')).toBe(true);
+    const secrets = DEMO_LINES.ana;
+    expect((anaView['turns'] as Out[]).map((t) => t['text'])).toEqual(expect.arrayContaining([...secrets]));
+    // The attacker: an attempt of Mallory's own, two versions long.
+    const m = ok(await act(keyed, 'pev.start_attempt', W.mallory, { scenarioIri: V['scenario'], scenarioVersion: 1, coached: false }, {}, on));
+    const mIri = String(m['attemptIri']);
+    const v1 = String(m['descriptorUrl']);
+    const v2 = String(ok(await act(keyed, 'pev.say', W.mallory, { attemptIri: mIri, turnIndex: 1, text: 'Nothing to see here, Sam.' }, {}, on))['descriptorUrl']);
+    const mView = ok(await act(keyed, 'pev.get_attempt', W.mallory, { attemptIri: mIri }, {}, on));
+    const original = vault.store.get(MANIFEST)!;
+    // His head chains to her head first.
+    const pointAtHer = entry(original, v2, (ps) => ps.flatMap((p) => (is(p, 'iep:supersedes') ? [`    iep:supersedes <${anaHead}>`, p] : [p])));
+    const forgeries: readonly [string, string][] = [
+      ['a supersedes pointing at her head', pointAtHer],
+      ['her head also filed under his attempt', entry(pointAtHer, anaHead, (ps) => [...ps, `    iep:describes <${mIri}>`])],
+      // Filed under his attempt in place of his first version, and cut from her own chain, so the
+      // chain reads through: only each version's signed body says it does not belong there.
+      ['her head filed in place of his first version', entry(entry(entry(original,
+        v2, (ps) => ps.map((p) => (is(p, 'iep:supersedes') ? `    iep:supersedes <${anaHead}>` : p))),
+        anaHead, (ps) => [...ps.filter((p) => !is(p, 'iep:supersedes')), `    iep:describes <${mIri}>`]),
+        v1, (ps) => ps.map((p) => (is(p, 'iep:describes') ? '    iep:describes <urn:pev:attempt:0000000000000000-1>' : p)))],
+    ];
+    try {
+      for (const [what, forged] of forgeries) {
+        vault.store.set(MANIFEST, forged);
+        const writes = JSON.stringify([...vault.store].sort());
+        const deletes = vault.deletes.length;
+        const requestsBefore = vault.requests.length;
+        const exported = await act(keyed, 'pev.export_record', W.mallory, { attemptIri: mIri }, {}, on);
+        const read = await act(keyed, 'pev.get_attempt', W.mallory, { attemptIri: mIri }, {}, on);
+        const copied = await act(keyed, 'pev.holder_copy', W.mallory, { attemptIri: mIri, targetPodUrl: 'https://mallory-pod.example.test/m/' }, {}, on);
+        const redacted = await act(keyed, 'pev.redact_attempt', W.mallory, { attemptIri: mIri, target: mView['currentTarget'] }, {}, on);
+        for (const a of [exported, read, copied, redacted]) {
+          for (const s of secrets) expect(JSON.stringify(a).includes(s), `${what}: ${s}`).toBe(false);
+        }
+        for (const a of [exported, copied, redacted]) refused(a, 409, 'record-not-trusted');
+        if (what.startsWith('her head filed in place')) {
+          // The chain reads through, so the bridge opens her head, finds its signed body is not his,
+          // and shows the version without anything read from it.
+          expect(ok(read)['versions']).toEqual([
+            { descriptorUrl: anaHead, recordId: expect.any(String), state: null, modalStatus: null, contentDeleted: false, trusted: false },
+            { descriptorUrl: v2, recordId: expect.any(String), state: null, modalStatus: null, contentDeleted: false, trusted: false },
+          ]);
+          expect(String(exported['misplaced'])).toContain('its signed body describes another graph');
+        } else {
+          refused(read, 409, 'record-not-trusted');
+          // Stopped at the manifest or at his own head: her graph is not even fetched.
+          expect(vault.requests.slice(requestsBefore).filter((r) => r.url === anaGraph)).toEqual([]);
+        }
+        if (what.startsWith('a supersedes')) await expect(readChain(SEALED, mIri, KEYED, vault.fetchFn)).rejects.toBeInstanceOf(RecordUnreadable);
+        // Nothing written, nothing deleted.
+        expect([JSON.stringify([...vault.store].sort()) === writes, vault.deletes.length - deletes]).toEqual([true, 0]);
+      }
+    } finally {
+      vault.store.set(MANIFEST, original);
+    }
+    // Her own reads are untouched, and so are his once the manifest is back.
+    ok(await act(keyed, 'pev.export_record', W.ana, { attemptIri: V['attempt'] }, {}, on));
+    expect((ok(await act(keyed, 'pev.export_record', W.mallory, { attemptIri: mIri }, {}, on))['versions'] as Out[]).length).toBe(2);
+  }, SLOW);
+
   it('redaction deletes the sealed graphs it followed from the descriptors, and the redacted head is sealed too', async () => {
+    // Searched as a key holder sees the pod (every envelope opened), her lines are there before.
+    expect(DEMO_LINES.ana.every((line) => operatorPlaintext(vault.store, SEALED, RECORD_KEY).text.includes(line))).toBe(true);
     const v = ok(await act(keyed, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on));
     const n = (v['versions'] as Out[]).length;
     const deletesBefore = vault.deletes.length;
@@ -1261,6 +1445,71 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     const chain = await readChain(SEALED, V['attempt']!, KEYED, vault.fetchFn);
     const head = chain[chain.length - 1]!;
     expect([chain.filter((x) => isDeleted(x)).length, !isDeleted(head) && head.sealed && isTrusted(head)]).toEqual([n, true]);
+    // ...and gone after, in the clear or encrypted, with every envelope left still opening.
+    const seen = operatorPlaintext(vault.store, SEALED, RECORD_KEY);
+    expect(seen.unopened).toEqual([]);
+    for (const line of DEMO_LINES.ana) expect(seen.text.includes(line), line).toBe(false);
+  }, SLOW);
+
+  /** An operator pod written first without the key and then with it, on the same vault. */
+  const LEGACY = 'https://legacy-pod.example.test/practice/';
+  const onLegacy = { pod: LEGACY };
+  const legacyDeps: Partial<PevDeps> = { fetchFn: vault.fetchFn, holderFetchFn: vault.fetchFn, defaultPodUrl: LEGACY };
+  const plainL = make({ ...legacyDeps, model: scriptedPracticeModel() });
+  const keyedL = make({ ...legacyDeps, recordKey: RECORD_KEY, model: scriptedPracticeModel() });
+
+  it('attempts started before the key keep their plain IRI and stay the learner\'s; new ones are keyed and counted after them', async () => {
+    for (const [who, role] of [[W.author, 'author'], [W.reviewer, 'reviewer'], [W.reviewer2, 'reviewer']] as const) {
+      ok(await act(plainL, 'pev.register_role', W.admin, { address: who.address, role, change: 'add' }, {}, onLegacy));
+    }
+    const p = ok(await act(plainL, 'pev.author_scenario', W.author, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } }, {}, onLegacy));
+    ok(await act(plainL, 'pev.ratify_scenario', W.reviewer, { scenarioIri: p['scenarioIri'], version: 1, scenarioHash: p['scenarioHash'] }, {}, onLegacy));
+    const sIri = String(p['scenarioIri']);
+    V['legacyScenario'] = sIri;
+    // Ben starts before the key: the plain hash of his address.
+    const env = await envelopeFor(W.ben, 'pev.start_attempt', { scenarioIri: sIri, scenarioVersion: 1, coached: false }, onLegacy);
+    const first = ok((await plainL['pev.start_attempt']!({ envelope: env })) as Out);
+    expect([first['attemptIri'], first['attemptNumber']]).toEqual([`urn:pev:attempt:${attemptKey(LEGACY, sIri, W.ben.address)}-1`, 1]);
+    // The keyed bridge still finds it by its plain key: the same start envelope does not start a second attempt...
+    refused((await keyedL['pev.start_attempt']!({ envelope: env })) as Out, 409, 'envelope-already-used');
+    // ...and his next attempt is keyed and numbered after it.
+    const second = ok(await act(keyedL, 'pev.start_attempt', W.ben, { scenarioIri: sIri, scenarioVersion: 1, coached: false }, {}, onLegacy));
+    expect([second['attemptIri'], second['attemptNumber']])
+      .toEqual([`urn:pev:attempt:${attemptKey(LEGACY, sIri, W.ben.address, attemptIriSecret(RECORD_KEY))}-2`, 2]);
+    const mine = ok(await act(keyedL, 'pev.get_attempt', W.ben, {}, {}, onLegacy));
+    expect((mine['attempts'] as Out[]).map((a) => [a['attemptIri'], a['attemptNumber']]).sort())
+      .toEqual([[first['attemptIri'], 1], [second['attemptIri'], 2]].sort());
+    const old = ok(await act(keyedL, 'pev.get_attempt', W.ben, { attemptIri: first['attemptIri'] }, {}, onLegacy));
+    expect([old['state'], old['attemptNumber']]).toEqual(['in-conversation', 1]);
+  }, SLOW);
+
+  it('a scenario head sealed to another key is not "not ratified": the projection is refused naming PEV_RECORD_KEY and nothing is written', async () => {
+    const sIri = V['legacyScenario']!;
+    // Ana's attempt on the ratified, plaintext version 1, reviewed before the key was set.
+    const a = ok(await act(plainL, 'pev.start_attempt', W.ana, { scenarioIri: sIri, scenarioVersion: 1, coached: false }, {}, onLegacy));
+    const iri = String(a['attemptIri']);
+    for (const [k, turnIndex] of [[0, 1], [1, 3], [2, 5]] as const) ok(await act(plainL, 'pev.say', W.ana, { attemptIri: iri, turnIndex, text: DEMO_LINES.ana[k] }, {}, onLegacy));
+    ok(await act(plainL, 'pev.end_conversation', W.ana, { attemptIri: iri, turnIndex: 7 }, {}, onLegacy));
+    const j = ok(await act(plainL, 'pev.judge_attempt', W.ana, { attemptIri: iri }, {}, onLegacy));
+    const lv = levels([['specific-observation', 'specific'], ['asks-their-view', 'first'], ['agrees-next-step', 'owner-and-date', 'Sam owns the status note and Tuesday 10am is the date; the second quote is not in the transcript.']]);
+    const o = ok(await act(plainL, 'pev.override_attempt', W.reviewer2, { attemptIri: iri, target: j['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }, {}, onLegacy));
+    expect(o['projectable']).toBe(true);
+    // The author saves version 2 as a draft with the key set: the scenario's head is now sealed.
+    const md = demoScenarioInput('missed-deadline', 2) as Out;
+    ok(await act(keyedL, 'pev.author_scenario', W.author, { scenario: { ...md, title: `${String(md['title'])} (revised)` }, status: 'draft', basedOnVersion: 1, draftAssistance: { used: false } }, {}, onLegacy));
+    const before = JSON.stringify([...vault.store].sort());
+    for (const [h, hasKey] of [[make({ ...legacyDeps, recordKey: OTHER_KEY }), true], [make(legacyDeps), false]] as const) {
+      const x = refused(await act(h, 'pev.project_attempt', W.ana, { attemptIri: iri, format: 'xapi' }, {}, onLegacy), 409, 'record-not-trusted');
+      expect(x['iep:resolvedBy']).toEqual({ env: 'PEV_RECORD_KEY' });
+      expect(String(x['error'])).toContain(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key');
+      expect(x['skipAudit']).toBeUndefined();
+      // Reading the attempt says the same, rather than "rubric not ratified".
+      refused(await act(h, 'pev.get_attempt', W.ana, { attemptIri: iri }, {}, onLegacy), 409, 'record-not-trusted');
+    }
+    expect(JSON.stringify([...vault.store].sort())).toBe(before);
+    // The bridge holding the key reads the sealed head, finds version 1 ratified, and projects.
+    const y = ok(await act(keyedL, 'pev.project_attempt', W.ana, { attemptIri: iri, format: 'xapi' }, {}, onLegacy));
+    expect(y['practiceEvidence']).toBe(true);
   }, SLOW);
 });
 

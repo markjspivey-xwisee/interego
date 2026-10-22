@@ -573,3 +573,34 @@ export function scenarioResults(i: {
     }),
   };
 }
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  Calibration for a reader who signed nothing: small cells show counts only
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export const CALIBRATION_SMALL_COUNT_RULE = 'A figure resting on 1 to k − 1 reviewed outcomes is hidden (null) and only its count stays: agreement, Brier score, level distance and the unverified-quote rate of a cell with 1 to k − 1 samples, and the blind, test-retest and audit-sample agreement of a subset with 1 to k − 1 rows. With one or two outcomes such a figure is one review\'s result read back, so it is not shown to a reader who signed nothing. Counts, status and standing stay.';
+
+/** A calibration cell as `pev.calibration` shows it: `ratesSuppressed` when any figure was hidden. */
+export type ShownCalibrationCell = CalibrationCellView & { readonly ratesSuppressed: boolean };
+
+/**
+ * The small-count rule of results applied to calibration (CALIBRATION_SMALL_COUNT_RULE): a rate
+ * over 1 to k − 1 outcomes is hidden, its count kept. Applied by the unsigned `pev.calibration`;
+ * the review queue ranks with the whole cells and shows only its factors.
+ */
+export function suppressSmallCells(cells: readonly CalibrationCellView[], k: number): ShownCalibrationCell[] {
+  return cells.map((c) => {
+    const main = isSmall(c.samples, k);
+    const blind = isSmall(c.blindSamples, k);
+    const repeat = isSmall(c.repeatSamples, k);
+    const audit = isSmall(c.auditSampleSamples, k);
+    return {
+      ...c,
+      ...(main ? { agreementRate: null, meanBrier: null, meanLevelDistance: null, normalisedLevelDistance: null, unverifiedRate: null } : {}),
+      ...(blind ? { blindAgreementRate: null } : {}),
+      ...(repeat ? { repeatAgreement: null } : {}),
+      ...(audit ? { auditSampleAgreementRate: null } : {}),
+      ratesSuppressed: main || blind || repeat || audit,
+    };
+  });
+}

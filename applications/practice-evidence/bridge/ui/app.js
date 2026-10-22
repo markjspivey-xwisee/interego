@@ -1125,6 +1125,7 @@ async function viewCalibration(root) {
     h('label', { class: 'inline' }, pooled, ' pool across rubric versions with the same criterion text (information only)')));
   const r = await invoke(ACT.calibration, podArgs({ group_by: S.pooled ? 'criterion-content' : undefined }));
   root.append(h('p', { class: 'label', text: r.metricNote }));
+  if (r.smallCountRule) root.append(muted(r.smallCountRule.replace(/k − 1/g, String(r.k - 1))));
   root.append(muted(`Policy for standing: agreement of at least ${r.policy.floor} over at least ${r.policy.minSamples} reviewed outcomes, from at least ${r.policy.minDistinctHumanConfirmers} different people. A cell stays Hypothetical below ${r.minSamplesForAsserted} samples. ${r.attemptsRead} attempt(s) and ${r.outcomesRead} outcome row(s) read; ${r.personJudgeCellsWithheld} cell(s) of people who judged are left out here.`));
   if (!r.cells.length) root.append(muted('No reviewed outcomes yet.'));
   else root.append(calibrationTable(r.cells));

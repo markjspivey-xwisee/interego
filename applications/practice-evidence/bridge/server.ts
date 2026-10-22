@@ -24,12 +24,26 @@
  *   PEV_TRUSTED_PLATFORM_ADDRESSES  earlier platform addresses whose records stay trusted
  *   PEV_RECORD_KEY                  64 hex (an optional 0x): the key every record written to the
  *                                   operator pod is encrypted to, as an envelope only this bridge
- *                                   can open; descriptors and the manifest stay readable (signer,
- *                                   record kind, modal status, times). Absent → records are
- *                                   plaintext, and the startup lines say so. Malformed → the
- *                                   bridge does not start. Plaintext records written earlier stay
- *                                   readable. Losing it makes every encrypted record unreadable:
- *                                   back it up. Holder copies are never encrypted. Never logged.
+ *                                   can open, and the key new attempt IRIs are keyed with (an
+ *                                   HMAC), so no one without it can tell whose an attempt is.
+ *                                   Descriptors and the manifest stay readable: signer, record
+ *                                   kind, modal status, times, trust level, the authors, ratifiers,
+ *                                   reviewers and admins they name (never a learner), the chain of
+ *                                   versions, and per attempt how many versions, when, whether
+ *                                   reviewed and whether redacted. Absent → records are plaintext
+ *                                   and attempt IRIs are a plain hash of the learner's address
+ *                                   (anyone holding a candidate address can find that learner's
+ *                                   attempts), and the startup lines say so. Malformed → the bridge
+ *                                   does not start. Plaintext records and plain attempt IRIs
+ *                                   written earlier stay as they are, and readable. Losing it makes
+ *                                   every encrypted record unreadable: back it up. Holder copies
+ *                                   are never encrypted. Never logged.
+ *   PEV_REQUIRE_RECORD_KEY=1        a deployment guard: the bridge does not start (exit 1) unless
+ *                                   PEV_RECORD_KEY is set and well-formed, so a deployment whose
+ *                                   key is blank or missing (an unresolved reference, a forgotten
+ *                                   setting) never writes plaintext to a pod that serves reads to
+ *                                   anyone. The pev image sets it; absent or 0 (local runs, the
+ *                                   demo) → no guard. Any other value → the bridge does not start.
  *   PEV_ADMIN_ADDRESSES             addresses that may change roles and withdraw reviews
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
@@ -121,9 +135,21 @@ async function main(): Promise<void> {
     platformKeyKind = 'ephemeral';
   }
 
+  const requireRaw = env('PEV_REQUIRE_RECORD_KEY');
+  if (requireRaw !== undefined && requireRaw !== '1' && requireRaw !== '0') {
+    warn(`PEV_REQUIRE_RECORD_KEY is ${JSON.stringify(requireRaw)}; it takes 1 (refuse to start without PEV_RECORD_KEY) or 0. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const requireRecordKey = requireRaw === '1';
   const recordKeyHex = env('PEV_RECORD_KEY');
   if (recordKeyHex !== undefined && !RECORD_KEY_HEX.test(recordKeyHex)) {
     warn('PEV_RECORD_KEY is not 64 hex characters (32 bytes, an optional 0x prefix): records encrypted to a mistyped or truncated key could not be opened with the right one. Not listening.');
+    process.exitCode = 1;
+    return;
+  }
+  if (recordKeyHex === undefined && requireRecordKey) {
+    warn('PEV_REQUIRE_RECORD_KEY=1 and PEV_RECORD_KEY is not set (or is blank, as an unresolved reference is): this deployment would write every transcript, judgment and reviewer reason in plaintext to its pod. Set PEV_RECORD_KEY to 64 hex characters (32 bytes) and back it up, or, for a local run only, unset PEV_REQUIRE_RECORD_KEY. Not listening.');
     process.exitCode = 1;
     return;
   }
@@ -213,8 +239,8 @@ async function main(): Promise<void> {
   say(`  pod: ${defaultPodUrl ?? 'none (each act names its pod)'}; records read and written on: ${anyPod ? 'any public pod (PEV_SERVED_PODS=*)' : servedPods.length > 0 ? servedPods.join(', ') : 'NO pod: set PEV_DEFAULT_POD_URL or PEV_SERVED_PODS, or every act is refused'}`);
   say(`  pod credential: ${writeSecret ? 'configured, sent on reads and writes under the operator pod' : 'not configured'}`);
   say(recordKey
-    ? `  records are encrypted to this bridge's record key (PEV_RECORD_KEY, public key ${recordKey.publicKey}): the pod holds the graph of every record written from now on only as ciphertext; descriptors and the manifest stay readable (signer, record kind, modal status, times), and records written before the key was set stay plaintext. Back the key up: without it no encrypted record can be read again`
-    : '  records are plaintext: anyone the pod lets read pev/records/ reads every transcript (a pod that serves reads anonymously serves them to everyone). Set PEV_RECORD_KEY (64 hex) to encrypt them');
+    ? `  records are encrypted to this bridge's record key (PEV_RECORD_KEY, public key ${recordKey.publicKey}): the pod holds the graph of every record written from now on only as ciphertext, and new attempt IRIs are keyed with it, so no one without the key can tell whose an attempt is. Still readable by anyone the pod lets read: descriptors and the manifest (signer, record kind, modal status, times, trust level, the authors, ratifiers, reviewers and admins they name, never a learner) and, per attempt, how many versions, when, whether reviewed and whether redacted. Records and attempt IRIs written before the key was set stay as they were: plaintext, and a plain hash of the learner's address. Back the key up: without it no encrypted record can be read again`
+    : '  records are plaintext: anyone the pod lets read pev/records/ reads every transcript (a pod that serves reads anonymously serves them to everyone), and attempt IRIs are a plain hash of the learner\'s address, so anyone holding a candidate address finds that learner\'s attempts. Set PEV_RECORD_KEY (64 hex) to encrypt them');
   say(`  platform key: ${platformKeyKind}, address ${platformWallet.address}`);
   if (platformKeyKind === 'ephemeral') {
     say('  records written now become untrusted after a restart unless you add this address to PEV_TRUSTED_PLATFORM_ADDRESSES');

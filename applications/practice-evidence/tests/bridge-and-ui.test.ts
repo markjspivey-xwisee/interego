@@ -13,6 +13,7 @@
  * environment reads.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { request } from 'node:http';
 import { join, relative } from 'node:path';
@@ -575,6 +576,34 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     expect(publishes.map((x) => [x.includes('PEV_COPIES_CONTAINER'), x.includes('sealTo')])).toEqual([[false, true], [true, false]]);
     expect(handlers).toContain('...(ctx.trusted.recordKey ? { sealTo: ctx.trusted.recordKey } : {}),');
   });
+
+  it('PEV_REQUIRE_RECORD_KEY=1 stops a bridge whose record key is missing or blank before it listens, and the image sets it', () => {
+    expect(server).toMatch(/const requireRecordKey = requireRaw === '1';/);
+    expect(server).toMatch(/if \(recordKeyHex === undefined && requireRecordKey\) \{\n[^}]*Not listening\.'\);\n\s*process\.exitCode = 1;\n\s*return;/);
+    const image = readFileSync(join(REPO, 'deploy/Dockerfile.pev-bridge'), 'utf8');
+    expect(image).toMatch(/^ENV PEV_REQUIRE_RECORD_KEY=1$/m);
+    expect(image).toMatch(/^ENV PEV_RECORD_KEY=$/m);
+    expect(image).toMatch(/^#\s+PEV_RECORD_KEY\s+64 hex[\s\S]*?BACK IT UP/m);
+    // The server itself, run under tsx as the image runs it, with nothing else in its environment.
+    const run = (extra: Record<string, string>): { status: number | null; out: string; err: string } => {
+      const r = spawnSync(process.execPath, ['--import', 'tsx', join(VERTICAL, 'bridge/server.ts')], {
+        cwd: REPO, encoding: 'utf8', timeout: 120_000, env: { NODE_NO_WARNINGS: '1', PORT: '0', ...extra },
+      });
+      return { status: r.status, out: r.stdout, err: r.stderr };
+    };
+    const KEY = 'ab'.repeat(32);
+    const missing: readonly Record<string, string>[] = [{ PEV_REQUIRE_RECORD_KEY: '1' }, { PEV_REQUIRE_RECORD_KEY: '1', PEV_RECORD_KEY: '  ' }];
+    for (const extra of missing) {
+      const r = run(extra);
+      expect([r.status, r.out.includes('listening on'), r.err], JSON.stringify(extra))
+        .toEqual([1, false, expect.stringContaining('PEV_REQUIRE_RECORD_KEY=1 and PEV_RECORD_KEY is not set (or is blank')]);
+    }
+    const typo = run({ PEV_REQUIRE_RECORD_KEY: 'yes', PEV_RECORD_KEY: KEY });
+    expect([typo.status, typo.err]).toEqual([1, expect.stringContaining('PEV_REQUIRE_RECORD_KEY is "yes"; it takes 1')]);
+    // A valid key passes the guard: this run goes on to the next check (demo keys on a public host) and stops there.
+    const passes = run({ PEV_REQUIRE_RECORD_KEY: '1', PEV_RECORD_KEY: `0x${KEY}`, PEV_DEMO_ROLES: '1', HOST: '0.0.0.0' });
+    expect([passes.status, passes.err.includes('PEV_RECORD_KEY'), passes.err]).toEqual([1, false, expect.stringContaining('PEV_DEMO_ROLES=1 needs a loopback HOST')]);
+  }, 300_000);
 
   it('no instruction or label the platform shows says no', () => {
     const DECLINE = /\b(error|reason|refused|denied|forbidden|unauthori[sz]ed|invalid|pending|rejected|conflict|unavailable)\b/i;

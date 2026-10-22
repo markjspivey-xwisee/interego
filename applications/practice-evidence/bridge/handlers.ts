@@ -51,10 +51,10 @@ import {
   type JudgeChosenBy, type JudgmentResult, type NextLevelGuidance, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
 import {
-  actorOf, applyRoleChange, attemptIri as attemptIriOf, attemptKey, buildRecordDescriptor, checkEnvelope, conflictedReviewersOf,
-  didOf, freshNonce, graphIriOf, isAddress, judgeSignersOf, modalFor, modelAgentIri, nextActionsFor, nextActionView, NonceLedger, podBase,
+  actorOf, applyRoleChange, attemptIri as attemptIriOf, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, conflictedReviewersOf,
+  didOf, freshNonce, graphIriOf, isAddress, isWellFormedText, judgeSignersOf, modalFor, modelAgentIri, nextActionsFor, nextActionView, NonceLedger, podBase,
   projectionIri, recordGraphTurtle, recordIdFor, recordLocal, redactBody, registryIri, rubricIriOf, sameAddress,
-  scenarioIri as scenarioIriOf, signDraftReceipt, signEnvelope, slugFor, standingReview, verifyDraftReceipt,
+  scenarioIri as scenarioIriOf, signDraftReceipt, signEnvelope, slugFor, standingReview, toWellFormedText, verifyDraftReceipt,
   EXPORT_VERIFY_STEPS, REDACTION_NOTE, ROLES,
   type Actor, type AttemptAct, type AttemptBody, type DescriptorPlan, type DraftAssistance, type EnvelopeForm,
   type FinalLevel, type KeyKind, type NextAction, type PevRecordBody, type ProjectionAuditBody, type RecordTarget,
@@ -62,15 +62,15 @@ import {
   type ScenarioStatus, type StoredEnvelope,
 } from '../src/records.js';
 import {
-  auditCoverageOf, calibrationCells, outcomeRowsOf, reviewQueue, scenarioResults,
-  AUDIT_SAMPLE_RATE, METRIC_NOTE, RESULTS_K, STANDING_POLICY,
+  auditCoverageOf, calibrationCells, outcomeRowsOf, reviewQueue, scenarioResults, suppressSmallCells,
+  AUDIT_SAMPLE_RATE, CALIBRATION_SMALL_COUNT_RULE, METRIC_NOTE, RESULTS_K, STANDING_POLICY,
   type CalibrationCellView, type QueueCandidate,
 } from '../src/calibration.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, listEntries, normalPod, placementProblem, publishPevRecord, readChain, readHead,
   readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship, underPod,
-  ChainForked, GraphMissing, PodTransportFailed, RecordSealed, RecordUnreadable, PEV_COPIES_CONTAINER,
+  ChainForked, GraphMissing, PodTransportFailed, RecordNotSealable, RecordSealed, RecordUnreadable, PEV_COPIES_CONTAINER,
   type DeletedVersion, type ReadCache, type ReadRecord, type RoleRegistryView, type TrustedPlatform,
 } from './pod-helpers.js';
 
@@ -200,6 +200,10 @@ function refusalFor(e: unknown): Out {
   if (e instanceof PublishShapeViolationError) {
     return { ...refuse(500, 'This bridge built a record that does not conform to its own shapes; nothing was written.', 'record-shape') };
   }
+  if (e instanceof RecordNotSealable) {
+    // A local failure before any write: never reported as the pod's.
+    return { ...refuse(500, `This bridge built a record it cannot encrypt to its record key (${e.message}); nothing was written.`, 'record-shape') };
+  }
   if (e instanceof ChainForked) {
     return {
       ...refuse(409, `This record has ${e.heads.length} competing latest versions; it can be read and exported but not advanced.`, 'chain-forked'),
@@ -243,6 +247,11 @@ interface Ctx {
   readonly platform: Wallet;
   readonly platformDid: string;
   readonly trusted: TrustedPlatform;
+  /**
+   * The secret attempt IRIs are keyed with (attemptIriSecret of the record key), or null without a
+   * record key, when attempt IRIs are a plain hash of the learner's address.
+   */
+  readonly attemptSecret: string | null;
   readonly admins: ReadonlySet<string>;
   readonly fetchFn: typeof fetch;
   readonly holderFetchFn: typeof fetch;
@@ -281,6 +290,7 @@ function makeContext(deps: PevDeps): Ctx {
       addresses: new Set([deps.platformWallet.address.toLowerCase(), ...lower(deps.trustedPlatformAddresses)]),
       ...(deps.recordKey ? { recordKey: deps.recordKey } : {}),
     },
+    attemptSecret: deps.recordKey ? attemptIriSecret(deps.recordKey) : null,
     admins: new Set(lower(deps.adminAddresses)),
     fetchFn,
     holderFetchFn: deps.holderFetchFn ?? fetchFn,
@@ -318,12 +328,18 @@ function shape(field: string, rule: string): Declined {
   return decline(400, `${field} ${rule}.`, 'payload-shape');
 }
 
+/** Text with a lone UTF-16 surrogate: refused at input, before any model call or write. */
+function notWellFormed(field: string): Declined {
+  return shape(field, 'must be well-formed text (it holds half of a UTF-16 surrogate pair, which cannot be stored as sent)');
+}
+
 function needText(p: P, field: string, max: number, code?: string, min = 1): string {
   const v = p[field];
   if (typeof v !== 'string' || v.trim().length < min) {
     throw code ? decline(400, `${field} is required text.`, code) : shape(field, 'must be non-empty text');
   }
   if (v.length > max) throw shape(field, `must be at most ${max} characters`);
+  if (!isWellFormedText(v)) throw notWellFormed(field);
   return v;
 }
 
@@ -332,7 +348,27 @@ function optText(p: P, field: string, max: number): string | undefined {
   if (v === undefined || v === null || v === '') return undefined;
   if (typeof v !== 'string') throw shape(field, 'must be text');
   if (v.length > max) throw shape(field, `must be at most ${max} characters`);
+  if (!isWellFormedText(v)) throw notWellFormed(field);
   return v;
+}
+
+/**
+ * Where in a signed payload the first text that is not well-formed sits (a key or a string
+ * value with a lone UTF-16 surrogate), or null. Every payload is kept in the record it changes,
+ * so one such string anywhere would make the record impossible to seal or hash as sent.
+ */
+function illFormedAt(v: unknown, at: string, depth = 0): string | null {
+  if (typeof v === 'string') return isWellFormedText(v) ? null : at;
+  if (depth > 64 || typeof v !== 'object' || v === null) return null;
+  const children: (readonly [string, unknown, boolean])[] = Array.isArray(v)
+    ? (v as unknown[]).map((x, i) => [`${at}[${i}]`, x, true] as const)
+    : Object.entries(v).map(([k, x]) => [`${at}.${toWellFormedText(k)}`, x, isWellFormedText(k)] as const);
+  for (const [here, x, keyOk] of children) {
+    if (!keyOk) return here;
+    const found = illFormedAt(x, here, depth + 1);
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 function needInt(p: P, field: string, min: number, max: number): number {
@@ -416,6 +452,8 @@ async function signedAct(
   const env = checkEnvelope(args, A[key], now, { maxAgeMs: ctx.maxAgeMs });
   if (!env.ok) throw decline(env.status, env.message, env.code);
   o.checks?.(env.payload);
+  const bad = illFormedAt(env.payload, 'payload');
+  if (bad !== null) throw notWellFormed(bad);
   const podUrl = String(env.payload['podUrl']);
   const argPod = args['pod_url'];
   if (typeof argPod === 'string' && argPod.trim() !== '' && podBase(argPod.trim()) !== podBase(podUrl)) {
@@ -525,8 +563,17 @@ function checkTarget(given: RecordTarget, head: ReadRecord): void {
 //  Steps 10–12: descriptor plan and the one way a record is written
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-/** The descriptor plan for a body (§5.1). Pure: holder copies rebuild the same plan from the same body. */
-function planOf(body: PevRecordBody, o: { readonly recordId: string; readonly platformDid: string; readonly supersedes?: string; readonly derivedFrom?: readonly string[] }): DescriptorPlan {
+/**
+ * The descriptor plan for a body (§5.1). Pure: holder copies rebuild the same plan from the same
+ * body. The descriptor is public even when the graph is sealed (`sealed`), so it names a person
+ * only in a role that is public by design: an author, a ratifier, a reviewer or an admin, never
+ * a learner. Attempt descriptors name the reviewer alone; a projection audit names whoever asked
+ * only when its graph is plaintext anyway.
+ */
+function planOf(body: PevRecordBody, o: {
+  readonly recordId: string; readonly platformDid: string; readonly supersedes?: string; readonly derivedFrom?: readonly string[];
+  readonly sealed?: boolean;
+}): DescriptorPlan {
   const common = {
     recordId: o.recordId, graphIri: graphIriOf(body), kind: body.kind, modal: modalFor(body), at: body.at, platformDid: o.platformDid,
     ...(o.supersedes !== undefined ? { supersedes: o.supersedes } : {}),
@@ -563,7 +610,12 @@ function planOf(body: PevRecordBody, o: { readonly recordId: string; readonly pl
     case 'role-registry':
       return { ...common, validFrom: body.at, actors: [{ did: body.change.by, role: 'Curator' }], trust: { level: 'SelfAsserted' } };
     case 'projection-audit':
-      return { ...common, validFrom: body.at, actors: [{ did: body.requestedBy, role: 'Curator' }], trust: { level: 'SelfAsserted' } };
+      // Who asked is usually the learner. With a record key the graph is sealed, and naming them
+      // on the public descriptor would tell anyone reading the pod which learner holds a reviewed
+      // attempt; the body keeps requestedBy either way.
+      return {
+        ...common, validFrom: body.at, actors: o.sealed ? [] : [{ did: body.requestedBy, role: 'Curator' }], trust: { level: 'SelfAsserted' },
+      };
   }
 }
 
@@ -591,7 +643,7 @@ async function writeRecord(call: Call, w: {
   if (digest.digest === null) throw decline(500, `This bridge built a record graph it cannot digest (${digest.reason}); nothing was written.`, 'record-shape');
   const proof = await signRecordAuthorship(ctx.platform, ctx.platformDid, recordId, graphTurtle, body.at);
   const descriptor = buildRecordDescriptor(planOf(body, {
-    recordId, platformDid: ctx.platformDid, ...(w.prev ? { supersedes: w.prev.descriptorUrl } : {}),
+    recordId, platformDid: ctx.platformDid, ...(w.prev ? { supersedes: w.prev.descriptorUrl } : {}), sealed: ctx.trusted.recordKey !== undefined,
   }));
   const v = validate(descriptor);
   if (!v.conforms) {
@@ -628,6 +680,10 @@ async function writeRecord(call: Call, w: {
 function routeFor(call: Call, args: Record<string, unknown>, packet: { readonly action: string; readonly then: string },
   who: { readonly signer: string; readonly roles: ReadonlySet<Role> }): TextModel {
   const { ctx } = call;
+  for (const field of ['llm_model', 'llm_api_key'] as const) {
+    const v = args[field];
+    if (typeof v === 'string' && !isWellFormedText(v)) throw notWellFormed(field);
+  }
   const r = resolveTextModel(ctx.deps.model, args, ctx.deps.byokFetch);
   if ('bad' in r) throw decline(400, r.bad, 'byok-incomplete');
   if ('none' in r) {
@@ -694,7 +750,9 @@ async function callModel(model: TextModel, req: TextModelRequest, t: Timeouts): 
   if (r.stopReason === 'max_tokens') {
     throw decline(502, 'The model\'s answer was cut off at its token limit; nothing was recorded.', 'model-output-cut-off', undefined, { disclosure });
   }
-  return r;
+  // A lone UTF-16 surrogate in what a model returned becomes U+FFFD here, before it is hashed or
+  // recorded: that is what a UTF-8 encoder writes for it, and an envelope cannot seal it as is.
+  return { ...r, text: toWellFormedText(r.text), model: toWellFormedText(r.model) };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -723,12 +781,18 @@ function reverify(e: StoredEnvelope): { readonly signer: string; readonly payloa
 
 interface Ratification { readonly ratified: boolean; readonly ratifiedBy: string | null }
 
-/** Whether the scenario version an attempt practised has a trusted ratified record with the same hashes. */
+/**
+ * Whether the scenario version an attempt practised has a trusted ratified record with the same
+ * hashes. A scenario record sealed to a key this bridge does not hold is NOT an answer of "not
+ * ratified": the bridge cannot tell, so the RecordSealed goes on to the caller as a 409 naming
+ * PEV_RECORD_KEY, and nothing (no skip audit) is written on the strength of it.
+ */
 async function ratificationOf(call: Call, pod: string, a: AttemptBody): Promise<Ratification> {
   let chain: readonly (ReadRecord | DeletedVersion)[];
   try {
     chain = await readChain(pod, a.scenario.scenarioIri, call.ctx.trusted, call.ctx.fetchFn, call.cache);
   } catch (e) {
+    if (e instanceof RecordSealed) throw e;
     if (e instanceof RecordUnreadable || e instanceof ChainForked || e instanceof GraphMissing) return { ratified: false, ratifiedBy: null };
     throw e;
   }
@@ -778,6 +842,8 @@ async function eligibility(call: Call, pod: string, h: AttemptHead): Promise<Eli
     if (!isTrusted(before) || placementProblem(before.body, pod, a.attemptIri) !== undefined
       || before.recordId !== review.target.recordId || before.graphDigest !== review.target.graphDigest) return notVerifiable;
   } catch (e) {
+    // Sealed to another key: unknown, not "not verifiable". The caller refuses with PEV_RECORD_KEY.
+    if (e instanceof RecordSealed) throw e;
     if (e instanceof RecordUnreadable || e instanceof GraphMissing) return notVerifiable;
     throw e;
   }
@@ -1013,8 +1079,10 @@ async function draftScenarioPacket(_call: Call, args: Record<string, unknown>): 
   const brief = typeof args['brief'] === 'string' ? args['brief'].trim() : '';
   if (brief === '') throw decline(400, 'Describe the performance situation to practise in brief.', 'brief-missing');
   if (brief.length > BRIEF_MAX) throw decline(400, `brief must be at most ${BRIEF_MAX} characters.`, 'brief-too-long');
+  if (!isWellFormedText(brief)) throw notWellFormed('brief');
   const source = typeof args['source_text'] === 'string' ? args['source_text'] : undefined;
   if (source !== undefined && source.length > SOURCE_TEXT_MAX) throw decline(400, `source_text must be at most ${SOURCE_TEXT_MAX} characters.`, 'source-text-too-long');
+  if (source !== undefined && !isWellFormedText(source)) throw notWellFormed('source_text');
   return { ...draftPacket(brief, source) };
 }
 
@@ -1034,6 +1102,10 @@ async function draftScenario(call: Call, args: Record<string, unknown>): Promise
   if (!('value' in parsed)) {
     throw decline(502, 'The model\'s draft does not fit the scenario rules; nothing was recorded and nothing was repaired.', 'draft-output-unusable',
       undefined, { problems: parsed.problems, text: r.text.slice(0, 300), disclosure });
+  }
+  if (illFormedAt(parsed.value, 'draft') !== null) {
+    throw decline(502, 'The model\'s draft holds text that is not well-formed UTF-16, which no record could hold as sent; nothing was recorded and nothing was repaired.', 'draft-output-unusable',
+      undefined, { disclosure });
   }
   const draftHash = draftComparableHash(parsed.value);
   const receipt = await signDraftReceipt(ctx.platform, { draftHash, disclosure, requestedBy: s.signerDid, issuedAt: iso(ctx), nonce: ctx.nonce() });
@@ -1131,11 +1203,14 @@ async function startAttempt(call: Call, args: Record<string, unknown>): Promise<
   }
   const isAuthor = sb.versionAuthors.some((x) => sameAddress(x, s.signer));
   if (sb.status === 'draft' && !isAuthor) throw decline(409, 'This scenario is a draft; learners start published versions only.', 'scenario-not-published');
-  const key = attemptKey(s.pod, sIri, s.signer);
+  // With a record key the new attempt's IRI is keyed (only a key holder can link it to the
+  // learner); attempts started before the key keep their plain key and are still this learner's.
+  const keys = attemptKeysOf(ctx, s.pod, sIri, s.signer);
+  const key = keys[0]!;
   return ctx.lock(`${s.pod}|attempts|${key}`, async () => {
     const all = await listEntries(s.pod, ctx.fetchFn);
-    const prefix = `urn:pev:attempt:${key}-`;
-    const mine = [...new Set(all.flatMap((e) => e.describes.filter((d) => d.startsWith(prefix))))];
+    const prefixes = keys.map((k) => `urn:pev:attempt:${k}-`);
+    const mine = [...new Set(all.flatMap((e) => e.describes.filter((d) => prefixes.some((p) => d.startsWith(p)))))];
     await notAStartedEnvelope(call, s, all, mine);
     const taken = ctx.attemptBudget.take(s.signer, ctx.now().getTime());
     if (!taken.ok) {
@@ -1173,6 +1248,15 @@ async function startAttempt(call: Call, args: Record<string, unknown>): Promise<
       nextActions: nextFor(ctx, body, s.signer, roles.of(s.signer), false), recorded: true,
     };
   });
+}
+
+/**
+ * The attempt keys one learner's attempts on one scenario can carry, the one new attempts take
+ * first: the keyed form (with a record key), then the plain form attempts written without one have.
+ */
+function attemptKeysOf(ctx: Ctx, pod: string, scenarioIriValue: string, learner: string): string[] {
+  const plain = attemptKey(pod, scenarioIriValue, learner);
+  return ctx.attemptSecret === null ? [plain] : [attemptKey(pod, scenarioIriValue, learner, ctx.attemptSecret), plain];
 }
 
 /**
@@ -1417,6 +1501,11 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
     if ('unusable' in parsed) {
       throw decline(502, `The judge's answer is not usable (${parsed.unusable}); nothing was recorded and nothing was repaired.`, 'judge-output-unusable',
         undefined, { text: r.text.slice(0, 300), disclosure });
+    }
+    // JSON escapes can still decode to a lone surrogate, which no record can hold as sent.
+    if (illFormedAt(parsed, 'judgment') !== null) {
+      throw decline(502, 'The judge\'s answer is not usable (it holds text that is not well-formed UTF-16); nothing was recorded and nothing was repaired.', 'judge-output-unusable',
+        undefined, { disclosure });
     }
     const judgeId = `model:${model.provider}/${r.model}`;
     const chosenBy: JudgeChosenBy = model.keySource === 'per-request-byok' ? (isLearner ? 'learner' : 'reviewer') : 'bridge-config';
@@ -1767,6 +1856,12 @@ async function retractReview(call: Call, args: Record<string, unknown>): Promise
 //  Calibration and results
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Unsigned: anyone who reaches the bridge reads this, and the bridge opens sealed attempts to
+ * compute it. So it returns aggregates only, with the small-count rule of results: a rate over 1
+ * to k − 1 outcomes is null and only its count stays (CALIBRATION_SMALL_COUNT_RULE); person-judge
+ * cells are left out.
+ */
 async function calibrationAct(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
   const pod = await readPod(ctx, args);
@@ -1779,9 +1874,10 @@ async function calibrationAct(call: Call, args: Record<string, unknown>): Promis
   const rubricFilter = typeof args['rubric_hash'] === 'string' && args['rubric_hash'] !== '' ? args['rubric_hash'] : null;
   const judgeFilter = typeof args['judge'] === 'string' && args['judge'] !== '' ? args['judge'] : null;
   const chosen = cells.filter((c) => (rubricFilter === null || c.rubricHash === rubricFilter) && (judgeFilter === null || c.judgeId === judgeFilter));
-  const shown = chosen.filter((c) => c.judgeKind !== 'person');
+  const shown = suppressSmallCells(chosen.filter((c) => c.judgeKind !== 'person'), ctx.resultsK);
   return {
-    podUrl: pod, cells: shown, personJudgeCellsWithheld: chosen.length - shown.length, policy: STANDING_POLICY,
+    podUrl: pod, cells: shown, personJudgeCellsWithheld: chosen.length - shown.length, k: ctx.resultsK, smallCountRule: CALIBRATION_SMALL_COUNT_RULE,
+    policy: STANDING_POLICY,
     auditSampleRate: AUDIT_SAMPLE_RATE, minSamplesForAsserted: STANDING_POLICY.minSamples, outcomesRead: outcomes,
     attemptsRead: read.heads.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, computedAt: iso(ctx), metricNote: METRIC_NOTE,
   };
@@ -1878,6 +1974,12 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
 //  The learner's record: holder copy, export, redaction
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+/**
+ * The chain of an attempt, refused (409 record-not-trusted) unless every version still on the pod
+ * is trusted and sits where it was written. Every act that hands a version's bytes or text to a
+ * caller, or deletes a version's graph, reads the chain this way: a version the pod's manifest
+ * chains in from elsewhere (a forged `supersedes`) is never returned, copied or deleted.
+ */
 async function trustedChain(call: Call, pod: string, iri: string): Promise<readonly (ReadRecord | DeletedVersion)[]> {
   const chain = await readChain(pod, iri, call.ctx.trusted, call.ctx.fetchFn, call.cache);
   for (const v of chain) if (!isDeleted(v) && !isTrusted(v)) throw untrusted(v);
@@ -1955,7 +2057,8 @@ async function exportRecord(call: Call, args: Record<string, unknown>): Promise<
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
   if (!sameAddress(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may export it.', 'not-the-learner');
-  const chain = await readChain(s.pod, iri, ctx.trusted, ctx.fetchFn, call.cache);
+  // Every version's opened bytes go to the caller, so every version must be this attempt's own.
+  const chain = await trustedChain(call, s.pod, iri);
   return {
     attemptIri: iri, exportedAt: iso(ctx), platformAddresses: [...ctx.trusted.addresses], verify: EXPORT_VERIFY_STEPS,
     versions: chain.map((v, i) => (isDeleted(v)
@@ -2094,9 +2197,12 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
         ? [{ judgmentIndex: j.index, turnIndex: q.turnIndex, start: q.start, end: q.end, criterionId: c.criterionId }] : [])))),
     currentTarget: targetOf(h.rec),
     projectable: e.eligible, projectableWhy: e.eligible ? EVIDENCE_WHY.ready : e.why,
+    // A version that is not trusted where it sits shows no state read from its body.
     versions: chain.map((v) => (isDeleted(v)
       ? { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: null, modalStatus: null, contentDeleted: true }
-      : { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: v.body.kind === 'attempt' ? v.body.state : null, modalStatus: v.modalStatus, contentDeleted: false })),
+      : !isTrusted(v)
+        ? { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: null, modalStatus: null, contentDeleted: false, trusted: false }
+        : { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: v.body.kind === 'attempt' ? v.body.state : null, modalStatus: v.modalStatus, contentDeleted: false })),
     authorship: h.rec.authorship, keyKind: a.keyKind, evidenceKind: a.evidenceKind, label: PRACTICE_LABEL, provisionalLabel: PROVISIONAL_LABEL,
     nextActions: nextFor(ctx, a, s.signer, roles, e.eligible),
   };

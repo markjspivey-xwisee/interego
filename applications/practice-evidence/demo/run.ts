@@ -28,10 +28,10 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  canonicalGraphDigest, deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, sha256, verifySignedAuthorship,
-  type EncryptionKeyPair, type Wallet,
+  canonicalGraphDigest, deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, openEncryptedEnvelope, sha256, verifySignedAuthorship,
+  type EncryptedEnvelope, type EncryptionKeyPair, type Wallet,
 } from '@interego/core';
-import { digestedGraphRegion, parseAuthorshipProofFromDescriptorTurtle } from '@interego/solid';
+import { digestedGraphRegion, parseAuthorshipProofFromDescriptorTurtle, parseDistributionFromDescriptorTurtle } from '@interego/solid';
 import { createVerticalBridge, type AffordanceHandler } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { pevAffordances } from '../affordances.js';
@@ -436,7 +436,30 @@ export interface DemoOptions {
 }
 
 /** Why there is no live mode, and what to run instead. */
-export const LIVE_MODE_NOTE = 'This demo is offline only: it never reaches a pod or a model. To run against a real pod and model, start the bridge (npx tsx applications/practice-evidence/bridge/server.ts) with PEV_DEFAULT_POD_URL, PEV_POD_WRITE_SECRET (if the pod requires one), PEV_ADMIN_ADDRESSES and PEV_LLM_API_KEY with PEV_LLM_MODEL, and use its web UI or its affordances.';
+export const LIVE_MODE_NOTE = 'This demo is offline only: it never reaches a pod or a model. To run against a real pod and model, start the bridge (npx tsx applications/practice-evidence/bridge/server.ts) with PEV_DEFAULT_POD_URL, PEV_POD_WRITE_SECRET (if the pod requires one), PEV_RECORD_KEY (64 hex, so transcripts are encrypted on the pod; back it up, because a lost key loses every encrypted record; PEV_REQUIRE_RECORD_KEY=1 makes the bridge refuse to start without it), PEV_ADMIN_ADDRESSES and PEV_LLM_API_KEY with PEV_LLM_MODEL, and use its web UI or its affordances.';
+
+/**
+ * Everything the operator pod holds under `podUrl` as text a reader with `recordKey` sees: every
+ * resource's bytes, with each envelope opened. `unopened` lists envelopes the key does not open.
+ */
+export function operatorPlaintext(store: ReadonlyMap<string, string>, podUrl: string, recordKey: EncryptionKeyPair): { readonly text: string; readonly unopened: readonly string[] } {
+  const parts: string[] = [];
+  const unopened: string[] = [];
+  for (const [url, body] of store) {
+    if (!url.startsWith(podUrl)) continue;
+    if (!url.endsWith('.envelope.jose.json')) { parts.push(body); continue; }
+    let plain: string | null = null;
+    try { plain = openEncryptedEnvelope(JSON.parse(body) as EncryptedEnvelope, recordKey); } catch { plain = null; }
+    if (plain === null) unopened.push(url); else parts.push(plain);
+  }
+  return { text: parts.join('\n'), unopened };
+}
+
+/** The graph URL a descriptor on the pod links to (its distribution), or null. */
+export function graphUrlOf(store: ReadonlyMap<string, string>, descriptorUrl: string): string | null {
+  const turtle = store.get(descriptorUrl);
+  return turtle === undefined ? null : parseDistributionFromDescriptorTurtle(turtle)?.accessURL ?? null;
+}
 
 type Json = Record<string, unknown>;
 interface Http { readonly status: number; readonly body: Json }
@@ -951,14 +974,25 @@ export async function runDemo(opts: DemoOptions = {}): Promise<DemoReport> {
     report.results = results.body;
 
     // ── 50: redaction ─────────────────────────────────────────────────────────────────────────
+    // The graphs are sealed, so searching the pod's bytes for Ana's lines would find nothing
+    // whatever was deleted. The check follows each version's graph from its descriptor before the
+    // redaction, says each one is gone after it, and searches what the record key opens.
+    let earlierGraphs: (string | null)[] = [];
     await step('50a', 'Ana removes her transcript from the operator pod', { status: 200 },
-      () => act(A, W.learner, PEV_ACTION.redactAttempt, { attemptIri: S['a1'], target: JSON.parse(S['a1Target'] ?? '{}') as unknown }),
+      async () => {
+        const before = await act(A, W.learner, PEV_ACTION.getAttempt, { attemptIri: S['a1'] });
+        earlierGraphs = arr(before.body['versions']).map((v) => graphUrlOf(pod.store, str(obj(v)['descriptorUrl'])));
+        return act(A, W.learner, PEV_ACTION.redactAttempt, { attemptIri: S['a1'], target: JSON.parse(S['a1Target'] ?? '{}') as unknown });
+      },
       (r) => {
-        const operatorBytes = [...pod.store].filter(([u]) => u.startsWith(DEMO_POD)).map(([, v]) => v).join('\n');
+        const seen = operatorPlaintext(pod.store, DEMO_POD, recordKey);
+        const left = earlierGraphs.filter((g) => g === null || pod.store.has(g));
         return [
           ...want(r.body['state'] === 'redacted' && r.body['modalStatus'] === 'Retracted', 'not redacted and Retracted'),
           ...want(r.body['graphsDeleted'] === 8 && arr(r.body['graphsStillPresent']).length === 0, `expected 8 graphs deleted, got ${String(r.body['graphsDeleted'])}`),
-          ...want(DEMO_LINES.ana.every((line) => !operatorBytes.includes(line)), 'a line of Ana\'s is still on the operator pod'),
+          ...want(earlierGraphs.length === 8 && left.length === 0, `expected the 8 earlier graphs gone from the pod; still there: ${left.join(', ')}`),
+          ...want(seen.unopened.length === 0, `envelopes the record key does not open: ${seen.unopened.join(', ')}`),
+          ...want(DEMO_LINES.ana.every((line) => !seen.text.includes(line)), 'a line of Ana\'s is still on the operator pod, in the clear or encrypted'),
         ];
       });
     const after = await step('50b', 'Ana reads the redacted attempt: no text; her copy still verifies', { status: 200 },

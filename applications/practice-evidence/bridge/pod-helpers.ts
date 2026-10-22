@@ -42,7 +42,7 @@ import {
 } from '@interego/solid';
 import { PEV_SHAPES_NS, readShapesTurtle } from '../src/ontology.js';
 import {
-  graphIriOf, podBase, recordBodyFromGraph, registryIri, RECORD_CLASS,
+  graphIriOf, isWellFormedText, podBase, recordBodyFromGraph, registryIri, RECORD_CLASS,
   type PevRecordBody, type Role, type RoleRegistryBody,
 } from '../src/records.js';
 
@@ -124,6 +124,17 @@ export class RecordSealed extends RecordUnreadable {
       ? 'its graph is sealed to a record key this bridge does not hold (PEV_RECORD_KEY is not the key that wrote it)'
       : 'its graph is sealed, and this bridge has no record key to open it (PEV_RECORD_KEY)');
     this.name = 'RecordSealed';
+  }
+}
+
+/**
+ * This bridge could not seal a record it built (its graph is not text a UTF-8 encoder keeps as
+ * is). Raised in this process before anything is written: never a pod failure.
+ */
+export class RecordNotSealable extends Error {
+  constructor(why: string) {
+    super(why);
+    this.name = 'RecordNotSealable';
   }
 }
 
@@ -259,6 +270,10 @@ export async function signRecordAuthorship(
  * readable. Without it the graph is plaintext and who may read it is the pod's own access control.
  * Only operator-pod records are sealed: a holder copy goes to the learner's own pod, and the
  * learner does not hold this bridge's record key.
+ *
+ * Sealing happens in this process, so a graph that cannot be sealed (text with a lone UTF-16
+ * surrogate, which the envelope's UTF-8 encoding refuses) is a `RecordNotSealable` raised before
+ * any write, never a `PodTransportFailed`: the pod was not involved.
  */
 export async function publishPevRecord(a: {
   readonly podUrl: string; readonly descriptor: ContextDescriptorData; readonly graphTurtle: string; readonly slug: string;
@@ -266,6 +281,9 @@ export async function publishPevRecord(a: {
   readonly currentHeads?: readonly string[]; readonly ifMatch?: boolean; readonly shapes?: boolean; readonly fetchFn?: typeof fetch;
   readonly sealTo?: EncryptionKeyPair;
 }): Promise<{ readonly descriptorUrl: string; readonly graphUrl: string }> {
+  if (a.sealTo && !isWellFormedText(a.graphTurtle)) {
+    throw new RecordNotSealable('the record graph holds text with a lone UTF-16 surrogate, which cannot be encrypted as it is');
+  }
   try {
     await assertSafeFetchTarget(a.podUrl);
   } catch {
@@ -285,6 +303,8 @@ export async function publishPevRecord(a: {
     return { descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl };
   } catch (e) {
     if (e instanceof PublishShapeViolationError || e instanceof PublishPreconditionFailedError) throw e;
+    // The envelope's UTF-8 encoding throws URIError on text it cannot encode: a local failure.
+    if (e instanceof URIError) throw new RecordNotSealable(`the record could not be encrypted (${e.message.slice(0, 120)})`);
     const refused = podRefusal(e);
     const why = e instanceof Error ? e.message : String(e);
     throw new PodTransportFailed(`writing to ${originOf(a.podUrl)} did not complete: ${why.slice(0, 200)}`, 'write', refused?.status ?? null, originOf(a.podUrl));
@@ -472,12 +492,20 @@ export async function readHead(podUrl: string, graphIri: string, trusted: Truste
  * Every version of a chain, oldest first, by following `supersedes` back from the head. After a
  * redaction the earlier graphs are gone: those versions come back as `contentDeleted` when the
  * chain's trusted head is in state `redacted`. Any other missing graph is a read failure.
+ *
+ * A version is opened only when the pod's own manifest files it under this chain's graph. The
+ * manifest is writable by anyone who can write the pod; a `supersedes` pointing at a record of
+ * another graph (another learner's attempt) is refused as unreadable BEFORE that record is
+ * fetched, so a forged chain cannot make this bridge open, with its record key, a record the
+ * caller is not entitled to. A record opened anyway (a manifest that files one descriptor under
+ * two graphs) is marked misplaced by its signed body, and callers use only trusted versions.
  */
 export async function readChain(
   podUrl: string, graphIri: string, trusted: TrustedPlatform, fetchFn?: typeof fetch, cache?: ReadCache,
 ): Promise<readonly (ReadRecord | DeletedVersion)[]> {
   const { head, entries } = await readHead(podUrl, graphIri, trusted, fetchFn, cache);
   if (!head) return [];
+  // readHead's entries are exactly the manifest entries describing this graph.
   const byUrl = new Map(entries.map((e) => [e.descriptorUrl, e]));
   const redactedHead = isTrusted(head) && head.body.kind === 'attempt' && head.body.state === 'redacted';
   const newestFirst: (ReadRecord | DeletedVersion)[] = [head];
@@ -486,6 +514,9 @@ export async function readChain(
   while (next !== undefined && !seen.has(next)) {
     seen.add(next);
     if (!underPod(next, podUrl)) throw new RecordUnreadable(next, 'the pod\'s manifest chains to a record outside the pod');
+    if (!byUrl.has(next)) {
+      throw new RecordUnreadable(next, 'the pod\'s manifest chains this record to a version it does not file under the same graph; that version is not opened');
+    }
     try {
       const rec = await readRecord(next, trusted, fetchFn, cache);
       newestFirst.push(misplace(rec, placementProblem(rec.body, podUrl, graphIri)));
