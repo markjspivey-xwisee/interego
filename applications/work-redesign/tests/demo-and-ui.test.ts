@@ -26,7 +26,8 @@
  * entity IRI (who is assigned which task, which agent works which kind of task, which decision is
  * a probe) can be recovered from the pod's public bytes by recomputing an unkeyed hash; every
  * keyed IRI names the key's fingerprint, and no keyed segment is shared between two kinds or
- * positions. The production server refuses to start without a record key when the image requires
+ * positions; the only instant two kinds share is a workflow version's with its tasks, the link
+ * README and readExposure name. The production server refuses to start without a record key when the image requires
  * one.
  */
 import { describe, it, expect, afterAll } from 'vitest';
@@ -321,7 +322,7 @@ describe('work-redesign offline demo and web UI', () => {
     expect(await refusedWith('{not json')).toBe(400);
   }, 120_000);
 
-  it('with a record key, no tuple behind an entity IRI can be recovered from the pod\'s public bytes: not who is assigned which task, which agent works which kind of task, which decision is a probe, or which workflow a record belongs to', async () => {
+  it('with a record key, no tuple behind an entity IRI can be recovered from the IRI\'s hashes on the pod\'s public bytes: not who is assigned which task, which agent works which kind of task, or which decision is a probe; the one link times give (a task\'s workflow) is the one README names', async () => {
     const { pod } = await walked();
     const admin = demoWallet('admin');
     const NOW = new Date('2027-06-01T00:00:00.000Z');
@@ -388,6 +389,18 @@ describe('work-redesign offline demo and web UI', () => {
     // The kinds whose scope the bridge selects by are there, each scope shared within its kind only.
     const kindsSeen = new Set([...parsed.values()].map((x) => x.kind));
     for (const k of ['workflow', 'task', 'classification', 'plan', 'valuation', 'decision', 'acknowledgement', 'run', 'grant', 'holder-copy']) expect([k, kindsSeen.has(k)]).toEqual([k, true]);
+    // What the IRIs hide, times can show: records one call writes share its instant. Only a workflow version and the tasks
+    // captured, added or retired with it share one across kinds, which makes a task's workflow public (README, "Times link
+    // what one call writes"; readExposure). Every other instant on the pod belongs to records of one kind.
+    const kindsAt = new Map<string, Set<string>>();
+    for (const [, body] of open) {
+      const at = /prov:generatedAtTime\s+"([^"]+)"/.exec(body)?.[1];
+      const kind = /iep:describes\s+<urn:wrd:([a-z-]+):/.exec(body)?.[1];
+      if (at !== undefined && kind !== undefined) kindsAt.set(at, (kindsAt.get(at) ?? new Set()).add(kind));
+    }
+    expect(kindsAt.size).toBeGreaterThan(20);
+    const crossKind = [...new Set([...kindsAt.values()].filter((k) => k.size > 1).map((k) => [...k].sort().join('+')))];
+    expect(crossKind).toEqual(['task+workflow']);
   }, 120_000);
 
   it('serves /ui, /ui/app.js and /ui/app.css with the CSP, nosniff, no-referrer and no-store headers; the shell has no style attribute and app.js no setAttribute(\'style\' and no innerHTML', async () => {

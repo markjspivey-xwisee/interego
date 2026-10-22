@@ -112,7 +112,7 @@ export type WrdHandler = (args: Record<string, unknown>) => Promise<unknown>;
 const READS_SIGNED = 'Reads through this bridge need a signed read from an admin or a key in this pod\'s registry.';
 const READS_PUBLIC = 'Anyone who can reach this bridge can read every record on this pod (the operator opened reads).';
 /** What keyed entity IRIs still show, said exactly (README, "Keyed entity IRIs"). */
-const KEYED_IRI_LINKS = 'A keyed IRI is urn:wrd:<kind>:k<fingerprint>:<scope>:<id>. The fingerprint (8 hex) names the record key it was derived under and reveals nothing about the key. Each segment is keyed with its kind and position, so segments of different kinds or positions never match, and equal segments mean the same thing in the same kind: the scope segment groups records of one kind by what they are scoped to (tasks, classifications, plans and decisions of one workflow; valuations and acknowledgements of one plan; runs of one agent on one kind of task; grants of one agent; holder copies of one holder; every workflow on the pod), which the bridge needs to select them from the manifest, and the id segment is equal where the id is (a task\'s position across workflows, one person\'s acknowledgements of one task across plans, grants on one kind of task across agents, valuations of the same inputs, runs given the same runId).';
+const KEYED_IRI_LINKS = 'A keyed IRI is urn:wrd:<kind>:k<fingerprint>:<scope>:<id>. The fingerprint (8 hex) names the record key it was derived under and reveals nothing about the key. Each segment is keyed with its kind and position, so segments of different kinds or positions never match, and equal segments mean the same thing in the same kind: the scope segment groups records of one kind by what they are scoped to (tasks, classifications, plans and decisions of one workflow; valuations and acknowledgements of one plan; runs of one agent on one kind of task; grants of one agent; holder copies of one holder; every workflow on the pod), which the bridge needs to select them from the manifest, and the id segment is equal where the id is (a task\'s position across workflows, one person\'s acknowledgements of one task across plans, grants on one kind of task across agents, valuations of the same inputs, runs given the same runId). Times link what one call writes: its records share generatedAtTime and validFrom and are written one after another, and capturing a workflow (or recording a task map) writes its first version with its tasks, and adding or retiring a task writes the task with the workflow version that lists or drops it, so which workflow a task belongs to, and its place among the tasks captured with it, are public whatever the IRIs hide. Every other call writes one record.';
 const AT_REST_SEALED = 'Record graphs are sealed to this bridge\'s record key on the pod, and the entity IRIs this bridge derives from who and what a record is about are keyed with it (records written before the key keep their unkeyed IRIs). Descriptors and the manifest stay public: each record\'s kind, its signers and whether each signed as curator or validator, its modal status and confidence, its times, and the versions it supersedes and was derived from. What those show together stays public too: for example, a task version signed by a validator alone and left Hypothetical is a dispute by one party, and a decision that carries a confidence and derives from a valuation is a valued one. ' + KEYED_IRI_LINKS;
 const AT_REST_PLAIN = 'Records are written in plaintext: anyone the pod lets read wrd/records/ reads them, and a pod that serves anonymous reads serves them to everyone.';
 const SIGNED_READ_NEEDED = 'Reading records through this bridge needs a signed read.';
@@ -171,6 +171,30 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const lower = (a: string): string => a.toLowerCase();
+
+/** A query key that carries a signed read, however a client spelled the object into the URL: read_envelope, read_envelope[signature] (qs, jQuery), read_envelope.payload, read_envelope[]. */
+const SIGNED_READ_KEY = /^read[-_]?envelope(?:$|[[.])/i;
+/** A key naming a signature, bare or as the last step of a nested query key (x[signature], x.signature). */
+const SIGNATURE_KEY = /(?:^|[[.])signature\]?$/i;
+/** An EIP-191 signature (65 bytes), or JSON text that names a signature: what a signed read carries. */
+const SIGNATURE_TEXT = /0x[0-9a-f]{130}|"signature"\s*:/i;
+/**
+ * The query key that carries a signed read, or null. A GET's arguments are its query string, so
+ * this looks at every key and every value, nested or not: read_envelope in any of the spellings an
+ * object takes in a query string, any key naming a signature, and any value holding a signature or
+ * JSON that names one. The unsigned template takes nothing of the kind.
+ */
+function signedReadKeyIn(args: Obj): string | null {
+  const carries = (v: unknown, depth: number): boolean => {
+    if (typeof v === 'string') return SIGNATURE_TEXT.test(v);
+    if (depth > 8 || typeof v !== 'object' || v === null) return false;
+    return Object.entries(v).some(([k, x]) => SIGNED_READ_KEY.test(k) || SIGNATURE_KEY.test(k) || carries(x, depth + 1));
+  };
+  for (const [k, v] of Object.entries(args)) {
+    if (SIGNED_READ_KEY.test(k) || SIGNATURE_KEY.test(k) || carries(v, 0)) return k;
+  }
+  return null;
+}
 
 /** A refusal raised from a helper; the handler wrapper returns it as the answer. */
 class Declined extends Error {
@@ -1804,8 +1828,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const role = named && isPerson(reg, call.actor) ? 'performer' : named ? 'agent' : holds(reg, call.actor, 'approver') ? 'approver' : 'operator';
       const ratifications = named ? [{ party: call.actor, verdict: 'ratify' as const, envelope: call.envelope, at: call.at }] : [];
       const status = verdictStatus(tp.namedParties, ratifications) === 'ratified' ? 'ratified' : 'classified';
-      const inForce = (await effectiveAllocations(call, tp.workflowIri)).get(taskIri)?.allocation ?? tp.current;
-      const currentNote = currentAllocationNote(inForce, result.regime, answers, reg.policy);
+      const decided = (await effectiveAllocations(call, tp.workflowIri)).get(taskIri);
+      const currentNote = currentAllocationNote(decided?.allocation ?? tp.current, result.regime, answers, reg.policy, decided ? 'decision' : 'captured');
       const notes = [...result.notes, ...(currentNote ? [currentNote] : []), ...(personNote ? [`Classifier's note: ${personNote}`] : [])];
       const w = await write(call, {
         kind: 'Classification', entity, status, head,
@@ -2663,11 +2687,14 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
     // The unsigned template is a GET: its arguments travel in the URL, where server, proxy and
     // browser logs keep them. A signed read reads every record until it is stale, so one sent
-    // here is refused before anything is read, and the refusal points at the POST form.
+    // here is refused before anything is read, and the refusal points at the POST form. So is one
+    // spelled the way an object goes into a query string (read_envelope[signature]=…,
+    // read_envelope.payload=…), or any argument carrying a signature.
     'wrd.envelope_template': async (args) => {
-      if (args['read_envelope'] !== undefined) {
+      const inUrl = signedReadKeyIn(args);
+      if (inUrl !== null) {
         return { ...refuse(400, SIGNED_READ_IN_URL,
-          'read_envelope was sent to wrd.envelope_template, whose arguments travel in the URL, where logs keep them; nothing was read or filled. POST the same arguments to wrd.read_envelope_template with read_envelope in the JSON body, and sign a new read: one that has been in a URL should be taken as seen by whoever keeps those logs',
+          `${JSON.stringify(inUrl.slice(0, 64))} carries a signed read or a signature and was sent to wrd.envelope_template, whose arguments travel in the URL, where logs keep them; nothing was read or filled. POST the same arguments to wrd.read_envelope_template with read_envelope in the JSON body, and sign a new read: one that has been in a URL should be taken as seen by whoever keeps those logs`,
           { ...via('read_envelope_template'), method: 'POST', intent: 'wrd:read-records' }) };
       }
       return envelopeTemplate(args, false);
@@ -2848,6 +2875,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const cutLines: Obj[] = [];
     /** Sections counted from records that cannot all be read, with why (rows say so too where they can). */
     const unreadable: Obj = {};
+    /** Tasks whose currentNotPermitted is unknown because a record it is read from cannot be read. */
+    const permittedShut: string[] = [];
     const listedTasks = new Set(workflowsRec.flatMap((w) => [...w.record.payload.taskIris, ...w.record.payload.retiredTaskIris]));
     const workflowByIri = new Map(workflowsRec.map((w) => [w.record.entityIri, w.record]));
     const acks = new Map(recordsOf(snap, 'Acknowledgement').map((a) => [`${a.record.payload.planIri}|${a.record.payload.taskIri}|${a.record.payload.personAddress}`, a.record]));
@@ -2897,9 +2926,19 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         ];
         // The workflow says whether it lists this task: when it cannot be read, that is unknown, not "no".
         const wfShut = unusable([p.workflowIri]);
-        const inForce = eff?.allocation ?? p.current;
         const clsP = cls?.record.payload;
-        const currentNote = clsP ? currentAllocationNote(inForce, clsP.regime, clsP.answers, policy) : null;
+        // No classification found by tuple, on a pod where classifications are keyed under another record key: unknown, not "not classified".
+        const clsUnknown = cls || clsGraph ? null : absenceUnknown('classification');
+        // Whether the allocation in force is one the classification allows is read from both: when
+        // a decision or plan it may come from, or the classification, cannot be read, it is
+        // unknown (null, with why), never worked out from the captured allocation as if that
+        // decision were absent. With no classification at all there is nothing to check.
+        const permittedUnknown = !(cls || clsGraph || clsUnknown !== null) ? null
+          : allocationShut.length > 0 ? `whether the allocation in force is one this task's classification allows is unknown: ${allocationShut.length} decision or plan record(s) it may come from cannot be read (${whysOf(allocationShut)})`
+            : clsGraph && !cls ? `whether the allocation in force is one this task's classification allows is unknown: the classification cannot be read (${whyUnusable(clsGraph)})`
+              : clsUnknown !== null ? `whether the allocation in force is one this task's classification allows is unknown: ${clsUnknown}` : null;
+        if (permittedUnknown !== null) permittedShut.push(t.record.entityIri);
+        const currentNote = clsP && permittedUnknown === null ? currentAllocationNote(eff?.allocation ?? p.current, clsP.regime, clsP.answers, policy, eff ? 'decision' : 'captured') : null;
         const owed = p.owedRatification ?? [];
         const reviewed = runsRec.filter((r) => r.record.status === 'reviewed' && r.record.payload.taskIri === t.record.entityIri);
         const reworked = reviewed.filter((r) => r.record.payload.review?.verdict !== 'accepted').length;
@@ -2909,8 +2948,6 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         // A run that cannot be read may be a reviewed run on this task: the counts are of the runs
         // that open, and a suggestion only a run that opens can settle (a critical failure) stands.
         const runsShut = contraryShut;
-        // No classification found by tuple, on a pod where classifications are keyed under another record key: unknown, not "not classified".
-        const clsUnknown = cls || clsGraph ? null : absenceUnknown('classification');
         return {
           taskIri: t.record.entityIri, workflowIri: p.workflowIri, name: p.name, description: p.description, textSha256: p.textSha256, current: p.current, performer: p.performer,
           namedParties: p.namedParties.map((a) => {
@@ -2939,7 +2976,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
               ? { unreadable: `${allocationShut.length} decision or plan record(s) the allocation in force may come from cannot be read (${whysOf(allocationShut)}), so the allocation in force may differ from this one` }
               : {}),
           },
-          currentNotPermitted: currentNote,
+          currentNotPermitted: currentNote, ...(permittedUnknown !== null ? { currentNotPermittedUnreadable: permittedUnknown } : {}),
           status: t.record.status, quoteStatus: p.quoteStatus, quotes: p.quotes, ...(p.revision ? { revision: { note: p.revision.note ?? null, answers: p.revision.answers, quotesCleared: p.revision.quotesCleared, by: p.revision.by.did } } : {}),
           ...(p.retirement ? { retirement: { why: p.retirement.why, at: p.retirement.at, by: p.retirement.by.did } } : {}),
           // Both answered from the task's workflow: null (with why) when that cannot be read.
@@ -2966,6 +3003,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           link: taskLink(t.record.entityIri), head: headInfo(t.head), demo: t.record.demo === true,
         };
       });
+      if (permittedShut.length > 0) {
+        unreadable['currentNotPermitted'] = `${permittedShut.length} task(s) have currentNotPermitted null because a decision, plan or classification it is read from cannot be read: whether their allocation in force is one their classification allows is unknown (each says why under currentNotPermittedUnreadable: WRD_RECORD_KEY when one is sealed)`;
+      }
     }
     if (want('plans')) {
       const out2: Obj[] = [];

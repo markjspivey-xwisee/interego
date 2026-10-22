@@ -1665,8 +1665,17 @@ describe('work-redesign bridge', () => {
     expect(JSON.stringify(revise)).not.toMatch(/Three-way match|Match each invoice/);
     // A signed read is never taken from a URL: the GET refuses one (400) before anything is read, valid or not, as an object or as text, and points at the POST form.
     const reviseQuery = `intent=wrd:revise-task&task_iri=${encodeURIComponent(ap.t1)}`;
-    for (const sent of [encodeURIComponent(JSON.stringify(cyRead)), encodeURIComponent(JSON.stringify(await readEnvelope(w, ZED))), 'x', '']) {
-      const inUrl = refused(await http(w, 'GET', 'envelope_template', undefined, `?${reviseQuery}&read_envelope=${sent}`), 400, /A signed read is never sent in a URL/, /POST the same arguments to wrd\.read_envelope_template with read_envelope in the JSON body/);
+    // The object spelled into the query the ways clients spell one: qs / jQuery brackets, dots, an array, or split into payload and signature.
+    const keyed = (v: unknown, prefix: string, open: string, close: string): string[] => (typeof v === 'object' && v !== null
+      ? Object.entries(v).flatMap(([k, x]) => keyed(x, `${prefix}${open}${k}${close}`, open, close))
+      : [`${encodeURIComponent(prefix)}=${encodeURIComponent(String(v))}`]);
+    const asJson = encodeURIComponent(JSON.stringify(cyRead));
+    for (const sent of [
+      `read_envelope=${asJson}`, `read_envelope=${encodeURIComponent(JSON.stringify(await readEnvelope(w, ZED)))}`, 'read_envelope=x', 'read_envelope=',
+      keyed(cyRead, 'read_envelope', '[', ']').join('&'), keyed(cyRead, 'read_envelope', '.', '').join('&'), `read_envelope%5B%5D=${asJson}`,
+      `payload=${encodeURIComponent(JSON.stringify(cyRead.payload))}&signature=${cyRead.signature}`, `note=${cyRead.signature}`, `context=${asJson}`,
+    ]) {
+      const inUrl = refused(await http(w, 'GET', 'envelope_template', undefined, `?${reviseQuery}&${sent}`), 400, /A signed read is never sent in a URL/, /POST the same arguments to wrd\.read_envelope_template with read_envelope in the JSON body/);
       expect(obj(inUrl['iep:resolvedBy'])).toMatchObject({ toolName: 'wrd.read_envelope_template', method: 'POST', intent: 'wrd:read-records' });
       expect([inUrl['template'], inUrl['context'], JSON.stringify(inUrl).includes(t1.descriptorUrl)]).toEqual([undefined, undefined, false]);
     }
@@ -2027,6 +2036,8 @@ describe('work-redesign bridge', () => {
     // The read model says what keyed IRIs still show: the key's fingerprint, which reveals nothing about it, and the segments one kind shares.
     expect(String(k1Read['readExposure'])).toMatch(/urn:wrd:<kind>:k<fingerprint>:<scope>:<id>\. The fingerprint \(8 hex\) names the record key it was derived under and reveals nothing about the key\./);
     expect(String(k1Read['readExposure'])).toMatch(/segments of different kinds or positions never match.*the scope segment groups records of one kind.*the id segment is equal where the id is/);
+    // And what times show whatever the IRIs hide: the records one call writes share their instant, so a task's workflow is public.
+    expect(String(k1Read['readExposure'])).toMatch(/Times link what one call writes: its records share generatedAtTime and validFrom.*which workflow a task belongs to, and its place among the tasks captured with it, are public whatever the IRIs hide/);
     expect(obj(must(arr(k1Read['tasks']).find((t) => t['taskIri'] === ap.t2))['classification'])).toMatchObject({ state: 'ok', regime: 'Knowable' });
     const texts = new Map(arr(k1Read['tasks']).map((t) => [String(t['taskIri']), String(t['textSha256'])]));
     const t1Head = headOfRow(must(arr(k1Read['tasks']).find((t) => t['taskIri'] === ap.t1)));
@@ -2067,6 +2078,14 @@ describe('work-redesign bridge', () => {
       expect(t2Cls).toMatchObject({ state: 'unreadable', trusted: false });
       expect(String(t2Cls['unreadable'])).toMatch(new RegExp(`whether this task is classified is unknown: 1 classification record\\(s\\) on this pod were keyed under another record key and cannot be read.*${graphIriOf(c2Iri)}: .*WRD_RECORD_KEY`));
       expect(obj(must(arr(read['tasks']).find((t) => t['taskIri'] === ap.t1))['classification'])).toMatchObject({ state: 'ok', regime: 'Evident' });
+      // Whether a task's allocation is one its classification allows is not worked out without the classification: unknown where
+      // whether it is classified is (T2, and T3 and T4, which could be classified under K1), answered for T1, whose classification opens.
+      const permitted = [ap.t1, ap.t2, ap.t3, ap.t4].map((iri) => must(arr(read['tasks']).find((t) => t['taskIri'] === iri)))
+        .map((t) => [t['taskIri'], t['currentNotPermitted'], t['currentNotPermittedUnreadable'] === undefined ? 'answered' : 'unknown']);
+      expect(permitted).toEqual([[ap.t1, null, 'answered'], [ap.t2, null, 'unknown'], [ap.t3, null, 'unknown'], [ap.t4, null, 'unknown']]);
+      expect(String(must(arr(read['tasks']).find((t) => t['taskIri'] === ap.t2))['currentNotPermittedUnreadable']))
+        .toMatch(new RegExp(`classification allows is unknown: 1 classification record\\(s\\) on this pod were keyed under another record key.*${graphIriOf(c2Iri)}: .*WRD_RECORD_KEY`));
+      expect(String(obj(read['unreadable'])['currentNotPermitted'])).toMatch(/^3 task\(s\) have currentNotPermitted null because a decision, plan or classification it is read from cannot be read/);
       expect(arr(read['sealed']).map((x) => x['graphIri'])).toEqual([graphIriOf(c2Iri)]);
       expect(obj(ok(await calibration(other))['recordKeyMismatch'])).toMatchObject({ env: 'WRD_RECORD_KEY', podKey: `k${fp1}` });
     }
@@ -2090,7 +2109,7 @@ describe('work-redesign bridge', () => {
     ok(await act(k1, CY, 'ratify_task', { subject: 'description', taskIri: ap.t3, ...bound(t3), verdict: 'ratify' }));
   }, 120_000);
 
-  it('never counts a run or a decision that does not open as absent: contraryEvidence, runs, awaitingReview and the calibration cells and probe signals they feed say they count only what opens, naming WRD_RECORD_KEY', async () => {
+  it('never counts a run or a decision that does not open as absent: contraryEvidence, runs, awaitingReview and the calibration cells and probe signals they feed say they count only what opens, naming WRD_RECORD_KEY, and whether an allocation in force is permitted is unknown, not worked out from the captured one', async () => {
     const w = await world({ recordKey: K1 });
     const { ap, planIri, valuation } = await valuedP1(w);
     const decisionIri = String((await submitValued(w, planIri, valuation))['decisionIri']);
@@ -2152,6 +2171,14 @@ describe('work-redesign bridge', () => {
     reopenRun();
     expect((await list(w))['unreadable']).toBeUndefined();
 
+    // T1 re-classified Turbulent: the allocation the decision put in force is one its classification no longer allows, and the read model says so.
+    ok(await classify(w, ANA, ap.t1, ANSWERS.turbulent));
+    const open = await list(w);
+    expect(obj(t1Of(open)['effective'])).toMatchObject({ level: 'agent-drafts-person-decides', source: 'measured-decision' });
+    expect(String(t1Of(open)['currentNotPermitted'])).toMatch(/^As a decision put it in force, this task is done at agent-drafts-person-decides, which Turbulent work does not permit; the task's classification no longer allows what that decision approved\. Propose a change\.$/);
+    expect(t1Of(open)['currentNotPermittedUnreadable']).toBeUndefined();
+    expect(open['unreadable']).toBeUndefined();
+
     // (b) The measured decision's head no longer opens: its prediction cell is not shown as never measured, and the allocation in force is not certain.
     const reopenDecision = shut(headOfRow(await decisionRow(w, decisionIri)).descriptorUrl);
     const decisionWhy = new RegExp(`counts only the records that can be read: 1 decision record\\(s\\) cannot be \\(${graphIriOf(decisionIri)}: .*WRD_RECORD_KEY.*\\)`);
@@ -2166,7 +2193,16 @@ describe('work-redesign bridge', () => {
     expect(Object.keys(obj(ok(await calibration(w, '?kind=predictions'))['unreadable']))).toEqual(['predictionCells']);
     const b = await list(w);
     expect(String(obj(t1Of(b)['effective'])['unreadable'])).toMatch(new RegExp(`${graphIriOf(decisionIri)}: .*WRD_RECORD_KEY.*so the allocation in force may differ from this one`));
+    // Nor is whether that allocation is permitted worked out from the captured one as if the decision were absent: every classified task
+    // on the decision's workflow (which tasks it changed is in its graph) has currentNotPermitted null and says why, and so does the list.
+    expect(obj(t1Of(b)['effective'])['source']).toBe('captured');
+    for (const t of arr(b['tasks'])) {
+      expect([t['taskIri'], t['currentNotPermitted']]).toEqual([t['taskIri'], null]);
+      expect(String(t['currentNotPermittedUnreadable'])).toMatch(new RegExp(`^whether the allocation in force is one this task's classification allows is unknown: 1 decision or plan record\\(s\\) it may come from cannot be read \\(${graphIriOf(decisionIri)}: .*WRD_RECORD_KEY`));
+    }
+    expect(String(obj(b['unreadable'])['currentNotPermitted'])).toMatch(new RegExp(`^${arr(b['tasks']).length} task\\(s\\) have currentNotPermitted null.*WRD_RECORD_KEY when one is sealed`));
     reopenDecision();
+    expect(String(t1Of(await list(w))['currentNotPermitted'])).toMatch(/^As a decision put it in force, this task is done at agent-drafts-person-decides/);
     expect(ok(await calibration(w))['unreadable']).toBeUndefined();
     expect(pilot1['status']).toBe('reviewed');
   }, 120_000);

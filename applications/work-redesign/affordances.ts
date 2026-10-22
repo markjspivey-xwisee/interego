@@ -358,7 +358,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.envelope_template',
     targetTemplate: '{base}/wrd/envelope_template',
     title: 'Get the payload to sign for a write (unsigned)',
-    description: `For one write intent (or wrd:read-records): the JSON Schema of its payload, and a template — ${TEMPLATE_SHAPE}. Unsigned: it fills only the intent, the pod, issuedAt, nonce, the IRIs you named and the head binding, and nothing read out of a record, unless the operator opened reads, when it also fills ${TEMPLATE_FILLED}. A signed read never goes in its URL: a read_envelope argument is refused (400) before anything is read; POST it to wrd.read_envelope_template instead. Signs nothing and writes nothing.`,
+    description: `For one write intent (or wrd:read-records): the JSON Schema of its payload, and a template — ${TEMPLATE_SHAPE}. Unsigned: it fills only the intent, the pod, issuedAt, nonce, the IRIs you named and the head binding, and nothing read out of a record, unless the operator opened reads, when it also fills ${TEMPLATE_FILLED}. A signed read never goes in its URL: a read_envelope argument, however it is spelled into the query (read_envelope[signature], read_envelope.payload), or any argument carrying a signature, is refused (400) before anything is read; POST it to wrd.read_envelope_template instead. Signs nothing and writes nothing.`,
     method: 'GET',
     annotations: { title: 'Payload template', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     reads: READS,
