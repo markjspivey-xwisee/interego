@@ -126,6 +126,8 @@ export interface Redaction {
 export interface AttemptAct {
   readonly action: string; readonly signer: string; readonly form: EnvelopeForm; readonly payloadSha256: string;
   readonly at: string; readonly serverHeldDemoKey?: boolean;
+  /** The act's signature over the payload whose sha256 is `payloadSha256`, so the act can be re-verified. */
+  readonly signature?: string;
 }
 
 export interface AttemptBody extends RecordCommon {

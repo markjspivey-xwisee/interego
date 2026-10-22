@@ -1,15 +1,21 @@
 /**
  * The inference seam, against a fetch double: what is sent, what is read back, what is retried,
- * what is not, how long a call may take, and that the key never leaks. No network.
+ * what is not, how long a call may take, and that the key never leaks — and how each failure
+ * reaches a caller of the handlers, with nothing recorded. No network.
  */
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { importWallet, sha256 } from '@interego/core';
 import {
   anthropicTextModel, disclosureOf, resolveTextModel, scriptedTextModel, TextModelCallFailed,
-  ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL, type TextModelRequest,
+  ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL, type TextModel, type TextModelRequest,
 } from '../src/model.js';
+import { createPevHandlers, type PevDeps } from '../bridge/handlers.js';
+import { demoScenarioInput, inMemoryPod } from '../demo/run.js';
+import { PEV_ACTION } from '../src/ontology.js';
+import { signEnvelope } from '../src/records.js';
 
 const KEY = 'sk-test-SECRET-0123456789';
 const REQ: TextModelRequest = { system: 'You speak as Sam.', messages: [{ role: 'user', content: 'Hello.' }], maxTokens: 200 };
@@ -220,4 +226,86 @@ describe('the environment stays at the entrypoint', () => {
     const needle = ['process', 'env'].join('.');
     expect(files.filter((f) => readFileSync(f, 'utf8').includes(needle))).toEqual([]);
   });
+});
+
+describe('a model failure reaches the caller as a status, and nothing is recorded', () => {
+  const POD = 'https://pod.example.test/model-seam/';
+  const pod = inMemoryPod();
+  const w = (name: string): ReturnType<typeof importWallet> => importWallet(`0x${sha256(`pev-model-seam:${name}`)}`, 'human', name);
+  const platform = w('platform');
+  const admin = w('admin');
+  const author = w('author');
+  const learner = w('learner');
+  let n = 0;
+  const base: PevDeps = { platformWallet: platform, platformKeyKind: 'demo-fixture', adminAddresses: [admin.address], fetchFn: pod.fetchFn, defaultPodUrl: POD };
+  const sign = async (who: ReturnType<typeof importWallet>, action: string, payload: Record<string, unknown>): Promise<{ payload: Record<string, unknown>; signature: string }> =>
+    signEnvelope(who, { v: 1, action, issuedAt: new Date().toISOString(), nonce: `model-seam-nonce-${String(++n).padStart(6, '0')}`, podUrl: POD, ...payload });
+  let attemptIri = '';
+  const snapshot = (): string => JSON.stringify([...pod.store].sort());
+
+  async function say(deps: Partial<PevDeps>, extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const h = createPevHandlers({ ...base, ...deps });
+    const envelope = await sign(learner, PEV_ACTION.say, { attemptIri, turnIndex: 1, text: 'Can we talk about Thursday?' });
+    return await h['pev.say']!({ envelope, ...extra }) as Record<string, unknown>;
+  }
+  const bridgeModel = (answer: (n: number) => Response | 'never'): TextModel =>
+    anthropicTextModel({ apiKey: KEY, model: 'claude-test', keySource: 'bridge-env', fetchImpl: fakeProvider(answer).fetchImpl, retryBaseMs: 1 });
+  function refusedWith(r: Record<string, unknown>, status: number, code: string): void {
+    expect(r['kind'], JSON.stringify(r).slice(0, 300)).toBe('refusal');
+    expect([r['iep:refusalStatus'], r['iep:refusalReason']]).toEqual([status, code]);
+    expect((r['disclosure'] as Record<string, unknown>)['requestedModel']).toBe('claude-test');
+    expect(JSON.stringify(r)).not.toContain(KEY);
+  }
+
+  it('sets up an attempt in conversation on an in-memory pod', async () => {
+    const h = createPevHandlers(base);
+    for (const [who, role] of [[author, 'author']] as const) {
+      const r = await h['pev.register_role']!({ envelope: await sign(admin, PEV_ACTION.registerRole, { address: who.address, role, change: 'add' }) }) as Record<string, unknown>;
+      expect(r['recorded']).toBe(true);
+    }
+    const sc = await h['pev.author_scenario']!({ envelope: await sign(author, PEV_ACTION.authorScenario, {
+      scenario: demoScenarioInput('missed-deadline'), status: 'published', draftAssistance: { used: false },
+    }) }) as Record<string, unknown>;
+    const st = await h['pev.start_attempt']!({ envelope: await sign(learner, PEV_ACTION.startAttempt, {
+      scenarioIri: sc['scenarioIri'], scenarioVersion: 1, coached: false,
+    }) }) as Record<string, unknown>;
+    expect(st['state']).toBe('in-conversation');
+    attemptIri = String(st['attemptIri']);
+  }, 60_000);
+
+  it('maps a per-request key\'s 404 to 400, and the bridge model\'s 404 to 503 for the operator', async () => {
+    const before = snapshot();
+    const byok = fakeProvider(() => providerError(404, 'not_found_error', 'model: claude-tset'));
+    const r = await say({ byokFetch: byok.fetchImpl }, { llm_api_key: KEY, llm_model: 'claude-test' });
+    refusedWith(r, 400, 'byok-request-not-accepted');
+    expect(r['providerErrorType']).toBe('not_found_error');
+    refusedWith(await say({ model: bridgeModel(() => providerError(404, 'not_found_error', 'model: claude-tset')) }), 503, 'bridge-model-misconfigured');
+    expect(snapshot()).toBe(before);
+  }, 60_000);
+
+  it('maps billing, rate limits, refusals and cut-off answers, recording nothing', async () => {
+    const before = snapshot();
+    refusedWith(await say({ model: bridgeModel(() => providerError(402, 'billing_error', 'no credit')) }), 503, 'model-billing');
+    const limited = await say({ model: bridgeModel(() => providerError(429, 'rate_limit_error', 'slow down', { 'retry-after': '9' })) });
+    refusedWith(limited, 503, 'model-rate-limited');
+    expect(limited['retryAfterSeconds']).toBe(9);
+    refusedWith(await say({ model: bridgeModel(() => providerError(401, 'authentication_error', 'bad key')) }), 503, 'bridge-model-key-not-accepted');
+    const declined = await say({ model: bridgeModel(() => ok({ stop_reason: 'refusal', stop_details: { category: 'cyber' } })) });
+    refusedWith(declined, 502, 'model-declined');
+    expect(declined['category']).toBe('cyber');
+    refusedWith(await say({ model: bridgeModel(() => ok({ stop_reason: 'max_tokens' })) }), 502, 'model-output-cut-off');
+    refusedWith(await say({ model: bridgeModel(() => providerError(500, 'api_error', 'boom')) }), 502, 'model-unreachable');
+    expect(snapshot()).toBe(before);
+  }, 60_000);
+
+  it('maps a timeout to 502 with the limit, and an empty line with no end signal to 502', async () => {
+    const before = snapshot();
+    const t = await say({ model: bridgeModel(() => 'never'), modelTimeouts: { counterpart: { timeoutMs: 50, budgetMs: 200 } } });
+    refusedWith(t, 502, 'model-unreachable');
+    expect([t['timedOut'], t['timeoutMs']]).toEqual([true, 50]);
+    const empty = await say({ model: bridgeModel(() => ok({ content: [{ type: 'text', text: '   ' }] })) });
+    refusedWith(empty, 502, 'model-output-empty');
+    expect((empty['disclosure'] as Record<string, unknown>)['model']).toBe('claude-test-20261001');
+    expect(snapshot()).toBe(before);
+  }, 60_000);
 });
