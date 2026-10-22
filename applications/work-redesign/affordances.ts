@@ -5,8 +5,8 @@
  * Every write takes a signed envelope and nothing else that names a person: identity is the
  * address recovered from the signature, never an input. No affordance takes a key, a seed, a
  * regime, a modal status, a provenance source or a caller DID. Reads take a signed read too
- * (wrd.read_records, wrd.read_calibration); the GET read model answers only when the operator
- * opens reads.
+ * (wrd.read_records, wrd.read_calibration, wrd.read_envelope_template), always in a POST body and
+ * never in a URL; the GET read model answers only when the operator opens reads.
  *
  * `wrdDemoAffordances` holds the one demo-only capability (signing with server-held demo
  * persona keys). Only the offline demo composes it; a production bridge neither advertises nor
@@ -25,11 +25,12 @@ const POD_INPUT: AffordanceInput = {
 /**
  * The envelope input. Its description carries the payload's every field (from src/payloads.ts),
  * so an agent reading only the manifest or MCP tools/list can build the payload it must sign;
- * wrd.envelope_template serves the full JSON Schema and a template filled from the pod.
+ * wrd.envelope_template serves the full JSON Schema and a template, and wrd.read_envelope_template
+ * the same filled from the pod for a signed read.
  */
 const envelope = (intent: EnvelopeIntent, name = 'envelope', required = true): AffordanceInput => ({
   name, type: 'object', required,
-  description: `{payload, signature}: EIP-191 personal_sign over canonicalJson(payload); payload.intent = "${intent}". Every payload also carries podUrl, issuedAt (ISO-8601, within 15 minutes) and a 16-64 character nonce. ${payloadSummary(intent)}. Full JSON Schema and a filled template: wrd.envelope_template with intent=${intent}.`,
+  description: `{payload, signature}: EIP-191 personal_sign over canonicalJson(payload); payload.intent = "${intent}". Every payload also carries podUrl, issuedAt (ISO-8601, within 15 minutes) and a 16-64 character nonce. ${payloadSummary(intent)}. Full JSON Schema and a template: wrd.envelope_template with intent=${intent} (filled from the pod: wrd.read_envelope_template, with a signed read).`,
 });
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } as const;
@@ -75,6 +76,24 @@ const CALIBRATION_OUTPUTS: AffordanceOutput = {
 const LIST_DESCRIPTION = 'Read model of every trusted wrd record on the pod: the vocabulary and published policy, the registry, workflows, tasks (with ratifications, classifications and their status), plans, valuations, decisions with their chains, grants, runs, and records set aside as untrusted, forked or altered.';
 const CALIBRATION_DESCRIPTION = 'How well valued decisions predicted their measured outcomes (band coverage against the nominal 0.8, Brier and ordinal distance, per metric, level and whether there was a comparison group), how well each agent judged its own runs against person reviews, and probe signals reported apart.';
 
+
+const TEMPLATE_SHAPE = 'podUrl, a fresh issuedAt and nonce, and, when you name the record, the head binding (descriptorUrl, graphDigest, recordId); fields left for you to decide are null and listed in fill';
+const TEMPLATE_FILLED = 'what the pod knows (for a valuation, one entry per task the plan changes; for a decision, its valuation; for an outcome, the declared window) and the context it read';
+const TEMPLATE_INPUTS: AffordanceInput[] = [
+  { name: 'intent', type: 'string', required: true, description: 'The write intent.', enum: [...ENVELOPE_INTENTS] },
+  POD_INPUT,
+  { name: 'task_iri', type: 'string', required: false, description: 'The task the payload is about (ratify, classify, revise, agent-run).' },
+  { name: 'workflow_iri', type: 'string', required: false, description: 'The workflow (propose, add a task).' },
+  { name: 'plan_iri', type: 'string', required: false, description: 'The plan (value, submit, acknowledge an assignment).' },
+  { name: 'decision_iri', type: 'string', required: false, description: 'The decision (countersign, record an outcome).' },
+  { name: 'grant_iri', type: 'string', required: false, description: 'The grant (revoke).' },
+  { name: 'subject', type: 'string', required: false, description: 'For wrd:ratify-task: what is ratified.', enum: ['description', 'classification', 'assignment'] },
+];
+const TEMPLATE_OUTPUTS: AffordanceOutput = {
+  description: 'The schema, the template, the paths still to fill, the tool to send it to, and the context read from the pod.',
+  properties: { intent: { type: 'string' }, toolName: { type: 'string' }, schema: { type: 'object' }, template: { type: 'object' }, fill: { type: 'array', items: { type: 'string' } }, context: { type: 'object' }, signing: { type: 'string' }, status: { type: 'string' }, computed: { type: 'boolean' } },
+  required: ['intent', 'schema', 'template', 'fill'],
+};
 
 export const wrdAffordances: ReadonlyArray<Affordance> = [
   {
@@ -338,27 +357,31 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:wrd:envelope-template' as IRI,
     toolName: 'wrd.envelope_template',
     targetTemplate: '{base}/wrd/envelope_template',
-    title: 'Get the payload to sign for a write',
-    description: 'For one write intent (or wrd:read-records): the JSON Schema of its payload, and a template — podUrl, a fresh issuedAt and nonce, and, when you name the record, the head binding (descriptorUrl, graphDigest, recordId). Fields left for you to decide are null and listed in fill. Sent with read_envelope (a signed wrd:read-records envelope from an admin or a registered key), or when the operator opened reads, it also fills what the pod knows (for a valuation, one entry per task the plan changes; for a decision, its valuation; for an outcome, the declared window) and the context it read. Otherwise it fills only the intent, the pod, issuedAt, nonce, the IRIs you named and the head binding, and nothing read out of a record. Signs nothing and writes nothing.',
+    title: 'Get the payload to sign for a write (unsigned)',
+    description: `For one write intent (or wrd:read-records): the JSON Schema of its payload, and a template — ${TEMPLATE_SHAPE}. Unsigned: it fills only the intent, the pod, issuedAt, nonce, the IRIs you named and the head binding, and nothing read out of a record, unless the operator opened reads, when it also fills ${TEMPLATE_FILLED}. A signed read never goes in its URL: a read_envelope argument is refused (400) before anything is read; POST it to wrd.read_envelope_template instead. Signs nothing and writes nothing.`,
     method: 'GET',
     annotations: { title: 'Payload template', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     reads: READS,
+    inputs: TEMPLATE_INPUTS,
+    outputs: TEMPLATE_OUTPUTS,
+  },
+  {
+    action: 'urn:iep:action:wrd:read-envelope-template' as IRI,
+    toolName: 'wrd.read_envelope_template',
+    targetTemplate: '{base}/wrd/read_envelope_template',
+    title: 'Get the payload to sign for a write, filled from the pod (signed read)',
+    description: `wrd.envelope_template with a signed read, carried in the JSON body so it never appears in a URL: the JSON Schema and a template — ${TEMPLATE_SHAPE} — filled with ${TEMPLATE_FILLED}. For an admin or a key in the pod's registry; any other key is refused (403), and a stale read 401, as wrd.read_records refuses them. Signs nothing and writes nothing.`,
+    method: 'POST',
+    annotations: { title: 'Payload template (signed read)', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    reads: READS,
     inputs: [
-      { name: 'intent', type: 'string', required: true, description: 'The write intent.', enum: [...ENVELOPE_INTENTS] },
-      POD_INPUT,
-      { name: 'task_iri', type: 'string', required: false, description: 'The task the payload is about (ratify, classify, revise, agent-run).' },
-      { name: 'workflow_iri', type: 'string', required: false, description: 'The workflow (propose, add a task).' },
-      { name: 'plan_iri', type: 'string', required: false, description: 'The plan (value, submit, acknowledge an assignment).' },
-      { name: 'decision_iri', type: 'string', required: false, description: 'The decision (countersign, record an outcome).' },
-      { name: 'grant_iri', type: 'string', required: false, description: 'The grant (revoke).' },
-      { name: 'subject', type: 'string', required: false, description: 'For wrd:ratify-task: what is ratified.', enum: ['description', 'classification', 'assignment'] },
-      { name: 'read_envelope', type: 'object', required: false, description: 'Optional signed read: the wrd:read-records envelope wrd.read_records takes ({payload, signature}, or its JSON text in a GET query), from an admin or a key in the pod\'s registry. Valid, it fills the whole template and its context; refused (401, 403) like the read itself otherwise.' },
+      {
+        name: 'read_envelope', type: 'object', required: true,
+        description: `The signed read: ${READ_ENVELOPE.description} In the JSON body, never in a URL.`,
+      },
+      ...TEMPLATE_INPUTS,
     ],
-    outputs: {
-      description: 'The schema, the template, the paths still to fill, the tool to send it to, and the context read from the pod.',
-      properties: { intent: { type: 'string' }, toolName: { type: 'string' }, schema: { type: 'object' }, template: { type: 'object' }, fill: { type: 'array', items: { type: 'string' } }, context: { type: 'object' }, signing: { type: 'string' }, status: { type: 'string' }, computed: { type: 'boolean' } },
-      required: ['intent', 'schema', 'template', 'fill'],
-    },
+    outputs: TEMPLATE_OUTPUTS,
   },
   {
     action: 'urn:iep:action:wrd:list-records' as IRI,

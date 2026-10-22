@@ -30,7 +30,9 @@
  *                                   Absent → plaintext records, and the startup says they are
  *                                   world-readable on a pod that serves anonymous reads. Keep a
  *                                   copy: a lost key leaves every sealed record unreadable (409),
- *                                   with no way back
+ *                                   with no way back, and every keyed IRI names its key's
+ *                                   fingerprint, so a bridge with another key (or none) on a pod
+ *                                   holding keyed records refuses every write (409)
  *   WRD_REQUIRE_RECORD_KEY          1 → the bridge does not start (exit 1) without a valid
  *                                   WRD_RECORD_KEY (blank counts as missing), so a deployment
  *                                   cannot fall back to plaintext records. The image sets it;
@@ -39,8 +41,9 @@
  *                                   GETs from anyone who can reach the bridge; otherwise they
  *                                   answer 401, reads need a signed read (wrd.read_records,
  *                                   wrd.read_calibration) from an admin or a registered key, and
- *                                   wrd.envelope_template fills only the shape and the head
- *                                   binding unless it is sent that signed read
+ *                                   the GET wrd.envelope_template fills only the shape and the
+ *                                   head binding; wrd.read_envelope_template fills it all for
+ *                                   that signed read, sent in the POST body (never in a URL)
  *   WRD_PLATFORM_KEY                hex secp256k1 key the bridge signs records with; absent → an
  *                                   EPHEMERAL key, and records written now are not trusted
  *                                   after a restart

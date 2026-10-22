@@ -12,7 +12,8 @@
  * The UI tests check what the browser is served (headers, an inert shell, a client that never
  * writes HTML or style attributes) and that the client calls only what the manifest declares.
  * The page is also run in a jsdom window against a demo-composed bridge: it signs one read per
- * signer and reuses it, and without a signer it meets the 401 of the unsigned read model.
+ * signer and reuses it, sends it for a filled template only in a POST body (no request URL ever
+ * carries it), and without a signer it meets the 401 of the unsigned read model.
  *
  * The Host-guard tests check that a loopback bridge answers only its own names — a page that
  * rebinds its DNS name to 127.0.0.1 is refused (421) before any route — and that bridge/server.ts
@@ -20,10 +21,13 @@
  *
  * On the pod the walk leaves behind (sealed, reads closed): an unsigned wrd.envelope_template
  * holds nothing beyond its allowlist for any intent that reads a record, valued and probe
- * decisions alike, while the same call with a signed read is filled; and no tuple behind an
+ * decisions alike, while the same arguments with a signed read, POSTed to
+ * wrd.read_envelope_template, are filled (and the GET refuses a signed read); no tuple behind an
  * entity IRI (who is assigned which task, which agent works which kind of task, which decision is
- * a probe) can be recovered from the pod's public bytes by recomputing an unkeyed hash. The
- * production server refuses to start without a record key when the image requires one.
+ * a probe) can be recovered from the pod's public bytes by recomputing an unkeyed hash; every
+ * keyed IRI names the key's fingerprint, and no keyed segment is shared between two kinds or
+ * positions. The production server refuses to start without a record key when the image requires
+ * one.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -40,7 +44,7 @@ import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
 import { attachUi, hostAllowlistGuard, isLoopbackBind, servedHostNames, UI_CSP } from '../bridge/ui.js';
 import { runDemo, memoryPod, demoClock, DEMO_REFUSALS, DEMO_POD, DEMO_HOLDER_POD, DEMO_RECORD_KEY, type MemoryPod, type DemoReport } from '../demo/run.js';
-import { h16 } from '../src/records.js';
+import { h16, entityIriKey, iriKeyFingerprint } from '../src/records.js';
 
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8').split('\r\n').join('\n');
 const APP_JS = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
@@ -121,6 +125,8 @@ async function openUi(base: string): Promise<UiPage> {
     log.push({ method: init?.method ?? 'GET', path: url.pathname, query: url.search, status: r.status, body });
     return r;
   };
+  // jsdom does not scroll: opening a panel scrolls to the top, which is a no-op here, not an error.
+  (w as unknown as { scrollTo: () => void }).scrollTo = () => undefined;
   w.eval(APP_JS);
   const d = w.document;
   return {
@@ -283,13 +289,16 @@ describe('work-redesign offline demo and web UI', () => {
       for (const [path, v] of leaves(r['template'])) if (v !== null) expect([intent, path, [intent, DEMO_POD, objOf(r['template'])['issuedAt'], objOf(r['template'])['nonce'], false].includes(v as string)]).toEqual([intent, path, true]);
     }
 
-    // The same calls with a signed read are filled from the records: as an object, or as its JSON text in a GET query.
+    // The same calls with a signed read, through wrd.read_envelope_template, are filled from the records: the read as an object, or as its JSON text.
     const read = await signedRead();
     const filled = async (intent: string, args: Obj, asText = false): Promise<Obj> => {
-      const r = objOf(await h['wrd.envelope_template']!({ intent, ...args, read_envelope: asText ? JSON.stringify(read) : read }));
+      const r = objOf(await h['wrd.read_envelope_template']!({ intent, ...args, read_envelope: asText ? JSON.stringify(read) : read }));
       expect([intent, r['kind'], r['contextWithheld']]).toEqual([intent, undefined, undefined]);
       return r;
     };
+    // The GET form never takes one: it is refused (400) before anything is read, and nothing is filled.
+    const inUrl = objOf(await h['wrd.envelope_template']!({ intent: 'wrd:classify-task', task_iri: tasks[0]?.['taskIri'], read_envelope: JSON.stringify(read) }));
+    expect([inUrl['iep:refusalStatus'], inUrl['error'], inUrl['template']]).toEqual([400, 'A signed read is never sent in a URL.', undefined]);
     const valuedPlan = plans.find((p) => p['planKind'] === 'valued' && rows(p['tasks']).some((x) => x['changed'] === true));
     const changed = rows(objOf(valuedPlan)['tasks']).filter((x) => x['changed'] === true).map((x) => String(x['taskIri'])).sort();
     const valueT = await filled('wrd:value-plan', { plan_iri: objOf(valuedPlan)['planIri'] }, true);
@@ -306,7 +315,7 @@ describe('work-redesign offline demo and web UI', () => {
     expect(['revise', 'retire']).toContain(objOf((await filled('wrd:revise-task', { task_iri: someTask['taskIri'] }))['template'])['op']);
 
     // A signed read the bridge would refuse as a read is refused here too.
-    const refusedWith = async (envelope: unknown): Promise<unknown> => objOf(await h['wrd.envelope_template']!({ intent: 'wrd:value-plan', plan_iri: objOf(valuedPlan)['planIri'], read_envelope: envelope }))['iep:refusalStatus'];
+    const refusedWith = async (envelope: unknown): Promise<unknown> => objOf(await h['wrd.read_envelope_template']!({ intent: 'wrd:value-plan', plan_iri: objOf(valuedPlan)['planIri'], read_envelope: envelope }))['iep:refusalStatus'];
     expect(await refusedWith(await signedRead(demoWallet('zed')))).toBe(403);
     expect(await refusedWith(await signedRead(admin, new Date(NOW.getTime() - 3_600_000).toISOString()))).toBe(401);
     expect(await refusedWith('{not json')).toBe(400);
@@ -349,16 +358,36 @@ describe('work-redesign offline demo and web UI', () => {
     const open = [...pod.bodies.entries()].filter(([u]) => u.startsWith(DEMO_POD) && !u.startsWith(DEMO_HOLDER_POD) && !u.endsWith('.envelope.jose.json'));
     expect(open.length).toBeGreaterThan(50);
     expect(open.some(([u]) => u.endsWith('-graph.trig'))).toBe(false);
-    const iris = new Set(open.flatMap(([, body]) => [...body.matchAll(/urn:wrd:([a-z-]+):([0-9a-f]{16}):([0-9a-f]{16})/g)].map((m) => m[0])));
-    expect(iris.size).toBeGreaterThan(40);
+    const parsed = new Map<string, { kind: string; key: string | null; scope: string; id: string }>();
+    for (const [, body] of open) {
+      for (const m of body.matchAll(/urn:wrd:([a-z-]+):(?:k([0-9a-f]{8}):)?([0-9a-f]{16}):([0-9a-f]{16})/g)) {
+        parsed.set(m[0], { kind: m[1] ?? '', key: m[2] ?? null, scope: m[3] ?? '', id: m[4] ?? '' });
+      }
+    }
+    expect(parsed.size).toBeGreaterThan(40);
     const recovered: string[] = [];
-    for (const iri of iris) {
-      const [, , kind, scope, id] = iri.split(':');
+    for (const [iri, { kind, scope, id }] of parsed) {
       // The registry's IRI is derived from the pod URL alone, which is public: it is never keyed (every bridge on the pod must find it).
       if (kind === 'registry') continue;
-      for (const seg of [scope, id]) if (seg !== undefined && tuples.has(seg)) recovered.push(`${iri} ← ${tuples.get(seg) ?? ''}`);
+      for (const seg of [scope, id]) if (tuples.has(seg)) recovered.push(`${iri} ← ${tuples.get(seg) ?? ''}`);
     }
     expect(recovered).toEqual([]);
+    // Every keyed IRI names the key it was derived under (its public fingerprint), and only the registry is unkeyed.
+    const fingerprint = iriKeyFingerprint(entityIriKey(DEMO_RECORD_KEY));
+    expect([...new Set([...parsed.values()].map((x) => `${x.kind === 'registry' ? 'registry' : 'entity'}:${x.key ?? 'unkeyed'}`))].sort()).toEqual([`entity:${fingerprint}`, 'registry:unkeyed']);
+    // Segments are keyed with their kind and position: no segment value appears under two (kind, position) pairs. Within one pair, equal
+    // segments are the scope a lookup selects by (records of one kind about one workflow, plan, agent or holder), as README and readExposure say.
+    const INTENTIONALLY_SHARED: string[] = [];
+    const uses = new Map<string, Set<string>>();
+    for (const x of parsed.values()) {
+      if (x.key === null) continue;
+      for (const [position, seg] of [['scope', x.scope], ['id', x.id]] as const) uses.set(seg, (uses.get(seg) ?? new Set()).add(`${x.kind}.${position}`));
+    }
+    expect(uses.size).toBeGreaterThan(40);
+    expect([...uses.entries()].filter(([, at]) => at.size > 1).map(([seg, at]) => `${seg}: ${[...at].sort().join(' = ')}`)).toEqual(INTENTIONALLY_SHARED);
+    // The kinds whose scope the bridge selects by are there, each scope shared within its kind only.
+    const kindsSeen = new Set([...parsed.values()].map((x) => x.kind));
+    for (const k of ['workflow', 'task', 'classification', 'plan', 'valuation', 'decision', 'acknowledgement', 'run', 'grant', 'holder-copy']) expect([k, kindsSeen.has(k)]).toEqual([k, true]);
   }, 120_000);
 
   it('serves /ui, /ui/app.js and /ui/app.css with the CSP, nosniff, no-referrer and no-store headers; the shell has no style attribute and app.js no setAttribute(\'style\' and no innerHTML', async () => {
@@ -467,7 +496,7 @@ describe('work-redesign offline demo and web UI', () => {
     expect([bad.status, /WRD_RECORD_KEY must be 64 hex characters/.test(bad.stderr)]).toEqual([1, true]);
   }, 120_000);
 
-  it('the web UI, run in a DOM against a demo-composed bridge, signs one read per signer and reuses it; a signer with no role is refused and can switch back; with nothing to sign it meets the 401', async () => {
+  it('the web UI, run in a DOM against a demo-composed bridge, signs one read per signer and reuses it, sending it only in a POST body, never in a URL; a signer with no role is refused and can switch back; with nothing to sign it meets the 401', async () => {
     const pod = memoryPod();
     const clock = demoClock();
     const seed = (id: string) => importWallet(`0x${sha256Hex(`wrd-ui-dom:${id}`)}`, 'human', id);
@@ -479,9 +508,21 @@ describe('work-redesign offline demo and web UI', () => {
       recordKey: DEMO_RECORD_KEY,
       demoPersonas: new Map([['ana', { id: 'ana', label: 'Ana (demo)', wallet: ana }], ['zed', { id: 'zed', label: 'Zed (demo)', wallet: zed }]]),
     });
-    const payload = { intent: 'wrd:update-registry', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: 'ui-dom-registry-0001', entries: [{ address: ana.address, roles: ['operator'], label: 'Ana', softwareAgent: false, personRef: 'p-ana' }] };
+    const payload = {
+      intent: 'wrd:update-registry', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: 'ui-dom-registry-0001',
+      entries: [{ address: ana.address, roles: ['operator', 'worker'], label: 'Ana', softwareAgent: false, personRef: 'p-ana' }],
+      taskKinds: [{ slug: 'invoice-matching', label: 'Invoice matching', definition: 'Match an invoice to its purchase order.' }],
+    };
     const registered = await handlers['wrd.update_registry']!({ envelope: { payload, signature: await signMessageRaw(admin, canonicalJson(payload)) } }) as Record<string, unknown>;
     expect(registered['status']).toBe('registered');
+    // One task to classify, so the page offers "What this signs".
+    const capture = {
+      intent: 'wrd:capture-workflow', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: 'ui-dom-capture-00001',
+      workflow: { title: 'Accounts payable', unitLabel: 'invoice' },
+      tasks: [{ name: 'Match invoices', description: 'Three-way match before approval.', currentLevel: 'person', personAddress: ana.address, taskKind: 'invoice-matching' }],
+    };
+    const captured = await handlers['wrd.capture_workflow']!({ envelope: { payload: capture, signature: await signMessageRaw(ana, canonicalJson(capture)) } }) as Record<string, unknown>;
+    expect(captured['status']).toBe('captured');
     const l = await listenLoopback(createVerticalBridge({
       verticalName: 'work-redesign', affordances: [...wrdAffordances, ...wrdDemoAffordances], handlers, deploymentUrl: 'http://127.0.0.1', middleware: (a) => attachUi(a, { base: 'http://127.0.0.1' }),
     }));
@@ -518,6 +559,24 @@ describe('work-redesign offline demo and web UI', () => {
     const back = reads().slice(zedReads);
     expect(back.map((r) => `${r.method} ${r.path}`)).toEqual(['POST /wrd/read_records', 'POST /wrd/read_calibration']);
     expect(back.every((r) => JSON.stringify(r.body['envelope']) === firstEnvelope)).toBe(true);
+
+    // "What this signs" with Ana's fresh read: the read goes in the POST body of wrd.read_envelope_template, and the template comes back filled.
+    page.click('Tasks');
+    await page.until(() => page.text().includes('Match invoices'), 'the task');
+    page.click('Classify');
+    await page.until(() => page.text().includes('Sign the answers'), 'the classify panel');
+    const beforeTemplate = page.log.length;
+    page.click('What this signs');
+    await page.until(() => page.text().includes('Template, filled from the pod'), 'the template');
+    const templateCalls = page.log.slice(beforeTemplate).filter((r) => /envelope_template/.test(r.path));
+    expect(templateCalls.map((r) => `${r.method} ${r.path} ${r.status}`)).toEqual(['POST /wrd/read_envelope_template 200']);
+    expect(JSON.stringify(templateCalls[0]?.body['read_envelope'])).toBe(firstEnvelope);
+    expect(templateCalls[0]?.body['intent']).toBe('wrd:classify-task');
+    expect(page.text()).not.toContain('Withheld:');
+    expect(page.text()).toMatch(/"taskTextSha256": "[0-9a-f]{64}"/);
+    // No request the page made, of any kind, carried a signed read in its URL.
+    expect(page.log.filter((r) => r.query.includes('read_envelope') || r.path.includes('read_envelope=')).map((r) => `${r.method} ${r.path}${r.query}`)).toEqual([]);
+    expect(page.log.some((r) => r.method === 'GET' && r.path === '/wrd/envelope_template')).toBe(true);
     expect(page.errors).toEqual([]);
 
     // A production composition and a browser with no wallet: nothing can sign, and the unsigned read model answers 401.

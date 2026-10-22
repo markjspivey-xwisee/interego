@@ -10,8 +10,9 @@
  * decisions, read-back of the platform's content-bound proofs and tamper detection, agent runs,
  * earned and revoked grants, holder copies, pod failure, and every envelope refusal. Reads are
  * signed (the admin signs each read the tests make), as a production bridge requires; the
- * operator pod credential, the served-pods allowlist, sealed records and scoped reads have their
- * own cases at the end.
+ * operator pod credential, the served-pods allowlist, sealed records, scoped reads, a pod keyed
+ * under another record key, and figures counted from records that do not open have their own
+ * cases at the end.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import {
@@ -30,7 +31,7 @@ import {
   readRecord, publishRecord, verifyHolderBundle, operatorPodFetch, openPod, KeyedMutex, StaleHeadError, RecordNotSealableError, WRD_CONTAINER, SEALED_NO_KEY, SEALED_OTHER_KEY,
 } from '../bridge/pod-helpers.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
-import { envelopeSha256, entityIri, entityIriKey, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, type WrdRecord } from '../src/records.js';
+import { envelopeSha256, entityIri, entityIriKey, iriKeyFingerprint, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, type WrdRecord } from '../src/records.js';
 import { normaliseForQuote } from '../src/work.js';
 import { meanRampFactor, monthsBetween, DEMO_LABEL } from '../src/valuation.js';
 import { WRD_NS } from '../src/ontology.js';
@@ -247,10 +248,14 @@ const list = async (w: World, query = ''): Promise<Obj> =>
   ok(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w), ...Object.fromEntries(new URLSearchParams(query)) }), 'read_records');
 const calibration = async (w: World, query = ''): Promise<Res> =>
   http(w, 'POST', 'read_calibration', { envelope: await readEnvelope(w), ...Object.fromEntries(new URLSearchParams(query)) });
-/** wrd.envelope_template as a GET; sent the admin's signed read (as read_envelope, JSON text in the query) unless `signed` is false. */
+/**
+ * A payload template: with the admin's signed read as read_envelope in the POST body of
+ * wrd.read_envelope_template (a signed read never goes in a URL), or, when `signed` is false, the
+ * unsigned GET wrd.envelope_template. `query` is the GET form's query string either way.
+ */
 async function template(w: World, query: string, signed = true): Promise<Res> {
-  const read = signed ? `&read_envelope=${encodeURIComponent(JSON.stringify(await readEnvelope(w)))}` : '';
-  return http(w, 'GET', 'envelope_template', undefined, `?${query}${read}`);
+  if (!signed) return http(w, 'GET', 'envelope_template', undefined, `?${query}`);
+  return http(w, 'POST', 'read_envelope_template', { ...Object.fromEntries(new URLSearchParams(query)), read_envelope: await readEnvelope(w) });
 }
 const taskRow = async (w: World, taskIri: string): Promise<Obj> => must(arr((await list(w))['tasks']).find((t) => t['taskIri'] === taskIri), `task ${taskIri}`);
 /** The head binding a ratify or revise payload carries. */
@@ -443,7 +448,7 @@ describe('work-redesign bridge', () => {
     for (const a of wrdAffordances) expect(typeof production[a.toolName], a.toolName).toBe('function');
     expect(production['wrd.demo_envelope']).toBeUndefined();
     expect(wrdAffordances.map((a) => a.toolName)).not.toContain('wrd.demo_envelope');
-    expect(new Set(wrdAffordances.map((a) => a.toolName)).size).toBe(21);
+    expect(new Set(wrdAffordances.map((a) => a.toolName)).size).toBe(22);
 
     const w = await world();
     const manifestRes = await fetch(`${w.base}/affordances?format=jsonld`, { headers: { accept: 'application/ld+json' } });
@@ -1596,11 +1601,15 @@ describe('work-redesign bridge', () => {
       const shut = await readRecord(entry, POD, w.pod.fetchFn, trusted, undefined, WRD_CONTAINER, key);
       expect(shut).toMatchObject({ record: null, graphContent: '', why, authorship: { signatureValid: true, eligible: true, trusted: false, contentBinding: 'declared' } });
     }
-    // Bridges on the same pod holding another record key, or none: the registry they would read is sealed, so they answer 409 rather than read or write past it.
-    for (const [extra, reason] of [[{ recordKey: K2 }, /sealed to a key this bridge does not hold/], [{}, /holds no record key/]] as const) {
+    // Bridges on the same pod holding another record key, or none: the registry they would read is sealed, so they answer 409 rather than read past it,
+    // and the pod holds IRIs keyed under K1, so they write nothing (409, naming the key fingerprints and WRD_RECORD_KEY).
+    const k1 = `k${iriKeyFingerprint(entityIriKey(K1))}`;
+    for (const [extra, reason, bridgeKey] of [[{ recordKey: K2 }, /sealed to a key this bridge does not hold/, `holds the one with fingerprint k${iriKeyFingerprint(entityIriKey(K2))}`], [{}, /holds no record key/, 'holds no record key']] as const) {
       const other = await sibling(w, extra);
       refused(await http(other, 'POST', 'read_records', { envelope: await readEnvelope(other) }), 409, /altered after signing/, reason);
-      refused(await act(other, ADMIN, 'update_registry', { entries: [person(ZED, ['worker'], 'p-zed', 'Zed')] }), 409, /altered after signing/, reason);
+      const wrote = refused(await act(other, ADMIN, 'update_registry', { entries: [person(ZED, ['worker'], 'p-zed', 'Zed')] }), 409, /derived under a record key this bridge does not hold/,
+        new RegExp(`derived under the record key with fingerprint ${k1}, and this bridge ${bridgeKey} \\(WRD_RECORD_KEY\\)`));
+      expect(wrote['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
     }
     // Under the key the lifecycle goes on, and a holder's download carries the opened graphs, which verify offline.
     ok(await ratify(w, DEE, ap.t2));
@@ -1652,15 +1661,25 @@ describe('work-redesign bridge', () => {
     });
     expect(arr(revise['fill'])).toEqual(['op']);
     expect(revise['context']).toEqual({});
-    expect(String(revise['contextWithheld'])).toMatch(/signed wrd:read-records envelope as read_envelope/);
+    expect(String(revise['contextWithheld'])).toMatch(/POST the same arguments to wrd\.read_envelope_template with a signed wrd:read-records envelope as read_envelope in the JSON body/);
     expect(JSON.stringify(revise)).not.toMatch(/Three-way match|Match each invoice/);
-    // The same call with a registered key's signed read is filled from the record, context and all.
-    const signedRevise = ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(ap.t1)}&read_envelope=${encodeURIComponent(JSON.stringify(cyRead))}`));
+    // A signed read is never taken from a URL: the GET refuses one (400) before anything is read, valid or not, as an object or as text, and points at the POST form.
+    const reviseQuery = `intent=wrd:revise-task&task_iri=${encodeURIComponent(ap.t1)}`;
+    for (const sent of [encodeURIComponent(JSON.stringify(cyRead)), encodeURIComponent(JSON.stringify(await readEnvelope(w, ZED))), 'x', '']) {
+      const inUrl = refused(await http(w, 'GET', 'envelope_template', undefined, `?${reviseQuery}&read_envelope=${sent}`), 400, /A signed read is never sent in a URL/, /POST the same arguments to wrd\.read_envelope_template with read_envelope in the JSON body/);
+      expect(obj(inUrl['iep:resolvedBy'])).toMatchObject({ toolName: 'wrd.read_envelope_template', method: 'POST', intent: 'wrd:read-records' });
+      expect([inUrl['template'], inUrl['context'], JSON.stringify(inUrl).includes(t1.descriptorUrl)]).toEqual([undefined, undefined, false]);
+    }
+    refused(await http(w, 'GET', 'envelope_template', undefined, '?intent=wrd:anything&read_envelope=x'), 400, /never sent in a URL/);
+    // The same arguments POSTed with a registered key's signed read in the body are filled from the record, context and all.
+    const signedRevise = ok(await http(w, 'POST', 'read_envelope_template', { intent: 'wrd:revise-task', task_iri: ap.t1, read_envelope: cyRead }));
     expect(signedRevise['template']).toMatchObject({ op: 'revise', taskIri: ap.t1, descriptorUrl: t1.descriptorUrl, description: 'Three-way match before approval.' });
     expect(signedRevise).not.toHaveProperty('contextWithheld');
     expect(arr(obj(signedRevise['context'])['taskKinds']).length).toBeGreaterThan(0);
-    // A signed read the read model would refuse is refused here too.
-    refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(ap.t1)}&read_envelope=${encodeURIComponent(JSON.stringify(await readEnvelope(w, ZED)))}`), 403, /Only an admin/);
+    // A signed read the read model would refuse is refused here too; the POST form takes none but a signed read.
+    refused(await http(w, 'POST', 'read_envelope_template', { intent: 'wrd:revise-task', task_iri: ap.t1, read_envelope: await readEnvelope(w, ZED) }), 403, /Only an admin/);
+    refused(await http(w, 'POST', 'read_envelope_template', { intent: 'wrd:revise-task', task_iri: ap.t1 }), 401, /signed envelope is required/);
+    refused(await http(w, 'POST', 'read_envelope_template', { intent: 'wrd:revise-task', task_iri: ap.t1, read_envelope: '{not json' }), 400, /malformed/);
     const readT = ok(await http(w, 'GET', 'envelope_template', undefined, '?intent=wrd:read-records'));
     expect(readT).toMatchObject({ toolName: 'wrd.read_records', template: { intent: 'wrd:read-records', podUrl: POD } });
     // The template, signed as it is, is a read.
@@ -1708,7 +1727,7 @@ describe('work-redesign bridge', () => {
     const zed = refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, ZED) }), 502, /manifest could not be read in full/);
     refused(await http(w, 'POST', 'read_calibration', { envelope: await readEnvelope(w, ZED) }), 502, /manifest could not be read in full/);
     refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, CY) }), 502, /manifest could not be read in full/);
-    refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:read-records&read_envelope=${encodeURIComponent(JSON.stringify(await readEnvelope(w, ZED)))}`), 502, /manifest could not be read in full/);
+    refused(await http(w, 'POST', 'read_envelope_template', { intent: 'wrd:read-records', read_envelope: await readEnvelope(w, ZED) }), 502, /manifest could not be read in full/);
     // The admin's signed read still fills a template.
     expect(ok(await template(w, 'intent=wrd:update-registry'))['context']).toHaveProperty('members');
     // The same refusal a write gets in the same state.
@@ -1793,7 +1812,7 @@ describe('work-redesign bridge', () => {
     const listed = await list(w);
     expect(arr(listed['forked'])).toEqual([]);
     expect(headOfRow(await taskRow(w, ap.t1)).descriptorUrl).toBe(t1Head.descriptorUrl);
-    expect(String(must(arr(listed['untrusted']).find((u) => u['descriptorUrl'] === t2Head.descriptorUrl), 'set aside')['why'])).toMatch(/is a version of urn:wrd:task:[0-9a-f:]+graph, not of urn:wrd:task:/);
+    expect(String(must(arr(listed['untrusted']).find((u) => u['descriptorUrl'] === t2Head.descriptorUrl), 'set aside')['why'])).toMatch(/is a version of urn:wrd:task:[0-9a-fk:]+graph, not of urn:wrd:task:/);
     ok(await ratify(w, CY, ap.t1, 'dispute', 'Still being checked'));
   }, 60_000);
 
@@ -1980,6 +1999,177 @@ describe('work-redesign bridge', () => {
     expect(captured['workflowIri']).not.toBe(entityIri('workflow', POD, seed));
     expect(arr(captured['taskIris'] as unknown)).toEqual([entityIri('task', String(captured['workflowIri']), '1', iriKey)]);
   }, 90_000);
+
+  it('names its record key in every keyed IRI: on a pod holding IRIs keyed under another key, a bridge with another key or none writes nothing and looks nothing up by tuple (409, naming WRD_RECORD_KEY), and its read model marks what it cannot know; the key\'s own bridge and a keyless pod go on', async () => {
+    // History written without a key: registry, workflow, tasks, T1's classification.
+    const w = await world();
+    await register(w);
+    const ap = await captureAp(w);
+    ok(await ratify(w, CY, ap.t1));
+    ok(await ratify(w, DEE, ap.t2));
+    ok(await classify(w, ANA, ap.t1, ANSWERS.evident));
+    const keyedIri = /^urn:wrd:[a-z-]+:k[0-9a-f]{8}:/;
+    // A keyless pod goes on keylessly: no IRI carries a key, nothing is mismatched.
+    expect((await manifest(w)).flatMap((e) => e.describes).filter((g) => keyedIri.test(g))).toEqual([]);
+    expect((await list(w))['recordKeyMismatch']).toBeUndefined();
+
+    // The operator sets WRD_RECORD_KEY (K1): T2's classification is a new entity, keyed under K1 and naming K1's fingerprint.
+    const k1 = await sibling(w, { recordKey: K1 });
+    const fp1 = iriKeyFingerprint(entityIriKey(K1));
+    const fp2 = iriKeyFingerprint(entityIriKey(K2));
+    expect([fp1, fp2].every((f) => /^[0-9a-f]{8}$/.test(f)) && fp1 !== fp2).toBe(true);
+    const c2 = ok(await classify(k1, ANA, ap.t2, ANSWERS.knowable));
+    const c2Iri = String(c2['classificationIri']);
+    expect(c2Iri).toBe(entityIri('classification', ap.workflowIri, ap.t2, entityIriKey(K1)));
+    expect(c2Iri).toMatch(new RegExp(`^urn:wrd:classification:k${fp1}:[0-9a-f]{16}:[0-9a-f]{16}$`));
+    const k1Read = await list(k1);
+    expect(k1Read['recordKeyMismatch']).toBeUndefined();
+    // The read model says what keyed IRIs still show: the key's fingerprint, which reveals nothing about it, and the segments one kind shares.
+    expect(String(k1Read['readExposure'])).toMatch(/urn:wrd:<kind>:k<fingerprint>:<scope>:<id>\. The fingerprint \(8 hex\) names the record key it was derived under and reveals nothing about the key\./);
+    expect(String(k1Read['readExposure'])).toMatch(/segments of different kinds or positions never match.*the scope segment groups records of one kind.*the id segment is equal where the id is/);
+    expect(obj(must(arr(k1Read['tasks']).find((t) => t['taskIri'] === ap.t2))['classification'])).toMatchObject({ state: 'ok', regime: 'Knowable' });
+    const texts = new Map(arr(k1Read['tasks']).map((t) => [String(t['taskIri']), String(t['textSha256'])]));
+    const t1Head = headOfRow(must(arr(k1Read['tasks']).find((t) => t['taskIri'] === ap.t1)));
+
+    const before = (await manifest(w)).length;
+    for (const [extra, bridgeKey] of [[{ recordKey: K2 }, `holds the one with fingerprint k${fp2}`], [{}, 'holds no record key']] as const) {
+      const other = await sibling(w, extra);
+      const why = new RegExp(`${graphIriOf(c2Iri)} \\(.*\\) was derived under the record key with fingerprint k${fp1}, and this bridge ${bridgeKey} \\(WRD_RECORD_KEY\\): it derives other IRIs for the same records`);
+      const writes: Array<[string, Res]> = [];
+      // T2 classified again would start a second chain beside the one this bridge cannot see.
+      writes.push(['classify_task', await act(other, ANA, 'classify_task', { taskIri: ap.t2, taskTextSha256: must(texts.get(ap.t2)), answers: ANSWERS.evident })]);
+      writes.push(['ratify_task', await act(other, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1Head), verdict: 'dispute', note: 'not this way' })]);
+      writes.push(['propose_allocation', await propose(other, ap, P1_CHANGES(ap), 'P-other')]);
+      writes.push(['update_registry', await act(other, ADMIN, 'update_registry', { entries: [person(ZED, ['worker'], 'p-zed', 'Zed')] })]);
+      writes.push(['capture_workflow', await act(other, ANA, 'capture_workflow', { workflow: { title: 'Month-end accrual review', unitLabel: 'accrual' }, tasks: [{ name: 'Review accruals', description: 'Check open accruals.', currentLevel: 'person', personAddress: DEE.address, taskKind: 'gl-coding' }] })]);
+      writes.push(['holder_copy', await act(other, CY, 'holder_copy', {})]);
+      for (const tool of ['record_task_map', 'revise_task', 'value_plan', 'submit_decision', 'countersign_decision', 'record_outcome', 'grant_autonomy', 'revoke_grant']) {
+        writes.push([tool, await act(other, ANA, tool, {})]);
+      }
+      const run = await runEnvelope(other, `run-other-${bridgeKey.length}`, ap.t1, 'accepted');
+      writes.push(['log_agent_run', await http(other, 'POST', 'log_agent_run', { run_envelope: run, review_envelope: await reviewEnvelope(other, ELI, run, 'accepted') })]);
+      for (const [tool, r] of writes) {
+        refused(r, 409, /derived under a record key this bridge does not hold/, why);
+        expect([tool, r.body['iep:resolvedBy']]).toEqual([tool, { env: 'WRD_RECORD_KEY' }]);
+      }
+      expect(writes.map(([tool]) => tool).sort()).toEqual([...Object.keys(INTENT), 'log_agent_run'].sort());
+      // Nothing reached the pod.
+      expect((await manifest(w)).length).toBe(before);
+      // A lookup by tuple is refused too: the template for ratifying T2's classification (unsigned or signed).
+      refused(await template(other, `intent=wrd:ratify-task&subject=classification&task_iri=${encodeURIComponent(ap.t2)}`, false), 409, /derived under a record key/, why);
+      refused(await template(other, `intent=wrd:ratify-task&subject=classification&task_iri=${encodeURIComponent(ap.t2)}`), 409, /derived under a record key/, why);
+
+      // The read model answers what it can read, and marks what rests on a record keyed under K1: T2 is not "not classified".
+      const read = await list(other);
+      expect(obj(read['recordKeyMismatch'])).toMatchObject({ env: 'WRD_RECORD_KEY', podKey: `k${fp1}`, bridgeKey: extra.recordKey ? `k${fp2}` : null });
+      expect(String(obj(read['recordKeyMismatch'])['why'])).toMatch(why);
+      const t2Cls = obj(must(arr(read['tasks']).find((t) => t['taskIri'] === ap.t2))['classification'], 'T2 classification');
+      expect(t2Cls).toMatchObject({ state: 'unreadable', trusted: false });
+      expect(String(t2Cls['unreadable'])).toMatch(new RegExp(`whether this task is classified is unknown: 1 classification record\\(s\\) on this pod were keyed under another record key and cannot be read.*${graphIriOf(c2Iri)}: .*WRD_RECORD_KEY`));
+      expect(obj(must(arr(read['tasks']).find((t) => t['taskIri'] === ap.t1))['classification'])).toMatchObject({ state: 'ok', regime: 'Evident' });
+      expect(arr(read['sealed']).map((x) => x['graphIri'])).toEqual([graphIriOf(c2Iri)]);
+      expect(obj(ok(await calibration(other))['recordKeyMismatch'])).toMatchObject({ env: 'WRD_RECORD_KEY', podKey: `k${fp1}` });
+    }
+
+    // The key's own bridge goes on: Dee ratifies T2's classification, and the write lands.
+    ok(await ratifyClassification(k1, DEE, ap.t2));
+    expect((await manifest(w)).length).toBe(before + 1);
+    // A descriptor a pod writer adds, naming a graph keyed under another key but signed by no trusted platform key, stops nothing.
+    const forgedEntity = `urn:wrd:task:k${fp2}:${'0'.repeat(16)}:${'1'.repeat(16)}`;
+    const at = w.clock.now().toISOString();
+    const rogue = ContextDescriptor.create('urn:wrd:record:task-rogue' as IRI).describes(graphIriOf(forgedEntity) as IRI).conformsTo(`${WRD_NS}Task` as IRI)
+      .temporal({ validFrom: at }).agent({ identity: 'did:ethr:0x0000000000000000000000000000000000000bad' as IRI, isSoftwareAgent: false }, 'Author')
+      .selfAsserted('did:ethr:0x0000000000000000000000000000000000000bad' as IRI).hypothetical().build();
+    await publish(rogue, `@prefix wrd: <${WRD_NS}> .\n<${forgedEntity}> a wrd:Task ; wrd:status "captured" ; wrd:payloadJson "{}" .\n`, POD,
+      { fetch: w.pod.fetchFn, containerPath: WRD_CONTAINER, descriptorSlug: 'task-rogue', graphSlug: 'task-rogue-graph' });
+    expect((await manifest(w)).some((e) => e.describes.includes(graphIriOf(forgedEntity)))).toBe(true);
+    const k1After = await list(k1);
+    expect(k1After['recordKeyMismatch']).toBeUndefined();
+    expect(arr(k1After['untrusted']).map((u) => u['descriptorUrl'])).toContain(`${POD}${WRD_CONTAINER}task-rogue.ttl`);
+    const t3 = headOfRow(must(arr(k1After['tasks']).find((t) => t['taskIri'] === ap.t3)));
+    ok(await act(k1, CY, 'ratify_task', { subject: 'description', taskIri: ap.t3, ...bound(t3), verdict: 'ratify' }));
+  }, 120_000);
+
+  it('never counts a run or a decision that does not open as absent: contraryEvidence, runs, awaitingReview and the calibration cells and probe signals they feed say they count only what opens, naming WRD_RECORD_KEY', async () => {
+    const w = await world({ recordKey: K1 });
+    const { ap, planIri, valuation } = await valuedP1(w);
+    const decisionIri = String((await submitValued(w, planIri, valuation))['decisionIri']);
+    await acknowledgeAll(w, planIri);
+    ok(await countersign(w, BO, decisionIri, 'approve'));
+    const csRow = await decisionRow(w, decisionIri);
+    const csAt = String(obj(csRow['countersign'])['at']);
+    const prediction = obj(csRow['prediction']);
+    const pilot1 = await logReviewedRun(w, 'pilot-1', ap.t1, 'accepted', ELI, 'accepted');
+    const pilot2 = await logReviewedRun(w, 'pilot-2', ap.t1, 'accepted', FAY, 'reworked');
+    w.clock.advance(9 * WEEK);
+    const windowEnd = plusWeeks(csAt, 8);
+    const measured = Number(obj(prediction['band'])['p50']) * meanRampFactor(0, monthsBetween(csAt, windowEnd), Number(prediction['rampMonths']));
+    ok(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured: { weeklyValueDelta: measured, comparisonBasis: 'staggered', windowStart: csAt, windowEnd, method: 'Staggered roll-out across two AP teams' } }));
+    const t1Of = (l: Obj): Obj => must(arr(l['tasks']).find((t) => t['taskIri'] === ap.t1), 'T1 row');
+    const contrary = (l: Obj, taskIri: string): Obj => obj(obj(must(arr(l['tasks']).find((t) => t['taskIri'] === taskIri))['classification'])['contraryEvidence'] ?? {});
+
+    // Everything opens: nothing is marked.
+    const base = await list(w);
+    expect(contrary(base, ap.t1)).toMatchObject({ reviewedRuns: 2, criticalFailures: 0 });
+    expect(contrary(base, ap.t1)['unreadable']).toBeUndefined();
+    expect(base['unreadable']).toBeUndefined();
+    expect(arr(base['runs']).map((r) => [r['reviewed'], r['unreadable']])).toEqual([[2, undefined]]);
+    const baseCal = ok(await calibration(w));
+    expect(baseCal['unreadable']).toBeUndefined();
+    expect(arr(baseCal['predictionCells']).map((c) => [c['samples'], c['unreadable']])).toEqual([[1, undefined]]);
+    expect(arr(baseCal['agentCells']).map((c) => [c['samples'], c['unreadable']])).toEqual([[2, undefined]]);
+
+    /** Seal one version shut (its ciphertext changed on the pod); the returned function restores it. */
+    const shut = (descriptorUrl: string): (() => void) => {
+      const url = sealedGraphUrl(w, descriptorUrl);
+      const original = must(w.pod.bodies.get(url));
+      corruptSealed(w, url);
+      return () => w.pod.tamper(url, must(w.pod.bodies.get(url)), original);
+    };
+
+    // (a) The reviewed run Fay reworked no longer opens. Which task, agent and kind of task it is about is not public: every figure counted from runs says so.
+    const reopenRun = shut(String(pilot2['descriptorUrl']));
+    const runGraph = graphIriOf(String(pilot2['runIri']));
+    const runWhy = new RegExp(`counts only the records that can be read: 1 run record\\(s\\) cannot be \\(${runGraph}: .*WRD_RECORD_KEY.*\\)`);
+    const a = await list(w);
+    for (const t of [ap.t1, ap.t2, ap.t3, ap.t4]) {
+      expect(String(contrary(a, t)['unreadable'])).toMatch(runWhy);
+    }
+    // The counts are of the runs that open; whether to suggest re-classifying is unknown (no critical failure among them settles it).
+    expect(contrary(a, ap.t1)).toMatchObject({ reviewedRuns: 1, criticalFailures: 0, suggestReclassify: null });
+    expect(contrary(a, ap.t2)).toMatchObject({ reviewedRuns: 0, suggestReclassify: null });
+    expect(arr(a['runs']).map((r) => r['reviewed'])).toEqual([1]);
+    expect(String(must(arr(a['runs'])[0])['unreadable'])).toMatch(runWhy);
+    expect(Object.keys(obj(a['unreadable'])).sort()).toEqual(['awaitingReview', 'contraryEvidence', 'runs']);
+    for (const v of Object.values(obj(a['unreadable']))) expect(String(v)).toMatch(runWhy);
+    expect(arr(a['sealed']).map((x) => x['graphIri'])).toEqual([runGraph]);
+    const aCal = ok(await calibration(w));
+    expect(Object.keys(obj(aCal['unreadable'])).sort()).toEqual(['agentCells', 'awaitingAPerson']);
+    expect(arr(aCal['agentCells']).map((c) => c['samples'])).toEqual([1]);
+    expect(String(must(arr(aCal['agentCells'])[0])['unreadable'])).toMatch(runWhy);
+    expect(arr(aCal['predictionCells']).map((c) => [c['samples'], c['unreadable']])).toEqual([[1, undefined]]);
+    expect(obj(aCal['probeSignals'])['unreadable']).toBeUndefined();
+    reopenRun();
+    expect((await list(w))['unreadable']).toBeUndefined();
+
+    // (b) The measured decision's head no longer opens: its prediction cell is not shown as never measured, and the allocation in force is not certain.
+    const reopenDecision = shut(headOfRow(await decisionRow(w, decisionIri)).descriptorUrl);
+    const decisionWhy = new RegExp(`counts only the records that can be read: 1 decision record\\(s\\) cannot be \\(${graphIriOf(decisionIri)}: .*WRD_RECORD_KEY.*\\)`);
+    const bCal = ok(await calibration(w));
+    expect(arr(bCal['predictionCells'])).toEqual([]);
+    expect(Object.keys(obj(bCal['unreadable'])).sort()).toEqual(['predictionCells', 'probeSignals']);
+    expect(String(obj(bCal['unreadable'])['predictionCells'])).toMatch(decisionWhy);
+    expect(String(obj(bCal['probeSignals'])['unreadable'])).toMatch(decisionWhy);
+    expect(arr(bCal['agentCells']).map((c) => [c['samples'], c['unreadable']])).toEqual([[2, undefined]]);
+    // Only one section asked for: only its mark.
+    expect(Object.keys(obj(ok(await calibration(w, '?kind=agents'))['unreadable'] ?? {}))).toEqual([]);
+    expect(Object.keys(obj(ok(await calibration(w, '?kind=predictions'))['unreadable']))).toEqual(['predictionCells']);
+    const b = await list(w);
+    expect(String(obj(t1Of(b)['effective'])['unreadable'])).toMatch(new RegExp(`${graphIriOf(decisionIri)}: .*WRD_RECORD_KEY.*so the allocation in force may differ from this one`));
+    reopenDecision();
+    expect(ok(await calibration(w))['unreadable']).toBeUndefined();
+    expect(pilot1['status']).toBe('reviewed');
+  }, 120_000);
 
   it('answers 502, not 200, when the pod refuses a write with 403', async () => {
     const w = await world();

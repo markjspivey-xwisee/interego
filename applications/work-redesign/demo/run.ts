@@ -445,11 +445,12 @@ export async function runDemo(opts: {
   };
   /**
    * Ask the bridge for the payload a write needs, filled from the pod (what a Path-A agent does
-   * before it signs). Reads are closed, so the walk sends its signed read along: without one the
-   * template carries only the shape and the head binding.
+   * before it signs). Reads are closed, so the walk sends its signed read along, in the POST body
+   * of wrd.read_envelope_template (never in a URL): without one the GET wrd.envelope_template
+   * carries only the shape and the head binding.
    */
   const template = async (intent: string, query: Obj): Promise<Res> =>
-    call('wrd.envelope_template', { intent, ...query, read_envelope: JSON.stringify(await readEnvelope()) });
+    call('wrd.read_envelope_template', { intent, ...query, read_envelope: await readEnvelope() });
   const planRow = async (planIri: string): Promise<Obj> => arr((await list({ kind: 'plans' }))['plans']).find((p) => p['planIri'] === planIri) ?? {};
   const decisionRow = async (decisionIri: string): Promise<Obj> => arr((await list({ kind: 'decisions' }))['decisions']).find((d) => d['decisionIri'] === decisionIri) ?? {};
   const countersign = async (who: Persona, decisionIri: string, verdict: 'approve' | 'decline', extra: Obj = {}): Promise<Res> => {
@@ -486,8 +487,8 @@ export async function runDemo(opts: {
     const manifest = obj(JSON.parse(await (await fetch(`${base}/affordances?format=jsonld`, { headers: { accept: 'application/ld+json' } })).text()));
     for (const a of arr(manifest['affordances'])) tools.set(str(a['toolName']), { url: str(a['target']), method: str(a['method']) });
     const production = wrdAffordances.map((a) => a.toolName);
-    expect('1. the manifest lists the 21 production affordances and the two demo-only ones (signer, clock)', 'GET /affordances',
-      production.length === 21 && production.every((t) => tools.has(t)) && tools.has('wrd.demo_envelope') && tools.has('wrd.demo_advance_clock') && tools.size === 23
+    expect('1. the manifest lists the 22 production affordances and the two demo-only ones (signer, clock)', 'GET /affordances',
+      production.length === 22 && production.every((t) => tools.has(t)) && tools.has('wrd.demo_envelope') && tools.has('wrd.demo_advance_clock') && tools.size === 24
         && [...tools.values()].every((t) => t.url.startsWith(`${base}/wrd/`)),
       `${tools.size} declared; every target is on ${base}`);
     // Only this server's own names are answered: a page that rebinds its DNS name to 127.0.0.1 is refused before any route.
@@ -844,7 +845,7 @@ export async function runDemo(opts: {
       obj(arr(p3.body['tasks']).find((r) => r['taskIri'] === t1)?.['grant'])['evidenceFromThisTask'] === true ? null : 'no grant evidence from this task');
     const p3Template = await template('wrd:value-plan', { plan_iri: p3Iri });
     const p3Draft = obj(p3Template.body['template']);
-    okStep('25. eli asks for the valuation payload P3 needs: a template keyed by its changed task, with what is left to fill', 'wrd.envelope_template', p3Template, () =>
+    okStep('25. eli asks for the valuation payload P3 needs: a template keyed by its changed task, with what is left to fill', 'wrd.read_envelope_template', p3Template, () =>
       p3Draft['planIri'] === p3Iri && Object.keys(obj(obj(p3Draft['inputs'])['tasks'])).join() === t1 && strings(p3Template.body['fill']).includes('inputs.currency')
         && obj(p3Template.body['schema'])['title'] === 'wrd:value-plan payload' ? null : JSON.stringify(p3Template.body).slice(0, 300));
     const p3Inputs: Obj = {

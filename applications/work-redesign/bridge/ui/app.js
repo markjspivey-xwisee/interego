@@ -72,7 +72,7 @@ const TAB_OF = {
   'wrd.value_plan': 'value', 'wrd.submit_decision': 'decisions', 'wrd.countersign_decision': 'decisions', 'wrd.record_outcome': 'decisions',
   'wrd.log_agent_run': 'agents', 'wrd.grant_autonomy': 'agents', 'wrd.revoke_grant': 'agents', 'wrd.holder_copy': 'me',
   'wrd.list_records': 'tasks', 'wrd.calibration': 'calibration', 'wrd.read_records': 'tasks', 'wrd.read_calibration': 'calibration',
-  'wrd.envelope_template': 'tasks', 'wrd.demo_advance_clock': 'decisions',
+  'wrd.envelope_template': 'tasks', 'wrd.read_envelope_template': 'tasks', 'wrd.demo_advance_clock': 'decisions',
 };
 
 // ── Small pure helpers ───────────────────────────────────────────────────────────────────
@@ -273,17 +273,18 @@ function showResult(tool, r) { S.result = { tool, ...r }; render(); }
 
 /**
  * Show exactly what a write signs: the payload's schema and a template the bridge fills from the
- * pod. Reads only. When this signer holds a fresh signed read for this pod, it goes along as
- * read_envelope, so the bridge fills the whole template; without one (or if the bridge refuses
- * it), the template carries only the shape and the head binding.
+ * pod. Reads only. When this signer holds a fresh signed read for this pod, it goes as
+ * read_envelope in the POST body of wrd.read_envelope_template, never in a URL, so the bridge
+ * fills the whole template; without one (or if the bridge refuses it), the unsigned GET
+ * wrd.envelope_template carries only the shape and the head binding.
  */
 async function showPayload(intent, args) {
   const base = { intent, pod_url: S.pod || undefined, ...(args || {}) };
   const hit = S.reads.get(`${readSigner()}|${S.pod}`);
   const fresh = readSigner() !== '' && hit && Date.now() - hit.at < READ_ENVELOPE_MS;
-  let r = await call('wrd.envelope_template', fresh ? { ...base, read_envelope: JSON.stringify(hit.envelope) } : base);
+  let r = fresh ? await call('wrd.read_envelope_template', { ...base, read_envelope: hit.envelope }) : await call('wrd.envelope_template', base);
   if (!r.ok && fresh && (r.status === 401 || r.status === 403)) { S.reads.delete(`${readSigner()}|${S.pod}`); r = await call('wrd.envelope_template', base); }
-  if (!r.ok) { showResult('wrd.envelope_template', r); return; }
+  if (!r.ok) { showResult(fresh ? 'wrd.read_envelope_template' : 'wrd.envelope_template', r); return; }
   openPanel(`What “${intent}” signs`, h('div', null,
     h('p', { class: 'small muted', text: `${r.body.signing} Sent to ${r.body.toolName}. Fields still yours to decide: ${(r.body.fill ?? []).join(', ') || 'none'}.` }),
     r.body.contextWithheld ? h('p', { class: 'small warnbox', text: r.body.contextWithheld }) : null,
@@ -421,7 +422,9 @@ function strip() {
       d.demoRecords > 0 ? h('p', { class: 'small' }, chip('demo', 'demo'), ` ${d.demoRecords} of ${d.records} records here are ${d.demoLabel}.`) : null,
       altered + forked + untrusted > 0 ? h('p', { class: 'warnbox small' },
         `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`) : null,
-      (d.sealed ?? []).length > 0 ? h('p', { class: 'badbox small', text: `${d.sealed.length} record(s) are sealed and this bridge cannot open them. ${d.sealedNote ?? ''}` }) : null),
+      (d.sealed ?? []).length > 0 ? h('p', { class: 'badbox small', text: `${d.sealed.length} record(s) are sealed and this bridge cannot open them. ${d.sealedNote ?? ''}` }) : null,
+      d.recordKeyMismatch ? h('p', { class: 'badbox small', text: `Another record key: ${d.recordKeyMismatch.why}` }) : null,
+      d.unreadable ? h('p', { class: 'badbox small', text: `Counted only from the records that can be read: ${Object.keys(d.unreadable).join(', ')}.` }) : null),
     h('div', { class: 'stack' },
       signerNode(),
       me ? h('div', { class: 'row small' }, 'Acting address ', h('code', { text: me }),
@@ -893,8 +896,9 @@ function tasksView() {
         h('td', null, statusChip(t.status), t.revision ? h('div', { class: 'small', text: `revised; answers ${t.revision.answers.length} dispute(s)` }) : null),
         h('td', null, c && c.state === 'ok' ? [h('strong', { text: c.regime }), ` ${c.method} `, statusChip(c.status), c.current ? null : chip('classified against an earlier description', 'warn'),
           c.disagreement.length ? chip(`${c.disagreement.length} party disagrees`, 'bad') : null,
-          c.contraryEvidence?.suggestReclassify ? h('div', { class: 'warnbox small' }, c.contraryEvidence.note, ' ', h('button', { text: 'Re-classify', on: { click: () => classifyPanel(t) } })) : null]
-          : c ? chip(`classification ${c.state}: not trusted`, 'bad') : chip('not classified', 'warn')),
+          c.contraryEvidence?.suggestReclassify ? h('div', { class: 'warnbox small' }, c.contraryEvidence.note, ' ', h('button', { text: 'Re-classify', on: { click: () => classifyPanel(t) } })) : null,
+          c.contraryEvidence?.unreadable ? h('div', { class: 'badbox small', text: c.contraryEvidence.unreadable }) : null]
+          : c ? [chip(`classification ${c.state}: not trusted`, 'bad'), c.unreadable ? h('div', { class: 'badbox small', text: c.unreadable }) : null] : chip('not classified', 'warn')),
         h('td', null,
           h('button', { text: 'Open', on: { click: () => { location.hash = `task=${encodeURIComponent(t.taskIri)}`; } } }),
           h('button', { text: 'Copy link', on: { click: () => copyText(new URL(t.link, location.href).href) } }),
@@ -1468,6 +1472,8 @@ function calibrationView() {
   if (!c) return h('section', null, h('h2', { text: 'Calibration' }), h('p', { class: 'muted', text: 'Reading…' }));
   return h('section', null,
     h('h2', { text: 'Calibration: did the predictions land?' }),
+    c.recordKeyMismatch ? h('p', { class: 'badbox small', text: `Another record key: ${c.recordKeyMismatch.why}` }) : null,
+    Object.values(c.unreadable ?? {}).map((why) => h('p', { class: 'badbox small', text: why })),
     h('p', { class: 'small muted', text: `A prediction cell counts measured decisions whose value landed in the ramp-adjusted P10–P90 band (nominal coverage ${c.nominalBandCoverage}). Cells stay Hypothetical below ${c.minSamples} samples. Inconclusive outcomes are excluded and counted.` }),
     table(['Kind', 'Samples', 'In band', 'Mean Brier', 'Mean level distance', 'Status', 'Excluded (inconclusive)', 'Excluded (short window)', 'Ramp-adjusted', 'Dispositions', ''],
       (c.predictionCells ?? []).map((x) => h('tr', null, h('td', null, x.label, x.basisClass === 'uncontrolled' ? chip('no comparison group', 'warn') : null),
@@ -1541,6 +1547,7 @@ function agentsView() {
     table(['Agent', 'Kind of task', 'Model', '#Reviewed', '#Acted under grant', 'Cost per run (agent-reported, reviewed runs)'], (d.runs ?? []).map((r) => h('tr', null,
       h('td', { text: labelOf(r.agentAddress) }), h('td', { text: r.taskKind }), h('td', { text: r.model }), h('td', { class: 'num', text: String(r.reviewed) }), h('td', { class: 'num', text: String(r.actedUnderGrant) }),
       h('td', { text: r.reportedCost ? `${num(r.reportedCost.mean, 4)} ${r.reportedCost.currency} over ${r.reportedCost.runs}` : '—' })))),
+    d.unreadable?.runs ? h('p', { class: 'badbox small', text: d.unreadable.runs }) : null,
     h('details', { class: 'card' }, h('summary', { text: 'Log a run' }),
       S.mode === 'demo' ? [
         field('Signed by the agent (demo persona)', select(agentPersonas.map((p) => [p.id, p.label]), st.persona, (e) => { st.persona = e.target.value; })),
@@ -1556,7 +1563,8 @@ function agentsView() {
       input('', (e) => { st.note = e.target.value; }, { placeholder: 'review note (optional)', size: 40 }),
       h('button', { class: 'primary', text: 'Sign and log', on: { click: logRun } })),
     h('h3', { text: 'Awaiting a person' }),
-    (d.awaitingReview ?? []).length === 0 ? h('p', { class: 'muted small', text: 'No run acted under a grant awaits review.' })
+    d.unreadable?.awaitingReview ? h('p', { class: 'badbox small', text: d.unreadable.awaitingReview }) : null,
+    (d.awaitingReview ?? []).length === 0 ? h('p', { class: 'muted small', text: d.unreadable?.awaitingReview ? 'No run that can be read awaits review.' : 'No run acted under a grant awaits review.' })
       : (d.awaitingReview ?? []).map((a) => h('div', { class: 'small' }, `${labelOf(a.agentAddress)} on “${taskName(a.taskIri)}” (${a.taskKind}) `, demoChip(a), h('button', { text: 'Review', on: { click: () => reviewPanel(a) } }))),
     h('h3', { text: 'Grants' }),
     table(['Agent', 'Kind of task', 'Principal', 'Model', 'Status', 'Evidence', ''], (d.grants ?? []).map((g) => h('tr', null,

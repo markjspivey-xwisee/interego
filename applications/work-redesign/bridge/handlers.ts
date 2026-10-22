@@ -13,16 +13,20 @@
  * the pod's role registry, whose every change an admin signed. Separation of duties compares
  * those person references, never keys, and never anything a caller typed.
  *
- * Reads are scoped: wrd.read_records and wrd.read_calibration answer a signed read
- * (wrd:read-records) from an admin or a key the registry holds, decided on the whole manifest;
- * the GET read model (wrd.list_records, wrd.calibration) answers 401 unless the operator opens it
- * (publicReads), and wrd.envelope_template then fills only an allowlist (the caller's own IRIs and
- * the head binding) unless it is sent the same signed read. Every call names a pod this bridge
- * serves, or is refused (403) before the pod is read.
+ * Reads are scoped: wrd.read_records, wrd.read_calibration and wrd.read_envelope_template answer
+ * a signed read (wrd:read-records), always in a POST body, from an admin or a key the registry
+ * holds, decided on the whole manifest; the GET read model (wrd.list_records, wrd.calibration)
+ * answers 401 unless the operator opens it (publicReads), and the GET wrd.envelope_template fills
+ * only an allowlist (the caller's own IRIs and the head binding) and refuses a signed read in its
+ * URL (400). Every call names a pod this bridge serves, or is refused (403) before the pod is read.
  *
  * With a record key, the entity IRIs this bridge derives from a tuple (an address and a task, an
- * agent and a kind of task, a plan and "probe") are keyed with it, so the public manifest does not
- * give the tuple away; records written before the key keep their unkeyed IRIs and are still found.
+ * agent and a kind of task, a plan and "probe") are keyed with it, each segment separated by kind
+ * and position, so the public manifest does not give the tuple away; records written before the
+ * key keep their unkeyed IRIs and are still found. Every keyed IRI carries the key's public
+ * fingerprint: when the pod holds one derived under a key this bridge does not hold (or any, and
+ * it holds none), the bridge would find those records absent, so it refuses every write and every
+ * lookup by tuple (409, naming WRD_RECORD_KEY) and its read model marks what it cannot know.
  *
  * Every refusal is a typed `refuse()` with an HTTP status; every success carries an outcome
  * flag. No environment reads: bridge/server.ts composes this with its configuration.
@@ -52,7 +56,7 @@ import {
 import { payloadSchema, isEnvelopeIntent } from '../src/payloads.js';
 import {
   openEnvelope, verifyStoredEnvelope, NonceLedger, envelopeSha256, didOf, isAddress, isIsoInstant, entityIri, entityIriKey, scopePrefix, graphIriOf,
-  recordIdFor, normalisePodUrl, illFormedTextPath, DEFAULT_ENVELOPE_WINDOW,
+  recordIdFor, normalisePodUrl, illFormedTextPath, iriKeyFingerprint, fingerprintOfIri, kindOfIri, DEFAULT_ENVELOPE_WINDOW, ENTITY_IRI_PATTERN,
   type DecisionPayload, type DescriptorSpec, type EntityKind, type EnvelopeIntent, type ExpertEvidenceBasis, type MeasuredValue,
   type MeasurementPlan, type PartyVerdict, type PlanTaskRow, type PlatformRef, type PolicyRef, type RecordKind, type RecordOf,
   type RecordSigner, type RegistryMember, type RegistryTaskKind, type SignedEnvelope, type TaskPayload, type WrdRecord,
@@ -107,11 +111,15 @@ export type WrdHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
 const READS_SIGNED = 'Reads through this bridge need a signed read from an admin or a key in this pod\'s registry.';
 const READS_PUBLIC = 'Anyone who can reach this bridge can read every record on this pod (the operator opened reads).';
-const AT_REST_SEALED = 'Record graphs are sealed to this bridge\'s record key on the pod, and the entity IRIs this bridge derives from who and what a record is about are keyed with it (records written before the key keep their unkeyed IRIs). Descriptors and the manifest stay public: each record\'s kind, its signers and whether each signed as curator or validator, its modal status and confidence, its times, and the versions it supersedes and was derived from. What those show together stays public too: for example, a task version signed by a validator alone and left Hypothetical is a dispute by one party, and a decision that carries a confidence and derives from a valuation is a valued one.';
+/** What keyed entity IRIs still show, said exactly (README, "Keyed entity IRIs"). */
+const KEYED_IRI_LINKS = 'A keyed IRI is urn:wrd:<kind>:k<fingerprint>:<scope>:<id>. The fingerprint (8 hex) names the record key it was derived under and reveals nothing about the key. Each segment is keyed with its kind and position, so segments of different kinds or positions never match, and equal segments mean the same thing in the same kind: the scope segment groups records of one kind by what they are scoped to (tasks, classifications, plans and decisions of one workflow; valuations and acknowledgements of one plan; runs of one agent on one kind of task; grants of one agent; holder copies of one holder; every workflow on the pod), which the bridge needs to select them from the manifest, and the id segment is equal where the id is (a task\'s position across workflows, one person\'s acknowledgements of one task across plans, grants on one kind of task across agents, valuations of the same inputs, runs given the same runId).';
+const AT_REST_SEALED = 'Record graphs are sealed to this bridge\'s record key on the pod, and the entity IRIs this bridge derives from who and what a record is about are keyed with it (records written before the key keep their unkeyed IRIs). Descriptors and the manifest stay public: each record\'s kind, its signers and whether each signed as curator or validator, its modal status and confidence, its times, and the versions it supersedes and was derived from. What those show together stays public too: for example, a task version signed by a validator alone and left Hypothetical is a dispute by one party, and a decision that carries a confidence and derives from a valuation is a valued one. ' + KEYED_IRI_LINKS;
 const AT_REST_PLAIN = 'Records are written in plaintext: anyone the pod lets read wrd/records/ reads them, and a pod that serves anonymous reads serves them to everyone.';
 const SIGNED_READ_NEEDED = 'Reading records through this bridge needs a signed read.';
-const CONTEXT_WITHHELD = 'Withheld: without a signed read this template carries only the intent, the pod, issuedAt, nonce, the IRIs you named and the head binding (descriptorUrl, graphDigest, recordId). Fields that depend on what a record says (a task\'s text digest, a plan\'s tasks, a decision\'s kind, valuation or window) are left empty. Send a signed wrd:read-records envelope as read_envelope, from an admin or a key in the registry, to have them filled.';
-const SEALED_RECORDS = 'Records this bridge cannot open (sealed to another WRD_RECORD_KEY, or their sealed bytes changed on the pod) are listed here and never read as absent: a figure that would depend on one is marked rather than computed without it.';
+const CONTEXT_WITHHELD = 'Withheld: without a signed read this template carries only the intent, the pod, issuedAt, nonce, the IRIs you named and the head binding (descriptorUrl, graphDigest, recordId). Fields that depend on what a record says (a task\'s text digest, a plan\'s tasks, a decision\'s kind, valuation or window) are left empty. POST the same arguments to wrd.read_envelope_template with a signed wrd:read-records envelope as read_envelope in the JSON body, from an admin or a key in the registry, to have them filled.';
+const SIGNED_READ_IN_URL = 'A signed read is never sent in a URL.';
+const KEY_MISMATCH = 'This pod holds records whose IRIs were derived under a record key this bridge does not hold.';
+const SEALED_RECORDS = 'Records this bridge cannot open (sealed to another WRD_RECORD_KEY, or their sealed bytes changed on the pod) are listed here and never read as absent: a figure that would depend on one is marked rather than computed without it (see unreadable).';
 const NEXT_RECLASSIFY = 'Re-classify this task, then propose a plan.';
 const CONTRARY_NOTE = 'Reviewed runs on this task disagree with its classification often enough to look again; nothing changes until someone re-classifies it.';
 const UNACKNOWLEDGED = 'named by the operator, not acknowledged';
@@ -173,8 +181,10 @@ const decline = (status: number, error: string, why: string, resolvedBy?: Record
 /** The affordance that resolves a refusal. */
 const via = (tool: string): Record<string, unknown> => ({ action: `urn:iep:action:wrd:${tool.replace(/_/g, '-')}`, toolName: `wrd.${tool}` });
 const viaToolName = (toolName: string): Record<string, unknown> => via(toolName.replace(/^wrd\./, ''));
+/** The tools a signed read (wrd:read-records) is sent to, always in a POST body. */
+type SignedReadTool = 'read_records' | 'read_calibration' | 'read_envelope_template';
 /** The signed read that resolves a refusal: the tool, and the intent its envelope carries. */
-const readVia = (tool: 'read_records' | 'read_calibration'): Record<string, unknown> => ({ ...via(tool), intent: 'wrd:read-records' });
+const readVia = (tool: SignedReadTool): Record<string, unknown> => ({ ...via(tool), intent: 'wrd:read-records' });
 
 function need(p: Obj, key: string, max: number, path = 'payload'): string {
   const v = p[key];
@@ -185,9 +195,10 @@ function need(p: Obj, key: string, max: number, path = 'payload'): string {
 function maybe(p: Obj, key: string, max: number, path = 'payload'): string | undefined {
   return p[key] === undefined ? undefined : need(p, key, max, path);
 }
+const ENTITY_IRI = new RegExp(ENTITY_IRI_PATTERN);
 function needIri(p: Obj, key: string): string {
   const v = p[key];
-  if (typeof v !== 'string' || !/^urn:wrd:[a-z-]+:[0-9a-f]{16}:[0-9a-f]{16}$/.test(v)) throw decline(400, BAD_PAYLOAD, `payload.${key} must be a wrd entity IRI`);
+  if (typeof v !== 'string' || !ENTITY_IRI.test(v)) throw decline(400, BAD_PAYLOAD, `payload.${key} must be a wrd entity IRI`);
   return v;
 }
 const GRAPH_DIGEST = /^graph-nquads-sha256:[0-9a-f]{64}$/;
@@ -395,6 +406,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const readExposure = `${publicReads ? READS_PUBLIC : READS_SIGNED} ${recordKey ? AT_REST_SEALED : AT_REST_PLAIN}`;
   /** The key entity IRIs are derived under: present only with a record key. */
   const iriKey = recordKey ? entityIriKey(recordKey) : undefined;
+  /** The public fingerprint every IRI this bridge keys carries (see iriKeyFingerprint); null without a record key. */
+  const ownFingerprint = iriKey === undefined ? null : iriKeyFingerprint(iriKey);
 
   let platformP: Promise<PlatformSigner> | null = null;
   const platform = (): Promise<PlatformSigner> => {
@@ -455,6 +468,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (admins.has(opened.signer) || memberOf(await registryOf(call), opened.signer)) {
       if (!ledger.claim(opened.signer, nonce, call.now)) throw decline(409, REPLAYED, `${opened.signer} already used the nonce ${nonce} on this bridge`);
     }
+    // Nothing is written on a pod holding records keyed under another record key (write() checks again).
+    await refuseKeyConflict(call);
     return { ...call, actor: opened.signer, actorDid: opened.did, payload: opened.payload, envelope: opened.envelope, nonce };
   }
 
@@ -478,7 +493,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
    * registry when the version that removed this key sits behind a segment that did not answer,
    * so for any signer but an admin an incomplete walk is refused as a write's is (502).
    */
-  async function authoriseRead(call: Call, raw: unknown, tool: 'read_records' | 'read_calibration'): Promise<void> {
+  async function authoriseRead(call: Call, raw: unknown, tool: SignedReadTool): Promise<void> {
     const opened = openEnvelope(raw, 'wrd:read-records', call.podUrl, call.now, window);
     if (!opened.ok) throw new Declined(refuse(opened.status, opened.error, opened.why, opened.status === 401 ? readVia(tool) : undefined));
     if (admins.has(opened.signer)) return;
@@ -498,6 +513,45 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     return headIn(await call.view.graph(graphIriOf(entity)), kind);
   }
 
+  // ── IRIs derived under another record key ───────────────────────────────────────────
+
+  /** A graph on the pod whose IRI was derived under a record key this bridge does not hold. */
+  interface KeyConflict { readonly fingerprint: string; readonly graphIri: string; readonly descriptorUrl: string }
+  /** An IRI keyed under another key than this bridge's (or under any, when this bridge holds none). */
+  const foreignKeyed = (iri: string): boolean => { const fp = fingerprintOfIri(iri); return fp !== null && fp !== ownFingerprint; };
+  const conflicts = new WeakMap<PodView, Promise<KeyConflict | null>>();
+  /**
+   * The first graph on the pod keyed under another record key, or null; looked for once per call,
+   * in the manifest the call walks anyway. Only a version a trusted platform key signed where its
+   * proof says counts (as for every version), so an entry a pod writer adds to the manifest does
+   * not stop the bridge. Such a graph means this bridge derives other IRIs than the records on the
+   * pod carry: a lookup by tuple would find nothing and answer from that absence, and a write would
+   * start a second chain beside the one it cannot see.
+   */
+  function keyConflict(call: Call): Promise<KeyConflict | null> {
+    let found = conflicts.get(call.view);
+    if (!found) {
+      found = (async (): Promise<KeyConflict | null> => {
+        for (const e of await call.view.entries()) {
+          if (!e.describes.some(foreignKeyed)) continue;
+          const l = await call.view.read(e);
+          if (l.authorship.eligible && foreignKeyed(l.graphIri)) return { fingerprint: fingerprintOfIri(l.graphIri) ?? '', graphIri: l.graphIri, descriptorUrl: l.descriptorUrl };
+        }
+        return null;
+      })();
+      conflicts.set(call.view, found);
+    }
+    return found;
+  }
+  /** Why a bridge facing a KeyConflict cannot answer from what it finds, naming WRD_RECORD_KEY. */
+  const keyConflictWhy = (c: KeyConflict): string =>
+    `${c.graphIri} (${c.descriptorUrl}) was derived under the record key with fingerprint k${c.fingerprint}, and this bridge ${ownFingerprint === null ? 'holds no record key' : `holds the one with fingerprint k${ownFingerprint}`} (WRD_RECORD_KEY): it derives other IRIs for the same records, so it would find them absent`;
+  /** Refuse (409, naming WRD_RECORD_KEY) a write or a lookup by tuple on a pod holding IRIs keyed under another record key. */
+  async function refuseKeyConflict(call: Call): Promise<void> {
+    const c = await keyConflict(call);
+    if (c) throw decline(409, KEY_MISMATCH, `${keyConflictWhy(c)}; it writes nothing and looks nothing up by tuple until it runs with that key`, { env: 'WRD_RECORD_KEY' });
+  }
+
   // ── Entity IRIs derived from a tuple: keyed when this bridge holds a record key ─────────
 
   /** The IRIs a tuple can have on this pod: the keyed form first (with a record key), then the unkeyed form records written without one carry. */
@@ -512,15 +566,18 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
    * The entity a tuple names on this pod: the first form whose graph has a current version
    * (trusted or not, so a sealed or altered one is found and refused, never passed over), which
    * keeps an existing unkeyed chain growing under its own IRI; otherwise the form a new entity is
-   * written under.
+   * written under. On a pod holding IRIs keyed under another record key, refused (409): the
+   * entity may be there under a form this bridge cannot derive.
    */
   async function resolveEntity(call: Call, kind: EntityKind, scope: string, id: string): Promise<string> {
+    await refuseKeyConflict(call);
     const forms = iriForms(kind, scope, id);
     for (const e of forms) if ((await call.view.graph(graphIriOf(e))).state !== 'absent') return e;
     return forms[0] ?? newEntity(kind, scope, id);
   }
-  /** Every graph on the pod under a scope, in either form. */
+  /** Every graph on the pod under a scope, in either form; refused (409) as resolveEntity is on a pod keyed under another record key. */
   async function scopedGraphs(call: Call, kind: EntityKind, scope: string): Promise<string[]> {
+    await refuseKeyConflict(call);
     const out = new Set<string>();
     for (const prefix of scopeForms(kind, scope)) for (const g of await call.view.graphIris(prefix)) out.add(g);
     return [...out].sort();
@@ -582,6 +639,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     readonly signers: readonly RecordSigner[]; readonly head: Head<K> | null; readonly tag?: string;
     readonly validFrom?: string; readonly validUntil?: string; readonly confidence?: number; readonly derivedFrom?: readonly string[];
   }): Promise<Written> {
+    await refuseKeyConflict(call);
     if (w.head) await refuseReused(call, w.head.graph);
     const version = w.head ? w.head.record.version + 1 : 1;
     const graphIri = graphIriOf(w.entity);
@@ -1397,17 +1455,18 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const WEEK_MS = 7 * 86_400_000;
 
   /**
-   * The signed read a template may be filled with: `read_envelope`, the wrd:read-records envelope
-   * wrd.read_records takes, as an object or (in a GET query) its JSON text. Undefined when none.
+   * The signed read wrd.read_envelope_template fills a template with: `read_envelope` in the JSON
+   * body, the wrd:read-records envelope wrd.read_records takes, as an object or its JSON text.
+   * Undefined when none was sent (authoriseRead then answers 401).
    */
   function readEnvelopeArg(args: Obj): unknown {
     const v = args['read_envelope'];
     if (v === undefined || v === null || v === '') return undefined;
     if (typeof v !== 'string') return v;
-    const malformed = (why: string): Declined => decline(400, 'The envelope is malformed.', why, readVia('read_records'));
+    const malformed = (why: string): Declined => decline(400, 'The envelope is malformed.', why, readVia('read_envelope_template'));
     if (v.length > 20_000) throw malformed('read_envelope is longer than 20000 characters');
     let parsed: unknown;
-    try { parsed = JSON.parse(v); } catch { throw malformed('read_envelope must be {payload, signature}, or its JSON text in a query string'); }
+    try { parsed = JSON.parse(v); } catch { throw malformed('read_envelope must be {payload, signature}, or its JSON text'); }
     const ill = illFormedTextPath(parsed, 'read_envelope');
     if (ill !== null) throw decline(400, NOT_WELL_FORMED, `${ill} holds a lone UTF-16 surrogate`);
     return parsed;
@@ -1417,23 +1476,24 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
    * The payload a write intent needs: its JSON Schema and a template, with the fields the bridge
    * may fill filled and the rest null and listed in `fill`. Reads only.
    *
-   * WHAT IT FILLS DEPENDS ON WHO ASKS. With reads opened by the operator, or with a valid signed
-   * read (`read_envelope`: the wrd:read-records envelope wrd.read_records takes, from an admin or a
-   * registered key), it fills what the pod knows: the plan's changed tasks for a valuation, the
-   * valuation a decision binds, the declared window for an outcome, and the context it read.
-   * Otherwise it fills an ALLOWLIST and nothing else: intent, podUrl, issuedAt, nonce, the IRIs the
-   * caller named, and the head binding of each record they name (descriptorUrl, graphDigest,
-   * recordId: what the public descriptors carry). Nothing else in that template is read out of a
-   * graph, and its shape does not depend on one either: it never branches on a plan's kind, a
-   * decision's kind or a task's retirement.
+   * WHAT IT FILLS DEPENDS ON WHO ASKS. Through wrd.read_envelope_template, with a valid signed read
+   * (`read_envelope` in the POST body: the wrd:read-records envelope wrd.read_records takes, from an
+   * admin or a registered key), or through wrd.envelope_template with reads opened by the operator,
+   * it fills what the pod knows: the plan's changed tasks for a valuation, the valuation a decision
+   * binds, the declared window for an outcome, and the context it read. Otherwise it fills an
+   * ALLOWLIST and nothing else: intent, podUrl, issuedAt, nonce, the IRIs the caller named, and the
+   * head binding of each record they name (descriptorUrl, graphDigest, recordId: what the public
+   * descriptors carry). Nothing else in that template is read out of a graph, and its shape does
+   * not depend on one either: it never branches on a plan's kind, a decision's kind or a task's
+   * retirement. `signed` is true for wrd.read_envelope_template, which needs the signed read.
    */
-  async function envelopeTemplate(args: Obj): Promise<unknown> {
+  async function envelopeTemplate(args: Obj, signed: boolean): Promise<unknown> {
     const intent = args['intent'];
     if (!isEnvelopeIntent(intent)) return { ...refuse(400, 'Unknown intent.', `intent must be one of ${Object.keys(TOOL_OF_INTENT).join(', ')}`) };
-    const signedRead = readEnvelopeArg(args);
+    const signedRead = signed ? readEnvelopeArg(args) : undefined;
     const call = await openCall(args, signedRead, false);
-    if (signedRead !== undefined) await authoriseRead(call, signedRead, 'read_records');
-    const full = publicReads || signedRead !== undefined;
+    if (signed) await authoriseRead(call, signedRead, 'read_envelope_template');
+    const full = publicReads || signed;
     // The registry is read only to fill context, which an unsigned call does not get.
     const reg = full ? await registryOf(call) : null;
     const arg = (k: string): string | null => (typeof args[k] === 'string' && args[k] !== '' ? String(args[k]) : null);
@@ -1636,7 +1696,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         Object.assign(context, { targetPodUrl: 'optional: a pod you hold; without it the bundle is returned for download' });
         break;
       case 'wrd:read-records':
-        Object.assign(context, { tools: ['wrd.read_records', 'wrd.read_calibration', 'wrd.envelope_template (as read_envelope)'], reuse: 'the same envelope reads again until issuedAt leaves the window; its nonce is not spent' });
+        Object.assign(context, {
+          tools: ['wrd.read_records', 'wrd.read_calibration', 'wrd.read_envelope_template (as read_envelope)'],
+          reuse: 'the same envelope reads again until issuedAt leaves the window; its nonce is not spent',
+          neverInAUrl: 'send it only in a POST body: a URL is kept in server, proxy and browser logs, and whoever holds a copy reads every record until it is stale',
+        });
         break;
     }
     const answer = { intent, toolName: TOOL_OF_INTENT[intent], schema: payloadSchema(intent), template: t, fill: nullPaths(t) };
@@ -2597,7 +2661,19 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       return { holder: { address: me, did: call.actorDid }, status, targetPodUrl: target, copied, bundle, receiptUrl: w.descriptorUrl, recorded: true };
     },
 
-    'wrd.envelope_template': async (args) => envelopeTemplate(args),
+    // The unsigned template is a GET: its arguments travel in the URL, where server, proxy and
+    // browser logs keep them. A signed read reads every record until it is stale, so one sent
+    // here is refused before anything is read, and the refusal points at the POST form.
+    'wrd.envelope_template': async (args) => {
+      if (args['read_envelope'] !== undefined) {
+        return { ...refuse(400, SIGNED_READ_IN_URL,
+          'read_envelope was sent to wrd.envelope_template, whose arguments travel in the URL, where logs keep them; nothing was read or filled. POST the same arguments to wrd.read_envelope_template with read_envelope in the JSON body, and sign a new read: one that has been in a URL should be taken as seen by whoever keeps those logs',
+          { ...via('read_envelope_template'), method: 'POST', intent: 'wrd:read-records' }) };
+      }
+      return envelopeTemplate(args, false);
+    },
+
+    'wrd.read_envelope_template': async (args) => envelopeTemplate(args, true),
 
     'wrd.list_records': async (args) => {
       if (!publicReads) return unsignedRead('read_records');
@@ -2656,6 +2732,34 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   /** The graphs whose current version is sealed and does not open, with why. */
   const sealedOf = (snap: Snapshot): Obj[] => snap.graphs.filter((s) => s.g.heads.some(isSealedShut))
     .map((s) => ({ graphIri: s.graphIri, why: s.g.heads.find(isSealedShut)?.why ?? null }));
+  /** Why a graph cannot be used: the head's own why, which names WRD_RECORD_KEY when it is sealed and does not open. */
+  const whyUnusable = (s: SnapGraph): string => `${s.graphIri}: ${s.g.state === 'forked' ? 'more than one version claims to be current'
+    : s.g.heads.find(isSealedShut)?.why ?? s.g.heads[0]?.why ?? 'its current version is not trusted'}`;
+  /** The whys of some graphs, the first three spelled out (every one is listed under sealed, altered or forked). */
+  const whysOf = (shut: readonly SnapGraph[]): string =>
+    `${shut.slice(0, 3).map(whyUnusable).join('; ')}${shut.length > 3 ? `; and ${shut.length - 3} more, listed under sealed, altered or forked` : ''}`;
+  /**
+   * Graphs of one kind whose current version cannot be used (altered, forked, or sealed and not
+   * opened). The kind is public in every entity IRI, keyed or not, so a figure counted from records
+   * of a kind knows when one of them is missing from the count, even when it cannot tell which.
+   */
+  const shutOfKind = (snap: Snapshot, kind: EntityKind): SnapGraph[] =>
+    snap.graphs.filter((s) => kindOfIri(s.graphIri) === kind && (s.g.state === 'altered' || s.g.state === 'forked'));
+  /**
+   * The mark a figure counted from records of these kinds carries when any of them cannot be read
+   * (null when every one opens): the figure is the count of the records that open, and says so,
+   * never presented as if the others were absent.
+   */
+  const countedWithout = (snap: Snapshot, kinds: readonly EntityKind[], figure: string): string | null => {
+    const shut = kinds.flatMap((k) => shutOfKind(snap, k));
+    return shut.length === 0 ? null
+      : `${figure} counts only the records that can be read: ${shut.length} ${kinds.join(' or ')} record(s) cannot be (${whysOf(shut)}), so ${figure} may differ`;
+  };
+  /** What the read model says when the pod holds IRIs keyed under another record key (see keyConflict). */
+  const keyConflictNote = (c: KeyConflict): Obj => ({
+    why: `${keyConflictWhy(c)}. Writes and lookups by tuple are refused (409), and every answer below that rests on a record keyed under that key is marked unreadable.`,
+    env: 'WRD_RECORD_KEY', podKey: `k${c.fingerprint}`, bridgeKey: ownFingerprint === null ? null : `k${ownFingerprint}`,
+  });
 
   async function listRecords(call: Call, args: Obj): Promise<Obj> {
     const kind = kindArg(args);
@@ -2666,6 +2770,25 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const reg = await registryOf(call);
     const snap = await snapshot(call.view);
     const policy = reg.policy;
+    const conflict = await keyConflict(call);
+    /**
+     * Records of a kind keyed under another record key: this bridge cannot derive their IRIs from a
+     * tuple, so when a lookup by tuple finds nothing, the record may be one of them. Null when the
+     * absence is an answer (no record of that kind is keyed under another key).
+     */
+    const unknownAbsence = new Map<EntityKind, string | null>();
+    const absenceUnknown = (entityKind: EntityKind): string | null => {
+      if (!unknownAbsence.has(entityKind)) {
+        const foreign = shutOfKind(snap, entityKind).filter((x) => foreignKeyed(x.graphIri));
+        unknownAbsence.set(entityKind, foreign.length === 0 ? null
+          : `${foreign.length} ${entityKind} record(s) on this pod were keyed under another record key and cannot be read, and this may be one of them (${whysOf(foreign)})${conflict ? `: ${keyConflictWhy(conflict)}` : ''}`);
+      }
+      return unknownAbsence.get(entityKind) ?? null;
+    };
+    // Figures counted from runs: their kind is public, which reviewed run each is about is not.
+    const runsUnreadable = (figure: string): string | null => countedWithout(snap, ['run'], figure);
+    /** Every task's contraryEvidence counts reviewed runs: one that does not open may be on any task. */
+    const contraryShut = want('tasks') ? runsUnreadable('contraryEvidence') : null;
 
     const tasksRec = recordsOf(snap, 'Task');
     const graphByIri = new Map(snap.graphs.map((s) => [s.graphIri, s]));
@@ -2699,13 +2822,14 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       iris.map((e) => graphByIri.get(graphIriOf(e))).find((s) => s !== undefined && (s.g.state === 'altered' || s.g.state === 'forked'));
     /**
      * Decisions on a workflow that cannot be read: the allocation in force may come from one of
-     * them, so the read model says so rather than show the captured allocation as certain.
+     * them, so the read model says so rather than show the captured allocation as certain. A
+     * decision keyed under another record key cannot be placed on a workflow (its scope is keyed),
+     * so it counts against every workflow.
      */
-    const unreadableDecisions = (workflowIri: string): string[] => scopeForms('decision', workflowIri)
-      .flatMap((prefix) => snap.graphs.filter((s) => s.graphIri.startsWith(prefix) && (s.g.state === 'altered' || s.g.state === 'forked')).map((s) => s.graphIri));
-    /** Why a graph cannot be used: the head's own why, which names WRD_RECORD_KEY when it is sealed and does not open. */
-    const whyUnusable = (s: SnapGraph): string => `${s.graphIri}: ${s.g.state === 'forked' ? 'more than one version claims to be current'
-      : s.g.heads.find(isSealedShut)?.why ?? s.g.heads[0]?.why ?? 'its current version is not trusted'}`;
+    const unreadableDecisions = (workflowIri: string): string[] => [...new Set([
+      ...scopeForms('decision', workflowIri).flatMap((prefix) => snap.graphs.filter((s) => s.graphIri.startsWith(prefix) && (s.g.state === 'altered' || s.g.state === 'forked')).map((s) => s.graphIri)),
+      ...shutOfKind(snap, 'decision').filter((s) => foreignKeyed(s.graphIri)).map((s) => s.graphIri),
+    ])];
     /**
      * The plans that cannot be read of decisions on a workflow that put their plan in force: the
      * allocation such a decision put in force is its plan's, so without the plan it is unknown.
@@ -2722,6 +2846,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     };
     /** Graphs whose line an answer walked and found cut short by an earlier version that does not open (see PodView.line). */
     const cutLines: Obj[] = [];
+    /** Sections counted from records that cannot all be read, with why (rows say so too where they can). */
+    const unreadable: Obj = {};
     const listedTasks = new Set(workflowsRec.flatMap((w) => [...w.record.payload.taskIris, ...w.record.payload.retiredTaskIris]));
     const workflowByIri = new Map(workflowsRec.map((w) => [w.record.entityIri, w.record]));
     const acks = new Map(recordsOf(snap, 'Acknowledgement').map((a) => [`${a.record.payload.planIri}|${a.record.payload.taskIri}|${a.record.payload.personAddress}`, a.record]));
@@ -2766,8 +2892,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         const effGrant = effectiveGrant.get(t.record.entityIri);
         // The allocation in force may come from a decision that cannot be read, or from the plan of one that can.
         const allocationShut = [
-          ...unreadableDecisions(p.workflowIri).map((g) => { const s = graphByIri.get(g); return s ? whyUnusable(s) : g; }),
-          ...unreadablePlansInForce(p.workflowIri).map(whyUnusable),
+          ...unreadableDecisions(p.workflowIri).map((g) => graphByIri.get(g)).filter((x): x is SnapGraph => x !== undefined),
+          ...unreadablePlansInForce(p.workflowIri),
         ];
         // The workflow says whether it lists this task: when it cannot be read, that is unknown, not "no".
         const wfShut = unusable([p.workflowIri]);
@@ -2780,6 +2906,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         const critical = reviewed.filter((r) => r.record.payload.review?.verdict === 'critical-failure').length;
         const share = reviewed.length > 0 ? reworked / reviewed.length : 0;
         const suggest = (reviewed.length >= policy.grantPolicy.contraryMinRuns && share > policy.grantPolicy.contraryReworkShare) || critical > 0;
+        // A run that cannot be read may be a reviewed run on this task: the counts are of the runs
+        // that open, and a suggestion only a run that opens can settle (a critical failure) stands.
+        const runsShut = contraryShut;
+        // No classification found by tuple, on a pod where classifications are keyed under another record key: unknown, not "not classified".
+        const clsUnknown = cls || clsGraph ? null : absenceUnknown('classification');
         return {
           taskIri: t.record.entityIri, workflowIri: p.workflowIri, name: p.name, description: p.description, textSha256: p.textSha256, current: p.current, performer: p.performer,
           namedParties: p.namedParties.map((a) => {
@@ -2805,7 +2936,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
               : { ...p.current, source: 'captured' }),
             // A decision on this workflow, or the plan of one in force, that cannot be read may have changed the allocation: never shown as certain.
             ...(allocationShut.length > 0 && !(effGrant?.active === null)
-              ? { unreadable: `${allocationShut.length} decision or plan record(s) the allocation in force may come from cannot be read (${allocationShut.join('; ')}), so the allocation in force may differ from this one` }
+              ? { unreadable: `${allocationShut.length} decision or plan record(s) the allocation in force may come from cannot be read (${whysOf(allocationShut)}), so the allocation in force may differ from this one` }
               : {}),
           },
           currentNotPermitted: currentNote,
@@ -2823,12 +2954,15 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
             status: cls.record.status, current: cls.record.payload.taskTextSha256 === p.textSha256,
             ratifications: cls.record.payload.ratifications.map((r) => ({ party: r.party, verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at })),
             disagreement: cls.record.payload.ratifications.filter((r) => r.answers).map((r) => ({ party: r.party, answers: r.answers })),
-            contraryEvidence: reviewed.length > 0 ? { reviewedRuns: reviewed.length, reworkedShare: Math.round(share * 10_000) / 10_000, criticalFailures: critical, suggestReclassify: suggest, note: CONTRARY_NOTE } : null,
+            contraryEvidence: reviewed.length > 0 || runsShut !== null ? {
+              reviewedRuns: reviewed.length, reworkedShare: Math.round(share * 10_000) / 10_000, criticalFailures: critical,
+              suggestReclassify: runsShut === null ? suggest : critical > 0 ? true : null, note: CONTRARY_NOTE, ...(runsShut !== null ? { unreadable: runsShut } : {}),
+            } : null,
             state: 'ok', trusted: true, head: headInfo(cls.head), demo: cls.record.demo === true,
           } : clsGraph && (clsGraph.g.state === 'altered' || clsGraph.g.state === 'forked') ? {
             state: clsGraph.g.state, trusted: false,
             heads: clsGraph.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, contentBinding: h.authorship.contentBinding, why: h.why })),
-          } : null,
+          } : clsUnknown !== null ? { state: 'unreadable', trusted: false, unreadable: `whether this task is classified is unknown: ${clsUnknown}` } : null,
           link: taskLink(t.record.entityIri), head: headInfo(t.head), demo: t.record.demo === true,
         };
       });
@@ -2849,22 +2983,26 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         if (wfShut) shut.push(whyUnusable(wfShut));
         for (const row of p.tasks) {
           const tShut = unusable([row.taskIri]);
-          const cShut = unusable(iriForms('classification', p.workflowIri, row.taskIri));
-          if (tShut) shut.push(whyUnusable(tShut));
-          if (cShut) shut.push(whyUnusable(cShut));
+          const cGraph = unusable(iriForms('classification', p.workflowIri, row.taskIri));
           const t = tasksRec.find((x) => x.record.entityIri === row.taskIri);
           const c = classificationByTask.get(row.taskIri);
+          // The classification is found by tuple: not found where classifications are keyed under another record key, it is unknown, not absent.
+          const cShut = cGraph ? whyUnusable(cGraph) : c ? null : absenceUnknown('classification');
+          if (tShut) shut.push(whyUnusable(tShut));
+          if (cShut !== null) shut.push(cShut);
           if (row.changed && (t?.record.status === 'retired' || (wf && !wf.record.payload.taskIris.includes(row.taskIri)))) { stale = RETIRED_IN_PLAN; break; }
           if (tShut) continue;
           if (!t || t.record.payload.textSha256 !== p.taskTextSha256[row.taskIri]) { stale = STALE_PLAN; break; }
-          if (cShut) continue;
+          if (cShut !== null) continue;
           if (!c || c.head.descriptorUrl !== p.classificationHeads[row.taskIri]) { stale = STALE_PLAN; break; }
         }
         const assignments = p.tasks.filter((r) => r.changed && r.proposed.personAddress).map((r) => {
           const a = acks.get(`${pl.record.entityIri}|${r.taskIri}|${r.proposed.personAddress ?? ''}`);
           // An acknowledgement that exists and cannot be read is not "not acknowledged".
-          const shut = a ? undefined : unusable(iriForms('acknowledgement', ...ackTuple(pl.record.entityIri, r.taskIri, r.proposed.personAddress ?? '')));
-          if (shut) return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state: 'unreadable', label: `${UNREADABLE_ACK}: ${shut.g.heads[0]?.why ?? shut.g.state}` };
+          const shutGraph = a ? undefined : unusable(iriForms('acknowledgement', ...ackTuple(pl.record.entityIri, r.taskIri, r.proposed.personAddress ?? '')));
+          // Found by tuple: where acknowledgements are keyed under another record key, one not found is unknown, not "not acknowledged".
+          const shut = shutGraph ? shutGraph.g.heads[0]?.why ?? shutGraph.g.state : a ? null : absenceUnknown('acknowledgement');
+          if (shut !== null) return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state: 'unreadable', label: `${UNREADABLE_ACK}: ${shut}` };
           const state = a ? a.status : 'not-acknowledged';
           return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state, ...(a?.payload.note ? { note: a.payload.note } : {}), label: state === 'acknowledged' ? ACKNOWLEDGED : state === 'objected' ? OBJECTED : UNACKNOWLEDGED };
         });
@@ -2944,11 +3082,17 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         agg.set(k, a);
         if (r.record.status === 'acted-under-grant') awaiting.push({ runIri: r.record.entityIri, agentAddress: p.agentAddress, taskIri: p.taskIri, taskKind: p.taskKind, runEnvelope: p.runEnvelope, demo: r.record.demo === true });
       }
+      // A run that cannot be read belongs to an agent and kind of task this bridge cannot see: every row, and the section, says so.
+      const shut = runsUnreadable('runs');
       out['runs'] = [...agg.values()].map((a) => ({
         agentAddress: a.agentAddress, taskKind: a.taskKind, model: a.model, reviewed: a.reviewed, actedUnderGrant: a.actedUnderGrant,
         ...(a.costs.length > 0 ? { reportedCost: { runs: a.costs.length, mean: a.costs.reduce((x, y) => x + y, 0) / a.costs.length, currency: a.currency, basis: REPORTED_COST_BASIS } } : {}),
+        ...(shut !== null ? { unreadable: shut } : {}),
       }));
       out['awaitingReview'] = awaiting;
+      if (shut !== null) unreadable['runs'] = shut;
+      const awaitingShut = runsUnreadable('awaitingReview');
+      if (awaitingShut !== null) unreadable['awaitingReview'] = awaitingShut;
     }
     out['untrusted'] = [
       ...snap.graphs.flatMap((s) => s.g.untrusted),
@@ -2959,6 +3103,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const sealed = [...sealedOf(snap), ...cutLines];
     out['sealed'] = sealed;
     if (sealed.length > 0) out['sealedNote'] = SEALED_RECORDS;
+    // contraryEvidence is per task, marked on each row; the section-level mark says it once for the whole list.
+    if (contraryShut !== null) unreadable['contraryEvidence'] = contraryShut;
+    if (Object.keys(unreadable).length > 0) out['unreadable'] = unreadable;
+    if (conflict) out['recordKeyMismatch'] = keyConflictNote(conflict);
     out['altered'] = snap.graphs.filter((s) => s.g.state === 'altered').map((s) => s.graphIri);
     out['integrity'] = snap.graphs.filter((s) => s.g.state === 'altered' || s.g.state === 'forked').map((s) => ({
       graphIri: s.graphIri, state: s.g.state,
@@ -3000,20 +3148,35 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       decisions, runs, probes, minSamples: policy.minSamples, policy,
       currentModelOf: (did) => memberOf(reg, did.replace(/^did:ethr:/, ''))?.model ?? null,
     });
+    // Cells are computed from the records that open. A decision or run that does not open (its
+    // kind is public in its IRI, its metric, level, agent and kind of task are not) may belong to
+    // any cell: every cell of its section, and the section, is marked, never counted as if absent.
+    const marks = {
+      predictionCells: countedWithout(snap, ['decision'], 'predictionCells'),
+      probeSignals: countedWithout(snap, ['decision'], 'probeSignals'),
+      agentCells: countedWithout(snap, ['run'], 'agentCells'),
+      awaitingAPerson: countedWithout(snap, ['run'], 'awaitingAPerson'),
+    };
+    const mark = (why: string | null): Obj => (why === null ? {} : { unreadable: why });
     const agentCells: Obj[] = [];
     for (const c of report.agentCells) {
       const address = c.agentDid.replace(/^did:ethr:/, '');
-      agentCells.push({ ...c, agentAddress: address, principal: memberOf(reg, address)?.principal ?? null, grant: await grantView(call, reg, address, c.taskKind) });
+      agentCells.push({ ...c, agentAddress: address, principal: memberOf(reg, address)?.principal ?? null, grant: await grantView(call, reg, address, c.taskKind), ...mark(marks.agentCells) });
     }
     const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
-    // Cells are computed from the records that open: the ones that do not are named, not dropped silently.
     const sealed = sealedOf(snap);
+    const wanted: Readonly<Record<keyof typeof marks, boolean>> = {
+      predictionCells: kind === null || kind === 'predictions', probeSignals: kind === null || kind === 'probes', agentCells: kind === null || kind === 'agents', awaitingAPerson: true,
+    };
+    const unreadable = Object.fromEntries(Object.entries(marks).filter(([k, why]) => why !== null && wanted[k as keyof typeof marks]));
+    const conflict = await keyConflict(call);
     return {
       podUrl: call.podUrl, complete: snap.complete, status: 'calibrated', computed: true, minSamples: report.minSamples, nominalBandCoverage: report.nominalBandCoverage,
       demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null, sealed, ...(sealed.length > 0 ? { sealedNote: SEALED_RECORDS } : {}),
-      ...(kind === null || kind === 'predictions' ? { predictionCells: report.predictionCells } : {}),
-      ...(kind === null || kind === 'agents' ? { agentCells } : {}),
-      ...(kind === null || kind === 'probes' ? { probeSignals: report.probeSignals } : {}),
+      ...(Object.keys(unreadable).length > 0 ? { unreadable } : {}), ...(conflict ? { recordKeyMismatch: keyConflictNote(conflict) } : {}),
+      ...(wanted.predictionCells ? { predictionCells: report.predictionCells.map((c) => ({ ...c, ...mark(marks.predictionCells) })) } : {}),
+      ...(wanted.agentCells ? { agentCells } : {}),
+      ...(wanted.probeSignals ? { probeSignals: { ...report.probeSignals, ...mark(marks.probeSignals) } } : {}),
       awaitingAPerson: awaiting, grantPolicy: policy, podPolicy: reg.podPolicy,
     };
   }

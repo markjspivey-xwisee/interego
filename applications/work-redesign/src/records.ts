@@ -219,18 +219,47 @@ export type EntityKind = 'registry' | 'workflow' | 'task' | 'classification' | '
 export function entityIriKey(recordKey: { readonly secretKey: string }): string {
   return createHmac('sha256', Buffer.from(recordKey.secretKey, 'base64')).update('wrd-entity-iri', 'utf8').digest('hex');
 }
-/** One 16-hex segment: sha256 of the seed, or HMAC-SHA256 under `key` (hex) when one is given. */
-const segment = (seed: string, key?: string): string => (key === undefined
-  ? h16(seed)
-  : createHmac('sha256', Buffer.from(key, 'hex')).update(seed, 'utf8').digest('hex').slice(0, 16));
 /**
- * `urn:wrd:<kind>:<seg(scope)>:<seg(id)>` — the scope segment lets a reader select graphs from the
- * manifest before reading any. The graph IRIs are public (the manifest names them), so without
- * `key` anyone who can guess a tuple (an address, a task, a kind of task) recovers it from the
- * hash; with `key` (entityIriKey of the record key) only a holder of the record key can.
+ * The public identifier of the key entity IRIs are derived under: the first 8 hex of
+ * HMAC-SHA256(key, 'wrd-iri-key-fingerprint'). Every keyed IRI carries it, so a bridge can tell
+ * that a pod holds IRIs derived under a key it does not hold before it answers a lookup from
+ * their absence. It names the key and reveals nothing about it: an HMAC output under a secret key
+ * says nothing about the key, and 32 bits tell apart the few keys one pod ever sees.
  */
-export const entityIri = (kind: EntityKind, scope: string, id: string, key?: string): string => `urn:wrd:${kind}:${segment(scope, key)}:${segment(id, key)}`;
-export const scopePrefix = (kind: EntityKind, scope: string, key?: string): string => `urn:wrd:${kind}:${segment(scope, key)}:`;
+export function iriKeyFingerprint(key: string): string {
+  return createHmac('sha256', Buffer.from(key, 'hex')).update('wrd-iri-key-fingerprint', 'utf8').digest('hex').slice(0, 8);
+}
+/** Where a segment sits in an entity IRI; part of what a keyed segment is derived from. */
+type SegmentPosition = 'scope' | 'id';
+/**
+ * One 16-hex segment: sha256 of the seed, or, under `key` (hex), HMAC-SHA256 of
+ * `kind \0 position \0 seed`. The kind and position separate the domains: one seed (an agent's
+ * address, a workflow IRI) gives unrelated segments in a grant's scope and a holder copy's, or in
+ * a task's scope and a plan's, so equal keyed segments only ever mean the same seed in the same
+ * kind of entity at the same position.
+ */
+const segment = (kind: EntityKind, position: SegmentPosition, seed: string, key?: string): string => (key === undefined
+  ? h16(seed)
+  : createHmac('sha256', Buffer.from(key, 'hex')).update(`${kind}\u0000${position}\u0000${seed}`, 'utf8').digest('hex').slice(0, 16));
+/** `k<fingerprint>:` in a keyed IRI, nothing in an unkeyed one. */
+const keyMark = (key?: string): string => (key === undefined ? '' : `k${iriKeyFingerprint(key)}:`);
+/**
+ * `urn:wrd:<kind>:<seg(scope)>:<seg(id)>` unkeyed, `urn:wrd:<kind>:k<fingerprint>:<seg(scope)>:<seg(id)>`
+ * keyed. The scope segment lets a reader select graphs of one kind from the manifest before
+ * reading any. The graph IRIs are public (the manifest names them), so without `key` anyone who
+ * can guess a tuple (an address, a task, a kind of task) recovers it from the hash; with `key`
+ * (entityIriKey of the record key) only a holder of the record key can, and the fingerprint
+ * (iriKeyFingerprint) says which key it was.
+ */
+export const entityIri = (kind: EntityKind, scope: string, id: string, key?: string): string =>
+  `urn:wrd:${kind}:${keyMark(key)}${segment(kind, 'scope', scope, key)}:${segment(kind, 'id', id, key)}`;
+export const scopePrefix = (kind: EntityKind, scope: string, key?: string): string => `urn:wrd:${kind}:${keyMark(key)}${segment(kind, 'scope', scope, key)}:`;
+/** An entity IRI, keyed or not, as a JSON Schema / RegExp pattern. */
+export const ENTITY_IRI_PATTERN = '^urn:wrd:[a-z-]+:(?:k[0-9a-f]{8}:)?[0-9a-f]{16}:[0-9a-f]{16}$';
+/** The key fingerprint an entity or graph IRI carries (see iriKeyFingerprint), or null for an unkeyed one. */
+export const fingerprintOfIri = (iri: string): string | null => /^urn:wrd:[a-z-]+:k([0-9a-f]{8}):/.exec(iri)?.[1] ?? null;
+/** The kind of entity an entity or graph IRI names: public in the IRI, keyed or not. */
+export const kindOfIri = (iri: string): string | null => /^urn:wrd:([a-z-]+):/.exec(iri)?.[1] ?? null;
 
 /** A UTF-16 code unit that is half of a surrogate pair with no other half. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;

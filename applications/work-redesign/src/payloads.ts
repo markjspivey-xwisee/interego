@@ -19,7 +19,7 @@ import {
 } from './ontology.js';
 import { CLASSIFICATION_QUESTIONS, LIMITS } from './work.js';
 import { MAX_INPUT, RUN_ALTERNATIVES, STATE_FIELDS } from './valuation.js';
-import type { EnvelopeIntent } from './records.js';
+import { ENTITY_IRI_PATTERN, type EnvelopeIntent } from './records.js';
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
 
@@ -31,8 +31,7 @@ const list = (items: JsonSchema, min: number, max: number, description?: string)
   ({ type: 'array', items, minItems: min, maxItems: max, ...(description ? { description } : {}) });
 const keyed = (values: JsonSchema, description: string): JsonSchema => ({ type: 'object', additionalProperties: values, description });
 
-const ENTITY_IRI = '^urn:wrd:[a-z-]+:[0-9a-f]{16}:[0-9a-f]{16}$';
-const iriOf = (what: string): JsonSchema => ({ type: 'string', pattern: ENTITY_IRI, description: `the ${what} IRI (urn:wrd:…), from wrd.read_records` });
+const iriOf = (what: string): JsonSchema => ({ type: 'string', pattern: ENTITY_IRI_PATTERN, description: `the ${what} IRI (urn:wrd:…), from wrd.read_records` });
 const ADDRESS: JsonSchema = { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$', description: 'a 0x address registered on the pod' };
 const HEX64: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 const HEAD = {
