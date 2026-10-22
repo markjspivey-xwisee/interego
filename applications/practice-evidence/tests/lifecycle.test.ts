@@ -14,12 +14,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import {
-  canonicalGraphDigest, importWallet, makeWalletDelegationVerifier, sha256, validateAgainstShape, verifySignedAuthorship,
-  type Wallet,
+  canonicalGraphDigest, ContextDescriptor, importWallet, makeWalletDelegationVerifier, sha256, validateAgainstShape, verifySignedAuthorship,
+  type IRI, type Wallet,
 } from '@interego/core';
 import { digestedGraphRegion, discover, parseAuthorshipProofFromDescriptorTurtle } from '@interego/solid';
 import { createPevHandlers, describeStartup, type PevDeps } from '../bridge/handlers.js';
-import { isDeleted, isTrusted, operatorWriteFetch, readChain, readRecord } from '../bridge/pod-helpers.js';
+import {
+  cappedFetch, isDeleted, isTrusted, operatorPodFetch, publishPevRecord, readChain, readHead, readRecord, readRoleRegistry,
+} from '../bridge/pod-helpers.js';
 import { DEMO_LINES, FABRICATED_QUOTE, demoKey, demoScenarioInput, inMemoryPod, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION, readShapesTurtle, toolNameOf } from '../src/ontology.js';
 import { scriptedTextModel, TextModelCallFailed, type TextModel, type TextModelRequest, type TextModelResult } from '../src/model.js';
@@ -27,7 +29,7 @@ import {
   assess, coerceScenario, creditedLevels, COUNTERPART_PROMPT_TEMPLATE_HASH, JUDGE_PROMPT_TEMPLATE_HASH,
   type JudgmentResult, type ScenarioSpec,
 } from '../src/practice.js';
-import { modelAgentIri, recordLocal, signEnvelope, signedRequestEnvelope } from '../src/records.js';
+import { modelAgentIri, recordLocal, registryIri, signEnvelope, signedRequestEnvelope } from '../src/records.js';
 import { CMI5_CATEGORY_PREFIX, statementProblems, VERB_COMPLETED } from '../src/projections.js';
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -54,6 +56,7 @@ const W = {
   ana: wallet('ana'), ben: wallet('ben'), stranger: wallet('stranger'),
   judgeAgent: wallet('judge-agent', 'agent'), judgePerson: wallet('judge-person'),
   agentReviewer: wallet('agent-reviewer', 'agent'), agentLearner: wallet('agent-learner', 'agent'), lateReviewer: wallet('late-reviewer'),
+  newcomer: wallet('newcomer'), mallory: wallet('mallory'),
 };
 const TRUSTED = { addresses: new Set([W.platform.address.toLowerCase()]) };
 
@@ -85,7 +88,7 @@ const byok = fakeProvider();
 
 const base: PevDeps = {
   platformWallet: W.platform, platformKeyKind: 'demo-fixture', adminAddresses: [W.admin.address],
-  fetchFn: operatorWriteFetch(POD, SECRET, pod.fetchFn), holderFetchFn: pod.fetchFn, defaultPodUrl: POD,
+  fetchFn: operatorPodFetch(POD, SECRET, pod.fetchFn), holderFetchFn: pod.fetchFn, defaultPodUrl: POD,
   deploymentUrl: 'https://bridge.example.test', byokFetch: byok.fetchImpl, now: () => clock.now(), nonce,
 };
 const make = (over: Partial<PevDeps> = {}): Handlers => createPevHandlers({ ...base, ...over }) as Handlers;
@@ -792,7 +795,7 @@ describe('queue, calibration and results read the pod; person-judge figures stay
     expect(ids).toContain(S['oneTurnAttempt']);
     expect(ids).not.toContain(S['authorTest']);
     const e = (q['entries'] as Out[]).find((x) => x['attemptIri'] === S['oneTurnAttempt'])!;
-    expect(Object.keys(e['why'] as Out).sort()).toEqual(['auditSample', 'cellNeed', 'disagreement', 'learnerControlled', 'nearThreshold', 'uncertainty', 'uncertaintyDeclared', 'unverified']);
+    expect(Object.keys(e['why'] as Out).sort()).toEqual(['auditSample', 'cellNeed', 'disagreement', 'learnerControlled', 'nearThreshold', 'notQuoted', 'uncertainty', 'uncertaintyDeclared', 'unverified']);
     expect(typeof e['priority']).toBe('number');
   }, SLOW);
 
@@ -818,8 +821,10 @@ describe('queue, calibration and results read the pod; person-judge figures stay
     const per = (r['final'] as Out)['perCriterion'] as { levels: { suppressed: boolean; count: number | null }[] }[];
     expect(per.every((c) => c.levels.every((l) => l.count === null || l.count === 0))).toBe(true);
     expect((r['personJudgeCells'] as Out[]).some((x) => x['judgeId'] === `did:ethr:${W.judgePerson.address}`)).toBe(true);
+    expect([r['reviewerChangesShown'], r['reviewerChanges']]).toEqual(['counts', []]);
     const md = ok(await act(H, 'pev.scenario_results', W.reviewer3, { scenarioIri: S['md'] }));
     expect((md['counts'] as Out)['authorTestExcluded']).toBe(0);
+    expect(md['reviewerChangesShown']).toBe('each');
     const draft = ok(await act(H, 'pev.scenario_results', W.author, { scenarioIri: S['mdDraft'] }));
     expect((draft['counts'] as Out)['authorTestExcluded']).toBe(1);
   }, SLOW);
@@ -861,12 +866,23 @@ describe('records come from the pod, and the pod plumbing holds', () => {
     expect(r['signerAddress']).toBe(W.platform.address);
     ok(await act(make({ platformWallet: otherKey, trustedPlatformAddresses: [W.platform.address] }), 'pev.get_attempt', W.agentLearner, { attemptIri: S['ag'] }));
     const startup = await describeStartup({ ...base, platformWallet: otherKey });
-    expect([startup.registryTrusted, startup.lines[0]]).toEqual([false, `PEV_TRUSTED_PLATFORM_ADDRESSES=${W.platform.address}`]);
+    expect(startup.registryTrusted).toBe(false);
+    // The setting is offered only with the warning that the pod's content is no evidence the key was ours.
+    expect(startup.lines.join('\n')).toContain(`If it is yours: PEV_TRUSTED_PLATFORM_ADDRESSES=${W.platform.address}.`);
+    expect(startup.lines.join('\n')).toMatch(/WARNING: trust that key only if .* is an address this bridge printed as its own platform key/);
+    expect(startup.lines.some((l) => l.startsWith('PEV_TRUSTED_PLATFORM_ADDRESSES='))).toBe(false);
   }, SLOW);
 
-  it('writes only to served pods; a pod that refuses a write or a read is named, with the credential setting', async () => {
+  it('reads and writes only served pods; a pod that refuses a write or a read is named, with the credential setting', async () => {
     refused(await act(H, 'pev.register_role', W.admin, { address: W.ana.address, role: 'author', change: 'add' }, {}, { pod: OTHER_POD }), 403, 'pod-not-served');
-    ok((await H['pev.list_scenarios']!({ pod_url: OTHER_POD })) as Out);
+    refused((await H['pev.list_scenarios']!({ pod_url: OTHER_POD })) as Out, 403, 'pod-not-served');
+    refused((await H['pev.calibration']!({ pod_url: OTHER_POD })) as Out, 403, 'pod-not-served');
+    refused(await act(H, 'pev.get_attempt', W.ana, {}, {}, { pod: OTHER_POD }), 403, 'pod-not-served');
+    // No default pod and no served pods: nothing is served until the operator says so ('*' is an explicit choice).
+    const none = refused(await act(make({ defaultPodUrl: undefined }), 'pev.register_role', W.admin, { address: W.ana.address, role: 'author', change: 'add' }), 403, 'pod-not-served');
+    expect(none['iep:resolvedBy']).toEqual({ env: 'PEV_SERVED_PODS' });
+    // Served pods are compared after URL normalisation: an upper-case host and a default port still match.
+    ok((await make({ servedPods: ['HTTPS://POD.example.test:443/practice'] })['pev.list_scenarios']!({ pod_url: POD })) as Out);
     refused(await act(H, 'pev.register_role', W.admin, { address: W.ana.address, role: 'author', change: 'add' }, { pod_url: OTHER_POD }), 400, 'pod-url-differs');
     refused((await H['pev.list_scenarios']!({ pod_url: 'http://127.0.0.1:9/' })) as Out, 400, 'pod-not-public');
     const fresh = inMemoryPod();
@@ -877,20 +893,44 @@ describe('records come from the pod, and the pod plumbing holds', () => {
     refused((await readRefused['pev.list_scenarios']!({})) as Out, 502, 'pod-refused-read');
   }, SLOW);
 
-  it('operatorWriteFetch adds the credential to writes under the operator pod only, and never follows a redirect with it', async () => {
+  it('operatorPodFetch adds the credential to reads and writes under the operator pod only, and never follows a redirect with it', async () => {
     const seen: { url: string; auth: string | null; redirect?: RequestRedirect }[] = [];
     const spy = (async (input: RequestInfo | URL, init?: RequestInit) => {
       seen.push({ url: String(input), auth: new Headers(init?.headers).get('authorization'), ...(init?.redirect ? { redirect: init.redirect } : {}) });
       return new Response(null, { status: 204 });
     }) as typeof fetch;
-    const f = operatorWriteFetch(POD, SECRET, spy);
+    const f = operatorPodFetch(POD, SECRET, spy);
     for (const method of ['PUT', 'POST', 'PATCH', 'DELETE']) await f(`${POD}pev/records/x.ttl`, { method });
     await f(`${POD}pev/records/x.ttl`, { method: 'GET' });
     await f('https://pod.example.test/elsewhere/x.ttl', { method: 'PUT' });
     await f('https://pod.example.test.evil.test/practice/x.ttl', { method: 'PUT' });
-    await operatorWriteFetch(POD, undefined, spy)(`${POD}x.ttl`, { method: 'PUT' });
-    expect(seen.slice(0, 4).every((s) => s.auth === `Bearer ${SECRET}` && s.redirect === 'manual')).toBe(true);
-    expect(seen.slice(4).map((s) => s.auth)).toEqual([null, null, null, null]);
+    await operatorPodFetch(POD, undefined, spy)(`${POD}x.ttl`, { method: 'PUT' });
+    expect(seen.slice(0, 5).every((s) => s.auth === `Bearer ${SECRET}` && s.redirect === 'manual')).toBe(true);
+    expect(seen.slice(5).map((s) => s.auth)).toEqual([null, null, null]);
+  }, SLOW);
+
+  it('a pod that refuses anonymous reads keeps transcripts from strangers while the bridge, with its credential, still works', async () => {
+    const gated = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const read = (init?.method ?? 'GET').toUpperCase() === 'GET';
+      if (read && url.startsWith(POD) && new Headers(init?.headers).get('authorization') !== `Bearer ${SECRET}`) return new Response('no', { status: 401, statusText: 'Unauthorized' });
+      return pod.fetchFn(input, init);
+    }) as typeof fetch;
+    const transcript = [...pod.store.keys()].find((u) => u.startsWith(`${POD}pev/records/attempt-`) && u.endsWith('-graph.trig'))!;
+    expect((await gated(transcript)).status).toBe(401);
+    const withCredential = ok((await make({ fetchFn: operatorPodFetch(POD, SECRET, gated) })['pev.list_scenarios']!({})) as Out);
+    expect((withCredential['scenarios'] as Out[]).length).toBeGreaterThan(0);
+    refused((await make({ fetchFn: gated })['pev.list_scenarios']!({})) as Out, 502, 'pod-refused-read');
+  }, SLOW);
+
+  it('reads every response with a byte limit and keeps what a pod sent within it', async () => {
+    const big = cappedFetch((async () => new Response('x'.repeat(64), { status: 200, headers: { etag: '"v1"' } })) as typeof fetch, 32);
+    await expect(big('https://pod.example.test/practice/x.ttl')).rejects.toThrow(/limit of 32 bytes/);
+    const declared = cappedFetch((async () => new Response('x', { status: 200, headers: { 'content-length': '999999999' } })) as typeof fetch, 32);
+    await expect(declared('https://pod.example.test/practice/x.ttl')).rejects.toThrow(/declares 999999999 bytes/);
+    const small = await cappedFetch((async () => new Response('hello', { status: 200, headers: { etag: '"v1"' } })) as typeof fetch, 32)('https://pod.example.test/practice/x.ttl');
+    expect([small.status, small.headers.get('etag'), await small.text()]).toEqual([200, '"v1"', 'hello']);
+    expect((await cappedFetch((async () => new Response(null, { status: 304 })) as typeof fetch, 32)('https://pod.example.test/x')).status).toBe(304);
   }, SLOW);
 
   it('demo signing is off unless configured; when on, its envelopes act and the record says a server-held key signed', async () => {
@@ -954,6 +994,122 @@ describe('a review is checked against the registry as it stood when it was signe
       attemptIri: iri, target: j['currentTarget'], levels: levels([['names-constraint', 'specific'], ['explores-interests', 'none']]), sawJudgeLevelsFirst: true,
     }));
     refused(await act(H, 'pev.project_attempt', W.ben, { attemptIri: iri, format: 'xapi' }), 409, 'countersign-not-verifiable');
+  }, SLOW);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  Replays, records out of place, spending limits, and who may confirm a judge they chose
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/** Re-publish a signed record's exact graph region, with its platform proof, as a new descriptor somewhere else. */
+async function republish(region: string, proof: NonNullable<Awaited<ReturnType<typeof readRecord>>['proof']>, onPod: string, describes: string, slug: string, supersedes?: string): Promise<string> {
+  const now = new Date(clock.t).toISOString();
+  const b = ContextDescriptor.create(`urn:pev:test:${slug}` as IRI).describes(describes as IRI).temporal({ validFrom: now })
+    .provenance({ wasAttributedTo: 'urn:pev:test:attacker' as IRI, generatedAtTime: now })
+    .agent({ identity: 'urn:pev:test:attacker' as IRI, isSoftwareAgent: true }, 'Author').hypothetical().selfAsserted('urn:pev:test:attacker' as IRI);
+  if (supersedes !== undefined) b.supersedes(supersedes as IRI);
+  const w = await publishPevRecord({
+    podUrl: onPod, descriptor: b.build(), graphTurtle: region, slug, authorshipProof: proof, shapes: false, fetchFn: pod.fetchFn,
+    ...(supersedes !== undefined ? { supersedes, currentHeads: [supersedes] } : {}),
+  });
+  return w.descriptorUrl;
+}
+
+describe('a signed envelope acts once on any process, and a signed record counts only where it was written', () => {
+  it('an admin envelope stored in the registry cannot be applied again by a restarted or second process', async () => {
+    const add = await envelopeFor(W.admin, 'pev.register_role', { address: W.mallory.address, role: 'reviewer', change: 'add' });
+    ok((await H['pev.register_role']!({ envelope: add })) as Out);
+    ok(await act(H, 'pev.register_role', W.admin, { address: W.mallory.address, role: 'reviewer', change: 'remove' }));
+    refused((await H['pev.register_role']!({ envelope: add })) as Out, 409, 'envelope-already-used');
+    const restarted = make({ model: scriptedPracticeModel() });
+    refused((await restarted['pev.register_role']!({ envelope: add })) as Out, 409, 'envelope-already-used');
+    const roles = await readRoleRegistry(POD, TRUSTED, pod.fetchFn);
+    expect(roles.roles.get(W.mallory.address.toLowerCase())).toBeUndefined();
+  }, SLOW);
+
+  it('a start, a line or a review envelope stored in an attempt cannot act again on another process', async () => {
+    const start = await envelopeFor(W.newcomer, 'pev.start_attempt', { scenarioIri: S['rn'], scenarioVersion: 1, coached: false });
+    const st = ok((await H['pev.start_attempt']!({ envelope: start })) as Out);
+    const restarted = make({ model: scriptedPracticeModel() });
+    refused((await restarted['pev.start_attempt']!({ envelope: start })) as Out, 409, 'envelope-already-used');
+    const line = await envelopeFor(W.newcomer, 'pev.say', { attemptIri: st['attemptIri'], turnIndex: 1, text: 'The two defects block the payment flow, so the date moves.', endAfter: true });
+    ok((await H['pev.say']!({ envelope: line })) as Out);
+    refused((await restarted['pev.say']!({ envelope: line })) as Out, 409, 'envelope-already-used');
+    S['newcomer'] = String(st['attemptIri']);
+  }, SLOW);
+
+  it('a reviewer who asked for the judgment, here with a model of their own choosing, cannot confirm it; another reviewer can', async () => {
+    const j = ok(await act(H, 'pev.judge_attempt', W.reviewer3, { attemptIri: S['newcomer'] }, { llm_api_key: BYOK_KEY, llm_model: 'claude-test' }));
+    expect((j['judgment'] as JudgmentResult).chosenBy).toBe('reviewer');
+    // The provider double puts every criterion at its lowest level with no quote: nothing was checked, and the record says so.
+    expect((j['judgment'] as JudgmentResult).criteria.map((c) => c.status)).toEqual(['no-quote-needed', 'no-quote-needed']);
+    expect(j['unverifiedCriteria']).toEqual([]);
+    const lowest = levels([['names-constraint', 'none'], ['explores-interests', 'none']]);
+    const review = { attemptIri: S['newcomer'], target: j['currentTarget'], levels: lowest, sawJudgeLevelsFirst: true };
+    refused(await act(H, 'pev.countersign_attempt', W.reviewer3, review), 403, 'reviewer-requested-the-judgment');
+    const q = ok(await act(H, 'pev.review_queue', W.reviewer3, { limit: 100 }));
+    expect((q['entries'] as Out[]).map((e) => e['attemptIri'])).not.toContain(S['newcomer']);
+    const other = ok(await act(H, 'pev.review_queue', W.reviewer, { limit: 100 }));
+    const entry = (other['entries'] as Out[]).find((e) => e['attemptIri'] === S['newcomer'])!;
+    expect([(entry['why'] as Out)['notQuoted'], entry['mayCountersignAsIs']]).toEqual([1, true]);
+    ok(await act(H, 'pev.countersign_attempt', W.reviewer, review));
+  }, SLOW);
+
+  it('a platform-signed registry copied to another pod grants nothing there, even on a bridge that serves any pod', async () => {
+    const Y = 'https://attacker.example.test/mine/';
+    const head = (await readHead(POD, registryIri(POD), TRUSTED, pod.fetchFn)).head!;
+    expect(isTrusted(head)).toBe(true);
+    await republish(head.regionTurtle, head.proof!, Y, registryIri(Y), 'transplanted-registry');
+    const there = await readRoleRegistry(Y, TRUSTED, pod.fetchFn);
+    expect([there.trusted, there.roles.size, there.head?.misplaced]).toEqual([false, 0, expect.stringContaining('describes another graph')]);
+    const anyPod = make({ servedPods: '*' });
+    const scenario = demoScenarioInput('renegotiate-scope');
+    const r = refused(await act(anyPod, 'pev.author_scenario', W.author, { scenario, status: 'published', draftAssistance: { used: false } }, {}, { pod: Y }), 409, 'record-not-trusted');
+    expect(String(r['error'])).toContain('signed by this platform, but not for where it sits');
+    refused(await act(H, 'pev.author_scenario', W.author, { scenario, status: 'published', draftAssistance: { used: false } }, {}, { pod: Y }), 403, 'pod-not-served');
+  }, SLOW);
+
+  it('an old registry version re-published on top of a newer one is caught by its signed place in the chain', async () => {
+    const Z = 'https://rollback.example.test/practice/';
+    const z = make({ defaultPodUrl: Z });
+    ok(await act(z, 'pev.register_role', W.admin, { address: W.author.address, role: 'author', change: 'add' }, {}, { pod: Z }));
+    const granted = ok(await act(z, 'pev.register_role', W.admin, { address: W.mallory.address, role: 'reviewer', change: 'add' }, {}, { pod: Z }));
+    const removed = ok(await act(z, 'pev.register_role', W.admin, { address: W.mallory.address, role: 'reviewer', change: 'remove' }, {}, { pod: Z }));
+    const v2 = await readRecord(String(granted['descriptorUrl']), TRUSTED, pod.fetchFn);
+    expect([v2.body.seq, v2.body.prev?.recordId !== undefined]).toEqual([2, true]);
+    await republish(v2.regionTurtle, v2.proof!, Z, registryIri(Z), 'rolled-back-registry', String(removed['descriptorUrl']));
+    const view = await readRoleRegistry(Z, TRUSTED, pod.fetchFn);
+    expect([view.trusted, view.head?.misplaced]).toEqual([false, 'its signed body says it is version 2 of its chain, but this pod holds 4 version(s)']);
+    const chain = await readChain(Z, registryIri(Z), TRUSTED, pod.fetchFn);
+    expect(chain.map((v) => (isDeleted(v) ? 'deleted' : isTrusted(v)))).toEqual([true, true, true, false]);
+    refused(await act(z, 'pev.register_role', W.admin, { address: W.mallory.address, role: 'reviewer', change: 'add' }, {}, { pod: Z }), 409, 'record-not-trusted');
+  }, SLOW);
+
+  it('limits this bridge\'s own model and attempt starts per signer per hour; a per-request key is not counted', async () => {
+    const tight = make({ model: scriptedPracticeModel(), budgets: { modelCallsPerHour: { perSigner: 1, total: 50 }, attemptsPerHour: { perSigner: 1, total: 50 } } });
+    const a = ok(await act(tight, 'pev.start_attempt', W.newcomer, { scenarioIri: S['rn'], scenarioVersion: 1, coached: true }));
+    const again = refused(await act(tight, 'pev.start_attempt', W.newcomer, { scenarioIri: S['rn'], scenarioVersion: 1, coached: true }), 429, 'attempt-budget-spent');
+    expect([again['scope'], (again['retryAfterSeconds'] as number) > 0]).toEqual(['signer', true]);
+    ok(await act(tight, 'pev.say', W.newcomer, { attemptIri: a['attemptIri'], turnIndex: 1, text: 'The payment defects come first.' }));
+    const spent = refused(await act(tight, 'pev.say', W.newcomer, { attemptIri: a['attemptIri'], turnIndex: 3, text: 'Then the date moves.' }), 429, 'model-budget-spent');
+    expect(spent['iep:resolvedBy']).toMatchObject({ action: PEV_ACTION.counterpartPacket });
+    ok(await act(tight, 'pev.say', W.newcomer, { attemptIri: a['attemptIri'], turnIndex: 3, text: 'Then the date moves.' }, { llm_api_key: BYOK_KEY, llm_model: 'claude-test' }));
+    const total = make({ model: scriptedPracticeModel(), budgets: { modelCallsPerHour: { perSigner: 10, total: 1 } } });
+    const b = ok(await act(total, 'pev.start_attempt', W.newcomer, { scenarioIri: S['rn'], scenarioVersion: 1, coached: false }));
+    ok(await act(total, 'pev.say', W.newcomer, { attemptIri: b['attemptIri'], turnIndex: 1, text: 'The payment defects come first.', endAfter: true }));
+    const all = refused(await act(total, 'pev.judge_attempt', W.reviewer, { attemptIri: b['attemptIri'] }), 429, 'model-budget-spent');
+    expect(all['scope']).toBe('total');
+  }, SLOW);
+
+  it('a bridge that lends its model only to registered addresses refuses a stranger, who can still bring a key or a packet', async () => {
+    const registered = make({ model: scriptedPracticeModel(), bridgeModelFor: 'registered' });
+    const outsider = wallet('outsider');
+    const a = ok(await act(registered, 'pev.start_attempt', outsider, { scenarioIri: S['rn'], scenarioVersion: 1, coached: false }));
+    const r = refused(await act(registered, 'pev.say', outsider, { attemptIri: a['attemptIri'], turnIndex: 1, text: 'The payment defects come first.' }), 403, 'bridge-model-for-registered-only');
+    expect(r['iep:resolvedBy']).toMatchObject({ action: PEV_ACTION.counterpartPacket });
+    ok(await act(registered, 'pev.say', outsider, { attemptIri: a['attemptIri'], turnIndex: 1, text: 'The payment defects come first.' }, { llm_api_key: BYOK_KEY, llm_model: 'claude-test' }));
+    ok(await act(H, 'pev.register_role', W.admin, { address: outsider.address, role: 'learner', change: 'add' }));
+    ok(await act(registered, 'pev.say', outsider, { attemptIri: a['attemptIri'], turnIndex: 3, text: 'Then the date moves.' }));
   }, SLOW);
 });
 

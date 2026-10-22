@@ -7,8 +7,17 @@
  *   · its body comes from the `pev:recordJson` literal, and the literal's sha256 matches;
  *   · its platform authorship proof verifies AND binds the exact graph region served
  *     (`contentBinding: 'bound'`);
- *   · the proof's signer is one of the trusted platform addresses.
- * A record that fails any of these is reported, never used.
+ *   · the proof's signer is one of the trusted platform addresses;
+ *   · it sits where it was written: the signed body names the graph and the pod it is read
+ *     from, its signed `seq` is its place in the chain, and its signed `prev` names the version
+ *     the pod chains it to. A signed record copied to another pod, or an old version
+ *     re-published on top of a newer one, keeps a valid signature but fails this.
+ * A record that fails any of these is reported, never used. What no reader can catch on its own
+ * is truncation: someone who can write the pod can delete the newest versions, and the chain
+ * then ends at an older, correctly placed version. That needs an anchor outside the pod.
+ *
+ * Every response body is read with a size limit, and a descriptor's graph is fetched only from
+ * the descriptor's own host, so one read cannot make the bridge fetch from anywhere else.
  *
  * Transport: every request goes through the substrate's SSRF guard (`guardedFetchFn`), which
  * re-checks every redirect hop and refuses a redirect on a write. Nothing here retries: the
@@ -26,7 +35,7 @@ import {
 } from '@interego/solid';
 import { PEV_SHAPES_NS, readShapesTurtle } from '../src/ontology.js';
 import {
-  podBase, recordBodyFromGraph, registryIri, RECORD_CLASS,
+  graphIriOf, podBase, recordBodyFromGraph, registryIri, RECORD_CLASS,
   type PevRecordBody, type Role, type RoleRegistryBody,
 } from '../src/records.js';
 
@@ -37,6 +46,8 @@ export const PEV_COPIES_CONTAINER = 'pev/holder-copies/';
 export interface TrustedPlatform { readonly addresses: ReadonlySet<string> }
 
 export interface ReadRecord {
+  /** Set when a signed record is not where it was written (another graph, another pod, another place in the chain). */
+  readonly misplaced?: string;
   readonly descriptorUrl: string;
   /** The urn id the platform's authorship proof binds (`proof.descriptorId`); '' when there is no proof. */
   readonly recordId: string;
@@ -116,22 +127,61 @@ function base(fetchFn?: typeof fetch): typeof fetch {
   return fetchFn ?? globalThis.fetch.bind(globalThis);
 }
 
-/** The guarded fetch, typed as the substrate's FetchFn. */
-function guarded(fetchFn?: typeof fetch): FetchFn {
-  return guardedFetchFn(base(fetchFn)) as unknown as FetchFn;
-}
+/** The most this bridge reads from any one response: a manifest, a descriptor or a graph. */
+export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
-const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+/** Statuses whose response cannot carry a body, which a Response cannot be rebuilt with. */
+const NULL_BODY = new Set([101, 103, 204, 205, 304]);
 
 /**
- * The operator pod's write credential, added to WRITES to ONE pod only: the method is POST, PUT,
- * PATCH or DELETE, the URL's parsed origin equals the pod's, AND the URL lies under the pod's
- * base path — so a holder pod on the same host never receives it. Reads never carry it. A
- * decorated request is sent with `redirect: 'manual'`, so the credential cannot follow a
- * redirect anywhere. Mirrors foxxi's gate-write-fetch, tightened to the pod path.
+ * Read every response body with a byte limit, so a hostile pod cannot make the bridge buffer an
+ * unbounded body. A response over the limit is an error, never a truncated record.
  */
-export function operatorWriteFetch(podUrl: string | undefined, writeSecret: string | undefined, baseFetch: typeof fetch): typeof fetch {
-  if (!podUrl || !writeSecret) return baseFetch;
+export function cappedFetch(f: typeof fetch, maxBytes = MAX_RESPONSE_BYTES): typeof fetch {
+  const capped = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const res = await f(input, init);
+    const declared = Number(res.headers.get('content-length') ?? Number.NaN);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`the response declares ${declared} bytes, over this bridge's limit of ${maxBytes}`);
+    }
+    if (!res.body || NULL_BODY.has(res.status) || res.status < 200 || res.status > 599) return res;
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(`the response is over this bridge's limit of ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let at = 0;
+    for (const c of chunks) { bytes.set(c, at); at += c.byteLength; }
+    return new Response(bytes, { status: res.status, statusText: res.statusText, headers: res.headers });
+  };
+  return capped as typeof fetch;
+}
+
+/** The guarded, size-capped fetch, typed as the substrate's FetchFn. */
+function guarded(fetchFn?: typeof fetch): FetchFn {
+  return guardedFetchFn(cappedFetch(base(fetchFn))) as unknown as FetchFn;
+}
+
+/**
+ * The operator pod's credential, added to requests to ONE pod only: the URL's parsed origin
+ * equals the pod's AND the URL lies under the pod's base path, so a holder pod on the same host
+ * never receives it. It goes on reads as well as writes, so an operator can make the pod refuse
+ * anonymous reads of `pev/` and the bridge still reads its own records. A decorated request is
+ * sent with `redirect: 'manual'`, so the credential cannot follow a redirect anywhere. Mirrors
+ * foxxi's gate-write-fetch, tightened to the pod path.
+ */
+export function operatorPodFetch(podUrl: string | undefined, secret: string | undefined, baseFetch: typeof fetch): typeof fetch {
+  if (!podUrl || !secret) return baseFetch;
   let podHref: string;
   let podOrigin: string;
   try {
@@ -143,17 +193,14 @@ export function operatorWriteFetch(podUrl: string | undefined, writeSecret: stri
   }
   const decorated = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    const method = String(init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET')).toUpperCase();
     let mine = false;
-    if (WRITE_METHODS.has(method)) {
-      try {
-        const u = new URL(url);
-        mine = u.origin === podOrigin && u.href.startsWith(podHref);
-      } catch { mine = false; }
-    }
+    try {
+      const u = new URL(url);
+      mine = u.origin === podOrigin && u.href.startsWith(podHref);
+    } catch { mine = false; }
     if (!mine) return baseFetch(input, init);
     const headers = new Headers(init?.headers);
-    headers.set('Authorization', `Bearer ${writeSecret}`);
+    headers.set('Authorization', `Bearer ${secret}`);
     return baseFetch(input, { ...init, headers, redirect: 'manual' });
   };
   return decorated as typeof fetch;
@@ -245,9 +292,42 @@ function modalOf(descriptorTurtle: string): string | null {
   return m ? (m[1] ?? null) : null;
 }
 
-/** True when a record may drive a decision: the proof verifies, binds the served bytes, and its signer is trusted. */
+/** True when a record may drive a decision: the proof verifies, binds the served bytes, its signer is trusted, and it sits where it was written. */
 export function isTrusted(r: ReadRecord): boolean {
-  return r.authorship.valid && r.authorship.contentBinding === 'bound' && r.authorship.platformKnown;
+  return r.authorship.valid && r.authorship.contentBinding === 'bound' && r.authorship.platformKnown && r.misplaced === undefined;
+}
+
+/** The pod base of a URL, normalised the way the URL parser writes it (host case, default port). */
+export function normalPod(url: string): string | null {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? podBase(u.href) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when `url` lies under the pod's base path. */
+export function underPod(url: string, podUrl: string): boolean {
+  const pod = normalPod(podUrl);
+  try { return pod !== null && new URL(url).href.startsWith(pod); } catch { return false; }
+}
+
+/** Why a signed body does not belong at (pod, graph): another graph, or written for another pod. */
+export function placementProblem(body: PevRecordBody, podUrl: string, graphIri: string): string | undefined {
+  if (graphIriOf(body) !== graphIri) return 'its signed body describes another graph than the one this pod files it under';
+  const written = normalPod(body.podUrl);
+  if (written === null || written !== normalPod(podUrl)) return `its signed body was written for the pod ${body.podUrl}, not this one`;
+  return undefined;
+}
+
+function seqProblem(body: PevRecordBody, versions: number): string | undefined {
+  return body.seq === versions ? undefined
+    : `its signed body says it is version ${body.seq ?? '(none)'} of its chain, but this pod holds ${versions} version(s)`;
+}
+
+function misplace(r: ReadRecord, why: string | undefined): ReadRecord {
+  return why === undefined ? r : { ...r, misplaced: why };
 }
 
 /**
@@ -282,6 +362,7 @@ async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatfor
   const proof = parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle);
   const dist = parseDistributionFromDescriptorTurtle(descriptorTurtle);
   if (!dist) throw new RecordUnreadable(descriptorUrl, 'the descriptor names no graph distribution');
+  if (originOf(dist.accessURL) !== origin) throw new RecordUnreadable(descriptorUrl, 'the descriptor points its graph at another host');
   let graphContent: string | null;
   try {
     graphContent = (await fetchGraphContent(dist.accessURL, { fetch: f })).content;
@@ -320,15 +401,22 @@ export interface HeadRead {
   readonly entries: readonly ManifestEntry[];
 }
 
-/** The single head of a chain (or none). Two heads are a fork, refused as such. */
+/**
+ * The single head of a chain (or none). Two heads are a fork, refused as such. The head is read
+ * only from under the pod, and is marked `misplaced` unless its signed body names this graph and
+ * this pod and its signed seq equals the number of versions the pod holds.
+ */
 export async function readHead(podUrl: string, graphIri: string, trusted: TrustedPlatform, fetchFn?: typeof fetch, cache?: ReadCache): Promise<HeadRead> {
   const entries = (await listEntries(podUrl, fetchFn, graphIri)).filter((e) => e.describes.includes(graphIri));
   const heads = headsOf(entries, graphIri);
   const seq = entries.length + 1;
   if (heads.length === 0) return { head: null, heads, seq, entries };
   if (heads.length > 1) throw new ChainForked(graphIri, heads);
+  const url = heads[0]!;
+  if (!underPod(url, podUrl)) throw new RecordUnreadable(url, 'the pod\'s manifest names a record outside the pod');
   try {
-    return { head: await readRecord(heads[0]!, trusted, fetchFn, cache), heads, seq, entries };
+    const rec = await readRecord(url, trusted, fetchFn, cache);
+    return { head: misplace(rec, placementProblem(rec.body, podUrl, graphIri) ?? seqProblem(rec.body, entries.length)), heads, seq, entries };
   } catch (e) {
     if (e instanceof GraphMissing) throw new RecordUnreadable(e.descriptorUrl, 'the head record\'s graph is not on the pod');
     throw e;
@@ -352,8 +440,10 @@ export async function readChain(
   let next = byUrl.get(head.descriptorUrl)?.supersedes?.[0];
   while (next !== undefined && !seen.has(next)) {
     seen.add(next);
+    if (!underPod(next, podUrl)) throw new RecordUnreadable(next, 'the pod\'s manifest chains to a record outside the pod');
     try {
-      newestFirst.push(await readRecord(next, trusted, fetchFn, cache));
+      const rec = await readRecord(next, trusted, fetchFn, cache);
+      newestFirst.push(misplace(rec, placementProblem(rec.body, podUrl, graphIri)));
     } catch (e) {
       if (e instanceof GraphMissing && redactedHead) {
         newestFirst.push({ descriptorUrl: e.descriptorUrl, recordId: e.recordId, graphUrl: e.graphUrl, descriptorTurtle: e.descriptorTurtle, contentDeleted: true });
@@ -365,7 +455,28 @@ export async function readChain(
     }
     next = byUrl.get(next)?.supersedes?.[0];
   }
-  return newestFirst.reverse();
+  return linked(newestFirst.reverse());
+}
+
+/**
+ * Check each version's signed place in the chain against the chain the pod's manifest gives:
+ * version i (from 1) says seq i, and names version i − 1 as its prev (the first names none). A
+ * version that does not is marked misplaced; a deleted version's own body cannot be checked.
+ */
+function linked(oldestFirst: readonly (ReadRecord | DeletedVersion)[]): (ReadRecord | DeletedVersion)[] {
+  return oldestFirst.map((v, i) => {
+    if (isDeleted(v) || v.misplaced !== undefined) return v;
+    const before = i > 0 ? oldestFirst[i - 1] : undefined;
+    const p = v.body.prev;
+    if (v.body.seq !== i + 1) return misplace(v, `its signed body says it is version ${v.body.seq ?? '(none)'} of its chain, but it is version ${i + 1} here`);
+    if (before === undefined) return p === undefined ? v : misplace(v, 'its signed body names a predecessor, but it is the first version here');
+    const priorId = before.recordId;
+    const priorDigest = isDeleted(before) ? null : before.graphDigest;
+    if (!p || (priorId !== null && p.recordId !== priorId) || (priorDigest !== null && p.graphDigest !== priorDigest)) {
+      return misplace(v, 'its signed predecessor is not the version this pod chains it to');
+    }
+    return v;
+  });
 }
 
 export function isDeleted(v: ReadRecord | DeletedVersion): v is DeletedVersion {
@@ -396,10 +507,13 @@ export async function readHeadsOfKind(
   let untrusted = 0;
   let forked = 0;
   for (const g of graphs.slice(0, o.max)) {
-    const heads = headsOf(groups.get(g) ?? [], g);
+    const group = groups.get(g) ?? [];
+    const heads = headsOf(group, g);
     if (heads.length !== 1) { forked += 1; continue; }
+    if (!underPod(heads[0]!, podUrl)) { untrusted += 1; continue; }
     try {
-      const r = await readRecord(heads[0]!, trusted, o.fetchFn, o.cache);
+      const read = await readRecord(heads[0]!, trusted, o.fetchFn, o.cache);
+      const r = misplace(read, placementProblem(read.body, podUrl, g) ?? seqProblem(read.body, group.length));
       if (isTrusted(r) && r.body.kind === kind) records.push(r); else untrusted += 1;
     } catch (e) {
       if (e instanceof RecordUnreadable || e instanceof GraphMissing) { untrusted += 1; continue; }

@@ -139,7 +139,7 @@ pevsh:CriterionJudgmentShape a sh:NodeShape ;
     sh:targetClass pev:CriterionJudgment ;
     sh:property [ sh:path pev:criterion ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
     sh:property [ sh:path pev:judgedLevel ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
-    sh:property [ sh:path pev:verificationStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "verified" "unverified" ) ] ;
+    sh:property [ sh:path pev:verificationStatus ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "verified" "unverified" "no-quote-needed" ) ] ;
     sh:property [ sh:path pev:rationaleSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] .
 
 pevsh:QuoteShape a sh:NodeShape ;
@@ -189,7 +189,7 @@ pevsh:RoleRegistryShape a sh:NodeShape ;
 pevsh:RoleAssignmentShape a sh:NodeShape ;
     sh:targetClass pev:RoleAssignment ;
     sh:property [ sh:path pev:address ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^0x[0-9a-fA-F]{40}$" ] ;
-    sh:property [ sh:path pev:role ; sh:minCount 1 ; sh:in ( "reviewer" "author" "judge" "agent" ) ] .
+    sh:property [ sh:path pev:role ; sh:minCount 1 ; sh:in ( "reviewer" "author" "judge" "agent" "learner" ) ] .
 
 pevsh:ProjectionAuditShape a sh:NodeShape ;
     sh:targetClass pev:ProjectionAudit ;

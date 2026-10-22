@@ -11,6 +11,7 @@ Verified, offline, by the five test modules in [`tests/`](tests/) and by the off
 - The pure engines: scenario and rubric checks, the quote rule, the platform's arithmetic, calibration, the review queue, results suppression, xAPI statement building and checking, record graphs against the SHACL shapes, envelopes in both forms.
 - The model seam against a fetch double that speaks the Anthropic Messages shape: request shape, timeouts, retries, and every failure mapped to a refusal that records nothing.
 - Every act, in order, through the handlers on an in-memory pod that honours ETags and conditional writes, with generated wallets: every refusal the spec names is provoked and its status and code asserted, and every record is read back from the pod and checked against the platform signature.
+- The defences added after review, each provoked: an envelope stored in a record replayed on a second handler set (a restart or a replica), a platform-signed registry copied to another pod, an old registry version re-published on top of a newer one, the hourly limits on the bridge's own model and on attempt starts, the registered-only model route, a reviewer confirming a judgment from a model they chose, quotes that cut a word, linked result tables, and a pod that refuses anonymous reads.
 - The bridge over HTTP and MCP, and the web UI: the shipped `/ui` page and `app.js` run in a jsdom window against a loopback bridge, and three signing modes (demo keys, a wallet, pasted signatures) carry a learner, an author, a reviewer and an admin through the lifecycle.
 - The offline demo walks two bridges over HTTP the way a Path-A agent does and checks every step; a test runs it and re-checks what it reports.
 
@@ -27,7 +28,7 @@ Five kinds of people use it, and an agent can sit in any seat its registry entry
 
 - **Author.** Writes a practice scenario: what the learner practises, their part, the situation, the person they practise with (who they are, what they want, what they know, how they react), that person's first line, when the conversation ends, a turn limit, and a rubric of criteria with ordered levels and a descriptor per level. The author must say how the scenario is used (feedback only, or a pass gate) and how knowable the work is. They can draft with this bridge's model or their own agent; the record says who drafted it. They save a draft, try it themselves (a test that never counts), and publish. Every content edit is a new version that supersedes the old one. Per scenario they see results and what reviewers changed and why.
 - **Reviewer.** Ratifies a published rubric version (until then, results on it cannot leave as evidence). Works a ranked queue. States a level for every criterion, confirming the judge's or setting another with a reason. On audit-sample attempts, chooses levels before seeing the judge's. Re-reviews a contested review.
-- **Learner.** Picks a scenario, says whether they are coached, and talks with the other person. Every reply shows which model produced it. They end the conversation (the other person may propose the end, never impose it), ask for judging and second opinions, and see per criterion: the level, their own words highlighted where a quote checked out, what did not check out and why, the judge's words labelled as not part of the score, and what the next level asks for, quoted from the rubric. They can contest a review, download their signed record, copy it to their own pod, and remove the transcript from the operator's pod.
+- **Learner.** Picks a scenario, says whether they are coached, and talks with the other person (see "Who can take part today" for what a learner needs). Every reply shows which model produced it. They end the conversation (the other person may propose the end, never impose it), ask for judging and second opinions, and see per criterion: the level, their own words highlighted where a quote checked out, what did not check out and why, the judge's words labelled as not part of the score, and what the next level asks for, quoted from the rubric. They can contest a review, download their signed record, copy it to their own pod, and remove the transcript from the operator's pod.
 - **Judge.** This bridge's model, or an independent judge agent working from a packet. It picks a level, quotes and a rationale per criterion. It never computes a score and never has the last word.
 - **Admin.** Registers roles. Can withdraw a review for cause; the withdrawal is recorded and the learner sees why.
 
@@ -37,12 +38,12 @@ Everything is a signed record on a pod. With no model configured the bridge says
 
 These are deliberate design choices of this vertical, stated as our own concepts.
 
-- **The model never does arithmetic and never gets the last word.** A judge returns a level, quotes and a rationale per criterion. The platform checks every quote, character for character after a published normalisation, against the learner's own lines; computes any score from the rubric's weights and pass rule; and records a Hypothetical attempt bound to the rubric version hash, the transcript hash and the judge disclosure. A quote that does not check out leaves its criterion unverified, and an unverified criterion counts at its lowest level until a reviewer sets it.
-- **Nothing leaves as evidence until a qualified person reviews it, on a rubric a person ratified.** A reviewer who is not the learner, not a judge of the attempt and not the platform states every level in a signed act. That review is an Asserted record that supersedes the Hypothetical one. Unverified criteria must be set by the reviewer. Statements are built only for a reviewed head on a ratified rubric; a decline is a 409 and leaves an audit row.
+- **The model never does arithmetic and never gets the last word.** A judge returns a level, quotes and a rationale per criterion. The platform checks every quote, character for character after a published normalisation, against the learner's own lines, on whole words only (a quote that starts or ends inside a word, such as "acceptable" inside "unacceptable", does not count) and with at least two words; computes any score from the rubric's weights and pass rule, which the judge never sees; and records a Hypothetical attempt bound to the rubric version hash, the transcript hash and the judge disclosure. A quote that does not check out leaves its criterion unverified, and an unverified criterion counts at its lowest level until a reviewer sets it. A criterion put at its lowest level with no quote is marked "no quote needed", not "verified": nothing was checked, and the queue raises a judgment made mostly of those.
+- **Nothing leaves as evidence until a qualified person reviews it, on a rubric a person ratified.** A reviewer who is not the learner, not a judge of the attempt, not the reviewer who asked for the judgment being confirmed (or had it judged by a model they chose with their own key), and not the platform states every level in a signed act. That review is an Asserted record that supersedes the Hypothetical one. Unverified criteria must be set by the reviewer. Statements are built only for a reviewed head on a ratified rubric; a decline is a 409 and leaves an audit row.
 - **Classify first, and feedback only is a real choice.** The author declares how knowable the work is. A pass gate on work not read as evident or knowable needs a recorded reason. A feedback-only scenario computes, stores and projects no score at all.
-- **The judge is calibrated per criterion, and the queue says where to look.** Every review is an outcome for the judge, per (judge × prompt × rubric version × criterion), measured as agreement with the reviewer (not accuracy) with a Brier score and a mean level distance. The queue ranks attempts by unverified quotes, disagreement between judgments, closeness to the pass mark, the judge's own uncertainty, thin calibration, learner control and the audit sample, and shows the factors with the priority.
+- **The judge is calibrated per criterion, and the queue says where to look.** Every review is an outcome for the judge, per (judge × prompt × rubric version × criterion), measured as agreement with the reviewer (not accuracy) with a Brier score and a mean level distance. The queue ranks attempts by unverified quotes, criteria put at the lowest level with nothing quoted, disagreement between judgments, closeness to the pass mark, the judge's own uncertainty, thin calibration, learner control and the audit sample, and shows the factors with the priority.
 - **Several judgments, with agreement shown.** An attempt can be judged up to five times; a repeat by the same judge and prompt measures test-retest consistency.
-- **Practice evidence is not capability evidence.** Records and statements say "practice"; the statement verb is `completed`; no credential is issued from practice; the attempt number and whether the learner was coached are recorded.
+- **Practice evidence is not capability evidence.** Records and statements say "practice"; the statement verb is `completed`; no credential is issued from practice; the attempt number and whether the learner was coached are recorded. Both are weaker than they look: the attempt number counts attempts by one signing key on one scenario (a new key starts again at 1), and coaching is what the learner declared. Each statement says so in its list of what it loses.
 - **Who controlled the other person and the judge is recorded.** When the learner's own agent wrote the other person's lines, or the learner chose the judge's model, the record says so and the queue raises the attempt.
 - **The learner holds their record.** They can download every version's exact signed bytes, verifiable offline with the substrate's functions alone; copy every version to a pod they name; contest a review; and remove the transcript from the operator's pod while every hash and level stays.
 - **Your own agent can do the inference.** Routes: this bridge's model (operator key), your own key for one request (used once, never stored), client-required packets that let your agent play the other person or an independent judge agent judge, and a scripted fixture for the offline demo and tests. Every turn and judgment discloses provider, the model the provider returned, key source, route and measured usage.
@@ -58,6 +59,12 @@ Every act that changes or reveals a person's record is signed by that person; th
 
 Agents use either envelope form: `{payload, signature}` (EIP-191 over `canonicalJson(payload)`), or `{_signed_payload, _signature}` when `agent_id` names the signer's own key. A relay-mediated signature is refused: the relay signs with its own key.
 
+### Who can take part today
+
+- **A learner needs an Ethereum-style (secp256k1) wallet that does `personal_sign`, and answers one signing prompt per line they say**, or pastes an EIP-191 signature over canonical JSON. There is no passkey (WebAuthn), `did:key`, email, SSO or LMS-launch identity, and no anonymous practice. A typical learner without such a wallet cannot take part yet.
+- **An agent needs its own key.** An agent connected through the Interego relay (claude.ai, ChatGPT and other relay clients) signs with the relay's key, which this bridge refuses, so a relay-mediated agent cannot act here, including on the packet routes.
+- **Everyone is a key.** One person with two keys is two learners: attempt numbers, quotas and conflict checks see keys, not people.
+
 ## Run it
 
 **The offline demo** (no network, no model, no environment variables):
@@ -68,7 +75,7 @@ npx tsx applications/practice-evidence/demo/run.ts --serve          # ...then se
 npx tsx applications/practice-evidence/demo/run.ts --serve --port 6111
 ```
 
-With `--serve`, open `http://127.0.0.1:6110/ui`. The other person, the judge and the drafter are the scripted fixture: it answers lines it has no script for with "Go on.", judges the demo rubrics from its script and gives other rubrics the lowest level, and says so on every record. There is no `--live` mode; the real path is the server below.
+With `--serve`, open `http://127.0.0.1:6110/ui`. The other person, the judge and the drafter are the scripted fixture: it answers lines it has no script for with "Go on.", judges the demo rubrics from its script and gives other rubrics the lowest level, drafts the same "Renegotiating a deadline with a client" scenario whatever brief you send (the draft's note says no model read it), and says so on every record. There is no `--live` mode; the real path is the server below.
 
 **The bridge:**
 
@@ -88,23 +95,27 @@ Then the web UI is at `/ui`, the affordance manifest at `/affordances`, MCP at `
 | `HOST` | default `127.0.0.1`; a bridge holding a signing key does not listen on every interface unless told to |
 | `BRIDGE_DEPLOYMENT_URL` | the public base URL |
 | `PEV_DEFAULT_POD_URL` | the operator pod |
-| `PEV_SERVED_PODS` | comma-separated pods records may be written to; default the operator pod |
-| `PEV_POD_WRITE_SECRET` | the operator pod's write credential, sent as a bearer only on writes under that pod's path; never logged |
+| `PEV_SERVED_PODS` | comma-separated pods records are read from and written to; default the operator pod. `*` (explicit) is any public pod; with neither this nor `PEV_DEFAULT_POD_URL` every act is refused (403 `pod-not-served`) |
+| `PEV_POD_WRITE_SECRET` | the operator pod's credential, sent as a bearer on reads and writes under that pod's path only; never logged |
+| `PEV_BRIDGE_MODEL_FOR` | `registered` (default): this bridge's own model speaks and judges only for addresses holding a role on the pod (an admin can register learners); `anyone`: any signer |
+| `PEV_MODEL_CALLS_PER_HOUR` | `<per signer>,<total>` calls on this bridge's own model per hour, default `120,2000` |
+| `PEV_ATTEMPTS_PER_HOUR` | `<per signer>,<total>` attempts started per hour, default `20,500` |
 | `PEV_PLATFORM_KEY` | the platform signing key; absent means an ephemeral key (see below) |
 | `PEV_TRUSTED_PLATFORM_ADDRESSES` | earlier platform addresses whose records stay trusted |
 | `PEV_ADMIN_ADDRESSES` | addresses that may change roles and withdraw reviews |
 | `PEV_LLM_API_KEY` or `ANTHROPIC_API_KEY`, with `PEV_LLM_MODEL` | this bridge's own model route; a key without a model is no route, because this bridge never picks a model |
-| `PEV_DEMO_ROLES` | `1` gives the bridge demo role keys; refused unless `HOST` is loopback |
+| `PEV_DEMO_ROLES` | `1` gives the bridge demo role keys; refused unless `HOST` and `BRIDGE_DEPLOYMENT_URL` are loopback, and refused with `PEV_PLATFORM_KEY` (demo records are signed by an ephemeral key, so a later real run does not trust them unless told to) |
 
 - **The pod** must accept this bridge's writes, or the bridge needs `PEV_POD_WRITE_SECRET` for a gated pod. A refused write is reported as `pod-refused-write`, naming that setting.
-- **Ephemeral key.** Without `PEV_PLATFORM_KEY` the bridge makes a key at startup and every record says `keyKind: ephemeral`. After a restart those records are untrusted until the old address is added to `PEV_TRUSTED_PLATFORM_ADDRESSES`; the startup lines print the exact setting, or use a fresh pod path.
+- **Ephemeral key.** Without `PEV_PLATFORM_KEY` the bridge makes a key at startup, prints its address, and every record says `keyKind: ephemeral`. After a restart those records are untrusted until the old address is added to `PEV_TRUSTED_PLATFORM_ADDRESSES`. When the pod's registry is signed by a key this bridge does not trust, the startup lines name that key with a warning: trust it only if it is an address this bridge printed before, because anyone who can write the pod can sign a record with a key of their own, and a trusted key signs everything. Otherwise use a fresh pod path.
+- **Limits.** Calls on this bridge's own model and attempt starts are limited per signer and in total per hour (429 `model-budget-spent` or `attempt-budget-spent`, with `retryAfterSeconds`). The counts live in the process: a restart or a second replica starts its own. A per-request key and the packet routes are not counted. A refusal writes nothing to the pod, so a stranger hammering the bridge cannot fill the pod with refusal rows.
 - **Your own key for one request** (`llm_api_key` with `llm_model`) is used once, never stored or echoed. The web UI offers it as a toggle in the header.
 
 ## Affordances
 
 | Tool | What it does |
 |---|---|
-| `pev.register_role` | An admin adds or removes reviewer, author, judge or agent for an address |
+| `pev.register_role` | An admin adds or removes reviewer, author, judge, agent or learner for an address |
 | `pev.author_scenario` | Save or publish a scenario version |
 | `pev.draft_scenario_packet` | The drafting prompt for your own agent; writes nothing |
 | `pev.draft_scenario` | Draft with this bridge's model or your key; writes nothing, returns a platform receipt |
@@ -124,7 +135,7 @@ Then the web UI is at `/ui`, the affordance manifest at `/affordances`, MCP at `
 | `pev.contest_review` | The learner asks a different reviewer to look again |
 | `pev.retract_review` | An admin withdraws a review for cause |
 | `pev.calibration` | Agreement with the reviewer per judge, prompt, rubric version and criterion |
-| `pev.scenario_results` | Results per scenario, small counts suppressed |
+| `pev.scenario_results` | Results per scenario, small counts suppressed; reasons for changes to reviewers and admins only |
 | `pev.project_attempt` | An xAPI statement for a reviewed attempt on a ratified rubric |
 | `pev.holder_copy` | Copy every version of an attempt to a pod the learner names |
 | `pev.export_record` | Every version's exact signed bytes, verifiable offline |
@@ -160,21 +171,30 @@ Calibration is computed on read from the reviewed attempts on the pod and is not
 
 ## Results
 
-Per scenario, for reviewers, authors and admins: counts by state, final levels from standing reviews, provisional levels from primary judgments (labelled), coached and attempt-number splits, and what reviewers changed and why. Counts below five are suppressed, and a second cell is suppressed where one would otherwise be recoverable. The page says what results are: what happened in practice, not what caused it.
+Per scenario, for reviewers, authors and admins: counts by state, final levels from standing reviews, provisional levels from primary judgments (labelled), coached and attempt-number splits, and what reviewers changed. The page says what results are: what happened in practice, not what caused it.
+
+Suppression, as built: a row of level counts is shown whole or not at all. When any count in it is from 1 to 4, every count in the row is hidden (zeros too) and only the row total stays, so the hidden counts are one of several ways to make that total and none can be worked out by subtraction. A split (coached or not, first attempt or later) is withheld for a criterion when either of its rows is hidden, because the two rows add up to the shown total. The pass-rule count is hidden when it or the rest is from 1 to 4. What reviewers changed is a row of three counts per criterion (raised, lowered, unchanged) under the same rule. Only reviewers and admins, who may read any attempt through `get_attempt`, see each change with its level, reason and time; an author sees the counts. Counts by state (for example "contested: 1") are not suppressed: they say what happened to attempts, not at what level anyone performed. The provisional table is a different measure (the judge's levels over judged attempts) and follows the same rule on its own.
 
 ## Projections and what they lose
 
-`xapi` builds an xAPI 2.0 statement; `cmi5` builds the same with cmi5-allowed context only (a derived registration and session id, no cmi5-defined category, so practice cannot satisfy an assignable unit). Both carry the practice marker, the rubric and transcript hashes, the primary judge and the reviewer. A pass gate carries a score and `success`; feedback only carries levels and neither. Each statement lists what it loses (the quotes, the transcript, the reviewer's reasons, other judgments). SCORM is refused (501): a SCORM write is made by content in the browser, so it would carry a score without its provenance.
+`xapi` builds an xAPI 2.0 statement; `cmi5` builds the same with cmi5-allowed context only (a derived registration and session id, no cmi5-defined category, so practice cannot satisfy an assignable unit). Both carry the practice marker, the rubric and transcript hashes, the primary judge's model as `provider/model` (as the provider returned it, or as a packet judge declared it, with `declaredBy` naming who), the judge's identity, and the reviewer. A pass gate carries a score and `success`; feedback only carries levels and neither. Each statement lists what it loses (the quotes, the transcript, the reviewer's reasons, other judgments, that a packet judge's model is declared, that the attempt number counts keys, that coaching is declared). SCORM is refused (501): a SCORM write is made by content in the browser, so it would carry a score without its provenance.
 
 ## What it does not do yet
 
+- **Screen what goes in.** There is no check on a learner's lines before they reach the model, and no content check when an author publishes: a learner's line goes straight to the model, and any author text becomes the other person's instructions. Do not put this in front of learners who are not your own colleagues until both exist.
+- **Identity beyond wallets.** See "Who can take part today": no passkeys, `did:key`, SSO, LMS launch or anonymous practice, and relay-mediated agents cannot act.
+- **Keep transcripts private on its own.** Records are plaintext on the operator pod (see Threat notes).
+- An overall written feedback text for the learner (feedback is per criterion); all-or-nothing deductions; judge reference material only the judge sees; the judge correcting itself once when a quote does not check out.
+- Streaming replies; the other person speaking first beyond the authored first line; behaviour triggers, moods and reply-length settings for the other person.
+- Attempt limits set per scenario (only the bridge's hourly limits exist); a results dashboard with rates and averages.
+- UI languages other than English, and an accessibility review of the web UI.
 - Send statements to a learning record store; LTI grade passback; SCORM; a cmi5 launch from an LMS.
 - Packages for authoring tools.
 - Voice, avatars, coaches, knowledge retrieval.
 - Encrypted holder copies; writing pod access-control documents.
 - Retention windows (automatic redaction after a period); a pod-wide feedback-only switch; review links for people without an account.
 - Session keys for signing (one wallet prompt per act today).
-- Badges or any credential; metering.
+- Badges or any credential; metering or billing beyond the hourly limits.
 
 ## Cost and growth
 
@@ -185,21 +205,24 @@ Every exchange rewrites the whole attempt body, so storage per attempt grows wit
 - A learner can try to talk the judge into a level. Quote checking cannot catch a real quote used out of context; the reviewer is the control.
 - Reviewers usually see the judge's levels first; blind order is declared by the reviewer, not enforced.
 - When the learner's own agent wrote the other person's lines, the record says so and the queue raises the attempt.
-- Records are plaintext. The bridge writes no access-control document and no public-read facet; whoever the operator pod lets read `pev/records/` can read transcripts, so restrict that container.
+- **Transcripts are as public as the pod makes them.** Records are plaintext and the bridge writes no access-control document. On a pod that serves reads anonymously (the repository's own write-gated pod does, by design), anyone who can reach the pod can read every transcript, judgment and reviewer reason straight from the manifest, whatever `get_attempt` allows; the xAPI statement even names the record. The bridge sends its pod credential on reads as well as writes, so an operator whose pod can require that credential for reads of `pev/` can keep transcripts from strangers (proven only against the in-memory pod: no such real pod was tested). Holder copies go only to pods that accept unauthenticated writes, which in practice are usually world-readable too.
 - The person-versus-agent rules rest entirely on the admin's registry.
-- Writes are bounded by the served pods, the turn limit, five judgments and two contests per attempt.
+- **Spending.** Without limits, any fresh key could make the bridge spend its operator's model key. The bridge's own model is for registered addresses by default on the server, and calls and attempt starts are limited per signer and in total per hour in each process. A restart resets the counts, and many fresh keys share only the total. Writes are further bounded by the served pods, the turn limit, five judgments and two contests per attempt.
+- **Records count only where they were written.** A record's signed body names its graph, its pod, its place in the chain and the version before it. A platform-signed record copied to another pod, or an old version re-published on top of a newer one, keeps a valid signature but is refused as misplaced (409 `record-not-trusted`). What no reader of the pod alone can catch is truncation: someone who can write the pod can delete the newest versions, and the chain then ends at an older, correctly placed one. That needs an anchor outside the pod, which is not built.
+- **Reads are bounded.** Every response is read with an 8 MiB limit, a descriptor's graph is fetched only from the descriptor's own host, records are read only from under the pod, and every read, signed or not (`list_scenarios` and `calibration` need no signature), answers only for served pods.
 - The Host-header guard protects a loopback bridge from DNS rebinding: a request naming another site gets 421 on every route except `/health`, which the shared bridge mounts before any middleware and which answers only a status and the build id.
-- The nonce ledger is per process: across a restart, what remains is the ten-minute freshness window and the compare-and-set on each chain.
+- **Replays.** The nonce ledger is per process, so it does not reach a restart or a second replica. What does: every act on an attempt keeps its payload hash in the record, and an envelope already in the record is refused (409 `envelope-already-used`); a start envelope that already started one of the learner's recent attempts is refused; the role registry carries the payload hashes of the admin envelopes it applied within the replay window. Acts on a review or a scenario are also bound to the exact record or version they name. What remains: an admin envelope that changed nothing is not recorded, so after a restart it could be replayed within its ten minutes if someone captured it in transit.
 - Relay-mediated signatures are refused.
-- Redaction deletes graphs but leaves descriptors and manifest entries, which hold proofs and hashes, not text.
+- Redaction deletes graphs but leaves descriptors and manifest entries, which hold proofs and hashes, not text. The kept hashes are plain sha256 of each line and quote, so anyone who can read the pod can confirm a guess of a short or predictable line ("Yes.", "I understand.") against them; the redaction note says so. Keyed commitments are not built.
+- **Demo mode** writes to the operator pod it is given and signs with an ephemeral platform key it refuses to run beside a configured one; a page that reaches the loopback UI can act as any demo role. Use a demo pod path.
 
 ## Deviations
 
 From the design decisions and the spec, deliberately:
 
 1. **No grants in this version.** Standing is computed and shown; it changes nothing, and there is no grant record to revoke.
-2. **Plaintext records**; the pod's own access control governs reads. Encrypted copies are out of scope.
-3. **Replay protection is per process** (see Threat notes).
+2. **Plaintext records**; the pod's own access control governs reads, and on a pod that serves reads anonymously that means anyone (see Threat notes). Encrypted records and copies are out of scope.
+3. **The nonce ledger is per process**; replays across processes are caught by the payload hashes the records keep (see Threat notes).
 4. **Concurrency.** Every record has a unique slug, so a race between processes becomes a detectable fork (409 `chain-forked`, no repair path in this version), never a silent overwrite. The heads are read again right before every publish. Graph locks belong to each handler set, so two handler sets in one process behave like two processes.
 5. **SCORM is 501.** `cmi5` is narrowed to xAPI with cmi5-allowed context.
 6. **Nothing is posted to an LRS.**
@@ -216,13 +239,22 @@ From the design decisions and the spec, deliberately:
 17. **Blind review is declared, not enforced.**
 18. **Redaction** deletes earlier graphs only under the operator pod's path; anything else is listed in `graphsStillPresent`.
 19. **Wallet signing is one prompt per act.**
-20. **Served pods** bound where the platform key's records are written.
+20. **Served pods** bound where the platform key's records are read and written.
 21. **Unratified rubrics** cannot be projected.
 22. **Additions to the spec's interface:** refusal codes `payload-shape`, `pod-url-differs`, `target-missing`, `why-too-long`, `brief-too-long`, `source-text-too-long`, `byok-incomplete`, `group-by-unknown`, `target-pod-is-served`; output fields `currentTarget` on every attempt write, `primaryJudgeLevels` on reviews, the rubric on queue entries, `validFrom`/`validUntil` on a withdrawal, `provisionalLabel` on judgments, and `scenarioKey` in scenario views (the web UI needs it to edit a scenario). Each attempt act keeps its signature, so every act can be re-verified from the record. An untrusted attempt head answers `project_attempt` with 409 `record-not-trusted` and writes no skip audit. Eligibility checks the author-test rule first.
 23. **The other person's reply has no length limit**; the 4000-character limit applies to the learner's lines and to lines recorded from a packet.
 24. **Demo role keys** on the real server are registered against `PEV_DEFAULT_POD_URL` at startup.
 25. **The offline demo has no live mode**: `runDemo({ live: true })` and `--live` say what to run instead. Its step table follows the spec's, with extra checks: 27b reads the skip audit back from the pod; 31a shows that the same reviewer is refused as an earlier reviewer (403) before any state check, and 31b that a different reviewer is refused because the attempt is already reviewed (409); 47b, 50b and the last step read the attempts.
 26. **The scripted judge** gives criteria it has no script for the lowest level, with a rationale saying it is a fixture, so a scenario written in `--serve` mode can be judged offline.
+27. **The quote rule is stricter than DECISIONS #4**: a quote must also start and end on whole words and hold at least two words (or one word of 12 letters or digits), because a mid-word match can invert what the learner said. The lowest level with no quote is `no-quote-needed`, a third verification status; it counts as the judge's level and does not block countersigning.
+28. **The judge does not see the stakes.** Its request carries criteria, levels and descriptors only: no weights, level values, pass rule or use.
+29. **Withdrawing a review retracts the attempt's head record.** The head after a withdrawal is modal Retracted (with `validUntil`), although only the review was withdrawn and the transcript and judgments still stand. This is a deliberate encoding: the claim the head made (a reviewed result) no longer stands. A generic reader that trusts modal status alone will treat the whole attempt as withdrawn.
+30. **Reads, signed or not, are limited to served pods**; any public pod is an explicit `PEV_SERVED_PODS=*`, and with no pod configured nothing is served.
+31. **A reviewer who asked for the primary judgment, or had any judgment made by a model they chose** (their own key), may not review that attempt, as a judge signer may not. A reviewer who only asked for a second opinion with the bridge's model still may.
+32. **Queue weights**: `unverified` is 0.2 (the spec's 0.25) to make room for `notQuoted` at 0.05; they still add up to 1.
+33. **Results suppression** hides whole rows and withholds splits (see Results), and reasons for changes go to reviewers and admins only; the spec suppressed cells.
+34. **Hourly limits and the registered-only model route** are additions; a limit refusal writes no audit row (it would let a stranger fill the pod).
+35. **Records carry their place in the chain** (`seq`, `prev`) in the signed body, and the role registry carries recent admin envelope hashes.
 
 ## Owner questions
 

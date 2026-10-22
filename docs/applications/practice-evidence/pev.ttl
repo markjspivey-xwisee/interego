@@ -40,7 +40,7 @@ pev:Attempt a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:comment "One learner's practice of one scenario version: the transcript, the judgments, the reviews and every reopening, as one supersede chain on one graph. Practice evidence is rehearsal, not capability evidence." .
 pev:RoleRegistry a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Role registry" ;
-    rdfs:comment "The per-pod list of addresses and the roles they hold (reviewer, author, judge, agent). Each change is signed by an admin and supersedes the previous registry record." .
+    rdfs:comment "The per-pod list of addresses and the roles they hold (reviewer, author, judge, agent, learner). Each change is signed by an admin and supersedes the previous registry record." .
 pev:ProjectionAudit a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Projection audit row" ;
     rdfs:comment "A record that a statement was built for an attempt, or that building one was declined and why. Nothing is projected silently." .
@@ -136,7 +136,7 @@ pev:LevelChoiceRule a owl:NamedIndividual, pev:PlatformRule ;
     rdfs:comment "Choose the highest level whose descriptor the learner's own words fully meet. A level that is only partly met is not met." .
 pev:QuoteRule a owl:NamedIndividual, pev:PlatformRule ;
     rdfs:label "Quote rule" ;
-    rdfs:comment "A quote counts only when, after the quote and the learner's turn are both normalised (Unicode NFC; curly quotes and apostrophes made straight; every run of whitespace made one space; both ends trimmed), it appears character for character, with case kept, inside one of the learner's own turns, and is at least 12 characters long. The platform never repairs or paraphrases a quote. A level above the lowest needs at least one quote that checks out, and a quote that does not check out leaves its criterion unverified." .
+    rdfs:comment "A quote counts only when, after the quote and the learner's turn are both normalised (Unicode NFC; curly quotes and apostrophes made straight; every run of whitespace made one space; both ends trimmed), it appears character for character, with case kept, inside one of the learner's own turns; it neither starts nor ends inside a word of that turn (a letter, digit or combining mark on both sides of either end); it is at least 12 characters long; and it holds at least two words, or one word of at least 12 letters or digits. The platform never repairs or paraphrases a quote. A level above the lowest needs at least one quote that checks out, and a quote that does not check out leaves its criterion unverified. A criterion judged at its lowest level with no quote is marked no-quote-needed: nothing was there to check, so it is not called verified." .
 pev:ScoringRule a owl:NamedIndividual, pev:PlatformRule ;
     rdfs:label "Scoring rule" ;
     rdfs:comment "For a pass gate the platform computes the points as the sum, over criteria, of the weight times the value of the chosen level, and the maximum as the sum of each weight times the value of that criterion's top level. The percent is points over maximum, rounded half up to one decimal. The pass rule is met when points times 100 is at least the minimum percent times the maximum and every required level is reached. An unverified criterion counts at its lowest level until a reviewer sets it. For feedback only none of this is computed: the result is the levels alone." .
@@ -617,7 +617,7 @@ pev:repeatOf a owl:DatatypeProperty ;
     rdfs:range xsd:integer .
 pev:verificationStatus a owl:DatatypeProperty ;
     rdfs:label "verification status" ;
-    rdfs:comment "verified or unverified: whether every quote checked out and a level above the lowest has one." ;
+    rdfs:comment "verified, unverified or no-quote-needed. verified: every quote checked out and a level above the lowest has one. unverified: a quote did not check out, or a level above the lowest has none. no-quote-needed: the lowest level with no quote, so nothing was checked." ;
     rdfs:range xsd:string .
 pev:declaredConfidence a owl:DatatypeProperty ;
     rdfs:label "declared confidence" ;
@@ -709,7 +709,7 @@ pev:address a owl:DatatypeProperty ;
     rdfs:range xsd:string .
 pev:role a owl:DatatypeProperty ;
     rdfs:label "role" ;
-    rdfs:comment "reviewer, author, judge or agent." ;
+    rdfs:comment "reviewer, author, judge, agent or learner." ;
     rdfs:range xsd:string .
 
 # Projection audit.
@@ -744,8 +744,8 @@ pev:practiceEvidence a owl:DatatypeProperty ;
     rdfs:comment "True on every statement this vertical projects. Practice evidence is rehearsal of a known scenario; it is not capability evidence and no credential is issued from it." ;
     rdfs:range xsd:boolean .
 pev:judgeModel a owl:DatatypeProperty ;
-    rdfs:label "primary judge" ;
-    rdfs:comment "The primary judgment's judge id." ;
+    rdfs:label "primary judge model" ;
+    rdfs:comment "The primary judgment's model as provider/model: as the provider returned it on a model route, or as the judge declared it on the packet route (then pev:declaredBy names who declared it). The judge's identity is pev:judgeId." ;
     rdfs:range xsd:string .
 pev:judgeRoute a owl:DatatypeProperty ;
     rdfs:label "primary judge route" ;

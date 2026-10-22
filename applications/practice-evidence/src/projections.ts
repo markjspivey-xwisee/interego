@@ -9,7 +9,8 @@
  *     an achievement in an LRS report;
  *   · a feedback-only scenario carries levels and NO score and NO success;
  *   · every statement carries the practice marker, the rubric hash, the transcript hash, the judge
- *     and the reviewer;
+ *     model (provider/model, as the provider returned it or as a packet judge declared it), the
+ *     judge's identity and the reviewer;
  *   · the `cmi5` format is xAPI with cmi5-ALLOWED context only: it never carries a cmi5-defined
  *     category, so practice cannot satisfy an assignable unit, and its registration and session id
  *     are derived from the attempt, not issued by an LMS.
@@ -79,7 +80,8 @@ export function buildStatement(format: ProjectionFormat, i: ProjectionInput): Re
     [PRACTICE_MARKER]: true,
     [ext('rubricHash')]: a.scenario.rubricHash,
     [ext('transcriptHash')]: a.transcriptHash ?? null,
-    [ext('judgeModel')]: primary.judge.id,
+    [ext('judgeModel')]: `${primary.disclosure.provider}/${primary.disclosure.model}`,
+    [ext('judgeId')]: primary.judge.id,
     [ext('judgeRoute')]: primary.route,
     [ext('judgeChosenBy')]: primary.chosenBy,
     [ext('judgmentCount')]: a.judgments.length,
@@ -96,6 +98,7 @@ export function buildStatement(format: ProjectionFormat, i: ProjectionInput): Re
     [ext('learnerKind')]: a.learner.kind,
     [ext('sourceRecord')]: i.headDescriptorUrl,
   };
+  if (primary.disclosure.declaredBy !== undefined) contextExt[ext('declaredBy')] = primary.disclosure.declaredBy;
   if (anyDemoSigner(a)) contextExt[ext('serverHeldDemoKey')] = true;
   if (format === 'cmi5') contextExt[CMI5_SESSION_EXT] = deterministicUuid(`${a.attemptIri}|session`);
 
@@ -207,20 +210,21 @@ export function statementProblems(stmt: unknown, format: ProjectionFormat, use: 
 }
 
 /** What each projection leaves out. Stored in every audit row and returned with every statement. */
+const LOSSY_COMMON: readonly string[] = [
+  'carries levels, not the quotes or their offsets',
+  'carries the transcript hash, not the transcript',
+  'carries the reviewer, not the reviewer\'s grounds',
+  'carries the primary judge; other judgments are in the record',
+  'on the packet route the judge model is as the judge declared it (declaredBy names who), not measured',
+  'attemptNumber counts attempts by this signing key on this scenario, not by this person: a new key starts again at 1',
+  'coached is what the learner declared when starting, not checked',
+  'the full record is referenced by descriptor URL',
+];
+
 export const LOSSY: Readonly<Record<'xapi' | 'cmi5' | 'scorm', readonly string[]>> = {
-  xapi: [
-    'carries levels, not the quotes or their offsets',
-    'carries the transcript hash, not the transcript',
-    'carries the reviewer, not the reviewer\'s grounds',
-    'carries the primary judge; other judgments are in the record',
-    'the full record is referenced by descriptor URL',
-  ],
+  xapi: LOSSY_COMMON,
   cmi5: [
-    'carries levels, not the quotes or their offsets',
-    'carries the transcript hash, not the transcript',
-    'carries the reviewer, not the reviewer\'s grounds',
-    'carries the primary judge; other judgments are in the record',
-    'the full record is referenced by descriptor URL',
+    ...LOSSY_COMMON,
     'no LMS launched this session: the registration and session ids are derived from the attempt, not issued by an LMS, so an LMS will not match this statement to an enrolment',
     'carries no cmi5-defined category: practice does not satisfy an assignable unit',
   ],

@@ -136,6 +136,9 @@ describe('the bridge over HTTP: one route and one tool per declared affordance, 
       const h = a.annotations ?? {};
       expect([typeof h.readOnlyHint, typeof h.destructiveHint, typeof h.idempotentHint, typeof h.openWorldHint], a.toolName).toEqual(['boolean', 'boolean', 'boolean', 'boolean']);
     }
+    // A paid model call and a demo signature are not reads: an MCP client must not auto-approve them as read-only.
+    const hint = (tool: string): boolean | undefined => pevAffordances.find((a) => a.toolName === tool)?.annotations?.readOnlyHint;
+    expect([hint('pev.draft_scenario'), hint('pev.sign_as_demo_role'), hint('pev.say'), hint('pev.judge_attempt')]).toEqual([false, false, false, false]);
     expect(Object.keys(demoHandlers).sort()).toEqual(pevAffordances.map((a) => a.toolName).sort());
   });
 
@@ -535,14 +538,21 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
   it('binds to loopback by default, gates demo keys on a loopback host, guards loopback binds, and serves the UI', () => {
     expect(server).toMatch(/const HOST = env\('HOST'\) \?\? '127\.0\.0\.1';/);
     expect(server).toMatch(/if \(demoOn && !loopback\) \{/);
+    // Demo keys never run beside a configured platform key or behind a public deployment URL.
+    expect(server).toMatch(/if \(demoOn && !baseIsLoopback\) \{/);
+    expect(server).toMatch(/if \(demoOn && keyHex\) \{/);
+    // Any public pod is an explicit '*', the bridge's model is for registered addresses unless the operator says anyone, and budgets apply.
+    expect(server).toMatch(/const anyPod = servedRaw === '\*';/);
+    expect(server).toMatch(/const modelFor = env\('PEV_BRIDGE_MODEL_FOR'\) === 'anyone' \? 'anyone' : 'registered';/);
+    expect(server).toMatch(/bridgeModelFor: modelFor, budgets,/);
     expect(server).toMatch(/if \(loopback\) a\.use\(hostAllowlistGuard\(allowedHosts\)\);/);
     expect(server).toContain('attachUi(a);');
     expect(server).toContain("{ label: 'Web UI', href: `${base}/ui`, rel: 'alternate', type: 'text/html' }");
     expect(server).not.toMatch(/scriptedTextModel|scriptedPracticeModel|demo\/run/);
   });
 
-  it('sends the operator pod credential only through operatorWriteFetch, and holder copies through a separate fetch', () => {
-    expect(server).toMatch(/fetchFn: operatorWriteFetch\(defaultPodUrl, writeSecret, baseFetch\)/);
+  it('sends the operator pod credential only through operatorPodFetch, and holder copies through a separate fetch', () => {
+    expect(server).toMatch(/fetchFn: operatorPodFetch\(defaultPodUrl, writeSecret, baseFetch\)/);
     expect(server).toMatch(/holderFetchFn: baseFetch/);
     expect(server).toMatch(/const writeSecret = env\('PEV_POD_WRITE_SECRET'\);/);
     const reads = /env\(\s*'PEV_POD_WRITE_SECRET'|\[\s*'PEV_POD_WRITE_SECRET'\s*\]/;

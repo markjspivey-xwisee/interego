@@ -45,8 +45,8 @@ export const LIFECYCLE_STATES: readonly LifecycleState[] = [
   'in-conversation', 'ended', 'judged', 'countersigned', 'overridden', 'contested', 'review-retracted', 'redacted',
 ];
 export type EnvelopeForm = 'pev-canonical' | 'signed-request';
-export type Role = 'reviewer' | 'author' | 'judge' | 'agent';
-export const ROLES: readonly Role[] = ['reviewer', 'author', 'judge', 'agent'];
+export type Role = 'reviewer' | 'author' | 'judge' | 'agent' | 'learner';
+export const ROLES: readonly Role[] = ['reviewer', 'author', 'judge', 'agent', 'learner'];
 
 export interface StoredEnvelope {
   readonly form: EnvelopeForm;
@@ -62,11 +62,21 @@ export interface StoredEnvelope {
 }
 
 export interface Actor { readonly address: string; readonly did: string; readonly serverHeldDemoKey: boolean }
+/** The version a record supersedes, as the platform signed it into the record itself. */
+export interface RecordLink { readonly recordId: string; readonly graphDigest: string }
 export interface RecordCommon {
   readonly v: 1; readonly podUrl: string; readonly keyKind: KeyKind;
   /** The platform address that signs this record's authorship proof. */
   readonly platformSigner: string;
   readonly at: string;
+  /**
+   * The record's place in its chain, stamped by the bridge as it writes and signed with the rest of
+   * the body: `seq` counts versions from 1, `prev` names the version this one supersedes. A reader
+   * refuses a head whose seq is not the chain's length, or a version whose prev is not the version
+   * before it, so an old signed version re-published on top of a newer one is caught.
+   */
+  readonly seq?: number;
+  readonly prev?: RecordLink;
 }
 
 export type DraftAssistance =
@@ -158,9 +168,17 @@ export interface AttemptBody extends RecordCommon {
 
 export interface RoleEntry { readonly address: string; readonly roles: readonly Role[] }
 
+/** An envelope that changed this chain, kept while it could still pass the freshness check. */
+export interface RecentEnvelope { readonly payloadSha256: string; readonly at: string }
+
 export interface RoleRegistryBody extends RecordCommon {
   readonly kind: 'role-registry'; readonly registryIri: string; readonly seq: number;
   readonly entries: readonly RoleEntry[];
+  /**
+   * The payload hashes of the admin envelopes applied within the replay window, carried forward
+   * from version to version, so a stored envelope cannot be applied again by another process.
+   */
+  readonly recentEnvelopes?: readonly RecentEnvelope[];
   readonly change: { readonly address: string; readonly role: Role; readonly change: 'add' | 'remove'; readonly by: string };
   readonly actor: Actor;
   readonly envelope: StoredEnvelope;
@@ -529,7 +547,7 @@ export function redactBody(a: AttemptBody, redaction: Redaction, at: string): At
   };
 }
 
-export const REDACTION_NOTE = 'The text of this attempt was removed from this pod. Hashes remain, so a copy you hold can still be checked against this record.';
+export const REDACTION_NOTE = 'The text of this attempt was removed from this pod. Hashes remain, so a copy you hold can still be checked against this record. The hashes are plain sha256 of each line and quote: anyone who can read this pod can confirm a guess of a short or predictable line against them.';
 
 /** How a learner checks an exported record with no pod and no bridge. */
 export const EXPORT_VERIFY_STEPS: readonly string[] = [
@@ -548,7 +566,7 @@ export interface NextAction { readonly action: string; readonly toolName: string
 export interface NextActionView {
   readonly state: LifecycleState; readonly authorTest: boolean; readonly judgmentCount: number; readonly contestCount: number;
   readonly learnerTurns: number; readonly mayCountersignAsIs: boolean;
-  /** True when the caller is the learner, a judge signer, or an earlier reviewer of this attempt. */
+  /** True when the caller is the learner, a judge signer, a reviewer who asked for the primary judgment or chose a judge's model, or an earlier reviewer. */
   readonly callerConflicted: boolean;
 }
 
@@ -623,19 +641,48 @@ export function nextActionsFor(
   return [...out.values()];
 }
 
+/** Lowercase addresses of every judge that signed a judgment of this attempt (the packet route). */
+export function judgeSignersOf(a: AttemptBody): string[] {
+  return a.judgments.flatMap((j) => {
+    const addr = j.judge.signer !== undefined ? addressOfDid(j.judge.signer) : null;
+    return addr ? [addr.toLowerCase()] : [];
+  });
+}
+
+/**
+ * Lowercase addresses of reviewers who signed the act that produced the primary judgment (the one
+ * a countersign confirms), or had any judgment made by a model they chose with their own key.
+ */
+export function judgeRequestersOf(a: AttemptBody): string[] {
+  return a.judgments.flatMap((j, i) => {
+    const requestedPrimary = i === 0 && j.requestedBy.role === 'reviewer';
+    if (!requestedPrimary && j.chosenBy !== 'reviewer') return [];
+    const addr = addressOfDid(j.requestedBy.did);
+    return addr ? [addr.toLowerCase()] : [];
+  });
+}
+
+/**
+ * Everyone who may not review this attempt, as lowercase addresses: the learner, every judge that
+ * signed a judgment, a reviewer who asked for the primary judgment or chose a judge's model with
+ * their own key, and every earlier reviewer (DECISIONS #2: the countersigner differs from the
+ * original signer, the subject and the judge).
+ */
+export function conflictedReviewersOf(a: AttemptBody): string[] {
+  return [...new Set([
+    a.learner.address.toLowerCase(), ...judgeSignersOf(a), ...judgeRequestersOf(a), ...a.reviews.map((r) => r.reviewer.address.toLowerCase()),
+  ])];
+}
+
 /** The figures nextActionsFor reads, from an attempt body and a caller address. */
 export function nextActionView(a: AttemptBody, caller: string): NextActionView {
   const primary = a.judgments[0];
-  const judgeSigners = a.judgments.map((j) => j.judge.signer).filter((x): x is string => x !== undefined)
-    .map((d) => (addressOfDid(d) ?? '').toLowerCase());
-  const reviewers = a.reviews.map((r) => r.reviewer.address.toLowerCase());
-  const c = caller.toLowerCase();
   return {
     state: a.state, authorTest: a.authorTest, judgmentCount: a.judgments.length,
     contestCount: a.reopenings.filter((r) => r.kind === 'contest').length,
     learnerTurns: learnerTurnCount(a.turns),
     mayCountersignAsIs: primary !== undefined && primary.unverifiedCriteria.length === 0,
-    callerConflicted: c === a.learner.address.toLowerCase() || judgeSigners.includes(c) || reviewers.includes(c),
+    callerConflicted: conflictedReviewersOf(a).includes(caller.toLowerCase()),
   };
 }
 

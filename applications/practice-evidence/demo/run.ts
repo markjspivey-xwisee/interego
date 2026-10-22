@@ -1043,7 +1043,7 @@ function markdownReport(i: { ok: boolean; steps: readonly DemoStep[]; latency: r
   const res = obj(i.report.results);
   out.push('', '## Results for missed-deadline', '', cell(res['label']), '', `Counts: ${JSON.stringify(obj(res['counts']))}`, '');
   for (const c of arr(obj(res['final'])['perCriterion']).map(obj)) {
-    out.push(`- final, ${cell(c['title'])} (n = ${String(c['n'])}): ${arr(c['levels']).map(obj).map((l) => `${String(l['label'])} ${l['suppressed'] ? 'fewer than 5' : String(l['count'])}`).join(', ')}`);
+    out.push(`- final, ${cell(c['title'])} (n = ${String(c['n'])}): ${arr(c['levels']).map(obj).map((l) => `${String(l['label'])} ${l['suppressed'] ? 'hidden' : String(l['count'])}`).join(', ')}`);
   }
   out.push('', '## The learner\'s copies', '', `Export: ${JSON.stringify(i.report.export)}`, '', `Holder copy: ${JSON.stringify(i.report.copies)}`, '');
   out.push('## Per-turn latency on the in-memory pod', '', `${i.latency.map((x) => `${x} ms`).join(', ')}.`, '',

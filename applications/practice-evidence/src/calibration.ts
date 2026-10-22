@@ -289,8 +289,13 @@ export function auditCoverageOf(attempts: readonly AttemptBody[]): Map<string, {
 //  Review queue (§9.5): where a reviewer should look next, with the arithmetic shown
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+/**
+ * The weights add up to 1. `unverified` and `nearThreshold` look for a judge giving too much
+ * credit; `notQuoted` is the one signal for too little: criteria put at the lowest level with no
+ * quote, where nothing was checked at all.
+ */
 export const QUEUE_WEIGHTS = {
-  unverified: 0.25, disagreement: 0.15, nearThreshold: 0.15, uncertainty: 0.15, cellNeed: 0.1, learnerControlled: 0.1, auditSample: 0.1,
+  unverified: 0.2, notQuoted: 0.05, disagreement: 0.15, nearThreshold: 0.15, uncertainty: 0.15, cellNeed: 0.1, learnerControlled: 0.1, auditSample: 0.1,
 } as const;
 const UNDECLARED_UNCERTAINTY = 0.2;
 
@@ -305,7 +310,7 @@ export interface QueueCandidate {
 }
 
 export interface QueueWhy {
-  readonly unverified: number; readonly disagreement: number; readonly nearThreshold: number; readonly uncertainty: number;
+  readonly unverified: number; readonly notQuoted: number; readonly disagreement: number; readonly nearThreshold: number; readonly uncertainty: number;
   readonly uncertaintyDeclared: boolean; readonly cellNeed: number; readonly learnerControlled: number; readonly auditSample: number;
 }
 
@@ -323,7 +328,7 @@ function cellNeedOf(cell: CalibrationCellView | undefined): number {
 export function queueFactors(c: QueueCandidate, cells: readonly CalibrationCellView[]): QueueWhy {
   const primary = c.judgments[0];
   if (!primary) {
-    return { unverified: 0, disagreement: 0, nearThreshold: 0, uncertainty: 0, uncertaintyDeclared: false, cellNeed: 1, learnerControlled: 0, auditSample: 0 };
+    return { unverified: 0, notQuoted: 0, disagreement: 0, nearThreshold: 0, uncertainty: 0, uncertaintyDeclared: false, cellNeed: 1, learnerControlled: 0, auditSample: 0 };
   }
   const spreads = agreementOf(c.scenarioSpec, c.judgments).map((x) => x.normalisedSpread);
   const disagreement = c.judgments.length > 1 && spreads.length > 0 ? Math.max(...spreads) : 0;
@@ -340,8 +345,10 @@ export function queueFactors(c: QueueCandidate, cells: readonly CalibrationCellV
   });
   const learnerControlled = c.counterpartControlledBy === 'learner' || c.judgments.some((j) => j.chosenBy === 'learner') ? 1
     : c.counterpartControlledBy === 'learner-model' ? 0.5 : 0;
+  const notQuoted = primary.criteria.length === 0 ? 0 : primary.criteria.filter((x) => x.status === 'no-quote-needed').length / primary.criteria.length;
   return {
     unverified: primary.unverifiedCriteria.length > 0 ? 1 : 0,
+    notQuoted: round3(notQuoted),
     disagreement: round3(disagreement),
     nearThreshold: round3(nearThreshold),
     uncertainty: round3(uncertainty),
@@ -355,7 +362,7 @@ export function queueFactors(c: QueueCandidate, cells: readonly CalibrationCellV
 /** Σ weight × factor, rounded to 3 places. */
 export function priorityOf(w: QueueWhy): number {
   const W = QUEUE_WEIGHTS;
-  return round3(W.unverified * w.unverified + W.disagreement * w.disagreement + W.nearThreshold * w.nearThreshold
+  return round3(W.unverified * w.unverified + W.notQuoted * w.notQuoted + W.disagreement * w.disagreement + W.nearThreshold * w.nearThreshold
     + W.uncertainty * w.uncertainty + W.cellNeed * w.cellNeed + W.learnerControlled * w.learnerControlled + W.auditSample * w.auditSample);
 }
 
@@ -400,13 +407,23 @@ export function reviewQueue(
 
 export const RESULTS_K = 5;
 export const RESULTS_LABEL = 'Practice results: what happened in practice. They do not show what caused it.';
+export const SUPPRESSION_RULE = 'A row of level counts is shown whole or not at all: when any count in it is from 1 to k − 1, every count in the row is hidden and only the row total stays, so no hidden count can be worked out by subtraction. A split (coached or not, first attempt or later) is withheld for a criterion when either of its rows is hidden, because the two rows add up to the shown total. Counts of what reviewers changed follow the same rule, and only reviewers and admins, who may read any attempt, see each change and its reason.';
 
 export interface LevelCount { readonly levelId: string; readonly label: string; readonly count: number | null; readonly suppressed: boolean }
-export interface CriterionDistribution { readonly criterionId: string; readonly title: string; readonly n: number; readonly levels: readonly LevelCount[] }
+export interface CriterionDistribution {
+  readonly criterionId: string; readonly title: string; readonly n: number; readonly levels: readonly LevelCount[];
+  /** Set on both rows of a split that is withheld because one of its rows is hidden. */
+  readonly withheld?: true;
+}
+
+export interface ReviewerChange {
+  readonly criterionId: string; readonly judgeLevelId: string; readonly finalLevelId: string;
+  readonly why: string | null; readonly reviewedAt: string;
+}
 
 export interface ScenarioResultsView {
   readonly scenarioIri: string; readonly versions: readonly number[]; readonly assessmentUse: AssessmentUse; readonly k: number;
-  readonly label: string;
+  readonly label: string; readonly suppressionRule: string;
   readonly counts: { readonly attempts: number; readonly byState: Readonly<Record<LifecycleState, number>>; readonly authorTestExcluded: number; readonly redacted: number };
   readonly final: {
     readonly reviewedAttempts: number; readonly perCriterion: readonly CriterionDistribution[];
@@ -415,30 +432,24 @@ export interface ScenarioResultsView {
     readonly byAttemptNumber: { readonly first: readonly CriterionDistribution[]; readonly later: readonly CriterionDistribution[] };
   };
   readonly provisional: { readonly judgedAttempts: number; readonly perCriterion: readonly CriterionDistribution[]; readonly label: typeof PROVISIONAL_LABEL };
-  readonly reviewerChanges: readonly {
-    readonly criterionId: string; readonly judgeLevelId: string; readonly finalLevelId: string;
-    readonly why: string | null; readonly reviewedAt: string;
-  }[];
-  readonly changedByReviewer: readonly { readonly criterionId: string; readonly reviewedAttempts: number; readonly changed: number }[];
+  /** 'each' for a reviewer or an admin; 'counts' for an author, who sees only the suppressed counts below. */
+  readonly reviewerChangesShown: 'each' | 'counts';
+  /** Every level a reviewer set differently from the judge, with the reason: empty unless shown is 'each'. */
+  readonly reviewerChanges: readonly ReviewerChange[];
+  /** Per criterion: how many reviewed attempts the reviewer raised or lowered from the judge's level. */
+  readonly reviewerChangeCounts: readonly { readonly criterionId: string; readonly raised: number | null; readonly lowered: number | null; readonly suppressed: boolean }[];
+  readonly changedByReviewer: readonly { readonly criterionId: string; readonly reviewedAttempts: number; readonly changed: number | null; readonly suppressed: boolean }[];
 }
 
+const isSmall = (c: number, k: number): boolean => c > 0 && c < k;
+
 /**
- * Suppress every count below k. In a row with exactly one suppressed cell, also suppress the
- * smallest other cell (non-zero first), so the hidden one cannot be recovered from n by
- * subtraction. A row whose n is itself below k is suppressed whole.
+ * Show a row whole or not at all. When any count is from 1 to k − 1, every count (zeros included)
+ * is hidden, so the hidden counts are one of several ways to make the row's total.
  */
 export function suppressRow(counts: readonly { levelId: string; label: string; count: number }[], k: number): LevelCount[] {
-  const n = counts.reduce((s, c) => s + c.count, 0);
-  if (n > 0 && n < k) return counts.map((c) => ({ levelId: c.levelId, label: c.label, count: null, suppressed: true }));
-  const hidden = new Set<number>();
-  counts.forEach((c, i) => { if (c.count > 0 && c.count < k) hidden.add(i); });
-  if (hidden.size === 1) {
-    const others = counts.map((c, i) => ({ c, i })).filter(({ i }) => !hidden.has(i));
-    const nonZero = others.filter(({ c }) => c.count > 0).sort((a, b) => a.c.count - b.c.count || a.i - b.i);
-    const pick = nonZero[0] ?? others[0];
-    if (pick) hidden.add(pick.i);
-  }
-  return counts.map((c, i) => (hidden.has(i)
+  const hide = counts.some((c) => isSmall(c.count, k));
+  return counts.map((c) => (hide
     ? { levelId: c.levelId, label: c.label, count: null, suppressed: true }
     : { levelId: c.levelId, label: c.label, count: c.count, suppressed: false }));
 }
@@ -458,8 +469,28 @@ function distributions(spec: ScenarioSpec, levelSets: readonly Readonly<Record<s
   });
 }
 
+/** Withhold both rows of a split for a criterion when either row hides a count. */
+function split(a: readonly CriterionDistribution[], b: readonly CriterionDistribution[]): [CriterionDistribution[], CriterionDistribution[]] {
+  const hidden = (d: CriterionDistribution | undefined): boolean => d !== undefined && d.levels.some((l) => l.suppressed);
+  const withhold = (d: CriterionDistribution): CriterionDistribution => ({
+    ...d, levels: d.levels.map((l) => ({ levelId: l.levelId, label: l.label, count: null, suppressed: true })), withheld: true,
+  });
+  const out: [CriterionDistribution[], CriterionDistribution[]] = [[], []];
+  a.forEach((x, i) => {
+    const y = b[i];
+    const w = hidden(x) || hidden(y);
+    out[0].push(w ? withhold(x) : x);
+    if (y) out[1].push(w ? withhold(y) : y);
+  });
+  return out;
+}
+
 /** Results across the chosen versions of one scenario, from trusted attempt heads. */
-export function scenarioResults(i: { scenarioIri: string; spec: ScenarioSpec; versions: readonly number[]; attempts: readonly AttemptBody[]; k: number }): ScenarioResultsView {
+export function scenarioResults(i: {
+  scenarioIri: string; spec: ScenarioSpec; versions: readonly number[]; attempts: readonly AttemptBody[]; k: number;
+  /** True for a reviewer or an admin: each change a reviewer made is listed with its reason. */
+  detail?: boolean;
+}): ScenarioResultsView {
   const inScope = i.attempts.filter((a) => a.scenario.scenarioIri === i.scenarioIri
     && (i.versions.length === 0 || i.versions.includes(a.scenario.version)));
   const counted = inScope.filter((a) => !a.authorTest);
@@ -480,31 +511,42 @@ export function scenarioResults(i: { scenarioIri: string; spec: ScenarioSpec; ve
     const gated = reviewed.filter((x) => x.r.assessment.use === 'pass-gate');
     const count = gated.filter((x) => x.r.assessment.use === 'pass-gate' && x.r.assessment.meetsPassRule).length;
     const of = gated.length;
-    const small = (c: number): boolean => c > 0 && c < i.k;
-    const suppressed = small(count) || small(of - count);
+    const suppressed = isSmall(count, i.k) || isSmall(of - count, i.k);
     meetsPassRule = { count: suppressed ? null : count, of, suppressed };
   }
 
-  const reviewerChanges: ScenarioResultsView['reviewerChanges'][number][] = [];
-  const changed = new Map<string, { reviewedAttempts: number; changed: number }>();
+  const changes: ReviewerChange[] = [];
+  const tally = new Map<string, { reviewedAttempts: number; changed: number; raised: number; lowered: number }>();
   for (const { a, r } of reviewed) {
     const primary = a.judgments[0];
     for (const c of i.spec.rubric.criteria) {
       const fin = r.finalLevels.find((f) => f.criterionId === c.id);
       const judgeLevel = primary?.criteria.find((x) => x.criterionId === c.id)?.levelId;
       if (!fin || judgeLevel === undefined) continue;
-      const cur = changed.get(c.id) ?? { reviewedAttempts: 0, changed: 0 };
-      changed.set(c.id, { reviewedAttempts: cur.reviewedAttempts + 1, changed: cur.changed + (fin.levelId !== judgeLevel ? 1 : 0) });
+      const step = levelIndex(c, fin.levelId) - levelIndex(c, judgeLevel);
+      const cur = tally.get(c.id) ?? { reviewedAttempts: 0, changed: 0, raised: 0, lowered: 0 };
+      tally.set(c.id, {
+        reviewedAttempts: cur.reviewedAttempts + 1, changed: cur.changed + (fin.levelId !== judgeLevel ? 1 : 0),
+        raised: cur.raised + (step > 0 ? 1 : 0), lowered: cur.lowered + (step < 0 ? 1 : 0),
+      });
       if (r.outcome === 'overridden' && fin.from === 'reviewer') {
-        reviewerChanges.push({ criterionId: c.id, judgeLevelId: judgeLevel, finalLevelId: fin.levelId, why: fin.why ?? null, reviewedAt: r.reviewedAt });
+        changes.push({ criterionId: c.id, judgeLevelId: judgeLevel, finalLevelId: fin.levelId, why: fin.why ?? null, reviewedAt: r.reviewedAt });
       }
     }
   }
+  const detail = i.detail === true;
+  // raised, lowered and unchanged are one row: shown whole or not at all, like a level row.
+  const hideChanges = (x: { reviewedAttempts: number; changed: number; raised: number; lowered: number }): boolean =>
+    !detail && [x.raised, x.lowered, x.reviewedAttempts - x.changed].some((n) => isSmall(n, i.k));
+  const t = (id: string): { reviewedAttempts: number; changed: number; raised: number; lowered: number } =>
+    tally.get(id) ?? { reviewedAttempts: 0, changed: 0, raised: 0, lowered: 0 };
+  const [coached, notCoached] = split(distributions(i.spec, finalSets((a) => a.coached), i.k), distributions(i.spec, finalSets((a) => !a.coached), i.k));
+  const [first, later] = split(distributions(i.spec, finalSets((a) => a.attemptNumber === 1), i.k), distributions(i.spec, finalSets((a) => a.attemptNumber > 1), i.k));
 
   return {
     scenarioIri: i.scenarioIri,
     versions: [...new Set(inScope.map((a) => a.scenario.version))].sort((x, y) => x - y),
-    assessmentUse: i.spec.assessmentUse, k: i.k, label: RESULTS_LABEL,
+    assessmentUse: i.spec.assessmentUse, k: i.k, label: RESULTS_LABEL, suppressionRule: SUPPRESSION_RULE,
     counts: {
       attempts: counted.length, byState, authorTestExcluded: inScope.length - counted.length,
       redacted: counted.filter((a) => a.state === 'redacted').length,
@@ -513,17 +555,21 @@ export function scenarioResults(i: { scenarioIri: string; spec: ScenarioSpec; ve
       reviewedAttempts: reviewed.length,
       perCriterion: distributions(i.spec, finalSets(() => true), i.k),
       meetsPassRule,
-      byCoached: {
-        coached: distributions(i.spec, finalSets((a) => a.coached), i.k),
-        notCoached: distributions(i.spec, finalSets((a) => !a.coached), i.k),
-      },
-      byAttemptNumber: {
-        first: distributions(i.spec, finalSets((a) => a.attemptNumber === 1), i.k),
-        later: distributions(i.spec, finalSets((a) => a.attemptNumber > 1), i.k),
-      },
+      byCoached: { coached, notCoached },
+      byAttemptNumber: { first, later },
     },
     provisional: { judgedAttempts: judged.length, perCriterion: distributions(i.spec, judged.map((x) => x.levels), i.k), label: PROVISIONAL_LABEL },
-    reviewerChanges: reviewerChanges.sort((x, y) => x.reviewedAt.localeCompare(y.reviewedAt)),
-    changedByReviewer: i.spec.rubric.criteria.map((c) => ({ criterionId: c.id, ...(changed.get(c.id) ?? { reviewedAttempts: 0, changed: 0 }) })),
+    reviewerChangesShown: detail ? 'each' : 'counts',
+    reviewerChanges: detail ? changes.sort((x, y) => x.reviewedAt.localeCompare(y.reviewedAt)) : [],
+    reviewerChangeCounts: i.spec.rubric.criteria.map((c) => {
+      const x = t(c.id);
+      const hide = hideChanges(x);
+      return { criterionId: c.id, raised: hide ? null : x.raised, lowered: hide ? null : x.lowered, suppressed: hide };
+    }),
+    changedByReviewer: i.spec.rubric.criteria.map((c) => {
+      const x = t(c.id);
+      const hide = hideChanges(x);
+      return { criterionId: c.id, reviewedAttempts: x.reviewedAttempts, changed: hide ? null : x.changed, suppressed: hide };
+    }),
   };
 }

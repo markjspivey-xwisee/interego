@@ -11,10 +11,14 @@
  *                                   every interface unless told to)
  *   BRIDGE_DEPLOYMENT_URL           the public base URL
  *   PEV_DEFAULT_POD_URL             the operator pod
- *   PEV_SERVED_PODS                 comma-separated pods records may be written to; default the
- *                                   operator pod
- *   PEV_POD_WRITE_SECRET            the operator pod's write credential (bearer), sent only on
- *                                   writes under that pod's path; never logged
+ *   PEV_SERVED_PODS                 comma-separated pods records are read from and written to;
+ *                                   default the operator pod; '*' (explicit) is any public pod
+ *   PEV_POD_WRITE_SECRET            the operator pod's credential (bearer), sent on reads and
+ *                                   writes under that pod's path only; never logged
+ *   PEV_BRIDGE_MODEL_FOR            registered (default) | anyone: who may use this bridge's own
+ *                                   model; registered = an address holding a role on the pod
+ *   PEV_MODEL_CALLS_PER_HOUR        "<per signer>,<total>", default 120,2000
+ *   PEV_ATTEMPTS_PER_HOUR           "<per signer>,<total>", default 20,500
  *   PEV_PLATFORM_KEY                the platform signing key; absent → an ephemeral key, and the
  *                                   startup lines say what that means
  *   PEV_TRUSTED_PLATFORM_ADDRESSES  earlier platform addresses whose records stay trusted
@@ -22,7 +26,8 @@
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
  *                                   route (this bridge never picks a model)
- *   PEV_DEMO_ROLES=1                demo role keys held by this bridge, loopback HOST only
+ *   PEV_DEMO_ROLES=1                demo role keys held by this bridge: loopback HOST and
+ *                                   BRIDGE_DEPLOYMENT_URL only, and never with PEV_PLATFORM_KEY
  *
  * Run:
  *   PEV_DEFAULT_POD_URL=https://your-pod.example/practice/ PEV_ADMIN_ADDRESSES=0x… \
@@ -35,8 +40,11 @@ import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { freshNonce, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
-import { createPevHandlers, describeStartup, DEMO_ROLE_NAMES, type DemoRoleName, type DemoSigner, type PevDeps } from './handlers.js';
-import { operatorWriteFetch } from './pod-helpers.js';
+import {
+  createPevHandlers, describeStartup, DEFAULT_BUDGETS, DEMO_ROLE_NAMES,
+  type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
+} from './handlers.js';
+import { operatorPodFetch } from './pod-helpers.js';
 import { attachUi, hostAllowlistGuard } from './ui.js';
 
 const say = (line: string): void => { process.stdout.write(`${line}\n`); };
@@ -52,6 +60,19 @@ const HOST = env('HOST') ?? '127.0.0.1';
 const base = (env('BRIDGE_DEPLOYMENT_URL') ?? `http://127.0.0.1:${PORT}`).replace(/\/$/, '');
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 const loopback = LOOPBACK.has(HOST);
+const baseIsLoopback = ((): boolean => { try { return LOOPBACK.has(new URL(base).hostname); } catch { return false; } })();
+
+/** "<per signer>,<total>" as an hourly limit; the default when absent or not two positive integers. */
+function hourly(name: string, fallback: HourlyLimit): HourlyLimit {
+  const raw = env(name);
+  if (raw === undefined) return fallback;
+  const [a, b] = raw.split(',').map((x) => Number(x.trim()));
+  if (a === undefined || b === undefined || !Number.isInteger(a) || !Number.isInteger(b) || a < 1 || b < 1) {
+    warn(`${name}: expected "<per signer>,<total>" as positive integers; using ${fallback.perSigner},${fallback.total}`);
+    return fallback;
+  }
+  return { perSigner: a, total: b };
+}
 
 const DEMO_LABELS: Readonly<Record<DemoRoleName, string>> = {
   'admin': 'Admin (demo key)', 'author': 'Author (demo key)', 'reviewer': 'Reviewer (demo key)',
@@ -63,12 +84,21 @@ const DEMO_GRANTS: readonly { readonly role: DemoRoleName; readonly grants: read
   { role: 'reviewer', grants: ['reviewer'] },
   { role: 'second-reviewer', grants: ['reviewer'] },
   { role: 'judge-agent', grants: ['judge', 'agent'] },
+  { role: 'learner', grants: ['learner'] },
+  { role: 'second-learner', grants: ['learner'] },
 ];
 
 async function main(): Promise<void> {
   const defaultPodUrl = env('PEV_DEFAULT_POD_URL');
-  const servedPods = list(env('PEV_SERVED_PODS') ?? defaultPodUrl);
+  const servedRaw = env('PEV_SERVED_PODS');
+  const anyPod = servedRaw === '*';
+  const servedPods = anyPod ? [] : list(servedRaw ?? defaultPodUrl);
   const writeSecret = env('PEV_POD_WRITE_SECRET');
+  const modelFor = env('PEV_BRIDGE_MODEL_FOR') === 'anyone' ? 'anyone' : 'registered';
+  const budgets = {
+    modelCallsPerHour: hourly('PEV_MODEL_CALLS_PER_HOUR', DEFAULT_BUDGETS.modelCallsPerHour),
+    attemptsPerHour: hourly('PEV_ATTEMPTS_PER_HOUR', DEFAULT_BUDGETS.attemptsPerHour),
+  };
 
   const keyHex = env('PEV_PLATFORM_KEY');
   let platformWallet: Wallet;
@@ -99,6 +129,16 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  if (demoOn && !baseIsLoopback) {
+    warn(`PEV_DEMO_ROLES=1 needs BRIDGE_DEPLOYMENT_URL on a loopback host; it is ${base}, so the Host guard would admit that host. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (demoOn && keyHex) {
+    warn('PEV_DEMO_ROLES=1 runs with an ephemeral platform key only: role changes a demo admin signs would otherwise stay trusted after demo mode is off. Unset PEV_PLATFORM_KEY (and use a demo pod path). Not listening.');
+    process.exitCode = 1;
+    return;
+  }
   let demoSigner: DemoSigner | undefined;
   let demoAdmin: Wallet | undefined;
   if (demoOn) {
@@ -114,12 +154,13 @@ async function main(): Promise<void> {
     platformWallet, platformKeyKind,
     trustedPlatformAddresses: trusted.filter((x) => isAddress(x)),
     adminAddresses: [...admins.filter((x) => isAddress(x)), ...(demoAdmin ? [demoAdmin.address] : [])],
-    fetchFn: operatorWriteFetch(defaultPodUrl, writeSecret, baseFetch),
+    fetchFn: operatorPodFetch(defaultPodUrl, writeSecret, baseFetch),
     holderFetchFn: baseFetch,
     byokFetch: baseFetch,
     deploymentUrl: base,
     ...(defaultPodUrl ? { defaultPodUrl } : {}),
-    ...(servedPods.length > 0 ? { servedPods } : {}),
+    ...(anyPod ? { servedPods: '*' as const } : servedPods.length > 0 ? { servedPods } : {}),
+    bridgeModelFor: modelFor, budgets,
     ...(model ? { model } : {}),
     ...(demoSigner ? { demoSigner } : {}),
   };
@@ -150,17 +191,19 @@ async function main(): Promise<void> {
 
   say(`practice-evidence bridge  ${base}`);
   say(`  web UI ${base}/ui  |  MCP ${base}/mcp  |  manifest ${base}/affordances  |  ontology ${base}/ns/pev`);
-  say(`  pod: ${defaultPodUrl ?? 'none (each act names its pod)'}; records written to: ${servedPods.length > 0 ? servedPods.join(', ') : 'any public pod'}`);
-  say(`  pod write credential: ${writeSecret ? 'configured' : 'not configured'}`);
+  say(`  pod: ${defaultPodUrl ?? 'none (each act names its pod)'}; records read and written on: ${anyPod ? 'any public pod (PEV_SERVED_PODS=*)' : servedPods.length > 0 ? servedPods.join(', ') : 'NO pod: set PEV_DEFAULT_POD_URL or PEV_SERVED_PODS, or every act is refused'}`);
+  say(`  pod credential: ${writeSecret ? 'configured, sent on reads and writes under the operator pod' : 'not configured'}`);
+  say('  records are plaintext: anyone the pod lets read pev/records/ reads every transcript (a pod that serves reads anonymously serves them to everyone)');
   say(`  platform key: ${platformKeyKind}, address ${platformWallet.address}`);
   if (platformKeyKind === 'ephemeral') {
     say('  records written now become untrusted after a restart unless you add this address to PEV_TRUSTED_PLATFORM_ADDRESSES');
   }
   say(model
-    ? `  model route: ${model.provider} ${model.requestedModel} (this bridge's key)`
+    ? `  model route: ${model.provider} ${model.requestedModel} (this bridge's key), for ${modelFor === 'anyone' ? 'ANY signer (PEV_BRIDGE_MODEL_FOR=anyone): anyone who reaches this bridge spends this key, up to the hourly limits' : 'addresses holding a role on the pod'}; per hour ${budgets.modelCallsPerHour.perSigner} calls per signer, ${budgets.modelCallsPerHour.total} in total`
     : llmKey
       ? '  model route: none: a key is set but PEV_LLM_MODEL is not, and this bridge never picks a model; packet routes only'
       : '  model route: none: packet routes only (or a per-request key)');
+  say(`  attempts per hour: ${budgets.attemptsPerHour.perSigner} per signer, ${budgets.attemptsPerHour.total} in total (counted in this process only)`);
   say(`  admins: ${deps.adminAddresses?.length ?? 0}`);
   for (const line of (await describeStartup(deps)).lines) say(`  ${line}`);
 

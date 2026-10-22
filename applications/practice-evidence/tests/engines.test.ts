@@ -22,11 +22,11 @@ import {
 } from '../src/ontology.js';
 import {
   agreementOf, assembleJudgment, assess, coerceJudgment, coerceScenario, coerceScenarioDraft, counterpartControl,
-  counterpartPacket, counterpartRequest, criterionContentHash, draftComparableHash, draftPacket, draftRequest,
+  counterpartPacket, counterpartRequest, creditedLevels, criterionContentHash, criterionStatus, draftComparableHash, draftPacket, draftRequest,
   normaliseForQuote, nextLevelGuidance, parseDraftText, parseJudgeText, rubricHash, scenarioHash, splitEndSignal,
   transcriptHash, verifyQuote, judgePacket, judgeRequest,
   COUNTERPART_PACKET_INSTRUCTIONS, COUNTERPART_PROMPT_TEMPLATE, DRAFT_PACKET_INSTRUCTIONS, DRAFT_PROMPT_TEMPLATE,
-  DRAFT_RECORD_NOTE, DRAFT_REVIEW_NOTE, END_PROPOSAL_RULE, END_SIGNAL, JUDGE_PACKET_INSTRUCTIONS, JUDGE_PROMPT_TEMPLATE,
+  draftReviewNote, DRAFT_RECORD_NOTE, DRAFT_REVIEW_NOTE, SCRIPTED_DRAFT_REVIEW_NOTE, END_PROPOSAL_RULE, END_SIGNAL, JUDGE_PACKET_INSTRUCTIONS, JUDGE_PROMPT_TEMPLATE,
   JUDGE_PROMPT_TEMPLATE_HASH, LEVEL_CHOICE_RULE, PRACTICE_LABEL, PROVISIONAL_LABEL, QUOTE_RULE, SCORING_RULE,
   type JudgeCriterionInput, type JudgmentResult, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
@@ -518,7 +518,45 @@ describe('the quote rule', () => {
     const noQuote = judgmentOf(MD2, ATTEMPT1, { criteria: JUDGMENT_CLEAN.criteria.map((c) => (c.criterionId === 'asks-their-view' ? { ...c, quotes: [] } : c)) }, 0);
     expect(noQuote.criteria.find((c) => c.criterionId === 'asks-their-view')?.why).toBe('a level above the lowest needs at least one learner quote');
     const lowest = judgmentOf(MD2, ATTEMPT1, { criteria: JUDGMENT_CLEAN.criteria.map((c) => (c.criterionId === 'asks-their-view' ? { ...c, level: 'no', quotes: [] } : c)) }, 0);
-    expect(lowest.criteria.find((c) => c.criterionId === 'asks-their-view')?.status).toBe('verified');
+    // The lowest level with no quote: nothing was checked, so it is not called verified, and it does not block countersigning.
+    expect(lowest.criteria.find((c) => c.criterionId === 'asks-their-view')?.status).toBe('no-quote-needed');
+    expect(lowest.unverifiedCriteria).toEqual([]);
+    expect(creditedLevels(MD2, lowest)['asks-their-view']).toBe('no');
+    expect(criterionStatus(0, [verifyQuote({ text: 'the deadline for it' }, turns)]).status).toBe('verified');
+  });
+
+  // A match that starts or ends inside a word can invert what the learner said ("acceptable" inside
+  // "unacceptable"); it never counts, and neither does a quote with no words in it.
+  const said = [
+    mkTurn(0, 'counterpart', 'You missed the deadline again.'),
+    mkTurn(1, 'learner', 'That is unacceptable behaviour from the team, and I am unwilling to escalate it.'),
+    mkTurn(3, 'learner', 'I understand. ............ ok'),
+  ];
+  const CUT = 'found only starting or ending inside a word of the learner’s line, which can change what they said';
+
+  it('refuses a quote that starts or ends inside a word of the learner\'s line', () => {
+    for (const text of ['acceptable behaviour from the team', 'willing to escalate it', 'nacceptable b', 'is unacceptable behavio']) {
+      const q = verifyQuote({ text }, said);
+      expect([text, q.verified, q.why]).toEqual([text, false, CUT]);
+    }
+    const inverted = verifyQuote({ text: 'acceptable behaviour from the team' }, said);
+    expect(criterionStatus(1, [inverted])).toEqual({ status: 'unverified', why: CUT });
+  });
+
+  it('accepts a whole-word quote, including one that starts at punctuation or is one long word', () => {
+    for (const text of ['unacceptable behaviour from the team', ', and I am unwilling', 'I understand', 'unacceptable']) {
+      expect([text, verifyQuote({ text }, said).verified]).toEqual([text, true]);
+    }
+    const elsewhere = [...said, mkTurn(5, 'learner', 'Some would call it acceptable behaviour from the team.')];
+    const q = verifyQuote({ text: 'acceptable behaviour from the team' }, elsewhere);
+    expect([q.verified, q.turnIndex, q.occurrences]).toEqual([true, 5, 1]);
+  });
+
+  it('refuses a quote with fewer than two words and no word of 12 letters or digits', () => {
+    expect(verifyQuote({ text: '............' }, said)).toMatchObject({ verified: false, why: 'holds fewer than two words (and no word of 12 letters or digits)' });
+    expect(verifyQuote({ text: '... ok ......' }, said).verified).toBe(false);
+    expect(QUOTE_RULE).toContain('neither starts nor ends inside a word');
+    expect(QUOTE_RULE).toContain('no-quote-needed');
   });
 });
 
@@ -576,12 +614,15 @@ describe('judge output', () => {
     expect(agreementOf(MD2, [j0]).every((x) => x.spread === 0 && x.agree)).toBe(true);
   });
 
-  it('builds a judge request with the rule text, the rubric the learner saw and labelled turns', () => {
+  it('builds a judge request with the rule text, the rubric\'s criteria and levels without the stakes, and labelled turns', () => {
     const req = judgeRequest(MD2, ATTEMPT1);
     expect(req.system).toContain(LEVEL_CHOICE_RULE);
     expect(req.system).toContain('never compute a score');
+    expect(req.system).toContain('starting and ending on whole words');
     const user = req.messages[0]!.content;
-    expect(user).toContain('"weight": 2');
+    // The judge sees levels and descriptors only: no weight, level value, pass rule or use, so it cannot aim at a threshold.
+    expect(user).toContain(MD2.rubric.criteria[0]!.levels[1]!.descriptor);
+    for (const stake of ['"weight"', '"value"', '"passRule"', '"minPercent"', '"assessmentUse"', 'pass-gate']) expect(user).not.toContain(stake);
     expect(user).toContain(`[T1 LEARNER] ${normaliseForQuote(T1)}`);
     expect(user).toContain('[T2 THEM]');
     expect(JUDGE_PROMPT_TEMPLATE_HASH).toBe(sha256(JUDGE_PROMPT_TEMPLATE));
@@ -640,6 +681,13 @@ describe('conversation', () => {
     for (const theirs of ['Character Name', 'Opening Line', 'Scenario Context', 'Learner Role', 'Human-AI Task Scale', 'Sim Builder', 'simulation credits']) {
       expect(texts).not.toContain(theirs);
     }
+  });
+
+  it('words the note returned with a draft by the route that drafted it: a fixture never says a model drafted', () => {
+    expect(draftReviewNote('bridge-model')).toBe(DRAFT_REVIEW_NOTE);
+    expect(draftReviewNote('scripted')).toBe(SCRIPTED_DRAFT_REVIEW_NOTE);
+    expect(SCRIPTED_DRAFT_REVIEW_NOTE).toContain('no model read your brief');
+    expect(SCRIPTED_DRAFT_REVIEW_NOTE).not.toContain('a draft from a model');
   });
 
   it('packs the counterpart request for the learner\'s own agent without sampling or writing', () => {
@@ -982,9 +1030,9 @@ describe('the review queue', () => {
     expect(q.entries[1]!.mayCountersignAsIs).toBe(false);
     for (const e of q.entries) {
       const W = QUEUE_WEIGHTS;
-      const sum = W.unverified * e.why.unverified + W.disagreement * e.why.disagreement + W.nearThreshold * e.why.nearThreshold
+      const sum = W.unverified * e.why.unverified + W.notQuoted * e.why.notQuoted + W.disagreement * e.why.disagreement + W.nearThreshold * e.why.nearThreshold
         + W.uncertainty * e.why.uncertainty + W.cellNeed * e.why.cellNeed + W.learnerControlled * e.why.learnerControlled + W.auditSample * e.why.auditSample;
-      expect(e.priority).toBeCloseTo(sum, 3);
+      expect(e.priority).toBe(Math.round(sum * 1000) / 1000);
       expect(priorityOf(e.why)).toBe(e.priority);
     }
     expect(Object.values(QUEUE_WEIGHTS).reduce((x, y) => x + y, 0)).toBeCloseTo(1, 10);
@@ -1014,6 +1062,9 @@ describe('the review queue', () => {
     expect(by.get(a!)!.why.nearThreshold).toBe(0.67); // 1 − |66.7 − 70| / 10
     expect(by.get(b!)!.why.nearThreshold).toBe(0);
     expect(by.get(c!)!.why.nearThreshold).toBe(0);
+    // A judge that puts everything at the lowest level with no quote checked nothing: the queue raises it.
+    expect([by.get(b!)!.why.notQuoted, by.get(c!)!.why.notQuoted, by.get(a!)!.why.notQuoted]).toEqual([1, 1, 0]);
+    expect(by.get(b!)!.mayCountersignAsIs).toBe(true);
   });
 
   it('breaks ties by the oldest judgment, excludes conflicted reviewers and never lists author tests', () => {
@@ -1052,7 +1103,7 @@ describe('results per scenario', () => {
     });
   };
 
-  it('counts by state, excludes author tests, suppresses small cells and their complement, and keeps provisional apart', () => {
+  it('counts by state, excludes author tests, shows a row whole or not at all, withholds a split with a hidden side, and keeps provisional apart', () => {
     const attempts: AttemptBody[] = [];
     for (let i = 0; i < 5; i++) attempts.push(finals({ ...ALL_JUDGE }, i, { coached: i < 2 }));
     for (let i = 5; i < 8; i++) attempts.push(finals({ ...ALL_JUDGE, 'specific-observation': 'vague' }, i, { attemptNumber: 2, whys: { 'specific-observation': 'Only said the report was late.' } }));
@@ -1068,8 +1119,8 @@ describe('results per scenario', () => {
     expect(r.final.reviewedAttempts).toBe(8);
     const so = r.final.perCriterion.find((c) => c.criterionId === 'specific-observation')!;
     expect(so.n).toBe(8);
-    // vague 3 is below k; it is the only small cell, so the smallest other non-zero cell (specific, 5) is hidden too.
-    expect(so.levels.map((l) => [l.levelId, l.count, l.suppressed])).toEqual([['none', 0, false], ['vague', null, true], ['specific', null, true]]);
+    // vague 3 is below k, so every count in the row is hidden (the zero too): only n = 8 shows.
+    expect(so.levels.map((l) => [l.levelId, l.count, l.suppressed])).toEqual([['none', null, true], ['vague', null, true], ['specific', null, true]]);
     const asks = r.final.perCriterion.find((c) => c.criterionId === 'asks-their-view')!;
     expect(asks.levels.find((l) => l.levelId === 'first')).toEqual({ levelId: 'first', label: 'First', count: 8, suppressed: false });
     // Meets the rule: 5 at 100 %, 3 with vague (2·50 + 200 + 200 = 500/600 = 83.3 %): all 8 meet.
@@ -1078,25 +1129,59 @@ describe('results per scenario', () => {
     expect(r.provisional.label).toBe(PROVISIONAL_LABEL);
     const provAgrees = r.provisional.perCriterion.find((c) => c.criterionId === 'agrees-next-step')!;
     expect(provAgrees.levels.find((l) => l.levelId === 'none')!.suppressed).toBe(true);
-    expect(r.reviewerChanges).toHaveLength(3);
-    expect(r.reviewerChanges[0]).toMatchObject({ criterionId: 'specific-observation', judgeLevelId: 'specific', finalLevelId: 'vague', why: 'Only said the report was late.' });
-    expect(r.changedByReviewer.find((c) => c.criterionId === 'specific-observation')).toEqual({ criterionId: 'specific-observation', reviewedAttempts: 8, changed: 3 });
+    // Coached is 2 of 8 and later attempts 3 of 8: each split has a hidden side, so both its rows are withheld.
     expect(r.final.byCoached.coached[0]!.n).toBe(2);
     expect(r.final.byAttemptNumber.later[0]!.n).toBe(3);
-    expect(r.final.byCoached.coached[0]!.levels.every((l) => l.suppressed)).toBe(true);
+    for (const d of [...r.final.byCoached.coached, ...r.final.byCoached.notCoached, ...r.final.byAttemptNumber.first, ...r.final.byAttemptNumber.later]) {
+      expect([d.criterionId, d.withheld, d.levels.every((l) => l.count === null)]).toEqual([d.criterionId, true, true]);
+    }
+    // An author sees what reviewers changed only as counts, and a count of 3 is hidden.
+    expect(r.reviewerChangesShown).toBe('counts');
+    expect(r.reviewerChanges).toEqual([]);
+    expect(r.reviewerChangeCounts.find((c) => c.criterionId === 'specific-observation')).toEqual({ criterionId: 'specific-observation', raised: null, lowered: null, suppressed: true });
+    expect(r.changedByReviewer.find((c) => c.criterionId === 'specific-observation')).toEqual({ criterionId: 'specific-observation', reviewedAttempts: 8, changed: null, suppressed: true });
+    expect(r.changedByReviewer.find((c) => c.criterionId === 'asks-their-view')).toEqual({ criterionId: 'asks-their-view', reviewedAttempts: 8, changed: 0, suppressed: false });
+    // A reviewer or an admin, who may read every attempt, sees each change and its reason.
+    const d = scenarioResults({ scenarioIri: sIri, spec: MD2, versions: [], attempts, k: 5, detail: true });
+    expect(d.reviewerChangesShown).toBe('each');
+    expect(d.reviewerChanges).toHaveLength(3);
+    expect(d.reviewerChanges[0]).toMatchObject({ criterionId: 'specific-observation', judgeLevelId: 'specific', finalLevelId: 'vague', why: 'Only said the report was late.' });
+    expect(d.changedByReviewer.find((c) => c.criterionId === 'specific-observation')).toEqual({ criterionId: 'specific-observation', reviewedAttempts: 8, changed: 3, suppressed: false });
+    expect(d.reviewerChangeCounts.find((c) => c.criterionId === 'specific-observation')).toMatchObject({ raised: 0, lowered: 3 });
   });
 
-  it('suppresses two small cells without a complement, and a row whose total is itself small', () => {
-    const row = suppressRow([{ levelId: 'a', label: 'A', count: 5 }, { levelId: 'b', label: 'B', count: 3 }, { levelId: 'c', label: 'C', count: 2 }], 5);
-    expect(row.map((x) => x.count)).toEqual([5, null, null]);
+  it('hides a row whole, so neither the row total nor a second table recovers a hidden count', () => {
+    // [1, 1, 20] with n = 22: hiding only the two small cells would force both to 1.
+    expect(suppressRow([{ levelId: 'a', label: 'A', count: 1 }, { levelId: 'b', label: 'B', count: 1 }, { levelId: 'c', label: 'C', count: 20 }], 5).map((x) => x.count)).toEqual([null, null, null]);
+    expect(suppressRow([{ levelId: 'a', label: 'A', count: 5 }, { levelId: 'b', label: 'B', count: 3 }, { levelId: 'c', label: 'C', count: 2 }], 5).map((x) => x.count)).toEqual([null, null, null]);
     expect(suppressRow([{ levelId: 'a', label: 'A', count: 2 }, { levelId: 'b', label: 'B', count: 0 }], 5).every((x) => x.suppressed)).toBe(true);
-    expect(suppressRow([{ levelId: 'a', label: 'A', count: 0 }, { levelId: 'b', label: 'B', count: 0 }], 5).every((x) => !x.suppressed)).toBe(true);
+    expect(suppressRow([{ levelId: 'a', label: 'A', count: 0 }, { levelId: 'b', label: 'B', count: 7 }], 5).map((x) => x.count)).toEqual([0, 7]);
+    // all = coached + not coached: a = 2 + 5, b = 5 + 5, c = 5 + 5. The coached row hides a; if the not-coached row
+    // and the total stayed, a = 7 − 5 = 2 by subtraction. Both sides of the split are withheld instead.
+    const mk = (i: number, lvl: string, coached: boolean): AttemptBody => finals({ ...ALL_JUDGE, 'specific-observation': lvl }, 200 + i, { coached });
+    const set: AttemptBody[] = [];
+    let i = 0;
+    for (const [lvl, nC, nN] of [['none', 2, 5], ['vague', 5, 5], ['specific', 5, 5]] as const) {
+      for (let x = 0; x < nC; x++) set.push(mk(i++, lvl, true));
+      for (let x = 0; x < nN; x++) set.push(mk(i++, lvl, false));
+    }
+    const r = scenarioResults({ scenarioIri: scenarioIri(POD, MD2.scenarioKey), spec: MD2, versions: [], attempts: set, k: 5 });
+    const row = (ds: readonly { criterionId: string; levels: readonly { count: number | null }[] }[]): (number | null)[] => ds.find((x) => x.criterionId === 'specific-observation')!.levels.map((l) => l.count);
+    expect(row(r.final.perCriterion)).toEqual([7, 10, 10]);
+    expect(row(r.final.byCoached.coached)).toEqual([null, null, null]);
+    expect(row(r.final.byCoached.notCoached)).toEqual([null, null, null]);
+    // One overridden attempt: an author sees no level, no reason and no time of the change.
+    const one = scenarioResults({ scenarioIri: scenarioIri(POD, MD2.scenarioKey), spec: MD2, versions: [], k: 5,
+      attempts: [finals({ ...ALL_JUDGE, 'specific-observation': 'none' }, 300, { whys: { 'specific-observation': 'Ana never named the date.' } })] });
+    expect(row(one.final.perCriterion)).toEqual([null, null, null]);
+    expect(one.reviewerChanges).toEqual([]);
+    expect(JSON.stringify(one)).not.toContain('Ana never named the date.');
   });
 
   it('drops a reviewer\'s why from results once the attempt is redacted', () => {
     const a = finals({ ...ALL_JUDGE, 'specific-observation': 'vague' }, 99, { whys: { 'specific-observation': 'Only said the report was late.' } });
     const redacted = redactBody(a, { by: LEARNER, role: 'learner', at: at(600), envelope: ENVELOPE, target: TARGET }, at(600));
-    const r = scenarioResults({ scenarioIri: scenarioIri(POD, MD2.scenarioKey), spec: MD2, versions: [], attempts: [redacted], k: 5 });
+    const r = scenarioResults({ scenarioIri: scenarioIri(POD, MD2.scenarioKey), spec: MD2, versions: [], attempts: [redacted], k: 5, detail: true });
     expect(r.counts.redacted).toBe(1);
     expect(r.reviewerChanges[0]!.why).toBeNull();
   });
@@ -1127,7 +1212,19 @@ describe('statements', () => {
     expect(ctx[`${PEV_NS}rubricHash`]).toBe(H_MD2);
     expect(ctx[`${PEV_NS}transcriptHash`]).toBe(transcriptHash(ATTEMPT1));
     expect(ctx[`${PEV_NS}reviewer`]).toBe(REVIEWER.did);
-    expect(ctx[`${PEV_NS}judgeModel`]).toBe('model:scripted/scripted-fixture');
+    // The judge model as provider/model, and the judge's identity apart from it.
+    expect(ctx[`${PEV_NS}judgeModel`]).toBe('scripted/scripted-fixture');
+    expect(ctx[`${PEV_NS}judgeId`]).toBe('model:scripted/scripted-fixture');
+    expect(ctx).not.toHaveProperty(`${PEV_NS}declaredBy`);
+    const packetJudge = judgmentOf(MD2, ATTEMPT1, JUDGMENT_CLEAN, 0, {
+      judge: { id: REVIEWER.did, kind: 'agent', signer: REVIEWER.did }, route: 'client-packet', chosenBy: 'judge-registry',
+      disclosure: { provider: 'acme', model: 'judge-7', keySource: 'mcp-client', route: 'client-packet', declaredBy: REVIEWER.did },
+    });
+    const byPacket = buildStatement('xapi', input({ ...gate, judgments: [packetJudge] }));
+    const pctx = (byPacket['context'] as { extensions: Record<string, unknown> }).extensions;
+    expect([pctx[`${PEV_NS}judgeModel`], pctx[`${PEV_NS}judgeId`], pctx[`${PEV_NS}declaredBy`]]).toEqual(['acme/judge-7', REVIEWER.did, REVIEWER.did]);
+    expect(LOSSY.xapi.join(' ')).toContain('attemptNumber counts attempts by this signing key');
+    expect(LOSSY.cmi5.join(' ')).toContain('coached is what the learner declared');
     const c = buildStatement('cmi5', input(gate));
     expect(statementProblems(c, 'cmi5', 'pass-gate')).toEqual([]);
     expect(c['id']).not.toBe(x['id']);

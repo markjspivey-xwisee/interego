@@ -94,6 +94,7 @@ const CHOSEN_BY_WORDS = {
 };
 const FACTOR_WORDS = {
   unverified: 'a quote did not check out',
+  notQuoted: 'criteria put at the lowest level with no quote (nothing was checked)',
   disagreement: 'the judgments disagree',
   nearThreshold: 'close to the pass mark',
   uncertainty: 'the judge\'s own uncertainty',
@@ -101,6 +102,16 @@ const FACTOR_WORDS = {
   learnerControlled: 'the learner controlled the other person or chose the judge',
   auditSample: 'in the audit sample (blind first)',
 };
+
+const STATUS_WORDS = {
+  verified: 'verified',
+  unverified: 'unverified',
+  'no-quote-needed': 'no quote needed: lowest level, nothing checked',
+};
+/** A criterion's verification status as a chip: green only when a quote really checked out. */
+function statusChip(status) {
+  return chip(STATUS_WORDS[status] || status, status === 'verified' ? 'ok' : status === 'unverified' ? 'bad' : '');
+}
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 //  DOM: elements are built, never parsed from strings
@@ -742,7 +753,7 @@ function judgmentsPanel(v) {
       if (!cj) continue;
       block.append(h('p', { class: j.index === sj.index ? 'judged shown' : 'judged' },
         `Judgment ${j.index + 1}: `, h('strong', { text: levelLabel(v.rubric, c.id, cj.levelId) }), ' ',
-        chip(cj.status, cj.status === 'verified' ? 'ok' : 'bad')));
+        statusChip(cj.status)));
     }
     const cj = sj.criteria.find((x) => x.criterionId === c.id);
     if (cj) {
@@ -998,12 +1009,13 @@ function paintReviewForm(form, v, st, blind) {
     sel.value = st.picks[c.id] || '';
     const row = h('div', { class: 'criterion' }, h('h4', { text: c.title }), sel);
     if (st.revealed && cj) {
-      row.append(h('p', {}, 'The judge chose ', h('strong', { text: levelLabel(v.rubric, c.id, cj.levelId) }), ' ', chip(cj.status, cj.status === 'verified' ? 'ok' : 'bad')));
-      const needsWhy = Boolean(st.picks[c.id]) && (st.picks[c.id] !== cj.levelId || cj.status !== 'verified');
+      row.append(h('p', {}, 'The judge chose ', h('strong', { text: levelLabel(v.rubric, c.id, cj.levelId) }), ' ', statusChip(cj.status)));
+      const needsWhy = Boolean(st.picks[c.id]) && (st.picks[c.id] !== cj.levelId || cj.status === 'unverified');
       const why = h('textarea', { rows: 2, maxlength: 1000, dataset: { why: c.id }, placeholder: needsWhy ? 'Required: why (10 to 1000 characters)' : 'Optional note', oninput: (e) => { st.whys[c.id] = e.target.value; } });
       why.value = st.whys[c.id] || '';
       row.append(why);
-      if (needsWhy) row.append(h('p', { class: 'warn', text: cj.status !== 'verified' ? 'The judge\'s quote did not check out here: say why your level stands.' : 'Your level differs from the judge\'s: say why.' }));
+      if (needsWhy) row.append(h('p', { class: 'warn', text: cj.status === 'unverified' ? 'The judge\'s quote did not check out here: say why your level stands.' : 'Your level differs from the judge\'s: say why.' }));
+      if (cj.status === 'no-quote-needed') row.append(muted('The judge put this at the lowest level and quoted nothing, so nothing was checked: read the learner\'s lines for anything that reaches higher.'));
     }
     form.append(row);
   }
@@ -1040,10 +1052,14 @@ function paintReviewForm(form, v, st, blind) {
 //  Results and calibration
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
-function distributionTable(rows) {
+function distributionTable(rows, k) {
   return h('table', { class: 'distribution' }, h('tbody', {}, rows.map((d) => h('tr', {},
     h('th', { text: `${d.title} (n = ${d.n})` }),
-    d.levels.map((l) => h('td', { text: `${l.label}: ${l.suppressed ? 'fewer than 5' : l.count}` }))))));
+    d.withheld
+      ? h('td', { text: `split withheld: one side has a count from 1 to ${k - 1}` })
+      : d.levels.some((l) => l.suppressed)
+        ? h('td', { text: `hidden: a count in this row is from 1 to ${k - 1}, so only the total shows` })
+        : d.levels.map((l) => h('td', { text: `${l.label}: ${l.count}` }))))));
 }
 
 function resultsCsv(r) {
@@ -1064,15 +1080,24 @@ async function viewResults(root, scenarioIri) {
   const c = r.counts;
   root.append(h('p', { text: `${c.attempts} attempt(s); ${c.authorTestExcluded} author test(s) left out; ${c.redacted} with the transcript removed.` }),
     h('p', { class: 'facts' }, Object.entries(c.byState).filter(([, n]) => n > 0).map(([s, n]) => chip(`${STATE_WORDS[s] || s}: ${n}`))));
-  root.append(h('h3', { text: `Final levels (reviewed: ${r.final.reviewedAttempts})` }), distributionTable(r.final.perCriterion));
-  if (r.final.meetsPassRule) root.append(h('p', { text: `Met the pass rule: ${r.final.meetsPassRule.suppressed ? 'fewer than 5' : r.final.meetsPassRule.count} of ${r.final.meetsPassRule.of}.` }));
-  root.append(h('h4', { text: 'Coached / not coached' }), distributionTable(r.final.byCoached.coached), distributionTable(r.final.byCoached.notCoached));
-  root.append(h('h4', { text: 'First attempt / later attempts' }), distributionTable(r.final.byAttemptNumber.first), distributionTable(r.final.byAttemptNumber.later));
-  root.append(h('h3', { text: `Provisional levels (judged: ${r.provisional.judgedAttempts}), ${r.provisional.label}` }), distributionTable(r.provisional.perCriterion));
-  root.append(h('h3', { text: 'What reviewers changed, and why' }));
-  if (!r.reviewerChanges.length) root.append(muted('No reviewer set a level other than the judge\'s.'));
-  else root.append(h('ul', {}, r.reviewerChanges.map((x) => h('li', { text: `${x.criterionId}: ${x.judgeLevelId} → ${x.finalLevelId} (${x.reviewedAt}): ${x.why === null ? '(removed with the transcript)' : x.why}` }))));
-  root.append(h('ul', {}, r.changedByReviewer.map((x) => h('li', { text: `${x.criterionId}: changed in ${x.changed} of ${x.reviewedAttempts} reviewed attempt(s)` }))));
+  root.append(h('h3', { text: `Final levels (reviewed: ${r.final.reviewedAttempts})` }), distributionTable(r.final.perCriterion, r.k));
+  if (r.final.meetsPassRule) root.append(h('p', { text: `Met the pass rule: ${r.final.meetsPassRule.suppressed ? `hidden (it or the rest is from 1 to ${r.k - 1})` : r.final.meetsPassRule.count} of ${r.final.meetsPassRule.of}.` }));
+  root.append(h('h4', { text: 'Coached / not coached' }), distributionTable(r.final.byCoached.coached, r.k), distributionTable(r.final.byCoached.notCoached, r.k));
+  root.append(h('h4', { text: 'First attempt / later attempts' }), distributionTable(r.final.byAttemptNumber.first, r.k), distributionTable(r.final.byAttemptNumber.later, r.k));
+  root.append(h('h3', { text: `Provisional levels (judged: ${r.provisional.judgedAttempts}), ${r.provisional.label}` }), distributionTable(r.provisional.perCriterion, r.k));
+  root.append(h('h3', { text: r.reviewerChangesShown === 'each' ? 'What reviewers changed, and why' : 'What reviewers changed' }));
+  if (r.reviewerChangesShown === 'each') {
+    if (!r.reviewerChanges.length) root.append(muted('No reviewer set a level other than the judge\'s.'));
+    else root.append(h('ul', {}, r.reviewerChanges.map((x) => h('li', { text: `${x.criterionId}: ${x.judgeLevelId} → ${x.finalLevelId} (${x.reviewedAt}): ${x.why === null ? '(removed with the transcript)' : x.why}` }))));
+  } else {
+    root.append(muted('Each change and its reason are shown to reviewers and admins only; here they are counts.'));
+    root.append(h('ul', {}, r.reviewerChangeCounts.map((x) => h('li', { text: x.suppressed
+      ? `${x.criterionId}: hidden (a count from 1 to ${r.k - 1})` : `${x.criterionId}: raised in ${x.raised}, lowered in ${x.lowered}` }))));
+  }
+  root.append(h('ul', {}, r.changedByReviewer.map((x) => h('li', { text: x.suppressed
+    ? `${x.criterionId}: changed in a hidden number of ${x.reviewedAttempts} reviewed attempt(s)`
+    : `${x.criterionId}: changed in ${x.changed} of ${x.reviewedAttempts} reviewed attempt(s)` }))));
+  root.append(muted(r.suppressionRule));
   if (r.personJudgeCells && r.personJudgeCells.length) root.append(h('h3', { text: 'People who judged (only readers of results see this)' }), calibrationTable(r.personJudgeCells));
   root.append(h('div', { class: 'row' },
     h('button', { type: 'button', text: 'Download JSON', onclick: () => download('results.json', JSON.stringify(r, null, 2), 'application/json') }),
@@ -1339,7 +1364,7 @@ function authorForm(A, paint) {
 function viewRoles(root) {
   root.append(h('h2', { text: 'Roles on this pod' }), muted('Only an admin address configured on this bridge can change roles. Each change is a signed record that supersedes the registry\'s previous version.'));
   const address = h('input', { type: 'text', placeholder: '0x… (40 hex digits)', 'aria-label': 'Address', size: 44 });
-  const role = h('select', { 'aria-label': 'Role' }, ['reviewer', 'author', 'judge', 'agent'].map((r) => h('option', { value: r, text: r })));
+  const role = h('select', { 'aria-label': 'Role' }, ['reviewer', 'author', 'judge', 'agent', 'learner'].map((r) => h('option', { value: r, text: r })));
   const change = h('select', { 'aria-label': 'Change' }, h('option', { value: 'add', text: 'add' }), h('option', { value: 'remove', text: 'remove' }));
   const out = h('div', { class: 'outcome' });
   const row = h('div', { class: 'row' }, address, role, change);
