@@ -188,7 +188,7 @@ Every exchange rewrites the whole attempt body, so storage per attempt grows wit
 - Records are plaintext. The bridge writes no access-control document and no public-read facet; whoever the operator pod lets read `pev/records/` can read transcripts, so restrict that container.
 - The person-versus-agent rules rest entirely on the admin's registry.
 - Writes are bounded by the served pods, the turn limit, five judgments and two contests per attempt.
-- The Host-header guard protects a loopback bridge from DNS rebinding.
+- The Host-header guard protects a loopback bridge from DNS rebinding: a request naming another site gets 421 on every route except `/health`, which the shared bridge mounts before any middleware and which answers only a status and the build id.
 - The nonce ledger is per process: across a restart, what remains is the ten-minute freshness window and the compare-and-set on each chain.
 - Relay-mediated signatures are refused.
 - Redaction deletes graphs but leaves descriptors and manifest entries, which hold proofs and hashes, not text.
