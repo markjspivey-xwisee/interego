@@ -1,0 +1,19 @@
+name: Restore guarded PGSL relay
+on:
+  push:
+    branches:
+      - incident/pgsl-relay-restore-20261022
+    paths:
+      - .github/workflows/pgsl-relay-restore-20261022.yml
+permissions: {}
+concurrency:
+  group: pgsl-relay-restore-20261022
+  cancel-in-progress: false
+jobs:
+  relay:
+    uses: ./.github/workflows/deploy-railway.yml
+    with:
+      service: relay
+      tag: '4d41980040f08123bf787523938596d304a77e35'
+      set_registry_credentials: true
+    secrets: inherit
