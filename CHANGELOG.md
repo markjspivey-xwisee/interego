@@ -1,6 +1,10 @@
 # Changelog
 
-## 2026-10-21 — Lock conditional proofs before flushing queued deletion
+## 2026-10-22 — Practice-evidence vertical: conversation practice with reviewable evidence
+
+A new vertical application, `applications/practice-evidence` (`pev:`), composes the substrate without extending it. Authors publish a scenario, a counterpart persona and a versioned rubric whose identity is the hash of its canonical form. Learners practise by text with the counterpart through a bridge model key, a per-request key, or their own agent via client-required packets, and every generated turn discloses its provider, returned model, key source and route. A judge returns a level and verbatim learner quotes per criterion; the platform verifies each quote against the learner's own turns, computes the score itself, and records a signed Hypothetical attempt bound to the rubric hash, the transcript hash and the judge disclosure.
+
+A registered reviewer who is neither the learner nor the judge countersigns or overrides the attempt, superseding it with an Asserted record; criteria whose quotes did not verify must be overridden. Each review is an outcome for per-criterion judge calibration through the shared judgment kit, and the review queue ranks attempts by uncertainty, nearness to the pass line and weak calibration. xAPI 2.0 statements, with cmi5-allowed context, are built only from a countersigned head and mark the evidence as practice; a declined projection returns 409 and writes a skip-audit row, and SCORM answers 501. Learners export, copy to their own pod, and redact their attempt records. The bridge serves a web UI at `/ui`, and an offline demo walks the lifecycle and asserts every refusal.
 
 Identical-value PostgreSQL CAS acquires the shared mutation lock before flushing deletions queued in that proof call. This prevents a queued deletion from taking a row lock before a concurrent guarded writer takes the database lock. A deterministic real PostgreSQL trigger gate verifies the competing writer waits on admission and both callbacks finish without retry. This correction preserves pressure-safe deletion and the existing physical growth checks; it does not claim that arbitrary earlier read-flushed deletes have universal lock ordering.
 
