@@ -106,7 +106,7 @@ npx tsx applications/work-redesign/bridge/server.ts
 | Variable | Meaning |
 |---|---|
 | `PORT` | Default `6100`. |
-| `HOST` | Default `127.0.0.1`. The bridge holds a signing key and its reads are unauthenticated, so it never binds every interface unless told to. |
+| `HOST` | Default `127.0.0.1`. The bridge holds a signing key and its reads are unauthenticated, so it never binds every interface unless told to. Bound to loopback, it answers only the Host names `127.0.0.1`, `localhost` and `[::1]` on `PORT` and the host of `BRIDGE_DEPLOYMENT_URL`. Any other Host is refused with 421, so a page that rebinds its own DNS name to 127.0.0.1 gets nothing. |
 | `BRIDGE_DEPLOYMENT_URL` | The public base URL. Default `http://127.0.0.1:<PORT>`. |
 | `WRD_DEFAULT_POD_URL` | The pod used when a call names none. It must be a public http(s) host: the SSRF guard refuses loopback and private addresses. |
 | `WRD_PLATFORM_KEY` | The hex secp256k1 key the bridge signs records with. Without it the bridge generates an **ephemeral** key and says so at startup. Records written under that key are not trusted after a restart. |
@@ -329,7 +329,7 @@ A task may cite an external task term (`externalTaskTerm`, for example an O\*NET
 
 **Access and storage**
 
-- **Reads are not scoped in v1.** `wrd.list_records` and `wrd.calibration` are unauthenticated GETs: anyone who can reach the bridge reads every record on the pod, including dispute notes and addresses. The UI says so on every screen. `HOST` defaults to loopback, and document text is stored only when the operator opts in.
+- **Reads are not scoped in v1.** `wrd.list_records` and `wrd.calibration` are unauthenticated GETs: anyone who can reach the bridge reads every record on the pod, including dispute notes and addresses. The UI says so on every screen. `HOST` defaults to loopback, and document text is stored only when the operator opts in. On loopback, and always in the demo, a request whose Host header is not one of the bridge's own names is refused (421) before any route except the shared `/health`, which returns only the status and build. A bridge bound to another interface does not check Host: put it behind a proxy that does.
 - **The bridge writes to the pod with plain HTTP and no pod credentials.** Use a pod, or a container on it, that accepts the bridge's writes. Pods on loopback or private addresses are refused by the SSRF guard. Holder copies likewise need a pod that accepts the bridge's writes; otherwise use the download. Copies are plaintext: encrypted copies are out of scope.
 
 **Integrity and replay**

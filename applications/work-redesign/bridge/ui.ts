@@ -16,10 +16,20 @@
  * has no 'unsafe-inline', the client sets widths through the CSSOM (allowed) and never
  * writes a style attribute or innerHTML.
  *
+ * `hostAllowlistGuard` refuses (421) any request whose Host header is not one of the names the
+ * bridge is served under. A loopback bridge holds a signing key and answers unauthenticated
+ * reads of every record on its pod — and the demo server also holds the personas' keys and signs
+ * for them — so without it a page on another site could rebind its own DNS name to 127.0.0.1
+ * and read or act as that origin. Cross-site POSTs are already blocked by the JSON-only body
+ * parser and the absence of CORS headers; this closes the rebinding path. Both compositions
+ * install it first in their `middleware` hook, which the shared factory runs before every route
+ * except its build-identity `/health`.
+ *
  * No environment reads; bridge/server.ts and demo/run.ts attach this.
  */
 import { readFileSync } from 'node:fs';
-import type { Express, Response } from 'express';
+import type { Express, NextFunction, Request, Response } from 'express';
+import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 
 export const UI_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
@@ -145,4 +155,38 @@ export function attachUi(app: Express, opts: { readonly base: string }): void {
   app.get('/ui', (_req, res) => { secure(res); res.type('text/html; charset=utf-8').send(html); });
   app.get('/ui/app.js', (_req, res) => { secure(res); res.type('text/javascript; charset=utf-8').send(appJs); });
   app.get('/ui/app.css', (_req, res) => { secure(res); res.type('text/css; charset=utf-8').send(APP_CSS); });
+}
+
+const LOOPBACK_BINDS: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+/** True when `host`, the address the bridge listens on, is a loopback name. */
+export function isLoopbackBind(host: string): boolean {
+  return LOOPBACK_BINDS.has(host.trim().toLowerCase());
+}
+
+/**
+ * The Host header values a loopback bridge listening on `port` answers: 127.0.0.1, localhost and
+ * [::1] on that port — bare as well on port 80, where a browser omits the port — and the host of
+ * `base`, the bridge's public URL, so a reverse proxy on the same machine that forwards the
+ * public name still reaches it. A `base` that is not a URL adds nothing.
+ */
+export function servedHostNames(port: number, base?: string): string[] {
+  const loopback = ['127.0.0.1', 'localhost', '[::1]'];
+  const names = loopback.map((h) => `${h}:${port}`);
+  if (port === 80) names.push(...loopback);
+  if (base !== undefined) {
+    try { names.push(new URL(base).host); } catch { /* not a URL: the loopback names remain */ }
+  }
+  return [...new Set(names.map((n) => n.toLowerCase()))];
+}
+
+/** Refuse (421) any request whose Host header, lowercased, is not in `allowed`. */
+export function hostAllowlistGuard(allowed: readonly string[]): (req: Request, res: Response, next: NextFunction) => void {
+  const names = new Set(allowed.map((h) => h.toLowerCase()));
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const host = (req.headers.host ?? '').toLowerCase();
+    if (names.has(host)) { next(); return; }
+    res.status(421).json(refuse(421, 'This bridge does not answer for that host name.',
+      'the Host header is not a name this bridge is served under, which is what a page that rebinds its own DNS name to the bridge sends'));
+  };
 }

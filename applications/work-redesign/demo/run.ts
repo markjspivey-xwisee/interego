@@ -28,7 +28,7 @@
  *
  * No environment reads: tests import this module. The report goes to demos/output/ (gitignored).
  */
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { importWallet, signMessageRaw, recoverMessageSigner, canonicalJson, sha256Hex, type FetchFn, type ManifestEntry, type Wallet } from '@interego/core';
@@ -38,7 +38,7 @@ import { listenLoopback } from '../../_shared/vertical-bridge/listen-loopback.js
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type DemoPersona } from '../bridge/handlers.js';
 import { readRecord, HOLDER_CONTAINER } from '../bridge/pod-helpers.js';
-import { attachUi } from '../bridge/ui.js';
+import { attachUi, hostAllowlistGuard, servedHostNames } from '../bridge/ui.js';
 import { envelopeSha256, entityIri, graphIriOf } from '../src/records.js';
 import { normaliseForQuote } from '../src/work.js';
 import { meanRampFactor, monthsBetween, DEMO_LABEL } from '../src/valuation.js';
@@ -169,6 +169,29 @@ const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is
 const WEEK = 7 * 86_400_000;
 const plusWeeks = (iso: string, weeks: number): string => new Date(Date.parse(iso) + weeks * WEEK).toISOString();
 
+/**
+ * One request to the demo server on 127.0.0.1:`port` carrying the Host header `host` — what a
+ * page on another site sends once it has rebound its own DNS name to 127.0.0.1. fetch() cannot
+ * set Host, so this goes through node:http, without a pooled connection.
+ */
+function hostProbe(port: number, method: 'GET' | 'POST', path: string, host: string): Promise<{ readonly status: number; readonly body: Obj }> {
+  return new Promise((resolve, reject) => {
+    const headers: Record<string, string> = { host, accept: 'application/json', ...(method === 'POST' ? { 'content-type': 'application/json' } : {}) };
+    const req = request({ host: '127.0.0.1', port, method, path, agent: false, headers }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => { text += chunk; });
+      res.on('end', () => {
+        let parsed: unknown;
+        try { parsed = JSON.parse(text); } catch { parsed = { text }; }
+        resolve({ status: res.statusCode ?? 0, body: obj(parsed) });
+      });
+    });
+    req.on('error', reject);
+    req.end(method === 'POST' ? '{}' : undefined);
+  });
+}
+
 // ── Fixtures ────────────────────────────────────────────────────────────────────────────
 
 /** An accounts-payable SOP. It literally contains every quoted span below except the fabricated one. */
@@ -282,10 +305,11 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     res.statusCode = 503;
     res.end();
   };
+  let port: number;
   let base: string;
   let close: () => Promise<void>;
   if (opts.serve) {
-    const port = opts.port ?? 6100;
+    port = opts.port ?? 6100;
     const server = await new Promise<Server>((resolve, reject) => {
       const s = createServer(serve);
       s.once('error', reject);
@@ -294,7 +318,8 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     base = `http://127.0.0.1:${port}`;
     close = async (): Promise<void> => { server.closeAllConnections(); await new Promise<void>((r) => server.close(() => r())); };
   } else {
-    const l = await listenLoopback({ listen: (port, host, cb) => createServer(serve).listen(port, host, cb) });
+    const l = await listenLoopback({ listen: (p, host, cb) => createServer(serve).listen(p, host, cb) });
+    port = l.port;
     base = l.base;
     close = l.close;
   }
@@ -305,7 +330,12 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
       adminAddresses: [P.admin.wallet.address], demoPersonas, demoClockAdvance: (ms) => clock.advance(ms),
     }),
     hypermediaLinks: [{ label: 'Web UI', href: `${base}/ui`, rel: 'alternate', type: 'text/html' }],
-    middleware: (a) => attachUi(a, { base }),
+    middleware: (a) => {
+      // Always bound to 127.0.0.1, and its endpoints hold the personas' keys and sign for them:
+      // refuse every Host but its own before any route (DNS rebinding), as bridge/server.ts does.
+      a.use(hostAllowlistGuard(servedHostNames(port, base)));
+      attachUi(a, { base });
+    },
   });
   handler = app as unknown as (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -431,6 +461,20 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
       production.length === 19 && production.every((t) => tools.has(t)) && tools.has('wrd.demo_envelope') && tools.has('wrd.demo_advance_clock') && tools.size === 21
         && [...tools.values()].every((t) => t.url.startsWith(`${base}/wrd/`)),
       `${tools.size} declared; every target is on ${base}`);
+    // Only this server's own names are answered: a page that rebinds its DNS name to 127.0.0.1 is refused before any route.
+    const rebound = await Promise.all([
+      hostProbe(port, 'GET', '/affordances?format=jsonld', `rebind.attacker.example:${port}`),
+      hostProbe(port, 'GET', '/wrd/list_records', `rebind.attacker.example:${port}`),
+      hostProbe(port, 'POST', '/wrd/demo_envelope', `rebind.attacker.example:${port}`),
+      hostProbe(port, 'GET', '/ui', 'rebind.attacker.example'),
+    ]);
+    expect('1. a Host naming another site (DNS rebinding) is refused 421 before any route: manifest, records, demo signer, UI', 'Host guard',
+      rebound.every((r) => r.status === 421 && r.body['kind'] === 'refusal' && str(r.body['iep:refusalReason']) !== '' && str(r.body['error']) !== ''),
+      rebound.map((r) => `${r.status} ${str(r.body['kind'])}`).join(', '));
+    const own = await Promise.all([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].map(async (h) => ({ h, r: await hostProbe(port, 'GET', '/affordances?format=jsonld', h) })));
+    expect('1. the server answers its own names: 127.0.0.1, localhost and [::1] on its port', 'Host guard',
+      own.every(({ r }) => r.status === 200 && r.body['kind'] !== 'refusal'),
+      own.map(({ h, r }) => `${h} ${r.status}`).join(', '));
     const signedForAna = await call('wrd.demo_envelope', { persona: 'ana', payload: { intent: 'wrd:holder-copy', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: nonce() } });
     const env1 = obj(signedForAna.body['envelope']);
     okStep('1. wrd.demo_envelope signs for ana with a key the demo server holds', 'wrd.demo_envelope', signedForAna, () =>
