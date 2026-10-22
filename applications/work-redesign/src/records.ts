@@ -13,6 +13,7 @@
  *
  * Pure: no environment reads, no network, no clock (every time is passed in).
  */
+import { createHmac } from 'node:crypto';
 import {
   canonicalJson, sha256Hex, recoverMessageSigner, parseTrig, findSubjectsOfType, readStringValue, ContextDescriptor, validate, turtleIriRef,
   type ContextDescriptorData, type IRI,
@@ -209,9 +210,53 @@ export class NonceLedger {
 export const h16 = (seed: string): string => sha256Hex(seed).slice(0, 16);
 export type EntityKind = 'registry' | 'workflow' | 'task' | 'classification' | 'plan' | 'valuation' | 'decision'
   | 'acknowledgement' | 'run' | 'grant' | 'holder-copy';
-/** `urn:wrd:<kind>:<h16(scope)>:<h16(id)>` — the scope segment lets a reader select graphs from the manifest before reading any. */
-export const entityIri = (kind: EntityKind, scope: string, id: string): string => `urn:wrd:${kind}:${h16(scope)}:${h16(id)}`;
-export const scopePrefix = (kind: EntityKind, scope: string): string => `urn:wrd:${kind}:${h16(scope)}:`;
+
+/**
+ * The key entity IRIs are derived under when the bridge holds a record key: an HMAC-SHA256 of the
+ * record key pair's secret key under the label `wrd-entity-iri`, as hex. Every bridge holding the
+ * same WRD_RECORD_KEY derives the same one, and it is never the key graphs are sealed with.
+ */
+export function entityIriKey(recordKey: { readonly secretKey: string }): string {
+  return createHmac('sha256', Buffer.from(recordKey.secretKey, 'base64')).update('wrd-entity-iri', 'utf8').digest('hex');
+}
+/** One 16-hex segment: sha256 of the seed, or HMAC-SHA256 under `key` (hex) when one is given. */
+const segment = (seed: string, key?: string): string => (key === undefined
+  ? h16(seed)
+  : createHmac('sha256', Buffer.from(key, 'hex')).update(seed, 'utf8').digest('hex').slice(0, 16));
+/**
+ * `urn:wrd:<kind>:<seg(scope)>:<seg(id)>` — the scope segment lets a reader select graphs from the
+ * manifest before reading any. The graph IRIs are public (the manifest names them), so without
+ * `key` anyone who can guess a tuple (an address, a task, a kind of task) recovers it from the
+ * hash; with `key` (entityIriKey of the record key) only a holder of the record key can.
+ */
+export const entityIri = (kind: EntityKind, scope: string, id: string, key?: string): string => `urn:wrd:${kind}:${segment(scope, key)}:${segment(id, key)}`;
+export const scopePrefix = (kind: EntityKind, scope: string, key?: string): string => `urn:wrd:${kind}:${segment(scope, key)}:`;
+
+/** A UTF-16 code unit that is half of a surrogate pair with no other half. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+/** True when `s` is well-formed UTF-16 (no lone surrogate): text a UTF-8 encoder keeps as it is. */
+export const isWellFormedText = (s: string): boolean => !LONE_SURROGATE.test(s);
+/**
+ * The path of the first string in `v` (keys included) that is not well-formed UTF-16, or null.
+ * Such text cannot be sealed, hashed or stored as what was sent.
+ */
+export function illFormedTextPath(v: unknown, path = 'input', depth = 0): string | null {
+  if (typeof v === 'string') return isWellFormedText(v) ? null : path;
+  if (depth > 64 || typeof v !== 'object' || v === null) return null;
+  if (Array.isArray(v)) {
+    for (const [i, x] of v.entries()) {
+      const p = illFormedTextPath(x, `${path}[${i}]`, depth + 1);
+      if (p !== null) return p;
+    }
+    return null;
+  }
+  for (const [k, x] of Object.entries(v)) {
+    if (!isWellFormedText(k)) return `${path} (a key)`;
+    const p = illFormedTextPath(x, `${path}.${k}`, depth + 1);
+    if (p !== null) return p;
+  }
+  return null;
+}
 export const graphIriOf = (entity: string): string => `${entity}:graph`;
 /** One id per write attempt: the nonce makes it unique, so a retry never lands on a partial write's URL. */
 export const recordIdFor = (kind: EntityKind, graphIri: string, version: number, nonce: string): string =>

@@ -16,18 +16,31 @@
  *                                   default the default pod. A call naming any other pod is
  *                                   refused (403 pod-not-served); with neither set, every call is
  *   WRD_POD_WRITE_SECRET            the operator pod's credential (bearer), sent on reads and
- *                                   writes under WRD_DEFAULT_POD_URL's path only, never on a
- *                                   redirect and never to a holder's pod; never printed
+ *                                   writes whose URL lies under WRD_DEFAULT_POD_URL's path and
+ *                                   origin, and nowhere else; never to a holder's pod; never
+ *                                   printed. Requests carrying it go out with redirect: 'manual'.
+ *                                   The SSRF guard re-issues a GET's redirect hop through the same
+ *                                   fetch, which adds the credential again only when the new URL
+ *                                   is still under the pod's path (so never outside the pod)
  *   WRD_RECORD_KEY                  64 hex: the record key. Every new record's graph is sealed
- *                                   to the X25519 key derived from it; descriptors and the
- *                                   manifest stay public. Absent → plaintext records, and the
- *                                   startup says they are world-readable on a pod that serves
- *                                   anonymous reads. Keep it: a lost key leaves every sealed
- *                                   record unreadable (409), with no way back
+ *                                   to the X25519 key derived from it, and the entity IRIs the
+ *                                   bridge derives are keyed with a key derived from it;
+ *                                   descriptors and the manifest stay public (signers, kinds,
+ *                                   modal status, times, supersedes and derivation links).
+ *                                   Absent → plaintext records, and the startup says they are
+ *                                   world-readable on a pod that serves anonymous reads. Keep a
+ *                                   copy: a lost key leaves every sealed record unreadable (409),
+ *                                   with no way back
+ *   WRD_REQUIRE_RECORD_KEY          1 → the bridge does not start (exit 1) without a valid
+ *                                   WRD_RECORD_KEY (blank counts as missing), so a deployment
+ *                                   cannot fall back to plaintext records. The image sets it;
+ *                                   unset by default for a local run
  *   WRD_PUBLIC_READS                1 → wrd.list_records and wrd.calibration answer unsigned
  *                                   GETs from anyone who can reach the bridge; otherwise they
- *                                   answer 401 and reads need a signed read (wrd.read_records,
- *                                   wrd.read_calibration) from an admin or a registered key
+ *                                   answer 401, reads need a signed read (wrd.read_records,
+ *                                   wrd.read_calibration) from an admin or a registered key, and
+ *                                   wrd.envelope_template fills only the shape and the head
+ *                                   binding unless it is sent that signed read
  *   WRD_PLATFORM_KEY                hex secp256k1 key the bridge signs records with; absent → an
  *                                   EPHEMERAL key, and records written now are not trusted
  *                                   after a restart
@@ -58,9 +71,16 @@ const defaultPodUrl = env('WRD_DEFAULT_POD_URL');
 const servedPods = list(env('WRD_SERVED_PODS') ?? defaultPodUrl);
 const writeSecret = env('WRD_POD_WRITE_SECRET');
 const recordKeyHex = env('WRD_RECORD_KEY');
+const requireRecordKey = env('WRD_REQUIRE_RECORD_KEY') === '1';
 const publicReads = env('WRD_PUBLIC_READS') === '1';
 const key = env('WRD_PLATFORM_KEY');
 
+// A deployment that requires a record key does not start without one: on a pod that serves
+// anonymous reads, plaintext records would be readable by anyone. env() reads blank as unset.
+if (requireRecordKey && recordKeyHex === undefined) {
+  process.stderr.write('work-redesign bridge did not start: WRD_REQUIRE_RECORD_KEY=1 and WRD_RECORD_KEY is not set (64 hex characters); records would be written in plaintext\n');
+  process.exit(1);
+}
 // A record key that is set but malformed stops the bridge: falling back to plaintext would
 // publish what the operator meant to seal.
 let recordKey: EncryptionKeyPair | undefined;

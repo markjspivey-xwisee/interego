@@ -17,8 +17,16 @@
  * The Host-guard tests check that a loopback bridge answers only its own names — a page that
  * rebinds its DNS name to 127.0.0.1 is refused (421) before any route — and that bridge/server.ts
  * and the demo both install that guard first.
+ *
+ * On the pod the walk leaves behind (sealed, reads closed): an unsigned wrd.envelope_template
+ * holds nothing beyond its allowlist for any intent that reads a record, valued and probe
+ * decisions alike, while the same call with a signed read is filled; and no tuple behind an
+ * entity IRI (who is assigned which task, which agent works which kind of task, which decision is
+ * a probe) can be recovered from the pod's public bytes by recomputing an unkeyed hash. The
+ * production server refuses to start without a record key when the image requires one.
  */
 import { describe, it, expect, afterAll } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { request } from 'node:http';
 import { join, relative } from 'node:path';
@@ -31,12 +39,40 @@ import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
 import { attachUi, hostAllowlistGuard, isLoopbackBind, servedHostNames, UI_CSP } from '../bridge/ui.js';
-import { runDemo, memoryPod, demoClock, DEMO_REFUSALS, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
+import { runDemo, memoryPod, demoClock, DEMO_REFUSALS, DEMO_POD, DEMO_HOLDER_POD, DEMO_RECORD_KEY, type MemoryPod, type DemoReport } from '../demo/run.js';
+import { h16 } from '../src/records.js';
 
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8').split('\r\n').join('\n');
 const APP_JS = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
 const listeners: TestListener[] = [];
 afterAll(async () => { for (const l of listeners) await l.close(); });
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
+const objOf = (v: unknown): Obj => (isObj(v) ? v : {});
+const rows = (v: unknown): Obj[] => (Array.isArray(v) ? v.filter(isObj) : []);
+const must = <T>(v: T | undefined | null, what: string): T => {
+  if (v === undefined || v === null) throw new Error(`expected ${what}`);
+  return v;
+};
+
+/** The demo walk, run once for every test that needs it, on a pod this module holds. */
+let walk: Promise<{ readonly report: DemoReport; readonly pod: MemoryPod }> | null = null;
+const walked = (): Promise<{ readonly report: DemoReport; readonly pod: MemoryPod }> => {
+  walk ??= (async () => {
+    const pod = memoryPod();
+    return { report: await runDemo({ quiet: true, writeReport: false, pod }), pod };
+  })();
+  return walk;
+};
+/** A demo persona's key, from the seed the demo publishes. */
+const demoWallet = (id: string, type: 'human' | 'agent' = 'human') => importWallet(`0x${sha256Hex(`wrd-demo:${id}`)}`, type, id);
+/** Every leaf of a JSON value with its path; empty arrays and objects have none. */
+const leaves = (v: unknown, path = ''): Array<readonly [string, unknown]> => {
+  if (Array.isArray(v)) return v.flatMap((x, i) => leaves(x, `${path}[${i}]`));
+  if (isObj(v)) return Object.entries(v).flatMap(([k, x]) => leaves(x, path === '' ? k : `${path}.${k}`));
+  return [[path, v]];
+};
 
 /** One request to 127.0.0.1:`port` with the Host header set to `host` (fetch() cannot set Host). */
 function hostRequest(port: number, method: 'GET' | 'POST', path: string, host: string): Promise<{ status: number; body: Record<string, unknown> }> {
@@ -116,7 +152,7 @@ async function openUi(base: string): Promise<UiPage> {
 
 describe('work-redesign offline demo and web UI', () => {
   it('runs the offline demo end to end, observes every asserted refusal with its status, and every record and cell it wrote says it is scripted', async () => {
-    const report = await runDemo({ quiet: true, writeReport: false });
+    const { report } = await walked();
     const failed = report.steps.filter((s) => !s.ok).map((s) => `${s.step}: ${s.note}`);
     expect(failed).toEqual([]);
     expect(report.ok).toBe(true);
@@ -147,6 +183,182 @@ describe('work-redesign offline demo and web UI', () => {
       [true, '421 refusal, 421 refusal, 421 refusal, 421 refusal'],
       [true, '200, 200, 200'],
     ]);
+  }, 120_000);
+
+  it('on the sealed pod the walk leaves, an unsigned wrd.envelope_template holds only its allowlist for every intent that reads a record, valued and probe decisions alike; sent a signed read it is filled; a bad signed read is refused', async () => {
+    const { pod } = await walked();
+    const admin = demoWallet('admin');
+    const NOW = new Date('2027-06-01T00:00:00.000Z');
+    const h = createWrdHandlers({
+      fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => NOW, platform: { wallet: demoWallet('platform', 'agent'), keyKind: 'demo' },
+      adminAddresses: [admin.address], recordKey: DEMO_RECORD_KEY,
+    });
+    let n = 0;
+    const signedRead = async (who = admin, issuedAt = NOW.toISOString()): Promise<{ payload: Obj; signature: string }> => {
+      n += 1;
+      const payload = { intent: 'wrd:read-records', podUrl: DEMO_POD, issuedAt, nonce: `allowlist-read-${String(n).padStart(6, '0')}` };
+      return { payload, signature: await signMessageRaw(who, canonicalJson(payload)) };
+    };
+    const all = objOf(await h['wrd.read_records']!({ envelope: await signedRead() }));
+    expect(all['status']).toBe('listed');
+    const tasks = rows(all['tasks']);
+    const workflows = rows(all['workflows']);
+    const plans = rows(all['plans']);
+    const decisions = rows(all['decisions']);
+    const grants = rows(all['grants']);
+    expect([tasks.length > 3, workflows.length > 0, grants.length > 0]).toEqual([true, true, true]);
+    expect(new Set(plans.map((p) => p['planKind']))).toEqual(new Set(['valued', 'probe']));
+    expect(new Set(decisions.map((d) => d['decisionKind']))).toEqual(new Set(['valued', 'probe']));
+
+    // What the descriptors make public anyway: every descriptor URL, graph digest and record id the pod holds.
+    const publicFacts = new Set(leaves(all).map(([, v]) => v).filter((v): v is string => typeof v === 'string'
+      && (/^https:\/\/192\.0\.2\.10\/ap-team\/wrd\/records\/[^/]+\.ttl$/.test(v) || /^graph-nquads-sha256:[0-9a-f]{64}$/.test(v) || /^urn:wrd:record:/.test(v))));
+    // What only the graphs say, and an unsigned template must never carry.
+    const secrets = [
+      ...tasks.flatMap((t) => [String(t['textSha256']), String(t['name']), String(t['description']), String(t['taskKind'])]),
+      ...rows(all['valuations']).flatMap((v) => [String(v['valuationIri']), String(v['valuationHash'])]),
+      ...decisions.flatMap((d) => [String(objOf(d['countersign'])['at'] ?? 'no countersign time'), String(d['valuationHash'] ?? 'no valuation hash')]),
+    ];
+
+    const cases: Array<{ intent: string; args: Obj }> = [
+      ...workflows.flatMap((w) => [
+        { intent: 'wrd:revise-task', args: { workflow_iri: w['workflowIri'] } },
+        { intent: 'wrd:propose-allocation', args: { workflow_iri: w['workflowIri'] } },
+      ]),
+      ...tasks.flatMap((t) => [
+        { intent: 'wrd:revise-task', args: { task_iri: t['taskIri'] } },
+        { intent: 'wrd:ratify-task', args: { subject: 'description', task_iri: t['taskIri'] } },
+        { intent: 'wrd:ratify-task', args: { subject: 'classification', task_iri: t['taskIri'] } },
+        { intent: 'wrd:classify-task', args: { task_iri: t['taskIri'] } },
+        { intent: 'wrd:agent-run', args: { task_iri: t['taskIri'] } },
+      ]),
+      ...plans.flatMap((p) => [
+        { intent: 'wrd:value-plan', args: { plan_iri: p['planIri'] } },
+        { intent: 'wrd:submit-decision', args: { plan_iri: p['planIri'] } },
+        ...rows(p['assignments']).map((a) => ({ intent: 'wrd:ratify-task', args: { subject: 'assignment', task_iri: a['taskIri'], plan_iri: p['planIri'] } })),
+      ]),
+      ...decisions.flatMap((d) => [
+        { intent: 'wrd:countersign-decision', args: { decision_iri: d['decisionIri'] } },
+        { intent: 'wrd:record-outcome', args: { decision_iri: d['decisionIri'] } },
+      ]),
+      ...grants.map((g) => ({ intent: 'wrd:revoke-grant', args: { grant_iri: g['grantIri'] } })),
+    ];
+    const shapes = new Map<string, Set<string>>();
+    let answered = 0;
+    for (const c of cases) {
+      const r = objOf(await h['wrd.envelope_template']!({ intent: c.intent, ...c.args }));
+      const label = `${c.intent} ${JSON.stringify(c.args)}`;
+      if (r['kind'] === 'refusal') {
+        // Only the record the walk tampered with at the end (a sealed classification that no longer opens) is refused.
+        expect([label, r['iep:refusalStatus']]).toEqual([label, 409]);
+        expect(String(r['iep:refusalReason'])).toMatch(/WRD_RECORD_KEY/);
+        continue;
+      }
+      answered += 1;
+      expect([label, r['context'], typeof r['contextWithheld']]).toEqual([label, {}, 'string']);
+      const tpl = objOf(r['template']);
+      const allowed = new Set<unknown>([c.intent, DEMO_POD, tpl['issuedAt'], tpl['nonce'], ...Object.values(c.args), ...publicFacts]);
+      if (c.intent === 'wrd:revise-task' && c.args['workflow_iri'] !== undefined) allowed.add('add');
+      for (const [path, v] of leaves(tpl)) {
+        if (v === null) continue;
+        expect([label, path, allowed.has(v)], `${label}: ${path} = ${JSON.stringify(v)}`).toEqual([label, path, true]);
+      }
+      expect(tpl['issuedAt']).toBe(NOW.toISOString());
+      const shown = JSON.stringify([r['template'], r['fill'], r['context']]);
+      for (const secret of secrets) expect(shown.includes(secret), `${label} carries ${secret}`).toBe(false);
+      expect(JSON.stringify(r['fill'])).not.toMatch(/urn:wrd:/);
+      // The shape never depends on what a graph says: one shape per intent and named argument, valued or probe.
+      // (Whether a head binding is filled depends only on whether the record exists, which the manifest shows.)
+      const key = `${c.intent}|${Object.keys(c.args).sort().join(',')}|${String(c.args['subject'] ?? '')}`;
+      const shape = JSON.stringify([Object.keys(tpl).sort(), (r['fill'] as string[]).filter((f) => !['descriptorUrl', 'graphDigest', 'recordId'].includes(f))]);
+      shapes.set(key, (shapes.get(key) ?? new Set()).add(shape));
+    }
+    expect(answered).toBeGreaterThan(cases.length - 4);
+    for (const [key, s] of shapes) expect([key, s.size]).toEqual([key, 1]);
+    expect(shapes.has('wrd:record-outcome|decision_iri|')).toBe(true);
+    // The intents that read no record carry only their fixed shape.
+    for (const intent of ['wrd:update-registry', 'wrd:capture-workflow', 'wrd:record-task-map', 'wrd:review-agent-run', 'wrd:grant-autonomy', 'wrd:holder-copy', 'wrd:read-records']) {
+      const r = objOf(await h['wrd.envelope_template']!({ intent }));
+      expect([intent, r['context']]).toEqual([intent, {}]);
+      for (const [path, v] of leaves(r['template'])) if (v !== null) expect([intent, path, [intent, DEMO_POD, objOf(r['template'])['issuedAt'], objOf(r['template'])['nonce'], false].includes(v as string)]).toEqual([intent, path, true]);
+    }
+
+    // The same calls with a signed read are filled from the records: as an object, or as its JSON text in a GET query.
+    const read = await signedRead();
+    const filled = async (intent: string, args: Obj, asText = false): Promise<Obj> => {
+      const r = objOf(await h['wrd.envelope_template']!({ intent, ...args, read_envelope: asText ? JSON.stringify(read) : read }));
+      expect([intent, r['kind'], r['contextWithheld']]).toEqual([intent, undefined, undefined]);
+      return r;
+    };
+    const valuedPlan = plans.find((p) => p['planKind'] === 'valued' && rows(p['tasks']).some((x) => x['changed'] === true));
+    const changed = rows(objOf(valuedPlan)['tasks']).filter((x) => x['changed'] === true).map((x) => String(x['taskIri'])).sort();
+    const valueT = await filled('wrd:value-plan', { plan_iri: objOf(valuedPlan)['planIri'] }, true);
+    expect(Object.keys(objOf(objOf(objOf(valueT['template'])['inputs'])['tasks'])).sort()).toEqual(changed);
+    expect(objOf(valueT['context'])['planKind']).toBe('valued');
+    const probeDecision = must(decisions.find((d) => d['decisionKind'] === 'probe'), 'probe decision');
+    const outcomeT = objOf((await filled('wrd:record-outcome', { decision_iri: probeDecision['decisionIri'] }))['template']);
+    expect(rows(outcomeT['probeResults']).map((x) => x['windowStart'])).toEqual(rows(probeDecision['probes']).map(() => objOf(probeDecision['countersign'])['at']));
+    const valuedDecision = must(decisions.find((d) => d['decisionKind'] === 'valued' && isObj(d['countersign'])), 'countersigned valued decision');
+    expect(objOf(objOf((await filled('wrd:record-outcome', { decision_iri: valuedDecision['decisionIri'] }))['template'])['measured'])['windowStart']).toBe(objOf(valuedDecision['countersign'])['at']);
+    const someTask = must(tasks.find((t) => t['status'] !== 'retired'), 'a current task');
+    expect(objOf((await filled('wrd:classify-task', { task_iri: someTask['taskIri'] }))['template'])['taskTextSha256']).toBe(someTask['textSha256']);
+    expect(objOf((await filled('wrd:agent-run', { task_iri: someTask['taskIri'] }))['template'])['taskKind']).toBe(someTask['taskKind']);
+    expect(['revise', 'retire']).toContain(objOf((await filled('wrd:revise-task', { task_iri: someTask['taskIri'] }))['template'])['op']);
+
+    // A signed read the bridge would refuse as a read is refused here too.
+    const refusedWith = async (envelope: unknown): Promise<unknown> => objOf(await h['wrd.envelope_template']!({ intent: 'wrd:value-plan', plan_iri: objOf(valuedPlan)['planIri'], read_envelope: envelope }))['iep:refusalStatus'];
+    expect(await refusedWith(await signedRead(demoWallet('zed')))).toBe(403);
+    expect(await refusedWith(await signedRead(admin, new Date(NOW.getTime() - 3_600_000).toISOString()))).toBe(401);
+    expect(await refusedWith('{not json')).toBe(400);
+  }, 120_000);
+
+  it('with a record key, no tuple behind an entity IRI can be recovered from the pod\'s public bytes: not who is assigned which task, which agent works which kind of task, which decision is a probe, or which workflow a record belongs to', async () => {
+    const { pod } = await walked();
+    const admin = demoWallet('admin');
+    const NOW = new Date('2027-06-01T00:00:00.000Z');
+    const h = createWrdHandlers({
+      fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => NOW, platform: { wallet: demoWallet('platform', 'agent'), keyKind: 'demo' },
+      adminAddresses: [admin.address], recordKey: DEMO_RECORD_KEY,
+    });
+    const payload = { intent: 'wrd:read-records', podUrl: DEMO_POD, issuedAt: NOW.toISOString(), nonce: 'keyed-iri-read-000001' };
+    const all = objOf(await h['wrd.read_records']!({ envelope: { payload, signature: await signMessageRaw(admin, canonicalJson(payload)) } }));
+    const members = rows(objOf(all['registry'])['members']);
+    const addresses = members.map((m) => String(m['address']));
+    const agents = members.filter((m) => m['softwareAgent'] === true).map((m) => String(m['address']));
+    const kinds = rows(objOf(all['registry'])['taskKinds']).map((k) => String(k['slug']));
+    const taskIris = rows(all['tasks']).map((t) => String(t['taskIri']));
+    const planIris = rows(all['plans']).map((p) => String(p['planIri']));
+    const valuations = rows(all['valuations']);
+    const entities = [
+      ...taskIris, ...planIris, ...rows(all['workflows']).map((w) => String(w['workflowIri'])), ...valuations.map((v) => String(v['valuationIri'])),
+      ...rows(all['decisions']).map((d) => String(d['decisionIri'])), ...rows(all['grants']).map((g) => String(g['grantIri'])),
+    ];
+    expect([addresses.length > 5, agents.length > 0, kinds.length > 2, taskIris.length > 3, planIris.length > 2]).toEqual([true, true, true, true, true]);
+    // Every tuple the bridge derives an entity IRI from, as an unkeyed hash would carry it.
+    const tuples = new Map<string, string>();
+    const add = (seed: string): void => { tuples.set(h16(seed), seed); };
+    for (const x of [DEMO_POD, ...addresses, ...entities]) add(x);
+    for (const t of taskIris) for (const a of addresses) add(`${t}|${a}`);
+    for (const a of agents) for (const k of kinds) add(`${a}|${k}`);
+    for (const k of kinds) add(`${DEMO_POD}|${k}`);
+    for (const p of planIris) {
+      add(`${p}|probe`);
+      for (const v of valuations) add(`${p}|${String(v['valuationHash'])}`);
+    }
+    // Every byte of the operator pod a reader without the record key sees: descriptors and the manifest, not the sealed graphs.
+    const open = [...pod.bodies.entries()].filter(([u]) => u.startsWith(DEMO_POD) && !u.startsWith(DEMO_HOLDER_POD) && !u.endsWith('.envelope.jose.json'));
+    expect(open.length).toBeGreaterThan(50);
+    expect(open.some(([u]) => u.endsWith('-graph.trig'))).toBe(false);
+    const iris = new Set(open.flatMap(([, body]) => [...body.matchAll(/urn:wrd:([a-z-]+):([0-9a-f]{16}):([0-9a-f]{16})/g)].map((m) => m[0])));
+    expect(iris.size).toBeGreaterThan(40);
+    const recovered: string[] = [];
+    for (const iri of iris) {
+      const [, , kind, scope, id] = iri.split(':');
+      // The registry's IRI is derived from the pod URL alone, which is public: it is never keyed (every bridge on the pod must find it).
+      if (kind === 'registry') continue;
+      for (const seg of [scope, id]) if (seg !== undefined && tuples.has(seg)) recovered.push(`${iri} ← ${tuples.get(seg) ?? ''}`);
+    }
+    expect(recovered).toEqual([]);
   }, 120_000);
 
   it('serves /ui, /ui/app.js and /ui/app.css with the CSP, nosniff, no-referrer and no-store headers; the shell has no style attribute and app.js no setAttribute(\'style\' and no innerHTML', async () => {
@@ -219,6 +431,13 @@ describe('work-redesign offline demo and web UI', () => {
     expect(server).toContain("pod credential: ${writeSecret ? 'configured");
     expect(server).not.toMatch(/\$\{writeSecret\}|\$\{recordKeyHex\}|\$\{recordKey\.secretKey\}/);
     expect(server).toMatch(/WARNING: no WRD_RECORD_KEY — records are written in PLAINTEXT/);
+    expect(server).toMatch(/^const requireRecordKey = env\('WRD_REQUIRE_RECORD_KEY'\) === '1';$/m);
+    expect(server).toMatch(/if \(requireRecordKey && recordKeyHex === undefined\) \{\n[^\n]*WRD_REQUIRE_RECORD_KEY=1 and WRD_RECORD_KEY is not set[^\n]*\n\s*process\.exit\(1\);/);
+    // The image requires a record key, declares it unset, and says to back it up.
+    const dockerfile = readFileSync(new URL('../../../deploy/Dockerfile.wrd-bridge', import.meta.url), 'utf8');
+    expect(dockerfile).toMatch(/^ENV WRD_REQUIRE_RECORD_KEY=1$/m);
+    expect(dockerfile).toMatch(/^ENV WRD_RECORD_KEY=$/m);
+    expect(dockerfile).toMatch(/#\s+WRD_RECORD_KEY\s[\s\S]*?BACK IT UP/);
     const vertical = fileURLToPath(new URL('..', import.meta.url));
     const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : e.name.endsWith('.ts') ? [join(dir, e.name)] : []));
     const others = files(vertical).filter((f) => f !== join(vertical, 'bridge', 'server.ts') && !f.startsWith(join(vertical, 'tests')));
@@ -226,6 +445,27 @@ describe('work-redesign offline demo and web UI', () => {
     const reads = /process\.env|env\(\s*'WRD_/;
     expect(others.filter((f) => reads.test(readFileSync(f, 'utf8'))).map((f) => relative(vertical, f))).toEqual([]);
   });
+
+  it('the production server does not start without a valid record key when WRD_REQUIRE_RECORD_KEY=1 (unset or blank counts as missing): exit 1, saying why', () => {
+    const root = fileURLToPath(new URL('../../../', import.meta.url));
+    const server = fileURLToPath(new URL('../bridge/server.ts', import.meta.url));
+    const base: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('WRD_')));
+    const start = (extra: NodeJS.ProcessEnv): { status: number | null; stderr: string; stdout: string } => {
+      const r = spawnSync(process.execPath, ['--import', 'tsx', server], {
+        cwd: root, env: { ...base, PORT: '0', HOST: '127.0.0.1', WRD_DEFAULT_POD_URL: DEMO_POD, ...extra }, encoding: 'utf8', timeout: 60_000,
+      });
+      return { status: r.status, stderr: r.stderr, stdout: r.stdout };
+    };
+    for (const recordKey of [undefined, '', '   ']) {
+      const r = start({ WRD_REQUIRE_RECORD_KEY: '1', ...(recordKey === undefined ? {} : { WRD_RECORD_KEY: recordKey }) });
+      expect([JSON.stringify(recordKey), r.status]).toEqual([JSON.stringify(recordKey), 1]);
+      expect(r.stderr).toMatch(/did not start: WRD_REQUIRE_RECORD_KEY=1 and WRD_RECORD_KEY is not set/);
+      expect(r.stdout).not.toMatch(/listening on/);
+    }
+    // A malformed key stops it whether or not a key is required.
+    const bad = start({ WRD_REQUIRE_RECORD_KEY: '1', WRD_RECORD_KEY: 'abc' });
+    expect([bad.status, /WRD_RECORD_KEY must be 64 hex characters/.test(bad.stderr)]).toEqual([1, true]);
+  }, 120_000);
 
   it('the web UI, run in a DOM against a demo-composed bridge, signs one read per signer and reuses it; a signer with no role is refused and can switch back; with nothing to sign it meets the 401', async () => {
     const pod = memoryPod();

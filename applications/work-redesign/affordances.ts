@@ -339,7 +339,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.envelope_template',
     targetTemplate: '{base}/wrd/envelope_template',
     title: 'Get the payload to sign for a write',
-    description: 'For one write intent (or wrd:read-records): the JSON Schema of its payload, and a template filled from the pod — podUrl, a fresh issuedAt and nonce, and, when you name the record, the head binding (descriptorUrl, graphDigest, recordId) and the rows it needs (for a valuation, one entry per task of the plan). Fields left for you to decide are null and listed in fill. Unless the operator opened reads, what the bridge read out of records (the context, a task description to revise) is withheld: read it with wrd.read_records. Signs nothing and writes nothing.',
+    description: 'For one write intent (or wrd:read-records): the JSON Schema of its payload, and a template — podUrl, a fresh issuedAt and nonce, and, when you name the record, the head binding (descriptorUrl, graphDigest, recordId). Fields left for you to decide are null and listed in fill. Sent with read_envelope (a signed wrd:read-records envelope from an admin or a registered key), or when the operator opened reads, it also fills what the pod knows (for a valuation, one entry per task the plan changes; for a decision, its valuation; for an outcome, the declared window) and the context it read. Otherwise it fills only the intent, the pod, issuedAt, nonce, the IRIs you named and the head binding, and nothing read out of a record. Signs nothing and writes nothing.',
     method: 'GET',
     annotations: { title: 'Payload template', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     reads: READS,
@@ -352,6 +352,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
       { name: 'decision_iri', type: 'string', required: false, description: 'The decision (countersign, record an outcome).' },
       { name: 'grant_iri', type: 'string', required: false, description: 'The grant (revoke).' },
       { name: 'subject', type: 'string', required: false, description: 'For wrd:ratify-task: what is ratified.', enum: ['description', 'classification', 'assignment'] },
+      { name: 'read_envelope', type: 'object', required: false, description: 'Optional signed read: the wrd:read-records envelope wrd.read_records takes ({payload, signature}, or its JSON text in a GET query), from an admin or a key in the pod\'s registry. Valid, it fills the whole template and its context; refused (401, 403) like the read itself otherwise.' },
     ],
     outputs: {
       description: 'The schema, the template, the paths still to fill, the tool to send it to, and the context read from the pod.',

@@ -27,10 +27,10 @@ import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type WrdDeps } from '../bridge/handlers.js';
 import {
-  readRecord, publishRecord, verifyHolderBundle, operatorPodFetch, openPod, KeyedMutex, StaleHeadError, WRD_CONTAINER, SEALED_NO_KEY, SEALED_OTHER_KEY,
+  readRecord, publishRecord, verifyHolderBundle, operatorPodFetch, openPod, KeyedMutex, StaleHeadError, RecordNotSealableError, WRD_CONTAINER, SEALED_NO_KEY, SEALED_OTHER_KEY,
 } from '../bridge/pod-helpers.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
-import { envelopeSha256, entityIri, graphIriOf, buildDescriptor } from '../src/records.js';
+import { envelopeSha256, entityIri, entityIriKey, graphIriOf, buildDescriptor, recordIdFor, type WrdRecord } from '../src/records.js';
 import { normaliseForQuote } from '../src/work.js';
 import { meanRampFactor, monthsBetween, DEMO_LABEL } from '../src/valuation.js';
 import { WRD_NS } from '../src/ontology.js';
@@ -247,6 +247,11 @@ const list = async (w: World, query = ''): Promise<Obj> =>
   ok(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w), ...Object.fromEntries(new URLSearchParams(query)) }), 'read_records');
 const calibration = async (w: World, query = ''): Promise<Res> =>
   http(w, 'POST', 'read_calibration', { envelope: await readEnvelope(w), ...Object.fromEntries(new URLSearchParams(query)) });
+/** wrd.envelope_template as a GET; sent the admin's signed read (as read_envelope, JSON text in the query) unless `signed` is false. */
+async function template(w: World, query: string, signed = true): Promise<Res> {
+  const read = signed ? `&read_envelope=${encodeURIComponent(JSON.stringify(await readEnvelope(w)))}` : '';
+  return http(w, 'GET', 'envelope_template', undefined, `?${query}${read}`);
+}
 const taskRow = async (w: World, taskIri: string): Promise<Obj> => must(arr((await list(w))['tasks']).find((t) => t['taskIri'] === taskIri), `task ${taskIri}`);
 /** The head binding a ratify or revise payload carries. */
 const bound = (h: { descriptorUrl: string; graphDigest: string }): Obj => ({ descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest });
@@ -704,10 +709,13 @@ describe('work-redesign bridge', () => {
     const blocked = refused(await propose(w, ap, P1_CHANGES(ap), 'P1'), 409, /retired, but its workflow still lists it/, new RegExp(`retired by did:ethr:${addr(ANA)}`));
     expect(obj(blocked['iep:resolvedBy'])).toMatchObject({ toolName: 'wrd.revise_task', op: 'retire', taskIri: t5, descriptorUrl: t5Retired.descriptorUrl });
     refused(await classify(w, ANA, t5, ANSWERS.evident), 409, /retired/);
-    refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:propose-allocation&workflow_iri=${encodeURIComponent(ap.workflowIri)}`), 409, /still lists it/);
+    refused(await template(w, `intent=wrd:propose-allocation&workflow_iri=${encodeURIComponent(ap.workflowIri)}`), 409, /still lists it/);
     // The template for the repair is the retirement, bound to the retired version.
-    const tpl = obj(ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(t5)}`))['template']);
+    const tpl = obj(ok(await template(w, `intent=wrd:revise-task&task_iri=${encodeURIComponent(t5)}`))['template']);
     expect(tpl).toMatchObject({ op: 'retire', taskIri: t5, descriptorUrl: t5Retired.descriptorUrl, graphDigest: t5Retired.graphDigest, why: null });
+    // Unsigned, with reads closed, neither branches on the retirement: the proposal template is the plain one, and op is left to fill.
+    expect(obj(ok(await template(w, `intent=wrd:propose-allocation&workflow_iri=${encodeURIComponent(ap.workflowIri)}`, false))['template'])).toMatchObject({ workflowIri: ap.workflowIri, title: null });
+    expect(obj(ok(await template(w, `intent=wrd:revise-task&task_iri=${encodeURIComponent(t5)}`, false))['template'])).toMatchObject({ op: null, taskIri: t5, descriptorUrl: t5Retired.descriptorUrl });
 
     // A head that is neither the retired version nor the one it retired is refused, pointing at the retired one.
     const moved = refused(await retire(ELI, { descriptorUrl: t5Retired.descriptorUrl, graphDigest: t5Captured.graphDigest }), 409, /changed since you read it/);
@@ -726,7 +734,7 @@ describe('work-redesign bridge', () => {
     expect(await taskRow(w, t5)).toMatchObject({ status: 'retired', retirementUnfinished: false, head: { descriptorUrl: t5Retired.descriptorUrl } });
     // Once finished, retiring again is the plain refusal, and the template no longer offers it.
     refused(await retire(ELI, t5Retired), 409, /was retired/, /already retired/);
-    expect(obj(ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(t5)}`))['template'])['op']).toBe('revise');
+    expect(obj(ok(await template(w, `intent=wrd:revise-task&task_iri=${encodeURIComponent(t5)}`))['template'])['op']).toBe('revise');
 
     // The orphan is retired the ordinary way and is then listed as retired, no longer orphaned.
     const o = headOfRow(await taskRow(w, orphan));
@@ -1472,7 +1480,7 @@ describe('work-redesign bridge', () => {
     refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revoke-grant&grant_iri=${encodeURIComponent('urn:wrd:grant:0000000000000000:0000000000000000')}`), 404);
   }, 60_000);
 
-  it('operatorPodFetch adds the credential to reads and writes under the operator pod only, and never follows a redirect with it', async () => {
+  it('operatorPodFetch adds the credential to reads and writes under the operator pod only; a redirect hop the SSRF guard re-issues carries it again only while it stays under the pod\'s path, and a redirected write is not followed', async () => {
     const seen: Seen[] = [];
     const spy = (async (input: RequestInfo | URL, init?: RequestInit) => {
       seen.push({ url: String(input), method: init?.method ?? 'GET', auth: new Headers(init?.headers).get('authorization'), ...(init?.redirect ? { redirect: init.redirect } : {}) });
@@ -1489,19 +1497,31 @@ describe('work-redesign bridge', () => {
     expect(seen.slice(0, 5).every((x) => x.auth === `Bearer ${SECRET}` && x.redirect === 'manual')).toBe(true);
     expect(seen.slice(5).map((x) => x.auth)).toEqual([null, null, null, null, null]);
 
-    // Through the SSRF guard, as the bridge reads: a GET redirected off the pod is re-issued by the guard, and that hop carries no credential.
+    // Through the SSRF guard, as the bridge reads: the guard re-issues a GET's redirect hop through the same fetch, which
+    // decides again for the new URL. A hop that stays under the pod's path carries the credential; the hop off the pod does not.
     const hops: Seen[] = [];
     const redirecting = (async (input: RequestInfo | URL, init?: RequestInit) => {
       hops.push({ url: String(input), method: init?.method ?? 'GET', auth: new Headers(init?.headers).get('authorization'), ...(init?.redirect ? { redirect: init.redirect } : {}) });
-      return String(input).startsWith(POD)
-        ? new Response(null, { status: 302, headers: { location: 'https://198.51.100.7/elsewhere/x.ttl' } })
-        : new Response('ok', { status: 200 });
+      const url = String(input);
+      if (url === `${POD}wrd/records/x.ttl`) return new Response(null, { status: 302, headers: { location: `${POD}wrd/records/moved/x.ttl` } });
+      if (url.startsWith(POD)) return new Response(null, { status: 302, headers: { location: 'https://198.51.100.7/elsewhere/x.ttl' } });
+      return new Response('ok', { status: 200 });
     }) as typeof fetch;
     const guarded = await openPod(POD, operatorPodFetch(POD, SECRET, redirecting) as unknown as FetchFn);
     expect((await guarded(`${POD}wrd/records/x.ttl`, { method: 'GET' })).status).toBe(200);
     expect(hops.map((x) => [x.url, x.auth, x.redirect])).toEqual([
-      [`${POD}wrd/records/x.ttl`, `Bearer ${SECRET}`, 'manual'], ['https://198.51.100.7/elsewhere/x.ttl', null, 'manual'],
+      [`${POD}wrd/records/x.ttl`, `Bearer ${SECRET}`, 'manual'],
+      [`${POD}wrd/records/moved/x.ttl`, `Bearer ${SECRET}`, 'manual'],
+      ['https://198.51.100.7/elsewhere/x.ttl', null, 'manual'],
     ]);
+    // A redirect to the same host outside the pod's path is off the pod too.
+    hops.length = 0;
+    const sameHost = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      hops.push({ url: String(input), method: init?.method ?? 'GET', auth: new Headers(init?.headers).get('authorization') });
+      return String(input).startsWith(POD) ? new Response(null, { status: 307, headers: { location: 'https://192.0.2.10/elsewhere/x.ttl' } }) : new Response('ok', { status: 200 });
+    }) as typeof fetch;
+    expect((await (await openPod(POD, operatorPodFetch(POD, SECRET, sameHost) as unknown as FetchFn))(`${POD}wrd/records/x.ttl`, { method: 'GET' })).status).toBe(200);
+    expect(hops.map((x) => [x.url, x.auth])).toEqual([[`${POD}wrd/records/x.ttl`, `Bearer ${SECRET}`], ['https://192.0.2.10/elsewhere/x.ttl', null]]);
     // A redirected write is not followed at all.
     await expect(guarded(`${POD}wrd/records/y.ttl`, { method: 'PUT', body: 'x' })).rejects.toThrow(/refusing to follow a redirect/);
   });
@@ -1625,13 +1645,22 @@ describe('work-redesign bridge', () => {
 
     // While reads are closed, wrd.envelope_template gives the shape and the head binding, never what it read out of a graph.
     const ap = await captureAp(w);
-    const revise = ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(ap.t1)}`));
+    const revise = ok(await template(w, `intent=wrd:revise-task&task_iri=${encodeURIComponent(ap.t1)}`, false));
     const t1 = headOfRow(await taskRow(w, ap.t1));
-    expect(revise['template']).toMatchObject({ op: 'revise', taskIri: ap.t1, descriptorUrl: t1.descriptorUrl, graphDigest: t1.graphDigest, description: null });
-    expect(arr(revise['fill'])).toContain('description');
+    expect(revise['template']).toEqual({
+      intent: 'wrd:revise-task', podUrl: POD, issuedAt: expect.any(String), nonce: expect.any(String), op: null, taskIri: ap.t1, descriptorUrl: t1.descriptorUrl, graphDigest: t1.graphDigest,
+    });
+    expect(arr(revise['fill'])).toEqual(['op']);
     expect(revise['context']).toEqual({});
-    expect(String(revise['contextWithheld'])).toMatch(/signed read/);
+    expect(String(revise['contextWithheld'])).toMatch(/signed wrd:read-records envelope as read_envelope/);
     expect(JSON.stringify(revise)).not.toMatch(/Three-way match|Match each invoice/);
+    // The same call with a registered key's signed read is filled from the record, context and all.
+    const signedRevise = ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(ap.t1)}&read_envelope=${encodeURIComponent(JSON.stringify(cyRead))}`));
+    expect(signedRevise['template']).toMatchObject({ op: 'revise', taskIri: ap.t1, descriptorUrl: t1.descriptorUrl, description: 'Three-way match before approval.' });
+    expect(signedRevise).not.toHaveProperty('contextWithheld');
+    expect(arr(obj(signedRevise['context'])['taskKinds']).length).toBeGreaterThan(0);
+    // A signed read the read model would refuse is refused here too.
+    refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(ap.t1)}&read_envelope=${encodeURIComponent(JSON.stringify(await readEnvelope(w, ZED)))}`), 403, /Only an admin/);
     const readT = ok(await http(w, 'GET', 'envelope_template', undefined, '?intent=wrd:read-records'));
     expect(readT).toMatchObject({ toolName: 'wrd.read_records', template: { intent: 'wrd:read-records', podUrl: POD } });
     // The template, signed as it is, is a read.
@@ -1645,6 +1674,201 @@ describe('work-redesign bridge', () => {
     expect(String(listed['readExposure'])).toMatch(/Anyone who can reach this bridge/);
     ok(await http(open, 'GET', 'calibration'));
   }, 60_000);
+
+  it('decides who may read on the whole manifest: with the registry version that removed a key behind a manifest segment that does not answer, a signed read by any key but an admin\'s is refused (502) as a write is, never answered from the older registry', async () => {
+    const manifestUrl = predictManifestUrl(POD);
+    const archiveUrl = `${manifestUrl}-archive-2`;
+    let hide: string | null = null;
+    // The pod's manifest with one entry moved to an archive segment that answers 404: a partial view a reader must notice.
+    const w = await world((pod) => ({
+      fetchFn: (async (url, init) => {
+        const u = String(url);
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (hide !== null && method === 'GET' && u === manifestUrl) {
+          const body = await (await pod.fetchFn(url, init)).text();
+          const blocks = body.split(/\n\n+/);
+          const kept = blocks.filter((b) => !b.includes(hide ?? ''));
+          if (kept.length === blocks.length) throw new Error('the entry to hide is not in the manifest');
+          return new Response(`${kept.join('\n\n')}\n\n<${manifestUrl}> iep:manifestArchive <${archiveUrl}> .\n`, { status: 200, headers: { 'content-type': 'text/turtle' } });
+        }
+        if (hide !== null && u === archiveUrl) return new Response('unavailable', { status: 404, statusText: 'Not Found' });
+        return pod.fetchFn(url, init);
+      }) as PodFetch,
+    }));
+    await register(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [person(ZED, ['worker'], 'p-zed', 'Zed')] }));
+    ok(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, ZED), kind: 'registry' }));
+    const removed = ok(await act(w, ADMIN, 'update_registry', { entries: [{ address: ZED.address, roles: [] }] }));
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, ZED) }), 403, /Only an admin/);
+
+    hide = String(removed['descriptorUrl']);
+    // The admin still reads, and is told the view is partial.
+    expect(ok(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w), kind: 'registry' }))['complete']).toBe(false);
+    // Zed, removed by the version that cannot be read, is not let back in by the one before it; nor is anyone else who is not an admin.
+    const zed = refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, ZED) }), 502, /manifest could not be read in full/);
+    refused(await http(w, 'POST', 'read_calibration', { envelope: await readEnvelope(w, ZED) }), 502, /manifest could not be read in full/);
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, CY) }), 502, /manifest could not be read in full/);
+    refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:read-records&read_envelope=${encodeURIComponent(JSON.stringify(await readEnvelope(w, ZED)))}`), 502, /manifest could not be read in full/);
+    // The admin's signed read still fills a template.
+    expect(ok(await template(w, 'intent=wrd:update-registry'))['context']).toHaveProperty('members');
+    // The same refusal a write gets in the same state.
+    const write = refused(await act(w, ADMIN, 'update_registry', { entries: [{ address: CY.address, roles: [] }] }), 502);
+    expect(zed['error']).toBe(write['error']);
+    hide = null;
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, ZED) }), 403, /Only an admin/);
+  }, 60_000);
+
+  it('refuses text that is not well-formed Unicode (a lone surrogate) with 400 before any work, and a record the bridge cannot seal is its own failure, never the pod\'s', async () => {
+    const w = await world({ recordKey: K1 });
+    await register(w);
+    const before = (await manifest(w)).length;
+    const task = { name: 'Review accruals', description: 'Check open accruals.', currentLevel: 'person', personAddress: DEE.address, taskKind: 'gl-coding' };
+    const env = await envelope(w, ANA, 'wrd:capture-workflow', { workflow: { title: 'Month-end \ud800 review', unitLabel: 'accrual' }, tasks: [task] });
+    refused(await http(w, 'POST', 'capture_workflow', { envelope: env }), 400, /not well-formed Unicode/, /arguments\.envelope\.payload\.workflow\.title holds a lone UTF-16 surrogate/);
+    refused(await http(w, 'POST', 'record_task_map', { envelope: env, document_text: 'A\udfffB' }), 400, /not well-formed Unicode/, /lone UTF-16 surrogate/);
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w), kind: 'tasks\udc00' }), 400, /not well-formed Unicode/);
+    expect((await manifest(w)).length).toBe(before);
+    // Refused before the envelope was opened, so its nonce was not spent: the same nonce with well-formed text is accepted.
+    const fixed = await envelope(w, ANA, 'wrd:capture-workflow', { workflow: { title: 'Month-end review', unitLabel: 'accrual' }, tasks: [task] }, { nonce: String(env.payload['nonce']) });
+    ok(await http(w, 'POST', 'capture_workflow', { envelope: fixed }));
+
+    // A graph the bridge built that cannot be sealed is refused in this process, before any write: not a 502 "the pod did not accept".
+    const now = w.clock.now().toISOString();
+    const entity = entityIri('workflow', POD, 'not-sealable', entityIriKey(K1));
+    const record = {
+      recordKind: 'Workflow', entityIri: entity, version: 1, status: 'captured',
+      payload: { title: 'Lone \ud800 surrogate', unitLabel: 'item', captureMode: 'manual', capturedBy: { did: `did:ethr:${addr(ANA)}`, envelope: fixed }, taskIris: [], retiredTaskIris: [] },
+      signers: [], platform: { did: `did:ethr:${addr(PLATFORM)}`, address: addr(PLATFORM), keyKind: 'configured' },
+    } as unknown as WrdRecord;
+    const at = (await manifest(w)).length;
+    await expect(publishRecord({
+      descriptor: { recordId: recordIdFor('workflow', graphIriOf(entity), 1, 'not-sealable-0001'), graphIri: graphIriOf(entity), recordKind: 'Workflow', now, validFrom: now, modal: 'Hypothetical', platformDid: `did:ethr:${addr(PLATFORM)}`, signers: [], derivedFrom: [] },
+      record, expectHead: null,
+    }, { podUrl: POD, fetchFn: w.pod.fetchFn, platform: { wallet: PLATFORM, keyKind: 'configured' }, trusted: new Set([addr(PLATFORM)]), mutex: new KeyedMutex(), recordKey: K1 })).rejects.toBeInstanceOf(RecordNotSealableError);
+    expect((await manifest(w)).length).toBe(at);
+  }, 60_000);
+
+  it('follows supersedes only to a trusted version of the same graph: a link a pod writer adds from one chain into another entity\'s sealed record never puts that record in the holder\'s copy, the chain or the heads', async () => {
+    const w = await world({ recordKey: K1 });
+    await register(w);
+    const ap = await captureAp(w);
+    ok(await ratify(w, CY, ap.t1));
+    // Dee's dispute note is in T2's line only (the workflow record carries the captured descriptions, not this).
+    const t2Text = 'Dee: the cost centre rule is wrong for capital purchases';
+    ok(await ratify(w, DEE, ap.t2, 'dispute', t2Text));
+    const t1Head = headOfRow(await taskRow(w, ap.t1));
+    const t2Head = headOfRow(await taskRow(w, ap.t2));
+    const t1First = must((await manifest(w)).find((e) => e.describes.includes(graphIriOf(ap.t1)) && e.descriptorUrl !== t1Head.descriptorUrl), 't1 v1').descriptorUrl;
+    // Cy is not named on T2 and signed nothing in it: her copy holds none of it.
+    expect(JSON.stringify(ok(await act(w, CY, 'holder_copy', {}))['bundle'])).not.toContain(t2Text);
+
+    // A writer of the pod, without the record key, edits the manifest: T1's head also "supersedes" T2's head, listed under T1's graph too.
+    const manifestUrl = predictManifestUrl(POD);
+    const original = must(w.pod.bodies.get(manifestUrl), 'manifest');
+    const forge = (withSupersedes: boolean): string => original.split('\n\n').map((b) => {
+      if (withSupersedes && b.startsWith(`<${t1Head.descriptorUrl}>`)) return b.replace(/(iep:describes <[^>]+> ;)/, `$1\n    iep:supersedes <${t2Head.descriptorUrl}> ;`);
+      if (b.startsWith(`<${t2Head.descriptorUrl}>`)) return b.replace(/(iep:describes <[^>]+> ;)/, `$1\n    iep:describes <${graphIriOf(ap.t1)}> ;`);
+      return b;
+    }).join('\n\n');
+    w.pod.tamper(manifestUrl, original, forge(true));
+    const entries = await manifest(w);
+    expect(must(entries.find((e) => e.descriptorUrl === t1Head.descriptorUrl)).supersedes?.[0]).toBe(t2Head.descriptorUrl);
+    expect(must(entries.find((e) => e.descriptorUrl === t2Head.descriptorUrl)).describes).toContain(graphIriOf(ap.t1));
+    // Cy's copy follows T1's line back past the forged link: T2's record, which the bridge could open, is not in it.
+    const exported = ok(await act(w, CY, 'holder_copy', {}));
+    const bundle = arr(exported['bundle']);
+    expect(bundle.map((b) => b['descriptorUrl'])).not.toContain(t2Head.descriptorUrl);
+    expect(JSON.stringify(bundle)).not.toContain(t2Text);
+    expect(bundle.filter((b) => b['entityIri'] === ap.t1).map((b) => b['descriptorUrl'])).toEqual([t1First, t1Head.descriptorUrl]);
+    expect(await verifyHolderBundle(exported, [PLATFORM.address])).toMatchObject({ ok: true });
+    // Listed under T1's graph without the link, T2's head would be a second head: it is set aside, and T1 is not forked.
+    w.pod.tamper(manifestUrl, forge(true), forge(false));
+    const listed = await list(w);
+    expect(arr(listed['forked'])).toEqual([]);
+    expect(headOfRow(await taskRow(w, ap.t1)).descriptorUrl).toBe(t1Head.descriptorUrl);
+    expect(String(must(arr(listed['untrusted']).find((u) => u['descriptorUrl'] === t2Head.descriptorUrl), 'set aside')['why'])).toMatch(/is a version of urn:wrd:task:[0-9a-f:]+graph, not of urn:wrd:task:/);
+    ok(await ratify(w, CY, ap.t1, 'dispute', 'Still being checked'));
+  }, 60_000);
+
+  it('never reads a sealed record that does not open as absent or negative: a grant and an acknowledgement answer 409 naming WRD_RECORD_KEY, the holder\'s copy refuses rather than come back short, and the read model marks them', async () => {
+    const w = await world({ recordKey: K1 });
+    const { ap, planIri, valuation } = await valuedP1(w);
+    ok(await acknowledge(w, CY, planIri, ap.t1, 'acknowledge'));
+    const planRow = async (): Promise<Obj> => must(arr((await list(w))['plans']).find((p) => p['planIri'] === planIri), 'plan row');
+    expect(must(arr((await planRow())['assignments']).find((a) => a['taskIri'] === ap.t1))['state']).toBe('acknowledged');
+    // The acknowledgement's sealed bytes are changed on the pod: it no longer opens.
+    const ack = must((await manifest(w)).find((e) => e.describes.some((g) => g.startsWith('urn:wrd:acknowledgement:'))), 'acknowledgement');
+    corruptSealed(w, sealedGraphUrl(w, ack.descriptorUrl));
+    const listed = await list(w);
+    const row = must(arr(must(arr(listed['plans']).find((p) => p['planIri'] === planIri))['assignments']).find((a) => a['taskIri'] === ap.t1));
+    expect(row['state']).toBe('unreadable');
+    expect(String(row['label'])).toMatch(/cannot be read.*WRD_RECORD_KEY/);
+    expect(arr(listed['sealed']).map((x) => x['graphIri'])).toEqual(ack.describes);
+    expect(String(listed['sealedNote'])).toMatch(/never read as absent/);
+    const submitted = refused(await act(w, ANA, 'submit_decision', {
+      planIri, valuationIri: valuation['valuationIri'], valuationHash: valuation['valuationHash'], measurementPlan: { metric: 'weekly-cash-delta', comparisonBasis: 'staggered', windowWeeks: 8 },
+    }), 409, /altered after signing/, /WRD_RECORD_KEY/);
+    expect(submitted['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
+    const copy = refused(await act(w, CY, 'holder_copy', {}), 409, /cannot tell whether they name you/, /WRD_RECORD_KEY/);
+    expect(copy['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
+
+    // A grant sealed to a key this bridge does not hold, at the grant's (keyed) IRI: not "no grant" and not "inactive".
+    const grant = entityIri('grant', addr(AGENT), `${POD}|invoice-matching`, entityIriKey(K1));
+    const now = w.clock.now().toISOString();
+    await publishRecord({
+      descriptor: { recordId: recordIdFor('grant', graphIriOf(grant), 1, 'sealed-grant-0001'), graphIri: graphIriOf(grant), recordKind: 'Grant', now, validFrom: now, modal: 'Asserted', platformDid: `did:ethr:${addr(PLATFORM)}`, signers: [], derivedFrom: [] },
+      record: {
+        recordKind: 'Grant', entityIri: grant, version: 1, status: 'granted', signers: [], platform: { did: `did:ethr:${addr(PLATFORM)}`, address: addr(PLATFORM), keyKind: 'configured' },
+        payload: {
+          agentAddress: addr(AGENT), agentDid: `did:ethr:${addr(AGENT)}`, principal: addr(ANA), model: 'scripted-fixture', taskKind: 'invoice-matching', taskKindDefinition: 'Match an invoice.',
+          policy: { iri: 'https://example.org/wrd/grant-policy' }, evaluation: {}, grantedBy: { did: `did:ethr:${addr(BO)}`, personRef: 'p-bo', envelope: { payload: {}, signature: '0x' } },
+          policyRef: { ontologyIri: WRD_NS, ontologySha256: sha256Hex('policy'), podPolicyHead: null },
+        },
+      } as unknown as WrdRecord,
+      expectHead: null,
+    }, { podUrl: POD, fetchFn: w.pod.fetchFn, platform: { wallet: PLATFORM, keyKind: 'configured' }, trusted: new Set([addr(PLATFORM)]), mutex: new KeyedMutex(), recordKey: K2 });
+    const underGrant = refused(await propose(w, ap, [{ taskIri: ap.t1, proposedLevel: 'agent-acts-within-grant', agentAddress: AGENT.address }], 'P-grant'), 409, /altered after signing/, /sealed to a key this bridge does not hold/);
+    expect(underGrant['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
+    // In the calibration, the agent's grant is shown as unreadable (active: null), not inactive; the sealed records are named.
+    await logReviewedRun(w, 'run-sealed-1', ap.t1, 'accepted', ELI, 'accepted');
+    const cal = ok(await calibration(w, '?kind=agents'));
+    expect(obj(must(arr(cal['agentCells'])[0], 'agent cell')['grant'])).toMatchObject({ active: null, why: expect.stringMatching(/WRD_RECORD_KEY/) });
+    expect(arr(cal['sealed']).map((x) => x['graphIri']).sort()).toEqual([...ack.describes, graphIriOf(grant)].sort());
+  }, 90_000);
+
+  it('with a record key, keeps extending chains written without one under their unkeyed IRIs, and derives every new entity\'s IRI with the key', async () => {
+    const w = await world();
+    const { ap, planIri, valuation } = await valuedP1(w);
+    ok(await acknowledge(w, CY, planIri, ap.t1, 'acknowledge'));
+    const keyed = await sibling(w, { recordKey: K1 });
+    const iriKey = entityIriKey(K1);
+    const graphsOf = async (prefix: string): Promise<string[]> => [...new Set((await manifest(w)).flatMap((e) => e.describes).filter((g) => g.startsWith(prefix)))].sort();
+    const classifications = await graphsOf('urn:wrd:classification:');
+    const acks = await graphsOf('urn:wrd:acknowledgement:');
+    // The same inputs find the valuation written without the key.
+    const again = ok(await act(keyed, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap) }));
+    expect([again['reused'], again['valuationIri']]).toEqual([true, valuation['valuationIri']]);
+    // A new entity is keyed, here a decision on the workflow written without the key.
+    const decision = await submitValued(keyed, planIri, again);
+    expect(decision['decisionIri']).toBe(entityIri('decision', ap.workflowIri, `${planIri}|${String(again['valuationHash'])}`, iriKey));
+    expect(decision['decisionIri']).not.toBe(entityIri('decision', ap.workflowIri, `${planIri}|${String(again['valuationHash'])}`));
+    // A second submission of the same decision finds it under its keyed IRI.
+    refused(await act(keyed, ANA, 'submit_decision', { planIri, valuationIri: again['valuationIri'], valuationHash: again['valuationHash'], measurementPlan: { metric: 'weekly-cash-delta', comparisonBasis: 'staggered', windowWeeks: 8 } }), 409, /already submitted/);
+    // Objecting to the assignment and re-classifying T1 extend the unkeyed chains; neither starts a keyed one.
+    ok(await acknowledge(keyed, CY, planIri, ap.t1, 'object', 'Not without training on the matching tool'));
+    ok(await classify(keyed, ANA, ap.t1, ANSWERS.evident));
+    expect(await graphsOf('urn:wrd:classification:')).toEqual(classifications);
+    expect(await graphsOf('urn:wrd:acknowledgement:')).toEqual(acks);
+    expect(obj((await taskRow(keyed, ap.t1))['classification'])).toMatchObject({ state: 'ok', head: { versions: 3 } });
+    expect(must(arr(must(arr((await list(keyed))['plans']).find((p) => p['planIri'] === planIri))['assignments']).find((a) => a['taskIri'] === ap.t1))['state']).toBe('objected');
+    // And a new workflow and its tasks.
+    const env = await envelope(keyed, ANA, 'wrd:capture-workflow', { workflow: { title: 'Month-end accrual review', unitLabel: 'accrual' }, tasks: [{ name: 'Review accruals', description: 'Check open accruals.', currentLevel: 'person', personAddress: DEE.address, taskKind: 'gl-coding' }] });
+    const captured = ok(await http(keyed, 'POST', 'capture_workflow', { envelope: env }));
+    const seed = `${addr(ANA)}|${String(env.payload['nonce'])}`;
+    expect(captured['workflowIri']).toBe(entityIri('workflow', POD, seed, iriKey));
+    expect(captured['workflowIri']).not.toBe(entityIri('workflow', POD, seed));
+    expect(arr(captured['taskIris'] as unknown)).toEqual([entityIri('task', String(captured['workflowIri']), '1', iriKey)]);
+  }, 90_000);
 
   it('answers 502, not 200, when the pod refuses a write with 403', async () => {
     const w = await world();

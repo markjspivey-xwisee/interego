@@ -28,6 +28,13 @@
  * otherwise eligible stays eligible and untrusted (so its graph answers "altered", 409, and an
  * older version never silently becomes current again), and one that is not is set aside.
  *
+ * ── WHAT THE MANIFEST SAYS IS ONLY A HINT ─────────────────────────────────────────────────────
+ * Which descriptors describe a graph, and which version supersedes which, are read from the
+ * manifest, which anyone able to write the pod can edit. So a version counts toward a graph, and
+ * a supersedes link is followed, only when the record's signed content names that graph: a link
+ * someone added from one chain into another never puts another entity's record (opened with the
+ * record key) into this graph's heads or its history.
+ *
  * No environment reads. The only network is the injected fetch, always behind guardedFetchFn.
  */
 import {
@@ -41,7 +48,7 @@ import {
 } from '@interego/solid';
 import { WRD_NS, WRD_SHAPES_NS, readShapesTurtle } from '../src/ontology.js';
 import {
-  buildDescriptor, buildGraphTurtle, parseRecordGraph, slugOf, h16, normalisePodUrl,
+  buildDescriptor, buildGraphTurtle, parseRecordGraph, slugOf, h16, normalisePodUrl, graphIriOf, isWellFormedText,
   type DescriptorSpec, type ModalChoice, type RecordKind, type WrdRecord,
 } from '../src/records.js';
 
@@ -72,6 +79,14 @@ export class PodWriteError extends Error {
 export class PodReadError extends Error {
   constructor(message: string, readonly status: number | null) { super(message); }
 }
+/**
+ * This bridge could not seal a record it built: its graph holds text a UTF-8 encoder cannot keep
+ * as it is (a lone UTF-16 surrogate). Raised in this process before anything is written, so it is
+ * the bridge's failure (500), never the pod's.
+ */
+export class RecordNotSealableError extends Error {
+  constructor(message: string) { super(message); this.name = 'RecordNotSealableError'; }
+}
 
 const statusIn = (message: string): number | null => {
   const m = /\b([45]\d\d)\b/.exec(message);
@@ -92,10 +107,15 @@ export async function openPod(podUrl: string, fetchFn?: FetchFn): Promise<FetchF
  * The operator pod's credential, added to requests to ONE pod only: the URL's parsed origin
  * equals the pod's AND the URL lies under the pod's base path, so a holder pod on the same host
  * never receives it. It goes on reads as well as writes, so an operator can make the pod refuse
- * anonymous reads of `wrd/` and the bridge still reads its own records. A decorated request is
- * sent with `redirect: 'manual'`, so the credential cannot follow a redirect anywhere (the SSRF
- * guard re-issues a GET's redirect hop itself, and this decides again for that URL). Copied from
- * practice-evidence's operatorPodFetch: verticals do not import each other.
+ * anonymous reads of `wrd/` and the bridge still reads its own records.
+ *
+ * Redirects: a decorated request is sent with `redirect: 'manual'`, so the fetch itself never
+ * carries the credential to a Location. The SSRF guard in front of this re-issues a GET's (or
+ * HEAD's) redirect hop itself, through this same function, which decides again for the new URL:
+ * a hop that stays under the pod's path and origin carries the credential again, and a hop
+ * anywhere else goes without it. A redirected write is not followed at all. So the credential is
+ * never sent outside the operator pod's path, redirect or not. Copied from practice-evidence's
+ * operatorPodFetch: verticals do not import each other.
  */
 export function operatorPodFetch(podUrl: string | undefined, secret: string | undefined, baseFetch: typeof fetch): typeof fetch {
   if (!podUrl || !secret) return baseFetch;
@@ -319,7 +339,9 @@ function distrust(r: BytesRead, signedByTrustedKey: boolean, atPredictedUrl: boo
 
 /** Why a sealed graph that did not open is not read; the record stays untrusted. */
 export const SEALED_NO_KEY = 'its graph is sealed, and this bridge holds no record key (WRD_RECORD_KEY) to open it';
-export const SEALED_OTHER_KEY = 'its graph is sealed to a key this bridge does not hold, or the sealed bytes were changed on the pod';
+export const SEALED_OTHER_KEY = 'its graph is sealed to a key this bridge does not hold, or the sealed bytes were changed on the pod (check WRD_RECORD_KEY)';
+/** A version whose sealed graph this bridge could not open: never read as absent, negative or empty. */
+export const isSealedShut = (l: { readonly why: string | null } | undefined): boolean => l !== undefined && (l.why === SEALED_NO_KEY || l.why === SEALED_OTHER_KEY);
 
 /**
  * Open a sealed graph document with the record key: the plaintext, or null when it is not an
@@ -389,6 +411,8 @@ async function sealedShut(entry: ManifestEntry, podUrl: string, descriptorTurtle
   return {
     ...unreadable(entry, reason),
     recordId: proof?.descriptorId ?? subjectId ?? '',
+    // The graph this descriptor itself names, not the manifest's word for it (see ofGraph).
+    graphIri: firstMatch(/iep:describes\s+<([^>]+)>/, descriptorTurtle) ?? '',
     modalStatus: firstMatch(/iep:modalStatus\s+iep:(\w+)/, descriptorTurtle) ?? entry.modalStatus,
     validFrom: firstMatch(/iep:validFrom\s+"([^"]+)"/, descriptorTurtle),
     validUntil: firstMatch(/iep:validUntil\s+"([^"]+)"/, descriptorTurtle),
@@ -517,6 +541,17 @@ export async function verifyHolderBundle(bundle: unknown, expectedPlatform: read
 
 // ── Heads ────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Whether a record read for `graphIri` is a version of that graph. A record that opened is judged
+ * by its signed content: the named graph its proof covers, and the entity that graph is about. A
+ * sealed record that did not open is judged by its own descriptor, and stays untrusted anyway.
+ * The manifest's `describes` is never enough: the pod's writers can edit it.
+ */
+export function ofGraph(l: LoadedRecord, graphIri: string): boolean {
+  if (l.graphIri !== graphIri) return false;
+  return l.record === null || graphIriOf(l.record.entityIri) === graphIri;
+}
+
 export interface GraphHeads {
   readonly graphIri: string;
   /** Eligible heads (after setting ineligible ones aside). */
@@ -542,13 +577,18 @@ export async function headsFor(graphIri: string, entries: readonly ManifestEntry
     const superseded = new Set(candidates.flatMap((e) => e.supersedes ?? []));
     const headEntries = candidates.filter((e) => !superseded.has(e.descriptorUrl));
     const loaded = await Promise.all(headEntries.map(read));
-    const bad = loaded.filter((l) => !l.authorship.eligible);
+    const bad = loaded.filter((l) => !l.authorship.eligible || !ofGraph(l, graphIri));
     if (bad.length === 0) {
       const only = loaded[0];
       const state = loaded.length === 0 ? 'absent' : loaded.length > 1 ? 'forked' : only && only.authorship.trusted ? 'ok' : 'altered';
       return { graphIri, heads: loaded, chain: candidates, state, untrusted };
     }
-    for (const b of bad) untrusted.push({ descriptorUrl: b.descriptorUrl, why: b.why ?? 'not eligible' });
+    for (const b of bad) {
+      untrusted.push({
+        descriptorUrl: b.descriptorUrl,
+        why: !b.authorship.eligible ? b.why ?? 'not eligible' : `it is a version of ${b.graphIri || 'another graph'}, not of ${graphIri}, although the manifest lists it under ${graphIri}`,
+      });
+    }
     const dropped = new Set(bad.map((b) => b.descriptorUrl));
     candidates = candidates.filter((e) => !dropped.has(e.descriptorUrl));
   }
@@ -603,23 +643,32 @@ export class PodView {
     return [...out].sort();
   }
 
-  /** The eligible versions of a graph's current line, oldest first (follows supersedes back from the single head). */
+  /**
+   * The trusted versions of a graph's current line, oldest first: from a trusted single head,
+   * back along supersedes links. A link is followed only to a trusted version of THIS graph (see
+   * ofGraph): one added to the manifest from this chain into another entity's, which the bridge
+   * could open, is passed over, so no caller reads another entity's record through this chain.
+   * The line stops at the first version that is not trusted.
+   */
   async history(g: GraphHeads): Promise<LoadedRecord[]> {
     const head = g.heads[0];
-    if (g.heads.length !== 1 || !head) return [];
+    if (g.heads.length !== 1 || !head || !head.authorship.trusted || !ofGraph(head, g.graphIri)) return [];
     const byUrl = new Map(g.chain.map((e) => [e.descriptorUrl, e]));
     const out: LoadedRecord[] = [head];
     const seen = new Set([head.descriptorUrl]);
     let cursor: LoadedRecord = head;
     for (;;) {
-      const prevUrl = cursor.supersedes.find((u) => byUrl.has(u) && !seen.has(u));
-      const prev = prevUrl ? byUrl.get(prevUrl) : undefined;
-      if (!prevUrl || !prev) break;
-      seen.add(prevUrl);
-      const loaded = await this.read(prev);
-      if (!loaded.authorship.eligible) break;
-      out.push(loaded);
-      cursor = loaded;
+      let prev: LoadedRecord | null = null;
+      for (const u of cursor.supersedes) {
+        const entry = byUrl.get(u);
+        if (!entry || seen.has(u)) continue;
+        seen.add(u);
+        const loaded = await this.read(entry);
+        if (loaded.authorship.trusted && ofGraph(loaded, g.graphIri)) { prev = loaded; break; }
+      }
+      if (!prev) break;
+      out.push(prev);
+      cursor = prev;
     }
     return out.reverse();
   }
@@ -680,11 +729,17 @@ const shapes = (): string => { shapesCache ??= readShapesTurtle(); return shapes
  *
  * With a record key the graph is sealed to it before it leaves the process: the pod stores only
  * `<slug>-graph.envelope.jose.json`. The shapes and the proof are checked over the plaintext.
+ * Sealing happens here, so a graph that cannot be sealed (a lone UTF-16 surrogate, which the
+ * envelope's UTF-8 encoding refuses) is a RecordNotSealableError raised before any write, never a
+ * PodWriteError: the pod was not involved.
  */
 export async function publishRecord(spec: PublishSpec, ctx: PublishContext): Promise<PublishedRecord> {
   const { recordId, graphIri } = spec.descriptor;
   if ((spec.descriptor.supersedes ?? null) !== spec.expectHead) throw new Error(`publishRecord: ${recordId} supersedes a different head than it expects`);
   const graphTurtle = buildGraphTurtle(spec.record);
+  if (ctx.recordKey && !isWellFormedText(graphTurtle)) {
+    throw new RecordNotSealableError(`the graph of ${recordId} holds text with a lone UTF-16 surrogate, which cannot be sealed as it is; nothing was written`);
+  }
   const digest = canonicalGraphDigestResult(graphTurtle);
   if (digest.digest === null) throw new Error(`publishRecord: the graph of ${recordId} does not parse (${digest.reason ?? 'no reason given'})`);
   const contentHash = digest.digest;
@@ -720,6 +775,8 @@ export async function publishRecord(spec: PublishSpec, ctx: PublishContext): Pro
     } catch (e) {
       if (e instanceof PublishShapeViolationError) throw e;
       if (e instanceof PublishPreconditionFailedError) throw new StaleHeadError(graphIri, e.actual.descriptorUrl ? [e.actual.descriptorUrl] : heads);
+      // The envelope's UTF-8 encoding throws URIError on text it cannot encode: a failure in this process, not the pod's.
+      if (e instanceof URIError) throw new RecordNotSealableError(`the graph of ${recordId} could not be sealed (${messageOf(e).slice(0, 120)}); nothing was written`);
       const message = messageOf(e);
       throw new PodWriteError(`the pod did not accept ${recordId}: ${message}`, statusIn(message));
     }

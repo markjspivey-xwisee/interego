@@ -43,7 +43,7 @@ import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type DemoPersona } from '../bridge/handlers.js';
 import { readRecord, openSealedGraph, HOLDER_CONTAINER, WRD_CONTAINER } from '../bridge/pod-helpers.js';
 import { attachUi, hostAllowlistGuard, servedHostNames } from '../bridge/ui.js';
-import { envelopeSha256, entityIri, graphIriOf } from '../src/records.js';
+import { envelopeSha256, entityIri, entityIriKey, graphIriOf } from '../src/records.js';
 import { normaliseForQuote } from '../src/work.js';
 import { meanRampFactor, monthsBetween, DEMO_LABEL } from '../src/valuation.js';
 import { WRD_NS } from '../src/ontology.js';
@@ -288,10 +288,14 @@ function persona(id: string, label: string, type: 'human' | 'agent' = 'human'): 
  * manifest like an agent through the whole lifecycle, and assert every refusal on the way.
  * Never throws for a failed expectation: each lands in `steps` with ok false, and `ok` is false.
  */
-export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?: boolean; readonly port?: number; readonly writeReport?: boolean } = {}): Promise<DemoReport> {
+export async function runDemo(opts: {
+  readonly quiet?: boolean; readonly serve?: boolean; readonly port?: number; readonly writeReport?: boolean;
+  /** The in-memory pod to walk on; a test passes its own to inspect what the walk left on it. */
+  readonly pod?: MemoryPod;
+} = {}): Promise<DemoReport> {
   const quiet = opts.quiet ?? false;
   const say = (s: string): void => { if (!quiet) process.stdout.write(s); };
-  const pod = memoryPod();
+  const pod = opts.pod ?? memoryPod();
   const clock = demoClock();
   const P = {
     platform: persona('platform', 'Platform key', 'agent'), admin: persona('admin', 'Admin'),
@@ -439,8 +443,13 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const h = headOf(obj((await taskRow(taskIri))['classification']));
     return act(who, 'wrd.ratify_task', { subject: 'classification', taskIri, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, verdict: 'ratify' });
   };
-  /** Ask the bridge for the payload a write needs, filled from the pod (what a Path-A agent does before it signs). */
-  const template = async (intent: string, query: Obj): Promise<Res> => call('wrd.envelope_template', { intent, ...query });
+  /**
+   * Ask the bridge for the payload a write needs, filled from the pod (what a Path-A agent does
+   * before it signs). Reads are closed, so the walk sends its signed read along: without one the
+   * template carries only the shape and the head binding.
+   */
+  const template = async (intent: string, query: Obj): Promise<Res> =>
+    call('wrd.envelope_template', { intent, ...query, read_envelope: JSON.stringify(await readEnvelope()) });
   const planRow = async (planIri: string): Promise<Obj> => arr((await list({ kind: 'plans' }))['plans']).find((p) => p['planIri'] === planIri) ?? {};
   const decisionRow = async (decisionIri: string): Promise<Obj> => arr((await list({ kind: 'decisions' }))['decisions']).find((d) => d['decisionIri'] === decisionIri) ?? {};
   const countersign = async (who: Persona, decisionIri: string, verdict: 'approve' | 'decline', extra: Obj = {}): Promise<Res> => {
@@ -900,7 +909,8 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     refusal('R-AL', 'cy asks for her copy on the platform pod itself', 'wrd.holder_copy', await act(P.cy, 'wrd.holder_copy', { targetPodUrl: DEMO_POD }), 400, /pod you hold/);
     const copied = await act(P.cy, 'wrd.holder_copy', { targetPodUrl: DEMO_HOLDER_POD });
     const bundle = new Set(arr(copied.body['bundle']).map((b) => `${str(b['recordKind'])}:${str(b['entityIri'])}`));
-    const classificationIri = (t: string): string => entityIri('classification', wfIri, t);
+    // The demo seals its records, so the IRIs it derives are keyed with the record key.
+    const classificationIri = (t: string): string => entityIri('classification', wfIri, t, entityIriKey(DEMO_RECORD_KEY));
     const v1Iri = str(v1.body['valuationIri']);
     const want = [
       `Task:${t1}`, `Task:${t3}`, `Workflow:${wfIri}`, `Classification:${classificationIri(t1)}`, `Classification:${classificationIri(t3)}`,

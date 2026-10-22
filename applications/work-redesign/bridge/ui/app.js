@@ -271,12 +271,22 @@ async function send(toolName, body) {
 
 function showResult(tool, r) { S.result = { tool, ...r }; render(); }
 
-/** Show exactly what a write signs: the payload's schema and a template the bridge fills from the pod. Reads only. */
+/**
+ * Show exactly what a write signs: the payload's schema and a template the bridge fills from the
+ * pod. Reads only. When this signer holds a fresh signed read for this pod, it goes along as
+ * read_envelope, so the bridge fills the whole template; without one (or if the bridge refuses
+ * it), the template carries only the shape and the head binding.
+ */
 async function showPayload(intent, args) {
-  const r = await call('wrd.envelope_template', { intent, pod_url: S.pod || undefined, ...(args || {}) });
+  const base = { intent, pod_url: S.pod || undefined, ...(args || {}) };
+  const hit = S.reads.get(`${readSigner()}|${S.pod}`);
+  const fresh = readSigner() !== '' && hit && Date.now() - hit.at < READ_ENVELOPE_MS;
+  let r = await call('wrd.envelope_template', fresh ? { ...base, read_envelope: JSON.stringify(hit.envelope) } : base);
+  if (!r.ok && fresh && (r.status === 401 || r.status === 403)) { S.reads.delete(`${readSigner()}|${S.pod}`); r = await call('wrd.envelope_template', base); }
   if (!r.ok) { showResult('wrd.envelope_template', r); return; }
   openPanel(`What “${intent}” signs`, h('div', null,
     h('p', { class: 'small muted', text: `${r.body.signing} Sent to ${r.body.toolName}. Fields still yours to decide: ${(r.body.fill ?? []).join(', ') || 'none'}.` }),
+    r.body.contextWithheld ? h('p', { class: 'small warnbox', text: r.body.contextWithheld }) : null,
     h('h3', { text: 'Template, filled from the pod' }), h('pre', { text: JSON.stringify(r.body.template, null, 2) }),
     Object.keys(r.body.context ?? {}).length ? h('details', null, h('summary', { text: 'What the bridge read to fill it' }), h('pre', { text: JSON.stringify(r.body.context, null, 2) })) : null,
     h('details', null, h('summary', { text: 'JSON Schema' }), h('pre', { text: JSON.stringify(r.body.schema, null, 2) }))));
@@ -410,7 +420,8 @@ function strip() {
       h('p', { class: 'small muted', text: d.readExposure }),
       d.demoRecords > 0 ? h('p', { class: 'small' }, chip('demo', 'demo'), ` ${d.demoRecords} of ${d.records} records here are ${d.demoLabel}.`) : null,
       altered + forked + untrusted > 0 ? h('p', { class: 'warnbox small' },
-        `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`) : null),
+        `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`) : null,
+      (d.sealed ?? []).length > 0 ? h('p', { class: 'badbox small', text: `${d.sealed.length} record(s) are sealed and this bridge cannot open them. ${d.sealedNote ?? ''}` }) : null),
     h('div', { class: 'stack' },
       signerNode(),
       me ? h('div', { class: 'row small' }, 'Acting address ', h('code', { text: me }),
@@ -876,6 +887,7 @@ function tasksView() {
         h('td', null, h('strong', { text: t.name }), h('div', { class: 'small muted', text: t.description }), chip(t.taskKind), chip(`quotes ${t.quoteStatus}`), demoChip(t),
           h('div', { class: 'small', text: `In force: ${allocationText(t.effective)}${t.effective.source !== 'captured' ? ` (${SOURCE_NAMES[t.effective.source] ?? t.effective.source})` : ''}` }),
           t.effective.suspended ? h('div', { class: 'badbox small', text: t.effective.suspendedWhy }) : null,
+          t.effective.unreadable ? h('div', { class: 'badbox small', text: t.effective.unreadable }) : null,
           t.currentNotPermitted ? h('div', { class: 'warnbox small', text: t.currentNotPermitted }) : null),
         h('td', null, partiesNode(t)),
         h('td', null, statusChip(t.status), t.revision ? h('div', { class: 'small', text: `revised; answers ${t.revision.answers.length} dispute(s)` }) : null),
@@ -999,7 +1011,7 @@ function planView() {
     const g = s.level === 'agent-acts-within-grant' && s.agentAddress ? activeGrant(s.agentAddress, t.taskKind) : null;
     return h('tr', null,
       h('td', null, h('strong', { text: t.name }), h('div', { class: 'small muted', text: allocationText(t.effective) }), t.effective.source !== 'captured' ? chip(SOURCE_NAMES[t.effective.source] ?? t.effective.source) : null,
-        t.effective.suspended ? chip(t.effective.suspendedWhy, 'bad') : null),
+        t.effective.suspended ? chip(t.effective.suspendedWhy, 'bad') : null, t.effective.unreadable ? chip(t.effective.unreadable, 'bad') : null),
       h('td', null, c?.regime ? [h('strong', { text: c.regime }), h('div', { class: 'small muted', text: REGIME_NOTES[c.regime] ?? '' })] : '—'),
       h('td', null, lock ? chip(lock, 'warn') : [
         select(levelOpts, s.level, (e) => { s.level = e.target.value; render(); }),
