@@ -155,3 +155,20 @@ The original PostgreSQL service still has public TCP proxy `ed573427-b4d2-4e3d-8
 The authenticated project Tokens dashboard showed no current token entries. No credential was created or entered there. The sweep's existing project token therefore requires an actual validation/replacement before measurement can pass its live-capacity gate; do not substitute stale metadata or weaken the gate.
 
 At 14:33:18 UTC verify-activate remained the single active operation, phase prepared with the exact receipt binding intact. Retained source volumes, game volumes, journal and disabled sweep are unchanged.
+
+## Activated compact database — 2026-10-22 14:36 UTC
+
+**Recovery activation succeeded. Do not rerun preflight/fence/prepare or restart a new activation attempt.** The existing private controller completed verify-activate; command logs at 14:36:18 UTC prove journal phase activated, no running operation, last.ok true, exact receipt binding, and full retained-data digests matching the original verified receipt. Full verification time: **2026-10-22T14:36:10.406Z**. Original source remains connection-blocked.
+
+| Table | Rows | Value bytes | SHA-256 |
+|---|---:|---:|---|
+| pgsl_kv | 2770097 | 33612850247 | `0095bbf186b9f07245bb452ba6beedca85db429aa492dbe534e4cd6d3738f972` |
+| relay_pgsl_published | 5058 | 14160622 | `805f03b4654a51859b81bc183cfde9f3ac652aeca9edf96322394cf25c43667d` |
+
+Structured proof: [receipts/pgsl-activation-20261022.json](./receipts/pgsl-activation-20261022.json), commit `0d5ebcd90e3ee5c0ae02b5dfd801515ee4b2c8fb`. Expected physical ID, exact schema/access metadata, both full byte receipts, login restoration and removal of the temporary recovery role were enforced by the existing controller. This proves preservation of the verified retained copy, not unconfirmed earlier Hallow RAM state.
+
+Both writer ceilings were explicitly set to `PGSL_PG_MAX_DATABASE_BYTES=48000000000` with skipDeploys true, then current source images were set to the exact published `4d41980040f08123bf787523938596d304a77e35` images:
+- CSS deployment `e33db3d8-082e-41e0-903b-e350b4be7ab7`, created 14:37:40.090 UTC.
+- Relay deployment `ef4e51a5-2d4c-49a1-a862-115c95df24bc`, created 14:37:44.015 UTC.
+
+These writer deployments are pending; terminal success/native health are not yet recorded. Next: verify both, restore Foxxi and both stopped Hallow services (candidate 539ef75, existing volumes/identity, confirmed-native startup gate), then sweep install/measurement/one-hour warmup/cadence and proven-unused cleanup. The sweep API token and blocked public-proxy removal/security rotation remain as noted above.
