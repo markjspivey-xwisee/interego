@@ -211,6 +211,9 @@ const sealedRefusal = (g: GraphHeads): Declined => {
   const why = g.heads.find(isSealedShut)?.why ?? 'its graph is sealed and does not open';
   return decline(409, INTEGRITY, `${g.graphIri}: its current version is not trusted: ${why}`, { env: 'WRD_RECORD_KEY' });
 };
+/** Why a graph's line is cut short by an earlier version that is sealed and does not open (see PodView.line). */
+const sealedVersionWhy = (graphIri: string, sealed: LoadedRecord): string =>
+  `${graphIri}: an earlier version (${sealed.descriptorUrl}) is not trusted: ${sealed.why ?? 'its graph is sealed and does not open'}`;
 
 /**
  * The current version of a graph as a record of `kind`, null when the graph is absent; 409 when
@@ -329,6 +332,15 @@ interface Effective {
   readonly source: 'approved-decision' | 'measured-decision';
 }
 
+/** Whether (and as what) a decision puts its plan's allocations in force: see effectiveFrom. */
+function inForceAs(d: RecordOf<'Decision'>): Effective['source'] | null {
+  const p = d.payload;
+  if (p.decisionKind !== 'valued' || !p.countersign || p.countersign.verdict !== 'approve') return null;
+  if (d.status === 'countersigned') return 'approved-decision';
+  if (d.status === 'measured' && p.outcome?.disposition === 'kept') return 'measured-decision';
+  return null;
+}
+
 /**
  * The allocation each task actually has: from the newest valued decision that changed it and is
  * either approved and still being measured ('approved-decision': the change is in force for its
@@ -340,11 +352,8 @@ function effectiveFrom(decisions: ReadonlyArray<RecordOf<'Decision'>>, planOf: (
   const out = new Map<string, Effective>();
   for (const d of decisions) {
     const p = d.payload;
-    if (p.decisionKind !== 'valued' || !p.countersign || p.countersign.verdict !== 'approve') continue;
-    let source: Effective['source'];
-    if (d.status === 'countersigned') source = 'approved-decision';
-    else if (d.status === 'measured' && p.outcome?.disposition === 'kept') source = 'measured-decision';
-    else continue;
+    const source = inForceAs(d);
+    if (source === null || !p.countersign) continue;
     const at = p.countersign.at;
     for (const row of planOf(p.planIri)?.payload.tasks ?? []) {
       if (!row.changed) continue;
@@ -539,9 +548,20 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
   interface Written { readonly descriptorUrl: string; readonly graphUrl: string; readonly recordId: string; readonly graphDigest: string }
 
+  /**
+   * A graph's whole trusted line, oldest first, for an answer that depends on all of it: 409,
+   * naming WRD_RECORD_KEY, when a version in it is sealed and does not open, never the part of
+   * the line after it as if it were the whole.
+   */
+  async function wholeLine(call: Call, g: GraphHeads): Promise<LoadedRecord[]> {
+    const l = await call.view.line(g);
+    if (l.sealed) throw decline(409, INTEGRITY, sealedVersionWhy(g.graphIri, l.sealed), { env: 'WRD_RECORD_KEY' });
+    return l.versions;
+  }
+
   /** The durable replay check: 409 when a version of this graph was already authorised by this signer and nonce. */
   async function refuseReused(call: Signed, g: GraphHeads): Promise<void> {
-    for (const v of await call.view.history(g)) {
+    for (const v of await wholeLine(call, g)) {
       const by = v.record?.authorisedBy;
       if (by && by.signer === call.actor && by.nonce === call.nonce) {
         throw decline(409, REPLAYED, `${call.actor} already used the nonce ${call.nonce} on ${g.graphIri} (version ${v.record?.version ?? '?'})`);
@@ -1150,7 +1170,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     }
     const wf = await headOf(call, task.record.payload.workflowIri, 'Workflow');
     if (!wf) throw decline(409, INTEGRITY, `the task's workflow ${task.record.payload.workflowIri} has no trusted record`);
-    const first = (await call.view.history(task.graph))[0];
+    const first = (await wholeLine(call, task.graph))[0];
     const startedAt = first?.validFrom ?? null;
     if (!startedAt || Date.parse(startedAt) >= call.now.getTime()) return { ...refuse(409, CLOCK_SKEW, `the task's first version is valid from ${startedAt ?? 'an unknown time'}`) };
     const payload: TaskPayload = { ...task.record.payload, retirement: { by: { did: call.actorDid, envelope: call.envelope }, why: r.why, at: call.at } };
@@ -1186,7 +1206,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const wf = await headOf(call, tp.workflowIri, 'Workflow');
     if (!wf) throw decline(409, INTEGRITY, `the task's workflow ${tp.workflowIri} has no trusted record`);
     if (!retirementUnfinished(task.record, wf.record)) return { ...refuse(409, RETIRED, `${r.taskIri} was already retired`) };
-    const versions = await call.view.history(task.graph);
+    const versions = await wholeLine(call, task.graph);
     const superseded = versions.length >= 2 ? versions[versions.length - 2] : undefined;
     if (![task.loaded, superseded].some((v) => v !== undefined && v.descriptorUrl === r.descriptorUrl && v.graphDigest === r.graphDigest)) {
       return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}, which retired the task; bind it to finish the retirement`, finishRetirementVia(r.taskIri, task.loaded)) };
@@ -2496,15 +2516,23 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const reg = await registryOf(call);
       const snap = await snapshot(call.view);
       // A record this bridge cannot open may name the holder: a copy without it would read as
-      // "nothing else names you". Refused, naming the setting, rather than answered short.
-      const shut = snap.graphs.filter((s) => s.g.heads.some(isSealedShut));
+      // "nothing else names you". Refused, naming the setting, rather than answered short. That
+      // holds for an earlier version as much as for a current one: a line cut short at a version
+      // that does not open would come back without it and every version before it.
+      const shut: string[] = snap.graphs.filter((s) => s.g.heads.some(isSealedShut))
+        .map((s) => `${s.graphIri}: ${s.g.heads.find(isSealedShut)?.why ?? ''}`);
+      const lines = new Map<string, LoadedRecord[]>();
+      for (const s of snap.graphs) {
+        if (s.g.state !== 'ok') continue;
+        const l = await call.view.line(s.g);
+        if (l.sealed) shut.push(sealedVersionWhy(s.graphIri, l.sealed));
+        lines.set(s.graphIri, l.versions);
+      }
       if (shut.length > 0) {
         return { ...refuse(409, 'Some records on this pod are sealed to a key this bridge does not hold, so it cannot tell whether they name you; nothing was copied.',
-          `${shut.length} graph(s) do not open, for example ${shut[0]?.graphIri ?? ''}: ${shut[0]?.g.heads.find(isSealedShut)?.why ?? ''}`, { env: 'WRD_RECORD_KEY' }) };
+          `${shut.length} graph(s) do not open in full, for example ${shut[0] ?? ''}`, { env: 'WRD_RECORD_KEY' }) };
       }
       const me = call.actor;
-      const lines = new Map<string, LoadedRecord[]>();
-      for (const s of snap.graphs) if (s.g.state === 'ok') lines.set(s.graphIri, await call.view.history(s.g));
       const selected = new Set<string>();
       const myTasks = new Set<string>();
       const recs = (g: string): WrdRecord[] => (lines.get(g) ?? []).flatMap((l) => (l.record ? [l.record] : []));
@@ -2647,7 +2675,13 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const decisionsRec = recordsOf(snap, 'Decision');
     const runsRec = recordsOf(snap, 'AgentRun');
     const workflowsRec = recordsOf(snap, 'Workflow');
-    const workflowOfPlan = (planIri: string): string | null => planByIri.get(planIri)?.record.payload.workflowIri ?? null;
+    /**
+     * A plan's workflow: from the plan when it opens, else from the plan IRI's scope (a plan is
+     * minted under its workflow), so a record about a plan that does not open is not filtered
+     * out of a workflow's answer as if it were not there.
+     */
+    const workflowOfPlan = (planIri: string): string | null => planByIri.get(planIri)?.record.payload.workflowIri
+      ?? (workflowFilter !== null && scopeForms('plan', workflowFilter).some((pre) => planIri.startsWith(pre)) ? workflowFilter : null);
     const label = (a: string): string => memberOf(reg, a)?.label ?? a;
     const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
     const records = snap.graphs.filter((s) => s.record !== null).length;
@@ -2669,6 +2703,25 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
      */
     const unreadableDecisions = (workflowIri: string): string[] => scopeForms('decision', workflowIri)
       .flatMap((prefix) => snap.graphs.filter((s) => s.graphIri.startsWith(prefix) && (s.g.state === 'altered' || s.g.state === 'forked')).map((s) => s.graphIri));
+    /** Why a graph cannot be used: the head's own why, which names WRD_RECORD_KEY when it is sealed and does not open. */
+    const whyUnusable = (s: SnapGraph): string => `${s.graphIri}: ${s.g.state === 'forked' ? 'more than one version claims to be current'
+      : s.g.heads.find(isSealedShut)?.why ?? s.g.heads[0]?.why ?? 'its current version is not trusted'}`;
+    /**
+     * The plans that cannot be read of decisions on a workflow that put their plan in force: the
+     * allocation such a decision put in force is its plan's, so without the plan it is unknown.
+     */
+    const unreadablePlansInForce = (workflowIri: string): SnapGraph[] => {
+      const prefixes = scopeForms('decision', workflowIri);
+      const out: SnapGraph[] = [];
+      for (const d of decisionsRec) {
+        if (!prefixes.some((pre) => d.s.graphIri.startsWith(pre)) || inForceAs(d.record) === null) continue;
+        const shut = unusable([d.record.payload.planIri]);
+        if (shut && !out.includes(shut)) out.push(shut);
+      }
+      return out;
+    };
+    /** Graphs whose line an answer walked and found cut short by an earlier version that does not open (see PodView.line). */
+    const cutLines: Obj[] = [];
     const listedTasks = new Set(workflowsRec.flatMap((w) => [...w.record.payload.taskIris, ...w.record.payload.retiredTaskIris]));
     const workflowByIri = new Map(workflowsRec.map((w) => [w.record.entityIri, w.record]));
     const acks = new Map(recordsOf(snap, 'Acknowledgement').map((a) => [`${a.record.payload.planIri}|${a.record.payload.taskIri}|${a.record.payload.personAddress}`, a.record]));
@@ -2711,7 +2764,13 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         const clsGraph = unusable(iriForms('classification', p.workflowIri, t.record.entityIri));
         const eff = effective.get(t.record.entityIri);
         const effGrant = effectiveGrant.get(t.record.entityIri);
-        const decisionsShut = unreadableDecisions(p.workflowIri);
+        // The allocation in force may come from a decision that cannot be read, or from the plan of one that can.
+        const allocationShut = [
+          ...unreadableDecisions(p.workflowIri).map((g) => { const s = graphByIri.get(g); return s ? whyUnusable(s) : g; }),
+          ...unreadablePlansInForce(p.workflowIri).map(whyUnusable),
+        ];
+        // The workflow says whether it lists this task: when it cannot be read, that is unknown, not "no".
+        const wfShut = unusable([p.workflowIri]);
         const inForce = eff?.allocation ?? p.current;
         const clsP = cls?.record.payload;
         const currentNote = clsP ? currentAllocationNote(inForce, clsP.regime, clsP.answers, policy) : null;
@@ -2744,15 +2803,19 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
                 } : {}),
               }
               : { ...p.current, source: 'captured' }),
-            // A decision on this workflow that cannot be read may have changed the allocation: never shown as certain.
-            ...(decisionsShut.length > 0 && !(effGrant?.active === null) ? { unreadable: `${decisionsShut.length} decision record(s) on this workflow cannot be read (${decisionsShut.join(', ')}), so the allocation in force may differ from this one` } : {}),
+            // A decision on this workflow, or the plan of one in force, that cannot be read may have changed the allocation: never shown as certain.
+            ...(allocationShut.length > 0 && !(effGrant?.active === null)
+              ? { unreadable: `${allocationShut.length} decision or plan record(s) the allocation in force may come from cannot be read (${allocationShut.join('; ')}), so the allocation in force may differ from this one` }
+              : {}),
           },
           currentNotPermitted: currentNote,
           status: t.record.status, quoteStatus: p.quoteStatus, quotes: p.quotes, ...(p.revision ? { revision: { note: p.revision.note ?? null, answers: p.revision.answers, quotesCleared: p.revision.quotesCleared, by: p.revision.by.did } } : {}),
           ...(p.retirement ? { retirement: { why: p.retirement.why, at: p.retirement.at, by: p.retirement.by.did } } : {}),
-          orphaned: !listedTasks.has(t.record.entityIri),
+          // Both answered from the task's workflow: null (with why) when that cannot be read.
+          orphaned: wfShut ? null : !listedTasks.has(t.record.entityIri),
           // Retired, but the workflow still lists it: retiring it again finishes the retirement.
-          retirementUnfinished: retirementUnfinished(t.record, workflowByIri.get(p.workflowIri)),
+          retirementUnfinished: wfShut ? null : retirementUnfinished(t.record, workflowByIri.get(p.workflowIri)),
+          ...(wfShut ? { workflowUnreadable: `whether the workflow lists this task is unknown: ${whyUnusable(wfShut)}` } : {}),
           classification: cls ? {
             regime: cls.record.payload.regime, method: cls.record.payload.method, rulesFired: cls.record.payload.rulesFired, notes: cls.record.payload.notes,
             answers: cls.record.payload.answers,
@@ -2777,11 +2840,25 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         if (!keep(pl.record.entityIri, p.workflowIri)) continue;
         let stale: string | null = null;
         const wf = workflowsRec.find((w) => w.record.entityIri === p.workflowIri);
+        // Staleness is read from the workflow, each task and its classification. A record that
+        // cannot be read (sealed shut, altered or forked) is not absent: nothing is concluded from
+        // it, and when the records that can be read do not show the plan stale, whether it is
+        // stale is unknown: `stale` is null and `unreadable` says why.
+        const shut: string[] = [];
+        const wfShut = unusable([p.workflowIri]);
+        if (wfShut) shut.push(whyUnusable(wfShut));
         for (const row of p.tasks) {
+          const tShut = unusable([row.taskIri]);
+          const cShut = unusable(iriForms('classification', p.workflowIri, row.taskIri));
+          if (tShut) shut.push(whyUnusable(tShut));
+          if (cShut) shut.push(whyUnusable(cShut));
           const t = tasksRec.find((x) => x.record.entityIri === row.taskIri);
           const c = classificationByTask.get(row.taskIri);
           if (row.changed && (t?.record.status === 'retired' || (wf && !wf.record.payload.taskIris.includes(row.taskIri)))) { stale = RETIRED_IN_PLAN; break; }
-          if (!t || t.record.payload.textSha256 !== p.taskTextSha256[row.taskIri] || !c || c.head.descriptorUrl !== p.classificationHeads[row.taskIri]) { stale = STALE_PLAN; break; }
+          if (tShut) continue;
+          if (!t || t.record.payload.textSha256 !== p.taskTextSha256[row.taskIri]) { stale = STALE_PLAN; break; }
+          if (cShut) continue;
+          if (!c || c.head.descriptorUrl !== p.classificationHeads[row.taskIri]) { stale = STALE_PLAN; break; }
         }
         const assignments = p.tasks.filter((r) => r.changed && r.proposed.personAddress).map((r) => {
           const a = acks.get(`${pl.record.entityIri}|${r.taskIri}|${r.proposed.personAddress ?? ''}`);
@@ -2791,7 +2868,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           const state = a ? a.status : 'not-acknowledged';
           return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state, ...(a?.payload.note ? { note: a.payload.note } : {}), label: state === 'acknowledged' ? ACKNOWLEDGED : state === 'objected' ? OBJECTED : UNACKNOWLEDGED };
         });
-        out2.push({ planIri: pl.record.entityIri, workflowIri: p.workflowIri, title: p.title, planKind: p.planKind, tasks: p.tasks, proposedBy: p.proposedBy.did, stale, assignments, head: headInfo(pl.head), demo: pl.record.demo === true });
+        out2.push({
+          planIri: pl.record.entityIri, workflowIri: p.workflowIri, title: p.title, planKind: p.planKind, tasks: p.tasks, proposedBy: p.proposedBy.did, stale,
+          ...(stale === null && shut.length > 0 ? { unreadable: `whether this plan is stale is unknown: ${shut.length} record(s) it was proposed against cannot be read (${shut.join('; ')})` } : {}),
+          assignments, head: headInfo(pl.head), demo: pl.record.demo === true,
+        });
       }
       out['plans'] = out2;
     }
@@ -2806,10 +2887,14 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       for (const d of decisionsRec) {
         const p = d.record.payload;
         if (!keep(d.record.entityIri, workflowOfPlan(p.planIri))) continue;
-        const chain = (await call.view.history(d.s.g)).map((l) => ({
+        const line = await call.view.line(d.s.g);
+        const chain = line.versions.map((l) => ({
           version: l.record?.version ?? null, status: l.record?.status ?? null, modalStatus: l.modalStatus, signedBy: l.record?.signers.map((s) => s.did) ?? [],
           at: l.generatedAt, descriptorUrl: l.descriptorUrl, recordId: l.recordId, graphDigest: l.graphDigest,
         }));
+        // A chain cut short at an earlier version that does not open says so: never shown as the whole chain.
+        const chainCut = line.sealed ? sealedVersionWhy(d.s.graphIri, line.sealed) : null;
+        if (chainCut !== null) cutLines.push({ graphIri: d.s.graphIri, why: chainCut });
         out3.push({
           decisionIri: d.record.entityIri, decisionKind: p.decisionKind, planIri: p.planIri, ...(p.valuationIri ? { valuationIri: p.valuationIri, valuationHash: p.valuationHash } : {}),
           status: d.record.status, statusLabel: statusLabelOf(d.record.status, p.decisionKind), decisionLevel: p.decisionLevel,
@@ -2821,7 +2906,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           ...(p.outcome ? { outcome: { did: p.outcome.did, personRef: p.outcome.personRef, disposition: p.outcome.disposition, ...(p.outcome.dispositionNote ? { dispositionNote: p.outcome.dispositionNote } : {}), at: p.outcome.at, ...(p.outcome.valued ? { valued: p.outcome.valued } : {}), ...(p.outcome.probes ? { probes: p.outcome.probes } : {}) } } : {}),
           ...(p.probes ? { probes: p.probes } : {}),
           ...(p.outcome?.probes?.some((x) => x.signal !== 'neither') ? { next: NEXT_RECLASSIFY } : {}),
-          grantChecks: p.grantChecks, chain, head: headInfo(d.head), demo: d.record.demo === true,
+          grantChecks: p.grantChecks, chain, ...(chainCut !== null ? { chainUnreadable: `the chain below is incomplete: ${chainCut}` } : {}),
+          head: headInfo(d.head), demo: d.record.demo === true,
         });
       }
       out['decisions'] = out3;
@@ -2832,11 +2918,15 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         const p = gr.record.payload;
         if (subject !== null && subject !== gr.record.entityIri) continue;
         const state = await grantView(call, reg, p.agentAddress, p.taskKind);
-        const history = await call.view.history(gr.s.g);
-        const grantedAt = [...history].reverse().find((l) => l.record?.status === 'granted')?.generatedAt ?? null;
+        const line = await call.view.line(gr.s.g);
+        const grantedAt = [...line.versions].reverse().find((l) => l.record?.status === 'granted')?.generatedAt ?? null;
+        const chainCut = line.sealed ? sealedVersionWhy(gr.s.graphIri, line.sealed) : null;
+        if (chainCut !== null) cutLines.push({ graphIri: gr.s.graphIri, why: chainCut });
         out4.push({
           grantIri: gr.record.entityIri, agentAddress: p.agentAddress, principal: p.principal, model: p.model, taskKind: p.taskKind, status: gr.record.status,
           active: state.active, why: state.why, evaluation: p.evaluation, evidenceTaskIris: p.evaluation.taskIris, grantedAt,
+          // grantedAt is read from the versions that open: with an earlier one that does not, it may be missing or not the first.
+          ...(chainCut !== null ? { chainUnreadable: `grantedAt may be missing: ${chainCut}` } : {}),
           ...(p.revocation ? { revokedAt: p.revocation.at, revocationWhy: p.revocation.why } : {}), head: headInfo(gr.head), demo: gr.record.demo === true,
         });
       }
@@ -2865,7 +2955,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       ...snap.foreign.map((e) => ({ descriptorUrl: e.descriptorUrl, why: 'it is outside this pod\'s wrd/records/ container (for example a holder copy)' })),
     ];
     out['forked'] = snap.graphs.filter((s) => s.g.state === 'forked').map((s) => s.graphIri);
-    const sealed = sealedOf(snap);
+    // Current versions that do not open, then earlier ones this answer met in a line it walked.
+    const sealed = [...sealedOf(snap), ...cutLines];
     out['sealed'] = sealed;
     if (sealed.length > 0) out['sealedNote'] = SEALED_RECORDS;
     out['altered'] = snap.graphs.filter((s) => s.g.state === 'altered').map((s) => s.graphIri);

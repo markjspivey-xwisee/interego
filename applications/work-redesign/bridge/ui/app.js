@@ -1069,7 +1069,7 @@ function planCard(p) {
   const me = actor();
   const changed = p.tasks.filter((r) => r.changed);
   return h('div', { class: 'card' },
-    h('div', null, h('strong', { text: p.title }), ' ', chip(p.planKind), p.stale ? chip(`stale: ${p.stale}`, 'bad') : null, demoChip(p),
+    h('div', null, h('strong', { text: p.title }), ' ', chip(p.planKind), p.stale ? chip(`stale: ${p.stale}`, 'bad') : null, p.unreadable ? chip(p.unreadable, 'bad') : null, demoChip(p),
       h('span', { class: 'small muted', text: ` proposed by ${labelOf(addrOfDid(p.proposedBy))}` })),
     changed.map((r) => h('div', { class: 'small' }, `${taskName(r.taskIri)}: ${allocationText(r.current)} → ${allocationText(r.proposed)}`,
       r.grant ? (r.grant.evidenceFromThisTask ? '' : [' ', chip('grant evidence comes from other tasks', 'warn')]) : '',
@@ -1166,7 +1166,7 @@ function valueView() {
   }
   const p = planBy(S.plan);
   const picker = plans.length === 0 ? h('p', { class: 'muted', text: 'No valued plan yet: propose one in Plan. (Probe plans on Emergent work are never priced.)' })
-    : field('Plan', select(plans.map((x) => [x.planIri, `${x.title}${x.stale ? ' — stale' : ''}`]), S.plan, (e) => { S.plan = e.target.value; render(); }));
+    : field('Plan', select(plans.map((x) => [x.planIri, `${x.title}${x.stale ? ' — stale' : x.unreadable ? ' — cannot be read in full' : ''}`]), S.plan, (e) => { S.plan = e.target.value; render(); }));
   if (!p) return h('section', null, h('h2', { text: 'Value a plan' }), picker);
   const { key, st } = valueDraft(p);
   const save = () => store.set(key, st);
@@ -1218,6 +1218,7 @@ function valueView() {
   return h('section', null,
     h('h2', { text: 'Value a plan with ranges' }), picker,
     p.stale ? h('p', { class: 'badbox', text: `This plan is stale: ${p.stale}` }) : null,
+    p.unreadable ? h('p', { class: 'badbox', text: p.unreadable }) : null,
     h('p', { class: 'small muted', text: 'Give every input as low / likely / high and say where it came from. A single number in "likely" is kept as one number and marked "no range given". These inputs are a draft in this browser until you sign them.' }),
     h('div', { class: 'card' },
       field('Currency (ISO 4217)', input(st.currency, (e) => { st.currency = e.target.value.toUpperCase(); save(); }, { size: 4 })),
@@ -1319,7 +1320,8 @@ function decisionsView() {
 }
 
 function submitForm() {
-  const plans = (data().plans ?? []).filter((p) => !p.stale);
+  // A plan whose staleness cannot be read (a record it was proposed against does not open) is not offered: the bridge would refuse it (409).
+  const plans = (data().plans ?? []).filter((p) => !p.stale && !p.unreadable);
   const st = { planIri: plans[0]?.planIri ?? '', valuationIri: '', metric: 'weekly-cash-delta', basis: '', windowWeeks: 8, description: '', note: '' };
   const body = h('div');
   const draw = () => {

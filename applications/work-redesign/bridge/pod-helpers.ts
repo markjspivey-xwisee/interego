@@ -649,28 +649,42 @@ export class PodView {
    * ofGraph): one added to the manifest from this chain into another entity's, which the bridge
    * could open, is passed over, so no caller reads another entity's record through this chain.
    * The line stops at the first version that is not trusted.
+   *
+   * `sealed` is the first version of this graph the walk met that is sealed and does not open
+   * (isSealedShut), or null. When it is set the line may be cut short there: the versions before
+   * it are missing, and a caller that would answer from the whole line refuses (409, naming
+   * WRD_RECORD_KEY) or marks its answer rather than answer from part of it.
    */
-  async history(g: GraphHeads): Promise<LoadedRecord[]> {
+  async line(g: GraphHeads): Promise<{ readonly versions: LoadedRecord[]; readonly sealed: LoadedRecord | null }> {
     const head = g.heads[0];
-    if (g.heads.length !== 1 || !head || !head.authorship.trusted || !ofGraph(head, g.graphIri)) return [];
+    if (g.heads.length !== 1 || !head || !head.authorship.trusted || !ofGraph(head, g.graphIri)) return { versions: [], sealed: null };
     const byUrl = new Map(g.chain.map((e) => [e.descriptorUrl, e]));
     const out: LoadedRecord[] = [head];
     const seen = new Set([head.descriptorUrl]);
+    let sealed: LoadedRecord | null = null;
     let cursor: LoadedRecord = head;
     for (;;) {
       let prev: LoadedRecord | null = null;
+      // Every link is read (not only up to the first trusted one), so a sealed version is never passed over unseen.
       for (const u of cursor.supersedes) {
         const entry = byUrl.get(u);
         if (!entry || seen.has(u)) continue;
         seen.add(u);
         const loaded = await this.read(entry);
-        if (loaded.authorship.trusted && ofGraph(loaded, g.graphIri)) { prev = loaded; break; }
+        if (!ofGraph(loaded, g.graphIri)) continue;
+        if (loaded.authorship.trusted) prev ??= loaded;
+        else if (isSealedShut(loaded)) sealed ??= loaded;
       }
       if (!prev) break;
       out.push(prev);
       cursor = prev;
     }
-    return out.reverse();
+    return { versions: out.reverse(), sealed };
+  }
+
+  /** The versions of `line`, for a caller that does not answer from the whole line. */
+  async history(g: GraphHeads): Promise<LoadedRecord[]> {
+    return (await this.line(g)).versions;
   }
 }
 

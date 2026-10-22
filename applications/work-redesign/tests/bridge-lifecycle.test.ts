@@ -30,7 +30,7 @@ import {
   readRecord, publishRecord, verifyHolderBundle, operatorPodFetch, openPod, KeyedMutex, StaleHeadError, RecordNotSealableError, WRD_CONTAINER, SEALED_NO_KEY, SEALED_OTHER_KEY,
 } from '../bridge/pod-helpers.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
-import { envelopeSha256, entityIri, entityIriKey, graphIriOf, buildDescriptor, recordIdFor, type WrdRecord } from '../src/records.js';
+import { envelopeSha256, entityIri, entityIriKey, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, type WrdRecord } from '../src/records.js';
 import { normaliseForQuote } from '../src/work.js';
 import { meanRampFactor, monthsBetween, DEMO_LABEL } from '../src/valuation.js';
 import { WRD_NS } from '../src/ontology.js';
@@ -1727,6 +1727,13 @@ describe('work-redesign bridge', () => {
     refused(await http(w, 'POST', 'capture_workflow', { envelope: env }), 400, /not well-formed Unicode/, /arguments\.envelope\.payload\.workflow\.title holds a lone UTF-16 surrogate/);
     refused(await http(w, 'POST', 'record_task_map', { envelope: env, document_text: 'A\udfffB' }), 400, /not well-formed Unicode/, /lone UTF-16 surrogate/);
     refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w), kind: 'tasks\udc00' }), 400, /not well-formed Unicode/);
+    // However deep it sits: the check has no depth past which it stops looking (and so reads as well-formed).
+    const nest = (levels: number, leaf: unknown): unknown => { let v = leaf; for (let i = 0; i < levels; i += 1) v = { n: v }; return v; };
+    const deepEnv = await envelope(w, ANA, 'wrd:capture-workflow', { workflow: { title: 'Month-end review', unitLabel: 'accrual' }, tasks: [task], extra: nest(70, 'x\ud800y') });
+    refused(await http(w, 'POST', 'capture_workflow', { envelope: deepEnv }), 400, /not well-formed Unicode/, /arguments\.envelope\.payload\.extra(\.n){70} holds a lone UTF-16 surrogate/);
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w), junk: nest(300, '\udc00') }), 400, /not well-formed Unicode/, /arguments\.junk(\.n){300} holds/);
+    expect(illFormedTextPath(nest(100_000, 'ok'))).toBeNull();
+    expect(illFormedTextPath([nest(100_000, 'ok'), { a: ['fine', 'x\ud800'] }])).toBe('input[1].a[1]');
     expect((await manifest(w)).length).toBe(before);
     // Refused before the envelope was opened, so its nonce was not spent: the same nonce with well-formed text is accepted.
     const fixed = await envelope(w, ANA, 'wrd:capture-workflow', { workflow: { title: 'Month-end review', unitLabel: 'accrual' }, tasks: [task] }, { nonce: String(env.payload['nonce']) });
@@ -1834,6 +1841,110 @@ describe('work-redesign bridge', () => {
     const cal = ok(await calibration(w, '?kind=agents'));
     expect(obj(must(arr(cal['agentCells'])[0], 'agent cell')['grant'])).toMatchObject({ active: null, why: expect.stringMatching(/WRD_RECORD_KEY/) });
     expect(arr(cal['sealed']).map((x) => x['graphIri']).sort()).toEqual([...ack.describes, graphIriOf(grant)].sort());
+  }, 90_000);
+
+  it('never answers the read model from the absence of a record that does not open: a sealed workflow leaves its tasks\' orphaned and retirementUnfinished unknown, a sealed task or classification a plan\'s staleness, a sealed plan of an approved decision the allocation in force, and a sealed earlier decision version its chain', async () => {
+    const w = await world({ recordKey: K1 });
+    const { ap, planIri, valuation } = await valuedP1(w);
+    const decisionIri = String((await submitValued(w, planIri, valuation))['decisionIri']);
+    await acknowledgeAll(w, planIri);
+    ok(await countersign(w, BO, decisionIri, 'approve'));
+    const planRow = (l: Obj): Obj => must(arr(l['plans']).find((p) => p['planIri'] === planIri), 'plan row');
+    const t1Row = (l: Obj): Obj => must(arr(l['tasks']).find((t) => t['taskIri'] === ap.t1), 't1 row');
+    const base = await list(w);
+    expect(planRow(base)).toMatchObject({ stale: null });
+    expect(planRow(base)['unreadable']).toBeUndefined();
+    expect(arr(base['tasks']).map((t) => [t['orphaned'], t['retirementUnfinished'], t['workflowUnreadable']])).toEqual(arr(base['tasks']).map(() => [false, false, undefined]));
+    expect(obj(t1Row(base)['effective'])).toMatchObject({ source: 'approved-decision', level: 'agent-drafts-person-decides' });
+    expect(obj(t1Row(base)['effective'])['unreadable']).toBeUndefined();
+    expect(arr(base['sealed'])).toEqual([]);
+    /** Seal one version shut (its ciphertext changed on the pod); the returned function restores it. */
+    const shut = (descriptorUrl: string): (() => void) => {
+      const url = sealedGraphUrl(w, descriptorUrl);
+      const original = must(w.pod.bodies.get(url));
+      corruptSealed(w, url);
+      return () => w.pod.tamper(url, must(w.pod.bodies.get(url)), original);
+    };
+
+    // (a) The workflow's head does not open: whether it lists a task is unknown, not "orphaned", and the plan's staleness is unknown.
+    const reopenWf = shut(headOfRow(must(arr(base['workflows']).find((x) => x['workflowIri'] === ap.workflowIri), 'workflow row')).descriptorUrl);
+    const a = await list(w);
+    expect(arr(a['tasks'])).toHaveLength(4);
+    for (const t of arr(a['tasks'])) {
+      expect(t).toMatchObject({ orphaned: null, retirementUnfinished: null });
+      expect(String(t['workflowUnreadable'])).toMatch(/whether the workflow lists this task is unknown: .*WRD_RECORD_KEY/);
+    }
+    expect(planRow(a)['stale']).toBeNull();
+    expect(String(planRow(a)['unreadable'])).toMatch(/whether this plan is stale is unknown.*WRD_RECORD_KEY/);
+    expect(arr(a['sealed']).map((s) => s['graphIri'])).toEqual([graphIriOf(ap.workflowIri)]);
+    reopenWf();
+
+    // (b) T1's classification head does not open: the plan is not called stale ("re-classified or revised"), its staleness is unknown.
+    const reopenCls = shut(headOfRow(obj(t1Row(await list(w))['classification'], 'classification')).descriptorUrl);
+    const b = await list(w);
+    expect(planRow(b)['stale']).toBeNull();
+    expect(String(planRow(b)['unreadable'])).toMatch(/whether this plan is stale is unknown: 1 record\(s\).*urn:wrd:classification:.*WRD_RECORD_KEY/);
+    expect(t1Row(b)).toMatchObject({ orphaned: false, classification: { state: 'altered', trusted: false } });
+    reopenCls();
+    // (b') T1's own head does not open: the same.
+    const reopenT1 = shut(headOfRow(t1Row(await list(w))).descriptorUrl);
+    const b2 = await list(w);
+    expect(planRow(b2)['stale']).toBeNull();
+    expect(String(planRow(b2)['unreadable'])).toMatch(new RegExp(`stale is unknown.*${graphIriOf(ap.t1)}: .*WRD_RECORD_KEY`));
+    reopenT1();
+    expect(planRow(await list(w))).toMatchObject({ stale: null });
+
+    // (c) The plan of the approved decision does not open: the allocation in force is not shown as the captured one, certain.
+    const reopenPlan = shut(headOfRow(planRow(await list(w))).descriptorUrl);
+    const c = await list(w);
+    for (const t of arr(c['tasks'])) {
+      expect(String(obj(t['effective'])['unreadable'])).toMatch(new RegExp(`cannot be read \\(${graphIriOf(planIri)}: .*WRD_RECORD_KEY.*\\), so the allocation in force may differ from this one`));
+    }
+    reopenPlan();
+    const restored = await list(w);
+    expect(obj(t1Row(restored)['effective'])).toMatchObject({ source: 'approved-decision' });
+    expect(obj(t1Row(restored)['effective'])['unreadable']).toBeUndefined();
+
+    // (d) An earlier version of the decision does not open: its chain says it is incomplete, and the graph is named under sealed.
+    const chain = arr((await decisionRow(w, decisionIri))['chain']);
+    expect(chain.map((v) => v['status'])).toEqual(['submitted', 'countersigned']);
+    shut(String(must(chain[0])['descriptorUrl']));
+    const d = await list(w);
+    const row = must(arr(d['decisions']).find((x) => x['decisionIri'] === decisionIri), 'decision row');
+    expect(arr(row['chain']).map((v) => v['status'])).toEqual(['countersigned']);
+    expect(String(row['chainUnreadable'])).toMatch(new RegExp(`the chain below is incomplete: .*an earlier version \\(${String(must(chain[0])['descriptorUrl'])}\\) is not trusted: .*WRD_RECORD_KEY`));
+    expect(arr(d['sealed']).map((s) => s['graphIri'])).toEqual([graphIriOf(decisionIri)]);
+    expect(obj(t1Row(d)['effective'])).toMatchObject({ source: 'approved-decision' });
+  }, 120_000);
+
+  it('never answers from part of a line: with an earlier version that does not open, the holder\'s copy refuses (409) rather than come back without it and every version before it, and a write that checks the whole line refuses too', async () => {
+    const w = await world({ recordKey: K1 });
+    await register(w);
+    const ap = await captureAp(w);
+    const cyNote = 'Cy: the match also checks the supplier';
+    ok(await ratify(w, CY, ap.t1, 'dispute', cyNote));
+    const disputed = headOfRow(await taskRow(w, ap.t1));
+    ok(await act(w, ANA, 'revise_task', { op: 'revise', taskIri: ap.t1, ...bound(disputed), description: 'Three-way match, supplier included.', note: 'added supplier' }));
+    ok(await ratify(w, CY, ap.t1));
+    const full = ok(await act(w, CY, 'holder_copy', {}));
+    const t1Versions = arr(full['bundle']).filter((b) => b['entityIri'] === ap.t1).map((b) => b['descriptorUrl']);
+    expect(t1Versions).toHaveLength(4);
+    expect(t1Versions).toContain(disputed.descriptorUrl);
+
+    // The disputed version (Cy's own signed note) no longer opens; the head still does.
+    corruptSealed(w, sealedGraphUrl(w, disputed.descriptorUrl));
+    expect(await taskRow(w, ap.t1)).toMatchObject({ status: 'ratified' });
+    const copy = refused(await act(w, CY, 'holder_copy', {}), 409, /cannot tell whether they name you/,
+      new RegExp(`do not open in full, for example ${graphIriOf(ap.t1)}: an earlier version \\(${disputed.descriptorUrl}\\) is not trusted: .*WRD_RECORD_KEY`));
+    expect(copy['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
+    expect(JSON.stringify(copy)).not.toContain(cyNote);
+    // The durable replay check reads the whole line: a write to T1 refuses rather than check part of it.
+    const before = (await manifest(w)).length;
+    const head = headOfRow(await taskRow(w, ap.t1));
+    const r = refused(await act(w, ANA, 'revise_task', { op: 'revise', taskIri: ap.t1, ...bound(head), description: 'Three-way match, supplier and tax code.', note: 'added tax code' }),
+      409, /altered after signing/, new RegExp(`${graphIriOf(ap.t1)}: an earlier version \\(${disputed.descriptorUrl}\\) is not trusted: .*WRD_RECORD_KEY`));
+    expect(r['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
+    expect((await manifest(w)).length).toBe(before);
   }, 90_000);
 
   it('with a record key, keeps extending chains written without one under their unkeyed IRIs, and derives every new entity\'s IRI with the key', async () => {

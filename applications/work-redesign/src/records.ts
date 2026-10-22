@@ -239,21 +239,41 @@ export const isWellFormedText = (s: string): boolean => !LONE_SURROGATE.test(s);
 /**
  * The path of the first string in `v` (keys included) that is not well-formed UTF-16, or null.
  * Such text cannot be sealed, hashed or stored as what was sent.
+ *
+ * The walk has no depth bound: it keeps its own stack (so a deeply nested value cannot overflow
+ * the call stack) and visits every string however deep it sits, because a bound past which it
+ * stopped looking would read as "well-formed" and let such text through. Each object is visited
+ * once, so a value that refers to itself still ends; a path is spelled out only for the one
+ * string it reports.
  */
-export function illFormedTextPath(v: unknown, path = 'input', depth = 0): string | null {
-  if (typeof v === 'string') return isWellFormedText(v) ? null : path;
-  if (depth > 64 || typeof v !== 'object' || v === null) return null;
-  if (Array.isArray(v)) {
-    for (const [i, x] of v.entries()) {
-      const p = illFormedTextPath(x, `${path}[${i}]`, depth + 1);
-      if (p !== null) return p;
+export function illFormedTextPath(v: unknown, path = 'input'): string | null {
+  interface Step { readonly value: unknown; readonly parent: Step | null; readonly seg: string }
+  const spell = (s: Step, suffix = ''): string => {
+    const segs: string[] = [];
+    for (let at: Step | null = s; at !== null; at = at.parent) segs.push(at.seg);
+    return segs.reverse().join('') + suffix;
+  };
+  const stack: Step[] = [{ value: v, parent: null, seg: path }];
+  const seen = new WeakSet<object>();
+  for (let step = stack.pop(); step !== undefined; step = stack.pop()) {
+    const x = step.value;
+    if (typeof x === 'string') {
+      if (!isWellFormedText(x)) return spell(step);
+      continue;
     }
-    return null;
-  }
-  for (const [k, x] of Object.entries(v)) {
-    if (!isWellFormedText(k)) return `${path} (a key)`;
-    const p = illFormedTextPath(x, `${path}.${k}`, depth + 1);
-    if (p !== null) return p;
+    if (typeof x !== 'object' || x === null || seen.has(x)) continue;
+    seen.add(x);
+    const children: Step[] = [];
+    if (Array.isArray(x)) {
+      for (const [i, c] of x.entries()) children.push({ value: c, parent: step, seg: `[${i}]` });
+    } else {
+      for (const [k, c] of Object.entries(x)) {
+        if (!isWellFormedText(k)) return spell(step, ' (a key)');
+        children.push({ value: c, parent: step, seg: `.${k}` });
+      }
+    }
+    // Pushed in reverse, so the first such string in document order is the one reported.
+    for (const c of children.reverse()) stack.push(c);
   }
   return null;
 }
