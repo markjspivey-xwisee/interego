@@ -1,0 +1,27 @@
+name: Restore guarded PGSL services
+on:
+  push:
+    branches:
+      - incident/pgsl-registry-restore-20261022
+    paths:
+      - .github/workflows/pgsl-registry-restore-20261022.yml
+permissions: {}
+concurrency:
+  group: pgsl-registry-restore-20261022
+  cancel-in-progress: false
+jobs:
+  css:
+    uses: ./.github/workflows/deploy-railway.yml
+    with:
+      service: css
+      tag: '4d41980040f08123bf787523938596d304a77e35'
+      set_registry_credentials: true
+    secrets: inherit
+  relay:
+    needs: css
+    uses: ./.github/workflows/deploy-railway.yml
+    with:
+      service: relay
+      tag: '4d41980040f08123bf787523938596d304a77e35'
+      set_registry_credentials: true
+    secrets: inherit
