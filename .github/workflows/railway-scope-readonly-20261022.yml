@@ -1,0 +1,22 @@
+name: Read-only Railway scope for verifier repair
+on:
+  push:
+    branches: [incident/railway-scope-readonly-20261022]
+    paths: [.github/workflows/railway-scope-readonly-20261022.yml]
+permissions:
+  contents: read
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: '25ae16128663e212a4234d9ed05bfe0d508f8d1f'
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with: { node-version: '20' }
+      - name: Read live pins and compute scope without deploying
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        run: npx --yes tsx tools/deploy-affected.ts
