@@ -1,0 +1,133 @@
+name: Read raw recovery volume metadata
+on:
+  push:
+    branches:
+      - incident/pgsl-volume-inspect-20261022
+    paths:
+      - .github/workflows/pgsl-volume-inspect-20261022.yml
+permissions: {}
+concurrency:
+  group: pgsl-volume-inspect-20261022
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Inspect only volume metadata and pending-work schema
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const projectId='b88ceabb-7461-4949-81d7-3d29132e7806';
+          const environmentId='449996a2-3533-462f-98c6-4ab4c05dd777';
+          const targetIds=['4471d983-aa9a-46d0-882b-13f5537d8f68','39097cdd-1093-420a-bc39-572aa2668bbd','54013c9e-2954-4332-a4e9-e6dd2b0efca1'];
+          const token=process.env.RAILWAY_PROJECT_TOKEN;if(!token)throw Error('missing existing project secret');
+          const say=value=>console.log(JSON.stringify(value));
+          const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+          async function gql(query,variables={}){
+           if(!query.trim().startsWith('query')&&!query.trim().startsWith('{'))throw Error('read-only GraphQL guard');
+           for(let attempt=1;;attempt++){
+            try{
+             const response=await fetch('https://backboard.railway.com/graphql/v2',{method:'POST',headers:{'Content-Type':'application/json','Project-Access-Token':token},body:JSON.stringify({query,variables}),signal:AbortSignal.timeout(20000)});
+             if(!response.ok)throw Error('Railway HTTP '+response.status);
+             const body=await response.json();
+             if(body.errors?.length)throw Error(body.errors.map(error=>error.message).join('; ').slice(0,500));
+             return body.data;
+            }catch(error){if(attempt>=3)throw error;await delay(attempt*1000);}
+           }
+          }
+          const scope=await gql('{projectToken{projectId environmentId}}');
+          if(scope.projectToken?.projectId!==projectId||scope.projectToken?.environmentId!==environmentId)throw Error('wrong project/environment scope');
+          const typeRef=depth=>'kind name'+(depth?' ofType{'+typeRef(depth-1)+'}':'');
+          const typeQuery='query($name:String!){__type(name:$name){name kind description fields{name description args{name defaultValue type{'+typeRef(6)+'}} type{'+typeRef(6)+'}} enumValues{name}}}';
+          const cache=new Map();
+          const getType=async name=>{if(!cache.has(name))cache.set(name,(await gql(typeQuery,{name})).__type);return cache.get(name);};
+          const unwrap=type=>type?.ofType?unwrap(type.ofType):type;
+          const signature=type=>type?.kind==='NON_NULL'?signature(type.ofType)+'!':type?.kind==='LIST'?'['+signature(type.ofType)+']':type?.name;
+          const fieldInfo=field=>({name:field.name,type:signature(field.type),args:field.args.map(arg=>({name:arg.name,type:signature(arg.type),defaultValue:arg.defaultValue})),description:field.description?.slice(0,350)});
+          const queryType=await getType('Query'),mutationType=await getType('Mutation');
+          say({phase:'volume-api-schema',queries:queryType.fields.filter(field=>/volume|environment.*(pending|patch|change)|pending.*environment/i.test(field.name)).map(fieldInfo),mutationMetadataOnly:mutationType.fields.filter(field=>/volume.*(delete|detach)|delete.*volume/i.test(field.name)).map(fieldInfo)});
+          const scalarNames=new Set(['id','name','projectId','environmentId','serviceId','volumeId','state','status','deletedAt','createdAt','updatedAt','mountPath','region','sizeMB','currentSizeMB','sizeGb','sizeGB','capacityGB','capacityGb','usedSizeMB','usageMB','nextSizeMB','maxSizeMB','nextVolumeInstanceSize','sourceVolumeId','isDeleted','isActive','isEphemeral','serviceName']);
+          function scalarSelection(type){return (type?.fields??[]).filter(field=>scalarNames.has(field.name)&&['SCALAR','ENUM'].includes(unwrap(field.type)?.kind)).map(field=>field.name);}
+          async function relatedSelection(type){
+           const fields=scalarSelection(type);
+           for(const field of (type?.fields??[]).filter(item=>/^(environment|service|serviceInstance|volume)$/.test(item.name))){
+            const base=unwrap(field.type);if(base.kind!=='OBJECT')continue;
+            const args=argsFor(field,{environmentId});if(args===null)continue;
+            const child=await getType(base.name),childFields=scalarSelection(child);
+            if(childFields.length)fields.push(field.name+args+'{'+childFields.join(' ')+'}');
+           }
+           return fields;
+          }
+          const argsFor=(field,vars={})=>{
+           const entries=[];
+           for(const arg of field.args??[]){
+            let value=vars[arg.name];
+            if(value===undefined&&arg.name==='first')value=20;
+            if(value===undefined&&arg.type.kind==='NON_NULL'&&arg.defaultValue===null)return null;
+            if(value!==undefined)entries.push(arg.name+':'+JSON.stringify(value));
+           }
+           return entries.length?'('+entries.join(',')+')':'';
+          };
+          async function selection(typeName,includeInstances=false){
+           const type=await getType(typeName);if(!type)return null;
+           const fields=scalarSelection(type);
+           if(includeInstances){
+            for(const field of type.fields.filter(field=>/^(volumeInstances|instances|volumeInstance)$/.test(field.name))){
+             const args=argsFor(field,{environmentId});if(args===null)continue;
+             const child=unwrap(field.type);
+             if(child.kind==='SCALAR')continue;
+             const childType=await getType(child.name);
+             if(childType?.fields?.some(item=>item.name==='edges')){
+              const edges=childType.fields.find(item=>item.name==='edges'),edgeType=await getType(unwrap(edges.type).name);
+              const node=edgeType?.fields?.find(item=>item.name==='node');
+              if(node){const nodeType=await getType(unwrap(node.type).name);const nodeFields=await relatedSelection(nodeType);if(nodeFields.length)fields.push(field.name+args+'{edges{node{'+nodeFields.join(' ')+'}}}');}
+             }else{const childFields=await relatedSelection(childType);if(childFields.length)fields.push(field.name+args+'{'+childFields.join(' ')+'}');}
+            }
+           }
+           return fields.length?fields.join(' '):null;
+          }
+          const volumeField=queryType.fields.find(field=>field.name==='volume');
+          if(volumeField){
+           const typeName=unwrap(volumeField.type).name,select=await selection(typeName,true);
+           say({phase:'volume-type-schema',type:typeName,fields:(await getType(typeName)).fields.filter(field=>/volume|instance|size|status|state|delete/i.test(field.name)).map(fieldInfo)});
+           if(select)for(const id of targetIds){
+            const args=argsFor(volumeField,{id,volumeId:id});
+            if(args===null){say({phase:'volume-direct',id,skipped:'unknown required argument'});continue;}
+            try{const data=await gql('query{volume'+args+'{'+select+'}}');say({phase:'volume-direct',id,data:data.volume??null});}
+            catch(error){say({phase:'volume-direct',id,error:error.message});}
+           }
+          }
+          const projectField=queryType.fields.find(field=>field.name==='project');
+          if(projectField){
+           const projectType=await getType(unwrap(projectField.type).name);
+           const volumes=projectType.fields.find(field=>field.name==='volumes');
+           if(volumes){
+            const connectionType=await getType(unwrap(volumes.type).name),edges=connectionType?.fields?.find(field=>field.name==='edges');
+            const edgeType=edges?await getType(unwrap(edges.type).name):null,node=edgeType?.fields?.find(field=>field.name==='node');
+            if(node){
+             const select=await selection(unwrap(node.type).name,true),projectArgs=argsFor(projectField,{id:projectId,projectId}),volumeArgs=argsFor(volumes,{});
+             if(select&&projectArgs!==null&&volumeArgs!==null){
+              const data=await gql('query{project'+projectArgs+'{id volumes'+volumeArgs+'{edges{node{'+select+'}}}}}');
+              const rows=data.project?.volumes?.edges?.map(edge=>edge.node)??[];
+              say({phase:'project-volume-inventory',projectId,total:rows.length,targets:rows.filter(volume=>targetIds.includes(volume.id)),targetPresence:Object.fromEntries(targetIds.map(id=>[id,rows.some(volume=>volume.id===id)]))});
+             }
+            }
+           }
+          }
+          const environmentField=queryType.fields.find(field=>field.name==='environment');
+          if(environmentField){
+           const environmentType=await getType(unwrap(environmentField.type).name);
+           say({phase:'environment-pending-schema',fields:environmentType.fields.filter(field=>/patch|pending|volume|change/i.test(field.name)).map(fieldInfo)});
+          }
+          for(const field of queryType.fields.filter(field=>/environment.*(pending|patch|change)|pending.*environment/i.test(field.name)).slice(0,6)){
+           const args=argsFor(field,{id:environmentId,environmentId,projectId});if(args===null)continue;
+           const base=unwrap(field.type);if(!['OBJECT','INTERFACE'].includes(base.kind))continue;
+           const type=await getType(base.name),select=scalarSelection(type);
+           if(select.length){try{const data=await gql('query{'+field.name+args+'{'+select.join(' ')+'}}');say({phase:'pending-work',field:field.name,data:data[field.name]});}catch(error){say({phase:'pending-work',field:field.name,error:error.message});}}
+          }
+          say({phase:'complete',readOnly:true,mutationsExecuted:0});
+          
+          NODE
