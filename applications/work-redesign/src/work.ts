@@ -191,8 +191,14 @@ export interface AllocationChange {
 }
 export interface TaskForAllocation {
   readonly taskIri: string; readonly taskKind: string;
-  /** The task's effective allocation (captured, or from the newest kept measured decision). */
+  /** The task's effective allocation (captured, or from the newest approved or kept measured decision). */
   readonly current: Allocation;
+  /**
+   * The current allocation puts an agent within a grant that is no longer active: the work has no
+   * authorised performer, so proposing that allocation again is a change like any other and must
+   * pass every rule (it is not "no change").
+   */
+  readonly currentSuspended?: boolean;
   readonly descriptionStatus: 'captured' | 'ratified' | 'disputed';
   readonly regime: Regime | null;
   readonly answers: ClassificationAnswers | null;
@@ -255,33 +261,30 @@ const CLASSIFY_FIRST = 'Classify every task before proposing an allocation.';
 const DISPUTED_DESCRIPTION = 'A disputed task description blocks any change to that task until it is revised and ratified.';
 const STALE_CLASSIFICATION = "This task's description was revised after it was classified; classify it again.";
 const DISPUTED_CLASSIFICATION = 'Someone named on this task disputes its classification; classify it again with them.';
+const UNRATIFIED_FOR_AGENT = 'An agent is put on this work only when everyone named on the task has ratified how knowable it is; their silence is not assent.';
 const STABILISE_FIRST = 'Turbulent work: act to stabilise first; no allocation change.';
 const PROBES_REQUIRED = 'Emergent work changes only as safe-to-fail probes with amplify and dampen conditions.';
 const UNCHECKABLE = 'This output cannot be checked before or after it takes effect; an acting agent is not allowed.';
 const CRITICAL_UNCHECKED = 'Critical work under a grant needs output that can be checked before it takes effect.';
 
-/**
- * Whether one proposed change is allowed on one task, first failure wins (spec §6.2): classify
- * first; an unchanged allocation is not a change; a disputed description, a stale or disputed
- * classification blocks it; the regime must permit change and the level; Emergent work changes
- * only as 1..5 valid probes; the parties must fit the level; acting agents need a checkable
- * output; within-grant needs an active grant and, for critical work, enough clean runs.
- */
-export function checkAllocation(change: AllocationChange, task: TaskForAllocation, ctx: {
+interface AllocationContext {
   readonly policy: EffectivePolicy;
   readonly isRegisteredAgent: (address: string) => boolean;
   readonly isRegisteredPerson: (address: string) => boolean;
   readonly grantFor: (agentAddress: string, taskKind: string) => GrantState;
-}): AllocationCheck {
-  const fail = (status: 400 | 409, error: string, why: string, resolvedBy?: string): AllocationCheck =>
-    ({ ok: false, status, error, why, taskIri: task.taskIri, ...(resolvedBy ? { resolvedBy } : {}) });
+}
 
+/**
+ * Whether one proposed change is allowed on one task, first failure wins (spec §6.2): classify
+ * first; an unchanged allocation is not a change; then checkLevelOnTask's rules.
+ */
+export function checkAllocation(change: AllocationChange, task: TaskForAllocation, ctx: AllocationContext): AllocationCheck {
   // 1. classified at all
   if (task.regime === null || task.answers === null || task.classificationStatus === null) {
-    return fail(409, CLASSIFY_FIRST, `${task.taskIri} has no classification`, 'wrd.classify_task');
+    return { ok: false, status: 409, error: CLASSIFY_FIRST, why: `${task.taskIri} has no classification`, taskIri: task.taskIri, resolvedBy: 'wrd.classify_task' };
   }
   const levelRule = ctx.policy.levels.get(change.proposedLevel);
-  if (!levelRule) return fail(400, 'Unknown allocation level.', `${change.proposedLevel} is not a published level`);
+  if (!levelRule) return { ok: false, status: 400, error: 'Unknown allocation level.', why: `${change.proposedLevel} is not a published level`, taskIri: task.taskIri };
   const proposed: Allocation = {
     level: change.proposedLevel,
     ...(change.personAddress !== undefined
@@ -291,29 +294,61 @@ export function checkAllocation(change: AllocationChange, task: TaskForAllocatio
   };
   // 2. not a change
   const hasProbes = (change.probes?.length ?? 0) > 0;
-  if (!hasProbes && proposed.level === task.current.level && sameAddress(proposed.personAddress, task.current.personAddress)
+  if (!hasProbes && !task.currentSuspended && proposed.level === task.current.level && sameAddress(proposed.personAddress, task.current.personAddress)
     && sameAddress(proposed.agentAddress, task.current.agentAddress)) {
     return { ok: true, changed: false, proposed };
   }
+  return checkLevelOnTask(proposed, change.probes, task, ctx);
+}
+
+/**
+ * Whether an agent may act alone on this task right now, under its grant: the same rules a
+ * proposal to put it there must pass (regime, checkability, critical work, ratified and current
+ * classification, an undisputed description, an active grant), re-run against the task as it
+ * stands at the moment of the run. A grant is checked by (agent, task kind); this checks the task.
+ */
+export function checkActingUnderGrant(agentAddress: string, task: TaskForAllocation, ctx: AllocationContext): AllocationCheck {
+  return checkLevelOnTask({ level: 'agent-acts-within-grant', agentAddress: agentAddress.toLowerCase() }, undefined, task, ctx);
+}
+
+/**
+ * Rules 3–11 of spec §6.2 for one allocation on one classified task, first failure wins: a
+ * disputed description, a stale or disputed classification, or (when an agent is named) a
+ * classification the people named have not ratified blocks it; the regime must permit change
+ * and the level; Emergent work changes only as 1..5 valid probes; the parties must fit the
+ * level; acting agents need a checkable output; within-grant needs an active grant and, for
+ * critical work, enough clean runs.
+ */
+function checkLevelOnTask(proposed: Allocation, probes: readonly Probe[] | undefined, task: TaskForAllocation, ctx: AllocationContext): AllocationCheck {
+  const fail = (status: 400 | 409, error: string, why: string, resolvedBy?: string): AllocationCheck =>
+    ({ ok: false, status, error, why, taskIri: task.taskIri, ...(resolvedBy ? { resolvedBy } : {}) });
+  if (task.regime === null || task.answers === null || task.classificationStatus === null) return fail(409, CLASSIFY_FIRST, `${task.taskIri} has no classification`, 'wrd.classify_task');
+  const levelRule = ctx.policy.levels.get(proposed.level);
+  if (!levelRule) return fail(400, 'Unknown allocation level.', `${proposed.level} is not a published level`);
+  const hasProbes = (probes?.length ?? 0) > 0;
   // 3–5. description and classification standing
   if (task.descriptionStatus === 'disputed') return fail(409, DISPUTED_DESCRIPTION, `${task.taskIri} is disputed by a party named on it`, 'wrd.revise_task');
   if (!task.classificationCurrent) return fail(409, STALE_CLASSIFICATION, `${task.taskIri} was classified against an earlier description`, 'wrd.classify_task');
   if (task.classificationStatus === 'disputed') return fail(409, DISPUTED_CLASSIFICATION, `the classification of ${task.taskIri} is disputed`, 'wrd.classify_task');
+  // 5b. an agent on the work needs the people named to have agreed how knowable it is
+  if (proposed.agentAddress !== undefined && task.classificationStatus !== 'ratified') {
+    return fail(409, UNRATIFIED_FOR_AGENT, `the classification of ${task.taskIri} is ${task.classificationStatus}, not ratified by everyone named on the task`, 'wrd.ratify_task');
+  }
   // 6–7. what the regime allows
   const regimeRule = ctx.policy.regimes.get(task.regime);
   if (!regimeRule) return fail(409, 'The published policy does not declare this regime.', String(task.regime));
   if (!regimeRule.permitsChange) return fail(409, task.regime === 'Turbulent' ? STABILISE_FIRST : `${task.regime} work: no allocation change is allowed.`, `${task.regime} routes to ${regimeRule.method}`);
-  if (!regimeRule.permittedLevels.includes(change.proposedLevel)) {
+  if (!regimeRule.permittedLevels.includes(proposed.level)) {
     const cap = ctx.policy.podPolicy?.maxLevel;
     const capRank = cap ? ctx.policy.levels.get(cap)?.autonomyRank : undefined;
     const capped = capRank !== undefined && levelRule.autonomyRank > capRank;
     const names = regimeRule.permittedLevels.join(', ') || 'none';
     return fail(409, `${task.regime} work permits only: ${names}.${capped ? ` This pod's policy caps the level at ${cap}.` : ''}`,
-      `${change.proposedLevel} is not permitted for ${task.regime} work`);
+      `${proposed.level} is not permitted for ${task.regime} work`);
   }
   // 8. probes
   if (regimeRule.requiresProbe) {
-    const why = probesWhy(change.probes);
+    const why = probesWhy(probes);
     if (why !== null) return fail(400, PROBES_REQUIRED, why);
   } else if (hasProbes) {
     return fail(400, `Probes are for Emergent work; this task's regime is ${task.regime}.`, 'probes were given on work that is not Emergent');
@@ -323,7 +358,7 @@ export function checkAllocation(change: AllocationChange, task: TaskForAllocatio
   if (!parties.ok) return fail(400, parties.error, parties.why);
   // 10. checkability
   if (levelRule.requiresCheckability.length > 0 && !levelRule.requiresCheckability.includes(task.answers.checkability)) {
-    return fail(409, UNCHECKABLE, `${change.proposedLevel} needs checkability ${levelRule.requiresCheckability.join(' or ')}; the answer was ${task.answers.checkability}`);
+    return fail(409, UNCHECKABLE, `${proposed.level} needs checkability ${levelRule.requiresCheckability.join(' or ')}; the answer was ${task.answers.checkability}`);
   }
   // 11. grants
   if (levelRule.requiresGrant) {
@@ -342,6 +377,26 @@ export function checkAllocation(change: AllocationChange, task: TaskForAllocatio
     }
   }
   return { ok: true, changed: true, proposed };
+}
+
+/**
+ * Why a task's allocation as it stands is one its classification would not allow, or null. Work
+ * is captured as it is done today, and an operator may report an agent already acting on it; this
+ * flags such a level once the task is classified (regime, checkability), so a reported current
+ * state never reads as an approved one.
+ */
+export function currentAllocationNote(current: Allocation, regime: Regime, answers: ClassificationAnswers, policy: EffectivePolicy): string | null {
+  const levelRule = policy.levels.get(current.level);
+  const regimeRule = policy.regimes.get(regime);
+  if (!levelRule || !regimeRule) return null;
+  if (!levelRule.requiresAgent && current.agentAddress === undefined) return null;
+  if (!regimeRule.permittedLevels.includes(current.level)) {
+    return `As captured, this task is done at ${current.level}, which ${regime} work does not permit; that is a reported current state, not an approved one. Propose a change.`;
+  }
+  if (levelRule.requiresCheckability.length > 0 && !levelRule.requiresCheckability.includes(answers.checkability)) {
+    return `As captured, an agent acts at ${current.level}, but the output's checkability is ${answers.checkability}; that is a reported current state, not an approved one. Propose a change.`;
+  }
+  return null;
 }
 
 export type PlanKind = 'valued' | 'probe';
@@ -679,8 +734,8 @@ export const PACKET_INSTRUCTIONS = [
   'Draft one task per distinct piece of work, each named verb-first ("Match each invoice to its purchase order").',
   'Every task cites 1 to 5 quotes copied EXACTLY from the document: at least 12 characters each, no ellipses, no paraphrase, no added words.',
   'The platform checks every quote against the document after Unicode NFC, straight quotes and collapsed whitespace, case-sensitively. A quote that does not match is flagged as unverified and is never corrected.',
-  'Do not invent performers, task kinds, allocation levels or numbers: the person who signs fills those in.',
-  'Declare yourself in draftedBy (kind, agent and model). If you leave it out the record says "not declared", never "unassisted".',
+  'Do not invent performers, task kinds, allocation levels or numbers: the person who signs fills those in (currentLevel, personAddress, agentAddress and taskKind for each task).',
+  'Declare yourself in draftedBy: kind "agent" with agent and model, or "person", or "not-declared". The capture refuses a map without draftedBy; "not-declared" is recorded as "not declared", never as "unassisted".',
 ].join('\n');
 
 export interface TaskMapPacket {
@@ -695,13 +750,13 @@ export interface TaskMapPacket {
   readonly context: { readonly document: { readonly title: string; readonly text: string } };
   readonly draftTemplate: {
     readonly workflow: { readonly title: string; readonly unitLabel: string };
-    readonly tasks: ReadonlyArray<{ readonly name: string; readonly description: string; readonly sourceQuotes: readonly string[]; readonly suggestedTaskKind: string }>;
+    readonly tasks: ReadonlyArray<{ readonly name: string; readonly description: string; readonly sourceQuotes: readonly string[] }>;
     readonly draftedBy: { readonly kind: 'agent'; readonly agent: string; readonly model: string };
   };
   readonly next: { readonly review: string; readonly toolName: 'wrd.record_task_map'; readonly action: 'urn:iep:action:wrd:record-task-map'; readonly sendAlso: 'document_text'; readonly podUrl?: string };
 }
 
-const PACKET_REVIEW = 'The person pastes this draft into the capture table, names the people and agents for each task, chooses each task kind, and signs.';
+const PACKET_REVIEW = 'The person pastes this draft into the capture table, adds each task\'s currentLevel, personAddress or agentAddress and registered taskKind, and signs it as a wrd:record-task-map envelope (wrd.envelope_template gives the full payload shape).';
 
 /** The instructions a client's own agent follows to draft a task map. Nothing is generated here. */
 export function buildTaskMapPacket(input: { readonly documentTitle: string; readonly documentText: string; readonly workflowTitle?: string; readonly podUrl?: string }): TaskMapPacket {
@@ -717,7 +772,7 @@ export function buildTaskMapPacket(input: { readonly documentTitle: string; read
     context: { document: { title: input.documentTitle, text: input.documentText } },
     draftTemplate: {
       workflow: { title: input.workflowTitle ?? '', unitLabel: '' },
-      tasks: [{ name: '', description: '', sourceQuotes: [], suggestedTaskKind: '' }],
+      tasks: [{ name: '', description: '', sourceQuotes: [] }],
       draftedBy: { kind: 'agent', agent: '<fill>', model: '<fill, or not-declared>' },
     },
     next: {

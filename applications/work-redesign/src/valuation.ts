@@ -81,7 +81,22 @@ function unknownKey(o: Record<string, unknown>, allowed: readonly string[], path
   return null;
 }
 
-function coerceTri(v: unknown, path: string, kind: 'rate' | 'amount'): Tri | string {
+/**
+ * The largest magnitude any input may take. Products of several inputs must stay finite: two
+ * inputs of 1e200 multiply to Infinity, and a valuation that contains Infinity or NaN is a
+ * number the engine never computed. 1e12 per input keeps every product the model forms (at most
+ * four factors) far inside double range.
+ */
+export const MAX_INPUT = 1e12;
+
+interface TriRules {
+  /** Only a task state's own fields may be marked not applicable (0, 0, 0). */
+  readonly allowNotApplicable?: boolean;
+  /** A proposed state has never run: 'measured' there must cite where it was measured. */
+  readonly proposedState?: boolean;
+}
+
+function coerceTri(v: unknown, path: string, kind: 'rate' | 'amount', rules: TriRules = {}): Tri | string {
   if (!isObject(v)) return `${path} must be {low, likely, high, basis}`;
   const extra = unknownKey(v, ['low', 'likely', 'high', 'basis', 'note', 'source'], path);
   if (extra) return extra;
@@ -90,10 +105,18 @@ function coerceTri(v: unknown, path: string, kind: 'rate' | 'amount'): Tri | str
     || !Number.isFinite(low) || !Number.isFinite(likely) || !Number.isFinite(high)) return `${path}: low, likely and high must be finite numbers`;
   if (!(low <= likely && likely <= high)) return `${path}: low <= likely <= high is required`;
   if (low < 0) return `${path} cannot be negative`;
+  if (high > MAX_INPUT) return `${path}: values above ${MAX_INPUT} are refused, so that every product of inputs stays a finite number`;
   if (kind === 'rate' && high > 1) return `${path} is a rate and must lie within [0, 1]`;
   if (!isOneOf(INPUT_BASES, v['basis'])) return `${path}.basis must be one of ${INPUT_BASES.join(', ')}`;
   if (v['note'] !== undefined && (typeof v['note'] !== 'string' || v['note'].length > NOTE_MAX)) return `${path}.note must be text of at most ${NOTE_MAX} characters`;
   if (v['source'] !== undefined && !isAbsoluteIri(v['source'])) return `${path}.source must be an absolute IRI`;
+  if (v['basis'] === 'not-applicable') {
+    if (!rules.allowNotApplicable) return `${path}.basis not-applicable is only for a task state's own fields`;
+    if (low !== 0 || likely !== 0 || high !== 0) return `${path}: basis not-applicable means 0, 0, 0`;
+  }
+  if (v['basis'] === 'measured' && rules.proposedState && v['source'] === undefined) {
+    return `${path}: a proposed state has not run yet, so basis measured needs a source (the IRI of the runs, outcome or pilot it was measured on); otherwise mark it an estimate`;
+  }
   return {
     low, likely, high, basis: v['basis'],
     ...(typeof v['note'] === 'string' ? { note: v['note'] } : {}),
@@ -101,13 +124,13 @@ function coerceTri(v: unknown, path: string, kind: 'rate' | 'amount'): Tri | str
   };
 }
 
-function coerceState(v: unknown, path: string): TaskState | string {
+function coerceState(v: unknown, path: string, which: 'current' | 'proposed'): TaskState | string {
   if (!isObject(v)) return `${path} must be an object of ${STATE_FIELDS.join(', ')}`;
   const extra = unknownKey(v, STATE_FIELDS, path);
   if (extra) return extra;
   const out: Partial<Record<StateField, Tri>> = {};
   for (const f of STATE_FIELDS) {
-    const t = coerceTri(v[f], `${path}.${f}`, RATE_FIELDS.has(f) ? 'rate' : 'amount');
+    const t = coerceTri(v[f], `${path}.${f}`, RATE_FIELDS.has(f) ? 'rate' : 'amount', { allowNotApplicable: true, proposedState: which === 'proposed' });
     if (typeof t === 'string') return t;
     out[f] = t;
   }
@@ -115,13 +138,19 @@ function coerceState(v: unknown, path: string): TaskState | string {
 }
 
 /**
- * Check valuation inputs against the plan they value: every triangle finite, ordered, with a
- * basis; rates within [0, 1]; amounts not negative; freed-hours dispositions for exactly the
- * valued changed tasks; task keys within the plan; changed tasks with current AND proposed
- * states; unchanged tasks with no proposed state, and with inputs whenever throughput changes
- * (then they no longer cancel). Returns a normalised copy holding only known fields.
+ * Check valuation inputs against the plan they value: every triangle finite, ordered, at most
+ * MAX_INPUT, with a basis; rates within [0, 1]; amounts not negative; 'not-applicable' only as
+ * 0/0/0 inside a task state; 'measured' on a proposed state only with a source; freed-hours
+ * dispositions for exactly the valued changed tasks; task keys within the plan; changed tasks
+ * with current AND proposed states; oversight costed wherever a person decides on or audits an
+ * agent's work; unchanged tasks with no proposed state, and with inputs whenever throughput
+ * changes (then they no longer cancel). Returns a normalised copy holding only known fields.
  */
-export function coerceValuationInputs(v: unknown, plan: { readonly taskIris: readonly string[]; readonly valuedChanged: ReadonlySet<string> }): Coerced<ValuationInputs> {
+export function coerceValuationInputs(v: unknown, plan: {
+  readonly taskIris: readonly string[]; readonly valuedChanged: ReadonlySet<string>;
+  /** Changed tasks whose proposed level has a person decide on or audit an agent's work. */
+  readonly personOversees?: ReadonlySet<string>;
+}): Coerced<ValuationInputs> {
   const fail = (why: string): Coerced<ValuationInputs> => ({ ok: false, why });
   if (!isObject(v)) return fail('inputs must be an object');
   const extra = unknownKey(v, ['currency', 'unitsPerWeek', 'valuePerUnit', 'hourlyCost', 'oneOffCost', 'horizonMonths', 'rampMonths',
@@ -186,13 +215,16 @@ export function coerceValuationInputs(v: unknown, plan: { readonly taskIris: rea
       if (typeof h === 'string') return fail(h);
       hourly = h;
     }
-    const current = coerceState(raw['current'], `${path}.current`);
+    const current = coerceState(raw['current'], `${path}.current`, 'current');
     if (typeof current === 'string') return fail(current);
     let proposed: TaskState | undefined;
     if (plan.valuedChanged.has(iri)) {
       if (raw['proposed'] === undefined) return fail(`${path}.proposed is required: this task changes`);
-      const pState = coerceState(raw['proposed'], `${path}.proposed`);
+      const pState = coerceState(raw['proposed'], `${path}.proposed`, 'proposed');
       if (typeof pState === 'string') return fail(pState);
+      if (plan.personOversees?.has(iri) && pState.oversightHoursPerRun.high === 0) {
+        return fail(`${path}.proposed.oversightHoursPerRun is 0: a person decides on or audits the agent's work at this level, so that time must be costed (a range, even a narrow one)`);
+      }
       proposed = pState;
     } else if (raw['proposed'] !== undefined) {
       return fail(`${path}.proposed: this task does not change, so it has no proposed state`);
@@ -215,6 +247,23 @@ export function coerceValuationInputs(v: unknown, plan: { readonly taskIris: rea
       freedHours, tasks,
     },
   };
+}
+
+/**
+ * The path of the first number in a valuation result that is not finite, or null. A result that
+ * holds NaN or Infinity is refused, never published: JSON would carry it as null, and the graph
+ * as a number nobody computed.
+ */
+export function nonFiniteIn(v: unknown, path = 'result'): string | null {
+  if (typeof v === 'number') return Number.isFinite(v) ? null : path;
+  if (Array.isArray(v)) {
+    for (const [i, x] of v.entries()) { const bad = nonFiniteIn(x, `${path}[${i}]`); if (bad) return bad; }
+    return null;
+  }
+  if (isObject(v)) {
+    for (const [k, x] of Object.entries(v)) { const bad = nonFiniteIn(x, `${path}.${k}`); if (bad) return bad; }
+  }
+  return null;
 }
 
 // ── Primitives ────────────────────────────────────────────────────────────────────────────
@@ -328,7 +377,8 @@ export interface ValuationResult {
     readonly topSensitivityEstimates: readonly string[];
     readonly unchangedTasks: 'entered' | 'not entered: unchanged tasks cancel when throughput is unchanged';
     readonly unconfirmed: ReadonlyArray<{ readonly path: string; readonly why: string }>;
-    readonly measuredAgentCost: ReadonlyArray<{ readonly taskKind: string; readonly runs: number; readonly mean: number; readonly currency: string }>;
+    /** The mean cost per run the agent itself declared on runs a person reviewed: agent-reported, not instrumented. */
+    readonly reportedAgentCost: ReadonlyArray<{ readonly taskKind: string; readonly runs: number; readonly mean: number; readonly currency: string; readonly basis: typeof REPORTED_COST_BASIS }>;
   };
   readonly pilot: ReadonlyArray<{
     readonly taskIri: string; readonly ceiling: number; readonly confidence: 0.95; readonly runsNeeded: number;
@@ -443,14 +493,15 @@ export const VALUATION_ASSUMPTIONS: readonly string[] = [
   "Inputs marked 'estimate' are unmeasured.",
 ];
 
-const UNCONFIRMED_AGENT_COST = 'no measured run cost for this kind of task yet';
+const UNCONFIRMED_AGENT_COST = 'no person-reviewed run of this kind of task reports a cost yet';
+export const REPORTED_COST_BASIS = 'agent-reported on person-reviewed runs';
 const RATIO_NEEDS_EVERY_TASK = "unchanged tasks were not entered; the ratio needs every task's cost";
 
 /**
  * Value a plan. `taskOrder` is the plan's task order (it fixes the draw order); `valuedChanged`
  * the changed tasks; `agentLevelTasks` the changed tasks whose proposed level names an agent;
- * `measuredAgentCost` the mean run cost per task kind measured from logged agent runs, in the
- * inputs' currency.
+ * `reportedAgentCost` the mean cost per run, by task kind, that the agent declared on runs a
+ * person reviewed, in the inputs' currency (shown beside the estimate, labelled agent-reported).
  */
 export function valuePlan(inputs: ValuationInputs, opts: {
   readonly planIri: string;
@@ -458,7 +509,7 @@ export function valuePlan(inputs: ValuationInputs, opts: {
   readonly valuedChanged: ReadonlySet<string>;
   readonly agentLevelTasks: ReadonlySet<string>;
   readonly taskKindOf: ReadonlyMap<string, string>;
-  readonly measuredAgentCost: ReadonlyMap<string, { readonly runs: number; readonly mean: number }>;
+  readonly reportedAgentCost: ReadonlyMap<string, { readonly runs: number; readonly mean: number }>;
   readonly methodIri: string;
   readonly draws?: number;
 }): ValuationResult {
@@ -543,14 +594,14 @@ export function valuePlan(inputs: ValuationInputs, opts: {
   for (const { tri } of paths) byBasis[tri.basis] += 1;
   const basisOf = new Map(paths.map(({ path, tri }) => [path, tri.basis]));
   const unconfirmed: { path: string; why: string }[] = [];
-  const measured: { taskKind: string; runs: number; mean: number; currency: string }[] = [];
+  const reported: { taskKind: string; runs: number; mean: number; currency: string; basis: typeof REPORTED_COST_BASIS }[] = [];
   const seenKinds = new Set<string>();
   for (const t of changedInOrder) {
     if (!opts.agentLevelTasks.has(t)) continue;
     const kind = opts.taskKindOf.get(t) ?? '';
-    const m = opts.measuredAgentCost.get(kind);
+    const m = opts.reportedAgentCost.get(kind);
     if (!m) unconfirmed.push({ path: `tasks[${t}].proposed.agentCostPerRun`, why: UNCONFIRMED_AGENT_COST });
-    else if (!seenKinds.has(kind)) { seenKinds.add(kind); measured.push({ taskKind: kind, runs: m.runs, mean: round(m.mean, 4), currency: inputs.currency }); }
+    else if (!seenKinds.has(kind)) { seenKinds.add(kind); reported.push({ taskKind: kind, runs: m.runs, mean: round(m.mean, 4), currency: inputs.currency, basis: REPORTED_COST_BASIS }); }
   }
 
   const vtcWhy = !everyTaskEntered ? RATIO_NEEDS_EVERY_TASK
@@ -591,11 +642,11 @@ export function valuePlan(inputs: ValuationInputs, opts: {
     },
     inputs: {
       byBasis,
-      noRange: paths.filter(({ tri }) => tri.low === tri.likely && tri.likely === tri.high).map(({ path }) => path),
+      noRange: paths.filter(({ tri }) => tri.basis !== 'not-applicable' && tri.low === tri.likely && tri.likely === tri.high).map(({ path }) => path),
       topSensitivityEstimates: cashScenario.sensitivity.slice(0, 3).filter((r) => basisOf.get(r.input) === 'estimate').map((r) => r.input),
       unchangedTasks: everyTaskEntered ? 'entered' : 'not entered: unchanged tasks cancel when throughput is unchanged',
       unconfirmed,
-      measuredAgentCost: measured,
+      reportedAgentCost: reported,
     },
     pilot,
     assumptions: VALUATION_ASSUMPTIONS,
@@ -651,6 +702,27 @@ export function checkOutcomeWindow(w: { readonly countersignedAt: string; readon
     };
   }
   return null;
+}
+
+const WEEK_MS = 7 * 86_400_000;
+
+/**
+ * A measurement window must be as long as the plan declared (windowWeeks). A kept change
+ * measured over a shorter window is refused: a grader could otherwise pick a short, favourable
+ * stretch. A change stopped early or reverted may be measured over less, says so
+ * (shorterThanPlanned), and stays out of the calibration cells.
+ */
+export function checkWindowLength(w: { readonly windowStart: string; readonly windowEnd: string; readonly windowWeeks: number; readonly disposition: OutcomeDisposition }):
+  { readonly ok: false; readonly status: 409; readonly why: string; readonly detail: string } | { readonly ok: true; readonly weeks: number; readonly shorterThanPlanned: boolean } {
+  const weeks = (Date.parse(w.windowEnd) - Date.parse(w.windowStart)) / WEEK_MS;
+  const shorter = weeks + 1e-9 < w.windowWeeks;
+  if (shorter && w.disposition === 'kept') {
+    return {
+      ok: false, status: 409, why: 'The measurement window is shorter than the plan declared.',
+      detail: `the window is ${round(weeks, 2)} weeks; the measurement plan declared ${w.windowWeeks}. Measure the whole window, or record the change as stopped early or reverted, with a note`,
+    };
+  }
+  return { ok: true, weeks: round(weeks, 4), shorterThanPlanned: shorter };
 }
 
 /**
@@ -717,6 +789,8 @@ export interface DecisionForCalibration {
   readonly decisionIri: string; readonly level: AllocationLevel; readonly metric: OutcomeMetric; readonly basis: ComparisonBasis;
   readonly verdict: BandVerdict; readonly rampAdjusted: boolean; readonly disposition: OutcomeDisposition;
   readonly measuredBy: string; readonly submittedAt: string; readonly measuredAt: string; readonly demo: boolean;
+  /** Measured over less than the declared window (only a change stopped early or reverted can be): kept out of the cells and counted. */
+  readonly shortWindow: boolean;
 }
 export interface ReviewedRun {
   readonly runIri: string; readonly taskIri: string; readonly agentDid: string; readonly taskKind: string; readonly model: string;
@@ -729,13 +803,17 @@ export interface ProbeOutcome { readonly decisionIri: string; readonly taskIri: 
 export interface PredictionCell {
   readonly kind: string; readonly metric: OutcomeMetric; readonly level: AllocationLevel; readonly basisClass: 'controlled' | 'uncontrolled'; readonly label: string;
   readonly samples: number; readonly hitRate: number | null; readonly meanBrier: number | null; readonly meanOrdinalDistance: number | null;
-  readonly status: 'Hypothetical' | 'Asserted'; readonly excludedInconclusive: number; readonly rampAdjusted: number;
+  readonly status: 'Hypothetical' | 'Asserted'; readonly excludedInconclusive: number; readonly excludedShortWindow: number; readonly rampAdjusted: number;
   readonly dispositions: Readonly<Record<OutcomeDisposition, number>>; readonly demoSamples: number; readonly scriptedLabel: string | null;
   readonly decisions: readonly string[];
 }
 export interface AgentCell {
   readonly kind: string; readonly agentDid: string; readonly taskKind: string; readonly model: string; readonly currentModel: boolean;
+  /** hitRate, meanBrier and meanOrdinalDistance measure how well the agent's OWN assessment of each run agreed with the person's verdict. */
   readonly samples: number; readonly hitRate: number | null; readonly meanBrier: number | null; readonly meanOrdinalDistance: number | null;
+  /** The share of reviewed runs a person accepted: how often the work itself was good enough. */
+  readonly acceptedShare: number | null;
+  readonly readyClaims: number;
   readonly readyClaimPrecision: number | null; readonly distinctConfirmers: number; readonly distinctConfirmersNote: string;
   readonly status: 'Hypothetical' | 'Asserted'; readonly demoSamples: number; readonly scriptedLabel: string | null;
 }
@@ -752,6 +830,7 @@ export interface CalibrationReport {
 
 const PREDICTION_PROBABILITIES = { 'below-band': (1 - NOMINAL_BAND_COVERAGE) / 2, 'in-band': NOMINAL_BAND_COVERAGE, 'above-band': (1 - NOMINAL_BAND_COVERAGE) / 2 };
 
+/** The agent's own assessment of each run, scored against the person's verdict: calibration of its self-assessment. */
 function runOutcomes(runs: readonly ReviewedRun[], kind: DecisionKind): LoopOutcome[] {
   return runs.map((r) => {
     const j = judgment(kind, {
@@ -760,6 +839,23 @@ function runOutcomes(runs: readonly ReviewedRun[], kind: DecisionKind): LoopOutc
     });
     return outcome(j, r.verdict, { did: r.reviewerDid, kind: 'human' }, new Date(r.reviewedAt));
   });
+}
+
+/**
+ * Every run scored as the fixed claim "this work will be accepted", the way a prediction is
+ * scored as the fixed claim "in band": a hit is a run a person accepted. The kit's competence
+ * rating over these outcomes is the share of the agent's work people accepted — what a grant
+ * to act alone has to rest on — whatever the agent said about its own runs.
+ */
+function acceptanceOutcomes(runs: readonly ReviewedRun[], kind: DecisionKind): LoopOutcome[] {
+  return runs.map((r) => {
+    const j = judgment(kind, { id: r.runIri, subject: r.runIri, answer: 'accepted', judge: r.agentDid, createdAt: r.performedAt });
+    return outcome(j, r.verdict, { did: r.reviewerDid, kind: 'human' }, new Date(r.reviewedAt));
+  });
+}
+
+function acceptedShareOf(runs: readonly ReviewedRun[]): number | null {
+  return runs.length === 0 ? null : round(runs.filter((r) => r.verdict === 'accepted').length / runs.length, 4);
 }
 
 function readyClaimPrecisionOf(runs: readonly ReviewedRun[]): number | null {
@@ -785,7 +881,7 @@ export function calibrationReport(input: {
   const predictionCells: PredictionCell[] = [...byKind.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([k, ds]) => {
     const first = ds[0] as DecisionForCalibration;
     const kind = predictionKind(first.metric, first.level, first.basis);
-    const graded = ds.filter((d) => d.verdict !== 'inconclusive');
+    const graded = ds.filter((d) => d.verdict !== 'inconclusive' && !d.shortWindow);
     const outcomes = graded.map((d) => {
       const j = judgment(kind, { id: d.decisionIri, subject: d.decisionIri, answer: 'in-band', probabilities: PREDICTION_PROBABILITIES, judge: VALUATION_JUDGE, createdAt: d.submittedAt });
       return outcome(j, d.verdict, { did: d.measuredBy, kind: 'human' }, new Date(d.measuredAt));
@@ -799,7 +895,8 @@ export function calibrationReport(input: {
       samples: cell?.samples ?? 0, hitRate: cell?.hitRate ?? null, meanBrier: cell?.meanBrier ?? null,
       meanOrdinalDistance: meanOrdinalDistance(outcomes, BAND_ALTERNATIVES),
       status: cell?.status ?? 'Hypothetical',
-      excludedInconclusive: ds.length - graded.length,
+      excludedInconclusive: ds.filter((d) => d.verdict === 'inconclusive' && !d.shortWindow).length,
+      excludedShortWindow: ds.filter((d) => d.shortWindow).length,
       rampAdjusted: ds.filter((d) => d.rampAdjusted).length,
       dispositions: { kept: ds.filter((d) => d.disposition === 'kept').length, reverted: ds.filter((d) => d.disposition === 'reverted').length, 'stopped-early': ds.filter((d) => d.disposition === 'stopped-early').length },
       demoSamples, scriptedLabel: demoSamples > 0 ? DEMO_LABEL : null,
@@ -823,6 +920,7 @@ export function calibrationReport(input: {
       currentModel: input.currentModelOf(first.agentDid) === first.model,
       samples: cell?.samples ?? 0, hitRate: cell?.hitRate ?? null, meanBrier: cell?.meanBrier ?? null,
       meanOrdinalDistance: meanOrdinalDistance(outcomes, RUN_ALTERNATIVES),
+      acceptedShare: acceptedShareOf(rs), readyClaims: rs.filter((r) => r.selfAnswer === 'accepted').length,
       readyClaimPrecision: readyClaimPrecisionOf(rs),
       distinctConfirmers: new Set(rs.map((r) => r.reviewerPersonRef)).size, distinctConfirmersNote: DISTINCT_PEOPLE_NOTE,
       status: cell?.status ?? 'Hypothetical', demoSamples, scriptedLabel: demoSamples > 0 ? DEMO_LABEL : null,
@@ -854,7 +952,11 @@ export interface GrantEvaluation {
   readonly humanConfirmations: number;
   readonly distinctConfirmers: number;
   readonly distinctConfirmersNote: string;
+  /** The kit's competence rating over acceptance outcomes: the share of reviewed runs a person accepted. */
   readonly rating: number | null;
+  readonly acceptedShare: number | null;
+  /** Runs the agent itself called ready ('accepted'); precision is measured over these. */
+  readonly readyClaims: number;
   readonly readyClaimPrecision: number | null;
   readonly criticalFailuresOnReadyClaims: number;
   readonly criticalFailures: number;
@@ -864,12 +966,21 @@ export interface GrantEvaluation {
   readonly taskIris: readonly string[];
 }
 
+const pct = (x: number): string => `${round(x * 100, 1)}%`;
+
 /**
- * Whether an agent has earned a grant on one kind of task, checks in order: only runs a
- * person reviewed, on the agent's currently declared model, after the latest revocation;
- * enough of them; the kit's autonomy rule (rating on competence ≥ floor over enough
- * person-confirmed outcomes); enough DISTINCT reviewers by attested person reference; and
- * precision on the runs the agent itself called ready, with no critical failure among them.
+ * Whether an agent has earned a grant on one kind of task, checks in order:
+ *   1. only runs a person reviewed, on the agent's currently declared model, after the latest
+ *      revocation, and at least minSamples of them;
+ *   2. the kit's autonomy rule over ACCEPTANCE outcomes — each run is the fixed claim "this
+ *      work will be accepted", so the competence rating is the share of reviewed runs a person
+ *      accepted, and it must clear the floor (an agent whose work is reworked 95% of the time
+ *      does not earn, however truthfully it labels its own runs);
+ *   3. enough DISTINCT reviewers by attested person reference (the kit counts outcomes);
+ *   4. at least minSamples runs the agent itself called ready, because under a grant the agent
+ *      acts alone only on runs it calls ready (the rest go to a person) — precision over one
+ *      ready claim proves nothing;
+ *   5. precision on those ready claims, with no critical failure among them.
  */
 export function evaluateGrant(input: {
   readonly agentDid: string; readonly taskKind: string; readonly model: string; readonly runs: readonly ReviewedRun[];
@@ -881,12 +992,14 @@ export function evaluateGrant(input: {
     .filter((r) => r.agentDid === input.agentDid && r.taskKind === input.taskKind && r.model === input.model && Date.parse(r.reviewedAt) > sinceMs)
     .sort((a, b) => a.reviewedAt.localeCompare(b.reviewedAt) || a.runIri.localeCompare(b.runIri));
   const samples = counted.length;
+  const accepted = counted.filter((r) => r.verdict === 'accepted').length;
   const distinct = new Set(counted.map((r) => r.reviewerPersonRef)).size;
   const ready = counted.filter((r) => r.selfAnswer === 'accepted');
   const precision = readyClaimPrecisionOf(counted);
   const criticalOnReady = ready.filter((r) => r.verdict === 'critical-failure').length;
   const base = {
     samples, humanConfirmations: samples, distinctConfirmers: distinct, distinctConfirmersNote: DISTINCT_PEOPLE_NOTE,
+    acceptedShare: acceptedShareOf(counted), readyClaims: ready.length,
     readyClaimPrecision: precision, criticalFailuresOnReadyClaims: criticalOnReady,
     criticalFailures: counted.filter((r) => r.verdict === 'critical-failure').length,
     countedSince: input.since, model: input.model,
@@ -897,7 +1010,7 @@ export function evaluateGrant(input: {
     return { ...base, earned: false, why: `${samples} person-reviewed runs on model ${input.model}${sinceText}; the policy needs ${p.minSamples}.`, kitWhy: null, rating: null };
   }
   const kind = runKind(input.taskKind);
-  const outcomes = runOutcomes(counted, kind);
+  const outcomes = acceptanceOutcomes(counted, kind);
   const cells = calibration(outcomes, [kind], p.minSamples);
   const fromExecution = `urn:wrd:grant-evaluation:${h16(canonicalJson({ agent: input.agentDid, taskKind: input.taskKind, model: input.model, runs: base.runIris }))}`;
   const att = attestation(cells, [kind], { attestor: input.attestor, subject: input.agentDid, descriptorUrl: input.grantGraphUrl, fromExecution, attestedAt: input.now.toISOString() });
@@ -905,19 +1018,33 @@ export function evaluateGrant(input: {
   const rated = snap?.axes[kind.axis];
   const rating = typeof rated === 'number' ? round(rated, 4) : null;
   const decision = autonomy({ kind: kind.kind, floor: p.floor, minSamples: p.minSamples, minHumanConfirmers: p.minHumanConfirmations }, kind, snap, att);
-  if (!decision.granted) return { ...base, earned: false, why: decision.why, kitWhy: decision.why, rating };
+  const acceptedText = `a person accepted ${accepted} of ${samples} reviewed runs (${pct(accepted / samples)})`;
+  if (!decision.granted) {
+    return {
+      ...base, earned: false, kitWhy: decision.why, rating,
+      why: rating !== null && rating < p.floor ? `${acceptedText}; the policy needs at least ${pct(p.floor)}.` : decision.why,
+    };
+  }
   if (distinct < p.minDistinctConfirmers) {
     return {
       ...base, earned: false, kitWhy: decision.why, rating,
       why: `reviewed by ${distinct} ${DISTINCT_PEOPLE_NOTE.replace('; this bridge cannot verify that', '')}; the policy needs ${p.minDistinctConfirmers}. This bridge cannot verify that they are different people.`,
     };
   }
-  if (precision === null) return { ...base, earned: false, kitWhy: decision.why, rating, why: 'the agent never called one of its runs ready, so its ready claims cannot be checked' };
-  if (precision < p.minReadyClaimPrecision) {
-    return { ...base, earned: false, kitWhy: decision.why, rating, why: `a person accepted ${round(precision * 100, 1)}% of the runs the agent called ready; the policy needs ${round(p.minReadyClaimPrecision * 100, 1)}%.` };
+  if (ready.length < p.minSamples) {
+    return {
+      ...base, earned: false, kitWhy: decision.why, rating,
+      why: `the agent called ${ready.length} of its reviewed runs ready; at least ${p.minSamples} ready claims are needed before their precision means anything (under a grant the agent acts alone only on runs it calls ready).`,
+    };
+  }
+  if (precision === null || precision < p.minReadyClaimPrecision) {
+    return { ...base, earned: false, kitWhy: decision.why, rating, why: `a person accepted ${pct(precision ?? 0)} of the ${ready.length} runs the agent called ready; the policy needs ${pct(p.minReadyClaimPrecision)}.` };
   }
   if (criticalOnReady > 0) {
     return { ...base, earned: false, kitWhy: decision.why, rating, why: `${criticalOnReady} run(s) the agent called ready were critical failures.` };
   }
-  return { ...base, earned: true, kitWhy: decision.why, rating, why: `earned: ${decision.why}; reviewed by ${distinct} ${DISTINCT_PEOPLE_NOTE}; ready-claim precision ${precision}.` };
+  return {
+    ...base, earned: true, kitWhy: decision.why, rating,
+    why: `earned: ${acceptedText}, clearing ${pct(p.floor)}; reviewed by ${distinct} ${DISTINCT_PEOPLE_NOTE}; ${pct(precision)} of ${ready.length} ready claims accepted.`,
+  };
 }

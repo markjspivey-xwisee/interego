@@ -17,15 +17,15 @@ import {
   type AllocationLevel, type EffectivePolicy, type Regime,
 } from '../src/ontology.js';
 import {
-  classifyTask, coerceAnswers, checkParties, checkAllocation, planKindOf, performerOf, namedPartiesOf, coerceChange,
+  classifyTask, coerceAnswers, checkParties, checkAllocation, checkActingUnderGrant, currentAllocationNote, planKindOf, performerOf, namedPartiesOf, coerceChange,
   normaliseForQuote, verifyQuote, verifyTaskQuotes, quoteStatusOf, coerceCapture, coerceRevision, applyTaskChanges, taskTextSha256,
   buildTaskMapPacket, MIN_QUOTE_CHARS,
   type ClassificationAnswers, type TaskForAllocation, type GrantState, type AllocationChange, type Allocation,
 } from '../src/work.js';
 import {
   coerceValuationInputs, valuePlan, seedFor, prng, sampleTriangular, percentile, npvOf, runsForRuleOfThree, meanRampFactor,
-  monthsBetween, checkOutcomeWindow, gradeOutcome, calibrationReport, evaluateGrant, meanOrdinalDistance, predictionKind, runKind,
-  DEMO_LABEL, DISTINCT_PEOPLE_NOTE, MONTH_DAYS,
+  monthsBetween, checkOutcomeWindow, checkWindowLength, gradeOutcome, calibrationReport, evaluateGrant, meanOrdinalDistance, predictionKind, runKind,
+  nonFiniteIn, DEMO_LABEL, DISTINCT_PEOPLE_NOTE, MONTH_DAYS, MAX_INPUT,
   type Tri, type TaskState, type ValuationInputs, type ReviewedRun, type DecisionForCalibration,
 } from '../src/valuation.js';
 import {
@@ -210,7 +210,7 @@ describe('classification', () => {
 const registered = { isRegisteredPerson: (a: string) => a === PERSON || a === PERSON2, isRegisteredAgent: (a: string) => a === AGENT_ADDR };
 const task = (o: Partial<TaskForAllocation> = {}): TaskForAllocation => ({
   taskIri: T1, taskKind: 'invoice-matching', current: { level: 'person', personAddress: PERSON },
-  descriptionStatus: 'ratified', regime: 'Evident', answers: answers(), classificationStatus: 'classified', classificationCurrent: true, ...o,
+  descriptionStatus: 'ratified', regime: 'Evident', answers: answers(), classificationStatus: 'ratified', classificationCurrent: true, ...o,
 });
 const noGrant = (): GrantState => ({ active: false, why: 'no grant' });
 const ctxWith = (grantFor: (a: string, k: string) => GrantState = noGrant, pol: EffectivePolicy = effective) => ({ policy: pol, ...registered, grantFor });
@@ -301,6 +301,45 @@ describe('parties and allocation', () => {
     const capped = effectivePolicy(policy, { maxLevel: 'agent-acts-person-audits' }, null);
     expect(checkAllocation(within, task(), ctxWith(active(500), capped))).toMatchObject({ ok: false, status: 409, error: expect.stringMatching(/This pod's policy caps the level at agent-acts-person-audits\./) });
   });
+
+  it('puts an agent on work only once everyone named has ratified its classification; silence is not assent', () => {
+    const drafts: AllocationChange = { taskIri: T1, proposedLevel: 'agent-drafts-person-decides', agentAddress: AGENT_ADDR };
+    expect(checkAllocation(drafts, task({ classificationStatus: 'classified' }), ctxWith()))
+      .toMatchObject({ ok: false, status: 409, error: expect.stringMatching(/ratified how knowable it is; their silence is not assent/), resolvedBy: 'wrd.ratify_task' });
+    expect(checkAllocation(drafts, task(), ctxWith())).toMatchObject({ ok: true, changed: true });
+    // A change that names no agent does not need it.
+    expect(checkAllocation({ taskIri: T1, proposedLevel: 'person-with-agent-assist' }, task({ classificationStatus: 'classified' }), ctxWith())).toMatchObject({ ok: true });
+    // ...but an assisting agent is an agent on the work.
+    expect(checkAllocation({ taskIri: T1, proposedLevel: 'person-with-agent-assist', agentAddress: AGENT_ADDR }, task({ classificationStatus: 'classified' }), ctxWith())).toMatchObject({ ok: false, status: 409 });
+  });
+
+  it('checks a run under a grant against the task as it stands: regime, checkability, worst case, ratification and the grant', () => {
+    const grant = (): GrantState => ({ active: true, grantIri: 'urn:wrd:grant:x:y', evidenceTaskIris: [T1], runsCounted: 24, criticalFailures: 0 });
+    const ctx = ctxWith(grant);
+    const inForce = { level: 'agent-acts-within-grant' as const, agentAddress: AGENT_ADDR };
+    expect(checkActingUnderGrant(AGENT_ADDR, task({ current: inForce }), ctx)).toEqual({ ok: true, changed: true, proposed: inForce });
+    // The review's reproduction: the grant is held on the kind of task, but THIS task is Turbulent, not checkable and critical.
+    const turbulent = task({ current: inForce, regime: 'Turbulent', answers: answers({ situationStable: 'unstable', checkability: 'not-checkable', worstCase: 'critical' }) });
+    expect(checkActingUnderGrant(AGENT_ADDR, turbulent, ctx)).toMatchObject({ ok: false, status: 409, error: 'Turbulent work: act to stabilise first; no allocation change.' });
+    expect(checkActingUnderGrant(AGENT_ADDR, task({ current: inForce, regime: 'Knowable' }), ctx)).toMatchObject({ ok: false, status: 409, error: expect.stringMatching(/^Knowable work permits only/) });
+    expect(checkActingUnderGrant(AGENT_ADDR, task({ current: inForce, answers: answers({ worstCase: 'critical' }) }), ctx)).toMatchObject({ ok: false, status: 409, error: expect.stringMatching(/needs 300 clean person-reviewed runs; this grant rests on 24/) });
+    expect(checkActingUnderGrant(AGENT_ADDR, task({ current: inForce, classificationStatus: 'disputed' }), ctx)).toMatchObject({ ok: false, status: 409 });
+    expect(checkActingUnderGrant(AGENT_ADDR, task({ current: inForce, descriptionStatus: 'disputed' }), ctx)).toMatchObject({ ok: false, status: 409, resolvedBy: 'wrd.revise_task' });
+    expect(checkActingUnderGrant(AGENT_ADDR, task({ current: inForce, classificationCurrent: false }), ctx)).toMatchObject({ ok: false, status: 409 });
+    expect(checkActingUnderGrant(AGENT_ADDR, task({ current: inForce }), ctxWith())).toMatchObject({ ok: false, status: 409, error: expect.stringMatching(/No active grant/) });
+    // A suspended allocation (its grant inactive) is not "no change": proposing it again must pass every rule.
+    const again: AllocationChange = { taskIri: T1, proposedLevel: 'agent-acts-within-grant', agentAddress: AGENT_ADDR };
+    expect(checkAllocation(again, task({ current: inForce }), ctxWith())).toMatchObject({ ok: true, changed: false });
+    expect(checkAllocation(again, task({ current: inForce, currentSuspended: true }), ctxWith())).toMatchObject({ ok: false, status: 409, error: expect.stringMatching(/No active grant/) });
+  });
+
+  it('flags a captured agent level the classification would not allow, as a reported current state', () => {
+    const audits = { level: 'agent-acts-person-audits' as const, personAddress: PERSON, agentAddress: AGENT_ADDR };
+    expect(currentAllocationNote(audits, 'Knowable', answers({ checkability: 'not-checkable' }), effective)).toMatch(/checkability is not-checkable; that is a reported current state, not an approved one/);
+    expect(currentAllocationNote(audits, 'Emergent', answers(), effective)).toMatch(/Emergent work does not permit/);
+    expect(currentAllocationNote(audits, 'Evident', answers(), effective)).toBeNull();
+    expect(currentAllocationNote({ level: 'person', personAddress: PERSON }, 'Turbulent', answers(), effective)).toBeNull();
+  });
 });
 
 // ── Quotes and capture ────────────────────────────────────────────────────────────────────
@@ -357,6 +396,11 @@ describe('quotes', () => {
     expect(packet).toMatchObject({ execution: 'client-required', status: 'instructions-only', sampling_performed: false, writes_performed: false, request: { documentSha256: sha256Hex(SOP), documentChars: SOP.length } });
     expect(packet.instructions).toMatch(/sampled no model and wrote nothing/);
     expect(packet.quoteRule.minChars).toBe(12);
+    // The template asks only for what the agent can draft; the person who signs adds level, parties and kind. draftedBy is required, or "not-declared".
+    expect(packet.draftTemplate.tasks).toEqual([{ name: '', description: '', sourceQuotes: [] }]);
+    expect(packet.instructions).toMatch(/The capture refuses a map without draftedBy; "not-declared" is recorded as "not declared"/);
+    expect(coerceCapture({ workflow: { title: 'x', unitLabel: 'y' }, tasks: [{ name: 'a', description: 'b', currentLevel: 'person', taskKind: 'invoice-matching', sourceQuotes: ['Match each invoice to its'] }], document: { title: 'd', sha256: sha256Hex(SOP), storeText: false } }, 'document'))
+      .toMatchObject({ ok: false, why: expect.stringMatching(/^draftedBy is required/) });
   });
 
   it('coerces revisions and applies them: a text change without new quotes clears the old ones', () => {
@@ -384,6 +428,12 @@ const state = (o: Partial<Record<keyof TaskState, Tri>>): TaskState => ({
   performerHoursPerRun: point(0), oversightHoursPerRun: point(0), agentCostPerRun: point(0),
   minorFailureRate: point(0), minorFailureCost: point(0), criticalFailureRate: point(0), criticalFailureCost: point(0), ...o,
 });
+/** A proposed state has not run, so its numbers are estimates (a 'measured' one would need a source). */
+const est = (n: number): Tri => point(n, 'estimate');
+const proposedState = (o: Partial<Record<keyof TaskState, Tri>>): TaskState => ({
+  performerHoursPerRun: est(0), oversightHoursPerRun: est(0), agentCostPerRun: est(0),
+  minorFailureRate: est(0), minorFailureCost: est(0), criticalFailureRate: est(0), criticalFailureCost: est(0), ...o,
+});
 /** Worked by hand: 100 invoices a week, value 10 each, 50 an hour. T1 moves from a person (0.2 h) to an agent drafting (0.5 a run) with a person deciding (0.05 h). */
 const exactInputs = (o: Partial<ValuationInputs> = {}): ValuationInputs => ({
   currency: 'EUR', unitsPerWeek: { current: point(100) }, valuePerUnit: point(10), hourlyCost: point(50), oneOffCost: point(10_000),
@@ -393,7 +443,7 @@ const exactInputs = (o: Partial<ValuationInputs> = {}): ValuationInputs => ({
     [T1]: {
       runsPerUnit: point(1),
       current: state({ performerHoursPerRun: point(0.2), minorFailureRate: point(0.05), minorFailureCost: point(20), criticalFailureRate: point(0.001), criticalFailureCost: point(1000) }),
-      proposed: state({ oversightHoursPerRun: point(0.05), agentCostPerRun: point(0.5), minorFailureRate: point(0.04), minorFailureCost: point(20), criticalFailureRate: point(0.001), criticalFailureCost: point(1000) }),
+      proposed: proposedState({ oversightHoursPerRun: est(0.05), agentCostPerRun: est(0.5), minorFailureRate: est(0.04), minorFailureCost: est(20), criticalFailureRate: est(0.001), criticalFailureCost: est(1000) }),
     },
     [T2]: { runsPerUnit: point(1), current: state({ performerHoursPerRun: point(0.1) }) },
   },
@@ -401,7 +451,7 @@ const exactInputs = (o: Partial<ValuationInputs> = {}): ValuationInputs => ({
 });
 const planOpts = (o: Partial<Parameters<typeof valuePlan>[1]> = {}): Parameters<typeof valuePlan>[1] => ({
   planIri: 'urn:wrd:plan:00000000000000a1:00000000000000c1', taskOrder: [T1, T2], valuedChanged: new Set([T1]), agentLevelTasks: new Set([T1]),
-  taskKindOf: new Map([[T1, 'invoice-matching'], [T2, 'gl-coding']]), measuredAgentCost: new Map(), methodIri: policy.valuationMethodIri, draws: 200, ...o,
+  taskKindOf: new Map([[T1, 'invoice-matching'], [T2, 'gl-coding']]), reportedAgentCost: new Map(), methodIri: policy.valuationMethodIri, draws: 200, ...o,
 });
 const flat = (b: { p10: number; p50: number; p90: number }, v: number): void => { expect(b).toEqual({ p10: v, p50: v, p90: v }); };
 
@@ -523,17 +573,23 @@ describe('valuation', () => {
     const t1 = must(base.tasks[T1]);
     const inputs: ValuationInputs = { ...base, tasks: { ...base.tasks, [T1]: { ...t1, proposed: { ...must(t1.proposed), agentCostPerRun: tri(0.2, 0.5, 3, 'estimate'), oversightHoursPerRun: tri(0.02, 0.05, 0.3, 'estimate') } } } };
     const r = valuePlan(inputs, planOpts());
-    // 4 workflow triangles (no proposed throughput) + T1 (runs + 7 current + 7 proposed) + T2 (runs + 7 current) = 27; two are estimates.
-    expect(r.inputs.byBasis).toEqual({ measured: 25, document: 0, 'performer-reported': 0, estimate: 2 });
+    // 4 workflow triangles (no proposed throughput) + T1 (runs + 7 current + 7 proposed) + T2 (runs + 7 current) = 27; the 7 proposed are estimates.
+    expect(r.inputs.byBasis).toEqual({ measured: 20, document: 0, 'performer-reported': 0, estimate: 7, 'not-applicable': 0 });
     expect(r.inputs.noRange).toHaveLength(25);
     expect(r.inputs.noRange).toContain('valuePerUnit');
     expect(r.inputs.noRange).not.toContain(`tasks[${T1}].proposed.agentCostPerRun`);
     expect(r.inputs.topSensitivityEstimates).toEqual([`tasks[${T1}].proposed.oversightHoursPerRun`, `tasks[${T1}].proposed.agentCostPerRun`]);
     expect(r.inputs.unchangedTasks).toBe('entered');
-    expect(r.inputs.unconfirmed).toEqual([{ path: `tasks[${T1}].proposed.agentCostPerRun`, why: 'no measured run cost for this kind of task yet' }]);
-    const measured = valuePlan(inputs, planOpts({ measuredAgentCost: new Map([['invoice-matching', { runs: 12, mean: 0.4123456 }]]) }));
-    expect(measured.inputs.unconfirmed).toEqual([]);
-    expect(measured.inputs.measuredAgentCost).toEqual([{ taskKind: 'invoice-matching', runs: 12, mean: 0.4123, currency: 'EUR' }]);
+    expect(r.inputs.unconfirmed).toEqual([{ path: `tasks[${T1}].proposed.agentCostPerRun`, why: 'no person-reviewed run of this kind of task reports a cost yet' }]);
+    const reported = valuePlan(inputs, planOpts({ reportedAgentCost: new Map([['invoice-matching', { runs: 12, mean: 0.4123456 }]]) }));
+    expect(reported.inputs.unconfirmed).toEqual([]);
+    expect(reported.inputs.reportedAgentCost).toEqual([{ taskKind: 'invoice-matching', runs: 12, mean: 0.4123, currency: 'EUR', basis: 'agent-reported on person-reviewed runs' }]);
+    // A zero that does not apply is counted apart and is never "no range given".
+    const na: Tri = { low: 0, likely: 0, high: 0, basis: 'not-applicable' };
+    const withNa = valuePlan({ ...inputs, tasks: { ...inputs.tasks, [T1]: { ...must(inputs.tasks[T1]), current: { ...must(inputs.tasks[T1]).current, oversightHoursPerRun: na, agentCostPerRun: na } } } }, planOpts());
+    expect(withNa.inputs.byBasis['not-applicable']).toBe(2);
+    expect(withNa.inputs.noRange).toHaveLength(23);
+    expect(withNa.inputs.noRange).not.toContain(`tasks[${T1}].current.agentCostPerRun`);
     expect(r.assumptions.join(' ')).toMatch(/count only for tasks whose disposition is 'unfilled'/);
   });
 
@@ -606,6 +662,34 @@ describe('valuation', () => {
     expect(coerceValuationInputs(set(['discountRate'], 0.1), plan)).toMatchObject({ ok: false, why: 'inputs.discountRate is not a valuation input' });
     expect(coerceValuationInputs(set(['valuePerUnit', 'source'], 'see spreadsheet'), plan)).toMatchObject({ ok: false, why: expect.stringMatching(/source must be an absolute IRI/) });
     expect(coerceValuationInputs(set(['valuePerUnit', 'source'], 'https://192.0.2.20/t/wrd/records/run-costs.ttl'), plan)).toMatchObject({ ok: true });
+    // Magnitudes are capped so that every product stays finite.
+    expect(coerceValuationInputs(set(['unitsPerWeek', 'current'], { low: 1e200, likely: 1e200, high: 1e200, basis: 'estimate' }), plan)).toMatchObject({ ok: false, why: expect.stringMatching(/values above 1000000000000 are refused/) });
+    expect(coerceValuationInputs(set(['unitsPerWeek', 'current'], { low: MAX_INPUT, likely: MAX_INPUT, high: MAX_INPUT, basis: 'estimate' }), plan)).toMatchObject({ ok: true });
+    // not-applicable: 0/0/0 inside a task state only.
+    const na = { low: 0, likely: 0, high: 0, basis: 'not-applicable' };
+    expect(coerceValuationInputs(set(['tasks', T1, 'current', 'agentCostPerRun'], na), plan)).toMatchObject({ ok: true });
+    expect(coerceValuationInputs(set(['tasks', T1, 'current', 'agentCostPerRun'], { ...na, high: 1 }), plan)).toMatchObject({ ok: false, why: expect.stringMatching(/not-applicable means 0, 0, 0/) });
+    expect(coerceValuationInputs(set(['valuePerUnit'], na), plan)).toMatchObject({ ok: false, why: expect.stringMatching(/only for a task state's own fields/) });
+    // A proposed state has not run: 'measured' there needs a source.
+    const measuredNoSource = { low: 0.4, likely: 0.5, high: 0.6, basis: 'measured' };
+    expect(coerceValuationInputs(set(['tasks', T1, 'proposed', 'agentCostPerRun'], measuredNoSource), plan)).toMatchObject({ ok: false, why: expect.stringMatching(/proposed state has not run yet, so basis measured needs a source/) });
+    expect(coerceValuationInputs(set(['tasks', T1, 'proposed', 'agentCostPerRun'], { ...measuredNoSource, source: 'https://192.0.2.20/t/wrd/records/pilot.ttl' }), plan)).toMatchObject({ ok: true });
+    expect(coerceValuationInputs(set(['tasks', T1, 'current', 'agentCostPerRun'], measuredNoSource), plan)).toMatchObject({ ok: true });
+    // Where a person decides on or audits the agent's work, their time must be costed.
+    const overseen = { ...plan, personOversees: new Set([T1]) };
+    expect(coerceValuationInputs(raw(), overseen)).toMatchObject({ ok: true });
+    expect(coerceValuationInputs(set(['tasks', T1, 'proposed', 'oversightHoursPerRun'], { low: 0, likely: 0, high: 0, basis: 'estimate' }), overseen))
+      .toMatchObject({ ok: false, why: expect.stringMatching(/oversightHoursPerRun is 0: a person decides on or audits the agent's work/) });
+  });
+
+  it('refuses a result that is not finite, wherever it sits', () => {
+    // The review's reproduction (1e200 × 1e200) is now refused at the input; the result is still walked in full.
+    expect(nonFiniteIn(valuePlan(exactInputs(), planOpts()))).toBeNull();
+    const big = valuePlan(exactInputs({ unitsPerWeek: { current: point(MAX_INPUT) }, valuePerUnit: point(MAX_INPUT) }), planOpts());
+    expect(nonFiniteIn(big)).toBeNull();
+    expect(nonFiniteIn({ a: [1, { b: Number.POSITIVE_INFINITY }] })).toBe('result.a[1].b');
+    expect(nonFiniteIn({ scenarios: { cash: { weeklyDelta: { p10: Number.NaN } } } })).toBe('result.scenarios.cash.weeklyDelta.p10');
+    expect(nonFiniteIn({ seed: 'abc', n: 0 })).toBeNull();
   });
 });
 
@@ -658,6 +742,18 @@ describe('outcome grading', () => {
     expect(checkOutcomeWindow({ countersignedAt, windowStart: 'last spring', windowEnd: '2026-04-01T00:00:00Z', now })).toMatchObject({ status: 400 });
     expect(checkOutcomeWindow({ countersignedAt, windowStart: '2026-03-01T09:00:00Z', windowEnd: '2026-05-01T00:00:00Z', now })).toBeNull();
   });
+
+  it('holds a kept change to the whole declared window; a change stopped early or reverted may be shorter and says so', () => {
+    const w = { windowStart: '2026-03-01T09:00:00.000Z', windowWeeks: 8 };
+    expect(checkWindowLength({ ...w, windowEnd: '2026-04-26T09:00:00.000Z', disposition: 'kept' })).toEqual({ ok: true, weeks: 8, shorterThanPlanned: false });
+    // One hour, chosen by the grader: refused for a kept change.
+    expect(checkWindowLength({ ...w, windowEnd: '2026-03-01T10:00:00.000Z', disposition: 'kept' })).toEqual({
+      ok: false, status: 409, why: 'The measurement window is shorter than the plan declared.',
+      detail: 'the window is 0.01 weeks; the measurement plan declared 8. Measure the whole window, or record the change as stopped early or reverted, with a note',
+    });
+    expect(checkWindowLength({ ...w, windowEnd: '2026-03-22T09:00:00.000Z', disposition: 'stopped-early' })).toEqual({ ok: true, weeks: 3, shorterThanPlanned: true });
+    expect(checkWindowLength({ ...w, windowEnd: '2026-03-22T09:00:00.000Z', disposition: 'reverted' })).toMatchObject({ ok: true, shorterThanPlanned: true });
+  });
 });
 
 // ── Envelopes ─────────────────────────────────────────────────────────────────────────────
@@ -705,6 +801,13 @@ describe('envelopes', () => {
     expect(ledger.claim(PERSON2, 'nonce-000000000001', t0)).toBe(true);
     // After the window the envelope itself is stale, so the ledger may forget the pair.
     expect(ledger.claim(PERSON, 'nonce-000000000001', new Date(t0.getTime() + 18 * 60_000))).toBe(true);
+    // Bounded: beyond its cap the oldest pairs go (the pod's own replay check stands behind them), and expiry stops at the first live entry.
+    const small = new NonceLedger(60_000, 3);
+    for (const n of ['n-0000000000000001', 'n-0000000000000002', 'n-0000000000000003', 'n-0000000000000004']) expect(small.claim(PERSON, n, t0)).toBe(true);
+    expect(small.size).toBe(3);
+    expect(small.claim(PERSON, 'n-0000000000000004', t0)).toBe(false);
+    expect(small.claim(PERSON, 'n-0000000000000005', new Date(t0.getTime() + 61_000))).toBe(true);
+    expect(small.size).toBe(1);
   });
 
   it('re-verifies a stored envelope weeks later without a freshness window', async () => {
@@ -723,7 +826,7 @@ describe('envelopes', () => {
 
 const decision = (n: number, o: Partial<DecisionForCalibration> = {}): DecisionForCalibration => ({
   decisionIri: `urn:wrd:decision:00000000000000a1:${String(n).padStart(16, '0')}`, level: 'agent-drafts-person-decides', metric: 'weekly-cash-delta', basis: 'staggered',
-  verdict: 'in-band', rampAdjusted: false, disposition: 'kept', measuredBy: `did:ethr:${PERSON2}`, submittedAt: '2026-01-01T00:00:00.000Z', measuredAt: '2026-03-01T00:00:00.000Z', demo: false, ...o,
+  verdict: 'in-band', rampAdjusted: false, disposition: 'kept', measuredBy: `did:ethr:${PERSON2}`, submittedAt: '2026-01-01T00:00:00.000Z', measuredAt: '2026-03-01T00:00:00.000Z', demo: false, shortWindow: false, ...o,
 });
 const AGENT_DID = didOf(AGENT_ADDR);
 function runs(n: number, o: { model?: string; reviewers?: readonly string[]; startAt?: string; plan?: (i: number) => [ReviewedRun['selfAnswer'], ReviewedRun['verdict']]; demo?: boolean } = {}): ReviewedRun[] {
@@ -754,6 +857,7 @@ describe('calibration and grants', () => {
         decision(1), decision(2, { verdict: 'below-band', rampAdjusted: true }), decision(3, { disposition: 'reverted' }),
         decision(4, { basis: 'before-after' }), decision(5, { basis: 'before-after', verdict: 'inconclusive' }),
         decision(6, { basis: 'holdout', metric: 'weekly-delta-if-redeployed' }),
+        decision(7, { disposition: 'stopped-early', shortWindow: true, verdict: 'below-band' }),
       ],
       runs: [], probes: [], minSamples: 20, policy: policy.grantPolicy, currentModelOf: () => null,
     });
@@ -764,7 +868,8 @@ describe('calibration and grants', () => {
     ]);
     const controlled = must(report.predictionCells[0]);
     // Judged in-band with 0.8: a hit scores (0.8−1)² + 2·0.1² = 0.06, a below-band miss (0.1−1)² + 0.8² + 0.1² = 1.46.
-    expect(controlled).toMatchObject({ samples: 3, hitRate: 0.667, meanBrier: 0.5267, meanOrdinalDistance: 0.3333, status: 'Hypothetical', excludedInconclusive: 0, rampAdjusted: 1, dispositions: { kept: 2, reverted: 1, 'stopped-early': 0 }, scriptedLabel: null });
+    // Decision 7 was measured over less than its declared window: kept out of the cell, and counted.
+    expect(controlled).toMatchObject({ samples: 3, hitRate: 0.667, meanBrier: 0.5267, meanOrdinalDistance: 0.3333, status: 'Hypothetical', excludedInconclusive: 0, excludedShortWindow: 1, rampAdjusted: 1, dispositions: { kept: 2, reverted: 1, 'stopped-early': 1 }, scriptedLabel: null });
     const uncontrolled = must(report.predictionCells[1]);
     expect(uncontrolled).toMatchObject({ basisClass: 'uncontrolled', samples: 1, excludedInconclusive: 1, hitRate: 1 });
     expect(uncontrolled.label).toMatch(/no comparison group$/);
@@ -803,25 +908,40 @@ describe('calibration and grants', () => {
     expect(report.probeSignals.scriptedLabel).toBe(DEMO_LABEL);
   });
 
-  it('earns a grant only with 20 reviewed runs on the declared model, rating >= 0.9, >= 5 distinct personRefs and ready-claim precision >= 0.9', () => {
+  it('earns a grant only with 20 reviewed runs on the declared model, 90% of them accepted by a person, >= 5 distinct personRefs, and >= 20 ready claims at precision >= 0.9', () => {
     const earned = evaluateGrant(grantInput(runs(24, { plan: demoPlan })));
-    // 23 of 24 reviewed runs agree with the agent's own answer: the kit reports 0.958 on competence.
-    expect(earned).toMatchObject({ earned: true, samples: 24, humanConfirmations: 24, distinctConfirmers: 5, rating: 0.958, readyClaimPrecision: 0.9565, criticalFailures: 0, taskIris: [T1] });
+    // A person accepted 22 of 24 runs: the kit's competence rating over acceptance outcomes is 22/24 = 0.917.
+    expect(earned).toMatchObject({ earned: true, samples: 24, humanConfirmations: 24, distinctConfirmers: 5, rating: 0.917, acceptedShare: 0.9167, readyClaims: 23, readyClaimPrecision: 0.9565, criticalFailures: 0, taskIris: [T1] });
+    expect(earned.why).toMatch(/^earned: a person accepted 22 of 24 reviewed runs \(91\.7%\), clearing 90%/);
     expect(earned.runIris).toHaveLength(24);
 
     expect(evaluateGrant(grantInput(runs(19)))).toMatchObject({ earned: false, why: '19 person-reviewed runs on model scripted-fixture; the policy needs 20.', rating: null });
     expect(evaluateGrant(grantInput(runs(24, { plan: demoPlan }), { model: 'other-model' }))).toMatchObject({ earned: false, samples: 0 });
-    const lowHitRate = evaluateGrant(grantInput(runs(20, { plan: (i) => (i < 3 ? ['accepted', 'reworked'] : ['accepted', 'accepted']) })));
-    expect(lowHitRate).toMatchObject({ earned: false, rating: 0.85, why: expect.stringMatching(/competence 0.85 is below the floor 0.9/) });
-    expect(lowHitRate.kitWhy).toBe(lowHitRate.why);
+    const lowAcceptance = evaluateGrant(grantInput(runs(20, { plan: (i) => (i < 3 ? ['accepted', 'reworked'] : ['accepted', 'accepted']) })));
+    expect(lowAcceptance).toMatchObject({ earned: false, rating: 0.85, acceptedShare: 0.85, why: 'a person accepted 17 of 20 reviewed runs (85%); the policy needs at least 90%.' });
+    expect(lowAcceptance.kitWhy).toMatch(/competence 0.85 is below the floor 0.9/);
     const threePeople = evaluateGrant(grantInput(runs(20, { reviewers: ['p-eli', 'p-fay', 'p-gus'] })));
     expect(threePeople).toMatchObject({ earned: false, distinctConfirmers: 3 });
     expect(threePeople.why).toBe('reviewed by 3 distinct registered reviewers the admin attests are different people; the policy needs 5. This bridge cannot verify that they are different people.');
-    // Hit rate 28/30 clears the floor, but of the 10 runs it called ready a person accepted only 8.
-    const imprecise = evaluateGrant(grantInput(runs(30, { plan: (i) => (i < 20 ? ['reworked', 'reworked'] : i < 28 ? ['accepted', 'accepted'] : ['accepted', 'reworked']) })));
-    expect(imprecise).toMatchObject({ earned: false, readyClaimPrecision: 0.8, why: 'a person accepted 80% of the runs the agent called ready; the policy needs 90%.' });
+    // 37 of 40 accepted clears the floor, but of the 23 runs it called ready a person accepted only 20.
+    const imprecise = evaluateGrant(grantInput(runs(40, { plan: (i) => (i < 17 ? ['reworked', 'accepted'] : i < 37 ? ['accepted', 'accepted'] : ['accepted', 'reworked']) })));
+    expect(imprecise).toMatchObject({ earned: false, acceptedShare: 0.925, readyClaims: 23, readyClaimPrecision: 0.8696, why: 'a person accepted 87% of the 23 runs the agent called ready; the policy needs 90%.' });
     const critical = evaluateGrant(grantInput(runs(25, { plan: (i) => (i === 3 ? ['accepted', 'critical-failure'] : ['accepted', 'accepted']) })));
     expect(critical).toMatchObject({ earned: false, criticalFailures: 1, criticalFailuresOnReadyClaims: 1, why: '1 run(s) the agent called ready were critical failures.' });
+  });
+
+  it('does not earn a grant for an agent whose work is reworked, however truthfully it labels its runs; nor on one ready claim', () => {
+    // The review's reproduction: 20 runs, 5 reviewers, a person accepted 1; the agent called the other 19 "reworked", correctly.
+    const truthful = runs(20, { plan: (i) => (i === 0 ? ['accepted', 'accepted'] : ['reworked', 'reworked']) });
+    const e = evaluateGrant(grantInput(truthful));
+    expect(e).toMatchObject({ earned: false, acceptedShare: 0.05, rating: 0.05, readyClaims: 1, why: 'a person accepted 1 of 20 reviewed runs (5%); the policy needs at least 90%.' });
+    // Its self-assessment is perfectly calibrated — the agent cell shows that, beside how little of its work was accepted.
+    const cell = must(calibrationReport({ decisions: [], runs: truthful, probes: [], minSamples: 20, policy: policy.grantPolicy, currentModelOf: () => 'scripted-fixture' }).agentCells[0]);
+    expect(cell).toMatchObject({ samples: 20, hitRate: 1, acceptedShare: 0.05, readyClaims: 1, readyClaimPrecision: 1, status: 'Asserted' });
+    // All work accepted, but the agent called only 5 runs ready: precision over 5 claims bounds nothing.
+    const shy = evaluateGrant(grantInput(runs(20, { plan: (i) => (i < 15 ? ['reworked', 'accepted'] : ['accepted', 'accepted']) })));
+    expect(shy).toMatchObject({ earned: false, acceptedShare: 1, readyClaims: 5, readyClaimPrecision: 1 });
+    expect(shy.why).toMatch(/^the agent called 5 of its reviewed runs ready; at least 20 ready claims are needed/);
   });
 
   it('counts two keys with one personRef as one reviewer', () => {
@@ -875,7 +995,8 @@ const RECORDS: WrdRecord[] = [
     taskKind: 'invoice-matching', taskKindDefinition: 'Match an invoice to its order and receipt.', externalTaskTerm: 'https://www.onetonline.org/link/summary/43-3031.00',
     quotes: quoteVerdicts, quoteStatus: quoteStatusOf(quoteVerdicts),
     ratifications: [{ party: PERSON, verdict: 'ratify', envelope: ENV, at: NOW }, { party: AGENT_ADDR, verdict: 'ratify', envelope: ENV, at: NOW }],
-  } },
+    owedRatification: [PERSON2],
+  }, authorisedBy: { signer: PERSON, nonce: 'nonce-000000000009' } },
   { ...common, recordKind: 'Classification', entityIri: entityIri('classification', WF, T1), status: 'classified', payload: {
     taskIri: T1, taskTextSha256: taskTextSha256('a', 'b'), answers: answers(), regime: classified.placed ? classified.regime : 'Knowable', method: classified.placed ? classified.method : 'expert-analysis',
     regimeSource: 'rule-on-signed-answers', regimeSourceIri: policy.regimeSourceIri, rulesFired: [...classified.rulesFired], notes: classified.placed ? [...classified.notes] : [],
@@ -900,10 +1021,12 @@ const RECORDS: WrdRecord[] = [
     assignments: [{ taskIri: T1, personAddress: PERSON, state: 'acknowledged' }],
     measurementPlan: { metric: 'weekly-cash-delta', comparisonBasis: 'staggered', windowWeeks: 8 }, comparisonGroup: true,
     submittedBy: { did: didOf(PERSON), personRef: 'p-ana', envelope: ENV }, grantChecks: [],
-    countersign: { verdict: 'approve', did: didOf(PERSON2), personRef: 'p-bo', envelope: ENV, objectionsConsidered: [], assignmentsAtCountersign: [], at: NOW },
+    preparedBy: [{ role: 'proposed', did: didOf(PERSON), personRef: 'p-ana' }, { role: 'submitted', did: didOf(PERSON), personRef: 'p-ana' }],
+    countersign: { verdict: 'approve', did: didOf(PERSON2), personRef: 'p-bo', envelope: ENV, objectionsConsidered: [], unacknowledgedConsidered: [T1], assignmentsAtCountersign: [], at: NOW },
     outcome: { did: didOf(PERSON2), personRef: 'p-eli', envelope: ENV, disposition: 'kept', at: NOW, valued: {
       measured: { weeklyValueDelta: -28.5, comparisonBasis: 'staggered', windowStart: NOW, windowEnd: NOW, method: 'staggered rollout across two teams' },
       metric: 'weekly-cash-delta', verdict: 'in-band', adjustedBand: { p10: -30, p50: -30, p90: -30 }, rampFactor: 1, rampAdjusted: false, basisChanged: false,
+      windowWeeks: 8, windowShorterThanPlanned: true, pilotCheck: { runsNeeded: 300, reviewedRuns: 12, criticalFailures: 0, ceilingSupported: false, declared: { runsObserved: 400 } },
     } },
   } },
   { ...common, recordKind: 'Acknowledgement', entityIri: entityIri('acknowledgement', PLAN, `${T1}|${PERSON}`), status: 'objected', payload: {
@@ -944,6 +1067,10 @@ describe('record graphs', () => {
     const taskTtl = buildGraphTurtle(must(RECORDS.find((r) => r.recordKind === 'Task')));
     expect(taskTtl).toContain(`wrd:currentLevel <${levelIri('agent-drafts-person-decides')}>`);
     expect(taskTtl).toContain(`wrd:performer <did:ethr:${AGENT_ADDR}>`);
+    // A prediction that is not a finite number is never written as one: the kit's dbl() would have written 0.
+    const dec = must(RECORDS.find((r) => r.recordKind === 'Decision')) as Extract<WrdRecord, { recordKind: 'Decision' }>;
+    const nan = { ...dec, payload: { ...dec.payload, prediction: { ...must(dec.payload.prediction), band: { p10: Number.NaN, p50: 1, p90: 2 } } } };
+    expect(() => buildGraphTurtle(nan)).toThrow(/predicted P10 is not a finite number; nothing is published/);
     // A graph that is not a wrd record reads as null, not as a guess.
     expect(parseRecordGraph('@prefix ex: <https://example.test/> . ex:a ex:b ex:c .')).toBeNull();
     expect(parseRecordGraph('not turtle {')).toBeNull();

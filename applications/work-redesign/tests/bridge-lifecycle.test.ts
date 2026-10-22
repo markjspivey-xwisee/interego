@@ -23,7 +23,7 @@ import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type WrdDeps } from '../bridge/handlers.js';
-import { readRecord, publishRecord, KeyedMutex, StaleHeadError, WRD_CONTAINER } from '../bridge/pod-helpers.js';
+import { readRecord, publishRecord, verifyHolderBundle, KeyedMutex, StaleHeadError, WRD_CONTAINER } from '../bridge/pod-helpers.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
 import { envelopeSha256, entityIri, graphIriOf, buildDescriptor } from '../src/records.js';
 import { normaliseForQuote } from '../src/work.js';
@@ -131,6 +131,16 @@ async function world(extra: Partial<WrdDeps> = {}, affordances = wrdAffordances)
   return { pod, clock, base: l.base, nonce: 0 };
 }
 
+/** A second bridge process on the same pod and clock, with its own (empty) in-process nonce ledger: a restart. */
+async function restart(w: World): Promise<World> {
+  const handlers = createWrdHandlers({
+    fetchFn: w.pod.fetchFn, defaultPodUrl: POD, now: () => w.clock.now(), platform: { wallet: PLATFORM, keyKind: 'configured' }, adminAddresses: [ADMIN.address],
+  });
+  const l = await listenLoopback(createVerticalBridge({ verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: 'http://127.0.0.1' }));
+  listeners.push(l);
+  return { pod: w.pod, clock: w.clock, base: l.base, nonce: w.nonce + 100_000 };
+}
+
 async function http(w: World, method: 'GET' | 'POST', tool: string, body?: Obj, query = ''): Promise<Res> {
   const r = await fetch(`${w.base}/wrd/${tool}${query}`, {
     method, headers: { 'content-type': 'application/json', accept: 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}),
@@ -213,11 +223,20 @@ async function ratify(w: World, who: Wallet, taskIri: string, verdict: 'ratify' 
   return act(w, who, 'ratify_task', { subject: 'description', taskIri, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, verdict, ...(note ? { note } : {}) });
 }
 
+/** The task's textSha256 as the read model shows it (a placeholder when the task has no trusted row, e.g. after tampering). */
+async function textOf(w: World, taskIri: string): Promise<string> {
+  const row = arr((await list(w))['tasks']).find((t) => t['taskIri'] === taskIri);
+  return row ? String(row['textSha256']) : '0'.repeat(64);
+}
 async function classify(w: World, who: Wallet, taskIri: string, answers: Obj): Promise<Res> {
-  return act(w, who, 'classify_task', { taskIri, answers });
+  return act(w, who, 'classify_task', { taskIri, taskTextSha256: await textOf(w, taskIri), answers });
+}
+async function ratifyClassification(w: World, who: Wallet, taskIri: string, verdict: 'ratify' | 'dispute' = 'ratify', note?: string): Promise<Res> {
+  const h = headOfRow(obj((await taskRow(w, taskIri))['classification'], 'classification'));
+  return act(w, who, 'ratify_task', { subject: 'classification', taskIri, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, verdict, ...(note ? { note } : {}) });
 }
 
-/** Registry, the document-captured AP workflow, every task ratified by its people, and classified by Ana. */
+/** Registry, the document-captured AP workflow, every task ratified by its people, classified by Ana, and those classifications ratified by the people named. */
 async function standardAp(w: World): Promise<Ap> {
   await register(w);
   const ap = await captureAp(w);
@@ -229,15 +248,16 @@ async function standardAp(w: World): Promise<Ap> {
   ok(await classify(w, ANA, ap.t2, ANSWERS.knowable));
   ok(await classify(w, ANA, ap.t3, ANSWERS.emergent));
   ok(await classify(w, ANA, ap.t4, ANSWERS.turbulent));
+  for (const [who, t] of [[CY, ap.t1], [DEE, ap.t2], [CY, ap.t3], [DEE, ap.t4]] as const) ok(await ratifyClassification(w, who, t));
   return ap;
 }
 
-type Basis = 'measured' | 'document' | 'performer-reported' | 'estimate';
+type Basis = 'measured' | 'document' | 'performer-reported' | 'estimate' | 'not-applicable';
 const tri = (low: number, likely: number, high: number, basis: Basis = 'estimate'): Obj => ({ low, likely, high, basis });
 const one = (v: number, basis: Basis = 'measured'): Obj => tri(v, v, v, basis);
 const STATE_ZERO: Obj = {
-  performerHoursPerRun: one(0), oversightHoursPerRun: one(0), agentCostPerRun: one(0), minorFailureRate: one(0), minorFailureCost: one(0),
-  criticalFailureRate: one(0), criticalFailureCost: one(0),
+  performerHoursPerRun: one(0, 'not-applicable'), oversightHoursPerRun: one(0, 'not-applicable'), agentCostPerRun: one(0, 'not-applicable'),
+  minorFailureRate: one(0, 'not-applicable'), minorFailureCost: one(0, 'not-applicable'), criticalFailureRate: one(0, 'not-applicable'), criticalFailureCost: one(0, 'not-applicable'),
 };
 const state = (o: Obj): Obj => ({ ...STATE_ZERO, ...o });
 
@@ -300,6 +320,16 @@ async function decisionRow(w: World, decisionIri: string): Promise<Obj> {
   return must(arr((await list(w))['decisions']).find((d) => d['decisionIri'] === decisionIri), 'decision row');
 }
 
+/** Everyone a plan names acknowledges their assignment, so an approval needs no override. */
+async function acknowledgeAll(w: World, planIri: string): Promise<void> {
+  const plan = must(arr((await list(w))['plans']).find((p) => p['planIri'] === planIri), 'plan row');
+  const who = new Map([[addr(CY), CY], [addr(DEE), DEE], [addr(ANA), ANA], [addr(ELI), ELI]]);
+  for (const a of arr(plan['assignments'])) {
+    if (a['state'] !== 'not-acknowledged') continue;
+    ok(await acknowledge(w, must(who.get(String(a['personAddress'])), 'assignee'), planIri, String(a['taskIri']), 'acknowledge'), 'acknowledge');
+  }
+}
+
 async function countersign(w: World, who: Wallet, decisionIri: string, verdict: 'approve' | 'decline', extra: Obj = {}): Promise<Res> {
   const h = headOfRow(await decisionRow(w, decisionIri));
   return act(w, who, 'countersign_decision', { decisionIri, recordId: h.recordId, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, verdict, ...extra });
@@ -339,7 +369,7 @@ describe('work-redesign bridge', () => {
     for (const a of wrdAffordances) expect(typeof production[a.toolName], a.toolName).toBe('function');
     expect(production['wrd.demo_envelope']).toBeUndefined();
     expect(wrdAffordances.map((a) => a.toolName)).not.toContain('wrd.demo_envelope');
-    expect(new Set(wrdAffordances.map((a) => a.toolName)).size).toBe(18);
+    expect(new Set(wrdAffordances.map((a) => a.toolName)).size).toBe(19);
 
     const w = await world();
     const manifestRes = await fetch(`${w.base}/affordances?format=jsonld`, { headers: { accept: 'application/ld+json' } });
@@ -357,6 +387,12 @@ describe('work-redesign bridge', () => {
     expect(signed['signer']).toBe(addr(ANA));
     expect(signed['demoKey']).toBe(true);
     refused(await http(demo, 'POST', 'demo_envelope', { persona: 'mallory', payload: {} }), 404);
+    // The demo clock moves only on a composition that has one to move.
+    refused(await http(demo, 'POST', 'demo_advance_clock', { weeks: 2 }), 501, /no scripted clock/);
+    const ticking = await world({ demoPersonas: new Map([['ana', { id: 'ana', label: 'Ana (demo)', wallet: ANA }]]), demoClockAdvance: () => undefined }, [...wrdAffordances, ...wrdDemoAffordances]);
+    expect(ok(await http(ticking, 'POST', 'demo_advance_clock', { weeks: 2 }))).toMatchObject({ movedWeeks: 2, scriptedLabel: DEMO_LABEL });
+    refused(await http(ticking, 'POST', 'demo_advance_clock', { weeks: 0 }), 400);
+    expect(production['wrd.demo_advance_clock']).toBeUndefined();
     // Every record a demo-composed bridge writes says it is scripted, in the payload and as a triple.
     ok(await act(demo, ADMIN, 'update_registry', { entries: REGISTRY_ENTRIES, taskKinds: TASK_KINDS }));
     expect(await list(demo)).toMatchObject({ records: 1, demoRecords: 1, demoLabel: DEMO_LABEL });
@@ -534,6 +570,7 @@ describe('work-redesign bridge', () => {
     refused(await act(w, CY, 'revise_task', { op: 'add', workflowIri: ap.workflowIri, descriptorUrl: wfHead.descriptorUrl, graphDigest: wfHead.graphDigest, task: { name: 'x', description: 'y', currentLevel: 'person', personAddress: CY.address, taskKind: 'invoice-matching' } }), 403);
     ok(await ratify(w, CY, t5));
     ok(await classify(w, ANA, t5, ANSWERS.evident));
+    ok(await ratifyClassification(w, CY, t5));
     ok(await classify(w, DEE, ap.t2, ANSWERS.knowable));
     const plan = ok(await propose(w, ap, [{ taskIri: t5, proposedLevel: 'person-with-agent-assist', personAddress: CY.address, agentAddress: AGENT.address }], 'P5'));
     const t5Head = headOfRow(await taskRow(w, t5));
@@ -589,6 +626,10 @@ describe('work-redesign bridge', () => {
     expect(arr(t4['rulesFired'])[0]).toBe(`${WRD_NS}RuleR1`);
     refused(await propose(w, ap, [{ taskIri: ap.t4, proposedLevel: 'person-with-agent-assist', personAddress: DEE.address }]), 409, /stabilise first/);
     refused(await propose(w, ap, [{ taskIri: ap.t3, proposedLevel: 'person-with-agent-assist', personAddress: CY.address }]), 400, /safe-to-fail probes/);
+    // An agent goes on work only once the people named have ratified how knowable it is.
+    refused(await propose(w, ap, [must(P1_CHANGES(ap)[0])]), 409, /ratified how knowable it is/);
+    ok(await ratifyClassification(w, CY, ap.t1));
+    ok(await ratifyClassification(w, DEE, ap.t2));
     refused(await propose(w, ap, [{ taskIri: ap.t1, proposedLevel: 'agent-acts-within-grant', agentAddress: AGENT.address }]), 409, /No active grant/);
     refused(await propose(w, ap, [{ taskIri: ap.t1, proposedLevel: 'agent-drafts-person-decides', agentAddress: CY.address, personAddress: CY.address }]), 400, /registered software agent/);
     const probe = { hypothesis: 'An agent-drafted reply settles disputes sooner', amplifyIf: 'median days to settle falls', dampenIf: 'suppliers escalate more', timeboxWeeks: 4 };
@@ -598,16 +639,23 @@ describe('work-redesign bridge', () => {
     expect(ok(await propose(w, ap, P1_CHANGES(ap)))['planKind']).toBe('valued');
   }, 60_000);
 
-  it('values a Knowable change only with expert evidence', async () => {
+  it('values a Knowable change only with expert evidence: who answered the questions, never an input basis the operator typed', async () => {
     const w = await world();
     const ap = await standardAp(w);
-    // Ana holds approver as well as operator, so her answers ARE expert evidence; Eli is an operator only.
+    // Eli, an operator only, re-classifies T2: not expert evidence, and nobody named on it has ratified it.
     expect(ok(await classify(w, ELI, ap.t2, ANSWERS.knowable))).toMatchObject({ answeredBy: { role: 'operator' }, status: 'classified' });
-    const planIri = String(ok(await propose(w, ap, P1_CHANGES(ap)))['planIri']);
-    refused(await act(w, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap, 'estimate') }), 409, /Knowable work is valued only with expert analysis/);
+    // A change on T2 that names no agent, so it can be proposed on an unratified classification.
+    const t2NoAgent: Obj = { taskIri: ap.t2, proposedLevel: 'person-with-agent-assist', personAddress: DEE.address };
+    const planIri = String(ok(await propose(w, ap, [must(P1_CHANGES(ap)[0]), t2NoAgent]))['planIri']);
+    // The review's reproduction: labelling every current input "performer-reported" is the operator's own typing, not expert evidence.
+    refused(await act(w, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap, 'performer-reported') }), 409, /Knowable work is valued only with expert analysis/);
     refused(await act(w, ANA, 'value_plan', { planIri, inputs: { ...p1Inputs(ap), currency: 'usd' } }), 400, /valuation inputs are malformed/, /currency/);
-    const v = ok(await act(w, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap) }));
-    expect(v['expertEvidence']).toEqual([{ taskIri: ap.t2, satisfiedBy: 'performer-inputs' }]);
+    // Dee, named on T2, ratifies Eli's answers: a classification everyone named has ratified.
+    ok(await ratifyClassification(w, DEE, ap.t2));
+    refused(await act(w, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap) }), 409, /re-classified or revised after this plan/);
+    const p2 = String(ok(await propose(w, ap, [must(P1_CHANGES(ap)[0]), t2NoAgent], 'P1 again'))['planIri']);
+    const v = ok(await act(w, ANA, 'value_plan', { planIri: p2, inputs: p1Inputs(ap) }));
+    expect(v['expertEvidence']).toEqual([{ taskIri: ap.t2, satisfiedBy: 'ratified-classification' }]);
     const result = obj(v['result']);
     const cash = obj(obj(obj(result['scenarios'])['cash'])['weeklyDelta']);
     const redeployed = obj(obj(obj(result['scenarios'])['redeployed'])['weeklyDelta']);
@@ -618,13 +666,12 @@ describe('work-redesign bridge', () => {
     expect(arr(obj(result['inputs'])['unconfirmed']).map((u) => u['path'])).toEqual([`tasks[${ap.t1}].proposed.agentCostPerRun`]);
     expect(arr(result['pilot']).map((x) => [x['taskIri'], x['runsNeeded']])).toEqual([[ap.t1, 300]]);
     expect(v['reused']).toBe(false);
-    const again = ok(await act(w, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap) }));
+    const again = ok(await act(w, ANA, 'value_plan', { planIri: p2, inputs: p1Inputs(ap) }));
     expect(again).toMatchObject({ reused: true, valuationHash: v['valuationHash'], valuationIri: v['valuationIri'] });
 
     ok(await classify(w, DEE, ap.t2, ANSWERS.knowable));
-    const p2 = String(ok(await propose(w, ap, P1_CHANGES(ap), 'P1 again'))['planIri']);
-    expect(ok(await act(w, ANA, 'value_plan', { planIri: p2, inputs: p1Inputs(ap, 'estimate') }))['expertEvidence']).toEqual([{ taskIri: ap.t2, satisfiedBy: 'performer-answers' }]);
-    refused(await act(w, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap) }), 409, /re-classified or revised after this plan/);
+    const p3 = String(ok(await propose(w, ap, [must(P1_CHANGES(ap)[0]), t2NoAgent], 'P1 third'))['planIri']);
+    expect(ok(await act(w, ANA, 'value_plan', { planIri: p3, inputs: p1Inputs(ap, 'estimate') }))['expertEvidence']).toEqual([{ taskIri: ap.t2, satisfiedBy: 'performer-answers' }]);
   }, 60_000);
 
   it('blocks valuation on a disputed task and submission on an unratified one (409)', async () => {
@@ -634,6 +681,8 @@ describe('work-redesign bridge', () => {
     ok(await ratify(w, CY, ap.t3));
     ok(await ratify(w, DEE, ap.t4));
     for (const [t, a] of [[ap.t1, ANSWERS.evident], [ap.t2, ANSWERS.knowable], [ap.t3, ANSWERS.emergent], [ap.t4, ANSWERS.turbulent]] as const) ok(await classify(w, ANA, t, a));
+    ok(await ratifyClassification(w, CY, ap.t1));
+    ok(await ratifyClassification(w, DEE, ap.t2));
     const planIri = String(ok(await propose(w, ap, P1_CHANGES(ap)))['planIri']);
     ok(await ratify(w, DEE, ap.t2, 'dispute', 'The proposal leaves out accruals'));
     refused(await act(w, ANA, 'value_plan', { planIri, inputs: p1Inputs(ap) }), 409, /disputed task description blocks valuation/);
@@ -659,6 +708,7 @@ describe('work-redesign bridge', () => {
     const prediction = obj(submitted['prediction']);
     const band = obj(prediction['band']);
 
+    await acknowledgeAll(w, planIri);
     const approved = ok(await countersign(w, BO, decisionIri, 'approve'));
     expect(approved).toMatchObject({ status: 'countersigned', statusLabel: 'approved; prediction unmeasured' });
     const csRow = await decisionRow(w, decisionIri);
@@ -666,16 +716,23 @@ describe('work-redesign bridge', () => {
     const graph = String(w.pod.bodies.get(String(obj(csRow['head'])['descriptorUrl']).replace('.ttl', '-graph.trig')));
     expect(graph).toContain('wrd:predictionStatus "unmeasured"');
 
+    // Two person-reviewed runs on T1 inside the window: the pilot check counts these, not what the grader types.
+    await logReviewedRun(w, 'pilot-1', ap.t1, 'accepted', ELI, 'accepted');
+    await logReviewedRun(w, 'pilot-2', ap.t1, 'accepted', FAY, 'accepted');
     w.clock.advance(9 * WEEK);
     const windowEnd = plusWeeks(csAt, 8);
     const factor = meanRampFactor(0, monthsBetween(csAt, windowEnd), Number(prediction['rampMonths']));
     expect(factor).toBeLessThan(1);
     const measured = Number(band['p50']) * factor;
-    const outcome = ok(await recordOutcome(w, ELI, decisionIri, {
-      disposition: 'kept', measured: { weeklyValueDelta: measured, comparisonBasis: 'staggered', windowStart: csAt, windowEnd, method: 'Staggered roll-out across two AP teams' },
-    }));
+    const fields = (m: Obj): Obj => ({ disposition: 'kept', measured: { weeklyValueDelta: measured, comparisonBasis: 'staggered', windowStart: csAt, windowEnd, method: 'Staggered roll-out across two AP teams', ...m } });
+    // One hour, chosen by the grader: a kept change is measured over the whole declared window.
+    refused(await recordOutcome(w, ELI, decisionIri, fields({ windowEnd: new Date(Date.parse(csAt) + 3_600_000).toISOString() })), 409, /shorter than the plan declared/, /declared 8/);
+    const outcome = ok(await recordOutcome(w, ELI, decisionIri, fields({ runsObserved: 500, criticalFailuresObserved: 0 })));
     expect(outcome).toMatchObject({ status: 'measured', disposition: 'kept' });
-    expect(obj(outcome['valued'])).toMatchObject({ verdict: 'in-band', rampAdjusted: true, comparisonGroup: true });
+    expect(obj(outcome['valued'])).toMatchObject({
+      verdict: 'in-band', rampAdjusted: true, comparisonGroup: true, windowShorterThanPlanned: false, countsTowardCalibration: true,
+      pilotCheck: { runsNeeded: 300, reviewedRuns: 2, criticalFailures: 0, ceilingSupported: false, declared: { runsObserved: 500, criticalFailuresObserved: 0 } },
+    });
 
     const decisionGraph = graphIriOf(decisionIri);
     const entries = (await manifest(w)).filter((e) => e.describes.includes(decisionGraph));
@@ -693,6 +750,8 @@ describe('work-redesign bridge', () => {
     expect(cell).toMatchObject({ samples: 1, hitRate: 1, status: 'Hypothetical', rampAdjusted: 1, scriptedLabel: null });
     const t1 = await taskRow(w, ap.t1);
     expect(obj(t1['effective'])).toMatchObject({ level: 'agent-drafts-person-decides', source: 'measured-decision', decisionIri });
+    const d = await decisionRow(w, decisionIri);
+    expect(arr(d['preparedBy']).map((x) => [x['role'], x['personRef']])).toEqual([['proposed', 'p-ana'], ['valued', 'p-ana'], ['submitted', 'p-ana']]);
   }, 90_000);
 
   it('refuses countersign by the submitter from either key, a subject, or a non-approver (403), on a stale digest, a replay or an unnamed objection (409), and an outcome before countersign or before the window ends (409)', async () => {
@@ -726,6 +785,7 @@ describe('work-redesign bridge', () => {
     ok(await act(w, ADMIN, 'update_registry', { entries: [person(BO, ['worker'], 'p-bo', 'Bo')] }));
     refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured }), 409, /no longer verifies/);
     ok(await act(w, ADMIN, 'update_registry', { entries: [person(BO, ['approver'], 'p-bo', 'Bo')] }));
+    refused(await recordOutcome(w, BO, decisionIri, { disposition: 'kept', measured }), 403, /approved a decision cannot grade it/);
     refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured: { ...measured, windowStart: plusWeeks(csAt, -1) } }), 409, /starts before the decision was countersigned/, /^the window starts \S+; the decision was countersigned \S+$/);
     refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'reverted', measured }), 400, /needs a note/);
     refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured: { ...measured, interval: { low: 200, high: 300 } } }), 400, /malformed/, /must contain/);
@@ -764,7 +824,9 @@ describe('work-redesign bridge', () => {
     expect(submitted['prediction']).toBeUndefined();
     expect(arr(submitted['probes'])).toHaveLength(2);
     const decisionIri = String(submitted['decisionIri']);
-    expect(ok(await countersign(w, BO, decisionIri, 'approve'))['statusLabel']).toBe('approved; probes not yet read');
+    refused(await countersign(w, BO, decisionIri, 'approve'), 409, /has not acknowledged their assignment/);
+    expect(ok(await countersign(w, BO, decisionIri, 'approve', { unacknowledgedConsidered: [ap.t3] }))['statusLabel']).toBe('approved; probes not yet read');
+    expect(obj((await decisionRow(w, decisionIri))['countersign'])['unacknowledgedConsidered']).toEqual([ap.t3]);
     const csAt = String(obj((await decisionRow(w, decisionIri))['countersign'])['at']);
     w.clock.advance(5 * WEEK);
     const result = (index: number, signal: string): Obj => ({ taskIri: ap.t3, index, signal, observed: 'Read from the dispute log', windowStart: csAt, windowEnd: plusWeeks(csAt, 4) });
@@ -845,7 +907,7 @@ describe('work-redesign bridge', () => {
     const cell = must(arr(calibration['agentCells']).find((c) => c['taskKind'] === 'invoice-matching'));
     expect(cell).toMatchObject({ samples: 2, model: 'scripted-fixture', currentModel: true, distinctConfirmers: 2, status: 'Hypothetical', agentAddress: addr(AGENT), principal: addr(ANA) });
     const runs = arr((await list(w, '?kind=runs'))['runs']);
-    expect(runs).toEqual([{ agentAddress: addr(AGENT), taskKind: 'invoice-matching', model: 'scripted-fixture', reviewed: 2, actedUnderGrant: 0, measuredCost: { runs: 1, mean: 0.12, currency: 'USD' } }]);
+    expect(runs).toEqual([{ agentAddress: addr(AGENT), taskKind: 'invoice-matching', model: 'scripted-fixture', reviewed: 2, actedUnderGrant: 0, reportedCost: { runs: 1, mean: 0.12, currency: 'USD', basis: 'agent-reported on person-reviewed runs' } }]);
   }, 60_000);
 
   it('refuses grants to people (403) and before they are earned (409); grants, uses, revokes (Retracted with the grant window), then every use is 409; a model change makes the grant inactive; a run under the grant is reviewed an hour after it was logged', async () => {
@@ -879,6 +941,22 @@ describe('work-redesign bridge', () => {
     refused(await propose(w, ap, [withinGrant], 'P3b'), 409, /No active grant/, /declared model changed since the grant \(was scripted-fixture, now scripted-fixture-2\)/);
     ok(await act(w, ADMIN, 'update_registry', { entries: [{ address: AGENT.address, roles: ['agent'], label: 'Matching agent', softwareAgent: true, principal: ANA.address, model: 'scripted-fixture' }] }));
 
+    // A grant is held on the kind of task; acting alone on T1 needs a decision that puts T1 there.
+    const early = await runEnvelope(w, 'g-000', ap.t1, 'accepted', { underGrant: grantIri });
+    refused(await http(w, 'POST', 'log_agent_run', { run_envelope: early }), 409, /No approved decision puts this task at agent-acts-within-grant/);
+    const p3Inputs: Obj = {
+      currency: 'USD', unitsPerWeek: { current: tri(180, 200, 220, 'measured') }, valuePerUnit: tri(5, 6, 7), hourlyCost: tri(38, 42, 46, 'document'),
+      oneOffCost: tri(1000, 2000, 3000), horizonMonths: 24, rampMonths: 1, annualDiscountRate: 0.08, criticalFailureCeiling: 0.01,
+      freedHours: { [ap.t1]: { disposition: 'absorbed' } },
+      tasks: { [ap.t1]: { runsPerUnit: one(1), current: state({ performerHoursPerRun: tri(0.15, 0.2, 0.3, 'measured') }), proposed: state({ agentCostPerRun: tri(0.08, 0.12, 0.2) }) } },
+    };
+    const v3 = ok(await act(w, ANA, 'value_plan', { planIri: plan['planIri'], inputs: p3Inputs }));
+    const d3 = String((await submitValued(w, String(plan['planIri']), v3))['decisionIri']);
+    refused(await countersign(w, ANA2, d3, 'approve'), 403);
+    ok(await countersign(w, BO, d3, 'approve'));
+    expect(obj((await taskRow(w, ap.t1))['effective'])).toMatchObject({ level: 'agent-acts-within-grant', source: 'approved-decision', decisionIri: d3, grant: { active: true }, suspended: false });
+    // Under the grant the agent acts alone only on what it calls ready.
+    refused(await http(w, 'POST', 'log_agent_run', { run_envelope: await runEnvelope(w, 'g-rw', ap.t1, 'reworked', { underGrant: grantIri }) }), 409, /Route it to a person/);
     const underGrant = await runEnvelope(w, 'g-001', ap.t1, 'accepted', { underGrant: grantIri });
     expect(ok(await http(w, 'POST', 'log_agent_run', { run_envelope: underGrant }))).toMatchObject({ status: 'acted-under-grant', countsTowardCalibration: false });
     const awaiting = arr((await list(w, '?kind=runs'))['awaitingReview']);
@@ -890,7 +968,8 @@ describe('work-redesign bridge', () => {
 
     const grantRow = must(arr((await list(w, '?kind=grants'))['grants']).find((g) => g['grantIri'] === grantIri));
     const gh = headOfRow(grantRow);
-    const revoked = ok(await act(w, BO, 'revoke_grant', { grantIri, recordId: gh.recordId, descriptorUrl: gh.descriptorUrl, why: 'Supplier master data migrated; re-earn on the new data' }));
+    refused(await act(w, BO, 'revoke_grant', { grantIri, recordId: gh.recordId, descriptorUrl: gh.descriptorUrl, why: 'no digest bound' }), 400, /malformed/, /graphDigest/);
+    const revoked = ok(await act(w, BO, 'revoke_grant', { grantIri, recordId: gh.recordId, descriptorUrl: gh.descriptorUrl, graphDigest: gh.graphDigest, why: 'Supplier master data migrated; re-earn on the new data' }));
     expect(revoked['status']).toBe('revoked');
     const revokedRow = must(arr((await list(w, '?kind=grants'))['grants']).find((g) => g['grantIri'] === grantIri));
     const head = obj(revokedRow['head']);
@@ -898,7 +977,11 @@ describe('work-redesign bridge', () => {
     expect(head['validFrom']).toBe(revokedRow['grantedAt']);
     expect(head['validUntil']).toBe(revoked['revokedAt']);
     expect(revokedRow).toMatchObject({ status: 'revoked', active: false });
-    refused(await act(w, BO, 'revoke_grant', { grantIri, recordId: String(head['recordId']), descriptorUrl: String(head['descriptorUrl']), why: 'again' }), 409, /already revoked/);
+    refused(await act(w, BO, 'revoke_grant', { grantIri, recordId: String(head['recordId']), descriptorUrl: String(head['descriptorUrl']), graphDigest: String(head['graphDigest']), why: 'again' }), 409, /already revoked/);
+    // Work the decision put under the grant now has no authorised performer, and says so.
+    const suspended = obj((await taskRow(w, ap.t1))['effective']);
+    expect(suspended).toMatchObject({ level: 'agent-acts-within-grant', source: 'approved-decision', grant: { active: false }, suspended: true });
+    expect(String(suspended['suspendedWhy'])).toMatch(/^grant revoked at \S+: this work has no authorised performer until a new decision changes it$/);
 
     refused(await http(w, 'POST', 'log_agent_run', { run_envelope: await runEnvelope(w, 'g-002', ap.t1, 'accepted', { underGrant: grantIri }) }), 409, /grant is not active: revoked at/);
     refused(await propose(w, ap, [withinGrant], 'P3c'), 409, /No active grant/);
@@ -906,7 +989,7 @@ describe('work-redesign bridge', () => {
     refused(await grant(BO), 409, /not earned/, /0 person-reviewed runs on model scripted-fixture since/);
   }, 120_000);
 
-  it('copies every record naming or signed by the holder to the pod they name, idempotently; changed rows only; refuses the platform pod (400) and a signer of nothing (403)', async () => {
+  it('copies every record naming or signed by the holder to the pod they name, idempotently; changed rows only; refuses the platform pod (400) and a signer of nothing (403); a download verifies offline against the expected platform address', async () => {
     const w = await world();
     const ap = await standardAp(w);
     const p1 = String(ok(await propose(w, ap, [P1_CHANGES(ap)[0] as Obj], 'P1'))['planIri']);
@@ -954,7 +1037,232 @@ describe('work-redesign bridge', () => {
     expect(exported).toMatchObject({ status: 'exported', targetPodUrl: null, copied: [] });
     expect(arr(exported['bundle']).some((b) => b['recordKind'] === 'Plan')).toBe(true);
     expect(arr((await list(w))['untrusted']).every((u) => !String(u['descriptorUrl']).startsWith(DEMO_HOLDER_POD))).toBe(true);
+
+    // The download verifies offline — no pod, no bridge — against the platform address list_records reports.
+    const platformAddress = String(obj(obj(obj(await list(w))['bridge'])['platform'])['address']);
+    expect(platformAddress).toBe(addr(PLATFORM));
+    const downloaded = JSON.parse(JSON.stringify({ holder: exported['holder'], bundle: exported['bundle'] })) as Obj;
+    const good = await verifyHolderBundle(downloaded, [platformAddress]);
+    expect(good.ok).toBe(true);
+    expect(good.records).toHaveLength(arr(exported['bundle']).length);
+    expect(good.records.every((r) => r.verified && r.signerAddress === addr(PLATFORM))).toBe(true);
+    // The wrong expected key, no expected key, and one altered byte are each caught.
+    const wrongKey = await verifyHolderBundle(downloaded, [addr(ANA)]);
+    expect(wrongKey.ok).toBe(false);
+    expect(wrongKey.records.every((r) => !r.verified && /not by an expected platform address/.test(r.why ?? ''))).toBe(true);
+    expect(await verifyHolderBundle(downloaded, [])).toMatchObject({ ok: false, why: expect.stringMatching(/proves nothing/) });
+    const items = arr(downloaded['bundle']);
+    const planAt = items.findIndex((b) => b['recordKind'] === 'Plan');
+    const plan = must(items[planAt]);
+    expect(String(plan['graphTrig'])).toContain('wrd:status "proposed"');
+    const tampered = items.map((b, i) => (i === planAt ? { ...b, graphTrig: String(b['graphTrig']).replace('wrd:status "proposed"', 'wrd:status "submitted"') } : b));
+    const caught = await verifyHolderBundle(tampered, [platformAddress]);
+    expect(caught.ok).toBe(false);
+    expect(caught.records.filter((r) => !r.verified).map((r) => [r.descriptorUrl, r.why])).toEqual([[plan['descriptorUrl'], 'its graph was altered after signing: the bytes no longer match the signed digest']]);
   }, 90_000);
+
+  it('rests a grant on the share of work a person accepted: an agent that labels its runs truthfully but is reworked 19 times in 20 earns nothing; a run under an earned grant is checked against the task as it stands', async () => {
+    const w = await world();
+    const ap = await standardAp(w);
+    // The review's reproduction, end to end: 20 runs on T2 by 5 reviewers, a person accepted 1, the agent said "reworked" of the other 19.
+    const reviewers = [ELI, FAY, GUS, HAL, IVY];
+    for (let i = 0; i < 20; i += 1) {
+      const self = i === 0 ? 'accepted' : 'reworked';
+      const run = await runEnvelope(w, `t-${i}`, ap.t2, self, { taskKind: 'gl-coding' });
+      ok(await http(w, 'POST', 'log_agent_run', { run_envelope: run, review_envelope: await reviewEnvelope(w, must(reviewers[i % 5]), run, self) }));
+    }
+    const notEarned = refused(await act(w, BO, 'grant_autonomy', { agentAddress: AGENT.address, taskKind: 'gl-coding' }), 409, /not earned/, /^a person accepted 1 of 20 reviewed runs \(5%\); the policy needs at least 90%\.$/);
+    expect(obj(notEarned['evaluation'])).toMatchObject({ acceptedShare: 0.05, readyClaims: 1, readyClaimPrecision: 1, distinctConfirmers: 5 });
+    const cell = must(arr(ok(await http(w, 'GET', 'calibration', undefined, '?kind=agents'))['agentCells']).find((c) => c['taskKind'] === 'gl-coding'));
+    expect(cell).toMatchObject({ samples: 20, hitRate: 1, acceptedShare: 0.05, readyClaims: 1 });
+
+    // An earned grant on invoice matching, a decision putting T1 under it — then T1 is re-classified Turbulent by the person who does it.
+    for (let i = 1; i <= 24; i += 1) await logReviewedRun(w, `m-${i}`, ap.t1, i === 24 ? 'reworked' : 'accepted', must(reviewers[i % 5]), i >= 23 ? 'reworked' : 'accepted');
+    const grantIri = String(ok(await act(w, BO, 'grant_autonomy', { agentAddress: AGENT.address, taskKind: 'invoice-matching' }))['grantIri']);
+    const plan = ok(await propose(w, ap, [{ taskIri: ap.t1, proposedLevel: 'agent-acts-within-grant', agentAddress: AGENT.address }], 'P3'));
+    const v = ok(await act(w, ANA, 'value_plan', { planIri: plan['planIri'], inputs: {
+      currency: 'USD', unitsPerWeek: { current: tri(180, 200, 220, 'measured') }, valuePerUnit: tri(5, 6, 7), hourlyCost: tri(38, 42, 46, 'document'),
+      oneOffCost: tri(1000, 2000, 3000), horizonMonths: 24, rampMonths: 1, annualDiscountRate: 0.08, criticalFailureCeiling: 0.01, freedHours: { [ap.t1]: { disposition: 'absorbed' } },
+      tasks: { [ap.t1]: { runsPerUnit: one(1), current: state({ performerHoursPerRun: tri(0.15, 0.2, 0.3, 'measured') }), proposed: state({ agentCostPerRun: tri(0.08, 0.12, 0.2) }) } },
+    } }));
+    const d3 = String((await submitValued(w, String(plan['planIri']), v))['decisionIri']);
+    ok(await countersign(w, BO, d3, 'approve'));
+    ok(await http(w, 'POST', 'log_agent_run', { run_envelope: await runEnvelope(w, 'g-1', ap.t1, 'accepted', { underGrant: grantIri }) }));
+    expect(ok(await classify(w, CY, ap.t1, ANSWERS.turbulent))).toMatchObject({ regime: 'Turbulent', status: 'ratified', answeredBy: { role: 'performer' } });
+    // The grant is still active on invoice matching, but THIS task is now Turbulent: nobody acts on it alone.
+    refused(await http(w, 'POST', 'log_agent_run', { run_envelope: await runEnvelope(w, 'g-2', ap.t1, 'accepted', { underGrant: grantIri }) }), 409, /Turbulent work: act to stabilise first/);
+  }, 120_000);
+
+  it('keeps everyone who prepared a prediction, and the principal of an agent it names, from approving it; the approver from grading it; one approved, unmeasured decision per task; a short window only when stopped early', async () => {
+    const w = await world();
+    const ap = await standardAp(w);
+    const plan = async (who: Wallet, title: string, changes: Obj[] = P1_CHANGES(ap)): Promise<string> =>
+      String(ok(await act(w, who, 'propose_allocation', { workflowIri: ap.workflowIri, title, changes }), `propose ${title}`)['planIri']);
+    const value = async (who: Wallet, planIri: string, inputs: Obj = p1Inputs(ap)): Promise<Obj> => ok(await act(w, who, 'value_plan', { planIri, inputs }), 'value');
+    const submit = async (who: Wallet, planIri: string, v: Obj): Promise<Res> => act(w, who, 'submit_decision', {
+      planIri, valuationIri: v['valuationIri'], valuationHash: v['valuationHash'], measurementPlan: { metric: 'weekly-cash-delta', comparisonBasis: 'staggered', windowWeeks: 8 },
+    });
+    const pa = await plan(ANA, 'proposed by Ana');
+    const da = String(ok(await submit(ELI, pa, await value(ELI, pa)))['decisionIri']);
+    const pb = await plan(ELI, 'valued by Ana');
+    const db = String(ok(await submit(ELI, pb, await value(ANA, pb)))['decisionIri']);
+    const pc = await plan(ELI, 'prepared by Eli');
+    const dc = String(ok(await submit(ELI, pc, await value(ELI, pc)))['decisionIri']);
+    refused(await countersign(w, ANA2, da, 'approve'), 403, /proposed this plan cannot countersign/);
+    refused(await countersign(w, ANA2, db, 'approve'), 403, /requested the valuation cannot countersign/);
+    refused(await countersign(w, ANA2, dc, 'approve'), 403, /accountable for an agent this decision puts on the work/);
+    await acknowledgeAll(w, pc);
+    ok(await countersign(w, BO, dc, 'approve'));
+    await acknowledgeAll(w, pa);
+    const busy = refused(await countersign(w, BO, da, 'approve'), 409, /Another approved decision on \S+ has not been measured yet/);
+    expect(obj(busy['iep:resolvedBy'])['toolName']).toBe('wrd.record_outcome');
+    // Nor can another change to T2 be submitted while Dc is being measured.
+    const t2Inputs: Obj = {
+      ...p1Inputs(ap), freedHours: { [ap.t2]: { disposition: 'undecided' } },
+      tasks: { [ap.t2]: { runsPerUnit: one(1), current: state({ performerHoursPerRun: tri(0.07, 0.1, 0.15), agentCostPerRun: tri(0.02, 0.05, 0.1) }), proposed: state({ performerHoursPerRun: tri(0.1, 0.15, 0.2) }) } },
+    };
+    const pd = await plan(ANA, 'T2 back to Dee alone', [{ taskIri: ap.t2, proposedLevel: 'person', personAddress: DEE.address }]);
+    refused(await submit(ANA, pd, await value(ANA, pd, t2Inputs)), 409, /Another approved decision/);
+
+    w.clock.advance(9 * WEEK);
+    const csAt = String(obj((await decisionRow(w, dc))['countersign'])['at']);
+    const measured = { weeklyValueDelta: 50, comparisonBasis: 'staggered', windowStart: csAt, windowEnd: plusWeeks(csAt, 8), method: 'Staggered roll-out' };
+    refused(await recordOutcome(w, BO, dc, { disposition: 'kept', measured }), 403, /approved a decision cannot grade it/);
+    refused(await recordOutcome(w, ELI, dc, { disposition: 'kept', measured }), 403, /predicted cannot grade/);
+    // Stopped after three weeks: recorded, said so, and kept out of calibration.
+    const short = ok(await recordOutcome(w, FAY, dc, { disposition: 'stopped-early', dispositionNote: 'Stopped: the supplier portal changed', measured: { ...measured, windowEnd: plusWeeks(csAt, 3) } }));
+    expect(obj(short['valued'])).toMatchObject({ windowShorterThanPlanned: true, countsTowardCalibration: false });
+    const cell = must(arr(ok(await http(w, 'GET', 'calibration', undefined, '?kind=predictions'))['predictionCells'])[0]);
+    expect(cell).toMatchObject({ samples: 0, excludedShortWindow: 1, dispositions: { 'stopped-early': 1 } });
+    // A change stopped early puts nothing in force: T1 is again as captured, and Da can now be approved.
+    expect(obj((await taskRow(w, ap.t1))['effective'])['source']).toBe('captured');
+    ok(await countersign(w, BO, da, 'approve'));
+  }, 120_000);
+
+  it('re-checks at approval what submission checked: a dispute raised after submission blocks it', async () => {
+    const w = await world();
+    const { ap, planIri, valuation } = await valuedP1(w);
+    const decisionIri = String((await submitValued(w, planIri, valuation))['decisionIri']);
+    await acknowledgeAll(w, planIri);
+    ok(await ratify(w, DEE, ap.t2, 'dispute', 'This misses the accrual step'));
+    const blocked = refused(await countersign(w, BO, decisionIri, 'approve'), 409, /must be ratified by everyone named on it/, /is disputed/);
+    expect(obj(blocked['iep:resolvedBy'])['toolName']).toBe('wrd.revise_task');
+    ok(await ratify(w, DEE, ap.t2));
+    ok(await ratifyClassification(w, CY, ap.t1, 'dispute', 'Mismatches only show up at month end'));
+    refused(await countersign(w, BO, decisionIri, 'approve'), 409, /disputes its classification/);
+    // Declining stays open: an approver can always say no.
+    expect(ok(await countersign(w, BO, decisionIri, 'decline', { note: 'Not while the classification is disputed' }))['status']).toBe('declined');
+  }, 60_000);
+
+  it('a revision that removes someone named does not stand until they ratify it, and they can still dispute it', async () => {
+    const w = await world();
+    const ap = await standardAp(w);
+    ok(await ratify(w, DEE, ap.t2, 'dispute', 'Misses the accrual step'));
+    const h = headOfRow(await taskRow(w, ap.t2));
+    // The review's reproduction: Ana answers Dee's dispute by naming herself and removing Dee.
+    const revised = ok(await act(w, ANA, 'revise_task', { op: 'revise', taskIri: ap.t2, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, personAddress: ANA.address, description: 'Ana codes the invoices now.', note: 'Reassigned' }));
+    expect(revised).toMatchObject({ status: 'captured', owedRatification: [addr(DEE)] });
+    // Naming herself does not let Ana ratify her own description into force.
+    expect(ok(await ratify(w, ANA, ap.t2))['status']).toBe('captured');
+    const row = await taskRow(w, ap.t2);
+    expect(arr(row['owedRatification'])).toEqual([{ address: addr(DEE), label: 'Dee', ratification: null }]);
+    // Dee's voice is not removed: she disputes the revision that removed her.
+    expect(ok(await ratify(w, DEE, ap.t2, 'dispute', 'I still do this work'))['status']).toBe('disputed');
+    refused(await propose(w, ap, [{ taskIri: ap.t2, proposedLevel: 'person-with-agent-assist', personAddress: ANA.address }]), 409, /disputed task description/);
+    expect(ok(await ratify(w, DEE, ap.t2))['status']).toBe('ratified');
+    // Someone unrelated still cannot.
+    refused(await ratify(w, CY, ap.t2), 403, /named on this task/);
+  }, 60_000);
+
+  it('refuses a replayed envelope after a restart: the pod holds the signer and nonce that authorised every version', async () => {
+    const w = await world();
+    const ap = await standardAp(w);
+    const zed = (roles: string[]): Obj => ({ entries: [person(ZED, roles, 'p-zed', 'Zed')] });
+    // The review's reproduction: add XAV as approver, remove XAV, restart, replay the add.
+    const addZed = await envelope(w, ADMIN, 'wrd:update-registry', zed(['approver']));
+    ok(await http(w, 'POST', 'update_registry', { envelope: addZed }));
+    ok(await act(w, ADMIN, 'update_registry', zed([])));
+    // A classification replayed over a newer one, and an acknowledgement replayed over an objection.
+    const firstClass = await envelope(w, ANA, 'wrd:classify-task', { taskIri: ap.t4, taskTextSha256: await textOf(w, ap.t4), answers: ANSWERS.turbulent });
+    ok(await http(w, 'POST', 'classify_task', { envelope: firstClass }));
+    ok(await classify(w, ANA, ap.t4, { ...ANSWERS.turbulent, worstCase: 'recoverable' }));
+    const planIri = String(ok(await propose(w, ap, P1_CHANGES(ap)))['planIri']);
+    const ph = await planHead(w, planIri);
+    const ack = await envelope(w, CY, 'wrd:ratify-task', { subject: 'assignment', planIri, taskIri: ap.t1, ...ph, verdict: 'acknowledge' });
+    ok(await http(w, 'POST', 'ratify_task', { envelope: ack }));
+    ok(await acknowledge(w, CY, planIri, ap.t1, 'object', 'On reflection, no'));
+
+    const fresh = await restart(w);
+    refused(await http(fresh, 'POST', 'update_registry', { envelope: addZed }), 409, /already used/, /on urn:wrd:registry/);
+    expect(arr(obj((await list(fresh))['registry'])['members']).some((m) => m['address'] === addr(ZED))).toBe(false);
+    refused(await http(fresh, 'POST', 'classify_task', { envelope: firstClass }), 409, /already used/);
+    refused(await http(fresh, 'POST', 'ratify_task', { envelope: ack }), 409, /already used/);
+    expect(arr((await list(fresh))['plans']).find((p) => p['planIri'] === planIri)?.['assignments']).toEqual([
+      expect.objectContaining({ taskIri: ap.t1, state: 'objected' }), expect.objectContaining({ taskIri: ap.t2, state: 'not-acknowledged' }),
+    ]);
+  }, 60_000);
+
+  it('values only finite numbers and costs the oversight of a person who decides or audits', async () => {
+    const w = await world();
+    const ap = await standardAp(w);
+    const planIri = String(ok(await propose(w, ap, P1_CHANGES(ap)))['planIri']);
+    const huge = refused(await act(w, ANA, 'value_plan', { planIri, inputs: { ...p1Inputs(ap), unitsPerWeek: { current: tri(1e200, 1e200, 1e200) }, valuePerUnit: tri(1e200, 1e200, 1e200) } }), 400, /malformed/, /values above 1000000000000 are refused/);
+    // A malformed payload is answered with the whole shape it should have had.
+    expect(obj(huge['expectedPayload'])['title']).toBe('wrd:value-plan payload');
+    expect(obj(huge['iep:resolvedBy'])).toMatchObject({ toolName: 'wrd.envelope_template', intent: 'wrd:value-plan' });
+    const inputs = p1Inputs(ap);
+    const tasks = obj(inputs['tasks']);
+    const t1 = obj(tasks[ap.t1]);
+    refused(await act(w, ANA, 'value_plan', { planIri, inputs: { ...inputs, tasks: { ...tasks, [ap.t1]: { ...t1, proposed: { ...obj(t1['proposed']), oversightHoursPerRun: one(0, 'estimate') } } } } }), 400, /malformed/, /oversightHoursPerRun is 0: a person decides on or audits/);
+    refused(await act(w, ANA, 'value_plan', { planIri, inputs: { ...inputs, tasks: { ...tasks, [ap.t1]: { ...t1, proposed: { ...obj(t1['proposed']), agentCostPerRun: tri(0.05, 0.1, 0.2, 'measured') } } } } }), 400, /malformed/, /basis measured needs a source/);
+    ok(await act(w, ANA, 'value_plan', { planIri, inputs }));
+  }, 60_000);
+
+  it('binds a classification to the text it answers; an agent named on a task classifies as an agent, never as expert evidence; a captured agent level the regime forbids is flagged', async () => {
+    const w = await world();
+    await register(w);
+    const captured = ok(await act(w, ANA, 'capture_workflow', {
+      workflow: { title: 'Coding review', unitLabel: 'invoice' },
+      tasks: [{ name: 'Code invoices', description: 'The agent codes; Dee audits.', currentLevel: 'agent-acts-person-audits', personAddress: DEE.address, agentAddress: AGENT.address, taskKind: 'gl-coding' }],
+    }));
+    const t = String(arr(captured['tasks'])[0]?.['taskIri']);
+    const missing = refused(await act(w, ANA, 'classify_task', { taskIri: t, answers: ANSWERS.knowable }), 400, /malformed/, /taskTextSha256/);
+    expect(obj(missing['expectedPayload'])['required']).toEqual(['intent', 'podUrl', 'issuedAt', 'nonce', 'taskIri', 'taskTextSha256', 'answers']);
+    refused(await act(w, ANA, 'classify_task', { taskIri: t, taskTextSha256: '0'.repeat(64), answers: ANSWERS.knowable }), 409, /description changed since you read it/);
+    const byAgent = ok(await act(w, AGENT, 'classify_task', { taskIri: t, taskTextSha256: await textOf(w, t), answers: { ...ANSWERS.knowable, checkability: 'not-checkable' } }));
+    expect(byAgent).toMatchObject({ answeredBy: { role: 'agent' }, status: 'classified' });
+    expect(arr(byAgent['notes']).join(' ')).toMatch(/reported current state, not an approved one/);
+    expect(String((await taskRow(w, t))['currentNotPermitted'])).toMatch(/checkability is not-checkable/);
+    const planIri = String(ok(await act(w, ANA, 'propose_allocation', { workflowIri: captured['workflowIri'], title: 'Dee codes', changes: [{ taskIri: t, proposedLevel: 'person', personAddress: DEE.address }] }))['planIri']);
+    refused(await act(w, ANA, 'value_plan', { planIri, inputs: {
+      currency: 'USD', unitsPerWeek: { current: tri(180, 200, 220, 'measured') }, valuePerUnit: tri(5, 6, 7), hourlyCost: tri(38, 42, 46, 'document'),
+      oneOffCost: tri(0, 500, 1000), horizonMonths: 12, rampMonths: 0, annualDiscountRate: 0.08, criticalFailureCeiling: 0.01, freedHours: { [t]: { disposition: 'undecided' } },
+      tasks: { [t]: { runsPerUnit: one(1), current: state({ oversightHoursPerRun: tri(0.02, 0.04, 0.06), agentCostPerRun: tri(0.05, 0.08, 0.1) }), proposed: state({ performerHoursPerRun: tri(0.1, 0.15, 0.2) }) } },
+    } }), 409, /Knowable work is valued only with expert analysis/);
+  }, 60_000);
+
+  it('publishes what each write signs: the manifest summarises every payload, and wrd.envelope_template serves the schema and a template filled from the pod', async () => {
+    const w = await world();
+    const ap = await standardAp(w);
+    const manifestText = await (await fetch(`${w.base}/affordances?format=jsonld`, { headers: { accept: 'application/ld+json' } })).text();
+    expect(manifestText).toContain('payload fields beyond intent, podUrl, issuedAt and nonce: {workflow: {title, unitLabel, description?}, tasks: [{name, description, currentLevel:');
+    const planIri = String(ok(await propose(w, ap, P1_CHANGES(ap)))['planIri']);
+    const valueT = ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:value-plan&plan_iri=${encodeURIComponent(planIri)}`));
+    expect(valueT).toMatchObject({ intent: 'wrd:value-plan', toolName: 'wrd.value_plan', status: 'templated', computed: true });
+    expect(Object.keys(obj(obj(obj(valueT['template'])['inputs'])['tasks'])).sort()).toEqual([ap.t1, ap.t2].sort());
+    expect(arr(valueT['fill'])).toContain('inputs.currency');
+    expect(arr(obj(valueT['context'])['changedTasks']).map((c) => [c['taskIri'], c['oversightRequired']])).toEqual([[ap.t1, true], [ap.t2, false]]);
+    // A template for a ratification carries the head the signer must bind; filled and signed, it is accepted as it is.
+    const ratifyT = ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:ratify-task&subject=assignment&task_iri=${encodeURIComponent(ap.t1)}&plan_iri=${encodeURIComponent(planIri)}`));
+    const template = obj(ratifyT['template']);
+    const ph = await planHead(w, planIri);
+    expect(template).toMatchObject({ descriptorUrl: ph.descriptorUrl, graphDigest: ph.graphDigest, planIri, taskIri: ap.t1, subject: 'assignment', verdict: null });
+    expect(template).not.toHaveProperty('recordId');
+    const payload = { ...template, verdict: 'acknowledge', issuedAt: w.clock.now().toISOString() };
+    expect(ok(await http(w, 'POST', 'ratify_task', { envelope: { payload, signature: await signMessageRaw(CY, canonicalJson(payload)) } }))['status']).toBe('acknowledged');
+    refused(await http(w, 'GET', 'envelope_template', undefined, '?intent=wrd:anything'), 400, /Unknown intent/);
+    refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revoke-grant&grant_iri=${encodeURIComponent('urn:wrd:grant:0000000000000000:0000000000000000')}`), 404);
+  }, 60_000);
 
   it('answers 502, not 200, when the pod refuses a write with 403', async () => {
     const w = await world();
@@ -977,6 +1285,6 @@ describe('work-redesign bridge', () => {
       expect(typeof r.body['iep:refusalReason'], r.tool).toBe('string');
       expect(typeof r.body['error'], r.tool).toBe('string');
     }
-    expect(new Set(fromBridge.map((r) => r.status))).toEqual(new Set([400, 401, 403, 404, 409, 422, 502]));
+    expect(new Set(fromBridge.map((r) => r.status))).toEqual(new Set([400, 401, 403, 404, 409, 422, 501, 502]));
   });
 });

@@ -46,7 +46,8 @@ export type AllocationLevel = 'person' | 'person-with-agent-assist' | 'agent-dra
   | 'agent-acts-person-audits' | 'agent-acts-within-grant';
 export type Checkability = 'before-effect' | 'after-effect' | 'not-checkable' | 'unknown';
 export type ComparisonBasis = 'holdout' | 'staggered' | 'before-after';
-export type InputBasis = 'measured' | 'document' | 'performer-reported' | 'estimate';
+/** Where an input came from. 'not-applicable' marks a 0/0/0 that does not apply to this state (for example performer hours where an agent performs); it is counted apart and never read as a single-number estimate. */
+export type InputBasis = 'measured' | 'document' | 'performer-reported' | 'estimate' | 'not-applicable';
 export type FreedHoursDisposition = 'redeployed' | 'absorbed' | 'unfilled' | 'undecided';
 export type OutcomeDisposition = 'kept' | 'reverted' | 'stopped-early';
 export type OutcomeMetric = 'weekly-cash-delta' | 'weekly-delta-if-redeployed';
@@ -60,7 +61,7 @@ export const ALLOCATION_LEVELS: readonly AllocationLevel[] = [
 ];
 export const CHECKABILITIES: readonly Checkability[] = ['before-effect', 'after-effect', 'not-checkable', 'unknown'];
 export const COMPARISON_BASES: readonly ComparisonBasis[] = ['holdout', 'staggered', 'before-after'];
-export const INPUT_BASES: readonly InputBasis[] = ['measured', 'document', 'performer-reported', 'estimate'];
+export const INPUT_BASES: readonly InputBasis[] = ['measured', 'document', 'performer-reported', 'estimate', 'not-applicable'];
 export const FREED_HOURS_DISPOSITIONS: readonly FreedHoursDisposition[] = ['redeployed', 'absorbed', 'unfilled', 'undecided'];
 export const OUTCOME_DISPOSITIONS: readonly OutcomeDisposition[] = ['kept', 'reverted', 'stopped-early'];
 export const OUTCOME_METRICS: readonly OutcomeMetric[] = ['weekly-cash-delta', 'weekly-delta-if-redeployed'];

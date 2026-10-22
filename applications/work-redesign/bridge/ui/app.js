@@ -43,7 +43,8 @@ const REGIME_NOTES = {
 };
 const METRIC_NAMES = { 'weekly-cash-delta': 'weekly cash change', 'weekly-delta-if-redeployed': 'weekly change if freed hours are redeployed' };
 const metricName = (m) => METRIC_NAMES[m] ?? m;
-const BASIS_NAMES = { measured: 'measured', document: 'from a document', 'performer-reported': 'reported by the performer', estimate: 'estimate' };
+const BASIS_NAMES = { measured: 'measured', document: 'from a document', 'performer-reported': 'reported by the performer', estimate: 'estimate', 'not-applicable': 'not applicable (0)' };
+const SOURCE_NAMES = { 'approved-decision': 'from an approved decision, being measured', 'measured-decision': 'from a measured, kept decision' };
 const STATE_FIELDS = [
   ['performerHoursPerRun', 'Performer hours per run'],
   ['oversightHoursPerRun', 'Oversight hours per run (the person who decides or audits)'],
@@ -62,7 +63,7 @@ const TAB_OF = {
   'wrd.revise_task': 'tasks', 'wrd.ratify_task': 'tasks', 'wrd.classify_task': 'tasks', 'wrd.propose_allocation': 'plan',
   'wrd.value_plan': 'value', 'wrd.submit_decision': 'decisions', 'wrd.countersign_decision': 'decisions', 'wrd.record_outcome': 'decisions',
   'wrd.log_agent_run': 'agents', 'wrd.grant_autonomy': 'agents', 'wrd.revoke_grant': 'agents', 'wrd.holder_copy': 'me',
-  'wrd.list_records': 'tasks', 'wrd.calibration': 'calibration',
+  'wrd.list_records': 'tasks', 'wrd.calibration': 'calibration', 'wrd.envelope_template': 'tasks', 'wrd.demo_advance_clock': 'decisions',
 };
 
 // ── Small pure helpers ───────────────────────────────────────────────────────────────────
@@ -260,6 +261,18 @@ async function send(toolName, body) {
 
 function showResult(tool, r) { S.result = { tool, ...r }; render(); }
 
+/** Show exactly what a write signs: the payload's schema and a template the bridge fills from the pod. Reads only. */
+async function showPayload(intent, args) {
+  const r = await call('wrd.envelope_template', { intent, pod_url: S.pod || undefined, ...(args || {}) });
+  if (!r.ok) { showResult('wrd.envelope_template', r); return; }
+  openPanel(`What “${intent}” signs`, h('div', null,
+    h('p', { class: 'small muted', text: `${r.body.signing} Sent to ${r.body.toolName}. Fields still yours to decide: ${(r.body.fill ?? []).join(', ') || 'none'}.` }),
+    h('h3', { text: 'Template, filled from the pod' }), h('pre', { text: JSON.stringify(r.body.template, null, 2) }),
+    Object.keys(r.body.context ?? {}).length ? h('details', null, h('summary', { text: 'What the bridge read to fill it' }), h('pre', { text: JSON.stringify(r.body.context, null, 2) })) : null,
+    h('details', null, h('summary', { text: 'JSON Schema' }), h('pre', { text: JSON.stringify(r.body.schema, null, 2) }))));
+}
+const payloadButton = (intent, args) => h('button', { class: 'small', text: 'What this signs', title: 'The payload schema and a template filled from the pod (reads only)', on: { click: () => showPayload(intent, args) } });
+
 async function refresh() {
   const r = await call('wrd.list_records', { pod_url: S.pod || undefined });
   if (r.ok) S.data = r.body;
@@ -338,6 +351,7 @@ function strip() {
     h('div', { class: 'stack' },
       S.mode === 'demo' ? [
         h('div', { class: 'demo-banner', text: DEMO_BANNER }),
+        S.tools.has('wrd.demo_advance_clock') ? demoClockNode() : null,
         h('div', { class: 'row' }, h('label', { class: 'inline', for: 'persona' }, 'Acting as'),
           h('select', { id: 'persona', on: { change: (e) => { S.persona = e.target.value; S.panel = null; render(); } } },
             personas().map((p) => h('option', { value: p.id, selected: p.id === S.persona, text: `${p.label} — ${roles(p.address).join(', ') || (p.id === 'admin' ? 'admin' : 'not registered')}` })))),
@@ -348,6 +362,16 @@ function strip() {
         m ? [m.roles.map((r) => chip(r)), m.softwareAgent ? chip('software agent', 'warn') : null, m.personRef ? ['person ', h('code', { text: m.personRef })] : null,
           m.principal ? ['principal ', labelOf(m.principal)] : null]
           : chip(S.persona === 'admin' ? 'admin key (signs registry changes only)' : 'not in this pod\'s registry', 'warn')) : null));
+}
+
+/** Demo only: the demo server's clock is scripted, so a visitor's own measurement window can end only when they move it. */
+function demoClockNode() {
+  const weeks = input('4', null, { type: 'number', min: 1, max: 104, size: 4, 'aria-label': 'weeks' });
+  return h('div', { class: 'row small' }, 'Demo clock: ', S.demoNow ? h('code', { text: when(S.demoNow) }) : 'scripted',
+    weeks, h('button', { text: 'Move it forward (weeks)', on: { click: async () => {
+      const out = await send('wrd.demo_advance_clock', { weeks: Number(weeks.value) });
+      if (out) { S.demoNow = out.now; render(); }
+    } } }));
 }
 
 /** Read another pod: the choice lives in the page address (?pod=), not in storage. */
@@ -393,6 +417,7 @@ function resultNode() {
     h('p', { text: b.error ?? 'No answer.' }),
     b['iep:refusalReason'] ? h('p', { class: 'small muted', text: `Why: ${b['iep:refusalReason']}` }) : null,
     b.evaluation ? evaluationNode(b.evaluation) : null,
+    b.expectedPayload ? h('details', null, h('summary', { text: 'The payload this tool expects (JSON Schema)' }), h('pre', { text: JSON.stringify(b.expectedPayload, null, 2) })) : null,
     fix?.toolName && TAB_OF[fix.toolName] ? h('button', { text: `What resolves it: ${S.tools.get(fix.toolName)?.title ?? fix.toolName}`, on: { click: () => goTab(TAB_OF[fix.toolName]) } }) : null,
     h('details', null, h('summary', { text: 'The full answer' }), h('pre', { text: JSON.stringify(b, null, 2) })));
 }
@@ -475,6 +500,7 @@ function taskView(iri) {
   if (!t) return h('section', null, back, h('p', { class: 'badbox', text: 'No task with this link on this pod (or it has no trusted record).' }));
   const me = actor();
   const named = t.namedParties.some((p) => p.address === me);
+  const owed = (t.owedRatification ?? []).some((p) => p.address === me);
   const c = t.classification;
   return h('section', null, back,
     h('h2', { text: t.name }), demoChip(t),
@@ -490,7 +516,7 @@ function taskView(iri) {
     h('div', { class: 'card' }, h('strong', { text: 'What signing means' }), h('p', { text: SIGNING_MEANS }),
       S.mode !== 'demo' ? h('ol', null, WALLET_STEPS.map((s) => h('li', { text: s }))) : null),
     h('div', null,
-      h('button', { class: 'primary', disabled: !named || t.status === 'retired', title: named ? '' : 'Only the people and agents named on this task can ratify or dispute it.', text: 'Ratify or dispute this description', on: { click: () => ratifyPanel(t, 'description') } }),
+      h('button', { class: 'primary', disabled: !(named || owed) || t.status === 'retired', title: named || owed ? '' : 'Only the people and agents named on this task (or removed from it by a revision) can ratify or dispute it.', text: 'Ratify or dispute this description', on: { click: () => ratifyPanel(t, 'description') } }),
       h('button', { disabled: !named || !c || c.state !== 'ok', title: named ? '' : 'Only the people and agents named on this task can ratify or dispute its classification.', text: 'Ratify or dispute the classification', on: { click: () => ratifyPanel(t, 'classification') } })));
 }
 
@@ -503,9 +529,10 @@ function quotesNode(quotes) {
 }
 
 function partiesNode(t) {
-  return h('div', null, t.namedParties.map((p) => h('div', null, `${p.label} `, chip(p.kind),
-    p.ratification ? chip(p.ratification.verdict === 'ratify' ? 'ratified' : 'disputed', p.ratification.verdict === 'ratify' ? 'good' : 'bad') : chip('has not signed', 'warn'),
-    p.ratification?.note ? h('span', { class: 'small', text: ` “${p.ratification.note}”` }) : null)));
+  const verdict = (p) => [p.ratification ? chip(p.ratification.verdict === 'ratify' ? 'ratified' : 'disputed', p.ratification.verdict === 'ratify' ? 'good' : 'bad') : chip('has not signed', 'warn'),
+    p.ratification?.note ? h('span', { class: 'small', text: ` “${p.ratification.note}”` }) : null];
+  return h('div', null, t.namedParties.map((p) => h('div', null, `${p.label} `, chip(p.kind), verdict(p))),
+    (t.owedRatification ?? []).map((p) => h('div', null, `${p.label} `, chip('removed by a revision: must ratify it', 'warn'), verdict(p))));
 }
 
 function classificationNode(t) {
@@ -769,9 +796,13 @@ function tasksView() {
       demoChip(wf)),
     table(['Task', 'Named on it', 'Status', 'How knowable', ''], rows.map((t) => {
       const named = t.namedParties.some((p) => p.address === me);
+      const owed = (t.owedRatification ?? []).some((p) => p.address === me);
       const c = t.classification;
       return h('tr', null,
-        h('td', null, h('strong', { text: t.name }), h('div', { class: 'small muted', text: t.description }), chip(t.taskKind), chip(`quotes ${t.quoteStatus}`), demoChip(t)),
+        h('td', null, h('strong', { text: t.name }), h('div', { class: 'small muted', text: t.description }), chip(t.taskKind), chip(`quotes ${t.quoteStatus}`), demoChip(t),
+          h('div', { class: 'small', text: `In force: ${allocationText(t.effective)}${t.effective.source !== 'captured' ? ` (${SOURCE_NAMES[t.effective.source] ?? t.effective.source})` : ''}` }),
+          t.effective.suspended ? h('div', { class: 'badbox small', text: t.effective.suspendedWhy }) : null,
+          t.currentNotPermitted ? h('div', { class: 'warnbox small', text: t.currentNotPermitted }) : null),
         h('td', null, partiesNode(t)),
         h('td', null, statusChip(t.status), t.revision ? h('div', { class: 'small', text: `revised; answers ${t.revision.answers.length} dispute(s)` }) : null),
         h('td', null, c && c.state === 'ok' ? [h('strong', { text: c.regime }), ` ${c.method} `, statusChip(c.status), c.current ? null : chip('classified against an earlier description', 'warn'),
@@ -781,7 +812,7 @@ function tasksView() {
         h('td', null,
           h('button', { text: 'Open', on: { click: () => { location.hash = `task=${encodeURIComponent(t.taskIri)}`; } } }),
           h('button', { text: 'Copy link', on: { click: () => copyText(new URL(t.link, location.href).href) } }),
-          h('button', { disabled: !named, title: named ? '' : 'Only the people and agents named on this task.', text: 'Ratify / dispute', on: { click: () => ratifyPanel(t, 'description') } }),
+          h('button', { disabled: !(named || owed), title: named || owed ? '' : 'Only the people and agents named on this task, or removed from it by a revision.', text: 'Ratify / dispute', on: { click: () => ratifyPanel(t, 'description') } }),
           h('button', { disabled: !(op || named || can('approver')), title: 'Operators, approvers and the people named on the task classify it.', text: 'Classify', on: { click: () => classifyPanel(t) } }),
           h('button', { disabled: !(op || named), title: 'An operator or someone named on the task.', text: 'Revise', on: { click: () => revisePanel(t) } }),
           h('button', { disabled: !op, title: 'Operators only.', text: 'Retire', on: { click: () => retirePanel(t) } })));
@@ -800,7 +831,9 @@ function classifyPanel(t) {
     qs.map((q) => { answers[q.id] = prior[q.id] ?? 'unknown'; return field(q.text, select(q.options.map((o) => [o, o]), answers[q.id], (e) => { answers[q.id] = e.target.value; })); }),
     field('Note', notes),
     h('details', { class: 'small' }, h('summary', { text: 'The published rules, in order' }), (data().vocabulary?.rules ?? []).map((r) => h('div', { text: `${r.id}: ${r.condition}` }))),
-    h('button', { class: 'primary', text: 'Sign the answers', on: { click: () => act('wrd.classify_task', 'wrd:classify-task', { taskIri: t.taskIri, answers: { ...answers }, ...(notes.value.trim() ? { notes: notes.value.trim() } : {}) }) } })));
+    h('p', { class: 'small muted', text: 'Your signature binds these answers to the description as it reads now (its textSha256): if the description is revised before this lands, the answers are refused, not attached to a text you did not see.' }),
+    h('button', { class: 'primary', text: 'Sign the answers', on: { click: () => act('wrd.classify_task', 'wrd:classify-task', { taskIri: t.taskIri, taskTextSha256: t.textSha256, answers: { ...answers }, ...(notes.value.trim() ? { notes: notes.value.trim() } : {}) }) } }),
+    payloadButton('wrd:classify-task', { task_iri: t.taskIri })));
 }
 
 function revisePanel(t) {
@@ -808,7 +841,7 @@ function revisePanel(t) {
   const disputes = t.namedParties.filter((p) => p.ratification?.verdict === 'dispute');
   openPanel(`Revise “${t.name}”`, h('div', null,
     disputes.length ? h('div', { class: 'warnbox' }, h('strong', { text: 'This revision answers these open disputes:' }), disputes.map((p) => h('div', { text: `${p.label}: ${p.ratification.note ?? ''}` }))) : null,
-    h('p', { class: 'small muted', text: 'Changing the text without new quotes clears the quotes (their verdicts stay in the record\'s history). Everyone named must ratify the revised text again.' }),
+    h('p', { class: 'small muted', text: 'Changing the text without new quotes clears the quotes (their verdicts stay in the record\'s history). Everyone named must ratify the revised text again, and anyone this revision removes from the task must ratify it too: a dispute is answered, never edited away.' }),
     field('Name', input(st.name, (e) => { st.name = e.target.value; }, { size: 50 })),
     field('Description', textarea(st.description, (e) => { st.description = e.target.value; })),
     field('Who does it today', select(captureLevels(), st.currentLevel, (e) => { st.currentLevel = e.target.value; })),
@@ -878,6 +911,7 @@ function planView() {
     if (c.regime === 'Turbulent') return 'stabilise first';
     return '';
   };
+  const agentLock = (t) => (t.classification?.status === 'ratified' ? '' : 'an agent is put on this work only once everyone named on it has ratified its classification');
   const editRow = (t) => {
     const s = rowState(t);
     const c = t.classification;
@@ -890,12 +924,14 @@ function planView() {
     })];
     const g = s.level === 'agent-acts-within-grant' && s.agentAddress ? activeGrant(s.agentAddress, t.taskKind) : null;
     return h('tr', null,
-      h('td', null, h('strong', { text: t.name }), h('div', { class: 'small muted', text: allocationText(t.effective) }), t.effective.source === 'measured-decision' ? chip('from a measured decision') : null),
+      h('td', null, h('strong', { text: t.name }), h('div', { class: 'small muted', text: allocationText(t.effective) }), t.effective.source !== 'captured' ? chip(SOURCE_NAMES[t.effective.source] ?? t.effective.source) : null,
+        t.effective.suspended ? chip(t.effective.suspendedWhy, 'bad') : null),
       h('td', null, c?.regime ? [h('strong', { text: c.regime }), h('div', { class: 'small muted', text: REGIME_NOTES[c.regime] ?? '' })] : '—'),
       h('td', null, lock ? chip(lock, 'warn') : [
         select(levelOpts, s.level, (e) => { s.level = e.target.value; render(); }),
         s.level && (rule.requiresPerson || s.level === 'person-with-agent-assist') ? field('Person', select(personOptions('choose'), s.personAddress, (e) => { s.personAddress = e.target.value; })) : null,
         s.level && (rule.requiresAgent || s.level === 'person-with-agent-assist') ? field(s.level === 'person-with-agent-assist' ? 'Assisting agent (optional)' : 'Agent', select(agentOptions('choose'), s.agentAddress, (e) => { s.agentAddress = e.target.value; render(); })) : null,
+        s.level && (rule.requiresAgent || s.agentAddress) && agentLock(t) ? chip(agentLock(t), 'warn') : null,
         g ? h('div', { class: 'small' }, `Grant in force: ${g.evaluation.samples} reviewed runs; `, g.evidenceTaskIris.includes(t.taskIri) ? 'evidence from this task' : chip('grant evidence comes from other tasks', 'warn')) : null,
         c?.regime === 'Emergent' && s.level ? probesEditor(s) : null]));
   };
@@ -1106,7 +1142,9 @@ function valueView() {
       h('div', { class: 'row' }, nInput('horizonMonths', 'Horizon (months)', { min: 1, max: 120 }), nInput('rampMonths', 'Ramp (months)', { min: 0, max: 60 }),
         nInput('annualDiscountRate', 'Annual discount rate (0 to 1)'), nInput('criticalFailureCeiling', 'Critical-failure ceiling for pilot sizing'))),
     p.tasks.map(taskBlock),
+    h('p', { class: 'small muted', text: 'Mark a zero that does not apply to a state (for example performer hours where an agent performs) "not applicable": it is counted apart, not read as a single-number estimate. A proposed state has not run yet, so "measured" there needs the source IRI it was measured on. Where a person decides on or audits the agent\'s work, cost their oversight hours.' }),
     h('button', { class: 'primary', disabled: S.busy || !can('operator'), title: can('operator') ? '' : 'Only a registered operator requests a valuation.', text: 'Sign and value', on: { click: run } }),
+    payloadButton('wrd:value-plan', { plan_iri: p.planIri }),
     latest ? valuationNode(latest) : null);
 }
 
@@ -1158,12 +1196,12 @@ function valuationNode(v) {
       r.valueToCost.why ? r.valueToCost.why : `now ${band(r.valueToCost.current, (n) => num(n, 2))}; proposed ${band(r.valueToCost.proposed, (n) => num(n, 2))}`),
     h('div', { class: 'cols' }, h('div', null, h('h3', { text: 'What moves the cash NPV most' }), sens(sc.cash)), h('div', null, h('h3', { text: 'What moves the redeployed NPV most' }), sens(sc.redeployed))),
     h('h3', { text: 'Where the inputs came from' }),
-    h('p', { class: 'small', text: Object.entries(r.inputs.byBasis).map(([b, n]) => `${n} ${BASIS_NAMES[b] ?? b}`).join(' · ') }),
+    h('p', { class: 'small', text: Object.entries(r.inputs.byBasis).filter(([, n]) => n > 0).map(([b, n]) => `${n} ${BASIS_NAMES[b] ?? b}`).join(' · ') }),
     r.inputs.noRange.length ? h('p', { class: 'small', text: `No range given (${r.inputs.noRange.length}): ${r.inputs.noRange.map(pathLabel).join('; ')}` }) : null,
     r.inputs.topSensitivityEstimates.length ? h('p', { class: 'warnbox small', text: `Unmeasured estimates among the three inputs that move the cash NPV most: ${r.inputs.topSensitivityEstimates.map(pathLabel).join('; ')}` }) : null,
     h('p', { class: 'small muted', text: `Unchanged tasks: ${r.inputs.unchangedTasks}` }),
     r.inputs.unconfirmed.map((u) => h('p', { class: 'small', text: `${pathLabel(u.path)}: ${u.why}` })),
-    r.inputs.measuredAgentCost.map((c) => h('p', { class: 'small', text: `Measured agent run cost for ${c.taskKind}: ${num(c.mean, 4)} ${c.currency} over ${c.runs} logged run(s)` })),
+    (r.inputs.reportedAgentCost ?? []).map((c) => h('p', { class: 'small', text: `Agent run cost for ${c.taskKind}: ${num(c.mean, 4)} ${c.currency} over ${c.runs} run(s) — ${c.basis}, not instrumented` })),
     r.pilot.length ? [h('h3', { text: 'Pilot size (rule of three, 95% one-sided)' }), r.pilot.map((x) => h('p', { class: x.likelyRateExceedsCeiling ? 'warnbox small' : 'small' },
       `${taskName(x.taskIri)}: ${x.runsNeeded} runs with no critical failure bound the rate below ${x.ceiling}; about ${x.weeksAtLikelyThroughput ?? '—'} week(s) at likely throughput.`,
       x.likelyRateExceedsCeiling ? ' The likely critical-failure rate is above the ceiling: a pilot cannot show this is below it.' : ''))] : null,
@@ -1177,7 +1215,7 @@ function decisionsView() {
   const valuationOf = (d) => (data().valuations ?? []).find((v) => v.valuationIri === d.valuationIri);
   return h('section', null,
     h('h2', { text: 'Decisions' }),
-    h('p', { class: 'small muted', text: `A submitted decision is Hypothetical. An approver who is neither the submitter nor a person whose work it changes countersigns it: then it reads "approved; prediction unmeasured" until someone other than the submitter records what was measured. ${NO_TOTALS}` }),
+    h('p', { class: 'small muted', text: `A submitted decision is Hypothetical. An approver who prepared none of it (proposal, valuation, submission), whose work it does not change and who answers for no agent it names countersigns it: then it reads "approved; prediction unmeasured" until someone who neither prepared nor approved it records what was measured, over the whole declared window. ${NO_TOTALS}` }),
     table(['Plan', 'Kind', 'Status', 'Predicted per week', 'Measured', 'Verdict', 'Basis', 'Disposition', 'Freed hours', ''], ds.map((d) => {
       const o = d.outcome;
       return h('tr', null,
@@ -1196,7 +1234,7 @@ function decisionsView() {
 
 function submitForm() {
   const plans = (data().plans ?? []).filter((p) => !p.stale);
-  const st = { planIri: plans[0]?.planIri ?? '', valuationIri: '', metric: 'weekly-cash-delta', basis: 'staggered', windowWeeks: 8, description: '', note: '' };
+  const st = { planIri: plans[0]?.planIri ?? '', valuationIri: '', metric: 'weekly-cash-delta', basis: '', windowWeeks: 8, description: '', note: '' };
   const body = h('div');
   const draw = () => {
     const p = planBy(st.planIri);
@@ -1208,12 +1246,12 @@ function submitForm() {
         field('Valuation', select(vals.map((v) => [v.valuationIri, `valued ${when(v.head.validFrom)} — hash ${short(v.valuationHash)}`]), st.valuationIri, (e) => { st.valuationIri = e.target.value; })),
         vals.length === 0 ? h('p', { class: 'warnbox small', text: 'Value this plan first.' }) : null,
         field('What will be measured', select((data().vocabulary?.metrics ?? []).map((x) => [x, metricName(x)]), st.metric, (e) => { st.metric = e.target.value; })),
-        field('Comparison', select((data().vocabulary?.comparisonBases ?? []).map((x) => [x, x === 'before-after' ? 'before-after — no comparison group' : x]), st.basis, (e) => { st.basis = e.target.value; })),
+        field('Comparison (choose: a controlled comparison claims a comparison group you must actually have)', select([['', 'choose how the change will be compared'], ...(data().vocabulary?.comparisonBases ?? []).map((x) => [x, x === 'before-after' ? 'before-after — no comparison group' : x])], st.basis, (e) => { st.basis = e.target.value; draw(); })),
         field('Measurement window (weeks after countersign)', input(String(st.windowWeeks), (e) => { st.windowWeeks = Number(e.target.value); }, { type: 'number', min: 1, max: 104 })),
         field('How the comparison is made (optional)', input('', (e) => { st.description = e.target.value; }, { size: 50 })),
       ] : p ? h('div', { class: 'small' }, 'A probe decision carries no valuation and no prediction. Its probes:', h('ul', null, p.tasks.filter((r) => r.changed).flatMap((r) => (r.probes ?? []).map((pr) => h('li', { text: `${taskName(r.taskIri)}: ${pr.hypothesis}` }))))) : null,
       field('Note (optional)', input('', (e) => { st.note = e.target.value; }, { size: 50 })),
-      h('button', { class: 'primary', disabled: !p || !can('operator'), title: can('operator') ? '' : 'Only a registered operator submits.', text: 'Sign and submit', on: { click: () => {
+      h('button', { class: 'primary', disabled: !p || !can('operator') || (p.planKind === 'valued' && !st.basis), title: can('operator') ? (p?.planKind === 'valued' && !st.basis ? 'Choose the comparison first.' : '') : 'Only a registered operator submits.', text: 'Sign and submit', on: { click: () => {
         const v = (data().valuations ?? []).find((x) => x.valuationIri === st.valuationIri);
         act('wrd.submit_decision', 'wrd:submit-decision', {
           planIri: st.planIri, ...(st.note ? { note: st.note } : {}),
@@ -1230,30 +1268,37 @@ function decisionCard(d, v) {
   const head = d.head;
   const binding = { decisionIri: d.decisionIri, recordId: head.recordId, descriptorUrl: head.descriptorUrl, graphDigest: head.graphDigest };
   const objected = d.assignments.filter((a) => a.state === 'objected');
-  const liveObjections = (data().plans ?? []).find((p) => p.planIri === d.planIri)?.assignments.filter((a) => a.state === 'objected') ?? objected;
+  const livePlan = (data().plans ?? []).find((p) => p.planIri === d.planIri);
+  const liveObjections = livePlan?.assignments.filter((a) => a.state === 'objected') ?? objected;
+  const liveSilent = livePlan?.assignments.filter((a) => a.state === 'not-acknowledged') ?? [];
   const considered = new Set();
+  const overSilence = new Set();
   const csNote = input('', null, { placeholder: 'note (optional)', size: 40 });
   return h('div', { class: 'card' },
     h('h3', { text: `${planBy(d.planIri)?.title ?? 'Decision'} — ${d.statusLabel}` }), demoChip(d),
     d.prediction ? h('p', { text: `Predicted ${metricName(d.prediction.metric)} at steady state: ${band(d.prediction.band, (n) => num(n, 0))}; ramp ${d.prediction.rampMonths} month(s); prediction ${d.prediction.status}.` }) : null,
     d.measurementPlan ? h('p', { class: 'small', text: `Measured over ${d.measurementPlan.windowWeeks} week(s) after countersign; ${d.basisLabel}.` }) : null,
-    h('p', { class: 'small', text: `Submitted by ${d.submittedBy.personRef}. People whose work it changes: ${d.subjects.map((s) => labelOf(s.address)).join(', ') || 'none'}. Decision level: ${LEVEL_NAMES[d.decisionLevel] ?? d.decisionLevel}.` }),
+    h('p', { class: 'small', text: `${d.preparedBy ? `Prepared by: ${d.preparedBy.map((x) => `${x.role} ${x.personRef}`).join(', ')}` : `Submitted by ${d.submittedBy.personRef}`}. People whose work it changes: ${d.subjects.map((s) => labelOf(s.address)).join(', ') || 'none'}. Decision level: ${LEVEL_NAMES[d.decisionLevel] ?? d.decisionLevel}.` }),
     d.assignments.map((a) => h('div', { class: 'small', text: `${labelOf(a.personAddress)} on ${taskName(a.taskIri)}: ${a.state}${a.note ? ` — “${a.note}”` : ''}` })),
     d.grantChecks.map((g) => h('div', { class: 'small', text: `Grant for ${taskName(g.taskIri)}: ${g.active ? 'active' : 'not active'}${g.evidenceFromThisTask ? '' : '; grant evidence comes from other tasks'}` })),
-    d.countersign ? h('p', { class: 'small', text: `${d.countersign.verdict === 'approve' ? 'Countersigned' : 'Declined'} by ${d.countersign.personRef} at ${when(d.countersign.at)}${d.countersign.objectionsConsidered.length ? `, over the named objection(s) on ${d.countersign.objectionsConsidered.map(taskName).join(', ')}` : ''}.` }) : null,
+    d.countersign ? h('p', { class: 'small', text: `${d.countersign.verdict === 'approve' ? 'Countersigned' : 'Declined'} by ${d.countersign.personRef} at ${when(d.countersign.at)}${d.countersign.objectionsConsidered.length ? `, over the named objection(s) on ${d.countersign.objectionsConsidered.map(taskName).join(', ')}` : ''}${(d.countersign.unacknowledgedConsidered ?? []).length ? `, over the silence of the person named on ${d.countersign.unacknowledgedConsidered.map(taskName).join(', ')}` : ''}.` }) : null,
     d.outcome ? outcomeNode(d) : null,
     d.next ? h('p', { class: 'warnbox', text: d.next }) : null,
     h('h3', { text: 'Every version of this decision' }),
     table(['#', 'Status', 'Modal status', 'Signed by', 'At', 'Descriptor'], d.chain.map((c) => h('tr', null, h('td', { text: String(c.version) }), h('td', { text: c.status }), h('td', { text: c.modalStatus }),
       h('td', { text: c.signedBy.map((x) => labelOf(addrOfDid(x))).join(', ') }), h('td', { text: when(c.at) }), h('td', null, h('code', { text: c.descriptorUrl }))))),
     d.status === 'submitted' ? h('div', { class: 'card' }, h('strong', { text: 'Countersign or decline' }),
-      h('p', { class: 'small muted', text: 'A registered approver who is not the submitter (from any of their keys) and not a person whose work this changes.' }),
+      h('p', { class: 'small muted', text: 'A registered approver who did not propose, value or submit it (from any of their keys), is not a person whose work it changes, and is not the accountable principal of an agent it puts on the work.' }),
       liveObjections.length ? h('div', null, h('div', { class: 'small', text: 'Objections you must name to approve over them:' }), liveObjections.map((a) => h('label', { class: 'inline' },
         h('input', { type: 'checkbox', on: { change: (e) => { if (e.target.checked) considered.add(a.taskIri); else considered.delete(a.taskIri); } } }),
         `${labelOf(a.personAddress)} on ${taskName(a.taskIri)}: “${a.note ?? ''}”`))) : null,
+      liveSilent.length ? h('div', null, h('div', { class: 'small', text: 'Named but not acknowledged — silence is not assent; name each to approve over it, or ask them to acknowledge first:' }), liveSilent.map((a) => h('label', { class: 'inline' },
+        h('input', { type: 'checkbox', on: { change: (e) => { if (e.target.checked) overSilence.add(a.taskIri); else overSilence.delete(a.taskIri); } } }),
+        `${labelOf(a.personAddress)} on ${taskName(a.taskIri)}`))) : null,
       csNote,
-      h('button', { class: 'primary', text: 'Approve', on: { click: () => act('wrd.countersign_decision', 'wrd:countersign-decision', { ...binding, verdict: 'approve', objectionsConsidered: [...considered], ...(csNote.value ? { note: csNote.value } : {}) }) } }),
-      h('button', { text: 'Decline', on: { click: () => act('wrd.countersign_decision', 'wrd:countersign-decision', { ...binding, verdict: 'decline', ...(csNote.value ? { note: csNote.value } : {}) }) } })) : null,
+      h('button', { class: 'primary', text: 'Approve', on: { click: () => act('wrd.countersign_decision', 'wrd:countersign-decision', { ...binding, verdict: 'approve', objectionsConsidered: [...considered], unacknowledgedConsidered: [...overSilence], ...(csNote.value ? { note: csNote.value } : {}) }) } }),
+      h('button', { text: 'Decline', on: { click: () => act('wrd.countersign_decision', 'wrd:countersign-decision', { ...binding, verdict: 'decline', ...(csNote.value ? { note: csNote.value } : {}) }) } }),
+      payloadButton('wrd:countersign-decision', { decision_iri: d.decisionIri })) : null,
     d.status === 'countersigned' ? outcomeForm(d, binding) : null,
     h('button', { text: 'Print summary', on: { click: () => printDecision(d, v) } }));
 }
@@ -1264,7 +1309,8 @@ function outcomeNode(d) {
     const x = o.valued;
     return h('div', { class: 'card' }, h('strong', { text: 'Measured' }), ' ', chip(x.verdict, x.verdict === 'in-band' ? 'good' : 'warn'),
       h('p', { class: 'small', text: `${num(x.measured.weeklyValueDelta, 0)} per week${x.measured.interval ? ` (interval ${num(x.measured.interval.low, 0)} to ${num(x.measured.interval.high, 0)})` : ''} against the ${x.rampAdjusted ? `ramp-adjusted (×${num(x.rampFactor, 3)}) ` : ''}band ${band(x.adjustedBand, (n) => num(n, 0))}. Window ${when(x.measured.windowStart)} to ${when(x.measured.windowEnd)}; ${x.measured.comparisonBasis === 'before-after' ? 'before-after — no comparison group' : x.measured.comparisonBasis}${x.basisChanged ? ' (not the basis the plan declared)' : ''}. ${x.measured.method}` }),
-      x.pilotCheck ? h('p', { class: 'small', text: `Pilot: ${x.pilotCheck.runsObserved} runs, ${x.pilotCheck.criticalFailuresObserved} critical failure(s); ${x.pilotCheck.ceilingSupported ? 'enough clean runs to bound the rate below the ceiling' : `not enough to bound it (needs ${x.pilotCheck.runsNeeded} clean runs)`}.` }) : null,
+      x.windowShorterThanPlanned ? h('p', { class: 'warnbox small', text: `Measured over less than the ${x.windowWeeks ?? ''} week(s) the plan declared (the change was ${o.disposition}): kept out of the calibration cells.` }) : null,
+      x.pilotCheck ? h('p', { class: 'small', text: `Pilot: ${x.pilotCheck.reviewedRuns} person-reviewed run(s) logged in the window, ${x.pilotCheck.criticalFailures} critical failure(s); ${x.pilotCheck.ceilingSupported ? 'enough clean runs to bound the rate below the ceiling' : `not enough to bound it (needs ${x.pilotCheck.runsNeeded} clean runs)`}.${x.pilotCheck.declared ? ` Declared by the grader: ${x.pilotCheck.declared.runsObserved ?? '—'} runs, ${x.pilotCheck.declared.criticalFailuresObserved ?? '—'} critical failure(s) (not counted).` : ''}` }) : null,
       h('p', { class: 'small', text: `Disposition: ${o.disposition}${o.dispositionNote ? ` — ${o.dispositionNote}` : ''}. Recorded by ${o.personRef} at ${when(o.at)}.` }));
   }
   return h('div', { class: 'card' }, h('strong', { text: 'Probes read' }),
@@ -1290,7 +1336,7 @@ function outcomeForm(d, binding) {
     }
   };
   return h('div', { class: 'card' }, h('strong', { text: 'Record what was measured' }),
-    h('p', { class: 'small muted', text: 'Someone other than the submitter, after the window has ended. The platform grades the value against the predicted band scaled for the declared ramp; an interval that straddles a band edge is inconclusive.' }),
+    h('p', { class: 'small muted', text: 'Someone who neither prepared nor approved the decision, after the whole declared window has ended (a shorter window only for a change stopped early or reverted, and then kept out of calibration). The platform grades the value against the predicted band scaled for the declared ramp; an interval that straddles a band edge is inconclusive. The pilot check counts the person-reviewed runs logged in the window; counts typed here are shown beside it as declared.' }),
     field('What happened to the change', select((data().vocabulary?.dispositions?.outcome ?? []).map((x) => [x, x]), st.disposition, (e) => { st.disposition = e.target.value; })),
     field('Note (required unless kept)', input('', (e) => { st.note = e.target.value; }, { size: 50 })),
     d.decisionKind === 'valued' ? [
@@ -1300,7 +1346,7 @@ function outcomeForm(d, binding) {
       field('Window start (ISO)', input(st.windowStart, (e) => { st.windowStart = e.target.value.trim(); }, { size: 26 })),
       field('Window end (ISO)', input(st.windowEnd, (e) => { st.windowEnd = e.target.value.trim(); }, { size: 26 })),
       field('How it was measured', input('', (e) => { st.method = e.target.value; }, { size: 50 })),
-      h('div', { class: 'row' }, field('Agent runs observed (optional)', input('', (e) => { st.runs = e.target.value; }, { type: 'number', min: 0 })), field('Critical failures observed', input('', (e) => { st.critical = e.target.value; }, { type: 'number', min: 0 }))),
+      h('div', { class: 'row' }, field('Agent runs observed (optional, declared)', input('', (e) => { st.runs = e.target.value; }, { type: 'number', min: 0 })), field('Critical failures observed (declared)', input('', (e) => { st.critical = e.target.value; }, { type: 'number', min: 0 }))),
     ] : st.probes.map((p) => h('div', { class: 'card' }, h('div', { class: 'small', text: `${taskName(p.taskIri)} probe ${p.index}` }),
       field('Which declared condition fired', select(['amplify', 'dampen', 'neither'].map((x) => [x, x]), p.signal, (e) => { p.signal = e.target.value; })),
       field('What was observed', input('', (e) => { p.observed = e.target.value; }, { size: 50 })),
@@ -1335,20 +1381,22 @@ function calibrationView() {
   return h('section', null,
     h('h2', { text: 'Calibration: did the predictions land?' }),
     h('p', { class: 'small muted', text: `A prediction cell counts measured decisions whose value landed in the ramp-adjusted P10–P90 band (nominal coverage ${c.nominalBandCoverage}). Cells stay Hypothetical below ${c.minSamples} samples. Inconclusive outcomes are excluded and counted.` }),
-    table(['Kind', 'Samples', 'In band', 'Mean Brier', 'Mean level distance', 'Status', 'Excluded (inconclusive)', 'Ramp-adjusted', 'Dispositions', ''],
+    table(['Kind', 'Samples', 'In band', 'Mean Brier', 'Mean level distance', 'Status', 'Excluded (inconclusive)', 'Excluded (short window)', 'Ramp-adjusted', 'Dispositions', ''],
       (c.predictionCells ?? []).map((x) => h('tr', null, h('td', null, x.label, x.basisClass === 'uncontrolled' ? chip('no comparison group', 'warn') : null),
         h('td', { class: 'num', text: String(x.samples) }), h('td', { class: 'num', text: `${pct(x.hitRate)} vs ${pct(c.nominalBandCoverage)}` }), h('td', { class: 'num', text: num(x.meanBrier, 3) }),
         h('td', { class: 'num', text: num(x.meanOrdinalDistance, 3) }), h('td', null, chip(x.status, x.status === 'Asserted' ? 'good' : 'warn')), h('td', { class: 'num', text: String(x.excludedInconclusive) }),
+        h('td', { class: 'num', text: String(x.excludedShortWindow ?? 0) }),
         h('td', { class: 'num', text: String(x.rampAdjusted) }), h('td', { text: Object.entries(x.dispositions).map(([k, n]) => `${k} ${n}`).join(', ') }),
         h('td', null, x.scriptedLabel ? chip(x.scriptedLabel, 'demo') : null)))),
     h('h3', { text: 'Probe signals' }),
     c.probeSignals ? h('p', null, `${c.probeSignals.label}. ${c.probeSignals.probes} probe(s): ${c.probeSignals.amplify} amplify, ${c.probeSignals.dampen} dampen, ${c.probeSignals.neither} neither; a declared condition fired ${c.probeSignals.conditionFired} time(s). `,
       c.probeSignals.scriptedLabel ? chip(c.probeSignals.scriptedLabel, 'demo') : null) : null,
-    h('h3', { text: 'Agents: did a person agree with the agent\'s own assessment?' }),
-    table(['Agent', 'Kind of task', 'Model', 'Samples', 'Hit rate', 'Mean Brier', 'Ready-claim precision', 'Distinct reviewers', 'Status', 'Grant', ''],
+    h('h3', { text: 'Agents: how often a person accepted the work, and how well the agent judged its own runs' }),
+    h('p', { class: 'small muted', text: 'Accepted is the share of reviewed runs a person accepted: what a grant rests on. Self-assessment agreement (and its Brier) is how often the agent\'s own verdict matched the person\'s: an agent can label its failures truthfully and still do poor work.' }),
+    table(['Agent', 'Kind of task', 'Model', 'Samples', 'Accepted by a person', 'Self-assessment agreement', 'Mean Brier', 'Ready claims', 'Ready-claim precision', 'Distinct reviewers', 'Status', 'Grant', ''],
       (c.agentCells ?? []).map((x) => h('tr', null, h('td', { text: labelOf(x.agentAddress) }), h('td', { text: x.taskKind }),
-        h('td', null, x.model, x.currentModel ? null : chip('not the declared model now', 'warn')), h('td', { class: 'num', text: String(x.samples) }), h('td', { class: 'num', text: pct(x.hitRate) }),
-        h('td', { class: 'num', text: num(x.meanBrier, 3) }), h('td', { class: 'num', text: pct(x.readyClaimPrecision) }),
+        h('td', null, x.model, x.currentModel ? null : chip('not the declared model now', 'warn')), h('td', { class: 'num', text: String(x.samples) }), h('td', { class: 'num', text: pct(x.acceptedShare) }), h('td', { class: 'num', text: pct(x.hitRate) }),
+        h('td', { class: 'num', text: num(x.meanBrier, 3) }), h('td', { class: 'num', text: String(x.readyClaims ?? '—') }), h('td', { class: 'num', text: pct(x.readyClaimPrecision) }),
         h('td', { title: x.distinctConfirmersNote, text: `${x.distinctConfirmers} (${x.distinctConfirmersNote})` }), h('td', null, chip(x.status, x.status === 'Asserted' ? 'good' : 'warn')),
         h('td', { text: x.grant.active ? 'active' : x.grant.why }), h('td', null, x.scriptedLabel ? chip(x.scriptedLabel, 'demo') : null)))),
     (c.awaitingAPerson ?? []).length ? h('p', { class: 'warnbox small', text: `${c.awaitingAPerson.length} run(s) acted under a grant await a person's review; they count toward nothing until reviewed.` }) : null);
@@ -1402,9 +1450,9 @@ function agentsView() {
   return h('section', null,
     h('h2', { text: 'Agents and grants' }),
     h('p', { class: 'small muted', text: 'An agent earns a grant to act alone on one registered kind of task only from runs a person reviewed, on its currently declared model. Revocation and model changes are checked on every use. People are never given enforced grants.' }),
-    table(['Agent', 'Kind of task', 'Model', '#Reviewed', '#Acted under grant', 'Measured cost per run'], (d.runs ?? []).map((r) => h('tr', null,
+    table(['Agent', 'Kind of task', 'Model', '#Reviewed', '#Acted under grant', 'Cost per run (agent-reported, reviewed runs)'], (d.runs ?? []).map((r) => h('tr', null,
       h('td', { text: labelOf(r.agentAddress) }), h('td', { text: r.taskKind }), h('td', { text: r.model }), h('td', { class: 'num', text: String(r.reviewed) }), h('td', { class: 'num', text: String(r.actedUnderGrant) }),
-      h('td', { text: r.measuredCost ? `${num(r.measuredCost.mean, 4)} ${r.measuredCost.currency} over ${r.measuredCost.runs}` : '—' })))),
+      h('td', { text: r.reportedCost ? `${num(r.reportedCost.mean, 4)} ${r.reportedCost.currency} over ${r.reportedCost.runs}` : '—' })))),
     h('details', { class: 'card' }, h('summary', { text: 'Log a run' }),
       S.mode === 'demo' ? [
         field('Signed by the agent (demo persona)', select(agentPersonas.map((p) => [p.id, p.label]), st.persona, (e) => { st.persona = e.target.value; })),
@@ -1413,7 +1461,7 @@ function agentsView() {
         field('The output (only its sha256 is recorded)', textarea('', (e) => { st.output = e.target.value; })),
         field('The agent\'s own assessment', select([['accepted', 'ready to accept'], ['reworked', 'needs rework'], ['critical-failure', 'critical failure']], st.answer, (e) => { st.answer = e.target.value; })),
         h('div', { class: 'row' }, field('Cost of this run (optional)', input('', (e) => { st.cost = e.target.value; }, { type: 'number', step: 'any', min: 0 })), field('Currency', input(st.currency, (e) => { st.currency = e.target.value.toUpperCase(); }, { size: 4 }))),
-        h('label', { class: 'inline' }, h('input', { type: 'checkbox', on: { change: (e) => { st.underGrant = e.target.checked; } } }), 'the agent acted under its grant'),
+        h('label', { class: 'inline' }, h('input', { type: 'checkbox', on: { change: (e) => { st.underGrant = e.target.checked; } } }), 'the agent acted under its grant (only a run it calls ready, on a task an approved decision put under the grant)'),
       ] : field('Run envelope signed by the agent\'s own key (JSON {payload, signature})', textarea('', (e) => { st.pasted = e.target.value; }, { class: 'tall' })),
       h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: true, on: { change: (e) => { st.review = e.target.checked; } } }), 'review it now, signed by the acting identity'),
       field('Your verdict', select([['accepted', 'accepted'], ['reworked', 'reworked'], ['critical-failure', 'critical failure']], st.verdict, (e) => { st.verdict = e.target.value; })),
@@ -1426,7 +1474,7 @@ function agentsView() {
     table(['Agent', 'Kind of task', 'Principal', 'Model', 'Status', 'Evidence', ''], (d.grants ?? []).map((g) => h('tr', null,
       h('td', { text: labelOf(g.agentAddress) }), h('td', { text: g.taskKind }), h('td', { text: labelOf(g.principal) }), h('td', { text: g.model }),
       h('td', null, chip(g.status, g.active ? 'good' : 'bad'), g.active ? null : h('div', { class: 'small', text: g.why }), demoChip(g)),
-      h('td', { class: 'small', text: `${g.evaluation.samples} reviewed runs, ${g.evaluation.distinctConfirmers} ${g.evaluation.distinctConfirmersNote}; ready-claim precision ${pct(g.evaluation.readyClaimPrecision)}; from ${g.evidenceTaskIris.map(taskName).join(', ')}` }),
+      h('td', { class: 'small', text: `${g.evaluation.samples} reviewed runs, ${pct(g.evaluation.acceptedShare)} accepted by a person, ${g.evaluation.distinctConfirmers} ${g.evaluation.distinctConfirmersNote}; ${g.evaluation.readyClaims ?? '—'} ready claims, precision ${pct(g.evaluation.readyClaimPrecision)}; from ${g.evidenceTaskIris.map(taskName).join(', ')}` }),
       h('td', null, g.status === 'granted' ? h('button', { text: 'Revoke…', on: { click: () => revokePanel(g) } }) : g.revokedAt ? h('span', { class: 'small', text: `revoked ${when(g.revokedAt)}: ${g.revocationWhy}` }) : null)))),
     h('div', { class: 'card' }, h('strong', { text: 'Evaluate and grant' }),
       field('Agent', select(agentsList().map((m) => [m.address, `${m.label} — model ${m.model}`]), grantForm.agent, (e) => { grantForm.agent = e.target.value; })),
@@ -1439,13 +1487,13 @@ function revokePanel(g) {
   openPanel(`Revoke ${labelOf(g.agentAddress)}'s grant on ${g.taskKind}`, h('div', null,
     h('p', { class: 'small muted', text: 'The grant record is withdrawn (Retracted) with its window ending now. Every later use is refused; re-earning counts only runs reviewed after this.' }),
     field('Why', why),
-    h('button', { class: 'primary', text: 'Sign the revocation', on: { click: () => act('wrd.revoke_grant', 'wrd:revoke-grant', { grantIri: g.grantIri, recordId: g.head.recordId, descriptorUrl: g.head.descriptorUrl, why: why.value.trim() }) } })));
+    h('button', { class: 'primary', text: 'Sign the revocation', on: { click: () => act('wrd.revoke_grant', 'wrd:revoke-grant', { grantIri: g.grantIri, recordId: g.head.recordId, descriptorUrl: g.head.descriptorUrl, graphDigest: g.head.graphDigest, why: why.value.trim() }) } })));
 }
 
 function evaluationNode(e) {
   if (!e) return null;
   return h('div', { class: 'small' }, h('div', null, e.earned ? chip('earned', 'good') : chip('not earned', 'warn'), ` ${e.why}`),
-    h('div', { text: `${e.samples} person-reviewed run(s) on model ${e.model}${e.countedSince ? ` since ${when(e.countedSince)}` : ''}; ${e.humanConfirmations} person confirmation(s); ${e.distinctConfirmers} ${e.distinctConfirmersNote}; rating ${num(e.rating, 3)}; ready-claim precision ${pct(e.readyClaimPrecision)}; ${e.criticalFailures} critical failure(s).` }));
+    h('div', { text: `${e.samples} person-reviewed run(s) on model ${e.model}${e.countedSince ? ` since ${when(e.countedSince)}` : ''}; ${pct(e.acceptedShare)} of them accepted by a person (the competence rating, ${num(e.rating, 3)}); ${e.distinctConfirmers} ${e.distinctConfirmersNote}; ${e.readyClaims ?? '—'} run(s) the agent called ready, ${pct(e.readyClaimPrecision)} of them accepted; ${e.criticalFailures} critical failure(s).` }));
 }
 
 // ── View 9: my record ────────────────────────────────────────────────────────────────────
@@ -1455,7 +1503,7 @@ function meView() {
   if (!me) return h('section', null, h('h2', { text: 'My record' }), h('p', { class: 'warnbox', text: READ_ONLY }));
   const did = `did:ethr:${me}`;
   const d = data();
-  const mine = tasks().filter((t) => t.namedParties.some((p) => p.address === me));
+  const mine = tasks().filter((t) => t.namedParties.some((p) => p.address === me) || (t.owedRatification ?? []).some((p) => p.address === me));
   const signed = [
     ...(d.workflows ?? []).map((w) => ['Workflow', w.title, w]), ...tasks().map((t) => ['Task', t.name, t]),
     ...(d.plans ?? []).map((p) => ['Plan', p.title, p]), ...(d.decisions ?? []).map((x) => ['Decision', planBy(x.planIri)?.title ?? x.decisionIri, x]),
@@ -1480,7 +1528,8 @@ function meView() {
   };
   return h('section', null,
     h('h2', { text: 'My record' }),
-    h('p', { class: 'small muted', text: 'Every record that names you or carries your signature, with every version. Take a copy to a pod you hold, or download it; each copy keeps the platform\'s original signature, so it still verifies.' }),
+    h('p', { class: 'small muted', text: 'Every record that names you or carries your signature, with every version. Take a copy to a pod you hold, or download it; each copy keeps the platform\'s original signature. This page does not verify a download: the README gives the command that does, offline, against the platform address you expect.' }),
+    h('p', { class: 'small' }, 'The platform address these records should be signed by: ', h('code', { text: d.bridge?.platform?.address ?? 'not reported' }), d.bridge?.platform?.keyKind === 'ephemeral' ? chip('ephemeral key: not trusted after a restart', 'warn') : null),
     h('h3', { text: 'Tasks that name me' }),
     mine.length === 0 ? h('p', { class: 'muted small', text: 'None.' }) : mine.map((t) => h('div', { class: 'small' }, h('a', { href: t.link, text: t.name }), ' ', statusChip(t.status), demoChip(t))),
     h('h3', { text: 'Current versions carrying my signature' }),

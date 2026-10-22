@@ -12,11 +12,14 @@
  * Carlo valuation, outcome grading, calibration and grants from the judgment kit, the platform's
  * content-bound proofs and their read-back, holder copies to a second pod, and the web UI.
  *
- * What is doubled, and only this: the NETWORK (an in-memory Solid-style pod that honours the
- * preconditions publish() relies on), TIME (a clock that moves only when told to, so a nine-week
- * measurement window can pass), and the PEOPLE: persona keys derived from published seeds and
- * held by this process. A scripted draft stands in for the client's own agent; the platform
- * verifies it, it does not produce it. Every record this demo writes says, in its payload and
+ * What is doubled: the NETWORK (an in-memory Solid-style pod that honours the preconditions
+ * publish() relies on), TIME (a clock that moves only when told to, so a nine-week measurement
+ * window can pass), the PEOPLE (persona keys derived from published seeds and held by this
+ * process), and what those people report: a scripted draft stands in for the client's own agent
+ * (the platform verifies it, it does not produce it); the agents' runs are scripted (their
+ * outputs are the digests of fixed strings and their self-assessments are chosen by the walk);
+ * and the one measured outcome is computed FROM the prediction (its P50 times the ramp factor),
+ * so it lands in band by construction. Every record this demo writes says, in its payload and
  * as a wrd:demoRecord triple, that it is scripted by the offline demo and is not evidence.
  *
  * Pod URLs are TEST-NET literals (RFC 5737). The SSRF guard does not class them as private
@@ -138,7 +141,7 @@ export interface DemoStep { readonly step: string; readonly tool: string; readon
 export interface DemoReport {
   readonly ok: boolean;
   readonly steps: readonly DemoStep[];
-  /** Refusal ids (R-A … R-AM) that answered as the walk expected, each with the status the bridge actually returned, as "R-A 403". */
+  /** Refusal ids (R-A … R-AT) that answered as the walk expected, each with the status the bridge actually returned, as "R-A 403". */
   readonly refusalsObserved: readonly string[];
   readonly records: number;
   readonly base: string | null;
@@ -152,8 +155,9 @@ export interface DemoReport {
 
 /** Every refusal the walk asserts, in the order it meets them. */
 export const DEMO_REFUSALS: readonly string[] = [
-  'R-A', 'R-B', 'R-C', 'R-D', 'R-E', 'R-F', 'R-G', 'R-H', 'R-I', 'R-J', 'R-K', 'R-L', 'R-M', 'R-N', 'R-O', 'R-P', 'R-Q', 'R-R', 'R-S', 'R-T',
-  'R-U', 'R-V', 'R-W', 'R-X', 'R-Y', 'R-Z', 'R-AA', 'R-AB', 'R-AC', 'R-AD', 'R-AE', 'R-AF', 'R-AG', 'R-AH', 'R-AI', 'R-AJ', 'R-AK', 'R-AL', 'R-AM',
+  'R-A', 'R-B', 'R-C', 'R-D', 'R-E', 'R-F', 'R-AN', 'R-G', 'R-H', 'R-I', 'R-J', 'R-K', 'R-L', 'R-M', 'R-N', 'R-O', 'R-P', 'R-Q', 'R-R', 'R-S', 'R-T',
+  'R-AO', 'R-U', 'R-V', 'R-AP', 'R-W', 'R-X', 'R-Y', 'R-Z', 'R-AQ', 'R-AA', 'R-AB', 'R-AC', 'R-AD', 'R-AR', 'R-AS', 'R-AT', 'R-AE', 'R-AF', 'R-AG', 'R-AH',
+  'R-AI', 'R-AJ', 'R-AK', 'R-AL', 'R-AM',
 ];
 
 type Obj = Record<string, unknown>;
@@ -197,16 +201,18 @@ const SCRIPTED_CLIENT_DRAFT = {
   workflow: { title: 'Supplier invoice processing', unitLabel: 'invoice' },
   tasks: [
     { name: 'Match each invoice to its purchase order and goods receipt', description: 'Three-way match of quantity, unit price and supplier before the invoice is approved for payment.',
-      sourceQuotes: ['Match each invoice to its purchase order and goods receipt', 'The three-way match checks quantity, unit price and supplier'], suggestedTaskKind: 'invoice-matching' },
+      sourceQuotes: ['Match each invoice to its purchase order and goods receipt', 'The three-way match checks quantity, unit price and supplier'] },
     { name: 'Code the invoice to the general ledger', description: 'Choose the general ledger account and cost centre, from the purchase order or else from the chart of accounts.',
-      sourceQuotes: ['Code the invoice to the general ledger account', FABRICATED], suggestedTaskKind: 'gl-coding' },
+      sourceQuotes: ['Code the invoice to the general ledger account', FABRICATED] },
     { name: 'Resolve a disputed invoice with the supplier', description: 'Contact the supplier, agree the corrected amount and record it in the dispute log.',
-      sourceQuotes: ['When a supplier disputes an invoice, contact the supplier', "agree the corrected amount with the supplier's accounts team"], suggestedTaskKind: 'supplier-dispute' },
+      sourceQuotes: ['When a supplier disputes an invoice, contact the supplier', "agree the corrected amount with the supplier's accounts team"] },
     { name: 'Escalate a suspected duplicate-payment fraud alert', description: 'Send it to the fraud desk and hold the payment until the desk clears it.',
-      sourceQuotes: ['Escalate any suspected duplicate payment to the fraud desk'], suggestedTaskKind: 'fraud-alert' },
+      sourceQuotes: ['Escalate any suspected duplicate payment to the fraud desk'] },
   ],
   draftedBy: { kind: 'agent', agent: 'SCRIPTED_CLIENT_DRAFT (offline demo fixture)' },
 } as const;
+/** What the person reviewing the draft chooses in the capture table for each task: its registered kind (the packet tells the agent not to invent kinds). */
+const TABLE_KINDS = ['invoice-matching', 'gl-coding', 'supplier-dispute', 'fraud-alert'] as const;
 
 const TASK_KINDS: readonly Obj[] = [
   { slug: 'invoice-matching', label: 'Invoice matching', definition: 'Match an invoice to its purchase order and goods receipt before payment.' },
@@ -225,12 +231,13 @@ const ANSWERS: Readonly<Record<'evident' | 'knowable' | 'emergent' | 'turbulent'
   unknown: { sameStepsSameResult: 'unknown', methodKnown: 'unknown', outcomeDependsOnOthers: 'unknown', situationStable: 'unknown', checkability: 'unknown', feedbackLatency: 'unknown', worstCase: 'unknown' },
 };
 
-type Basis = 'measured' | 'document' | 'performer-reported' | 'estimate';
+type Basis = 'measured' | 'document' | 'performer-reported' | 'estimate' | 'not-applicable';
 const tri = (low: number, likely: number, high: number, basis: Basis, note?: string): Obj => ({ low, likely, high, basis, ...(note ? { note } : {}) });
 const one = (v: number, basis: Basis): Obj => tri(v, v, v, basis);
-const zeroState = (basis: Basis): Obj => ({
-  performerHoursPerRun: one(0, basis), oversightHoursPerRun: one(0, basis), agentCostPerRun: one(0, basis), minorFailureRate: one(0, basis),
-  minorFailureCost: one(0, basis), criticalFailureRate: one(0, basis), criticalFailureCost: one(0, basis),
+/** A state whose every field is a zero that does not apply (no performer, no agent…); the walk overrides the fields that do. */
+const naState = (): Obj => ({
+  performerHoursPerRun: one(0, 'not-applicable'), oversightHoursPerRun: one(0, 'not-applicable'), agentCostPerRun: one(0, 'not-applicable'), minorFailureRate: one(0, 'not-applicable'),
+  minorFailureCost: one(0, 'not-applicable'), criticalFailureRate: one(0, 'not-applicable'), criticalFailureCost: one(0, 'not-applicable'),
 });
 const TOP_INPUTS: Obj = {
   currency: 'USD', unitsPerWeek: { current: tri(180, 200, 220, 'measured', 'invoices a week, last quarter') }, valuePerUnit: tri(5, 6, 7, 'estimate'),
@@ -263,6 +270,7 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     dee: persona('dee', 'Dee, GL specialist'), cy: persona('cy', 'Cy, AP clerk'), agent: persona('agent', 'Matching agent', 'agent'),
     eli: persona('eli', 'Eli, AP analyst'), fay: persona('fay', 'Fay, AP analyst'), gus: persona('gus', 'Gus, AP analyst'),
     hal: persona('hal', 'Hal, AP analyst'), ivy: persona('ivy', 'Ivy, AP analyst'), zed: persona('zed', 'Zed, never registered'),
+    coder: persona('coder', 'Coding agent', 'agent'),
   };
   const addr = (p: Persona): string => p.wallet.address.toLowerCase();
   const demoPersonas = new Map<string, DemoPersona>(Object.values(P).filter((p) => p.id !== 'platform').map((p) => [p.id, { id: p.id, label: p.label, wallet: p.wallet }]));
@@ -294,7 +302,7 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     verticalName: 'work-redesign', affordances: [...wrdAffordances, ...wrdDemoAffordances], deploymentUrl: base, defaultPodUrl: DEMO_POD,
     handlers: createWrdHandlers({
       fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), platform: { wallet: P.platform.wallet, keyKind: 'demo' },
-      adminAddresses: [P.admin.wallet.address], demoPersonas,
+      adminAddresses: [P.admin.wallet.address], demoPersonas, demoClockAdvance: (ms) => clock.advance(ms),
     }),
     hypermediaLinks: [{ label: 'Web UI', href: `${base}/ui`, rel: 'alternate', type: 'text/html' }],
     middleware: (a) => attachUi(a, { base }),
@@ -375,7 +383,14 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const h = headOf(await taskRow(taskIri));
     return act(who, 'wrd.ratify_task', { subject: 'description', taskIri, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, verdict, ...(note ? { note } : {}) });
   };
-  const classify = (who: Persona, taskIri: string, answers: Obj): Promise<Res> => act(who, 'wrd.classify_task', { taskIri, answers });
+  const classify = async (who: Persona, taskIri: string, answers: Obj): Promise<Res> =>
+    act(who, 'wrd.classify_task', { taskIri, taskTextSha256: str((await taskRow(taskIri))['textSha256']), answers });
+  const ratifyClassification = async (who: Persona, taskIri: string): Promise<Res> => {
+    const h = headOf(obj((await taskRow(taskIri))['classification']));
+    return act(who, 'wrd.ratify_task', { subject: 'classification', taskIri, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, verdict: 'ratify' });
+  };
+  /** Ask the bridge for the payload a write needs, filled from the pod (what a Path-A agent does before it signs). */
+  const template = async (intent: string, query: Obj): Promise<Res> => call('wrd.envelope_template', { intent, ...query });
   const planRow = async (planIri: string): Promise<Obj> => arr((await list({ kind: 'plans' }))['plans']).find((p) => p['planIri'] === planIri) ?? {};
   const decisionRow = async (decisionIri: string): Promise<Obj> => arr((await list({ kind: 'decisions' }))['decisions']).find((d) => d['decisionIri'] === decisionIri) ?? {};
   const countersign = async (who: Persona, decisionIri: string, verdict: 'approve' | 'decline', extra: Obj = {}): Promise<Res> => {
@@ -390,9 +405,9 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const h = headOf(await planRow(planIri));
     return act(who, 'wrd.ratify_task', { subject: 'assignment', planIri, taskIri, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, verdict, ...(note ? { note } : {}) });
   };
-  const runEnvelope = (runId: string, taskIri: string, self: 'accepted' | 'reworked', extra: Obj = {}): Promise<{ payload: Obj; signature: string }> =>
-    envelope(P.agent, 'wrd:agent-run', {
-      runId, taskIri, taskKind: 'invoice-matching', model: 'scripted-fixture', outputSha256: sha256Hex(`scripted output of ${runId}`),
+  const runEnvelope = (runId: string, taskIri: string, self: 'accepted' | 'reworked', extra: Obj = {}, who: Persona = P.agent, taskKind = 'invoice-matching'): Promise<{ payload: Obj; signature: string }> =>
+    envelope(who, 'wrd:agent-run', {
+      runId, taskIri, taskKind, model: 'scripted-fixture', outputSha256: sha256Hex(`scripted output of ${runId}`),
       selfAssessment: { answer: self }, performedAt: clock.now().toISOString(), ...extra,
     });
   const reviewEnvelope = (who: Persona, run: { payload: Obj; signature: string }, verdict: 'accepted' | 'reworked'): Promise<{ payload: Obj; signature: string }> =>
@@ -412,8 +427,8 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const manifest = obj(JSON.parse(await (await fetch(`${base}/affordances?format=jsonld`, { headers: { accept: 'application/ld+json' } })).text()));
     for (const a of arr(manifest['affordances'])) tools.set(str(a['toolName']), { url: str(a['target']), method: str(a['method']) });
     const production = wrdAffordances.map((a) => a.toolName);
-    expect('1. the manifest lists the 18 production affordances and the demo-only signer', 'GET /affordances',
-      production.length === 18 && production.every((t) => tools.has(t)) && tools.has('wrd.demo_envelope') && tools.size === 19
+    expect('1. the manifest lists the 19 production affordances and the two demo-only ones (signer, clock)', 'GET /affordances',
+      production.length === 19 && production.every((t) => tools.has(t)) && tools.has('wrd.demo_envelope') && tools.has('wrd.demo_advance_clock') && tools.size === 21
         && [...tools.values()].every((t) => t.url.startsWith(`${base}/wrd/`)),
       `${tools.size} declared; every target is on ${base}`);
     const signedForAna = await call('wrd.demo_envelope', { persona: 'ana', payload: { intent: 'wrd:holder-copy', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: nonce() } });
@@ -429,9 +444,10 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
       person(P.dee, ['approver', 'worker'], 'p-dee'), person(P.cy, ['worker'], 'p-cy'),
       ...[P.eli, P.fay, P.gus, P.hal, P.ivy].map((p) => person(p, ['operator'], `p-${p.id}`)),
       { address: P.agent.wallet.address, roles: ['agent'], label: P.agent.label, softwareAgent: true, principal: P.ana.wallet.address, model: 'scripted-fixture' },
+      { address: P.coder.wallet.address, roles: ['agent'], label: P.coder.label, softwareAgent: true, principal: P.dee.wallet.address, model: 'scripted-fixture' },
     ];
     refusal('R-A', 'a registry change signed by ana, who is not an admin', 'wrd.update_registry', await act(P.ana, 'wrd.update_registry', { entries }), 403, /Only an admin/);
-    okStep('2. the admin registers the people, the agent (principal ana, model scripted-fixture) and five task kinds', 'wrd.update_registry',
+    okStep('2. the admin registers the people, two agents (principals ana and dee, model scripted-fixture) and five task kinds', 'wrd.update_registry',
       await act(P.admin, 'wrd.update_registry', { entries, taskKinds: TASK_KINDS }));
 
     // 3. The client-required packet.
@@ -441,11 +457,11 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
         && obj(packet.body['request'])['documentSha256'] === sha256Hex(SOP) ? null : 'the packet is not a client-required, instructions-only packet');
 
     // 4–6. Capture from the document.
-    const completeTask = (t: typeof SCRIPTED_CLIENT_DRAFT.tasks[number], who: Persona): Obj => ({
-      name: t.name, description: t.description, currentLevel: 'person', personAddress: who.wallet.address, taskKind: t.suggestedTaskKind, sourceQuotes: [...t.sourceQuotes],
+    const completeTask = (t: typeof SCRIPTED_CLIENT_DRAFT.tasks[number], who: Persona, taskKind: string): Obj => ({
+      name: t.name, description: t.description, currentLevel: 'person', personAddress: who.wallet.address, taskKind, sourceQuotes: [...t.sourceQuotes],
     });
     const people = [P.cy, P.dee, P.cy, P.dee];
-    const tableTasks = SCRIPTED_CLIENT_DRAFT.tasks.map((t, i) => completeTask(t, people[i] ?? P.cy));
+    const tableTasks = SCRIPTED_CLIENT_DRAFT.tasks.map((t, i) => completeTask(t, people[i] ?? P.cy, TABLE_KINDS[i] ?? 'invoice-matching'));
     const draftText = JSON.stringify(SCRIPTED_CLIENT_DRAFT, null, 2);
     const doc = (sha: string, tasks: Obj[], storeText: boolean): Obj => ({
       workflow: SCRIPTED_CLIENT_DRAFT.workflow, tasks, document: { title: 'AP-SOP-014', sha256: sha, storeText }, draftedBy: SCRIPTED_CLIENT_DRAFT.draftedBy, draftSha256: sha256Hex(draftText),
@@ -504,6 +520,12 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
           ? null : `got ${JSON.stringify({ regime: c.body['regime'], status: c.body['status'], answeredBy: c.body['answeredBy'] })}`);
     }
 
+    // 11b. An agent goes on work only once the people named on it agree how knowable it is.
+    refusal('R-AN', 'propose an agent drafting T1 before cy has ratified its classification', 'wrd.propose_allocation',
+      await propose('too early', [{ taskIri: t1, proposedLevel: 'agent-drafts-person-decides', agentAddress: P.agent.wallet.address, personAddress: P.cy.wallet.address }]), 409, /ratified how knowable it is/);
+    okStep('11. cy ratifies the classification of T1 (Evident)', 'wrd.ratify_task', await ratifyClassification(P.cy, t1));
+    okStep('11. cy ratifies the classification of T3 (Emergent)', 'wrd.ratify_task', await ratifyClassification(P.cy, t3));
+
     // 12. What the regime allows.
     refusal('R-G', 'change Turbulent T4', 'wrd.propose_allocation', await propose('T4', [{ taskIri: t4, proposedLevel: 'person-with-agent-assist', personAddress: P.dee.wallet.address }]), 409, /stabilise first/);
     refusal('R-H', 'change Emergent T3 without probes', 'wrd.propose_allocation', await propose('T3', [{ taskIri: t3, proposedLevel: 'person-with-agent-assist', personAddress: P.cy.wallet.address }]), 400, /safe-to-fail probes/);
@@ -552,16 +574,16 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
       tasks: {
         [t1]: {
           runsPerUnit: one(1, 'measured'),
-          current: { ...zeroState('measured'), performerHoursPerRun: tri(0.15, 0.2, 0.3, 'measured'), minorFailureRate: tri(0.01, 0.02, 0.04, 'measured'),
+          current: { ...naState(), performerHoursPerRun: tri(0.15, 0.2, 0.3, 'measured'), minorFailureRate: tri(0.01, 0.02, 0.04, 'measured'),
             minorFailureCost: tri(20, 30, 50, 'performer-reported'), criticalFailureRate: tri(0, 0.001, 0.003, 'estimate'), criticalFailureCost: tri(500, 2000, 10000, 'estimate') },
-          proposed: { ...zeroState('measured'), oversightHoursPerRun: tri(0.03, 0.05, 0.08, 'estimate'), agentCostPerRun: tri(0.05, 0.1, 0.2, 'estimate'),
+          proposed: { ...naState(), oversightHoursPerRun: tri(0.03, 0.05, 0.08, 'estimate'), agentCostPerRun: tri(0.05, 0.1, 0.2, 'estimate'),
             minorFailureRate: tri(0.01, 0.03, 0.05, 'estimate'), minorFailureCost: tri(20, 30, 50, 'performer-reported'),
             criticalFailureRate: tri(0, 0.001, 0.003, 'estimate'), criticalFailureCost: tri(500, 2000, 10000, 'estimate') },
         },
         [t2]: {
           runsPerUnit: one(1, 'measured'),
-          current: { ...zeroState('measured'), performerHoursPerRun: tri(0.1, 0.15, 0.2, 'performer-reported') },
-          proposed: { ...zeroState('measured'), performerHoursPerRun: tri(0.07, 0.1, 0.15, 'estimate'), agentCostPerRun: tri(0.02, 0.05, 0.1, 'estimate') },
+          current: { ...naState(), performerHoursPerRun: tri(0.1, 0.15, 0.2, 'performer-reported') },
+          proposed: { ...naState(), performerHoursPerRun: tri(0.07, 0.1, 0.15, 'estimate'), agentCostPerRun: tri(0.02, 0.05, 0.1, 'estimate') },
         },
       },
     };
@@ -604,6 +626,8 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const d1Head = headOf(await decisionRow(d1Iri));
     refusal('R-T', 'bo countersigns a digest that is not the head\'s', 'wrd.countersign_decision',
       await act(P.bo, 'wrd.countersign_decision', { decisionIri: d1Iri, recordId: d1Head.recordId, descriptorUrl: d1Head.descriptorUrl, graphDigest: `graph-nquads-sha256:${'0'.repeat(64)}`, verdict: 'approve' }), 409, /changed since you read it/);
+    refusal('R-AO', 'bo approves D1 while dee has not acknowledged her T2 assignment, without naming it', 'wrd.countersign_decision', await countersign(P.bo, d1Iri, 'approve'), 409, /has not acknowledged their assignment/);
+    okStep('18. dee acknowledges working with the agent\'s assistance on T2', 'wrd.ratify_task', await acknowledge(P.dee, p1Iri, t2, 'acknowledge'));
     const boEnv = await envelope(P.bo, 'wrd:countersign-decision', { decisionIri: d1Iri, recordId: d1Head.recordId, descriptorUrl: d1Head.descriptorUrl, graphDigest: d1Head.graphDigest, verdict: 'approve', objectionsConsidered: [] });
     const approved = await call('wrd.countersign_decision', { envelope: boEnv });
     okStep('18. bo countersigns D1: Asserted, "approved; prediction unmeasured"', 'wrd.countersign_decision', approved, () =>
@@ -618,13 +642,16 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const windowEnd = plusWeeks(csAt, 8);
     const measuredFields = (value: number): Obj => ({ disposition: 'kept', measured: { weeklyValueDelta: value, comparisonBasis: 'staggered', windowStart: csAt, windowEnd, method: 'Staggered roll-out across the two AP teams; weekly cash change from the cost ledger' } });
     refusal('R-V', 'ana grades her own prediction', 'wrd.record_outcome', await recordOutcome(P.ana, d1Iri, measuredFields(100)), 403, /predicted cannot grade/);
+    refusal('R-AP', 'bo, who approved D1, grades it', 'wrd.record_outcome', await recordOutcome(P.bo, d1Iri, measuredFields(100)), 403, /approved a decision cannot grade it/);
     refusal('R-W', 'eli records an outcome whose window has not ended', 'wrd.record_outcome', await recordOutcome(P.eli, d1Iri, measuredFields(100)), 409, /has not ended yet/);
-    clock.advance(9 * WEEK);
+    const moved = await call('wrd.demo_advance_clock', { weeks: 9 });
+    okStep('19. the demo clock is moved nine weeks through its own (demo-only) affordance', 'wrd.demo_advance_clock', moved, () =>
+      moved.body['movedWeeks'] === 9 && Date.parse(str(moved.body['now'])) >= Date.parse(windowEnd) ? null : JSON.stringify(moved.body));
     const factor = meanRampFactor(0, monthsBetween(csAt, windowEnd), Number(prediction['rampMonths']));
     const measuredValue = Math.round(Number(obj(prediction['band'])['p50']) * factor * 100) / 100;
     const outcome = await recordOutcome(P.eli, d1Iri, measuredFields(measuredValue));
     const graded = obj(outcome.body['valued']);
-    okStep(`19. nine weeks later eli records ${measuredValue} a week (P50 × ramp factor ${factor.toFixed(3)}): in band, ramp-adjusted`, 'wrd.record_outcome', outcome, () =>
+    okStep(`19. nine weeks later eli records ${measuredValue} a week — scripted as the prediction's P50 × ramp factor ${factor.toFixed(3)}, so in band by construction`, 'wrd.record_outcome', outcome, () =>
       graded['verdict'] === 'in-band' && graded['rampAdjusted'] === true && Number(graded['rampFactor']) < 1 ? null : JSON.stringify(graded),
     () => `${str(graded['verdict'])} against the ramp-adjusted band P10 ${Number(obj(graded['adjustedBand'])['p10']).toFixed(2)} … P90 ${Number(obj(graded['adjustedBand'])['p90']).toFixed(2)}`);
     const chain = arr((await decisionRow(d1Iri))['chain']);
@@ -639,8 +666,8 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
       ...TOP_INPUTS, freedHours: { [t2]: { disposition: 'redeployed', note: 'dee moves to supplier master-data quality' } },
       tasks: { [t2]: {
         runsPerUnit: one(1, 'measured'),
-        current: { ...zeroState('measured'), performerHoursPerRun: tri(0.07, 0.1, 0.15, 'measured'), agentCostPerRun: tri(0.02, 0.05, 0.1, 'measured') },
-        proposed: { ...zeroState('measured'), oversightHoursPerRun: tri(0.02, 0.04, 0.06, 'estimate'), agentCostPerRun: tri(0.05, 0.08, 0.12, 'estimate'),
+        current: { ...naState(), performerHoursPerRun: tri(0.07, 0.1, 0.15, 'measured'), agentCostPerRun: tri(0.02, 0.05, 0.1, 'measured') },
+        proposed: { ...naState(), oversightHoursPerRun: tri(0.02, 0.04, 0.06, 'estimate'), agentCostPerRun: tri(0.05, 0.08, 0.12, 'estimate'),
           minorFailureRate: tri(0.02, 0.04, 0.08, 'estimate'), minorFailureCost: tri(30, 60, 120, 'estimate') },
       } },
     } });
@@ -663,15 +690,18 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     okStep('21. ana proposes P4 with two probes on T3', 'wrd.propose_allocation', p4, () => (p4.body['planKind'] === 'probe' ? null : `planKind ${str(p4.body['planKind'])}`));
     const zp = await act(P.ana, 'wrd.value_plan', { planIri: p4Iri, inputs: {} });
     refusal('R-Z', 'value the probe plan', 'wrd.value_plan', zp, 409, /probe plan/, () => (obj(zp.body['iep:resolvedBy'])['toolName'] === 'wrd.submit_decision' ? null : 'not resolved by submit_decision'));
-    const d4 = await act(P.ana, 'wrd.submit_decision', { planIri: p4Iri });
+    const d4 = await act(P.eli, 'wrd.submit_decision', { planIri: p4Iri });
     const d4Iri = str(d4.body['decisionIri']);
-    okStep('21. submit D4: no valuation, no prediction', 'wrd.submit_decision', d4, () => (d4.body['prediction'] === undefined ? null : 'a probe decision carries a prediction'));
-    okStep('21. bo countersigns D4', 'wrd.countersign_decision', await countersign(P.bo, d4Iri, 'approve'));
+    okStep('21. eli submits D4: no valuation, no prediction', 'wrd.submit_decision', d4, () => (d4.body['prediction'] === undefined ? null : 'a probe decision carries a prediction'));
+    refusal('R-AQ', 'ana countersigns D4 from her second key: she proposed P4', 'wrd.countersign_decision', await countersign(P.ana2, d4Iri, 'approve'), 403, /proposed this plan cannot countersign/);
+    const d4Approved = await countersign(P.bo, d4Iri, 'approve', { unacknowledgedConsidered: [t3] });
+    okStep('21. bo countersigns D4, naming cy\'s unacknowledged probe assignment to approve over her silence', 'wrd.countersign_decision', d4Approved, () =>
+      arr(d4Approved.body['assignments'])[0]?.['state'] === 'not-acknowledged' ? null : JSON.stringify(d4Approved.body['assignments']));
     const d4At = str(obj((await decisionRow(d4Iri))['countersign'])['at']);
     clock.advance(5 * WEEK);
     const probeResult = (index: number, signal: string, observed: string): Obj => ({ taskIri: t3, index, signal, observed, windowStart: d4At, windowEnd: plusWeeks(d4At, 4) });
-    const read = await recordOutcome(P.eli, d4Iri, { disposition: 'kept', probeResults: [probeResult(1, 'amplify', 'Median days to settle fell from 11 to 7'), probeResult(2, 'neither', 'Reopen rate unchanged at about one in six')] });
-    okStep('21. eli reads the probes: amplify, neither → "Re-classify this task, then propose a plan."', 'wrd.record_outcome', read, () => (read.body['next'] === 'Re-classify this task, then propose a plan.' ? null : str(read.body['next'])));
+    const read = await recordOutcome(P.fay, d4Iri, { disposition: 'kept', probeResults: [probeResult(1, 'amplify', 'Median days to settle fell from 11 to 7'), probeResult(2, 'neither', 'Reopen rate unchanged at about one in six')] });
+    okStep('21. fay reads the probes: amplify, neither → "Re-classify this task, then propose a plan."', 'wrd.record_outcome', read, () => (read.body['next'] === 'Re-classify this task, then propose a plan.' ? null : str(read.body['next'])));
     const reclass = await classify(P.cy, t3, ANSWERS.reclassified);
     okStep('21. cy re-classifies T3 from what the probes showed → Knowable (rule R4), ratified', 'wrd.classify_task', reclass, () =>
       reclass.body['regime'] === 'Knowable' && reclass.body['status'] === 'ratified' && strings(reclass.body['rulesFired']).includes(`${WRD_NS}RuleR4`)
@@ -713,15 +743,52 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
       granted.body['status'] === 'granted' && granted.body['principal'] === addr(P.ana) && granted.body['model'] === 'scripted-fixture'
         && JSON.stringify(obj(granted.body['evaluation'])['taskIris']) === JSON.stringify([t1]) ? null : JSON.stringify(granted.body['evaluation']));
 
-    // 25. The grant in use, and a person reviewing a run an hour after it was logged.
-    const p3 = await propose('P3: the agent matches invoices within its grant', [{ taskIri: t1, proposedLevel: 'agent-acts-within-grant', agentAddress: P.agent.wallet.address }]);
+    // 24b. An agent whose work is mostly reworked does not earn a grant, however truthfully it labels its runs.
+    let coderRuns = true;
+    const coderReviewers = [P.eli, P.fay, P.gus, P.hal, P.ivy];
+    for (let i = 1; i <= 20; i += 1) {
+      const self = i === 1 ? 'accepted' : 'reworked';
+      const run = await runEnvelope(`c-${String(i).padStart(3, '0')}`, t2, self, {}, P.coder, 'gl-coding');
+      const r = await call('wrd.log_agent_run', { run_envelope: run, review_envelope: await reviewEnvelope(coderReviewers[i % 5] ?? P.eli, run, self) });
+      coderRuns &&= r.status === 200;
+    }
+    expect('24. twenty coding-agent runs on T2, reviewed by five people: a person accepted 1; the agent called the other 19 "reworked" itself, truthfully', 'wrd.log_agent_run', coderRuns, '20 reviewed');
+    refusal('R-AR', 'bo grants the coding agent autonomy: its self-assessment agreed every time, but its work was accepted once', 'wrd.grant_autonomy',
+      await act(P.bo, 'wrd.grant_autonomy', { agentAddress: P.coder.wallet.address, taskKind: 'gl-coding' }), 409, /a person accepted 1 of 20 reviewed runs \(5%\); the policy needs at least 90%/);
+
+    // 25. The grant in use: a decision puts T1 under it, then a run under the grant, reviewed an hour later.
+    const p3 = await act(P.eli, 'wrd.propose_allocation', { workflowIri: wfIri, title: 'P3: the agent matches invoices within its grant', changes: [{ taskIri: t1, proposedLevel: 'agent-acts-within-grant', agentAddress: P.agent.wallet.address }] });
     const p3Iri = str(p3.body['planIri']);
-    okStep('25. ana proposes P3 with the agent acting within its grant', 'wrd.propose_allocation', p3, () =>
+    okStep('25. eli proposes P3 with the agent acting within its grant', 'wrd.propose_allocation', p3, () =>
       obj(arr(p3.body['tasks']).find((r) => r['taskIri'] === t1)?.['grant'])['evidenceFromThisTask'] === true ? null : 'no grant evidence from this task');
+    const p3Template = await template('wrd:value-plan', { plan_iri: p3Iri });
+    const p3Draft = obj(p3Template.body['template']);
+    okStep('25. eli asks for the valuation payload P3 needs: a template keyed by its changed task, with what is left to fill', 'wrd.envelope_template', p3Template, () =>
+      p3Draft['planIri'] === p3Iri && Object.keys(obj(obj(p3Draft['inputs'])['tasks'])).join() === t1 && strings(p3Template.body['fill']).includes('inputs.currency')
+        && obj(p3Template.body['schema'])['title'] === 'wrd:value-plan payload' ? null : JSON.stringify(p3Template.body).slice(0, 300));
+    const p3Inputs: Obj = {
+      ...obj(p3Draft['inputs']), ...TOP_INPUTS, freedHours: { [t1]: { disposition: 'absorbed', note: 'cy reviews supplier statements instead' } },
+      tasks: { [t1]: {
+        runsPerUnit: one(1, 'measured'),
+        current: { ...naState(), oversightHoursPerRun: tri(0.03, 0.05, 0.08, 'estimate'), agentCostPerRun: tri(0.08, 0.12, 0.2, 'estimate'),
+          minorFailureRate: tri(0.01, 0.03, 0.05, 'estimate'), minorFailureCost: tri(20, 30, 50, 'performer-reported') },
+        proposed: { ...naState(), agentCostPerRun: tri(0.08, 0.12, 0.2, 'estimate'), minorFailureRate: tri(0.01, 0.04, 0.07, 'estimate'), minorFailureCost: tri(20, 30, 50, 'performer-reported') },
+      } },
+    };
+    const v3 = await act(P.eli, 'wrd.value_plan', { planIri: p3Iri, inputs: p3Inputs });
+    okStep('25. eli values P3 from the template: the reported run cost is shown as agent-reported', 'wrd.value_plan', v3, () =>
+      JSON.stringify(arr(obj(obj(v3.body['result'])['inputs'])['reportedAgentCost']).map((c) => c['basis'])) === '["agent-reported on person-reviewed runs"]' ? null : JSON.stringify(obj(obj(v3.body['result'])['inputs'])['reportedAgentCost']));
+    const d3 = await act(P.eli, 'wrd.submit_decision', { ...submitFields(p3Iri, v3.body, 'holdout') });
+    const d3Iri = str(d3.body['decisionIri']);
+    okStep('25. eli submits D3', 'wrd.submit_decision', d3);
+    refusal('R-AS', 'ana, the agent\'s accountable principal, countersigns D3 from her approver key', 'wrd.countersign_decision', await countersign(P.ana2, d3Iri, 'approve'), 403, /accountable for an agent this decision puts on the work/);
+    okStep('25. bo countersigns D3: T1 is now in force at agent-acts-within-grant', 'wrd.countersign_decision', await countersign(P.bo, d3Iri, 'approve'));
     const underGrant = await runEnvelope('g-001', t1, 'accepted', { underGrant: grantIri });
     const acted = await call('wrd.log_agent_run', { run_envelope: underGrant });
     okStep('25. the agent logs a run under its grant, without review: acted-under-grant, counts toward nothing yet', 'wrd.log_agent_run', acted, () =>
       acted.body['status'] === 'acted-under-grant' && acted.body['countsTowardCalibration'] === false ? null : str(acted.body['status']));
+    refusal('R-AT', 'the agent logs a run under its grant that it calls "reworked" itself', 'wrd.log_agent_run',
+      await call('wrd.log_agent_run', { run_envelope: await runEnvelope('g-reworked', t1, 'reworked', { underGrant: grantIri }) }), 409, /route it to a person/i);
     clock.advance(3_600_000);
     const later = await call('wrd.log_agent_run', { run_envelope: underGrant, review_envelope: await reviewEnvelope(P.fay, underGrant, 'accepted') });
     okStep('25. an hour later fay reviews it from the stored run envelope', 'wrd.log_agent_run', later, () => (later.body['status'] === 'reviewed' ? null : str(later.body['status'])));
@@ -730,12 +797,15 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     // 26–27. Revocation, checked on every use.
     const grantRow = arr((await list({ kind: 'grants' }))['grants']).find((g) => g['grantIri'] === grantIri) ?? {};
     const gh = headOf(grantRow);
-    const revoked = await act(P.bo, 'wrd.revoke_grant', { grantIri, recordId: gh.recordId, descriptorUrl: gh.descriptorUrl, why: 'Supplier master data migrated; re-earn on the new data' });
+    const revoked = await act(P.bo, 'wrd.revoke_grant', { grantIri, recordId: gh.recordId, descriptorUrl: gh.descriptorUrl, graphDigest: gh.graphDigest, why: 'Supplier master data migrated; re-earn on the new data' });
     okStep('26. bo revokes the grant', 'wrd.revoke_grant', revoked, () => (revoked.body['status'] === 'revoked' ? null : 'not revoked'));
     const revokedRow = arr((await list({ kind: 'grants' }))['grants']).find((g) => g['grantIri'] === grantIri) ?? {};
     const rh = obj(revokedRow['head']);
     expect('26. the grant\'s head is Retracted, valid from the grant to the revocation', 'wrd.list_records',
       rh['modalStatus'] === 'Retracted' && rh['validFrom'] === revokedRow['grantedAt'] && rh['validUntil'] === revoked.body['revokedAt'], `${str(rh['validFrom'])} → ${str(rh['validUntil'])}`);
+    const t1Suspended = obj((await taskRow(t1))['effective']);
+    expect('26. T1, which D3 put under the grant, now shows no authorised performer', 'wrd.list_records',
+      t1Suspended['level'] === 'agent-acts-within-grant' && t1Suspended['suspended'] === true && /revoked at/.test(str(t1Suspended['suspendedWhy'])), str(t1Suspended['suspendedWhy']));
     refusal('R-AE', 'the agent logs a run under the revoked grant', 'wrd.log_agent_run', await call('wrd.log_agent_run', { run_envelope: await runEnvelope('g-002', t1, 'accepted', { underGrant: grantIri }) }), 409, /grant is not active: revoked at/);
     refusal('R-AF', 'propose T1 within the revoked grant', 'wrd.propose_allocation', await propose('P3 again', [{ taskIri: t1, proposedLevel: 'agent-acts-within-grant', agentAddress: P.agent.wallet.address }]), 409, /No active grant/);
     refusal('R-AG', 'value P3, which rests on the revoked grant', 'wrd.value_plan', await act(P.ana, 'wrd.value_plan', { planIri: p3Iri, inputs: {} }), 409, /No active grant/);
@@ -810,6 +880,9 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const signals = obj(cal['probeSignals']);
     const pc = cells.find((c) => c['kind'] === 'prediction:weekly-cash-delta:agent-drafts-person-decides:controlled') ?? {};
     const ac = agentCells.find((c) => c['kind'] === 'agent-run:invoice-matching') ?? {};
+    const cc = agentCells.find((c) => c['kind'] === 'agent-run:gl-coding') ?? {};
+    expect('31. the coding agent\'s cell: its self-assessment agreed with every review, and a person accepted 5% of its work', 'wrd.calibration',
+      cc['samples'] === 20 && cc['hitRate'] === 1 && cc['acceptedShare'] === 0.05 && obj(cc['grant'])['active'] === false, `agreement ${String(cc['hitRate'])}, accepted ${String(cc['acceptedShare'])}`);
     expect('31. calibration: one prediction (in band, ramp-adjusted), 25 reviewed runs at 0.96, probes kept apart', 'wrd.calibration',
       pc['samples'] === 1 && pc['status'] === 'Hypothetical' && pc['rampAdjusted'] === 1 && ac['samples'] === 25 && ac['status'] === 'Asserted' && ac['hitRate'] === 0.96
         && ac['model'] === 'scripted-fixture' && signals['probes'] === 2 && signals['amplify'] === 1 && signals['neither'] === 1,
@@ -830,7 +903,7 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
       records > 0 && marking.demoRecords === records && marking.unlabelledRows === 0 && marking.unlabelledCells === 0 && marking.sampledGraphHasDemoTriple,
       ['workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants'].map((k) => `${arr(all[k]).length} ${k}`).join(', '));
     const missingRefusals = DEMO_REFUSALS.filter((id) => !refusalsObserved.some((r) => r.startsWith(`${id} `)));
-    expect('32. every refusal R-A … R-AM was observed with its status', '—', missingRefusals.length === 0, missingRefusals.length === 0 ? `${refusalsObserved.length} refusals` : `missing ${missingRefusals.join(', ')}`);
+    expect('32. every refusal R-A … R-AT was observed with its status', '—', missingRefusals.length === 0, missingRefusals.length === 0 ? `${refusalsObserved.length} refusals` : `missing ${missingRefusals.join(', ')}`);
   } catch (e) {
     record('the walk stopped', '—', 0, 0, false, e instanceof Error ? e.message : String(e));
   }
@@ -860,7 +933,7 @@ function renderReport(r: { ok: boolean; steps: readonly DemoStep[]; refusalsObse
     '',
     `Result: **${r.ok ? 'every step passed' : 'FAILED'}** — ${r.steps.filter((s) => s.ok).length} of ${r.steps.length} steps; ${r.refusalsObserved.length} refusals observed; ${r.records} records on the in-memory pod; ${r.took}s.`,
     '',
-    `Everything below was ${DEMO_LABEL}: persona keys derived from published seeds and held by the demo process, a scripted draft standing in for the client's agent, and a clock moved by the walk. The bridge, signatures, policy, engines and pod read-back are the real code.`,
+    `Everything below was ${DEMO_LABEL}: persona keys derived from published seeds and held by the demo process, a scripted draft standing in for the client's agent, scripted agent runs (outputs are digests of fixed strings; self-assessments chosen by the walk), one measured outcome computed from the prediction itself (P50 × ramp factor, so in band by construction), and a clock moved by the walk. The bridge, signatures, policy, engines and pod read-back are the real code.`,
     '',
     '| # | Step | Tool | Expected | Got | Note |',
     '|---|---|---|---|---|---|',

@@ -12,15 +12,22 @@
  */
 import type { IRI } from '@interego/core';
 import type { Affordance, AffordanceInput, AffordanceOutput } from '../_shared/affordance-mcp/index.js';
+import { payloadSummary, ENVELOPE_INTENTS } from './src/payloads.js';
+import type { EnvelopeIntent } from './src/records.js';
 
 const POD_INPUT: AffordanceInput = {
   name: 'pod_url', type: 'string', required: false,
   description: "Pod to read/write; defaults to the bridge's configured pod. Must equal the envelope payload podUrl.",
 };
 
-const envelope = (intent: string, name = 'envelope', required = true): AffordanceInput => ({
+/**
+ * The envelope input. Its description carries the payload's every field (from src/payloads.ts),
+ * so an agent reading only the manifest or MCP tools/list can build the payload it must sign;
+ * wrd.envelope_template serves the full JSON Schema and a template filled from the pod.
+ */
+const envelope = (intent: EnvelopeIntent, name = 'envelope', required = true): AffordanceInput => ({
   name, type: 'object', required,
-  description: `{payload, signature}: EIP-191 personal_sign over canonicalJson(payload); payload.intent = "${intent}". Every payload also carries podUrl, issuedAt (ISO-8601, within 15 minutes) and a 16-64 character nonce.`,
+  description: `{payload, signature}: EIP-191 personal_sign over canonicalJson(payload); payload.intent = "${intent}". Every payload also carries podUrl, issuedAt (ISO-8601, within 15 minutes) and a 16-64 character nonce. ${payloadSummary(intent)}. Full JSON Schema and a filled template: wrd.envelope_template with intent=${intent}.`,
 });
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } as const;
@@ -208,7 +215,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.countersign_decision',
     targetTemplate: '{base}/wrd/countersign_decision',
     title: 'Countersign or decline a decision',
-    description: 'A registered approver who is not the submitter and whose work the decision does not change (compared by the person an admin attests is behind each key) approves or declines. Approval names every objection it approves over. Approved decisions become Asserted with the prediction still unmeasured; declined ones Counterfactual.',
+    description: 'A registered approver approves or declines. Compared by the person an admin attests is behind each key, the approver did not propose, value or submit the plan, is not a person whose work it changes, and is not the accountable principal of an agent it puts on the work. Approval re-checks that every changed task is still ratified and undisputed, names every objection and every assignment not yet acknowledged that it approves over, and is refused while another approved, unmeasured decision changes the same task. Approved decisions become Asserted with the prediction still unmeasured; declined ones Counterfactual.',
     method: 'POST',
     annotations: { title: 'Countersign a decision', ...WRITE },
     inputs: [envelope('wrd:countersign-decision'), POD_INPUT],
@@ -223,7 +230,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.record_outcome',
     targetTemplate: '{base}/wrd/record_outcome',
     title: 'Record the measured outcome of a decision',
-    description: 'After the measurement window has ended, someone other than the submitter records the measured weekly change (optionally with an interval), its comparison basis, and whether the change was kept, reverted or stopped early; the platform grades it against the predicted band scaled for the declared ramp. Probe decisions record which declared condition fired for each probe.',
+    description: 'After the measurement window has ended, someone who neither prepared (proposed, valued, submitted) nor countersigned the decision records the measured weekly change (optionally with an interval), its comparison basis, and whether the change was kept, reverted or stopped early. A kept change is measured over the whole declared window; a shorter window is recorded only for a change stopped early or reverted, and stays out of calibration. The platform grades it against the predicted band scaled for the declared ramp, and checks the pilot size against the person-reviewed runs logged in the window. Probe decisions record which declared condition fired for each probe.',
     method: 'POST',
     annotations: { title: 'Record an outcome', ...WRITE },
     inputs: [envelope('wrd:record-outcome'), POD_INPUT],
@@ -238,7 +245,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.log_agent_run',
     targetTemplate: '{base}/wrd/log_agent_run',
     title: "Log an agent's run, with a person's review",
-    description: 'A registered agent signs a run (task, model, output digest, its own assessment); a person who is not its accountable principal signs a review. Only person-reviewed runs count toward calibration and grants. A run under an active grant may be logged first and reviewed later with the stored run envelope.',
+    description: "A registered agent signs a run (task, model, output digest, its own assessment); a person who is not its accountable principal signs a review. Only person-reviewed runs count toward calibration and grants. A run under an active grant may be logged first and reviewed later with the stored run envelope, but only a run the agent itself calls accepted, on a task that an approved decision put at agent-acts-within-grant for this agent and whose regime, checkability and worst case still allow it; any other run goes to a person.",
     method: 'POST',
     annotations: { title: 'Log an agent run', ...WRITE },
     inputs: [
@@ -257,7 +264,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.grant_autonomy',
     targetTemplate: '{base}/wrd/grant_autonomy',
     title: 'Grant an agent autonomy on one kind of task',
-    description: 'An approver grants a registered software agent the right to act alone on one registered kind of task, only when earned: at least 20 person-reviewed runs on its currently declared model, a rating of at least 0.9, at least 5 distinct registered reviewers the admin attests are different people, and precise ready claims. People are never given enforced grants.',
+    description: 'An approver grants a registered software agent the right to act alone on one registered kind of task, only when earned: at least 20 person-reviewed runs on its currently declared model, of which a person accepted at least 90%; at least 5 distinct registered reviewers the admin attests are different people; and at least 20 runs the agent itself called ready, of which a person accepted at least 90% with no critical failure. People are never given enforced grants.',
     method: 'POST',
     annotations: { title: 'Grant autonomy', ...WRITE },
     inputs: [envelope('wrd:grant-autonomy'), POD_INPUT],
@@ -272,7 +279,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.revoke_grant',
     targetTemplate: '{base}/wrd/revoke_grant',
     title: 'Revoke a grant',
-    description: 'An approver withdraws a grant: a superseding Retracted record whose validity window ends now. Every later use of the grant is refused.',
+    description: 'An approver withdraws a grant: a superseding Retracted record whose validity window ends now, binding the grant head read (recordId, descriptorUrl, graphDigest). Every later use of the grant is refused, and work a decision put under it shows as having no authorised performer.',
     method: 'POST',
     annotations: { title: 'Revoke a grant', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     inputs: [envelope('wrd:revoke-grant'), POD_INPUT],
@@ -295,6 +302,31 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
       description: 'What was copied (or exported) and the bundle itself.',
       properties: { holder: { type: 'object' }, targetPodUrl: { type: 'string' }, copied: { type: 'array' }, bundle: { type: 'array' }, receiptUrl: { type: 'string' }, ...RECORDED },
       required: ['holder', 'status', 'bundle'],
+    },
+  },
+  {
+    action: 'urn:iep:action:wrd:envelope-template' as IRI,
+    toolName: 'wrd.envelope_template',
+    targetTemplate: '{base}/wrd/envelope_template',
+    title: 'Get the payload to sign for a write',
+    description: 'For one write intent: the JSON Schema of its payload, and a template filled from the pod — podUrl, a fresh issuedAt and nonce, and, when you name the record, the head binding (descriptorUrl, graphDigest, recordId) and the rows it needs (for a valuation, one entry per task of the plan). Fields left for you to decide are null and listed in fill. Signs nothing and writes nothing.',
+    method: 'GET',
+    annotations: { title: 'Payload template', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    reads: READS,
+    inputs: [
+      { name: 'intent', type: 'string', required: true, description: 'The write intent.', enum: [...ENVELOPE_INTENTS] },
+      POD_INPUT,
+      { name: 'task_iri', type: 'string', required: false, description: 'The task the payload is about (ratify, classify, revise, agent-run).' },
+      { name: 'workflow_iri', type: 'string', required: false, description: 'The workflow (propose, add a task).' },
+      { name: 'plan_iri', type: 'string', required: false, description: 'The plan (value, submit, acknowledge an assignment).' },
+      { name: 'decision_iri', type: 'string', required: false, description: 'The decision (countersign, record an outcome).' },
+      { name: 'grant_iri', type: 'string', required: false, description: 'The grant (revoke).' },
+      { name: 'subject', type: 'string', required: false, description: 'For wrd:ratify-task: what is ratified.', enum: ['description', 'classification', 'assignment'] },
+    ],
+    outputs: {
+      description: 'The schema, the template, the paths still to fill, the tool to send it to, and the context read from the pod.',
+      properties: { intent: { type: 'string' }, toolName: { type: 'string' }, schema: { type: 'object' }, template: { type: 'object' }, fill: { type: 'array', items: { type: 'string' } }, context: { type: 'object' }, signing: { type: 'string' }, status: { type: 'string' }, computed: { type: 'boolean' } },
+      required: ['intent', 'schema', 'template', 'fill'],
     },
   },
   {
@@ -357,6 +389,21 @@ export const wrdDemoAffordances: ReadonlyArray<Affordance> = [
       description: 'The signed envelope and who it was signed as.',
       properties: { envelope: { type: 'object' }, signer: { type: 'string' }, persona: { type: 'string' }, label: { type: 'string' }, demoKey: { type: 'boolean' }, scriptedLabel: { type: 'string' }, status: { type: 'string' } },
       required: ['envelope', 'signer'],
+    },
+  },
+  {
+    action: 'urn:iep:action:wrd:demo-advance-clock' as IRI,
+    toolName: 'wrd.demo_advance_clock',
+    targetTemplate: '{base}/wrd/demo_advance_clock',
+    title: 'Move the demo clock forward (demo only)',
+    description: "Offline demo only: moves the demo server's scripted clock forward, so a measurement window a visitor's own decision declares can end and its outcome be recorded. Production bridges read the real clock and neither advertise nor route this.",
+    method: 'POST',
+    annotations: { title: 'Advance the demo clock', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    inputs: [{ name: 'weeks', type: 'integer', required: true, description: 'Whole weeks to move forward, 1 to 104.', minimum: 1, maximum: 104 }],
+    outputs: {
+      description: 'The demo clock after the move.',
+      properties: { now: { type: 'string' }, movedWeeks: { type: 'integer' }, scriptedLabel: { type: 'string' }, status: { type: 'string' }, recorded: { type: 'boolean' } },
+      required: ['now'],
     },
   },
 ];

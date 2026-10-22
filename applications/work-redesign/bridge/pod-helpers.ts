@@ -203,27 +203,32 @@ async function getText(url: string, fetchFn: FetchFn, accept: string): Promise<{
   return { status: res.status, body: await res.text() };
 }
 
+/** What a descriptor and its graph document say on their own, before any pod or URL is consulted. */
+interface BytesRead {
+  readonly graphIri: string;
+  readonly graphTurtle: string;
+  readonly graphDigest: string;
+  readonly proof: AuthorshipProof | null;
+  readonly subjectId: string | null;
+  readonly verified: Verified;
+  readonly record: WrdRecord | null;
+  readonly modalStatus: string | undefined;
+  readonly modalMatches: boolean;
+}
+
 /**
- * Read one record and verify it. The descriptor and the graph are fetched; the region of the
- * graph document the proof covers is digested; the platform authorship proof is verified
- * against that digest; and when it answers 'mismatched' it is verified once more without an
- * observed hash, to learn whether the signature itself is intact. Verification results are
- * cached by the sha256 of the bytes fetched, so a re-read of unchanged bytes costs no signature
- * check, and a changed byte cannot reuse an old verdict.
+ * Verify a descriptor and its graph document from their bytes alone: the region of the graph
+ * document the proof covers is digested; the platform authorship proof is verified against that
+ * digest; and when it answers 'mismatched' it is verified once more without an observed hash,
+ * to learn whether the signature itself is intact. Verification results are cached by the sha256
+ * of the bytes, so a re-read of unchanged bytes costs no signature check, and a changed byte
+ * cannot reuse an old verdict. readRecord adds what only a pod can answer (where the record sits);
+ * verifyHolderBundle uses this as it is.
  */
-export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: FetchFn, trusted: ReadonlySet<string>,
-  cache?: VerifyCache, container: string = WRD_CONTAINER): Promise<LoadedRecord> {
-  const desc = await getText(entry.descriptorUrl, fetchFn, 'text/turtle');
-  if (desc.body === null) return unreadable(entry, `the descriptor is not at its manifest URL (${desc.status})`);
-  const descriptorTurtle = desc.body;
-  const dist = parseDistributionFromDescriptorTurtle(descriptorTurtle);
-  if (!dist) return unreadable(entry, 'the descriptor links no graph');
-  if (!dist.accessURL.startsWith(podUrl)) return unreadable(entry, 'the descriptor links a graph outside this pod');
-  const graph = await getText(dist.accessURL, fetchFn, 'application/trig, text/turtle');
-  if (graph.body === null) return unreadable(entry, `the graph is not at the URL its descriptor names (${graph.status})`);
-  const graphContent = graph.body;
+async function readBytes(descriptorTurtle: string, graphContent: string, fallbackModal: string | undefined, cache?: VerifyCache):
+  Promise<{ readonly ok: true; readonly read: BytesRead } | { readonly ok: false; readonly why: string }> {
   const region = digestedGraphRegion({ descriptorTurtle, graphContent });
-  if (!region.ok) return unreadable(entry, `the signed region of the graph could not be identified (${region.why})`);
+  if (!region.ok) return { ok: false, why: `the signed region of the graph could not be identified (${region.why})` };
   const graphDigest = canonicalGraphDigest(region.turtle) ?? '';
   const proof = parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle);
   const subjectId = firstMatch(/^<([^>]+)>\s*\n\s*a iep:ContextDescriptor/m, descriptorTurtle);
@@ -247,44 +252,131 @@ export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: 
     }
   }
   const record = parseRecordGraph(region.turtle);
-  const signerAddress = proof ? proof.signerAddress.toLowerCase() : null;
-  const signedByTrustedKey = verified.signatureValid && signerAddress !== null && trusted.has(signerAddress);
-  const atPredictedUrl = proof !== null && subjectId === proof.descriptorId
-    && entry.descriptorUrl === predictDescriptorUrl(podUrl, proof.descriptorId, { containerPath: container, descriptorSlug: slugOf(proof.descriptorId) });
-  const modalStatus = firstMatch(/iep:modalStatus\s+iep:(\w+)/, descriptorTurtle) ?? entry.modalStatus;
+  const modalStatus = firstMatch(/iep:modalStatus\s+iep:(\w+)/, descriptorTurtle) ?? fallbackModal;
   let modalMatches = false;
   if (record) {
     try { modalMatches = modalFor(record.recordKind, record.status) === modalStatus; } catch { modalMatches = false; }
   }
-  const eligible = signedByTrustedKey && atPredictedUrl;
-  const isTrusted = eligible && verified.contentBinding === 'bound' && record !== null && modalMatches;
-  const why = !proof ? 'it carries no authorship proof'
-    : !verified.signatureValid ? 'its authorship signature does not verify'
-      : !signedByTrustedKey ? 'it was signed by a key this bridge does not trust'
-        : !atPredictedUrl ? 'it is not at the URL its own proof names'
-          : verified.contentBinding !== 'bound' ? 'its graph was altered after signing: the bytes no longer match the signed digest'
-            : record === null ? 'its graph is not a well-formed wrd record'
-              : !modalMatches ? 'its descriptor was altered after signing: the modal status no longer matches the signed status'
+  return { ok: true, read: { graphIri: region.graphIri, graphTurtle: region.turtle, graphDigest, proof, subjectId, verified, record, modalStatus, modalMatches } };
+}
+
+/** Why bytes that verified as far as they go are still not trusted, in the order the checks apply; null when they are. */
+function distrust(r: BytesRead, signedByTrustedKey: boolean, atPredictedUrl: boolean | null, untrustedKey: string): string | null {
+  return !r.proof ? 'it carries no authorship proof'
+    : !r.verified.signatureValid ? 'its authorship signature does not verify'
+      : !signedByTrustedKey ? untrustedKey
+        : atPredictedUrl === false ? 'it is not at the URL its own proof names'
+          : r.verified.contentBinding !== 'bound' ? 'its graph was altered after signing: the bytes no longer match the signed digest'
+            : r.record === null ? 'its graph is not a well-formed wrd record'
+              : !r.modalMatches ? 'its descriptor was altered after signing: the modal status no longer matches the signed status'
                 : null;
+}
+
+/**
+ * Read one record from a pod and verify it: the descriptor and the graph are fetched, their
+ * bytes verified (readBytes), and the record is placed: it must sit at exactly the URL its own
+ * proof's descriptorId predicts, and be signed by a platform key this bridge trusts.
+ */
+export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: FetchFn, trusted: ReadonlySet<string>,
+  cache?: VerifyCache, container: string = WRD_CONTAINER): Promise<LoadedRecord> {
+  const desc = await getText(entry.descriptorUrl, fetchFn, 'text/turtle');
+  if (desc.body === null) return unreadable(entry, `the descriptor is not at its manifest URL (${desc.status})`);
+  const descriptorTurtle = desc.body;
+  const dist = parseDistributionFromDescriptorTurtle(descriptorTurtle);
+  if (!dist) return unreadable(entry, 'the descriptor links no graph');
+  if (!dist.accessURL.startsWith(podUrl)) return unreadable(entry, 'the descriptor links a graph outside this pod');
+  const graph = await getText(dist.accessURL, fetchFn, 'application/trig, text/turtle');
+  if (graph.body === null) return unreadable(entry, `the graph is not at the URL its descriptor names (${graph.status})`);
+  const graphContent = graph.body;
+  const bytes = await readBytes(descriptorTurtle, graphContent, entry.modalStatus, cache);
+  if (!bytes.ok) return unreadable(entry, bytes.why);
+  const r = bytes.read;
+  const { proof, verified } = r;
+  const signerAddress = proof ? proof.signerAddress.toLowerCase() : null;
+  const signedByTrustedKey = verified.signatureValid && signerAddress !== null && trusted.has(signerAddress);
+  const atPredictedUrl = proof !== null && r.subjectId === proof.descriptorId
+    && entry.descriptorUrl === predictDescriptorUrl(podUrl, proof.descriptorId, { containerPath: container, descriptorSlug: slugOf(proof.descriptorId) });
+  const eligible = signedByTrustedKey && atPredictedUrl;
+  const isTrusted = eligible && verified.contentBinding === 'bound' && r.record !== null && r.modalMatches;
+  const why = distrust(r, signedByTrustedKey, atPredictedUrl, 'it was signed by a key this bridge does not trust');
   const confidenceText = firstMatch(/iep:epistemicConfidence\s+"([^"]+)"/, descriptorTurtle);
   const confidence = confidenceText === null ? null : Number(confidenceText);
   return {
     descriptorUrl: entry.descriptorUrl,
-    recordId: proof?.descriptorId ?? subjectId ?? '',
-    graphIri: region.graphIri,
-    modalStatus,
+    recordId: proof?.descriptorId ?? r.subjectId ?? '',
+    graphIri: r.graphIri,
+    modalStatus: r.modalStatus,
     validFrom: firstMatch(/iep:validFrom\s+"([^"]+)"/, descriptorTurtle),
     validUntil: firstMatch(/iep:validUntil\s+"([^"]+)"/, descriptorTurtle),
     generatedAt: firstMatch(/prov:generatedAtTime\s+"([^"]+)"/, descriptorTurtle),
     confidence: confidence !== null && Number.isFinite(confidence) ? confidence : null,
     supersedes: entry.supersedes ?? [],
-    descriptorTurtle, graphContent, graphTurtle: region.turtle, graphDigest, record,
+    descriptorTurtle, graphContent, graphTurtle: r.graphTurtle, graphDigest: r.graphDigest, record: r.record,
     authorship: {
       signatureValid: verified.signatureValid, signerAddress, signedByTrustedKey, atPredictedUrl,
-      contentBinding: verified.contentBinding, modalMatches, eligible, trusted: isTrusted, proof,
+      contentBinding: verified.contentBinding, modalMatches: r.modalMatches, eligible, trusted: isTrusted, proof,
     },
     why,
   };
+}
+
+// ── A holder's downloaded bundle, verified offline ───────────────────────────────────────
+
+/** One record's verdict in a holder bundle. */
+export interface BundleVerdict {
+  readonly descriptorUrl: string;
+  readonly recordKind: string | null;
+  readonly entityIri: string | null;
+  readonly status: string | null;
+  readonly signerAddress: string | null;
+  /** The proof verifies, binds these graph bytes, was made by an expected platform key, and the descriptor's modal status matches the signed status. */
+  readonly verified: boolean;
+  readonly why: string | null;
+}
+
+/**
+ * Verify a bundle that wrd.holder_copy returned for download — the whole response or its
+ * `bundle` array — with no pod and no bridge: each record's platform proof must verify, bind
+ * the graph bytes in the bundle, and come from one of `expectedPlatform`, the platform addresses
+ * the holder expects (wrd.list_records reports the bridge's as bridge.platform.address, and the
+ * bridge prints it at startup). Where a record
+ * sat is not checked: a download has no URL to check against. Nothing here trusts the bundle's
+ * own claims about who signed it.
+ */
+export async function verifyHolderBundle(bundle: unknown, expectedPlatform: readonly string[]):
+  Promise<{ readonly ok: boolean; readonly records: readonly BundleVerdict[]; readonly why: string | null }> {
+  const items = Array.isArray(bundle) ? bundle
+    : typeof bundle === 'object' && bundle !== null && Array.isArray((bundle as { bundle?: unknown }).bundle) ? (bundle as { bundle: unknown[] }).bundle : null;
+  if (items === null) return { ok: false, records: [], why: 'not a holder bundle: expected the wrd.holder_copy response or its bundle array' };
+  if (items.length === 0) return { ok: false, records: [], why: 'the bundle holds no record' };
+  const expected = new Set(expectedPlatform.map((a) => a.toLowerCase()));
+  if (expected.size === 0) return { ok: false, records: [], why: 'name the platform address you expect: a bundle verified against no key proves nothing' };
+  const records: BundleVerdict[] = [];
+  for (const item of items) {
+    const o = (typeof item === 'object' && item !== null ? item : {}) as Record<string, unknown>;
+    const descriptorUrl = typeof o['descriptorUrl'] === 'string' ? o['descriptorUrl'] : '';
+    const descriptorTurtle = typeof o['descriptorTurtle'] === 'string' ? o['descriptorTurtle'] : null;
+    const graphTrig = typeof o['graphTrig'] === 'string' ? o['graphTrig'] : null;
+    if (descriptorTurtle === null || graphTrig === null) {
+      records.push({ descriptorUrl, recordKind: null, entityIri: null, status: null, signerAddress: null, verified: false, why: 'the entry lacks descriptorTurtle or graphTrig' });
+      continue;
+    }
+    const bytes = await readBytes(descriptorTurtle, graphTrig, undefined);
+    if (!bytes.ok) {
+      records.push({ descriptorUrl, recordKind: null, entityIri: null, status: null, signerAddress: null, verified: false, why: bytes.why });
+      continue;
+    }
+    const r = bytes.read;
+    const signerAddress = r.proof ? r.proof.signerAddress.toLowerCase() : null;
+    const byExpected = r.verified.signatureValid && signerAddress !== null && expected.has(signerAddress);
+    const why = distrust(r, byExpected, null, `it was signed by ${signerAddress ?? 'no key'}, not by an expected platform address`);
+    records.push({
+      descriptorUrl, recordKind: r.record?.recordKind ?? null, entityIri: r.record?.entityIri ?? null, status: r.record?.status ?? null,
+      signerAddress, verified: why === null, why,
+    });
+  }
+  const bad = records.filter((v) => !v.verified).length;
+  return { ok: bad === 0, records, why: bad === 0 ? null : `${bad} of ${records.length} record(s) do not verify` };
 }
 
 // ── Heads ────────────────────────────────────────────────────────────────────────────────

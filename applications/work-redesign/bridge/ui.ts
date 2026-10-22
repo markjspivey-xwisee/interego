@@ -72,6 +72,9 @@ p { margin: 0.4rem 0; }
 .app { max-width: 1280px; margin: 0 auto; padding: 0.75rem; }
 .strip { display: grid; gap: 0.5rem; grid-template-columns: 1fr; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.8rem; }
 .strip .row { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: center; }
+.strip > *, .strip .row > * { min-width: 0; max-width: 100%; }
+.strip code { word-break: break-all; }
+.strip .chip { white-space: normal; border-radius: 0.6rem; }
 .demo-banner { border: 3px solid var(--bad); border-radius: 6px; padding: 0.4rem 0.6rem; font-weight: 600; color: var(--bad); }
 .warnbox { border-left: 4px solid var(--warn); padding: 0.3rem 0.6rem; background: var(--panel); }
 .badbox { border-left: 4px solid var(--bad); padding: 0.3rem 0.6rem; background: var(--panel); }

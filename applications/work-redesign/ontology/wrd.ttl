@@ -206,7 +206,7 @@ wrd:LevelAgentActsWithinGrant a wrd:AllocationLevel ;
 
 wrd:defaultGrantPolicy a wrd:GrantPolicy ;
     rdfs:label "Default grant policy" ;
-    rdfs:comment "An agent earns a grant on one kind of task from at least 20 person-reviewed runs on its declared model, a reviewed hit rate of at least 0.9, at least 5 person confirmations from at least 5 distinct registered reviewers the admin attests are different people, and at least 0.9 precision on the runs it called ready. Critical work additionally needs ceil(3 / 0.01) = 300 clean runs (rule of three, 95% one-sided). Re-classification is suggested once at least 5 reviewed runs show more than 0.2 reworked." ;
+    rdfs:comment "An agent earns a grant on one kind of task from at least 20 person-reviewed runs on its declared model of which a person accepted at least 0.9, at least 5 person confirmations from at least 5 distinct registered reviewers the admin attests are different people, and at least 20 runs the agent itself called ready of which a person accepted at least 0.9. How well the agent labels its own runs is reported beside these, never in their place: an agent that truthfully calls most of its work reworked earns nothing. Critical work additionally needs ceil(3 / 0.01) = 300 clean runs (rule of three, 95% one-sided). Re-classification is suggested once at least 5 reviewed runs show more than 0.2 reworked." ;
     wrd:floor "0.9"^^xsd:decimal ;
     wrd:minSamples 20 ;
     wrd:minHumanConfirmations 5 ;
@@ -307,9 +307,9 @@ wrd:requiresGrant a owl:DatatypeProperty ; rdfs:label "requires grant" ; rdfs:do
 wrd:requiresCheckability a owl:DatatypeProperty ; rdfs:label "requires checkability" ; rdfs:domain wrd:AllocationLevel ;
     rdfs:comment "The checkability answers under which the level is allowed; absent means any." .
 wrd:floor a owl:DatatypeProperty ; rdfs:label "floor" ; rdfs:domain wrd:GrantPolicy ;
-    rdfs:comment "The minimum reviewed hit rate on the competence axis." .
+    rdfs:comment "The minimum share of person-reviewed runs a person accepted." .
 wrd:minSamples a owl:DatatypeProperty ; rdfs:label "minimum samples" ; rdfs:domain wrd:GrantPolicy ;
-    rdfs:comment "The minimum number of person-reviewed runs; also the sample floor at which a calibration cell becomes Asserted." .
+    rdfs:comment "The minimum number of person-reviewed runs, and of runs the agent called ready; also the sample floor at which a calibration cell becomes Asserted." .
 wrd:minHumanConfirmations a owl:DatatypeProperty ; rdfs:label "minimum human confirmations" ; rdfs:domain wrd:GrantPolicy ;
     rdfs:comment "The minimum number of outcomes confirmed by a person." .
 wrd:minDistinctConfirmers a owl:DatatypeProperty ; rdfs:label "minimum distinct confirmers" ; rdfs:domain wrd:GrantPolicy ;

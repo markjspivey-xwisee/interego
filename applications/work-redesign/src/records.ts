@@ -171,18 +171,37 @@ export function verifyStoredEnvelope(env: unknown, intent: EnvelopeIntent, podUr
   return { ok: true, signer, did: didOf(signer) };
 }
 
-/** (signer, nonce) pairs seen inside a time window; in-process, so a restart forgets them. */
+/**
+ * (signer, nonce) pairs seen inside a time window: the fast, in-process half of replay
+ * protection. It forgets on restart and is not shared between processes, so the durable half is
+ * the pod itself — every record carries the (signer, nonce) that authorised it, and a write is
+ * refused when its graph's chain already holds that pair (handlers.ts, write()).
+ *
+ * Bounded: entries expire in insertion order (a Map iterates in insertion order, so expiry
+ * stops at the first live entry instead of scanning the map), and beyond `maxEntries` the oldest
+ * are dropped — the durable check still stands behind them. Callers claim only for registered
+ * signers, so keys nobody registered cannot fill it.
+ */
 export class NonceLedger {
   private readonly seen = new Map<string, number>();
-  constructor(private readonly ttlMs: number) {}
+  constructor(private readonly ttlMs: number, private readonly maxEntries = 100_000) {}
   claim(signer: string, nonce: string, now: Date): boolean {
     const t = now.getTime();
-    for (const [k, at] of this.seen) if (at < t - this.ttlMs) this.seen.delete(k);
+    for (const [k, at] of this.seen) {
+      if (at >= t - this.ttlMs) break;
+      this.seen.delete(k);
+    }
     const key = `${signer.toLowerCase()}|${nonce}`;
     if (this.seen.has(key)) return false;
     this.seen.set(key, t);
+    while (this.seen.size > this.maxEntries) {
+      const oldest = this.seen.keys().next();
+      if (oldest.done) break;
+      this.seen.delete(oldest.value);
+    }
     return true;
   }
+  get size(): number { return this.seen.size; }
 }
 
 // ── IRIs, record ids, slugs ───────────────────────────────────────────────────────────────
@@ -236,6 +255,12 @@ export interface TaskPayload {
   readonly quotes: readonly QuoteVerdict[]; readonly quoteStatus: 'verified' | 'partly-verified' | 'unverified' | 'none';
   readonly ratifications: readonly PartyVerdict[];
   /**
+   * Parties a revision removed from the task who have not yet ratified it. Removing someone from
+   * a task is a statement about them: it does not take effect as ratified until they ratify it
+   * (they may also dispute it), so a dispute is answered, never edited away.
+   */
+  readonly owedRatification?: readonly string[];
+  /**
    * Who signed this task's description into being, and the digest of that envelope. The
    * envelope itself (which may describe sixty tasks) is stored once, verbatim, on the workflow
    * record the same call wrote: its `capturedBy`, or the `revision.by` of the version that added
@@ -250,7 +275,12 @@ export interface ClassificationPayload {
   readonly taskIri: string; readonly taskTextSha256: string; readonly answers: ClassificationAnswers;
   readonly regime: Regime; readonly method: MethodToken; readonly regimeSource: 'rule-on-signed-answers'; readonly regimeSourceIri: string;
   readonly rulesFired: readonly string[]; readonly notes: readonly string[];
-  readonly answeredBy: { readonly did: string; readonly address: string; readonly personRef: string; readonly role: 'operator' | 'approver' | 'performer'; readonly envelope: SignedEnvelope };
+  /**
+   * role: 'performer' only for a registered PERSON named on the task; an agent named on it
+   * answers as 'agent' (its answers need the people's ratification and are never expert
+   * evidence); otherwise 'approver' when the signer holds that role, else 'operator'.
+   */
+  readonly answeredBy: { readonly did: string; readonly address: string; readonly personRef: string; readonly role: 'operator' | 'approver' | 'performer' | 'agent'; readonly envelope: SignedEnvelope };
   readonly ratifications: ReadonlyArray<PartyVerdict & { readonly answers?: ClassificationAnswers }>;
   readonly policyRef: PolicyRef;
 }
@@ -266,7 +296,8 @@ export interface PlanPayload {
   readonly taskTextSha256: Readonly<Record<string, string>>; readonly policyRef: PolicyRef;
 }
 
-export type ExpertEvidenceBasis = 'approver-answers' | 'performer-answers' | 'ratified-classification' | 'performer-inputs';
+/** Who answered the seven classification questions — never an analysis artefact, and never an input's self-declared basis label. */
+export type ExpertEvidenceBasis = 'approver-answers' | 'performer-answers' | 'ratified-classification';
 export interface ValuationPayload {
   readonly planIri: string; readonly planDescriptorUrl: string; readonly inputs: ValuationInputs; readonly result: ValuationResult;
   readonly valuedTasks: readonly string[]; readonly unratifiedTasks: readonly string[];
@@ -292,10 +323,14 @@ export interface DecisionPayload {
   readonly measurementPlan?: MeasurementPlan; readonly comparisonGroup?: boolean; readonly basisLabel?: string;
   readonly probes?: ReadonlyArray<{ readonly taskIri: string; readonly index: number } & Probe>;
   readonly submittedBy: { readonly did: string; readonly personRef: string; readonly envelope: SignedEnvelope };
+  /** Everyone whose signed inputs set the prediction: who proposed the plan, requested the valuation and submitted. None of them countersigns or grades it. */
+  readonly preparedBy?: ReadonlyArray<{ readonly role: 'proposed' | 'valued' | 'submitted'; readonly did: string; readonly personRef: string }>;
   readonly grantChecks: ReadonlyArray<{ readonly taskIri: string; readonly grantIri: string; readonly active: boolean; readonly evidenceFromThisTask: boolean }>;
   readonly countersign?: {
     readonly verdict: 'approve' | 'decline'; readonly did: string; readonly personRef: string; readonly envelope: SignedEnvelope;
     readonly objectionsConsidered: readonly string[]; readonly assignmentsAtCountersign: DecisionPayload['assignments']; readonly at: string;
+    /** Tasks whose named person had not acknowledged the assignment, which the approver approved over by naming them. */
+    readonly unacknowledgedConsidered?: readonly string[];
   };
   readonly outcome?: {
     readonly did: string; readonly personRef: string; readonly envelope: SignedEnvelope; readonly disposition: OutcomeDisposition;
@@ -303,7 +338,18 @@ export interface DecisionPayload {
     readonly valued?: {
       readonly measured: MeasuredValue; readonly metric: OutcomeMetric; readonly verdict: BandVerdict; readonly adjustedBand: Band;
       readonly rampFactor: number; readonly rampAdjusted: boolean; readonly basisChanged: boolean;
-      readonly pilotCheck?: { readonly runsNeeded: number; readonly runsObserved: number; readonly criticalFailuresObserved: number; readonly ceilingSupported: boolean };
+      /** Measured over less than the declared window (a change stopped early or reverted): kept out of calibration cells. */
+      readonly windowShorterThanPlanned?: boolean;
+      readonly windowWeeks?: number;
+      /**
+       * The rule-of-three check, from the person-reviewed AgentRun records on the changed agent-level
+       * tasks performed inside the window — never from typed counts. Counts the grader typed are
+       * shown beside them as `declared`.
+       */
+      readonly pilotCheck?: {
+        readonly runsNeeded: number; readonly reviewedRuns: number; readonly criticalFailures: number; readonly ceilingSupported: boolean;
+        readonly declared?: { readonly runsObserved?: number; readonly criticalFailuresObserved?: number };
+      };
     };
     readonly probes?: ReadonlyArray<{ readonly taskIri: string; readonly index: number; readonly signal: ProbeSignal; readonly observed: string; readonly windowStart: string; readonly windowEnd: string; readonly pastTimebox: boolean }>;
   };
@@ -352,6 +398,8 @@ interface RecordBase<K extends RecordKind, P> {
   readonly payload: P;
   readonly signers: readonly RecordSigner[];
   readonly platform: PlatformRef;
+  /** The recovered signer and nonce of the envelope that authorised this version: the durable replay record. */
+  readonly authorisedBy?: { readonly signer: string; readonly nonce: string };
   /** Present only on records written by the offline demo. */
   readonly demo?: true;
 }
@@ -365,6 +413,11 @@ export type RecordOf<K extends RecordKind> = Extract<WrdRecord, { readonly recor
 // ── Payload graph ─────────────────────────────────────────────────────────────────────────
 
 const W = (local: string): string => `wrd:${local}`;
+/** A double literal, refusing a number that is not finite: the kit's dbl() would silently write 0, a number nobody computed. */
+const num = (n: number, what: string): string => {
+  if (!Number.isFinite(n)) throw new RangeError(`${what} is not a finite number; nothing is published`);
+  return dbl(n);
+};
 
 function kindTriples(rec: WrdRecord, S: string): string[] {
   const t: string[] = [];
@@ -420,14 +473,14 @@ function kindTriples(rec: WrdRecord, S: string): string[] {
       add(W('seed'), lit(r.seed));
       add(W('draws'), int(r.draws));
       add(W('valuationMethod'), iri(r.method));
-      add(W('cashWeeklyDeltaP10'), dbl(r.scenarios.cash.weeklyDelta.p10));
-      add(W('cashWeeklyDeltaP50'), dbl(r.scenarios.cash.weeklyDelta.p50));
-      add(W('cashWeeklyDeltaP90'), dbl(r.scenarios.cash.weeklyDelta.p90));
-      add(W('redeployedWeeklyDeltaP10'), dbl(r.scenarios.redeployed.weeklyDelta.p10));
-      add(W('redeployedWeeklyDeltaP50'), dbl(r.scenarios.redeployed.weeklyDelta.p50));
-      add(W('redeployedWeeklyDeltaP90'), dbl(r.scenarios.redeployed.weeklyDelta.p90));
-      add(W('cashNpvP50'), dbl(r.scenarios.cash.npv.p50));
-      add(W('redeployedNpvP50'), dbl(r.scenarios.redeployed.npv.p50));
+      add(W('cashWeeklyDeltaP10'), num(r.scenarios.cash.weeklyDelta.p10, 'cash P10'));
+      add(W('cashWeeklyDeltaP50'), num(r.scenarios.cash.weeklyDelta.p50, 'cash P50'));
+      add(W('cashWeeklyDeltaP90'), num(r.scenarios.cash.weeklyDelta.p90, 'cash P90'));
+      add(W('redeployedWeeklyDeltaP10'), num(r.scenarios.redeployed.weeklyDelta.p10, 'redeployed P10'));
+      add(W('redeployedWeeklyDeltaP50'), num(r.scenarios.redeployed.weeklyDelta.p50, 'redeployed P50'));
+      add(W('redeployedWeeklyDeltaP90'), num(r.scenarios.redeployed.weeklyDelta.p90, 'redeployed P90'));
+      add(W('cashNpvP50'), num(r.scenarios.cash.npv.p50, 'cash NPV P50'));
+      add(W('redeployedNpvP50'), num(r.scenarios.redeployed.npv.p50, 'redeployed NPV P50'));
       add(W('valuationHash'), lit(p.valuationHash));
       add(W('ontologySha256'), lit(p.policyRef.ontologySha256));
       break;
@@ -440,7 +493,7 @@ function kindTriples(rec: WrdRecord, S: string): string[] {
       if (p.valuationHash) add(W('valuationHash'), lit(p.valuationHash));
       if (p.measurementPlan) add(W('comparisonBasis'), lit(p.measurementPlan.comparisonBasis));
       if (p.outcome?.valued) {
-        add(W('measuredWeeklyDelta'), dbl(p.outcome.valued.measured.weeklyValueDelta));
+        add(W('measuredWeeklyDelta'), num(p.outcome.valued.measured.weeklyValueDelta, 'the measured weekly change'));
         add(W('bandVerdict'), lit(p.outcome.valued.verdict));
       }
       if (p.outcome) add(W('disposition'), lit(p.outcome.disposition));
@@ -450,9 +503,9 @@ function kindTriples(rec: WrdRecord, S: string): string[] {
         t.push(`${P} a wrd:Prediction .`);
         t.push(`${P} wrd:predictionStatus ${lit(p.prediction.status)} .`);
         t.push(`${P} wrd:outcomeMetric ${lit(p.prediction.metric)} .`);
-        t.push(`${P} wrd:predictedP10 ${dbl(p.prediction.band.p10)} .`);
-        t.push(`${P} wrd:predictedP50 ${dbl(p.prediction.band.p50)} .`);
-        t.push(`${P} wrd:predictedP90 ${dbl(p.prediction.band.p90)} .`);
+        t.push(`${P} wrd:predictedP10 ${num(p.prediction.band.p10, 'predicted P10')} .`);
+        t.push(`${P} wrd:predictedP50 ${num(p.prediction.band.p50, 'predicted P50')} .`);
+        t.push(`${P} wrd:predictedP90 ${num(p.prediction.band.p90, 'predicted P90')} .`);
       }
       break;
     }
