@@ -1,285 +1,58 @@
-name: Deploy to Railway
-
-# The last mile, restored.
-#
-# `deploy-azure.yml` used to build AND deploy automatically on every push to master.
-# It was deleted when the stack moved off Azure (the registry it pushed to no longer
-# exists), and nothing replaced its deploy half. Since then the pipeline has been:
-# GitHub builds an image, pushes it to GHCR — and stops. Railway pins an immutable
-# sha tag and does not watch for new ones, so a merged, built, green commit could sit
-# indefinitely while production ran something older, with nothing reporting the gap.
-#
-# This is deliberately SEPARATE from build-ghcr.yml rather than a job inside it.
-# Building is safe and repeatable; deploying is neither. Keeping them apart means the
-# image can be built from any ref without that alone changing what production runs.
-#
-# REQUIRES ONE SECRET: RAILWAY_PROJECT_TOKEN — a Railway PROJECT token (Settings →
-# Tokens → project-scoped), NOT an account token. The name says which, because the
-# two use different HTTP headers and the wrong one fails as a 200 that deploys
-# nothing. Prefer minting a fresh token for CI over reusing a local one.
-#
-# All the real logic — and the reasons behind each guard — lives in
-# tools/railway-redeploy.mjs, so it can be run by hand identically.
-
+name: Recovery credential audit
 on:
   workflow_dispatch:
     inputs:
       service:
-        description: 'Railway service name (relay, foxxi-bridge, …)'
+        description: Read-only audit; no service is deployed
         required: true
-        default: 'relay'
+        default: css
       tag:
-        description: 'Image tag: the 40-hex commit sha built by build-ghcr.yml. Defaults to this ref.'
+        description: Audit is pinned to the approved 4d419800 recovery images
         required: false
-        default: ''
+        default: '4d41980040f08123bf787523938596d304a77e35'
       set_registry_credentials:
-        description: >-
-          Give this service its GHCR pull credential before deploying. Needed ONCE for a
-          service created after the Azure→Railway migration: the migration driver gave the
-          original thirteen theirs and must never run again, and a service with none fails
-          with NO build log and NO deploy log, which reads like anything but a credential.
-          Harmless to repeat. See tools/railway-registry-credentials.mjs.
+        description: Ignored; this incident-branch audit makes no production changes
         type: boolean
         required: false
         default: false
-      # ★ NO verify_url INPUT, AND NO DEFAULT. It used to be a free-text field pre-filled
-      # with RELAY's /health — for every service. Dispatching service=identity at a sha
-      # relay happened to be running polled RELAY, read relay's matching build, printed
-      # "serving … — verified" and exited 0 while identity still ran an older image: the
-      # one assertion this repo has that a rollout landed, passing for a service it never
-      # contacted. tools/railway-redeploy.mjs now DERIVES the URL from the service being
-      # deployed (Railway's own `domains` answer + that service's health path from
-      # tools/railway-services.mjs), so there is nothing left here to type wrong.
-
-  # ── CALLABLE, so auto-deploy.yml ships through THIS workflow ────────────────────────────────
-  #
-  # Every guard below — the image-exists check, the rollback-recoverability check, the derived
-  # verify URL — exists because an adversarial review found the failure it prevents. An automatic
-  # deploy that reimplemented any of them would be a second path with none of that history, and it
-  # would be the path that runs unattended. So auto-deploy calls this, and a human dispatching by
-  # hand and a merge deploying itself take exactly the same route.
-  workflow_call:
-    inputs:
-      service:
-        description: 'Railway service name (relay, foxxi-bridge, …)'
-        required: true
-        type: string
-      tag:
-        description: 'Image tag: the 40-hex commit sha built by build-ghcr.yml.'
-        required: false
-        default: ''
-        type: string
-      set_registry_credentials:
-        description: 'Give this service its GHCR pull credential before deploying.'
-        type: boolean
-        required: false
-        default: false
-    secrets:
-      RAILWAY_PROJECT_TOKEN:
-        required: true
-      GHCR_TOKEN:
-        required: true
-
-# A second dispatch must QUEUE, never run alongside: re-triggering a deploy while one
-# is in flight SIGTERMs the healthy container, and the successors die before logging.
-# cancel-in-progress would do exactly that, so it stays false.
-concurrency:
-  group: railway-deploy-${{ inputs.service }}
-  cancel-in-progress: false
-
-# This job needs no GITHUB_TOKEN scope at all — it talks only to Railway.
 permissions: {}
-
+concurrency:
+  group: pgsl-recovery-credential-audit
+  cancel-in-progress: false
 jobs:
-  deploy:
-    name: "Deploy ${{ inputs.service }} to Railway"
+  credential-audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-        with:
-          # ★ FULL HISTORY, and the post-deploy check below is why. `railway-pins.mjs
-          # --check` dates each pinned sha (`git show -s --format=%cI`) and counts the
-          # commits between it and HEAD. actions/checkout's default `fetch-depth: 1` has
-          # neither, so every sha-pinned service reports UNKNOWN-COMMIT and the step goes
-          # red for a reason that has nothing to do with production — which is how a check
-          # gets read as broken and then ignored.
-          fetch-depth: 0
-      - uses: actions/setup-node@v6
-        with: { node-version: '20' }
-
-      - name: Resolve the tag
-        id: t
+      - name: Verify existing credentials without exposing or changing them
         env:
-          # Via env:, never inline in the script — a `${{ }}` interpolated straight
-          # into a shell command is expression injection, and a secret interpolated
-          # there lands on a process command line.
-          INPUT_TAG: ${{ inputs.tag }}
-          SHA: ${{ github.sha }}
-        run: |
-          TAG="${INPUT_TAG:-$SHA}"
-          case "$TAG" in
-            *[!0-9a-f]* | "" ) echo "tag must be 40 hex chars, got: $TAG" >&2; exit 1 ;;
-          esac
-          [ "${#TAG}" -eq 40 ] || { echo "tag must be 40 hex chars, got: $TAG" >&2; exit 1; }
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      # Repointing to a tag that was never pushed does NOT fail loudly: Railway
-      # leaves the previous container serving, so /health keeps returning 200 and
-      # the rollout looks fine. Catch it before touching production.
-      # ★ WITHOUT THIS, THE STEP BELOW FAILS FOR EVERY SERVICE. Every image this repo
-      # builds goes to a PRIVATE GHCR package, and a runner is not logged in to anything:
-      # `imagetools inspect` gets 403 and reports it as "is not in the registry. Run
-      # build-ghcr.yml for this commit first" — a message that accuses the build of not
-      # having happened. Measured on the FIRST EVER dispatch of this workflow (2026-08-06):
-      # it had never run since it was written, so the gap sat in a guard nobody had
-      # executed, in the workflow whose whole job is to make deploys verifiable.
-      - name: Log in to GHCR
-        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          GHCR_USERNAME: ${{ github.repository_owner }}
+        shell: bash
         run: |
-          if [ -z "$GHCR_TOKEN" ]; then
-            echo "::error::GHCR_TOKEN is not set. The image check below cannot read a private package without it."
-            exit 1
-          fi
-          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
-
-      - name: Verify the image exists in GHCR
-        env:
-          # ★ ASKED, NOT DERIVED. This step used to interpolate the service name into
-          # "interego-<service>". That is right for thirteen of the sixteen services and
-          # WRONG for css, whose image is `interego-css-pgsl` — the exact inline derivation
-          # tools/railway-services.mjs was created to delete, still spelled out here long
-          # after. Asking the tracked table means this step can never disagree with the
-          # deploy step below about which image is being checked.
-          # (The literal form is spelled with angle brackets above on purpose:
-          # tests/build-sha-is-verifiable.test.ts greps this file for the real interpolation
-          # and a comment quoting it verbatim would defeat the guard.)
-          SERVICE: ${{ inputs.service }}
-          TAG: ${{ steps.t.outputs.tag }}
-        run: |
-          IMAGE="$(node tools/railway-services.mjs image "$SERVICE")"
-          if ! docker buildx imagetools inspect "$IMAGE:$TAG" > /dev/null 2>&1; then
-            echo "::error::$IMAGE:$TAG is not in the registry. Run build-ghcr.yml for this commit first."
-            exit 1
-          fi
-          echo "$IMAGE:$TAG exists"
-
-      # ── THE WAY BACK IS CHECKED BEFORE THE WAY FORWARD IS TAKEN ──────────────
-      #
-      # ★ THE GAP THIS CLOSES. railway-redeploy.mjs restores the pin by itself when a
-      # deployment reaches a terminal FAILURE, and that case is covered. The case it cannot
-      # cover is the one that matters on a stateful service: a deploy Railway calls SUCCESS,
-      # whose container boots, and whose new code is wrong anyway. Undoing THAT means
-      # deploying the previous sha by hand — and nothing had ever established that the
-      # previous sha is still pullable. "Roll it back" was a sentence, not a plan.
-      #
-      # It fails the run rather than warning, and the trade is deliberate: refusing to
-      # replace a running image nobody can restore costs one build, while discovering it
-      # afterwards costs the service. The remedy is in the message and it is deterministic
-      # — every image here is built with `npm ci` from a tracked lockfile, so the outgoing
-      # sha rebuilds to the same tree it did the first time.
-      #
-      # It cannot fire on a service's FIRST deploy: railway-current-image.ts exits 1 with
-      # "nothing is pinned yet", which is not a missing rollback target, and this step says
-      # so and carries on.
-      - name: Confirm the image being REPLACED is still recoverable
-        env:
-          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-          SERVICE: ${{ inputs.service }}
-        run: |
-          set -o pipefail
-          # ★ `| tail -n 1`, and the exit code taken separately. `npx` prints its own
-          # "Need to install the following packages" line when tsx is not already in the
-          # tree — which it is not here, this job never runs `npm ci` — and that line would
-          # otherwise be captured as the image reference and inspected as one.
-          CURRENT="$(npx --yes tsx tools/railway-current-image.ts "$SERVICE" | tail -n 1)" && rc=0 || rc=$?
-          # ★ EXIT 1 AND EXIT 2 ARE DIFFERENT ANSWERS AND MUST NOT SHARE A BRANCH. 1 is "this
-          # service runs no image yet", a real and harmless state on a first deploy. 2 is a
-          # bad token, an unknown service, or a live repository that disagrees with the
-          # tracked table — treating that as "no rollback target" would turn every auth
-          # failure into a silent pass, which is the fail-open this whole file exists to kill.
-          if [ "$rc" -eq 1 ]; then
-            echo "no image is pinned on $SERVICE yet — a first deploy has nothing to roll back to"
-            exit 0
-          fi
-          if [ "$rc" -ne 0 ]; then
-            echo "::error::could not read the image $SERVICE is currently running (exit $rc). Nothing has been changed."
-            exit 1
-          fi
-          echo "rollback target: $CURRENT"
-          if ! docker buildx imagetools inspect "$CURRENT" > /dev/null 2>&1; then
-            echo "::error::$SERVICE is running $CURRENT, which is NO LONGER IN THE REGISTRY."
-            echo "::error::Deploying over it would be one-way. Build that commit first (build-ghcr.yml"
-            echo "::error::at that sha), then dispatch this workflow again."
-            exit 1
-          fi
-          echo "$CURRENT is still pullable — this deploy is reversible"
-
-      # Before the deploy, never after: a credential is consulted at pull time, so setting
-      # it afterwards leaves the FAILED deployment standing and the next dispatch looking
-      # like the fix.
-      - name: Set the GHCR pull credential on this service
-        if: ${{ inputs.set_registry_credentials }}
-        env:
-          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-          GHCR_USERNAME: ${{ github.repository_owner }}
-          # GHCR_TOKEN, not GITHUB_TOKEN: the run token expires with the job, and Railway
-          # pulls again on every restart and every redeploy long after this run is gone.
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          SERVICE: ${{ inputs.service }}
-        run: node tools/railway-registry-credentials.mjs "$SERVICE"
-
-      - name: Deploy
-        env:
-          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-          SERVICE: ${{ inputs.service }}
-          TAG: ${{ steps.t.outputs.tag }}
-        run: |
-          if [ -z "$RAILWAY_PROJECT_TOKEN" ]; then
-            echo "::error::RAILWAY_PROJECT_TOKEN is not set. Add it as a repository secret (a Railway PROJECT token)."
-            exit 1
-          fi
-          # ★ VERIFICATION IS NEITHER OPTIONAL NOR CONFIGURABLE FROM HERE.
-          #
-          # It was an opt-in that degraded to a printed caveat: without --verify-url,
-          # railway-redeploy.mjs exited 0 after announcing "Railway reports success, but
-          # nothing has confirmed the new code is actually serving". Making it required
-          # was not enough, because the field it required was pre-filled with RELAY's
-          # /health for every service — so a deploy of identity could poll relay, match
-          # relay's build against the tag, and print "verified" without contacting
-          # identity once. The URL is now derived inside the tool from the service being
-          # deployed, and there is no input here to get wrong.
-          node tools/railway-redeploy.mjs "$SERVICE" "$TAG"
-
-      # The resource floors live in tools/railway-services.mjs, but a floor nothing reads
-      # is a comment. This job holds a Railway credential, so it is one of only two places
-      # the live check can run at all — the other is railway-fleet-audit.yml.
-      #
-      # ── WHY THIS IS SCOPED TO ONE SERVICE ────────────────────────────────────
-      #
-      # This step used to be `node tools/railway-pins.mjs --check`: a FLEET-WIDE audit as
-      # the last step of a SINGLE-SERVICE deploy. Its own comment conceded the shape was
-      # wrong — "★ Expect it to be red whenever master has moved past the tag just
-      # deployed … That is the tool working" — and both consequences arrived.
-      #
-      # A rollout of `discord` went red because `css` was 46 commits behind. And ★ a step
-      # expected to be red is not read: measured on 2026-08-09 it had failed every deploy
-      # for at least two runs and was twice dismissed in one session as "the documented
-      # always-red step", while underneath it the relay was three commits of its own
-      # bundled code behind and FIFTEEN services were pinned to images that had never been
-      # built at master — precisely what the check exists to surface, hidden by a redness
-      # everyone had already agreed to ignore.
-      #
-      # Scoping is not softening. tools/railway-deploy-check.ts calls the fleet's own
-      # `hasDisagreement` and `singletonViolations` on a one-row array: same predicate,
-      # same axes, freshness included, no threshold — applied to the service this run
-      # actually changed. The fleet-wide question moved to railway-fleet-audit.yml, where
-      # it runs on a schedule and is allowed to be red without blocking a rollout.
-      - name: Check the deployed service's pin, floor and invariants against the live API
-        if: always()
-        env:
-          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-          SERVICE: ${{ inputs.service }}
-        run: npx tsx tools/railway-deploy-check.ts "$SERVICE"
+          node --input-type=module <<'NODE'
+          const project="b88ceabb-7461-4949-81d7-3d29132e7806",environment="449996a2-3533-462f-98c6-4ab4c05dd777";
+          const tag="4d41980040f08123bf787523938596d304a77e35";
+          let failed=false;
+          const say=x=>console.log(JSON.stringify(x));
+          try{
+           const token=process.env.RAILWAY_PROJECT_TOKEN;
+           if(!token)throw Error("missing");
+           const response=await fetch("https://backboard.railway.com/graphql/v2",{method:"POST",headers:{"Content-Type":"application/json","Project-Access-Token":token},body:JSON.stringify({query:"{projectToken{projectId environmentId}}"}),signal:AbortSignal.timeout(15000)});
+           const body=await response.json(),scope=body.data?.projectToken;
+           const valid=response.ok&&!body.errors?.length&&scope?.projectId===project&&scope?.environmentId===environment;
+           say({check:"railway-project-token",valid,http:response.status,scopeMatches:scope?.projectId===project&&scope?.environmentId===environment,apiErrors:Boolean(body.errors?.length)});if(!valid)failed=true;
+          }catch{say({check:"railway-project-token",valid:false,reason:"unavailable-or-unconfigured"});failed=true;}
+          for(const image of ["interego-css-pgsl","interego-relay"]){
+           try{
+            const secret=process.env.GHCR_TOKEN;if(!secret)throw Error("missing");
+            const path="markjspivey-xwisee/"+image;
+            const auth=await fetch("https://ghcr.io/token?service=ghcr.io&scope="+encodeURIComponent("repository:"+path+":pull"),{headers:{Authorization:"Basic "+Buffer.from("markjspivey-xwisee:"+secret).toString("base64")},signal:AbortSignal.timeout(15000)});
+            if(!auth.ok){say({check:"ghcr-pull",image,valid:false,stage:"authentication",http:auth.status});failed=true;continue;}
+            const bearer=(await auth.json()).token;if(!bearer)throw Error("no-token");
+            const manifest=await fetch("https://ghcr.io/v2/"+path+"/manifests/"+tag,{method:"HEAD",headers:{Authorization:"Bearer "+bearer,Accept:"application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json"},signal:AbortSignal.timeout(15000)});
+            say({check:"ghcr-pull",image,tag,valid:manifest.ok,http:manifest.status,digest:manifest.headers.get("docker-content-digest")});if(!manifest.ok)failed=true;
+           }catch{say({check:"ghcr-pull",image,valid:false,reason:"unavailable-or-unconfigured"});failed=true;}
+          }
+          process.exitCode=failed?1:0;
+          NODE
