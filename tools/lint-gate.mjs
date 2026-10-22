@@ -266,7 +266,11 @@ const UNLINTED_FRONTIER = {
   //    All seven lint clean.
   // CI measured 808 application source files after the native I2IDL-X modules;
   // the error pin remains unchanged.
-  applications: { errors: 1452, files: 850 },
+  //    850 -> 909 files (2026-10-22), errors not raised: the practice-evidence and work-redesign
+  //    verticals (src, bridge, ui, demo and tests of each) took the root past the slack. All of
+  //    it lints clean (`npx eslint applications/practice-evidence applications/work-redesign`:
+  //    0 problems).
+  applications: { errors: 1452, files: 909 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },

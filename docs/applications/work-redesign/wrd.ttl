@@ -1,0 +1,470 @@
+@prefix wrd:  <https://markjspivey-xwisee.github.io/interego/applications/work-redesign/wrd#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix agp:  <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+# Vertical vocabulary of the work-redesign application. Non-normative: it composes the
+# Interego substrate (iep:) and extends no L1, L2 or L3 ontology.
+#
+# The policy individuals below (regimes, methods, allocation levels, classification rules,
+# the default grant policy) ARE the rules the bridge applies: src/ontology.ts parses this file
+# at runtime and refuses to start without them, and every record cites the sha256 of the exact
+# text it parsed (wrd:ontologySha256), so an edit here never silently reinterprets an old record.
+
+<https://markjspivey-xwisee.github.io/interego/applications/work-redesign/wrd> a owl:Ontology ;
+    dct:title "wrd: — Work Redesign (vertical application)" ;
+    vann:preferredNamespacePrefix "wrd" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/work-redesign/wrd#" ;
+    rdfs:comment "Vertical application ontology. Non-normative." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/iep> .
+
+# ── Record classes ─────────────────────────────────────────────────────────────────────────
+# Each record is a context descriptor whose dct:conformsTo names one of these classes; the
+# subject of its payload graph carries the same type.
+
+wrd:RoleRegistry a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Role registry" ;
+    rdfs:comment "The admin-signed list of the keys that may act on a pod: their roles (approver, operator, worker, agent), the person reference an admin attests is behind each human key, each agent's accountable principal and declared model, the registered kinds of task, and the pod policy." .
+wrd:Workflow a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Workflow" ;
+    rdfs:comment "A unit of work a team does repeatedly, captured by hand or from a document, listing its current tasks. Hypothetical: a description of how work is done." .
+wrd:Task a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Task" ;
+    rdfs:comment "One piece of work in a workflow: its description, the person or agent who does it today, every party named on it, and the quotes it cites. Asserted only when every named party ratified the current text." .
+wrd:Classification a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Classification" ;
+    rdfs:comment "How knowable a task's cause and effect is (its regime), placed by a published rule from evidence answers a named person signed." .
+wrd:Plan a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Allocation plan" ;
+    rdfs:comment "A proposed change to who does which tasks, bound to the classifications and task texts it was checked against. Either valued (a priced change) or a probe plan (safe-to-fail probes on Emergent work, never priced)." .
+wrd:Valuation a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Valuation" ;
+    rdfs:comment "The seeded Monte Carlo valuation of a valued plan: ranges in, P10/P50/P90 out, for the cash figure and for the figure if freed hours are redeployed, with every input's basis, the cost breakdown, sensitivity and pilot size." .
+wrd:Decision a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Decision" ;
+    rdfs:comment "A submitted plan, its countersign by an accountable approver, and later its measured outcome, as versions on one graph. Countersigned means approved; the prediction it carries stays unmeasured until an outcome is recorded." .
+wrd:Acknowledgement a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Acknowledgement" ;
+    rdfs:comment "A person's own signed acknowledgement of, or objection to, the role a plan names them for on a task." .
+wrd:AgentRun a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Agent run" ;
+    rdfs:comment "One run of a registered agent on a task, with the agent's own assessment and, once a person reviews it, that person's verdict. Only reviewed runs count toward calibration or a grant." .
+wrd:Grant a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Grant" ;
+    rdfs:comment "An earned permission for one registered software agent, on its declared model, to act alone on one registered kind of task. Revoked by a superseding Retracted version; checked on every use." .
+wrd:HolderCopy a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
+    rdfs:label "Holder copy receipt" ;
+    rdfs:comment "A receipt that a person or agent took a copy of every record that names them or carries their signature, to a pod they hold or as a download." .
+
+# ── Other classes ──────────────────────────────────────────────────────────────────────────
+
+wrd:Regime a owl:Class ; rdfs:subClassOf skos:Concept ;
+    rdfs:label "Regime" ;
+    rdfs:comment "How knowable the relation between cause and effect is in a piece of work. Read first: the regime picks the method and limits which changes are allowed." .
+wrd:Method a owl:Class ; rdfs:subClassOf skos:Concept ;
+    rdfs:label "Method" ;
+    rdfs:comment "The way of changing work that a regime calls for." .
+wrd:AllocationLevel a owl:Class ; rdfs:subClassOf skos:Concept ;
+    rdfs:label "Allocation level" ;
+    rdfs:comment "Who does a task: a person, a person with an agent's help, an agent drafting for a person who decides, an agent acting with a person auditing, or an agent acting within an earned grant." .
+wrd:RegimeSource a owl:Class ; rdfs:subClassOf skos:Concept ;
+    rdfs:label "Regime source" ;
+    rdfs:comment "Where a regime placement came from." .
+wrd:GrantPolicy a owl:Class ; rdfs:subClassOf prov:Plan ;
+    rdfs:label "Grant policy" ;
+    rdfs:comment "The numbers an agent's person-reviewed runs must reach before it may act alone on a kind of task." .
+wrd:ClassificationRule a owl:Class ; rdfs:subClassOf prov:Plan ;
+    rdfs:label "Classification rule" ;
+    rdfs:comment "One row of the published decision table that places a task in a regime from evidence answers. Rows are tried in order; the first match wins." .
+wrd:ValuationMethod a owl:Class ; rdfs:subClassOf prov:Plan ;
+    rdfs:label "Valuation method" ;
+    rdfs:comment "A versioned statement of how a valuation is computed, so a stored valuation can be recomputed from its inputs and seed." .
+wrd:Prediction a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "Prediction" ;
+    rdfs:comment "The band a decision predicts; its status says whether the world has answered yet — a countersigned decision is Asserted, its prediction stays unmeasured until an outcome." .
+
+# ── Regimes (published policy) ─────────────────────────────────────────────────────────────
+
+wrd:Evident a wrd:Regime ;
+    rdfs:label "Evident" ;
+    rdfs:comment "Cause and effect are obvious and stable: the same steps give the same result, the method is documented, the output can be checked and feedback is fast. The only regime in which an agent may act within a grant." ;
+    wrd:regimeToken "Evident" ;
+    skos:closeMatch agp:Evident ;
+    wrd:routesTo wrd:Standardise ;
+    wrd:permitsChange true ;
+    wrd:requiresProbe false ;
+    wrd:pointValuation true ;
+    wrd:requiresExpertEvidence false ;
+    wrd:permitsLevel wrd:LevelPerson , wrd:LevelPersonWithAgentAssist , wrd:LevelAgentDraftsPersonDecides , wrd:LevelAgentActsPersonAudits , wrd:LevelAgentActsWithinGrant .
+
+wrd:Knowable a wrd:Regime ;
+    rdfs:label "Knowable" ;
+    rdfs:comment "Cause and effect can be worked out by analysis or expertise. No agent acts within a grant here, and a valued change needs expert evidence." ;
+    wrd:regimeToken "Knowable" ;
+    skos:closeMatch agp:Knowable ;
+    wrd:routesTo wrd:ExpertAnalysis ;
+    wrd:permitsChange true ;
+    wrd:requiresProbe false ;
+    wrd:pointValuation true ;
+    wrd:requiresExpertEvidence true ;
+    wrd:permitsLevel wrd:LevelPerson , wrd:LevelPersonWithAgentAssist , wrd:LevelAgentDraftsPersonDecides , wrd:LevelAgentActsPersonAudits .
+
+wrd:Emergent a wrd:Regime ;
+    rdfs:label "Emergent" ;
+    rdfs:comment "Cause and effect are visible only in hindsight. Work changes only through safe-to-fail probes with amplify and dampen conditions, and is never given a point valuation." ;
+    wrd:regimeToken "Emergent" ;
+    skos:closeMatch agp:Emergent ;
+    wrd:routesTo wrd:ProbePortfolio ;
+    wrd:permitsChange true ;
+    wrd:requiresProbe true ;
+    wrd:pointValuation false ;
+    wrd:requiresExpertEvidence false ;
+    wrd:permitsLevel wrd:LevelPerson , wrd:LevelPersonWithAgentAssist , wrd:LevelAgentDraftsPersonDecides .
+
+wrd:Turbulent a wrd:Regime ;
+    rdfs:label "Turbulent" ;
+    rdfs:comment "No discernible cause and effect; the situation is unstable. Act to stabilise first; no allocation change is allowed." ;
+    wrd:regimeToken "Turbulent" ;
+    skos:closeMatch agp:Turbulent ;
+    wrd:routesTo wrd:StabiliseFirst ;
+    wrd:permitsChange false ;
+    wrd:requiresProbe false ;
+    wrd:pointValuation false ;
+    wrd:requiresExpertEvidence false .
+
+# ── Methods ────────────────────────────────────────────────────────────────────────────────
+
+wrd:Standardise a wrd:Method ;
+    rdfs:label "Standardise" ;
+    rdfs:comment "Write the steps down, make the output checkable, and move the work to whoever (person or agent) performs it reliably, measured." ;
+    wrd:methodToken "standardise" .
+wrd:ExpertAnalysis a wrd:Method ;
+    rdfs:label "Expert analysis" ;
+    rdfs:comment "Have someone who knows the work analyse it before changing it, and value the change only on their evidence." ;
+    wrd:methodToken "expert-analysis" .
+wrd:ProbePortfolio a wrd:Method ;
+    rdfs:label "Probe portfolio" ;
+    rdfs:comment "Run a few small safe-to-fail probes, each with a hypothesis, a condition to amplify it and a condition to dampen it, inside a timebox; read what happens before deciding anything larger." ;
+    wrd:methodToken "probe-portfolio" .
+wrd:StabiliseFirst a wrd:Method ;
+    rdfs:label "Stabilise first" ;
+    rdfs:comment "Act to restore order before redesigning anything; classify again once the situation is stable." ;
+    wrd:methodToken "stabilise-first" .
+
+# ── Allocation levels ──────────────────────────────────────────────────────────────────────
+
+wrd:LevelPerson a wrd:AllocationLevel ;
+    rdfs:label "Person" ;
+    rdfs:comment "A person does the task." ;
+    wrd:levelToken "person" ;
+    wrd:autonomyRank 0 ;
+    wrd:requiresAgent false ;
+    wrd:requiresPerson true ;
+    wrd:requiresGrant false .
+wrd:LevelPersonWithAgentAssist a wrd:AllocationLevel ;
+    rdfs:label "Person with agent assist" ;
+    rdfs:comment "A person does the task and may use an agent's help; the person decides and is the performer." ;
+    wrd:levelToken "person-with-agent-assist" ;
+    wrd:autonomyRank 1 ;
+    wrd:requiresAgent false ;
+    wrd:requiresPerson true ;
+    wrd:requiresGrant false .
+wrd:LevelAgentDraftsPersonDecides a wrd:AllocationLevel ;
+    rdfs:label "Agent drafts, person decides" ;
+    rdfs:comment "A registered agent drafts the output; a named person decides on it before it takes effect." ;
+    wrd:levelToken "agent-drafts-person-decides" ;
+    wrd:autonomyRank 2 ;
+    wrd:requiresAgent true ;
+    wrd:requiresPerson true ;
+    wrd:requiresGrant false .
+wrd:LevelAgentActsPersonAudits a wrd:AllocationLevel ;
+    rdfs:label "Agent acts, person audits" ;
+    rdfs:comment "A registered agent acts; a named person audits its output. Only for output that can be checked." ;
+    wrd:levelToken "agent-acts-person-audits" ;
+    wrd:autonomyRank 3 ;
+    wrd:requiresAgent true ;
+    wrd:requiresPerson true ;
+    wrd:requiresGrant false ;
+    wrd:requiresCheckability "before-effect" , "after-effect" .
+wrd:LevelAgentActsWithinGrant a wrd:AllocationLevel ;
+    rdfs:label "Agent acts within grant" ;
+    rdfs:comment "A registered software agent acts alone, only while it holds an earned, unrevoked grant for this kind of task on its declared model. Never available to a person." ;
+    wrd:levelToken "agent-acts-within-grant" ;
+    wrd:autonomyRank 4 ;
+    wrd:requiresAgent true ;
+    wrd:requiresPerson false ;
+    wrd:requiresGrant true ;
+    wrd:requiresCheckability "before-effect" , "after-effect" .
+
+# ── Default grant policy ───────────────────────────────────────────────────────────────────
+
+wrd:defaultGrantPolicy a wrd:GrantPolicy ;
+    rdfs:label "Default grant policy" ;
+    rdfs:comment "An agent earns a grant on one kind of task from at least 20 person-reviewed runs on its declared model of which a person accepted at least 0.9, at least 5 person confirmations from at least 5 distinct registered reviewers the admin attests are different people, and at least 20 runs the agent itself called ready of which a person accepted at least 0.9. How well the agent labels its own runs is reported beside these, never in their place: an agent that truthfully calls most of its work reworked earns nothing. Critical work additionally needs ceil(3 / 0.01) = 300 clean runs (rule of three, 95% one-sided). Re-classification is suggested once at least 5 reviewed runs show more than 0.2 reworked." ;
+    wrd:floor "0.9"^^xsd:decimal ;
+    wrd:minSamples 20 ;
+    wrd:minHumanConfirmations 5 ;
+    wrd:minDistinctConfirmers 5 ;
+    wrd:minReadyClaimPrecision "0.9"^^xsd:decimal ;
+    wrd:criticalWorkFailureCeiling "0.01"^^xsd:decimal ;
+    wrd:contraryReworkShare "0.2"^^xsd:decimal ;
+    wrd:contraryMinRuns 5 .
+
+# ── Classification rules (tried in the order R1, R2, R3a/R3b, R4, R0) ──────────────────────
+
+wrd:RuleR1 a wrd:ClassificationRule ;
+    rdfs:label "R1" ;
+    wrd:ruleId "R1" ;
+    wrd:condition "The situation is unstable (situationStable = unstable)." ;
+    wrd:yields wrd:Turbulent .
+wrd:RuleR2 a wrd:ClassificationRule ;
+    rdfs:label "R2" ;
+    wrd:ruleId "R2" ;
+    wrd:condition "The outcome depends on others (outcomeDependsOnOthers = yes), or the method cannot be known in advance (methodKnown = not-knowable), or the outcome partly depends on others and the same steps rarely give the same result." ;
+    wrd:yields wrd:Emergent .
+wrd:RuleR3a a wrd:ClassificationRule ;
+    rdfs:label "R3a" ;
+    wrd:ruleId "R3a" ;
+    wrd:condition "The same steps always give the same result, the method is documented, the outcome does not depend on others and the situation is stable, BUT the output cannot be checked (or checkability is unknown) or feedback takes weeks or longer (or is unknown): read as Knowable, because Evident needs a checkable output and fast feedback." ;
+    wrd:yields wrd:Knowable .
+wrd:RuleR3b a wrd:ClassificationRule ;
+    rdfs:label "R3b" ;
+    wrd:ruleId "R3b" ;
+    wrd:condition "The same steps always give the same result, the method is documented, the outcome does not depend on others, the situation is stable, the output can be checked before or after it takes effect, and feedback arrives within minutes or days." ;
+    wrd:yields wrd:Evident .
+wrd:RuleR4 a wrd:ClassificationRule ;
+    rdfs:label "R4" ;
+    wrd:ruleId "R4" ;
+    wrd:condition "The method is documented or can be worked out by expert analysis, the outcome depends on others not at all or only partly, and the stability of the situation is known." ;
+    wrd:yields wrd:Knowable .
+wrd:RuleR0 a wrd:ClassificationRule ;
+    rdfs:label "R0" ;
+    wrd:ruleId "R0" ;
+    wrd:condition "No other rule matched: the answers do not place this task in a regime. Answer the unknowns, or run a probe to find out. No regime is ever assumed by default." .
+
+wrd:RuleOnSignedAnswers a wrd:RegimeSource ;
+    rdfs:label "Rule on signed answers" ;
+    rdfs:comment "A published rule (wrd:ClassificationRule) applied to answers a named person signed. It is not trajectory evidence and must not be read as agp's 'derived' source; it confers no calibration authority on the regime." ;
+    wrd:sourceToken "rule-on-signed-answers" .
+
+wrd:valuationMethodV1 a wrd:ValuationMethod ;
+    rdfs:label "Valuation method, version 1" ;
+    rdfs:comment "Independent triangular draws (low, likely, high) taken in a fixed order: units per week current then proposed, value per unit, hourly cost, one-off cost, then per task runs per unit, the task's hourly cost if it overrides the workflow's, the seven current-state inputs, and for changed tasks the seven proposed-state inputs. The generator is xoshiro128** seeded from the first 128 bits of sha256(canonicalJson({planIri, inputs})); percentiles are type 7 (linear interpolation); 5000 draws unless the record says otherwise. Correlation between inputs is not modelled. The change ramps in linearly over the stated ramp months. Two figures are reported: the cash figure, in which freed person-hours count only where the work is left unfilled, and the figure if freed hours are redeployed at current hourly cost. NPV discounts monthly at (1 + annual rate)^(1/12) - 1 over the horizon, net of the one-off cost; payback is the first month the discounted cumulative turns non-negative." .
+
+# ── Properties: common to records ──────────────────────────────────────────────────────────
+
+wrd:status a owl:DatatypeProperty ;
+    rdfs:label "status" ;
+    rdfs:comment "The lifecycle status of a record version (for example captured, ratified, submitted, countersigned, measured, granted, revoked)." .
+wrd:payloadJson a owl:DatatypeProperty ;
+    rdfs:label "payload JSON" ;
+    rdfs:comment "Canonical JSON of the whole record; the lossless form the engine reads; the triples beside it are its RDF projection." .
+wrd:signedBy a owl:ObjectProperty ;
+    rdfs:label "signed by" ;
+    rdfs:comment "The did:ethr of every verified envelope signer embedded in the record." .
+wrd:demoRecord a owl:DatatypeProperty ;
+    rdfs:label "demo record" ;
+    rdfs:range xsd:boolean ;
+    rdfs:comment "True only on records written by the offline demo with server-held persona keys: scripted, not evidence." .
+wrd:ontologySha256 a owl:DatatypeProperty ;
+    rdfs:label "ontology sha256" ;
+    rdfs:comment "The sha256 of the exact wrd.ttl text whose published rules the record was checked against." .
+
+# ── Properties: published policy ───────────────────────────────────────────────────────────
+
+wrd:regimeToken a owl:DatatypeProperty ; rdfs:label "regime token" ; rdfs:domain wrd:Regime ;
+    rdfs:comment "The regime's name as the engine and the records spell it." .
+wrd:routesTo a owl:ObjectProperty ; rdfs:label "routes to" ; rdfs:domain wrd:Regime ; rdfs:range wrd:Method ;
+    rdfs:comment "The method a regime calls for." .
+wrd:permitsChange a owl:DatatypeProperty ; rdfs:label "permits change" ; rdfs:domain wrd:Regime ;
+    rdfs:comment "Whether any allocation change is allowed on work in this regime." .
+wrd:requiresProbe a owl:DatatypeProperty ; rdfs:label "requires probe" ; rdfs:domain wrd:Regime ;
+    rdfs:comment "Whether a change on work in this regime must be made as safe-to-fail probes." .
+wrd:pointValuation a owl:DatatypeProperty ; rdfs:label "point valuation" ; rdfs:domain wrd:Regime ;
+    rdfs:comment "Whether a change on work in this regime may be priced." .
+wrd:requiresExpertEvidence a owl:DatatypeProperty ; rdfs:label "requires expert evidence" ; rdfs:domain wrd:Regime ;
+    rdfs:comment "A Knowable change is valued only when its classification was answered by an approver or by someone named on the task, or ratified by everyone named on it, or every current-state input of that task was measured or reported by its performer." .
+wrd:permitsLevel a owl:ObjectProperty ; rdfs:label "permits level" ; rdfs:domain wrd:Regime ; rdfs:range wrd:AllocationLevel ;
+    rdfs:comment "An allocation level a change on work in this regime may propose." .
+wrd:methodToken a owl:DatatypeProperty ; rdfs:label "method token" ; rdfs:domain wrd:Method ;
+    rdfs:comment "The method's name as the engine and the records spell it." .
+wrd:levelToken a owl:DatatypeProperty ; rdfs:label "level token" ; rdfs:domain wrd:AllocationLevel ;
+    rdfs:comment "The level's name as the engine and the records spell it." .
+wrd:autonomyRank a owl:DatatypeProperty ; rdfs:label "autonomy rank" ; rdfs:domain wrd:AllocationLevel ;
+    rdfs:comment "Internal order of levels by how much an agent does alone; used to apply a pod's level cap. Never shown as a score." .
+wrd:requiresAgent a owl:DatatypeProperty ; rdfs:label "requires agent" ; rdfs:domain wrd:AllocationLevel ;
+    rdfs:comment "Whether the level names a registered software agent." .
+wrd:requiresPerson a owl:DatatypeProperty ; rdfs:label "requires person" ; rdfs:domain wrd:AllocationLevel ;
+    rdfs:comment "Whether the level names a registered person (performer, decider or auditor)." .
+wrd:requiresGrant a owl:DatatypeProperty ; rdfs:label "requires grant" ; rdfs:domain wrd:AllocationLevel ;
+    rdfs:comment "Whether the level needs an active earned grant." .
+wrd:requiresCheckability a owl:DatatypeProperty ; rdfs:label "requires checkability" ; rdfs:domain wrd:AllocationLevel ;
+    rdfs:comment "The checkability answers under which the level is allowed; absent means any." .
+wrd:floor a owl:DatatypeProperty ; rdfs:label "floor" ; rdfs:domain wrd:GrantPolicy ;
+    rdfs:comment "The minimum share of person-reviewed runs a person accepted." .
+wrd:minSamples a owl:DatatypeProperty ; rdfs:label "minimum samples" ; rdfs:domain wrd:GrantPolicy ;
+    rdfs:comment "The minimum number of person-reviewed runs, and of runs the agent called ready; also the sample floor at which a calibration cell becomes Asserted." .
+wrd:minHumanConfirmations a owl:DatatypeProperty ; rdfs:label "minimum human confirmations" ; rdfs:domain wrd:GrantPolicy ;
+    rdfs:comment "The minimum number of outcomes confirmed by a person." .
+wrd:minDistinctConfirmers a owl:DatatypeProperty ; rdfs:label "minimum distinct confirmers" ; rdfs:domain wrd:GrantPolicy ;
+    rdfs:comment "The minimum number of distinct registered reviewers the admin attests are different people; the bridge cannot verify that." .
+wrd:minReadyClaimPrecision a owl:DatatypeProperty ; rdfs:label "minimum ready-claim precision" ; rdfs:domain wrd:GrantPolicy ;
+    rdfs:comment "Of the runs the agent itself called ready (accepted), the share a person accepted." .
+wrd:criticalWorkFailureCeiling a owl:DatatypeProperty ; rdfs:label "critical work failure ceiling" ; rdfs:domain wrd:GrantPolicy ;
+    rdfs:comment "The critical-failure rate a grant on critical work must be shown to be below, by the rule of three." .
+wrd:contraryReworkShare a owl:DatatypeProperty ; rdfs:label "contrary rework share" ; rdfs:domain wrd:GrantPolicy ;
+    rdfs:comment "The reworked share of reviewed runs above which re-classifying the task is suggested." .
+wrd:contraryMinRuns a owl:DatatypeProperty ; rdfs:label "contrary minimum runs" ; rdfs:domain wrd:GrantPolicy ;
+    rdfs:comment "The number of reviewed runs before the contrary-evidence suggestion applies." .
+wrd:underPolicy a owl:ObjectProperty ; rdfs:label "under policy" ; rdfs:range wrd:GrantPolicy ;
+    rdfs:comment "The grant policy a grant was evaluated under." .
+wrd:ruleId a owl:DatatypeProperty ; rdfs:label "rule id" ; rdfs:domain wrd:ClassificationRule ;
+    rdfs:comment "The rule's short identifier (R0, R1, R2, R3a, R3b, R4)." .
+wrd:condition a owl:DatatypeProperty ; rdfs:label "condition" ; rdfs:domain wrd:ClassificationRule ;
+    rdfs:comment "The rule's condition in words." .
+wrd:yields a owl:ObjectProperty ; rdfs:label "yields" ; rdfs:domain wrd:ClassificationRule ; rdfs:range wrd:Regime ;
+    rdfs:comment "The regime a rule places a task in when it matches. The engine reads this edge; it is not restated in code." .
+wrd:sourceToken a owl:DatatypeProperty ; rdfs:label "source token" ; rdfs:domain wrd:RegimeSource ;
+    rdfs:comment "The regime source's name as the records spell it." .
+
+# ── Properties: registry, workflow and task ─────────────────────────────────────────────────
+
+wrd:member a owl:ObjectProperty ; rdfs:label "member" ; rdfs:domain wrd:RoleRegistry ;
+    rdfs:comment "A key (as did:ethr) the registry lists." .
+wrd:hasTask a owl:ObjectProperty ; rdfs:label "has task" ; rdfs:domain wrd:Workflow ;
+    rdfs:comment "A current task of the workflow." .
+wrd:inWorkflow a owl:ObjectProperty ; rdfs:label "in workflow" ; rdfs:domain wrd:Task ;
+    rdfs:comment "The workflow a task belongs to." .
+wrd:performer a owl:ObjectProperty ; rdfs:label "performer" ; rdfs:domain wrd:Task ;
+    rdfs:comment "Who does the task today: the agent at agent-drafting and agent-acting levels, otherwise the person." .
+wrd:namedParty a owl:ObjectProperty ; rdfs:label "named party" ; rdfs:domain wrd:Task ;
+    rdfs:comment "Every person and agent named on the task; each ratifies or disputes its description." .
+wrd:taskKind a owl:DatatypeProperty ; rdfs:label "task kind" ;
+    rdfs:comment "The registered kind of task (a slug the admin declares with a one-sentence definition)." .
+wrd:currentLevel a owl:ObjectProperty ; rdfs:label "current level" ; rdfs:domain wrd:Task ; rdfs:range wrd:AllocationLevel ;
+    rdfs:comment "The allocation level the task is done at today." .
+wrd:quoteStatus a owl:DatatypeProperty ; rdfs:label "quote status" ; rdfs:domain wrd:Task ;
+    rdfs:comment "Whether the quotes a task cites were found verbatim in its source document: verified, partly-verified, unverified, or none (captured by hand)." .
+wrd:documentSha256 a owl:DatatypeProperty ; rdfs:label "document sha256" ;
+    rdfs:comment "The sha256 of the document a workflow was captured from." .
+wrd:captureMode a owl:DatatypeProperty ; rdfs:label "capture mode" ; rdfs:domain wrd:Workflow ;
+    rdfs:comment "manual or document." .
+wrd:externalTaskTerm a owl:ObjectProperty ; rdfs:label "external task term" ; rdfs:domain wrd:Task ;
+    rdfs:comment "An optional published task statement (for example an O*NET task) the task corresponds to, beside the local task kind." .
+
+# ── Properties: classification ─────────────────────────────────────────────────────────────
+
+wrd:classifies a owl:ObjectProperty ; rdfs:label "classifies" ; rdfs:domain wrd:Classification ;
+    rdfs:comment "The task a classification places." .
+wrd:regime a owl:ObjectProperty ; rdfs:label "regime" ; rdfs:range wrd:Regime ;
+    rdfs:comment "The regime a classification placed the task in." .
+wrd:method a owl:ObjectProperty ; rdfs:label "method" ; rdfs:range wrd:Method ;
+    rdfs:comment "The method the regime calls for." .
+wrd:regimeSource a owl:ObjectProperty ; rdfs:label "regime source" ; rdfs:range wrd:RegimeSource ;
+    rdfs:comment "Where the placement came from; always wrd:RuleOnSignedAnswers in this vertical." .
+wrd:ruleFired a owl:ObjectProperty ; rdfs:label "rule fired" ; rdfs:range wrd:ClassificationRule ;
+    rdfs:comment "The published rule whose condition matched." .
+wrd:checkability a owl:DatatypeProperty ; rdfs:label "checkability" ;
+    rdfs:comment "Whether a reviewer can check the task's output before it takes effect, only after, not at all, or unknown." .
+wrd:feedbackLatency a owl:DatatypeProperty ; rdfs:label "feedback latency" ;
+    rdfs:comment "How long before the effect of doing the task is known." .
+
+# ── Properties: plan and acknowledgement ───────────────────────────────────────────────────
+
+wrd:forWorkflow a owl:ObjectProperty ; rdfs:label "for workflow" ; rdfs:domain wrd:Plan ;
+    rdfs:comment "The workflow a plan changes." .
+wrd:changesTask a owl:ObjectProperty ; rdfs:label "changes task" ; rdfs:domain wrd:Plan ;
+    rdfs:comment "A task whose allocation the plan changes." .
+wrd:planKind a owl:DatatypeProperty ; rdfs:label "plan kind" ; rdfs:domain wrd:Plan ;
+    rdfs:comment "valued (a priced change) or probe (safe-to-fail probes on Emergent work)." .
+wrd:acknowledges a owl:ObjectProperty ; rdfs:label "acknowledges" ; rdfs:domain wrd:Acknowledgement ;
+    rdfs:comment "The plan whose assignment the person acknowledges or objects to." .
+wrd:forTask a owl:ObjectProperty ; rdfs:label "for task" ; rdfs:domain wrd:Acknowledgement ;
+    rdfs:comment "The task the assignment is on." .
+wrd:assignee a owl:ObjectProperty ; rdfs:label "assignee" ; rdfs:domain wrd:Acknowledgement ;
+    rdfs:comment "The person the plan names for the task." .
+
+# ── Properties: valuation ──────────────────────────────────────────────────────────────────
+
+wrd:values a owl:ObjectProperty ; rdfs:label "values" ; rdfs:domain wrd:Valuation ;
+    rdfs:comment "The plan a valuation prices." .
+wrd:seed a owl:DatatypeProperty ; rdfs:label "seed" ; rdfs:domain wrd:Valuation ;
+    rdfs:comment "The hex seed of the generator, sha256(canonicalJson({planIri, inputs}))." .
+wrd:draws a owl:DatatypeProperty ; rdfs:label "draws" ; rdfs:domain wrd:Valuation ;
+    rdfs:comment "The number of Monte Carlo draws." .
+wrd:valuationMethod a owl:ObjectProperty ; rdfs:label "valuation method" ; rdfs:range wrd:ValuationMethod ;
+    rdfs:comment "The versioned method the valuation followed." .
+wrd:cashWeeklyDeltaP10 a owl:DatatypeProperty ; rdfs:label "cash weekly change P10" ;
+    rdfs:comment "10th percentile of the weekly change in cash terms (freed hours count only where the work is left unfilled)." .
+wrd:cashWeeklyDeltaP50 a owl:DatatypeProperty ; rdfs:label "cash weekly change P50" ;
+    rdfs:comment "Median weekly change in cash terms." .
+wrd:cashWeeklyDeltaP90 a owl:DatatypeProperty ; rdfs:label "cash weekly change P90" ;
+    rdfs:comment "90th percentile of the weekly change in cash terms." .
+wrd:redeployedWeeklyDeltaP10 a owl:DatatypeProperty ; rdfs:label "weekly change if redeployed P10" ;
+    rdfs:comment "10th percentile of the weekly change if freed hours are redeployed at current hourly cost." .
+wrd:redeployedWeeklyDeltaP50 a owl:DatatypeProperty ; rdfs:label "weekly change if redeployed P50" ;
+    rdfs:comment "Median weekly change if freed hours are redeployed." .
+wrd:redeployedWeeklyDeltaP90 a owl:DatatypeProperty ; rdfs:label "weekly change if redeployed P90" ;
+    rdfs:comment "90th percentile of the weekly change if freed hours are redeployed." .
+wrd:cashNpvP50 a owl:DatatypeProperty ; rdfs:label "cash NPV P50" ;
+    rdfs:comment "Median net present value of the change in cash terms over the horizon." .
+wrd:redeployedNpvP50 a owl:DatatypeProperty ; rdfs:label "NPV if redeployed P50" ;
+    rdfs:comment "Median net present value of the change if freed hours are redeployed." .
+wrd:valuationHash a owl:DatatypeProperty ; rdfs:label "valuation hash" ;
+    rdfs:comment "sha256 of the canonical JSON of the plan, its descriptor URL, the inputs and the result; a decision binds it." .
+
+# ── Properties: decision and prediction ────────────────────────────────────────────────────
+
+wrd:decides a owl:ObjectProperty ; rdfs:label "decides" ; rdfs:domain wrd:Decision ;
+    rdfs:comment "The plan a decision is about." .
+wrd:decisionKind a owl:DatatypeProperty ; rdfs:label "decision kind" ; rdfs:domain wrd:Decision ;
+    rdfs:comment "valued or probe." .
+wrd:boundValuation a owl:ObjectProperty ; rdfs:label "bound valuation" ; rdfs:domain wrd:Decision ;
+    rdfs:comment "The valuation a valued decision binds by hash." .
+wrd:comparisonBasis a owl:DatatypeProperty ; rdfs:label "comparison basis" ;
+    rdfs:comment "How the outcome is measured: holdout, staggered, or before-after (no comparison group)." .
+wrd:prediction a owl:ObjectProperty ; rdfs:label "prediction" ; rdfs:domain wrd:Decision ; rdfs:range wrd:Prediction ;
+    rdfs:comment "The band the decision predicts." .
+wrd:predictionStatus a owl:DatatypeProperty ; rdfs:label "prediction status" ; rdfs:domain wrd:Prediction ;
+    rdfs:comment "unmeasured, measured, or not-to-be-measured (the decision was declined)." .
+wrd:outcomeMetric a owl:DatatypeProperty ; rdfs:label "outcome metric" ; rdfs:domain wrd:Prediction ;
+    rdfs:comment "The figure the prediction is about: weekly-cash-delta or weekly-delta-if-redeployed." .
+wrd:predictedP10 a owl:DatatypeProperty ; rdfs:label "predicted P10" ; rdfs:domain wrd:Prediction ;
+    rdfs:comment "10th percentile of the predicted steady-state weekly change." .
+wrd:predictedP50 a owl:DatatypeProperty ; rdfs:label "predicted P50" ; rdfs:domain wrd:Prediction ;
+    rdfs:comment "Median of the predicted steady-state weekly change." .
+wrd:predictedP90 a owl:DatatypeProperty ; rdfs:label "predicted P90" ; rdfs:domain wrd:Prediction ;
+    rdfs:comment "90th percentile of the predicted steady-state weekly change." .
+wrd:measuredWeeklyDelta a owl:DatatypeProperty ; rdfs:label "measured weekly change" ; rdfs:domain wrd:Decision ;
+    rdfs:comment "The weekly change a person measured and signed for, over a window that had ended." .
+wrd:bandVerdict a owl:DatatypeProperty ; rdfs:label "band verdict" ; rdfs:domain wrd:Decision ;
+    rdfs:comment "Where the measurement fell against the ramp-adjusted predicted band: below-band, in-band, above-band, or inconclusive." .
+wrd:disposition a owl:DatatypeProperty ; rdfs:label "disposition" ; rdfs:domain wrd:Decision ;
+    rdfs:comment "What became of the change: kept, reverted, or stopped-early." .
+
+# ── Properties: agent run, grant and copy ──────────────────────────────────────────────────
+
+wrd:agent a owl:ObjectProperty ; rdfs:label "agent" ;
+    rdfs:comment "The registered software agent that performed a run." .
+wrd:task a owl:ObjectProperty ; rdfs:label "task" ;
+    rdfs:comment "The task a run was performed on." .
+wrd:model a owl:DatatypeProperty ; rdfs:label "model" ;
+    rdfs:comment "The model an agent runs on, as its registry entry declares it." .
+wrd:principal a owl:ObjectProperty ; rdfs:label "principal" ;
+    rdfs:comment "The registered person accountable for an agent." .
+wrd:verdict a owl:DatatypeProperty ; rdfs:label "verdict" ;
+    rdfs:comment "A person's verdict on an agent run: accepted, reworked, or critical-failure." .
+wrd:reviewer a owl:ObjectProperty ; rdfs:label "reviewer" ;
+    rdfs:comment "The registered person who reviewed an agent run." .
+wrd:grantee a owl:ObjectProperty ; rdfs:label "grantee" ; rdfs:domain wrd:Grant ;
+    rdfs:comment "The registered software agent a grant is for." .
+wrd:holder a owl:ObjectProperty ; rdfs:label "holder" ; rdfs:domain wrd:HolderCopy ;
+    rdfs:comment "The person or agent who took the copy." .
+wrd:copiedRecord a owl:ObjectProperty ; rdfs:label "copied record" ; rdfs:domain wrd:HolderCopy ;
+    rdfs:comment "A record descriptor that was copied." .
