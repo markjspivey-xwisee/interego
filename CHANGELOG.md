@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-22 — Work-redesign: finish a retirement whose workflow write failed
+
+Retiring a task writes the task and then its workflow. If the workflow write failed, the task stayed retired while the workflow still listed it, a signed retry stopped at "already retired", and decisions on that workflow were blocked. Retiring such a task again now writes only the workflow version that drops it, signed by the requester and recording the retirement it finishes, and answers with a repaired flag; the envelope that performed the original retirement cannot be replayed to finish it, and a consistent workflow still receives the plain refusal. A failed workflow write after a retire or an add says what was written and which call comes next, readers that blocked on a retired-but-listed task name the repair, and the record listing marks unfinished retirements and the plans they make stale.
+
 ## 2026-10-22 — Work-redesign vertical: work decisions with an honest record
 
 A new vertical application, `applications/work-redesign` (`wrd:`), composes the substrate without extending it. Workflows are captured by hand or as task maps drafted by the caller's own agent through a client-required packet; every quoted source span is verified against the submitted document and never repaired. The people who do the work ratify or dispute each task description with a signed envelope, and a disputed task blocks valuation of plans that depend on it. Each task is placed in a regime (Evident, Knowable, Emergent or Turbulent, with close matches to the agentic-performance terms) before any method is chosen; allocation is refused until then and spans people and registered agents on the vertical's own levels.
