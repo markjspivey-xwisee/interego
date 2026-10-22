@@ -685,7 +685,7 @@ async function eligibility(call: Call, pod: string, h: AttemptHead): Promise<Eli
 function scenarioView(rec: ReadRecord, b: ScenarioBody): Out {
   const s = b.scenario;
   return {
-    scenarioIri: b.scenarioIri, version: b.version, status: b.status, ratified: b.status === 'ratified',
+    scenarioIri: b.scenarioIri, scenarioKey: s.scenarioKey, version: b.version, status: b.status, ratified: b.status === 'ratified',
     ...(b.ratification ? { ratifiedBy: b.ratification.reviewer.did } : {}),
     title: s.title, learnerGoal: s.learnerGoal, learnerPart: s.learnerPart, situation: s.situation,
     counterpart: { name: s.counterpart.name }, firstLine: s.firstLine, turnLimit: s.turnLimit, language: s.language,

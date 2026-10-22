@@ -37,7 +37,7 @@ import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTur
 import { freshNonce, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
 import { createPevHandlers, describeStartup, DEMO_ROLE_NAMES, type DemoRoleName, type DemoSigner, type PevDeps } from './handlers.js';
 import { operatorWriteFetch } from './pod-helpers.js';
-import { hostAllowlistGuard } from './ui.js';
+import { attachUi, hostAllowlistGuard } from './ui.js';
 
 const say = (line: string): void => { process.stdout.write(`${line}\n`); };
 const warn = (line: string): void => { process.stderr.write(`${line}\n`); };
@@ -134,18 +134,22 @@ async function main(): Promise<void> {
     handlers,
     deploymentUrl: base,
     ...(defaultPodUrl ? { defaultPodUrl } : {}),
-    hypermediaLinks: [{ label: 'pev ontology', href: `${base}/ns/pev`, rel: 'describedby', type: 'text/turtle' }],
+    hypermediaLinks: [
+      { label: 'Web UI', href: `${base}/ui`, rel: 'alternate', type: 'text/html' },
+      { label: 'pev ontology', href: `${base}/ns/pev`, rel: 'describedby', type: 'text/turtle' },
+    ],
     middleware: (a) => {
       if (loopback) a.use(hostAllowlistGuard(allowedHosts));
       attachOntologyServing(a, {
         mountPath: '/ns/pev', ontologyIri: PEV_ONTOLOGY_IRI, namespace: PEV_NS,
         ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
       });
+      attachUi(a);
     },
   });
 
   say(`practice-evidence bridge  ${base}`);
-  say(`  MCP ${base}/mcp  |  manifest ${base}/affordances  |  ontology ${base}/ns/pev`);
+  say(`  web UI ${base}/ui  |  MCP ${base}/mcp  |  manifest ${base}/affordances  |  ontology ${base}/ns/pev`);
   say(`  pod: ${defaultPodUrl ?? 'none (each act names its pod)'}; records written to: ${servedPods.length > 0 ? servedPods.join(', ') : 'any public pod'}`);
   say(`  pod write credential: ${writeSecret ? 'configured' : 'not configured'}`);
   say(`  platform key: ${platformKeyKind}, address ${platformWallet.address}`);
