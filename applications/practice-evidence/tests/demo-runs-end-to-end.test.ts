@@ -7,7 +7,8 @@
  * from what the demo returned.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
-import { DEMO_LINES, DEMO_POD, FABRICATED_QUOTE, LIVE_MODE_NOTE, runDemo, type DemoReport } from '../demo/run.js';
+import { isTrusted, readRecord, PEV_COPIES_CONTAINER, PEV_RECORDS_CONTAINER } from '../bridge/pod-helpers.js';
+import { DEMO_LEARNER_POD, DEMO_LINES, DEMO_POD, FABRICATED_QUOTE, LIVE_MODE_NOTE, demoRecordKey, demoWallet, runDemo, type DemoReport } from '../demo/run.js';
 import { CMI5_CATEGORY_PREFIX, PRACTICE_MARKER, statementProblems, VERB_COMPLETED, type ProjectionFormat } from '../src/projections.js';
 
 type Out = Record<string, unknown>;
@@ -104,6 +105,25 @@ describe('the offline demo runs end to end', () => {
     expect(report.turnLatencyMs).toHaveLength(5);
     expect(report.turnLatencyMs.every((ms) => Number.isFinite(ms) && ms >= 0)).toBe(true);
   });
+
+  it('the operator pod holds every record graph only as an envelope sealed to the demo record key; the learner\'s copies are plaintext', async () => {
+    const keys = [...report.pod.store.keys()];
+    const records = keys.filter((u) => u.startsWith(`${DEMO_POD}${PEV_RECORDS_CONTAINER}`));
+    const graphs = records.filter((u) => !u.endsWith('.ttl'));
+    expect(graphs.length).toBeGreaterThan(20);
+    expect(graphs.filter((u) => !u.endsWith('-graph.envelope.jose.json'))).toEqual([]);
+    const held = keys.filter((u) => u.startsWith(`${DEMO_LEARNER_POD}${PEV_COPIES_CONTAINER}`));
+    expect([held.filter((u) => u.endsWith('-graph.trig')).length, held.filter((u) => u.endsWith('.envelope.jose.json')).length]).toEqual([8, 0]);
+    // Each record whose graph is still on the pod opens with the record key and binds the platform signature.
+    const trusted = { addresses: new Set([demoWallet('platform').address.toLowerCase()]), recordKey: demoRecordKey() };
+    let opened = 0;
+    for (const url of records.filter((u) => u.endsWith('.ttl') && graphs.includes(u.replace(/\.ttl$/, '-graph.envelope.jose.json')))) {
+      const rec = await readRecord(url, trusted, report.pod.fetchFn);
+      expect([isTrusted(rec), rec.authorship.contentBinding, rec.sealed], url).toEqual([true, 'bound', true]);
+      opened += 1;
+    }
+    expect(opened).toBe(graphs.length);
+  }, 120_000);
 
   it('has no live mode, and says what to run instead', async () => {
     await expect(runDemo({ live: true, quiet: true })).rejects.toThrow(LIVE_MODE_NOTE);

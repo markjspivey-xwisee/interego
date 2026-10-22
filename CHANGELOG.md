@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-22 — Practice-evidence records encrypted at rest
+
+With `PEV_RECORD_KEY` set to 64 hex characters, the practice-evidence bridge writes every record to the operator pod with its graph encrypted to a key derived from that value, stored as `<slug>-graph.envelope.jose.json`, and opens it with the same key on read. The platform signature is checked over the opened graph, so every record still verifies as bound. Only the graphs are encrypted: descriptors and the manifest stay public, so the signer, record kind, modal status, times, trust level, the people a descriptor names and the chain of versions remain readable without the key. A record encrypted to a key the bridge does not hold, or read by a bridge with no key, is refused as unreadable with a pointer to `PEV_RECORD_KEY`, never read as empty. Plaintext records written before the key was set stay readable, and a bridge with the key reads both. Holder copies on a learner's pod are never encrypted, because the learner does not hold the bridge's key.
+
+Without the key the bridge writes plaintext as before, and its startup lines now say that `PEV_RECORD_KEY` would encrypt the records; a malformed key stops the bridge at startup. Losing the key makes every encrypted record unreadable, so the operator must back it up. The offline demo runs with a public fixture record key.
+
 ## 2026-10-22 — Container images for the work-redesign and practice-evidence bridges
 
 `deploy/Dockerfile.wrd-bridge` and `deploy/Dockerfile.pev-bridge` build the two bridges as single-stage images, and `deploy/images.json` adds `interego-wrd-bridge` and `interego-pev-bridge` to the build matrix with the prebuilt-packages recipe. Each image copies the packages, the shared vertical code and its own vertical, listens on every interface (`HOST=::`), and bakes in only non-secret defaults: the operator pod path on the gate and, for practice-evidence, lower pilot hourly budgets. Keys, admins, the pod credential and the model route stay unset until they are set on the service. No Railway service is added, so neither bridge deploys yet. The merge itself still redeploys jev-harness-bridge, whose image bundles the whole tree, as any change to `CHANGELOG.md` does.

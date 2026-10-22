@@ -19,6 +19,13 @@
  * Every response body is read with a size limit, and a descriptor's graph is fetched only from
  * the descriptor's own host, so one read cannot make the bridge fetch from anywhere else.
  *
+ * Encryption at rest: with a record key (`TrustedPlatform.recordKey`), operator-pod records are
+ * written with their graph sealed to that key alone, as `<slug>-graph.envelope.jose.json`; the
+ * descriptor, its proof and the manifest entry stay readable. A sealed graph is opened with the
+ * same key on read, and every check above runs over the opened Turtle. A graph sealed to a key
+ * this bridge does not hold is a `RecordUnreadable`, never an empty record. Plaintext records
+ * (written before a key was set, and every holder copy) are read as before.
+ *
  * Transport: every request goes through the substrate's SSRF guard (`guardedFetchFn`), which
  * re-checks every redirect hop and refuses a redirect on a write. Nothing here retries: the
  * substrate already retries transient failures inside `publish`, `discover` and
@@ -27,7 +34,7 @@
 import {
   assertSafeFetchTarget, canonicalGraphDigest, canonicalGraphDigestResult, createSignedAuthorship, guardedFetchFn,
   makeWalletDelegationSigner, makeWalletDelegationVerifier, verifySignedAuthorship,
-  type AuthorshipProof, type ContextDescriptorData, type FetchFn, type IRI, type ManifestEntry, type Wallet,
+  type AuthorshipProof, type ContextDescriptorData, type EncryptionKeyPair, type FetchFn, type IRI, type ManifestEntry, type Wallet,
 } from '@interego/core';
 import {
   digestedGraphRegion, discover, fetchGraphContent, parseAuthorshipProofFromDescriptorTurtle,
@@ -42,8 +49,15 @@ import {
 export const PEV_RECORDS_CONTAINER = 'pev/records/';
 export const PEV_COPIES_CONTAINER = 'pev/holder-copies/';
 
-/** The platform addresses whose record signatures this bridge accepts, lowercase. */
-export interface TrustedPlatform { readonly addresses: ReadonlySet<string> }
+/**
+ * The platform addresses whose record signatures this bridge accepts, lowercase, and the key pair
+ * its operator-pod records are sealed to. Without `recordKey` records are written in plaintext,
+ * and a sealed record cannot be read.
+ */
+export interface TrustedPlatform {
+  readonly addresses: ReadonlySet<string>;
+  readonly recordKey?: EncryptionKeyPair;
+}
 
 export interface ReadRecord {
   /** Set when a signed record is not where it was written (another graph, another pod, another place in the chain). */
@@ -58,9 +72,12 @@ export interface ReadRecord {
   /** `graph-nquads-sha256:<hex>` of the region: what a person's review names as its target. */
   readonly graphDigest: string;
   readonly proof: AuthorshipProof | null;
-  /** The exact bytes served. */
+  /** The exact descriptor bytes served. */
   readonly descriptorTurtle: string;
+  /** The graph document (the TriG wrap): the bytes served, or, for a sealed graph, the exact bytes that were sealed. */
   readonly graphContent: string;
+  /** True when the pod holds this record's graph only as an envelope sealed to the record key. */
+  readonly sealed: boolean;
   readonly authorship: { readonly valid: boolean; readonly contentBinding: string; readonly signerAddress: string | null; readonly platformKnown: boolean };
   readonly modalStatus: string | null;
 }
@@ -93,6 +110,20 @@ export class RecordUnreadable extends Error {
   constructor(readonly descriptorUrl: string, why: string) {
     super(why);
     this.name = 'RecordUnreadable';
+  }
+}
+
+/**
+ * A record whose graph is sealed to a key this bridge does not hold, or sealed while this bridge
+ * has no record key. A `RecordUnreadable`, so every reader that skips or refuses an unreadable
+ * record does the same with this one: it is never read as an empty record.
+ */
+export class RecordSealed extends RecordUnreadable {
+  constructor(descriptorUrl: string, readonly bridgeHasKey: boolean) {
+    super(descriptorUrl, bridgeHasKey
+      ? 'its graph is sealed to a record key this bridge does not hold (PEV_RECORD_KEY is not the key that wrote it)'
+      : 'its graph is sealed, and this bridge has no record key to open it (PEV_RECORD_KEY)');
+    this.name = 'RecordSealed';
   }
 }
 
@@ -218,14 +249,22 @@ export async function signRecordAuthorship(
 }
 
 /**
- * Publish one record. The shapes gate runs before any write; with `supersedes` the publish is a
- * compare-and-set against `currentHeads` unless `ifMatch` is false (holder copies). Records are
- * plaintext with no visibility facet: who may read them is the pod's own access control.
+ * Publish one record. The shapes gate runs before any write, on the plaintext; with `supersedes`
+ * the publish is a compare-and-set against `currentHeads` unless `ifMatch` is false (holder
+ * copies). Records carry no visibility facet.
+ *
+ * With `sealTo` the graph is sealed to that key pair alone (an X25519 envelope stored as
+ * `<slug>-graph.envelope.jose.json`, marked `iep:encrypted true` on the descriptor's distribution)
+ * and the pod holds no plaintext of it; the descriptor, its proof and the manifest entry stay
+ * readable. Without it the graph is plaintext and who may read it is the pod's own access control.
+ * Only operator-pod records are sealed: a holder copy goes to the learner's own pod, and the
+ * learner does not hold this bridge's record key.
  */
 export async function publishPevRecord(a: {
   readonly podUrl: string; readonly descriptor: ContextDescriptorData; readonly graphTurtle: string; readonly slug: string;
   readonly containerPath?: string; readonly authorshipProof: AuthorshipProof; readonly supersedes?: string;
   readonly currentHeads?: readonly string[]; readonly ifMatch?: boolean; readonly shapes?: boolean; readonly fetchFn?: typeof fetch;
+  readonly sealTo?: EncryptionKeyPair;
 }): Promise<{ readonly descriptorUrl: string; readonly graphUrl: string }> {
   try {
     await assertSafeFetchTarget(a.podUrl);
@@ -241,6 +280,7 @@ export async function publishPevRecord(a: {
       authorshipProof: a.authorshipProof,
       ...(a.shapes === false ? {} : { conformsToShapes: [{ shapeIri: PEV_SHAPES_NS, shapeTurtle: readShapesTurtle() }] }),
       ...(a.supersedes !== undefined && a.ifMatch !== false ? { ifMatchSupersedes: a.supersedes, currentHeads: [...(a.currentHeads ?? [])] } : {}),
+      ...(a.sealTo ? { encrypt: { recipients: [a.sealTo.publicKey], senderKeyPair: a.sealTo } } : {}),
     });
     return { descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl };
   } catch (e) {
@@ -332,7 +372,9 @@ function misplace(r: ReadRecord, why: string | undefined): ReadRecord {
 
 /**
  * Read one record by its descriptor URL and check it. The graph URL is followed from the
- * descriptor's distribution link, never rebuilt from a file name.
+ * descriptor's distribution link, never rebuilt from a file name. A sealed graph is opened with
+ * `trusted.recordKey`, and the proof is checked over the opened bytes; one this bridge cannot open
+ * is a `RecordSealed`.
  */
 export function readRecord(descriptorUrl: string, trusted: TrustedPlatform, fetchFn?: typeof fetch, cache?: ReadCache): Promise<ReadRecord> {
   const hit = cache?.get(descriptorUrl);
@@ -363,16 +405,19 @@ async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatfor
   const dist = parseDistributionFromDescriptorTurtle(descriptorTurtle);
   if (!dist) throw new RecordUnreadable(descriptorUrl, 'the descriptor names no graph distribution');
   if (originOf(dist.accessURL) !== origin) throw new RecordUnreadable(descriptorUrl, 'the descriptor points its graph at another host');
-  let graphContent: string | null;
+  let opened: { readonly content: string | null; readonly encrypted: boolean };
   try {
-    graphContent = (await fetchGraphContent(dist.accessURL, { fetch: f })).content;
+    // fetchGraphContent asks for `application/jose+json` first, opens an envelope with the record
+    // key (null when that key is not a recipient, or there is none), and passes plaintext through.
+    opened = await fetchGraphContent(dist.accessURL, { fetch: f, ...(trusted.recordKey ? { recipientKeyPair: trusted.recordKey } : {}) });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/:\s*(404|410)\b/.test(msg)) throw new GraphMissing(descriptorUrl, dist.accessURL, proof?.descriptorId ?? null, descriptorTurtle);
     const refused = podRefusal(e);
     throw new PodTransportFailed(`reading ${dist.accessURL} did not complete: ${msg.slice(0, 200)}`, 'read', refused?.status ?? null, originOf(dist.accessURL));
   }
-  if (graphContent === null) throw new RecordUnreadable(descriptorUrl, 'the graph is encrypted; pev records are plaintext');
+  if (opened.content === null) throw new RecordSealed(descriptorUrl, trusted.recordKey !== undefined);
+  const graphContent = opened.content;
   const region = digestedGraphRegion({ descriptorTurtle, graphContent });
   if (!region.ok) throw new RecordUnreadable(descriptorUrl, `the signed graph region cannot be located (${region.why})`);
   const parsed = recordBodyFromGraph(region.turtle);
@@ -388,7 +433,7 @@ async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatfor
   }
   return {
     descriptorUrl, recordId: proof?.descriptorId ?? '', graphUrl: dist.accessURL, body: parsed.body,
-    regionTurtle: region.turtle, graphDigest, proof, descriptorTurtle, graphContent, authorship,
+    regionTurtle: region.turtle, graphDigest, proof, descriptorTurtle, graphContent, sealed: opened.encrypted, authorship,
     modalStatus: modalOf(descriptorTurtle),
   };
 }

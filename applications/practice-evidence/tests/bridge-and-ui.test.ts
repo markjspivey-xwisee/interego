@@ -559,6 +559,23 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     expect(others.filter((f) => reads.test(readFileSync(f, 'utf8'))).map((f) => relative(VERTICAL, f))).toEqual([]);
   });
 
+  it('reads PEV_RECORD_KEY only in server.ts and refuses a malformed one; operator records are sealed, holder copies never', () => {
+    expect(server).toMatch(/const recordKeyHex = env\('PEV_RECORD_KEY'\);/);
+    expect(server).toContain("const RECORD_KEY_HEX = /^(0x)?[0-9a-fA-F]{64}$/;");
+    expect(server).toMatch(/if \(recordKeyHex !== undefined && !RECORD_KEY_HEX\.test\(recordKeyHex\)\) \{\n[^}]*Not listening\.'\);\n\s*process\.exitCode = 1;\n\s*return;/);
+    expect(server).toContain("deriveEncryptionKeyPair(recordKeyHex, 'pev-records')");
+    expect(server).toMatch(/\.\.\.\(recordKey \? \{ recordKey \} : \{\}\),/);
+    expect(server).toContain('Set PEV_RECORD_KEY (64 hex) to encrypt them');
+    const reads = /env\(\s*'PEV_RECORD_KEY'|\[\s*'PEV_RECORD_KEY'\s*\]/;
+    expect(others.filter((f) => reads.test(readFileSync(f, 'utf8'))).map((f) => relative(VERTICAL, f))).toEqual([]);
+    // Exactly two publishes: the operator record write, sealed when there is a key, and the holder copy, which never is.
+    const handlers = read('bridge/handlers.ts');
+    const publishes = handlers.split('await publishPevRecord({').slice(1).map((x) => x.slice(0, x.indexOf('});')));
+    expect(publishes).toHaveLength(2);
+    expect(publishes.map((x) => [x.includes('PEV_COPIES_CONTAINER'), x.includes('sealTo')])).toEqual([[false, true], [true, false]]);
+    expect(handlers).toContain('...(ctx.trusted.recordKey ? { sealTo: ctx.trusted.recordKey } : {}),');
+  });
+
   it('no instruction or label the platform shows says no', () => {
     const DECLINE = /\b(error|reason|refused|denied|forbidden|unauthori[sz]ed|invalid|pending|rejected|conflict|unavailable)\b/i;
     const shown = Object.entries(practice).filter(([k, v]) => typeof v === 'string' && /(INSTRUCTIONS|NOTE|LABEL|RULE)$/.test(k));

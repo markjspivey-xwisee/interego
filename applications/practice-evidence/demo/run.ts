@@ -2,8 +2,9 @@
  * The practice-evidence offline demo, and the fixtures it and the tests share.
  *
  * Fixtures: an in-memory pod that behaves like a Solid pod where it matters (ETags, conditional
- * writes, DELETE), public fixture keys, the two demo scenarios, and a scripted model for the other
- * person, the judge and the drafter.
+ * writes, DELETE), public fixture keys (a platform key, role keys and a record key), the two demo
+ * scenarios, and a scripted model for the other person, the judge and the drafter. The demo
+ * bridges encrypt their records to the fixture record key, as a bridge with PEV_RECORD_KEY does.
  *
  * `runDemo()` builds two real bridges (the same `createVerticalBridge` + handlers + web UI the
  * server composes; one with the scripted model, one with no model at all) on loopback ports and
@@ -27,7 +28,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  canonicalGraphDigest, importWallet, makeWalletDelegationVerifier, sha256, verifySignedAuthorship, type Wallet,
+  canonicalGraphDigest, deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, sha256, verifySignedAuthorship,
+  type EncryptionKeyPair, type Wallet,
 } from '@interego/core';
 import { digestedGraphRegion, parseAuthorshipProofFromDescriptorTurtle } from '@interego/solid';
 import { createVerticalBridge, type AffordanceHandler } from '../../_shared/vertical-bridge/index.js';
@@ -139,6 +141,15 @@ export const DEMO_ROLE_LABELS: Readonly<Record<DemoRoleName, string>> = {
 /** The deterministic wallet for a demo role (or the demo platform key). */
 export function demoWallet(role: DemoRoleName | 'platform'): Wallet {
   return importWallet(demoKey(role), role === 'judge-agent' || role === 'platform' ? 'agent' : 'human', `pev-demo-${role}`);
+}
+
+/**
+ * The demo bridges' record key: the derivation server.ts applies to PEV_RECORD_KEY, over the
+ * public fixture hex sha256('pev-demo-key:records'). Anyone can recompute it, so the demo's
+ * encryption protects nothing; it exercises the same write and read paths as a real key.
+ */
+export function demoRecordKey(): EncryptionKeyPair {
+  return deriveEncryptionKeyPair(sha256('pev-demo-key:records'), 'pev-records');
 }
 
 /** Every demo role, for a bridge that signs as them on request (`pev.sign_as_demo_role`). */
@@ -508,9 +519,10 @@ export async function runDemo(opts: DemoOptions = {}): Promise<DemoReport> {
   const nextNonce = (): string => `demo-nonce-${String(++n).padStart(10, '0')}`;
   const platform = demoWallet('platform');
   const W = Object.fromEntries(DEMO_ROLE_NAMES.map((r) => [r, demoWallet(r)])) as Record<DemoRoleName, Wallet>;
-  const trusted = { addresses: new Set([platform.address.toLowerCase()]) };
+  const recordKey = demoRecordKey();
+  const trusted = { addresses: new Set([platform.address.toLowerCase()]), recordKey };
   const common: PevDeps = {
-    platformWallet: platform, platformKeyKind: 'demo-fixture', adminAddresses: [W.admin.address],
+    platformWallet: platform, platformKeyKind: 'demo-fixture', adminAddresses: [W.admin.address], recordKey,
     fetchFn: pod.fetchFn, holderFetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, servedPods: [DEMO_POD],
     deploymentUrl, now: clock.now, nonce: nextNonce,
   };
@@ -738,9 +750,9 @@ export async function runDemo(opts: DemoOptions = {}): Promise<DemoReport> {
       async () => {
         const rec = await readRecord(str(obj(p27.body['skipAudit'])['descriptorUrl']), trusted, pod.fetchFn);
         const audit = rec.body.kind === 'projection-audit' ? rec.body : null;
-        return { status: 200, body: { trusted: isTrusted(rec), outcome: audit?.outcome ?? null, skipWhy: audit?.skipWhy ?? null } };
+        return { status: 200, body: { trusted: isTrusted(rec), sealed: rec.sealed, outcome: audit?.outcome ?? null, skipWhy: audit?.skipWhy ?? null } };
       },
-      (r) => want(r.body['trusted'] === true && r.body['outcome'] === 'skipped' && r.body['skipWhy'] === 'attempt-not-countersigned',
+      (r) => want(r.body['trusted'] === true && r.body['sealed'] === true && r.body['outcome'] === 'skipped' && r.body['skipWhy'] === 'attempt-not-countersigned',
         `the audit row reads ${JSON.stringify(r.body)}`));
     const reviewFields = (t: Json, picks: readonly (readonly [string, string, string?])[]): Json => ({ attemptIri: S['a1'], target: t, levels: levels(picks), sawJudgeLevelsFirst: true });
     const asJudged = [['specific-observation', 'specific'], ['asks-their-view', 'first'], ['agrees-next-step', 'owner-and-date']] as const;
@@ -817,6 +829,9 @@ export async function runDemo(opts: DemoOptions = {}): Promise<DemoReport> {
       (r) => [
         ...want(arr(r.body['copies']).length === 8 && r.body['copiesVerified'] === 8, `expected 8 verified copies, got ${arr(r.body['copies']).length} / ${String(r.body['copiesVerified'])}`),
         ...want(arr(r.body['copies']).every((c) => str(obj(c)['copyDescriptorUrl']).startsWith(DEMO_LEARNER_POD)), 'a copy is not on the learner pod'),
+        // The learner does not hold the bridge's record key, so her copies are never encrypted.
+        ...want([...pod.store.keys()].filter((u) => u.startsWith(DEMO_LEARNER_POD) && u.endsWith('-graph.trig')).length === 8
+          && ![...pod.store.keys()].some((u) => u.startsWith(DEMO_LEARNER_POD) && u.endsWith('.envelope.jose.json')), 'the copies are not plaintext on the learner pod'),
       ]);
     report.copies = { copies: arr(cp.body['copies']).length, copiesVerified: cp.body['copiesVerified'] ?? null, targetPodUrl: DEMO_LEARNER_POD };
     const firstCopy = str(obj(arr(cp.body['copies'])[0])['copyDescriptorUrl']);
@@ -949,8 +964,9 @@ export async function runDemo(opts: DemoOptions = {}): Promise<DemoReport> {
     const after = await step('50b', 'Ana reads the redacted attempt: no text; her copy still verifies', { status: 200 },
       async () => {
         const r = await act(A, W.learner, PEV_ACTION.getAttempt, { attemptIri: S['a1'] });
-        const copy = await readRecord(firstCopy, trusted, pod.fetchFn);
-        return { status: r.status, body: { ...r.body, copyStillVerifies: isTrusted(copy) } };
+        // Read without the record key: a copy is plaintext and needs only the platform address.
+        const copy = await readRecord(firstCopy, { addresses: trusted.addresses }, pod.fetchFn);
+        return { status: r.status, body: { ...r.body, copyStillVerifies: isTrusted(copy) && !copy.sealed } };
       },
       (r) => [
         ...want(arr(r.body['turns']).every((t) => !('text' in obj(t))), 'a turn still has text'),

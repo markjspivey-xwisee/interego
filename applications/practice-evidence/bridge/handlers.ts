@@ -30,7 +30,7 @@
  */
 import {
   assertSafeFetchTarget, canonicalGraphDigestResult, canonicalJson, recoverMessageSigner, sha256, sha256Hex, validate,
-  type ManifestEntry, type Wallet,
+  type EncryptionKeyPair, type ManifestEntry, type Wallet,
 } from '@interego/core';
 import { predictManifestUrl, PublishPreconditionFailedError, PublishShapeViolationError } from '@interego/solid';
 import type { AffordanceHandler } from '../../_shared/vertical-bridge/index.js';
@@ -70,7 +70,7 @@ import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, listEntries, normalPod, placementProblem, publishPevRecord, readChain, readHead,
   readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship, underPod,
-  ChainForked, GraphMissing, PodTransportFailed, RecordUnreadable, PEV_COPIES_CONTAINER,
+  ChainForked, GraphMissing, PodTransportFailed, RecordSealed, RecordUnreadable, PEV_COPIES_CONTAINER,
   type DeletedVersion, type ReadCache, type ReadRecord, type RoleRegistryView, type TrustedPlatform,
 } from './pod-helpers.js';
 
@@ -92,6 +92,13 @@ export interface PevDeps {
   readonly platformKeyKind: KeyKind;
   /** Earlier platform addresses whose records stay trusted (never keys). */
   readonly trustedPlatformAddresses?: readonly string[];
+  /**
+   * The key pair this bridge seals its operator-pod records to (server.ts derives it from
+   * PEV_RECORD_KEY). Absent: records are written in plaintext. Plaintext records stay readable
+   * either way; a sealed record is readable only with the key it was sealed to. Holder copies are
+   * never sealed: the learner does not hold this key.
+   */
+  readonly recordKey?: EncryptionKeyPair;
   /** Addresses that may change roles and retract a review. */
   readonly adminAddresses?: readonly string[];
   /** Operator pod transport. server.ts passes operatorWriteFetch(…); tests pass an in-memory pod. */
@@ -199,6 +206,12 @@ function refusalFor(e: unknown): Out {
       heads: e.heads,
     };
   }
+  if (e instanceof RecordSealed) {
+    return {
+      ...refuse(409, `The record at ${e.descriptorUrl} cannot be used: ${e.message}.`, 'record-not-trusted', { env: 'PEV_RECORD_KEY' }),
+      descriptorUrl: e.descriptorUrl,
+    };
+  }
   if (e instanceof RecordUnreadable || e instanceof GraphMissing) {
     return {
       ...refuse(409, `The record at ${e.descriptorUrl} cannot be used: ${e.message}.`, 'record-not-trusted'),
@@ -264,7 +277,10 @@ function makeContext(deps: PevDeps): Ctx {
     deps,
     platform: deps.platformWallet,
     platformDid: didOf(deps.platformWallet.address),
-    trusted: { addresses: new Set([deps.platformWallet.address.toLowerCase(), ...lower(deps.trustedPlatformAddresses)]) },
+    trusted: {
+      addresses: new Set([deps.platformWallet.address.toLowerCase(), ...lower(deps.trustedPlatformAddresses)]),
+      ...(deps.recordKey ? { recordKey: deps.recordKey } : {}),
+    },
     admins: new Set(lower(deps.adminAddresses)),
     fetchFn,
     holderFetchFn: deps.holderFetchFn ?? fetchFn,
@@ -555,7 +571,8 @@ interface Written { readonly descriptorUrl: string; readonly graphUrl: string; r
 
 /**
  * Sign and publish the next record of a chain. The heads are read again right before the
- * publish; anything but exactly the head this act read means someone else moved the chain.
+ * publish; anything but exactly the head this act read means someone else moved the chain. With
+ * a record key the graph is sealed to it; the proof is over the plaintext graph either way.
  */
 async function writeRecord(call: Call, w: {
   readonly pod: string; readonly body: PevRecordBody; readonly seq: number; readonly prev: ReadRecord | null;
@@ -590,6 +607,7 @@ async function writeRecord(call: Call, w: {
     const r = await publishPevRecord({
       podUrl: w.pod, descriptor, graphTurtle, slug: slugFor(body.kind, graphIri, w.seq, recordId), authorshipProof: proof,
       ...(w.prev ? { supersedes: w.prev.descriptorUrl, currentHeads: fresh } : {}), fetchFn: ctx.fetchFn,
+      ...(ctx.trusted.recordKey ? { sealTo: ctx.trusted.recordKey } : {}),
     });
     return { descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl, recordId, graphDigest: digest.digest };
   } catch (e) {
@@ -1896,6 +1914,8 @@ async function holderCopy(call: Call, args: Record<string, unknown>): Promise<Ou
       const descriptor = buildRecordDescriptor(planOf(v.body, {
         recordId: v.recordId, platformDid: signerDid, ...(prev !== undefined ? { supersedes: prev } : {}), derivedFrom: [v.descriptorUrl],
       }));
+      // Never sealed (no sealTo): the copy is for the learner's own pod, and the learner does not
+      // hold this bridge's record key. The region is the opened plaintext the proof binds.
       const r = await publishPevRecord({
         podUrl: target, descriptor, graphTurtle: v.regionTurtle, slug: `copy-${recordLocal(v.recordId)}`, containerPath: PEV_COPIES_CONTAINER,
         authorshipProof: v.proof, ...(prev !== undefined ? { supersedes: prev } : {}), ifMatch: false, fetchFn: ctx.holderFetchFn,
@@ -2192,6 +2212,14 @@ export async function describeStartup(deps: PevDeps): Promise<{ readonly lines: 
     }
     return { lines: [`The role registry on ${pod} is trusted; ${view.roles.size} address(es) hold roles.`], registryTrusted: true };
   } catch (e) {
+    if (e instanceof RecordSealed) {
+      return {
+        lines: [e.bridgeHasKey
+          ? `The role registry on ${pod} is sealed to a record key this bridge does not hold, so no role on that pod counts. Set PEV_RECORD_KEY to the key that wrote it (from the operator's backup), or set PEV_DEFAULT_POD_URL to a fresh pod path.`
+          : `The role registry on ${pod} is sealed, and this bridge has no record key, so no role on that pod counts. Set PEV_RECORD_KEY to the key that wrote it (from the operator's backup).`],
+        registryTrusted: false,
+      };
+    }
     const msg = e instanceof Error ? e.message : String(e);
     return { lines: [`The role registry on ${pod} could not be read: ${msg.slice(0, 200)}`], registryTrusted: null };
   }
