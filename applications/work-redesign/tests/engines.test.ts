@@ -645,8 +645,15 @@ describe('outcome grading', () => {
   it('refuses a window that starts before countersign or has not ended', () => {
     const countersignedAt = '2026-03-01T09:00:00.000Z';
     const now = new Date('2026-05-15T09:00:00.000Z');
-    expect(checkOutcomeWindow({ countersignedAt, windowStart: '2026-02-20T00:00:00Z', windowEnd: '2026-04-20T00:00:00Z', now })).toEqual({ status: 409, why: 'The measurement window starts before the decision was countersigned.' });
-    expect(checkOutcomeWindow({ countersignedAt, windowStart: '2026-03-01T09:00:00Z', windowEnd: '2026-06-01T00:00:00Z', now })).toEqual({ status: 409, why: 'The measurement window has not ended yet.' });
+    expect(checkOutcomeWindow({ countersignedAt, windowStart: '2026-02-20T00:00:00Z', windowEnd: '2026-04-20T00:00:00Z', now })).toEqual({
+      status: 409, why: 'The measurement window starts before the decision was countersigned.',
+      detail: 'the window starts 2026-02-20T00:00:00Z; the decision was countersigned 2026-03-01T09:00:00.000Z',
+    });
+    // The refusal says when the window ends and what time the server read, not the headline again.
+    expect(checkOutcomeWindow({ countersignedAt, windowStart: '2026-03-01T09:00:00Z', windowEnd: '2026-06-01T00:00:00Z', now })).toEqual({
+      status: 409, why: 'The measurement window has not ended yet.',
+      detail: 'the window ends 2026-06-01T00:00:00Z; it is now 2026-05-15T09:00:00.000Z',
+    });
     expect(checkOutcomeWindow({ countersignedAt, windowStart: '2026-04-01T00:00:00Z', windowEnd: '2026-04-01T00:00:00Z', now })).toMatchObject({ status: 400 });
     expect(checkOutcomeWindow({ countersignedAt, windowStart: 'last spring', windowEnd: '2026-04-01T00:00:00Z', now })).toMatchObject({ status: 400 });
     expect(checkOutcomeWindow({ countersignedAt, windowStart: '2026-03-01T09:00:00Z', windowEnd: '2026-05-01T00:00:00Z', now })).toBeNull();

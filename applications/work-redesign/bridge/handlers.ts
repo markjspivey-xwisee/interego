@@ -1435,7 +1435,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       for (const win of windows) {
         const bad = checkOutcomeWindow({ countersignedAt: cs.at, windowStart: String(win.windowStart ?? ''), windowEnd: String(win.windowEnd ?? ''), now: call.now });
-        if (bad) return { ...refuse(bad.status, bad.status === 409 ? bad.why : 'The measurement window is malformed.', bad.why) };
+        if (bad) return { ...refuse(bad.status, bad.status === 409 ? bad.why : 'The measurement window is malformed.', bad.detail) };
       }
       if (!isOneOf(OUTCOME_DISPOSITIONS, disposition)) return { ...refuse(400, BAD_PAYLOAD, `payload.disposition must be one of ${OUTCOME_DISPOSITIONS.join(', ')}`) };
       if (disposition !== 'kept' && !dispositionNote) return { ...refuse(400, 'Say what happened: a reverted or stopped change needs a note.', 'payload.dispositionNote is required unless the change was kept') };

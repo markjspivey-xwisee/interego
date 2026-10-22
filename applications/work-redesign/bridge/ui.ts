@@ -97,6 +97,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .chip { display: inline-block; padding: 0 0.45rem; border-radius: 999px; background: var(--chip); font-size: 0.82em; margin: 0 0.15rem 0.15rem 0; white-space: nowrap; }
 .chip.good { color: var(--good); } .chip.bad { color: var(--bad); } .chip.warn { color: var(--warn); }
 .chip.demo { border: 1px solid var(--bad); color: var(--bad); }
+td .chip { white-space: normal; border-radius: 0.6rem; }
 button, .button { font: inherit; border: 1px solid var(--accent); color: var(--accent); background: transparent; border-radius: 6px; padding: 0.25rem 0.6rem; cursor: pointer; margin: 0.1rem 0.2rem 0.1rem 0; }
 button.primary { background: var(--accent); color: var(--bg); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }

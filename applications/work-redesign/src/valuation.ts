@@ -627,13 +627,29 @@ export function meanRampFactor(t0Months: number, t1Months: number, rampMonths: n
   return (F(Math.max(0, t1Months)) - F(Math.max(0, t0Months))) / (t1Months - t0Months);
 }
 
-/** A measurement window must be well formed, start at or after countersign, and have ended. */
+/**
+ * A measurement window must be well formed, start at or after countersign, and have ended.
+ * `why` is the headline; `detail` names the dates that decided it, so the person refused can
+ * see when the window may be recorded rather than guess.
+ */
 export function checkOutcomeWindow(w: { readonly countersignedAt: string; readonly windowStart: string; readonly windowEnd: string; readonly now: Date }):
-  null | { readonly status: 400 | 409; readonly why: string } {
-  if (!isIsoInstant(w.windowStart) || !isIsoInstant(w.windowEnd)) return { status: 400, why: 'windowStart and windowEnd must be ISO-8601 date-times' };
-  if (Date.parse(w.windowStart) >= Date.parse(w.windowEnd)) return { status: 400, why: 'windowStart must be before windowEnd' };
-  if (Date.parse(w.windowStart) < Date.parse(w.countersignedAt)) return { status: 409, why: 'The measurement window starts before the decision was countersigned.' };
-  if (Date.parse(w.windowEnd) > w.now.getTime()) return { status: 409, why: 'The measurement window has not ended yet.' };
+  null | { readonly status: 400 | 409; readonly why: string; readonly detail: string } {
+  if (!isIsoInstant(w.windowStart) || !isIsoInstant(w.windowEnd)) {
+    return { status: 400, why: 'windowStart and windowEnd must be ISO-8601 date-times', detail: 'windowStart and windowEnd must be ISO-8601 date-times' };
+  }
+  if (Date.parse(w.windowStart) >= Date.parse(w.windowEnd)) return { status: 400, why: 'windowStart must be before windowEnd', detail: 'windowStart must be before windowEnd' };
+  if (Date.parse(w.windowStart) < Date.parse(w.countersignedAt)) {
+    return {
+      status: 409, why: 'The measurement window starts before the decision was countersigned.',
+      detail: `the window starts ${w.windowStart}; the decision was countersigned ${w.countersignedAt}`,
+    };
+  }
+  if (Date.parse(w.windowEnd) > w.now.getTime()) {
+    return {
+      status: 409, why: 'The measurement window has not ended yet.',
+      detail: `the window ends ${w.windowEnd}; it is now ${w.now.toISOString()}`,
+    };
+  }
   return null;
 }
 

@@ -720,13 +720,13 @@ describe('work-redesign bridge', () => {
     const csAt = String(obj((await decisionRow(w, decisionIri))['countersign'])['at']);
     const measured = { weeklyValueDelta: 100, comparisonBasis: 'staggered', windowStart: csAt, windowEnd: plusWeeks(csAt, 8), method: 'Staggered' };
     refused(await recordOutcome(w, ANA, decisionIri, { disposition: 'kept', measured }), 403, /predicted cannot grade/);
-    refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured }), 409, /has not ended yet/);
+    refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured }), 409, /has not ended yet/, /^the window ends \S+; it is now \S+$/);
     w.clock.advance(9 * WEEK);
     // The countersign is re-verified against the CURRENT registry, not trusted from the modal status.
     ok(await act(w, ADMIN, 'update_registry', { entries: [person(BO, ['worker'], 'p-bo', 'Bo')] }));
     refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured }), 409, /no longer verifies/);
     ok(await act(w, ADMIN, 'update_registry', { entries: [person(BO, ['approver'], 'p-bo', 'Bo')] }));
-    refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured: { ...measured, windowStart: plusWeeks(csAt, -1) } }), 409, /starts before the decision was countersigned/);
+    refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured: { ...measured, windowStart: plusWeeks(csAt, -1) } }), 409, /starts before the decision was countersigned/, /^the window starts \S+; the decision was countersigned \S+$/);
     refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'reverted', measured }), 400, /needs a note/);
     refused(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', measured: { ...measured, interval: { low: 200, high: 300 } } }), 400, /malformed/, /must contain/);
     const straddle = ok(await recordOutcome(w, ELI, decisionIri, { disposition: 'stopped-early', dispositionNote: 'Stopped after the audit backlog grew', measured: { ...measured, interval: { low: -1e6, high: 1e6 } } }));
