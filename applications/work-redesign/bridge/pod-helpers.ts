@@ -18,12 +18,22 @@
  * delete files, or overwrite a genuine descriptor's unsigned facets in place. v1 relies on the
  * pod's own access control for that.
  *
+ * ── SEALED GRAPHS ────────────────────────────────────────────────────────────────────────────
+ * Given the bridge's record key, every new version's graph is sealed to it (publish's encrypt
+ * option; stored as `<slug>-graph.envelope.jose.json`), and a sealed graph is opened with it on
+ * read. Descriptors and the manifest stay plaintext: signer, kind, modal status and times remain
+ * public. The authorship proof covers the plaintext graph, so the checks above run on the opened
+ * bytes unchanged. A sealed graph that does not open — sealed to another key, no key held, or
+ * ciphertext changed on the pod — is never read as an empty or valid record: a descriptor that is
+ * otherwise eligible stays eligible and untrusted (so its graph answers "altered", 409, and an
+ * older version never silently becomes current again), and one that is not is set aside.
+ *
  * No environment reads. The only network is the injected fetch, always behind guardedFetchFn.
  */
 import {
   assertSafeFetchTarget, guardedFetchFn, canonicalGraphDigest, canonicalGraphDigestResult, createSignedAuthorship,
-  makeWalletDelegationSigner, makeWalletDelegationVerifier, verifySignedAuthorship, sha256Hex,
-  type AuthorshipProof, type FetchFn, type IRI, type ManifestEntry, type Wallet,
+  makeWalletDelegationSigner, makeWalletDelegationVerifier, verifySignedAuthorship, sha256Hex, openEncryptedEnvelope,
+  type AuthorshipProof, type EncryptedEnvelope, type EncryptionKeyPair, type FetchFn, type IRI, type ManifestEntry, type Wallet,
 } from '@interego/core';
 import {
   publish, fetchAllManifestEntries, predictManifestUrl, predictDescriptorUrl, parseAuthorshipProofFromDescriptorTurtle,
@@ -76,6 +86,41 @@ export async function openPod(podUrl: string, fetchFn?: FetchFn): Promise<FetchF
   await assertSafeFetchTarget(podUrl);
   const base: FetchFn = fetchFn ?? (globalThis.fetch.bind(globalThis) as unknown as FetchFn);
   return guardedFetchFn(base);
+}
+
+/**
+ * The operator pod's credential, added to requests to ONE pod only: the URL's parsed origin
+ * equals the pod's AND the URL lies under the pod's base path, so a holder pod on the same host
+ * never receives it. It goes on reads as well as writes, so an operator can make the pod refuse
+ * anonymous reads of `wrd/` and the bridge still reads its own records. A decorated request is
+ * sent with `redirect: 'manual'`, so the credential cannot follow a redirect anywhere (the SSRF
+ * guard re-issues a GET's redirect hop itself, and this decides again for that URL). Copied from
+ * practice-evidence's operatorPodFetch: verticals do not import each other.
+ */
+export function operatorPodFetch(podUrl: string | undefined, secret: string | undefined, baseFetch: typeof fetch): typeof fetch {
+  if (!podUrl || !secret) return baseFetch;
+  let podHref: string;
+  let podOrigin: string;
+  try {
+    const u = new URL(normalisePodUrl(podUrl));
+    podHref = u.href;
+    podOrigin = u.origin;
+  } catch {
+    return baseFetch;
+  }
+  const decorated = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    let mine = false;
+    try {
+      const u = new URL(url);
+      mine = u.origin === podOrigin && u.href.startsWith(podHref);
+    } catch { mine = false; }
+    if (!mine) return baseFetch(input, init);
+    const headers = new Headers(init?.headers);
+    headers.set('Authorization', `Bearer ${secret}`);
+    return baseFetch(input, { ...init, headers, redirect: 'manual' });
+  };
+  return decorated as typeof fetch;
 }
 
 export interface ManifestWalk {
@@ -157,7 +202,7 @@ export interface LoadedRecord {
   readonly confidence: number | null;
   readonly supersedes: readonly string[];
   readonly descriptorTurtle: string;
-  /** The graph document as served (TriG). */
+  /** The graph document as served (TriG), or as opened when the pod holds it sealed. */
   readonly graphContent: string;
   /** The digested region: the named graph the proof covers. */
   readonly graphTurtle: string;
@@ -272,30 +317,121 @@ function distrust(r: BytesRead, signedByTrustedKey: boolean, atPredictedUrl: boo
                 : null;
 }
 
+/** Why a sealed graph that did not open is not read; the record stays untrusted. */
+export const SEALED_NO_KEY = 'its graph is sealed, and this bridge holds no record key (WRD_RECORD_KEY) to open it';
+export const SEALED_OTHER_KEY = 'its graph is sealed to a key this bridge does not hold, or the sealed bytes were changed on the pod';
+
 /**
- * Read one record from a pod and verify it: the descriptor and the graph are fetched, their
- * bytes verified (readBytes), and the record is placed: it must sit at exactly the URL its own
- * proof's descriptorId predicts, and be signed by a platform key this bridge trusts.
+ * Open a sealed graph document with the record key: the plaintext, or null when it is not an
+ * envelope, has no wrapped key for this key pair, or does not authenticate. Never throws, and
+ * never hands back the sealed bytes as if they were the graph.
+ */
+export function openSealedGraph(body: string, key: EncryptionKeyPair): string | null {
+  let env: unknown;
+  try { env = JSON.parse(body); } catch { return null; }
+  if (typeof env !== 'object' || env === null) return null;
+  const e = env as Partial<EncryptedEnvelope>;
+  if (e.algorithm !== 'X25519-XSalsa20-Poly1305' || !Array.isArray(e.wrappedKeys) || typeof e.content !== 'object' || e.content === null) return null;
+  try {
+    const plain = openEncryptedEnvelope(e as EncryptedEnvelope, key);
+    return typeof plain === 'string' ? plain : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Where a record sits and who signed it, from its descriptor alone: what readRecord decides for
+ * every record, and all it can decide for one whose sealed graph did not open.
+ */
+function placement(entry: ManifestEntry, podUrl: string, container: string, proof: AuthorshipProof | null, subjectId: string | null,
+  signatureValid: boolean, trusted: ReadonlySet<string>): { readonly signerAddress: string | null; readonly signedByTrustedKey: boolean; readonly atPredictedUrl: boolean } {
+  const signerAddress = proof ? proof.signerAddress.toLowerCase() : null;
+  const signedByTrustedKey = signatureValid && signerAddress !== null && trusted.has(signerAddress);
+  const atPredictedUrl = proof !== null && subjectId === proof.descriptorId
+    && entry.descriptorUrl === predictDescriptorUrl(podUrl, proof.descriptorId, { containerPath: container, descriptorSlug: slugOf(proof.descriptorId) });
+  return { signerAddress, signedByTrustedKey, atPredictedUrl };
+}
+
+/**
+ * A record whose sealed graph did not open. Its descriptor's proof is still checked (the
+ * signature, with no content to bind), so a version a trusted platform key signed at its
+ * predicted URL stays ELIGIBLE but is never trusted: its graph answers "altered" (409) instead
+ * of the previous version becoming current again, which a party able to write the pod could
+ * otherwise cause by corrupting one ciphertext. Anything less than that is set aside, as ever.
+ */
+async function sealedShut(entry: ManifestEntry, podUrl: string, descriptorTurtle: string, trusted: ReadonlySet<string>,
+  container: string, why: string, cache?: VerifyCache): Promise<LoadedRecord> {
+  const proof = parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle);
+  const subjectId = firstMatch(/^<([^>]+)>\s*\n\s*a iep:ContextDescriptor/m, descriptorTurtle);
+  let verified: Verified = { signatureValid: false, contentBinding: 'unbound' };
+  if (proof) {
+    const key = sha256Hex(`sealed\u0000${descriptorTurtle}`);
+    const hit = cache?.get(key);
+    if (hit) {
+      verified = hit;
+    } else {
+      const v = await verifySignedAuthorship(proof, makeWalletDelegationVerifier());
+      verified = { signatureValid: v.valid, contentBinding: v.contentBinding };
+      if (cache) {
+        if (cache.size >= VERIFY_CACHE_LIMIT) cache.clear();
+        cache.set(key, verified);
+      }
+    }
+  }
+  const { signerAddress, signedByTrustedKey, atPredictedUrl } = placement(entry, podUrl, container, proof, subjectId, verified.signatureValid, trusted);
+  const eligible = signedByTrustedKey && atPredictedUrl;
+  const reason = !proof ? 'it carries no authorship proof'
+    : !verified.signatureValid ? 'its authorship signature does not verify'
+      : !signedByTrustedKey ? 'it was signed by a key this bridge does not trust'
+        : !atPredictedUrl ? 'it is not at the URL its own proof names'
+          : why;
+  return {
+    ...unreadable(entry, reason),
+    recordId: proof?.descriptorId ?? subjectId ?? '',
+    modalStatus: firstMatch(/iep:modalStatus\s+iep:(\w+)/, descriptorTurtle) ?? entry.modalStatus,
+    validFrom: firstMatch(/iep:validFrom\s+"([^"]+)"/, descriptorTurtle),
+    validUntil: firstMatch(/iep:validUntil\s+"([^"]+)"/, descriptorTurtle),
+    generatedAt: firstMatch(/prov:generatedAtTime\s+"([^"]+)"/, descriptorTurtle),
+    descriptorTurtle,
+    authorship: {
+      signatureValid: verified.signatureValid, signerAddress, signedByTrustedKey, atPredictedUrl, contentBinding: verified.contentBinding,
+      modalMatches: false, eligible, trusted: false, proof,
+    },
+  };
+}
+
+/**
+ * Read one record from a pod and verify it: the descriptor and the graph are fetched (a sealed
+ * graph opened with `recordKey`), their bytes verified (readBytes), and the record is placed: it
+ * must sit at exactly the URL its own proof's descriptorId predicts, and be signed by a platform
+ * key this bridge trusts. A sealed graph that does not open is handled by sealedShut.
  */
 export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: FetchFn, trusted: ReadonlySet<string>,
-  cache?: VerifyCache, container: string = WRD_CONTAINER): Promise<LoadedRecord> {
+  cache?: VerifyCache, container: string = WRD_CONTAINER, recordKey?: EncryptionKeyPair): Promise<LoadedRecord> {
   const desc = await getText(entry.descriptorUrl, fetchFn, 'text/turtle');
   if (desc.body === null) return unreadable(entry, `the descriptor is not at its manifest URL (${desc.status})`);
   const descriptorTurtle = desc.body;
   const dist = parseDistributionFromDescriptorTurtle(descriptorTurtle);
   if (!dist) return unreadable(entry, 'the descriptor links no graph');
   if (!dist.accessURL.startsWith(podUrl)) return unreadable(entry, 'the descriptor links a graph outside this pod');
-  const graph = await getText(dist.accessURL, fetchFn, 'application/trig, text/turtle');
-  if (graph.body === null) return unreadable(entry, `the graph is not at the URL its descriptor names (${graph.status})`);
-  const graphContent = graph.body;
+  let graphContent: string;
+  if (dist.encrypted) {
+    const sealed = await getText(dist.accessURL, fetchFn, 'application/jose+json');
+    if (sealed.body === null) return unreadable(entry, `the graph is not at the URL its descriptor names (${sealed.status})`);
+    const opened = recordKey ? openSealedGraph(sealed.body, recordKey) : null;
+    if (opened === null) return sealedShut(entry, podUrl, descriptorTurtle, trusted, container, recordKey ? SEALED_OTHER_KEY : SEALED_NO_KEY, cache);
+    graphContent = opened;
+  } else {
+    const graph = await getText(dist.accessURL, fetchFn, 'application/trig, text/turtle');
+    if (graph.body === null) return unreadable(entry, `the graph is not at the URL its descriptor names (${graph.status})`);
+    graphContent = graph.body;
+  }
   const bytes = await readBytes(descriptorTurtle, graphContent, entry.modalStatus, cache);
   if (!bytes.ok) return unreadable(entry, bytes.why);
   const r = bytes.read;
   const { proof, verified } = r;
-  const signerAddress = proof ? proof.signerAddress.toLowerCase() : null;
-  const signedByTrustedKey = verified.signatureValid && signerAddress !== null && trusted.has(signerAddress);
-  const atPredictedUrl = proof !== null && r.subjectId === proof.descriptorId
-    && entry.descriptorUrl === predictDescriptorUrl(podUrl, proof.descriptorId, { containerPath: container, descriptorSlug: slugOf(proof.descriptorId) });
+  const { signerAddress, signedByTrustedKey, atPredictedUrl } = placement(entry, podUrl, container, proof, r.subjectId, verified.signatureValid, trusted);
   const eligible = signedByTrustedKey && atPredictedUrl;
   const isTrusted = eligible && verified.contentBinding === 'bound' && r.record !== null && r.modalMatches;
   const why = distrust(r, signedByTrustedKey, atPredictedUrl, 'it was signed by a key this bridge does not trust');
@@ -429,7 +565,7 @@ export class PodView {
   private readonly reads = new Map<string, Promise<LoadedRecord>>();
   private readonly graphs = new Map<string, Promise<GraphHeads>>();
   constructor(readonly podUrl: string, readonly fetchFn: FetchFn, readonly trusted: ReadonlySet<string>,
-    private readonly cache: VerifyCache, readonly strict: boolean) {}
+    private readonly cache: VerifyCache, readonly strict: boolean, private readonly recordKey?: EncryptionKeyPair) {}
 
   walk(): Promise<ManifestWalk> {
     this.walkP ??= walkManifest(this.podUrl, this.fetchFn);
@@ -445,7 +581,7 @@ export class PodView {
   read(e: ManifestEntry): Promise<LoadedRecord> {
     let p = this.reads.get(e.descriptorUrl);
     if (!p) {
-      p = readRecord(e, this.podUrl, this.fetchFn, this.trusted, this.cache);
+      p = readRecord(e, this.podUrl, this.fetchFn, this.trusted, this.cache, WRD_CONTAINER, this.recordKey);
       this.reads.set(e.descriptorUrl, p);
     }
     return p;
@@ -522,6 +658,8 @@ export interface PublishContext {
   readonly trusted: ReadonlySet<string>;
   readonly mutex: KeyedMutex;
   readonly cache?: VerifyCache;
+  /** The bridge's record key: the new version's graph is sealed to it, and the current heads are opened with it. Absent → plaintext. */
+  readonly recordKey?: EncryptionKeyPair;
 }
 export interface PublishedRecord { readonly descriptorUrl: string; readonly graphUrl: string; readonly recordId: string; readonly graphDigest: string }
 
@@ -539,6 +677,9 @@ const shapes = (): string => { shapesCache ??= readShapesTurtle(); return shapes
  * be accepted, forking the chain. The slug comes from the record id, which carries the
  * envelope's nonce, so no two write attempts share a URL and a partial write can never leave
  * one attempt's graph under another attempt's proof.
+ *
+ * With a record key the graph is sealed to it before it leaves the process: the pod stores only
+ * `<slug>-graph.envelope.jose.json`. The shapes and the proof are checked over the plaintext.
  */
 export async function publishRecord(spec: PublishSpec, ctx: PublishContext): Promise<PublishedRecord> {
   const { recordId, graphIri } = spec.descriptor;
@@ -557,7 +698,7 @@ export async function publishRecord(spec: PublishSpec, ctx: PublishContext): Pro
   return ctx.mutex.run(`${ctx.podUrl}|${graphIri}`, async () => {
     const walk = await walkManifest(ctx.podUrl, ctx.fetchFn);
     if (!walk.complete) throw new IncompleteManifestError(ctx.podUrl);
-    const current = await headsFor(graphIri, walk.entries, (e) => readRecord(e, ctx.podUrl, ctx.fetchFn, ctx.trusted, ctx.cache));
+    const current = await headsFor(graphIri, walk.entries, (e) => readRecord(e, ctx.podUrl, ctx.fetchFn, ctx.trusted, ctx.cache, WRD_CONTAINER, ctx.recordKey));
     const heads = current.heads.map((h) => h.descriptorUrl);
     if (spec.expectHead === null) {
       if (heads.length > 0) throw new StaleHeadError(graphIri, heads);
@@ -573,6 +714,7 @@ export async function publishRecord(spec: PublishSpec, ctx: PublishContext): Pro
         authorshipProof: proof,
         conformsToShapes: [{ shapeIri: WRD_SHAPES_NS, shapeTurtle: shapes() }],
         ...(spec.expectHead ? { ifMatchSupersedes: spec.expectHead, currentHeads: [spec.expectHead] } : {}),
+        ...(ctx.recordKey ? { encrypt: { recipients: [ctx.recordKey.publicKey], senderKeyPair: ctx.recordKey } } : {}),
       });
       return { descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl, recordId, graphDigest: contentHash };
     } catch (e) {
@@ -590,7 +732,9 @@ export async function publishRecord(spec: PublishSpec, ctx: PublishContext): Pro
  * holder-pod copy of the previous version (so the holder's pod shows one chain), and carrying
  * the ORIGINAL platform authorship proof — which binds the id and the content digest, so it
  * still verifies 'bound' on the holder's pod. Idempotent: a copy already at its predicted URL
- * is skipped.
+ * is skipped. The copy is plaintext even when the original is sealed: it goes to a pod the
+ * holder names, through a fetch that never carries the operator's credential, and encrypted
+ * copies are out of scope.
  */
 export async function copyRecordToHolder(rec: LoadedRecord, opts: {
   readonly targetPodUrl: string; readonly fetchFn: FetchFn; readonly previousCopyUrl: string | null; readonly existing: ReadonlySet<string>;

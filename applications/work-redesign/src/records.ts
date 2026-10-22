@@ -87,7 +87,7 @@ export interface SignedEnvelope { readonly payload: Record<string, unknown>; rea
 export type EnvelopeIntent = 'wrd:update-registry' | 'wrd:capture-workflow' | 'wrd:record-task-map' | 'wrd:revise-task'
   | 'wrd:ratify-task' | 'wrd:classify-task' | 'wrd:propose-allocation' | 'wrd:value-plan' | 'wrd:submit-decision'
   | 'wrd:countersign-decision' | 'wrd:record-outcome' | 'wrd:agent-run' | 'wrd:review-agent-run' | 'wrd:grant-autonomy'
-  | 'wrd:revoke-grant' | 'wrd:holder-copy';
+  | 'wrd:revoke-grant' | 'wrd:holder-copy' | 'wrd:read-records';
 
 /** The exact string an envelope's signature covers. */
 export const envelopeMessage = (payload: Record<string, unknown>): string => canonicalJson(payload);

@@ -24,7 +24,7 @@ An approver countersigns or declines. From none of their keys may the approver h
 
 Agents earn a revocable grant on one registered kind of task only from runs that people reviewed and accepted. Anyone named in a record, or who signed one, can take a copy of every record about their work.
 
-Every record is a signed Interego context descriptor on the operator's pod. The platform generates no text and invents no numbers. Every refusal is a typed HTTP refusal.
+Every record is a signed Interego context descriptor on the operator's pod. Given a record key, each record's graph is sealed on the pod, and reads through the bridge need a signature from an admin or a registered key. The platform generates no text and invents no numbers. Every refusal is a typed HTTP refusal.
 
 ## How this differs
 
@@ -65,8 +65,9 @@ npx tsx applications/work-redesign/demo/run.ts --serve    # then keeps the bridg
 npx tsx applications/work-redesign/demo/run.ts --serve --port=6197
 ```
 
-The demo drives the bridge the way a Path-A agent does. It reads `/affordances?format=jsonld`, calls only the targets it declares, and signs each envelope with a persona key. Along the way it asserts every refusal, `R-A` to `R-AT`, with its status. Those refusals cover:
+The demo drives the bridge the way a Path-A agent does. It reads `/affordances?format=jsonld`, calls only the targets it declares, and signs each envelope with a persona key; every read it makes is a signed read by the admin. It seals every record to a record key derived from a published seed, and checks that the pod holds only sealed graphs. Along the way it asserts every refusal, `R-A` to `R-AV`, with its status. Those refusals cover:
 
+- an unsigned read, and a signed read by a key that is neither an admin nor registered;
 - allocation before classification, and an agent placed before its task's classification is ratified;
 - a fabricated quote;
 - a disputed description;
@@ -82,12 +83,12 @@ The demo drives the bridge the way a Path-A agent does. It reads `/affordances?f
 - an altered run envelope;
 - a stale envelope;
 - a holder copy to the platform pod;
-- a tampered record.
+- a tampered record (its sealed graph changed on the pod).
 
 The demo doubles the network (the pod), time, the people, and what those people report:
 
 - **Time** is a clock that moves only when the walk calls `wrd.demo_advance_clock`, a demo-only affordance, so a nine-week window can pass.
-- **The people** are persona keys derived from published seeds and held by the demo process.
+- **The people** are persona keys derived from published seeds and held by the demo process. So is the record key.
 - **The draft** is scripted, standing in for the client's own agent. The platform verifies it; it does not produce it.
 - **The agents' runs** are scripted: their outputs are digests of fixed strings, and the walk chooses their self-assessments and the reviewers' verdicts.
 - **The one measured outcome** is computed from the prediction itself (its P50 times the ramp factor), so it lands in band by construction.
@@ -99,6 +100,7 @@ Every record it writes carries `"demo": true` and a `wrd:demoRecord true` triple
 ```bash
 WRD_DEFAULT_POD_URL=https://pod.example/team/ \
 WRD_PLATFORM_KEY=0x<64 hex> \
+WRD_RECORD_KEY=<64 hex, a different key> \
 WRD_ADMIN_ADDRESSES=0x<admin address> \
 npx tsx applications/work-redesign/bridge/server.ts
 ```
@@ -106,9 +108,13 @@ npx tsx applications/work-redesign/bridge/server.ts
 | Variable | Meaning |
 |---|---|
 | `PORT` | Default `6100`. |
-| `HOST` | Default `127.0.0.1`. The bridge holds a signing key and its reads are unauthenticated, so it never binds every interface unless told to. Bound to loopback, it answers only the Host names `127.0.0.1`, `localhost` and `[::1]` on `PORT` and the host of `BRIDGE_DEPLOYMENT_URL`. Any other Host is refused with 421, so a page that rebinds its own DNS name to 127.0.0.1 gets nothing. |
+| `HOST` | Default `127.0.0.1`. The bridge holds a signing key, so it never binds every interface unless told to. Bound to loopback, it answers only the Host names `127.0.0.1`, `localhost` and `[::1]` on `PORT` and the host of `BRIDGE_DEPLOYMENT_URL`. Any other Host is refused with 421, so a page that rebinds its own DNS name to 127.0.0.1 gets nothing. |
 | `BRIDGE_DEPLOYMENT_URL` | The public base URL. Default `http://127.0.0.1:<PORT>`. |
 | `WRD_DEFAULT_POD_URL` | The pod used when a call names none. It must be a public http(s) host: the SSRF guard refuses loopback and private addresses. |
+| `WRD_SERVED_PODS` | Comma list of the pods records are read from and written to. Default: the default pod. A call naming any other pod is refused (403, `pod-not-served`) before that pod is read; with neither variable set, every call is refused. Compared after normalisation (scheme and host case, default port, trailing slash). |
+| `WRD_POD_WRITE_SECRET` | The operator pod's credential, sent as `Authorization: Bearer` on reads and writes whose URL has the default pod's origin and lies under its path, and nowhere else: not to another origin or path on the same host, not on any redirect (those requests are sent with `redirect: 'manual'`), and never on a holder copy, which goes out through a separate fetch. The startup says whether one is configured and never prints it. On the shared gate this is the gate's operator token. |
+| `WRD_RECORD_KEY` | 64 hex characters (32 bytes), separate from `WRD_PLATFORM_KEY`. Every new record's graph is sealed to the X25519 key derived from it (`deriveEncryptionKeyPair(hex, 'wrd-records')`) and stored as `<slug>-graph.envelope.jose.json`; the bridge opens sealed graphs with it on read. A malformed value stops the bridge. Without it records are written in plaintext, and the startup warns that a pod which serves anonymous reads serves them to everyone. **Keep a copy:** a lost or changed key leaves every sealed record unreadable, and the bridge then refuses (409) to act on them. |
+| `WRD_PUBLIC_READS` | `1` opens the read model to anyone who can reach the bridge: `wrd.list_records` and `wrd.calibration` answer unsigned GETs, and `wrd.envelope_template` fills its context from the pod. Otherwise those GETs answer 401 and reads go through `wrd.read_records` and `wrd.read_calibration`. |
 | `WRD_PLATFORM_KEY` | The hex secp256k1 key the bridge signs records with. Without it the bridge generates an **ephemeral** key and says so at startup. Records written under that key are not trusted after a restart. |
 | `WRD_ADMIN_ADDRESSES` | Comma list of the addresses that may change the role registry. With none, every registry change is refused. |
 | `WRD_TRUSTED_PLATFORM_ADDRESSES` | Comma list of earlier platform keys whose records stay trusted, for key rotation. |
@@ -140,7 +146,7 @@ npx tsx -e "(async () => {
 curl -X POST -H 'content-type: application/json' --data "{\"envelope\": $(cat envelope.json)}" http://127.0.0.1:6100/wrd/update_registry
 ```
 
-To verify a downloaded record (the file **My record** saves, or a `wrd.holder_copy` response), name the platform address you expect. `wrd.list_records` reports it as `bridge.platform.address`, and the bridge prints it at startup. Each record's proof must verify, bind the graph bytes in the file, and come from that address. The command exits 1 if any record fails:
+To verify a downloaded record (the file **My record** saves, or a `wrd.holder_copy` response), name the platform address you expect. `wrd.read_records` reports it as `bridge.platform.address`, and the bridge prints it at startup. A download carries each record's graph opened, so it verifies without the record key. Each record's proof must verify, bind the graph bytes in the file, and come from that address. The command exits 1 if any record fails:
 
 ```bash
 npx tsx -e "(async () => {
@@ -160,7 +166,9 @@ Both were run against the served demo. A registry change signed with the first c
 
 1. **Your wallet.** When the browser has an EIP-191 wallet, the page signs with `personal_sign` over `canonicalJson(payload)`. An admin must first add your address to the pod's registry.
 2. **Demo keys.** Only on the offline demo server. A red banner says the keys are held by that server and these are not signatures by real people.
-3. **Read only.** Otherwise, with a sentence saying why.
+3. **No wallet.** Otherwise, with a sentence saying why. The page then reads only where the bridge serves unsigned reads.
+
+Reading is signed too. The page signs one `wrd:read-records` envelope per signer and pod, from the template `wrd.envelope_template` fills, and reuses it for up to nine minutes for every re-read and the calibration view; the bridge accepts it for fifteen. A reused read the bridge calls stale is signed once more. A signer with no role sees the refusal and can switch identity.
 
 The views are:
 
@@ -185,8 +193,8 @@ npx vitest run applications/work-redesign/tests
 There are three test modules:
 
 - `engines.test.ts`: the pure engines.
-- `bridge-lifecycle.test.ts`: the bridge over loopback HTTP, including a restarted bridge on the same pod refusing replays.
-- `demo-and-ui.test.ts`: the whole demo walk, the UI's headers and inert shell, and a check that the UI calls only declared tools and reaches every one of them.
+- `bridge-lifecycle.test.ts`: the bridge over loopback HTTP, including a restarted bridge on the same pod refusing replays, the operator credential (only under the pod path, never on a redirect or a holder copy), the served-pods allowlist, sealed records (only envelopes on the pod, verified bound once opened, refused by a bridge with another key or none) and scoped reads.
+- `demo-and-ui.test.ts`: the whole demo walk, the UI's headers and inert shell, a check that the UI calls only declared tools and reaches every one of them, and the UI run in jsdom against a demo bridge, signing one read and reusing it.
 
 ## Affordances
 
@@ -208,10 +216,12 @@ There are three test modules:
 | `wrd.grant_autonomy` | Grants an agent autonomy on one kind of task, once earned. | An approver who is not the agent's principal |
 | `wrd.revoke_grant` | Revokes a grant, bound to the version read. Work under it is shown with no authorised performer. | An approver |
 | `wrd.holder_copy` | Copies every record that names you or carries your signature to a pod you name, or returns it for download. | The holder |
-| `wrd.list_records` | The read model: registry, workflows, tasks, plans, valuations, decisions, grants, runs and integrity. | Nobody (GET) |
-| `wrd.calibration` | Prediction cells, agent-run cells and probe signals. | Nobody (GET) |
-| `wrd.envelope_template` | The JSON Schema of one intent's payload, and a template filled from the pod's current heads with the paths still to fill. Signs nothing and writes nothing. | Nobody (GET) |
-| `wrd.demo_envelope` | **Offline demo only**, declared in `wrdDemoAffordances`. Signs a payload with a persona key the demo server holds. A production bridge neither advertises nor routes it. | — |
+| `wrd.read_records` | The read model: registry, workflows, tasks, plans, valuations, decisions, grants, runs and integrity. Its envelope (`wrd:read-records`) spends no nonce, so it reads again until it is stale. | An admin, or any key in the pod's registry |
+| `wrd.read_calibration` | Prediction cells, agent-run cells and probe signals, by the same signed read. | An admin, or any key in the pod's registry |
+| `wrd.list_records` | The same read model as an unsigned GET. Answers 401, pointing at `wrd.read_records`, unless the operator set `WRD_PUBLIC_READS=1`. | Nobody (GET), when reads are opened |
+| `wrd.calibration` | The same calibration as an unsigned GET. Answers 401 unless `WRD_PUBLIC_READS=1`. | Nobody (GET), when reads are opened |
+| `wrd.envelope_template` | The JSON Schema of one intent's payload, and a template filled from the pod's current heads with the paths still to fill. While reads are not opened it fills only the shape and the head binding (URLs and digests the public descriptors carry) and withholds what it read out of records. Signs nothing and writes nothing. | Nobody (GET) |
+| `wrd.demo_envelope` | **Offline demo only**, declared in `wrdDemoAffordances`. Signs a payload with a persona key the demo server holds; without a persona it lists them. A production bridge neither advertises nor routes it. | — |
 | `wrd.demo_advance_clock` | **Offline demo only**, declared in `wrdDemoAffordances`. Moves the demo's clock forward by whole weeks so a measurement window can pass. A production bridge neither advertises nor routes it. | — |
 
 ## Records and lifecycle
@@ -223,6 +233,8 @@ Each kind of record is one graph. Every change is a new descriptor that supersed
 - it sits at the URL its own proof names.
 
 A current version whose graph bytes no longer match its proof is **altered**, and every lifecycle call that needs it answers 409.
+
+**Sealed graphs.** With a record key, each version's graph is sealed to it before it is written; the pod holds `<slug>-graph.envelope.jose.json`, and the descriptor links it as an encrypted distribution. Descriptors and the manifest stay public: anyone who can read the pod sees each record's signer and platform proof, kind, modal status, times and supersedes links, but not its graph. The proof covers the plaintext graph, so the checks above run on the opened bytes. A sealed graph that does not open (sealed to another key, no key held, or its ciphertext changed on the pod) is never read as a record: if its descriptor is otherwise current, the graph is **altered** and answers 409, so an older version never becomes current again in its place.
 
 ```
 Task            captured[H] ──every party ratifies──▶ ratified[A];  any dispute ──▶ disputed[H] ──revise──▶ captured[H];  retire ──▶ retired[Retracted]
@@ -243,7 +255,7 @@ Grant           granted[A] ──revoke──▶ revoked[Retracted, valid from t
 - `intent`;
 - `podUrl`, which must equal the pod the call targets;
 - `issuedAt`, accepted from 15 minutes before to 2 minutes after the bridge's clock;
-- a `nonce`, refused if reused (see **Integrity and replay** below).
+- a `nonce`, refused if reused (see **Integrity and replay** below). A signed read (`wrd:read-records`) changes nothing and spends no nonce: the same envelope reads again until its `issuedAt` leaves the window.
 
 Identity is only the address recovered from the signature: no affordance takes a caller DID, key or seed. Payloads that change an existing record also bind the head they read, and are refused with 409 if it has moved on:
 
@@ -329,14 +341,16 @@ A task may cite an external task term (`externalTaskTerm`, for example an O\*NET
 
 **Access and storage**
 
-- **Reads are not scoped in v1.** `wrd.list_records` and `wrd.calibration` are unauthenticated GETs: anyone who can reach the bridge reads every record on the pod, including dispute notes and addresses. The UI says so on every screen. `HOST` defaults to loopback, and document text is stored only when the operator opts in. On loopback, and always in the demo, a request whose Host header is not one of the bridge's own names is refused (421) before any route except the shared `/health`, which returns only the status and build. A bridge bound to another interface does not check Host: put it behind a proxy that does.
-- **The bridge writes to the pod with plain HTTP and no pod credentials.** Use a pod, or a container on it, that accepts the bridge's writes. Pods on loopback or private addresses are refused by the SSRF guard. Holder copies likewise need a pod that accepts the bridge's writes; otherwise use the download. Copies are plaintext: encrypted copies are out of scope.
+- **Reads through the bridge are scoped to signers it knows.** `wrd.read_records` and `wrd.read_calibration` answer a signed read from an admin or a key in the pod's registry, and refuse (403) any other key. The unsigned GETs `wrd.list_records` and `wrd.calibration` answer 401 unless the operator sets `WRD_PUBLIC_READS=1`, and until then `wrd.envelope_template` withholds what it reads out of records. Every registered key reads every record on the pod, including dispute notes, valuations and addresses: the scope is the registry, not the record. A signed read is reusable until it is stale (15 minutes), so whoever holds a copy of one can read for that long. The UI says which applies on every screen. The integrity refusals of `wrd.envelope_template` and of signed writes still name record IRIs and states.
+- **Encryption at rest covers graphs, not descriptors.** With `WRD_RECORD_KEY`, every record's graph is sealed on the pod; the descriptors and the manifest stay public (signer, kind, modal status, times, supersedes links). Without it, records are plaintext, and on a pod that serves anonymous reads, as the shared gate does, anyone can read every one. The bridge holds the only key: there is no second recipient and no key rotation, so keep a copy of the key. The registry is a record like any other, sealed to the same key, which is why a bridge with another key or none refuses (409) rather than act on a registry it cannot read.
+- **`HOST` defaults to loopback, and document text is stored only when the operator opts in.** On loopback, and always in the demo, a request whose Host header is not one of the bridge's own names is refused (421) before any route except the shared `/health`, which returns only the status and build. A bridge bound to another interface does not check Host: put it behind a proxy that does.
+- **The operator's pod credential, when configured, goes to the operator's pod only.** `WRD_POD_WRITE_SECRET` is added to requests under `WRD_DEFAULT_POD_URL`'s path and origin, never on a redirect, never to another pod. Without it, use a pod or container that accepts the bridge's writes. Pods on loopback or private addresses are refused by the SSRF guard. Holder copies go out without the credential, so they need a pod that accepts them; otherwise use the download. Copies are plaintext even when the originals are sealed: encrypted copies are out of scope.
 
 **Integrity and replay**
 
 - **Replay protection reads the pod.** Every record version stores the signer and nonce of the envelope that authorised it, and a write is refused (409) when the graph's chain already holds that pair, so it holds after a restart. Writes that start a graph mint an IRI from the nonce, or one unique to their subject, so a replay finds the graph already there. An in-process ledger, bounded to 100 000 entries and claimed only for registered keys and admins, refuses repeats before any read. Supersede is serialised per graph within one process; two bridge processes on one pod can still race between read and write.
 - **Adding or retiring a task writes two records: the task, then its workflow.** If the workflow write fails, the answer says what was written and what to call next.
-  - **A failed retirement** leaves a retired task that the workflow still lists; `wrd.list_records` marks it `retirementUnfinished`. Until it is finished, any proposal on that workflow answers 409, and so does valuing, submitting or approving a plan that changes the task. The 409 names the fix: retire the task again. Any operator can send that call, bound to the retired version or to the version it retired. It writes only the workflow version that drops the task, records which retirement it finishes in `revision.repairs`, and answers `repaired: true`. The envelope that retired the task cannot be replayed to finish it.
+  - **A failed retirement** leaves a retired task that the workflow still lists; the read model (`wrd.read_records`) marks it `retirementUnfinished`. Until it is finished, any proposal on that workflow answers 409, and so does valuing, submitting or approving a plan that changes the task. The 409 names the fix: retire the task again. Any operator can send that call, bound to the retired version or to the version it retired. It writes only the workflow version that drops the task, records which retirement it finishes in `revision.repairs`, and answers `repaired: true`. The envelope that retired the task cannot be replayed to finish it.
   - **A failed add** leaves an `orphaned` task, which no plan can name. Add the task again, and retire the orphan to clear it.
 - **A party with write access to the pod can still delete records, or overwrite a genuine descriptor in place.** Descriptors that are unsigned, foreign, replayed to another URL, or holder copies are all ignored. Edits that change a record's bytes or its modal status are detected and answered 409. Other facet edits are not covered by the platform's proof.
 - **An ephemeral platform key makes earlier records untrusted after a restart.** Set `WRD_PLATFORM_KEY`. A bridge with a new key starts new chains, and the registry records `replacedUntrusted: true`.
@@ -352,9 +366,9 @@ A task may cite an external task term (`externalTaskTerm`, for example an O\*NET
 
 **Interface and demo**
 
-- **Affordances beyond the original list.** `wrd.log_agent_run` exists because a grant has to be earned from real reviewed runs. `wrd.revise_task` exists because a dispute needs a way to be answered. `wrd.envelope_template` exists because a Path-A agent must be able to discover what to sign. `wrd.demo_envelope` and `wrd.demo_advance_clock` are demo only. The registry affordance is `wrd.update_registry`.
-- **Every lifecycle path is exercised against the in-memory pod, not a real Solid server.** The production composition (`bridge/server.ts`) has been started, and its health, manifest and UI read. A real deployment needs a pod that accepts the bridge's writes without credentials (a credentialled fetch is not built), a stable `WRD_PLATFORM_KEY`, and admin addresses. The admin can sign with the terminal command above instead of a browser wallet.
-- **The bridge's answers carry more than the minimum.** `wrd.list_records` also returns `records`, `integrity` (per altered or forked graph, its heads and why), `orphaned` and `retirementUnfinished` on tasks, and each workflow's latest `revision`. Unexpected failures answer 500, not the shared bridge's default 400.
+- **Affordances beyond the original list.** `wrd.log_agent_run` exists because a grant has to be earned from real reviewed runs. `wrd.revise_task` exists because a dispute needs a way to be answered. `wrd.envelope_template` exists because a Path-A agent must be able to discover what to sign. `wrd.read_records` and `wrd.read_calibration` exist because a bridge that opens sealed records must not hand them to anyone who asks. `wrd.demo_envelope` and `wrd.demo_advance_clock` are demo only. The registry affordance is `wrd.update_registry`.
+- **Every lifecycle path is exercised against the in-memory pod, not a real Solid server.** The production composition (`bridge/server.ts`) has been started, and its health, manifest and UI read. A real deployment needs a pod that accepts the bridge's writes (with `WRD_POD_WRITE_SECRET` where the pod requires a credential), a stable `WRD_PLATFORM_KEY` and `WRD_RECORD_KEY`, and admin addresses. The admin can sign with the terminal command above instead of a browser wallet.
+- **The bridge's answers carry more than the minimum.** The read model (`wrd.read_records`, or `wrd.list_records` when reads are opened) also returns `records`, `integrity` (per altered or forked graph, its heads and why), `orphaned` and `retirementUnfinished` on tasks, and each workflow's latest `revision`. Unexpected failures answer 500, not the shared bridge's default 400.
 - **The document-capture quote preview runs in the browser**, by a port of the published rule. The platform's check when you sign is the one that counts.
 - **In the demo UI, a run logged from the page states `performedAt` as the newest record time on the pod.** That is the demo server's scripted clock, not the browser's. In wallet mode the run envelope is signed by the agent's own key and pasted in.
 - **The wallet signing path in the UI was not exercised against a real wallet extension in this build.** The demo-key path was driven in headless Chromium: every view, a signed registry change, a refusal shown in the page, the task link and a record download. The canonical-JSON port follows `@interego/core`'s algorithm; the bridge verifies whatever arrives.
@@ -365,8 +379,8 @@ A task may cite an external task term (`externalTaskTerm`, for example an O\*NET
 - No HRIS or LMS import.
 - No LRS projection.
 - No cross-organisation aggregates.
-- No encrypted copies.
-- No read scoping.
+- No encrypted copies, and no record-key rotation or second recipient.
+- No read scoping finer than the registry: every registered key reads every record.
 - No passkey or did:key signing.
 - No interviews. Capture is by hand or from a document's text; the UI loads `.txt` or `.md` files, and nothing extracts text from PDF, Word or spreadsheets.
 - No generated options. People propose allocations; the platform checks, values and records them.

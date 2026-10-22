@@ -32,14 +32,14 @@ const list = (items: JsonSchema, min: number, max: number, description?: string)
 const keyed = (values: JsonSchema, description: string): JsonSchema => ({ type: 'object', additionalProperties: values, description });
 
 const ENTITY_IRI = '^urn:wrd:[a-z-]+:[0-9a-f]{16}:[0-9a-f]{16}$';
-const iriOf = (what: string): JsonSchema => ({ type: 'string', pattern: ENTITY_IRI, description: `the ${what} IRI (urn:wrd:…), from wrd.list_records` });
+const iriOf = (what: string): JsonSchema => ({ type: 'string', pattern: ENTITY_IRI, description: `the ${what} IRI (urn:wrd:…), from wrd.read_records` });
 const ADDRESS: JsonSchema = { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$', description: 'a 0x address registered on the pod' };
 const HEX64: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 const HEAD = {
-  descriptorUrl: text('the head you read: its descriptorUrl, from wrd.list_records'),
-  graphDigest: { type: 'string', pattern: '^graph-nquads-sha256:[0-9a-f]{64}$', description: 'the head you read: its graphDigest, from wrd.list_records' },
+  descriptorUrl: text('the head you read: its descriptorUrl, from wrd.read_records'),
+  graphDigest: { type: 'string', pattern: '^graph-nquads-sha256:[0-9a-f]{64}$', description: 'the head you read: its graphDigest, from wrd.read_records' },
 } as const;
-const RECORD_ID = text('the head you read: its recordId, from wrd.list_records');
+const RECORD_ID = text('the head you read: its recordId, from wrd.read_records');
 const NOTE = text('free text', LIMITS.note);
 
 const COMMON: Record<string, JsonSchema> = {
@@ -144,7 +144,7 @@ const FIELDS: Readonly<Record<EnvelopeIntent, { readonly properties: Record<stri
   },
   'wrd:classify-task': {
     description: "A registered operator or approver, or someone named on the task. taskTextSha256 binds the description the answers are about (the task row's textSha256).",
-    properties: { taskIri: iriOf('task'), taskTextSha256: { ...HEX64, description: "the task's textSha256 from wrd.list_records" }, answers: ANSWERS, notes: NOTE },
+    properties: { taskIri: iriOf('task'), taskTextSha256: { ...HEX64, description: "the task's textSha256 from wrd.read_records" }, answers: ANSWERS, notes: NOTE },
     required: ['taskIri', 'taskTextSha256', 'answers'],
   },
   'wrd:propose-allocation': {
@@ -213,6 +213,11 @@ const FIELDS: Readonly<Record<EnvelopeIntent, { readonly properties: Record<stri
     required: ['grantIri', 'recordId', 'descriptorUrl', 'graphDigest', 'why'],
   },
   'wrd:holder-copy': { description: 'Anyone named in or signing a record. Without targetPodUrl the bundle is returned for download.', properties: { targetPodUrl: text('a pod you hold (not this one)') }, required: [] },
+  'wrd:read-records': {
+    description: 'A signed read: an admin or a key in the pod\'s registry. Send it to wrd.read_records or wrd.read_calibration; it changes nothing, so its nonce is not spent, and the same envelope reads again until issuedAt leaves the window.',
+    properties: {},
+    required: [],
+  },
 };
 
 export const ENVELOPE_INTENTS: readonly EnvelopeIntent[] = Object.keys(FIELDS) as EnvelopeIntent[];

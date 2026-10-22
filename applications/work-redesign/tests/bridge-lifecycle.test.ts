@@ -8,12 +8,15 @@
  * add / retire, classification and its disputes, allocation rules, valuation with expert
  * evidence, the decision lifecycle (submit → countersign → measure, and decline), probe
  * decisions, read-back of the platform's content-bound proofs and tamper detection, agent runs,
- * earned and revoked grants, holder copies, pod failure, and every envelope refusal.
+ * earned and revoked grants, holder copies, pod failure, and every envelope refusal. Reads are
+ * signed (the admin signs each read the tests make), as a production bridge requires; the
+ * operator pod credential, the served-pods allowlist, sealed records and scoped reads have their
+ * own cases at the end.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import {
   importWallet, signMessageRaw, canonicalJson, sha256Hex, canonicalGraphDigest, verifySignedAuthorship, makeWalletDelegationVerifier,
-  ContextDescriptor, validate, type Wallet, type IRI,
+  ContextDescriptor, validate, deriveEncryptionKeyPair, type FetchFn, type Wallet, type IRI,
 } from '@interego/core';
 import {
   publish, fetchAllManifestEntries, predictManifestUrl, parseAuthorshipProofFromDescriptorTurtle, digestedGraphRegion,
@@ -23,7 +26,9 @@ import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type WrdDeps } from '../bridge/handlers.js';
-import { readRecord, publishRecord, verifyHolderBundle, KeyedMutex, StaleHeadError, WRD_CONTAINER } from '../bridge/pod-helpers.js';
+import {
+  readRecord, publishRecord, verifyHolderBundle, operatorPodFetch, openPod, KeyedMutex, StaleHeadError, WRD_CONTAINER, SEALED_NO_KEY, SEALED_OTHER_KEY,
+} from '../bridge/pod-helpers.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
 import { envelopeSha256, entityIri, graphIriOf, buildDescriptor } from '../src/records.js';
 import { normaliseForQuote } from '../src/work.js';
@@ -149,6 +154,42 @@ const gatedWorkflowWrites = (fetchFn: PodFetch, gate: WorkflowWriteGate): PodFet
   return fetchFn(url, init);
 };
 
+/** Another bridge on the same pod and clock (another record key, or none), as the same operator otherwise. */
+async function sibling(w: World, extra: Partial<WrdDeps>): Promise<World> {
+  const handlers = createWrdHandlers({
+    fetchFn: w.pod.fetchFn, defaultPodUrl: POD, now: () => w.clock.now(), platform: { wallet: PLATFORM, keyKind: 'configured' }, adminAddresses: [ADMIN.address], ...extra,
+  });
+  const l = await listenLoopback(createVerticalBridge({ verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: 'http://127.0.0.1' }));
+  listeners.push(l);
+  return { pod: w.pod, clock: w.clock, base: l.base, nonce: w.nonce + 200_000 };
+}
+
+// ── The operator's credential, the record key ────────────────────────────────────────────
+
+const SECRET = 'operator-pod-write-secret-for-tests';
+const K1 = deriveEncryptionKeyPair(sha256Hex('wrd-lifecycle:record-key-1'), 'wrd-records');
+const K2 = deriveEncryptionKeyPair(sha256Hex('wrd-lifecycle:record-key-2'), 'wrd-records');
+interface Seen { readonly url: string; readonly method: string; readonly auth: string | null; readonly redirect?: RequestRedirect }
+/**
+ * The pod as the gate serves it: reads pass, and a write under the operator's pod path without
+ * the operator's credential is refused (401). Every request is recorded with its credential.
+ */
+const gatePod = (pod: MemoryPod, seen: Seen[]): typeof fetch => (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = String(input);
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const auth = new Headers(init?.headers).get('authorization');
+  seen.push({ url, method, auth, ...(init?.redirect ? { redirect: init.redirect } : {}) });
+  if (url.startsWith(POD) && method !== 'GET' && method !== 'HEAD' && auth !== `Bearer ${SECRET}`) return new Response('no', { status: 401, statusText: 'Unauthorized' });
+  return pod.fetchFn(url, init as Parameters<FetchFn>[1]);
+}) as typeof fetch;
+/** A record's sealed graph document, by following its descriptor's link. */
+const sealedGraphUrl = (w: World, descriptorUrl: string): string => must(parseDistributionFromDescriptorTurtle(must(w.pod.bodies.get(descriptorUrl), 'descriptor')), 'distribution').accessURL;
+/** Change one character of a sealed graph's ciphertext on the pod: what a party able to write the pod can do to it. */
+function corruptSealed(w: World, url: string): void {
+  const ciphertext = String(obj(obj(JSON.parse(must(w.pod.bodies.get(url), 'sealed graph')))['content'])['ciphertext']);
+  w.pod.tamper(url, ciphertext, `${ciphertext.slice(0, 8)}${ciphertext.charAt(8) === 'A' ? 'B' : 'A'}${ciphertext.slice(9)}`);
+}
+
 /** A second bridge process on the same pod and clock, with its own (empty) in-process nonce ledger: a restart. */
 async function restart(w: World): Promise<World> {
   const handlers = createWrdHandlers({
@@ -197,7 +238,15 @@ function refused(r: Res, status: number, error?: RegExp, reason?: RegExp): Obj {
   return r.body;
 }
 
-const list = async (w: World, query = ''): Promise<Obj> => ok(await http(w, 'GET', 'list_records', undefined, query), 'list_records');
+/** A signed read (wrd:read-records), by the admin unless someone else is named. A read spends no nonce. */
+async function readEnvelope(w: World, who: Wallet = ADMIN, opts: { issuedAt?: string; podUrl?: string } = {}): Promise<{ payload: Obj; signature: string }> {
+  return envelope(w, who, 'wrd:read-records', {}, opts);
+}
+/** The read model through the signed read; `query` is the GET form's query string, kept so call sites read the same. */
+const list = async (w: World, query = ''): Promise<Obj> =>
+  ok(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w), ...Object.fromEntries(new URLSearchParams(query)) }), 'read_records');
+const calibration = async (w: World, query = ''): Promise<Res> =>
+  http(w, 'POST', 'read_calibration', { envelope: await readEnvelope(w), ...Object.fromEntries(new URLSearchParams(query)) });
 const taskRow = async (w: World, taskIri: string): Promise<Obj> => must(arr((await list(w))['tasks']).find((t) => t['taskIri'] === taskIri), `task ${taskIri}`);
 /** The head binding a ratify or revise payload carries. */
 const bound = (h: { descriptorUrl: string; graphDigest: string }): Obj => ({ descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest });
@@ -389,7 +438,7 @@ describe('work-redesign bridge', () => {
     for (const a of wrdAffordances) expect(typeof production[a.toolName], a.toolName).toBe('function');
     expect(production['wrd.demo_envelope']).toBeUndefined();
     expect(wrdAffordances.map((a) => a.toolName)).not.toContain('wrd.demo_envelope');
-    expect(new Set(wrdAffordances.map((a) => a.toolName)).size).toBe(19);
+    expect(new Set(wrdAffordances.map((a) => a.toolName)).size).toBe(21);
 
     const w = await world();
     const manifestRes = await fetch(`${w.base}/affordances?format=jsonld`, { headers: { accept: 'application/ld+json' } });
@@ -464,8 +513,8 @@ describe('work-redesign bridge', () => {
     expect(first['status']).toBe('registered');
     expect(arr(first['members']).find((m) => m['address'] === addr(AGENT))).toMatchObject({ softwareAgent: true, principal: addr(ANA), model: 'scripted-fixture', personRef: null });
     refused(await act(w, ADMIN, 'update_registry', { entries: [{ address: ANA.address, roles: [] }] }), 400, /malformed/, /principal of agent/);
-    const calibration = ok(await http(w, 'GET', 'calibration'));
-    expect(obj(calibration['grantPolicy'])['minSamples']).toBe(25);
+    const cal = ok(await calibration(w));
+    expect(obj(cal['grantPolicy'])['minSamples']).toBe(25);
 
     const noAdmins = await world({ adminAddresses: [] });
     refused(await act(noAdmins, ADMIN, 'update_registry', { entries: REGISTRY_ENTRIES }), 403, /no admin addresses configured/);
@@ -903,8 +952,8 @@ describe('work-redesign bridge', () => {
     expect(chain.map((c) => c['status'])).toEqual(['submitted', 'countersigned', 'measured']);
     expect(chain.map((c) => c['descriptorUrl'])).toEqual([root.descriptorUrl, second.descriptorUrl, third.descriptorUrl]);
 
-    const calibration = ok(await http(w, 'GET', 'calibration', undefined, '?kind=predictions'));
-    const cell = must(arr(calibration['predictionCells']).find((c) => c['kind'] === 'prediction:weekly-cash-delta:agent-drafts-person-decides:controlled'));
+    const cal = ok(await calibration(w, '?kind=predictions'));
+    const cell = must(arr(cal['predictionCells']).find((c) => c['kind'] === 'prediction:weekly-cash-delta:agent-drafts-person-decides:controlled'));
     expect(cell).toMatchObject({ samples: 1, hitRate: 1, status: 'Hypothetical', rampAdjusted: 1, scriptedLabel: null });
     const t1 = await taskRow(w, ap.t1);
     expect(obj(t1['effective'])).toMatchObject({ level: 'agent-drafts-person-decides', source: 'measured-decision', decisionIri });
@@ -992,7 +1041,7 @@ describe('work-redesign bridge', () => {
     const measured = ok(await recordOutcome(w, ELI, decisionIri, { disposition: 'kept', probeResults: [result(1, 'amplify'), result(2, 'neither')] }));
     expect(measured).toMatchObject({ status: 'measured', next: 'Re-classify this task, then propose a plan.' });
     expect(arr(measured['probes']).map((p) => p['signal'])).toEqual(['amplify', 'neither']);
-    const signals = obj(ok(await http(w, 'GET', 'calibration', undefined, '?kind=probes'))['probeSignals']);
+    const signals = obj(ok(await calibration(w, '?kind=probes'))['probeSignals']);
     expect(signals).toMatchObject({ probes: 2, amplify: 1, neither: 1, conditionFired: 1 });
   }, 60_000);
 
@@ -1061,8 +1110,8 @@ describe('work-redesign bridge', () => {
     }, { issuedAt: hourAgo });
     refused(await http(w, 'POST', 'log_agent_run', { run_envelope: staleRun, review_envelope: await reviewEnvelope(w, ELI, staleRun, 'accepted') }), 401, /stale/);
 
-    const calibration = ok(await http(w, 'GET', 'calibration', undefined, '?kind=agents'));
-    const cell = must(arr(calibration['agentCells']).find((c) => c['taskKind'] === 'invoice-matching'));
+    const cal = ok(await calibration(w, '?kind=agents'));
+    const cell = must(arr(cal['agentCells']).find((c) => c['taskKind'] === 'invoice-matching'));
     expect(cell).toMatchObject({ samples: 2, model: 'scripted-fixture', currentModel: true, distinctConfirmers: 2, status: 'Hypothetical', agentAddress: addr(AGENT), principal: addr(ANA) });
     const runs = arr((await list(w, '?kind=runs'))['runs']);
     expect(runs).toEqual([{ agentAddress: addr(AGENT), taskKind: 'invoice-matching', model: 'scripted-fixture', reviewed: 2, actedUnderGrant: 0, reportedCost: { runs: 1, mean: 0.12, currency: 'USD', basis: 'agent-reported on person-reviewed runs' } }]);
@@ -1231,7 +1280,7 @@ describe('work-redesign bridge', () => {
     }
     const notEarned = refused(await act(w, BO, 'grant_autonomy', { agentAddress: AGENT.address, taskKind: 'gl-coding' }), 409, /not earned/, /^a person accepted 1 of 20 reviewed runs \(5%\); the policy needs at least 90%\.$/);
     expect(obj(notEarned['evaluation'])).toMatchObject({ acceptedShare: 0.05, readyClaims: 1, readyClaimPrecision: 1, distinctConfirmers: 5 });
-    const cell = must(arr(ok(await http(w, 'GET', 'calibration', undefined, '?kind=agents'))['agentCells']).find((c) => c['taskKind'] === 'gl-coding'));
+    const cell = must(arr(ok(await calibration(w, '?kind=agents'))['agentCells']).find((c) => c['taskKind'] === 'gl-coding'));
     expect(cell).toMatchObject({ samples: 20, hitRate: 1, acceptedShare: 0.05, readyClaims: 1 });
 
     // An earned grant on invoice matching, a decision putting T1 under it — then T1 is re-classified Turbulent by the person who does it.
@@ -1290,7 +1339,7 @@ describe('work-redesign bridge', () => {
     // Stopped after three weeks: recorded, said so, and kept out of calibration.
     const short = ok(await recordOutcome(w, FAY, dc, { disposition: 'stopped-early', dispositionNote: 'Stopped: the supplier portal changed', measured: { ...measured, windowEnd: plusWeeks(csAt, 3) } }));
     expect(obj(short['valued'])).toMatchObject({ windowShorterThanPlanned: true, countsTowardCalibration: false });
-    const cell = must(arr(ok(await http(w, 'GET', 'calibration', undefined, '?kind=predictions'))['predictionCells'])[0]);
+    const cell = must(arr(ok(await calibration(w, '?kind=predictions'))['predictionCells'])[0]);
     expect(cell).toMatchObject({ samples: 0, excludedShortWindow: 1, dispositions: { 'stopped-early': 1 } });
     // A change stopped early puts nothing in force: T1 is again as captured, and Da can now be approved.
     expect(obj((await taskRow(w, ap.t1))['effective'])['source']).toBe('captured');
@@ -1400,7 +1449,8 @@ describe('work-redesign bridge', () => {
   }, 60_000);
 
   it('publishes what each write signs: the manifest summarises every payload, and wrd.envelope_template serves the schema and a template filled from the pod', async () => {
-    const w = await world();
+    // Reads opened by the operator: the template's context is filled from the pod (closed, it is withheld; see the scoped-reads case).
+    const w = await world({ publicReads: true });
     const ap = await standardAp(w);
     const manifestText = await (await fetch(`${w.base}/affordances?format=jsonld`, { headers: { accept: 'application/ld+json' } })).text();
     expect(manifestText).toContain('payload fields beyond intent, podUrl, issuedAt and nonce: {workflow: {title, unitLabel, description?}, tasks: [{name, description, currentLevel:');
@@ -1420,6 +1470,180 @@ describe('work-redesign bridge', () => {
     expect(ok(await http(w, 'POST', 'ratify_task', { envelope: { payload, signature: await signMessageRaw(CY, canonicalJson(payload)) } }))['status']).toBe('acknowledged');
     refused(await http(w, 'GET', 'envelope_template', undefined, '?intent=wrd:anything'), 400, /Unknown intent/);
     refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revoke-grant&grant_iri=${encodeURIComponent('urn:wrd:grant:0000000000000000:0000000000000000')}`), 404);
+  }, 60_000);
+
+  it('operatorPodFetch adds the credential to reads and writes under the operator pod only, and never follows a redirect with it', async () => {
+    const seen: Seen[] = [];
+    const spy = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push({ url: String(input), method: init?.method ?? 'GET', auth: new Headers(init?.headers).get('authorization'), ...(init?.redirect ? { redirect: init.redirect } : {}) });
+      return new Response(null, { status: 204 });
+    }) as typeof fetch;
+    const f = operatorPodFetch(POD, SECRET, spy);
+    for (const method of ['PUT', 'POST', 'PATCH', 'DELETE']) await f(`${POD}wrd/records/x.ttl`, { method });
+    await f(`${POD}wrd/records/x.ttl`, { method: 'GET' });
+    await f('https://192.0.2.10/elsewhere/x.ttl', { method: 'PUT' });          // the same host, another path
+    await f('https://192.0.2.10:8443/ap-team/x.ttl', { method: 'PUT' });       // another origin: another port
+    await f('https://192.0.2.10.evil.test/ap-team/x.ttl', { method: 'PUT' });  // a host that only starts like the pod's
+    await f(`${DEMO_HOLDER_POD}wrd/held/x.ttl`, { method: 'PUT' });              // a holder's pod
+    await operatorPodFetch(POD, undefined, spy)(`${POD}x.ttl`, { method: 'PUT' });
+    expect(seen.slice(0, 5).every((x) => x.auth === `Bearer ${SECRET}` && x.redirect === 'manual')).toBe(true);
+    expect(seen.slice(5).map((x) => x.auth)).toEqual([null, null, null, null, null]);
+
+    // Through the SSRF guard, as the bridge reads: a GET redirected off the pod is re-issued by the guard, and that hop carries no credential.
+    const hops: Seen[] = [];
+    const redirecting = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      hops.push({ url: String(input), method: init?.method ?? 'GET', auth: new Headers(init?.headers).get('authorization'), ...(init?.redirect ? { redirect: init.redirect } : {}) });
+      return String(input).startsWith(POD)
+        ? new Response(null, { status: 302, headers: { location: 'https://198.51.100.7/elsewhere/x.ttl' } })
+        : new Response('ok', { status: 200 });
+    }) as typeof fetch;
+    const guarded = await openPod(POD, operatorPodFetch(POD, SECRET, redirecting) as unknown as FetchFn);
+    expect((await guarded(`${POD}wrd/records/x.ttl`, { method: 'GET' })).status).toBe(200);
+    expect(hops.map((x) => [x.url, x.auth, x.redirect])).toEqual([
+      [`${POD}wrd/records/x.ttl`, `Bearer ${SECRET}`, 'manual'], ['https://198.51.100.7/elsewhere/x.ttl', null, 'manual'],
+    ]);
+    // A redirected write is not followed at all.
+    await expect(guarded(`${POD}wrd/records/y.ttl`, { method: 'PUT', body: 'x' })).rejects.toThrow(/refusing to follow a redirect/);
+  });
+
+  it('writes a pod that refuses anonymous writes with the operator credential, and sends holder copies without it, even into the operator pod', async () => {
+    const seen: Seen[] = [];
+    const w = await world((pod) => ({
+      fetchFn: operatorPodFetch(POD, SECRET, gatePod(pod, seen)) as unknown as FetchFn,
+      holderFetchFn: gatePod(pod, seen) as unknown as FetchFn,
+    }));
+    await register(w);
+    const ap = await captureAp(w);
+    ok(await ratify(w, CY, ap.t1));
+    const copied = ok(await act(w, CY, 'holder_copy', { targetPodUrl: DEMO_HOLDER_POD }));
+    expect(arr(copied['copied']).length).toBeGreaterThan(0);
+    const onPod = seen.filter((x) => x.url.startsWith(POD));
+    expect(onPod.filter((x) => x.method === 'PUT').length).toBeGreaterThan(10);
+    expect(onPod.every((x) => x.auth === `Bearer ${SECRET}` && x.redirect === 'manual')).toBe(true);
+    const toHolder = seen.filter((x) => x.url.startsWith(DEMO_HOLDER_POD));
+    expect(toHolder.filter((x) => x.method === 'PUT').length).toBeGreaterThan(0);
+    expect(seen.filter((x) => !x.url.startsWith(POD)).every((x) => x.auth === null)).toBe(true);
+    // A copy aimed inside the operator pod is still sent without the credential, so the pod refuses it.
+    refused(await act(w, CY, 'holder_copy', { targetPodUrl: `${POD}held-by-cy/` }), 502, /401/);
+    expect(seen.filter((x) => x.url.startsWith(`${POD}held-by-cy/`) && x.method === 'PUT').every((x) => x.auth === null)).toBe(true);
+    // Without the credential the bridge's own writes are refused, and nothing is answered as written.
+    const anonymous = await world((pod) => ({ fetchFn: gatePod(pod, []) as unknown as FetchFn }));
+    refused(await act(anonymous, ADMIN, 'update_registry', { entries: REGISTRY_ENTRIES, taskKinds: TASK_KINDS }), 502, /401/, /did not accept/);
+  }, 60_000);
+
+  it('reads and writes only the pods it serves: a call naming another pod is refused (403 pod-not-served)', async () => {
+    const w = await world();
+    await register(w);
+    const OTHER = 'https://192.0.2.99/other/';
+    const fields = { workflow: { title: 'Elsewhere', unitLabel: 'item' }, tasks: [{ name: 'Do it', description: 'Elsewhere.', currentLevel: 'person', personAddress: DEE.address, taskKind: 'gl-coding' }] };
+    refused(await http(w, 'POST', 'capture_workflow', { envelope: await envelope(w, ANA, 'wrd:capture-workflow', fields, { podUrl: OTHER }) }), 403, /only on the pods it serves/, /^pod-not-served: https:\/\/192\.0\.2\.99\/other\/ is not one of them$/);
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, ADMIN, { podUrl: OTHER }), pod_url: OTHER }), 403, /only on the pods it serves/, /pod-not-served/);
+    refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:read-records&pod_url=${encodeURIComponent(OTHER)}`), 403, /only on the pods it serves/, /pod-not-served/);
+    // Served pods are compared normalised: an upper-case host, the default port and no trailing slash name the same pod.
+    const loose = await world({ servedPods: ['HTTPS://192.0.2.10:443/ap-team'] });
+    expect(ok(await http(loose, 'POST', 'read_records', { envelope: await readEnvelope(loose) }))['podUrl']).toBe(POD);
+    // None served: every call is refused, naming the setting.
+    const none = await world({ servedPods: [] });
+    const r = refused(await http(none, 'POST', 'read_records', { envelope: await readEnvelope(none) }), 403, /serves no pod/, /pod-not-served/);
+    expect(r['iep:resolvedBy']).toEqual({ env: 'WRD_SERVED_PODS' });
+  });
+
+  it('seals every record graph to the record key: the pod stores only envelopes, records verify bound once opened, and a bridge with another key or none refuses to act on them', async () => {
+    const w = await world({ recordKey: K1 });
+    await register(w);
+    const ap = await captureAp(w);
+    ok(await ratify(w, CY, ap.t1));
+    // At rest: every graph document in wrd/records/ is sealed; descriptors stay public.
+    const graphs = [...w.pod.bodies.keys()].filter((u) => u.startsWith(`${POD}${WRD_CONTAINER}`) && !u.endsWith('.ttl'));
+    expect(graphs.length).toBeGreaterThan(5);
+    expect(graphs.filter((u) => !u.endsWith('-graph.envelope.jose.json'))).toEqual([]);
+    expect([...w.pod.bodies.keys()].filter((u) => u.endsWith('-graph.trig'))).toEqual([]);
+    for (const u of graphs) expect(must(w.pod.bodies.get(u))).not.toMatch(/payloadJson|Match each invoice|wrd:/);
+    const t1 = headOfRow(await taskRow(w, ap.t1));
+    const descriptor = must(w.pod.bodies.get(t1.descriptorUrl));
+    expect(descriptor).toMatch(/iep:encrypted true/);
+    expect(descriptor).toMatch(/iep:modalStatus iep:Asserted/);
+    expect(descriptor).not.toMatch(/Match each invoice/);
+
+    // Opened with the key, the record verifies against the platform's proof over the plaintext graph.
+    const trusted = new Set([addr(PLATFORM)]);
+    const entry = must((await manifest(w)).find((e) => e.descriptorUrl === t1.descriptorUrl)) as Parameters<typeof readRecord>[0];
+    const opened = await readRecord(entry, POD, w.pod.fetchFn, trusted, undefined, WRD_CONTAINER, K1);
+    expect(opened.authorship).toMatchObject({ signatureValid: true, eligible: true, trusted: true, contentBinding: 'bound', modalMatches: true });
+    expect([opened.graphDigest, opened.record?.recordKind, opened.why]).toEqual([t1.graphDigest, 'Task', null]);
+    // With another key, or none, it stays eligible (signed, where its proof says) but is never trusted or read as a record.
+    for (const [key, why] of [[K2, SEALED_OTHER_KEY], [undefined, SEALED_NO_KEY]] as const) {
+      const shut = await readRecord(entry, POD, w.pod.fetchFn, trusted, undefined, WRD_CONTAINER, key);
+      expect(shut).toMatchObject({ record: null, graphContent: '', why, authorship: { signatureValid: true, eligible: true, trusted: false, contentBinding: 'declared' } });
+    }
+    // Bridges on the same pod holding another record key, or none: the registry they would read is sealed, so they answer 409 rather than read or write past it.
+    for (const [extra, reason] of [[{ recordKey: K2 }, /sealed to a key this bridge does not hold/], [{}, /holds no record key/]] as const) {
+      const other = await sibling(w, extra);
+      refused(await http(other, 'POST', 'read_records', { envelope: await readEnvelope(other) }), 409, /altered after signing/, reason);
+      refused(await act(other, ADMIN, 'update_registry', { entries: [person(ZED, ['worker'], 'p-zed', 'Zed')] }), 409, /altered after signing/, reason);
+    }
+    // Under the key the lifecycle goes on, and a holder's download carries the opened graphs, which verify offline.
+    ok(await ratify(w, DEE, ap.t2));
+    const exported = ok(await act(w, CY, 'holder_copy', {}));
+    expect(await verifyHolderBundle(exported, [PLATFORM.address])).toMatchObject({ ok: true, why: null });
+
+    // A sealed graph changed on the pod no longer opens: its head is altered (409), and the version it superseded does not become current again.
+    corruptSealed(w, sealedGraphUrl(w, t1.descriptorUrl));
+    const after = await list(w);
+    expect(arr(after['altered'])).toContain(graphIriOf(ap.t1));
+    expect(arr(after['tasks']).map((t) => t['taskIri'])).not.toContain(ap.t1);
+    refused(await act(w, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1), verdict: 'ratify' }), 409, /altered after signing/, /sealed to a key this bridge does not hold, or the sealed bytes were changed/);
+  }, 60_000);
+
+  it('scopes reads: the GET read model answers 401 unless the operator opens it; a signed read by an admin or a registered key answers, reused, and anyone else is refused', async () => {
+    const w = await world();
+    for (const tool of ['list_records', 'calibration'] as const) {
+      const r = refused(await http(w, 'GET', tool), 401, /needs a signed read/, /WRD_PUBLIC_READS=1/);
+      expect(obj(r['iep:resolvedBy'])).toMatchObject({ toolName: tool === 'list_records' ? 'wrd.read_records' : 'wrd.read_calibration', intent: 'wrd:read-records' });
+    }
+    // The admin reads before any registry exists; once registered, so does any registered key, and no one else.
+    expect(ok(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w) }))).toMatchObject({ status: 'listed', records: 0, bridge: { reads: 'signed', recordsSealed: false } });
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, CY) }), 403, /Only an admin or a key in this pod's registry/);
+    await register(w);
+    const cyRead = await readEnvelope(w, CY);
+    const first = ok(await http(w, 'POST', 'read_records', { envelope: cyRead, kind: 'registry' }));
+    expect(obj(first['registry'])['members']).toHaveLength(REGISTRY_ENTRIES.length);
+    expect(String(first['readExposure'])).toMatch(/signed read/);
+    // A read spends no nonce: the same envelope reads again, records or calibration, until it is stale.
+    ok(await http(w, 'POST', 'read_records', { envelope: cyRead }));
+    ok(await http(w, 'POST', 'read_calibration', { envelope: cyRead, kind: 'agents' }));
+    ok(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, AGENT) }));
+    for (const tool of ['read_records', 'read_calibration']) refused(await http(w, 'POST', tool, { envelope: await readEnvelope(w, ZED) }), 403, /Only an admin or a key in this pod's registry/, /not in the registry at all/);
+    const hourAgo = new Date(w.clock.now().getTime() - 3_600_000).toISOString();
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, CY, { issuedAt: hourAgo }) }), 401, /stale/);
+    refused(await http(w, 'POST', 'read_records', {}), 401, /signed envelope is required/);
+    // A read is not a write, and a write is not a read.
+    refused(await http(w, 'POST', 'read_records', { envelope: await envelope(w, ADMIN, 'wrd:holder-copy', {}) }), 400, /malformed/, /intent must be wrd:read-records/);
+    refused(await http(w, 'POST', 'holder_copy', { envelope: cyRead }), 400, /malformed/, /intent must be wrd:holder-copy/);
+    refused(await http(w, 'POST', 'read_records', { envelope: { payload: { ...cyRead.payload, kind: 'tasks' }, signature: cyRead.signature } }), 403, /Only an admin/);
+    refused(await http(w, 'POST', 'read_records', { envelope: cyRead, kind: 'everything' }), 400, /Unknown kind/);
+
+    // While reads are closed, wrd.envelope_template gives the shape and the head binding, never what it read out of a graph.
+    const ap = await captureAp(w);
+    const revise = ok(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:revise-task&task_iri=${encodeURIComponent(ap.t1)}`));
+    const t1 = headOfRow(await taskRow(w, ap.t1));
+    expect(revise['template']).toMatchObject({ op: 'revise', taskIri: ap.t1, descriptorUrl: t1.descriptorUrl, graphDigest: t1.graphDigest, description: null });
+    expect(arr(revise['fill'])).toContain('description');
+    expect(revise['context']).toEqual({});
+    expect(String(revise['contextWithheld'])).toMatch(/signed read/);
+    expect(JSON.stringify(revise)).not.toMatch(/Three-way match|Match each invoice/);
+    const readT = ok(await http(w, 'GET', 'envelope_template', undefined, '?intent=wrd:read-records'));
+    expect(readT).toMatchObject({ toolName: 'wrd.read_records', template: { intent: 'wrd:read-records', podUrl: POD } });
+    // The template, signed as it is, is a read.
+    const p = obj(readT['template']);
+    ok(await http(w, 'POST', 'read_calibration', { envelope: { payload: p, signature: await signMessageRaw(DEE, canonicalJson(p)) } }));
+
+    // Opened by the operator, the GET read model answers anyone, and says so.
+    const open = await world({ publicReads: true });
+    const listed = ok(await http(open, 'GET', 'list_records'));
+    expect(listed).toMatchObject({ status: 'listed', bridge: { reads: 'public' } });
+    expect(String(listed['readExposure'])).toMatch(/Anyone who can reach this bridge/);
+    ok(await http(open, 'GET', 'calibration'));
   }, 60_000);
 
   it('answers 502, not 200, when the pod refuses a write with 403', async () => {

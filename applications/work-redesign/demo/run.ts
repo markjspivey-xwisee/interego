@@ -10,12 +10,13 @@
  * What is real: the bridge (createVerticalBridge + createWrdHandlers), every signature and its
  * verification, the published policy read from wrd.ttl, the classification rules, the Monte
  * Carlo valuation, outcome grading, calibration and grants from the judgment kit, the platform's
- * content-bound proofs and their read-back, holder copies to a second pod, and the web UI.
+ * content-bound proofs and their read-back, record graphs sealed to a record key on the pod and
+ * opened on read, signed reads, holder copies to a second pod, and the web UI.
  *
  * What is doubled: the NETWORK (an in-memory Solid-style pod that honours the preconditions
  * publish() relies on), TIME (a clock that moves only when told to, so a nine-week measurement
  * window can pass), the PEOPLE (persona keys derived from published seeds and held by this
- * process), and what those people report: a scripted draft stands in for the client's own agent
+ * process; so is the record key), and what those people report: a scripted draft stands in for the client's own agent
  * (the platform verifies it, it does not produce it); the agents' runs are scripted (their
  * outputs are the digests of fixed strings and their self-assessments are chosen by the walk);
  * and the one measured outcome is computed FROM the prediction (its P50 times the ramp factor),
@@ -31,13 +32,16 @@
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { importWallet, signMessageRaw, recoverMessageSigner, canonicalJson, sha256Hex, type FetchFn, type ManifestEntry, type Wallet } from '@interego/core';
-import { fetchAllManifestEntries, predictManifestUrl } from '@interego/solid';
+import {
+  importWallet, signMessageRaw, recoverMessageSigner, canonicalJson, sha256Hex, deriveEncryptionKeyPair,
+  type EncryptionKeyPair, type FetchFn, type ManifestEntry, type Wallet,
+} from '@interego/core';
+import { fetchAllManifestEntries, predictManifestUrl, parseDistributionFromDescriptorTurtle } from '@interego/solid';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type DemoPersona } from '../bridge/handlers.js';
-import { readRecord, HOLDER_CONTAINER } from '../bridge/pod-helpers.js';
+import { readRecord, openSealedGraph, HOLDER_CONTAINER, WRD_CONTAINER } from '../bridge/pod-helpers.js';
 import { attachUi, hostAllowlistGuard, servedHostNames } from '../bridge/ui.js';
 import { envelopeSha256, entityIri, graphIriOf } from '../src/records.js';
 import { normaliseForQuote } from '../src/work.js';
@@ -48,6 +52,8 @@ import { WRD_NS } from '../src/ontology.js';
 export const DEMO_POD = 'https://192.0.2.10/ap-team/';
 /** A worker's own pod, the target of holder copies (TEST-NET-2). */
 export const DEMO_HOLDER_POD = 'https://198.51.100.7/cy/';
+/** The demo's record key, derived from a published seed like the personas' keys: every graph the demo writes is sealed to it. */
+export const DEMO_RECORD_KEY: EncryptionKeyPair = deriveEncryptionKeyPair(sha256Hex('wrd-demo:record-key'), 'wrd-records');
 
 export interface MemoryPod {
   readonly fetchFn: FetchFn;
@@ -141,7 +147,7 @@ export interface DemoStep { readonly step: string; readonly tool: string; readon
 export interface DemoReport {
   readonly ok: boolean;
   readonly steps: readonly DemoStep[];
-  /** Refusal ids (R-A … R-AT) that answered as the walk expected, each with the status the bridge actually returned, as "R-A 403". */
+  /** Refusal ids (R-A … R-AV) that answered as the walk expected, each with the status the bridge actually returned, as "R-A 403". */
   readonly refusalsObserved: readonly string[];
   readonly records: number;
   readonly base: string | null;
@@ -155,7 +161,7 @@ export interface DemoReport {
 
 /** Every refusal the walk asserts, in the order it meets them. */
 export const DEMO_REFUSALS: readonly string[] = [
-  'R-A', 'R-B', 'R-C', 'R-D', 'R-E', 'R-F', 'R-AN', 'R-G', 'R-H', 'R-I', 'R-J', 'R-K', 'R-L', 'R-M', 'R-N', 'R-O', 'R-P', 'R-Q', 'R-R', 'R-S', 'R-T',
+  'R-AU', 'R-AV', 'R-A', 'R-B', 'R-C', 'R-D', 'R-E', 'R-F', 'R-AN', 'R-G', 'R-H', 'R-I', 'R-J', 'R-K', 'R-L', 'R-M', 'R-N', 'R-O', 'R-P', 'R-Q', 'R-R', 'R-S', 'R-T',
   'R-AO', 'R-U', 'R-V', 'R-AP', 'R-W', 'R-X', 'R-Y', 'R-Z', 'R-AQ', 'R-AA', 'R-AB', 'R-AC', 'R-AD', 'R-AR', 'R-AS', 'R-AT', 'R-AE', 'R-AF', 'R-AG', 'R-AH',
   'R-AI', 'R-AJ', 'R-AK', 'R-AL', 'R-AM',
 ];
@@ -327,7 +333,7 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     verticalName: 'work-redesign', affordances: [...wrdAffordances, ...wrdDemoAffordances], deploymentUrl: base, defaultPodUrl: DEMO_POD,
     handlers: createWrdHandlers({
       fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), platform: { wallet: P.platform.wallet, keyKind: 'demo' },
-      adminAddresses: [P.admin.wallet.address], demoPersonas, demoClockAdvance: (ms) => clock.advance(ms),
+      adminAddresses: [P.admin.wallet.address], demoPersonas, demoClockAdvance: (ms) => clock.advance(ms), recordKey: DEMO_RECORD_KEY,
     }),
     hypermediaLinks: [{ label: 'Web UI', href: `${base}/ui`, rel: 'alternate', type: 'text/html' }],
     middleware: (a) => {
@@ -403,7 +409,21 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
   };
   const expect = (step: string, tool: string, cond: boolean, note: string): void => record(step, tool, 200, cond ? 200 : 0, cond, note);
 
-  const list = async (query: Obj = {}): Promise<Obj> => (await call('wrd.list_records', query)).body;
+  // Reads are signed: the admin signs a wrd:read-records envelope for each read (the clock is scripted, so one is not reused).
+  let reads = 0;
+  const readEnvelope = async (who: Persona = P.admin): Promise<{ payload: Obj; signature: string }> => {
+    reads += 1;
+    const payload: Obj = { intent: 'wrd:read-records', podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: `demo-read-${String(reads).padStart(6, '0')}` };
+    return { payload, signature: await signMessageRaw(who.wallet, canonicalJson(payload)) };
+  };
+  const list = async (query: Obj = {}): Promise<Obj> => (await call('wrd.read_records', { envelope: await readEnvelope(), ...query })).body;
+  /** A record's graph as the pod holds it, following its descriptor's link and opening it with the record key when sealed. */
+  const podGraph = async (descriptorUrl: string): Promise<{ readonly sealed: boolean; readonly text: string }> => {
+    const dist = parseDistributionFromDescriptorTurtle(await (await pod.fetchFn(descriptorUrl)).text());
+    if (!dist) return { sealed: false, text: '' };
+    const body = await (await pod.fetchFn(dist.accessURL)).text();
+    return dist.encrypted ? { sealed: true, text: openSealedGraph(body, DEMO_RECORD_KEY) ?? '' } : { sealed: false, text: body };
+  };
   const taskRow = async (taskIri: string): Promise<Obj> => arr((await list({ kind: 'tasks' }))['tasks']).find((t) => t['taskIri'] === taskIri) ?? {};
   const headOf = (row: Obj): { descriptorUrl: string; graphDigest: string; recordId: string } => {
     const h = obj(row['head']);
@@ -457,8 +477,8 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const manifest = obj(JSON.parse(await (await fetch(`${base}/affordances?format=jsonld`, { headers: { accept: 'application/ld+json' } })).text()));
     for (const a of arr(manifest['affordances'])) tools.set(str(a['toolName']), { url: str(a['target']), method: str(a['method']) });
     const production = wrdAffordances.map((a) => a.toolName);
-    expect('1. the manifest lists the 19 production affordances and the two demo-only ones (signer, clock)', 'GET /affordances',
-      production.length === 19 && production.every((t) => tools.has(t)) && tools.has('wrd.demo_envelope') && tools.has('wrd.demo_advance_clock') && tools.size === 21
+    expect('1. the manifest lists the 21 production affordances and the two demo-only ones (signer, clock)', 'GET /affordances',
+      production.length === 21 && production.every((t) => tools.has(t)) && tools.has('wrd.demo_envelope') && tools.has('wrd.demo_advance_clock') && tools.size === 23
         && [...tools.values()].every((t) => t.url.startsWith(`${base}/wrd/`)),
       `${tools.size} declared; every target is on ${base}`);
     // Only this server's own names are answered: a page that rebinds its DNS name to 127.0.0.1 is refused before any route.
@@ -480,6 +500,13 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     okStep('1. wrd.demo_envelope signs for ana with a key the demo server holds', 'wrd.demo_envelope', signedForAna, () =>
       signedForAna.body['signer'] === addr(P.ana) && recoverMessageSigner(canonicalJson(obj(env1['payload'])), str(env1['signature'])).toLowerCase() === addr(P.ana)
         ? null : 'the recovered signer is not ana');
+    // Reads are scoped: unsigned, nothing; signed by a key neither admin nor registered, nothing.
+    refusal('R-AU', 'an unsigned read of the records', 'wrd.list_records', await call('wrd.list_records'), 401, /needs a signed read/);
+    refusal('R-AV', 'zed, neither an admin nor in the registry, signs a read', 'wrd.read_records',
+      await call('wrd.read_records', { envelope: await readEnvelope(P.zed) }), 403, /Only an admin or a key in this pod's registry/);
+    const adminRead = await call('wrd.read_records', { envelope: await readEnvelope() });
+    okStep('1. the admin signs a read: the empty pod, reads signed, records sealed', 'wrd.read_records', adminRead, () =>
+      obj(obj(adminRead.body)['bridge'])['reads'] === 'signed' && obj(obj(adminRead.body)['bridge'])['recordsSealed'] === true ? null : 'reads are not signed, or records are not sealed');
 
     // 2. The registry.
     const person = (p: Persona, roles: string[], personRef: string): Obj => ({ address: p.wallet.address, roles, label: p.label, softwareAgent: false, personRef });
@@ -606,7 +633,7 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const p1Iri = str(p1.body['planIri']);
     okStep('14. ana proposes P1 (valued)', 'wrd.propose_allocation', p1, () => (p1.body['planKind'] === 'valued' ? null : `planKind ${str(p1.body['planKind'])}`));
     const p1Row = await planRow(p1Iri);
-    expect('14. P1 shows cy as "named by the operator, not acknowledged"', 'wrd.list_records',
+    expect('14. P1 shows cy as "named by the operator, not acknowledged"', 'wrd.read_records',
       arr(p1Row['assignments']).some((a) => a['personAddress'] === addr(P.cy) && a['label'] === 'named by the operator, not acknowledged'), 'until she signs');
     const ack = await acknowledge(P.cy, p1Iri, t1, 'acknowledge');
     okStep('14. cy acknowledges deciding on the agent\'s T1 drafts', 'wrd.ratify_task', ack, () => (ack.body['status'] === 'acknowledged' ? null : 'not acknowledged'));
@@ -677,8 +704,9 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     okStep('18. bo countersigns D1: Asserted, "approved; prediction unmeasured"', 'wrd.countersign_decision', approved, () =>
       approved.body['statusLabel'] === 'approved; prediction unmeasured' ? null : str(approved.body['statusLabel']));
     const d1Row = await decisionRow(d1Iri);
-    const d1Graph = await (await pod.fetchFn(headOf(d1Row).descriptorUrl.replace(/\.ttl$/, '-graph.trig'))).text();
-    expect('18. the countersigned graph states its prediction is unmeasured', 'pod read', obj(d1Row['head'])['modalStatus'] === 'Asserted' && d1Graph.includes('wrd:predictionStatus "unmeasured"'), 'wrd:Prediction node in the graph');
+    const d1Graph = await podGraph(headOf(d1Row).descriptorUrl);
+    expect('18. the countersigned graph (sealed on the pod, opened with the record key) states its prediction is unmeasured', 'pod read',
+      obj(d1Row['head'])['modalStatus'] === 'Asserted' && d1Graph.sealed && d1Graph.text.includes('wrd:predictionStatus "unmeasured"'), 'wrd:Prediction node in the graph');
     refusal('R-U', 'replay bo\'s exact countersign envelope', 'wrd.countersign_decision', await call('wrd.countersign_decision', { envelope: boEnv }), 409, /already used/);
 
     // 19. The world answers, after the window has actually ended.
@@ -699,7 +727,7 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
       graded['verdict'] === 'in-band' && graded['rampAdjusted'] === true && Number(graded['rampFactor']) < 1 ? null : JSON.stringify(graded),
     () => `${str(graded['verdict'])} against the ramp-adjusted band P10 ${Number(obj(graded['adjustedBand'])['p10']).toFixed(2)} … P90 ${Number(obj(graded['adjustedBand'])['p90']).toFixed(2)}`);
     const chain = arr((await decisionRow(d1Iri))['chain']);
-    expect('19. D1 is one graph: submitted → countersigned → measured, each superseding the last', 'wrd.list_records',
+    expect('19. D1 is one graph: submitted → countersigned → measured, each superseding the last', 'wrd.read_records',
       JSON.stringify(chain.map((c) => c['status'])) === JSON.stringify(['submitted', 'countersigned', 'measured']), chain.map((c) => `${str(c['status'])}/${str(c['modalStatus'])}`).join(' → '));
 
     // 20. A declined decision, and an objection that must be named.
@@ -724,7 +752,7 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const declined = await countersign(P.bo, d2Iri, 'decline', { note: 'Not while the audit load is unresolved' });
     okStep('20. bo declines D2', 'wrd.countersign_decision', declined, () => (declined.body['status'] === 'declined' ? null : 'not declined'));
     const d2Row = await decisionRow(d2Iri);
-    expect('20. D2\'s head is Counterfactual and its prediction will not be measured', 'wrd.list_records',
+    expect('20. D2\'s head is Counterfactual and its prediction will not be measured', 'wrd.read_records',
       obj(d2Row['head'])['modalStatus'] === 'Counterfactual' && obj(d2Row['prediction'])['status'] === 'not-to-be-measured', str(d2Row['statusLabel']));
     refusal('R-Y', 'eli records an outcome on the declined D2', 'wrd.record_outcome', await recordOutcome(P.eli, d2Iri, { disposition: 'kept', measured: {} }), 409, /only for a countersigned decision/);
 
@@ -845,10 +873,10 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     okStep('26. bo revokes the grant', 'wrd.revoke_grant', revoked, () => (revoked.body['status'] === 'revoked' ? null : 'not revoked'));
     const revokedRow = arr((await list({ kind: 'grants' }))['grants']).find((g) => g['grantIri'] === grantIri) ?? {};
     const rh = obj(revokedRow['head']);
-    expect('26. the grant\'s head is Retracted, valid from the grant to the revocation', 'wrd.list_records',
+    expect('26. the grant\'s head is Retracted, valid from the grant to the revocation', 'wrd.read_records',
       rh['modalStatus'] === 'Retracted' && rh['validFrom'] === revokedRow['grantedAt'] && rh['validUntil'] === revoked.body['revokedAt'], `${str(rh['validFrom'])} → ${str(rh['validUntil'])}`);
     const t1Suspended = obj((await taskRow(t1))['effective']);
-    expect('26. T1, which D3 put under the grant, now shows no authorised performer', 'wrd.list_records',
+    expect('26. T1, which D3 put under the grant, now shows no authorised performer', 'wrd.read_records',
       t1Suspended['level'] === 'agent-acts-within-grant' && t1Suspended['suspended'] === true && /revoked at/.test(str(t1Suspended['suspendedWhy'])), str(t1Suspended['suspendedWhy']));
     refusal('R-AE', 'the agent logs a run under the revoked grant', 'wrd.log_agent_run', await call('wrd.log_agent_run', { run_envelope: await runEnvelope('g-002', t1, 'accepted', { underGrant: grantIri }) }), 409, /grant is not active: revoked at/);
     refusal('R-AF', 'propose T1 within the revoked grant', 'wrd.propose_allocation', await propose('P3 again', [{ taskIri: t1, proposedLevel: 'agent-acts-within-grant', agentAddress: P.agent.wallet.address }]), 409, /No active grant/);
@@ -905,29 +933,33 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     okStep('29. cy asks again: every version is already there', 'wrd.holder_copy', again, () =>
       arr(again.body['copied']).length === copiedCount && arr(again.body['copied']).every((c) => c['skipped'] === true) ? null : 'not idempotent');
 
-    // 30. Tamper with a signed record on the pod.
+    // 30. Tamper with a signed record on the pod. Its graph is sealed, so what someone with write
+    // access can change is the ciphertext: it no longer opens, and the head is altered, not skipped.
     const t1Class = obj((await taskRow(t1))['classification']);
-    const graphUrl = headOf(t1Class).descriptorUrl.replace(/\.ttl$/, '-graph.trig');
-    pod.tamper(graphUrl, '\\"regime\\":\\"Evident\\"', '\\"regime\\":\\"Knowable\\"');
+    const t1Dist = parseDistributionFromDescriptorTurtle(await (await pod.fetchFn(headOf(t1Class).descriptorUrl)).text());
+    const sealedUrl = t1Dist?.accessURL ?? '';
+    const ciphertext = str(obj(obj(JSON.parse(pod.bodies.get(sealedUrl) ?? '{}'))['content'])['ciphertext']);
+    const flipped = `${ciphertext.slice(0, 8)}${ciphertext.charAt(8) === 'A' ? 'B' : 'A'}${ciphertext.slice(9)}`;
+    pod.tamper(sealedUrl, ciphertext, flipped);
     const afterTamper = await list();
     const t1After = arr(afterTamper['tasks']).find((t) => t['taskIri'] === t1) ?? {};
-    expect('30. someone with write access edits T1\'s classification on the pod: listed as altered, not trusted', 'wrd.list_records',
-      strings(afterTamper['altered']).includes(graphIriOf(classificationIri(t1)))
-        && obj(t1After['classification'])['trusted'] === false, 'altered after signing');
+    expect('30. someone with write access edits T1\'s sealed classification on the pod: listed as altered, not trusted', 'wrd.read_records',
+      t1Dist?.encrypted === true && strings(afterTamper['altered']).includes(graphIriOf(classificationIri(t1)))
+        && obj(t1After['classification'])['trusted'] === false, 'the sealed graph no longer opens');
     refusal('R-AM', 'propose on the workflow whose T1 classification was altered', 'wrd.propose_allocation',
       await propose('after tampering', [{ taskIri: t1, proposedLevel: 'person-with-agent-assist', personAddress: P.cy.wallet.address }]), 409, /altered after signing/);
 
     // 31. Calibration, every cell labelled scripted.
-    const cal = (await call('wrd.calibration')).body;
+    const cal = (await call('wrd.read_calibration', { envelope: await readEnvelope() })).body;
     const cells = arr(cal['predictionCells']);
     const agentCells = arr(cal['agentCells']);
     const signals = obj(cal['probeSignals']);
     const pc = cells.find((c) => c['kind'] === 'prediction:weekly-cash-delta:agent-drafts-person-decides:controlled') ?? {};
     const ac = agentCells.find((c) => c['kind'] === 'agent-run:invoice-matching') ?? {};
     const cc = agentCells.find((c) => c['kind'] === 'agent-run:gl-coding') ?? {};
-    expect('31. the coding agent\'s cell: its self-assessment agreed with every review, and a person accepted 5% of its work', 'wrd.calibration',
+    expect('31. the coding agent\'s cell: its self-assessment agreed with every review, and a person accepted 5% of its work', 'wrd.read_calibration',
       cc['samples'] === 20 && cc['hitRate'] === 1 && cc['acceptedShare'] === 0.05 && obj(cc['grant'])['active'] === false, `agreement ${String(cc['hitRate'])}, accepted ${String(cc['acceptedShare'])}`);
-    expect('31. calibration: one prediction (in band, ramp-adjusted), 25 reviewed runs at 0.96, probes kept apart', 'wrd.calibration',
+    expect('31. calibration: one prediction (in band, ramp-adjusted), 25 reviewed runs at 0.96, probes kept apart', 'wrd.read_calibration',
       pc['samples'] === 1 && pc['status'] === 'Hypothetical' && pc['rampAdjusted'] === 1 && ac['samples'] === 25 && ac['status'] === 'Asserted' && ac['hitRate'] === 0.96
         && ac['model'] === 'scripted-fixture' && signals['probes'] === 2 && signals['amplify'] === 1 && signals['neither'] === 1,
       `prediction ${String(pc['samples'])} ${String(pc['status'])}; agent ${String(ac['samples'])} at ${String(ac['hitRate'])}; probes ${String(signals['probes'])}`);
@@ -937,17 +969,23 @@ export async function runDemo(opts: { readonly quiet?: boolean; readonly serve?:
     const all = await list();
     records = Number(all['records']);
     const rows = ['workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants'].flatMap((k) => arr(all[k]));
-    const sample = [...pod.bodies.entries()].find(([u]) => u.startsWith(`${DEMO_POD}wrd/records/registry-`) && u.endsWith('-graph.trig'))?.[1] ?? '';
+    const registryDescriptor = [...pod.bodies.keys()].find((u) => u.startsWith(`${DEMO_POD}${WRD_CONTAINER}registry-`) && u.endsWith('.ttl')) ?? '';
+    const sample = (await podGraph(registryDescriptor)).text;
+    // At rest, the pod holds every record graph sealed: no plaintext graph in wrd/records/, and no wrd triple in what it stores there.
+    const stored = [...pod.bodies.entries()].filter(([u]) => u.startsWith(`${DEMO_POD}${WRD_CONTAINER}`) && !u.endsWith('.ttl'));
+    expect(`32. the pod holds all ${stored.length} graph documents of every record version sealed (*-graph.envelope.jose.json), none in plaintext`, 'pod read',
+      stored.length > 0 && stored.every(([u, b]) => u.endsWith('-graph.envelope.jose.json') && !b.includes('wrd:') && !b.includes('payloadJson')),
+      `${stored.filter(([u]) => u.endsWith('-graph.envelope.jose.json')).length} sealed of ${stored.length}`);
     marking.records = records;
     marking.demoRecords = Number(all['demoRecords']);
     marking.unlabelledRows = rows.filter((r) => r['demo'] !== true).length;
     marking.unlabelledCells = unlabelledCells;
     marking.sampledGraphHasDemoTriple = sample.includes('wrd:demoRecord "true"^^xsd:boolean');
-    expect(`32. ${records} records, all scripted; every row and cell is labelled; a fetched graph carries wrd:demoRecord true`, 'wrd.list_records',
+    expect(`32. ${records} records, all scripted; every row and cell is labelled; a fetched graph carries wrd:demoRecord true`, 'wrd.read_records',
       records > 0 && marking.demoRecords === records && marking.unlabelledRows === 0 && marking.unlabelledCells === 0 && marking.sampledGraphHasDemoTriple,
       ['workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants'].map((k) => `${arr(all[k]).length} ${k}`).join(', '));
     const missingRefusals = DEMO_REFUSALS.filter((id) => !refusalsObserved.some((r) => r.startsWith(`${id} `)));
-    expect('32. every refusal R-A … R-AT was observed with its status', '—', missingRefusals.length === 0, missingRefusals.length === 0 ? `${refusalsObserved.length} refusals` : `missing ${missingRefusals.join(', ')}`);
+    expect('32. every refusal R-A … R-AV was observed with its status', '—', missingRefusals.length === 0, missingRefusals.length === 0 ? `${refusalsObserved.length} refusals` : `missing ${missingRefusals.join(', ')}`);
   } catch (e) {
     record('the walk stopped', '—', 0, 0, false, e instanceof Error ? e.message : String(e));
   }

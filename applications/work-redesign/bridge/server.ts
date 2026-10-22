@@ -5,26 +5,42 @@
  * imports the shared ontology server; it holds no handler, so nothing needs to import it.
  *
  *   PORT                            default 6100
- *   HOST                            default 127.0.0.1 — this bridge holds a signing key and its
- *                                   reads are unauthenticated in v1, so it never binds every
- *                                   interface unless told to. Bound to loopback, it answers only
- *                                   the Host names 127.0.0.1, localhost and [::1] on PORT and the
- *                                   host of BRIDGE_DEPLOYMENT_URL, and refuses any other (421):
- *                                   the DNS-rebinding guard
+ *   HOST                            default 127.0.0.1 — this bridge holds a signing key, so it
+ *                                   never binds every interface unless told to. Bound to
+ *                                   loopback, it answers only the Host names 127.0.0.1, localhost
+ *                                   and [::1] on PORT and the host of BRIDGE_DEPLOYMENT_URL, and
+ *                                   refuses any other (421): the DNS-rebinding guard
  *   BRIDGE_DEPLOYMENT_URL           the public base URL (default http://127.0.0.1:<PORT>)
  *   WRD_DEFAULT_POD_URL             the pod to use when a call names none
+ *   WRD_SERVED_PODS                 comma list of the pods records are read from and written to;
+ *                                   default the default pod. A call naming any other pod is
+ *                                   refused (403 pod-not-served); with neither set, every call is
+ *   WRD_POD_WRITE_SECRET            the operator pod's credential (bearer), sent on reads and
+ *                                   writes under WRD_DEFAULT_POD_URL's path only, never on a
+ *                                   redirect and never to a holder's pod; never printed
+ *   WRD_RECORD_KEY                  64 hex: the record key. Every new record's graph is sealed
+ *                                   to the X25519 key derived from it; descriptors and the
+ *                                   manifest stay public. Absent → plaintext records, and the
+ *                                   startup says they are world-readable on a pod that serves
+ *                                   anonymous reads. Keep it: a lost key leaves every sealed
+ *                                   record unreadable (409), with no way back
+ *   WRD_PUBLIC_READS                1 → wrd.list_records and wrd.calibration answer unsigned
+ *                                   GETs from anyone who can reach the bridge; otherwise they
+ *                                   answer 401 and reads need a signed read (wrd.read_records,
+ *                                   wrd.read_calibration) from an admin or a registered key
  *   WRD_PLATFORM_KEY                hex secp256k1 key the bridge signs records with; absent → an
  *                                   EPHEMERAL key, and records written now are not trusted
  *                                   after a restart
  *   WRD_ADMIN_ADDRESSES             comma list of addresses that may change the role registry
  *   WRD_TRUSTED_PLATFORM_ADDRESSES  comma list of earlier platform keys whose records stay trusted
  */
-import { createWallet, importWallet } from '@interego/core';
+import { createWallet, importWallet, deriveEncryptionKeyPair, type EncryptionKeyPair, type FetchFn } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { wrdAffordances } from '../affordances.js';
 import { WRD_NS, WRD_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { createWrdHandlers, type PlatformSigner } from './handlers.js';
+import { operatorPodFetch } from './pod-helpers.js';
 import { attachUi, hostAllowlistGuard, isLoopbackBind, servedHostNames } from './ui.js';
 
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((s) => s.trim()).filter((s) => s !== '');
@@ -39,7 +55,22 @@ const HOST = env('HOST') ?? '127.0.0.1';
 const base = (env('BRIDGE_DEPLOYMENT_URL') ?? `http://127.0.0.1:${PORT}`).replace(/\/$/, '');
 const loopback = isLoopbackBind(HOST);
 const defaultPodUrl = env('WRD_DEFAULT_POD_URL');
+const servedPods = list(env('WRD_SERVED_PODS') ?? defaultPodUrl);
+const writeSecret = env('WRD_POD_WRITE_SECRET');
+const recordKeyHex = env('WRD_RECORD_KEY');
+const publicReads = env('WRD_PUBLIC_READS') === '1';
 const key = env('WRD_PLATFORM_KEY');
+
+// A record key that is set but malformed stops the bridge: falling back to plaintext would
+// publish what the operator meant to seal.
+let recordKey: EncryptionKeyPair | undefined;
+if (recordKeyHex !== undefined) {
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(recordKeyHex)) {
+    process.stderr.write('work-redesign bridge did not start: WRD_RECORD_KEY must be 64 hex characters (32 bytes)\n');
+    process.exit(1);
+  }
+  recordKey = deriveEncryptionKeyPair(recordKeyHex, 'wrd-records');
+}
 
 let platform: PlatformSigner;
 if (key) {
@@ -49,11 +80,18 @@ if (key) {
   process.stdout.write(`work-redesign: no WRD_PLATFORM_KEY — using an EPHEMERAL platform key ${platform.wallet.address}; records written now will not be trusted after a restart\n`);
 }
 
+const baseFetch = globalThis.fetch.bind(globalThis);
 const app = createVerticalBridge({
   verticalName: 'work-redesign',
   affordances: wrdAffordances,
   handlers: createWrdHandlers({
     ...(defaultPodUrl ? { defaultPodUrl } : {}),
+    servedPods,
+    // The operator pod's credential goes only to that pod's path; holder copies go out without it.
+    fetchFn: operatorPodFetch(defaultPodUrl, writeSecret, baseFetch) as unknown as FetchFn,
+    holderFetchFn: baseFetch as unknown as FetchFn,
+    ...(recordKey ? { recordKey } : {}),
+    publicReads,
     platform,
     adminAddresses: list(env('WRD_ADMIN_ADDRESSES')),
     trustedPlatformAddresses: list(env('WRD_TRUSTED_PLATFORM_ADDRESSES')),
@@ -71,6 +109,13 @@ const app = createVerticalBridge({
     attachUi(a, { base });
   },
 });
+
+process.stdout.write(`work-redesign: records read and written on ${servedPods.length > 0 ? servedPods.join(', ') : 'NO pod: set WRD_DEFAULT_POD_URL or WRD_SERVED_PODS, or every call is refused'}\n`);
+process.stdout.write(`work-redesign: pod credential: ${writeSecret ? 'configured (sent under the default pod\'s path only)' : 'not configured'}\n`);
+process.stdout.write(recordKey
+  ? `work-redesign: records sealed to the record key (public key ${recordKey.publicKey}); descriptors and the manifest stay public\n`
+  : 'work-redesign: WARNING: no WRD_RECORD_KEY — records are written in PLAINTEXT, and on a pod that serves anonymous reads (the gate does) anyone can read every record\n');
+process.stdout.write(`work-redesign: reads: ${publicReads ? 'PUBLIC (WRD_PUBLIC_READS=1): anyone who can reach this bridge reads every record' : 'signed reads only (wrd.read_records, wrd.read_calibration); unsigned GETs answer 401'}\n`);
 
 // Express 5 hands a failed bind to this callback rather than throwing, so it is handled here:
 // ignored, the banner printed and the process exited 0, which a container platform reads as a

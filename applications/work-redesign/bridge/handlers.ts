@@ -13,11 +13,17 @@
  * the pod's role registry, whose every change an admin signed. Separation of duties compares
  * those person references, never keys, and never anything a caller typed.
  *
+ * Reads are scoped: wrd.read_records and wrd.read_calibration answer a signed read
+ * (wrd:read-records) from an admin or a key the registry holds; the GET read model
+ * (wrd.list_records, wrd.calibration) answers 401 unless the operator opens it (publicReads),
+ * and wrd.envelope_template then withholds what it read from the pod. Every call names a pod
+ * this bridge serves, or is refused (403) before the pod is read.
+ *
  * Every refusal is a typed `refuse()` with an HTTP status; every success carries an outcome
  * flag. No environment reads: bridge/server.ts composes this with its configuration.
  */
 import { randomBytes } from 'node:crypto';
-import { canonicalJson, sha256Hex, createWallet, signMessageRaw, type FetchFn, type ManifestEntry, type Wallet } from '@interego/core';
+import { canonicalJson, sha256Hex, createWallet, signMessageRaw, type EncryptionKeyPair, type FetchFn, type ManifestEntry, type Wallet } from '@interego/core';
 import { fetchAllManifestEntries, predictManifestUrl, PublishShapeViolationError } from '@interego/solid';
 import { refuse, type BridgeRefusal } from '../../_shared/vertical-bridge/refusal.js';
 import {
@@ -57,9 +63,21 @@ export type { PlatformSigner };
 export interface DemoPersona { readonly id: string; readonly label: string; readonly wallet: Wallet }
 
 export interface WrdDeps {
-  /** Pod transport; tests and the demo inject an in-memory pod. Never patch globalThis.fetch. */
+  /** Pod transport; tests and the demo inject an in-memory pod. Never patch globalThis.fetch. server.ts passes operatorPodFetch(…). */
   readonly fetchFn?: FetchFn;
+  /** Holder-copy transport: never carries the operator's pod credential. Defaults to `fetchFn`; server.ts passes plain fetch. */
+  readonly holderFetchFn?: FetchFn;
   readonly defaultPodUrl?: string;
+  /** Pods this bridge reads and writes records on. Default: [defaultPodUrl] when set, else none, so every call is refused (403). */
+  readonly servedPods?: readonly string[];
+  /** The record key: every new version's graph is sealed to it, and sealed graphs are opened with it. Absent → plaintext records. */
+  readonly recordKey?: EncryptionKeyPair;
+  /**
+   * The operator opens the read model to anyone who can reach the bridge: wrd.list_records and
+   * wrd.calibration answer unsigned GETs, and wrd.envelope_template fills its context from the pod.
+   * Default false: reads need a signed read (wrd.read_records, wrd.read_calibration).
+   */
+  readonly publicReads?: boolean;
   /** Determinism. */
   readonly now?: () => Date;
   /** Absent → a key is generated once, and every record discloses keyKind 'ephemeral'. */
@@ -82,7 +100,12 @@ export type WrdHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
 // ── Prose, kept out of return literals ───────────────────────────────────────────────────
 
-const READ_EXPOSURE = 'Anyone who can reach this bridge can read every record on this pod.';
+const READS_SIGNED = 'Reads through this bridge need a signed read from an admin or a key in this pod\'s registry.';
+const READS_PUBLIC = 'Anyone who can reach this bridge can read every record on this pod (the operator opened reads).';
+const AT_REST_SEALED = 'Record graphs are sealed to this bridge\'s record key on the pod; descriptors and the manifest stay public (signer, kind, modal status, times).';
+const AT_REST_PLAIN = 'Records are written in plaintext: anyone the pod lets read wrd/records/ reads them, and a pod that serves anonymous reads serves them to everyone.';
+const SIGNED_READ_NEEDED = 'Reading records through this bridge needs a signed read.';
+const CONTEXT_WITHHELD = 'Withheld: this bridge serves what it reads from the pod only to a signed read (wrd.read_records). The head binding above is filled; read the rest with a signed read.';
 const NEXT_RECLASSIFY = 'Re-classify this task, then propose a plan.';
 const CONTRARY_NOTE = 'Reviewed runs on this task disagree with its classification often enough to look again; nothing changes until someone re-classifies it.';
 const UNACKNOWLEDGED = 'named by the operator, not acknowledged';
@@ -112,7 +135,7 @@ const TOOL_OF_INTENT: Readonly<Record<EnvelopeIntent, string>> = {
   'wrd:propose-allocation': 'wrd.propose_allocation', 'wrd:value-plan': 'wrd.value_plan', 'wrd:submit-decision': 'wrd.submit_decision',
   'wrd:countersign-decision': 'wrd.countersign_decision', 'wrd:record-outcome': 'wrd.record_outcome', 'wrd:agent-run': 'wrd.log_agent_run',
   'wrd:review-agent-run': 'wrd.log_agent_run', 'wrd:grant-autonomy': 'wrd.grant_autonomy', 'wrd:revoke-grant': 'wrd.revoke_grant',
-  'wrd:holder-copy': 'wrd.holder_copy',
+  'wrd:holder-copy': 'wrd.holder_copy', 'wrd:read-records': 'wrd.read_records',
 };
 
 const STATUS_LABEL: Readonly<Record<string, string>> = {
@@ -125,6 +148,24 @@ const STATUS_LABEL: Readonly<Record<string, string>> = {
   'measured:probe': 'probes read',
 };
 const statusLabelOf = (status: string, kind: 'valued' | 'probe'): string => STATUS_LABEL[`${status}:${kind}`] ?? STATUS_LABEL[status] ?? status;
+
+/**
+ * Template fields wrd.envelope_template fills from a record's graph rather than from its
+ * descriptor or the caller: cleared (null, so listed in `fill`) when reads are not public.
+ */
+const TEMPLATE_CONTENT: Partial<Readonly<Record<EnvelopeIntent, readonly string[]>>> = {
+  'wrd:revise-task': ['description'],
+  'wrd:agent-run': ['taskKind'],
+  'wrd:record-outcome': ['measured.comparisonBasis'],
+};
+/** Set `path` (dot-separated) to null in `o` when it is present. */
+function clearPath(o: Record<string, unknown>, path: string): void {
+  const [head, ...rest] = path.split('.');
+  if (head === undefined || !(head in o)) return;
+  if (rest.length === 0) { o[head] = null; return; }
+  const inner = o[head];
+  if (typeof inner === 'object' && inner !== null && !Array.isArray(inner)) clearPath(inner as Record<string, unknown>, rest.join('.'));
+}
 
 // ── Small helpers ────────────────────────────────────────────────────────────────────────
 
@@ -142,6 +183,8 @@ const decline = (status: number, error: string, why: string, resolvedBy?: Record
 /** The affordance that resolves a refusal. */
 const via = (tool: string): Record<string, unknown> => ({ action: `urn:iep:action:wrd:${tool.replace(/_/g, '-')}`, toolName: `wrd.${tool}` });
 const viaToolName = (toolName: string): Record<string, unknown> => via(toolName.replace(/^wrd\./, ''));
+/** The signed read that resolves a refusal: the tool, and the intent its envelope carries. */
+const readVia = (tool: 'read_records' | 'read_calibration'): Record<string, unknown> => ({ ...via(tool), intent: 'wrd:read-records' });
 
 function need(p: Obj, key: string, max: number, path = 'payload'): string {
   const v = p[key];
@@ -177,7 +220,9 @@ interface Head<K extends RecordKind> { readonly loaded: LoadedRecord; readonly r
 function headIn<K extends RecordKind>(g: GraphHeads, kind: K): Head<K> | null {
   if (g.state === 'absent') return null;
   if (g.state !== 'ok') {
-    throw decline(409, INTEGRITY, `${g.graphIri}: ${g.state === 'forked' ? 'more than one version claims to be current' : 'its current version was altered after signing'}`);
+    // An altered head says why: changed bytes or modal status, or (sealed) a graph this bridge cannot open.
+    const why = g.heads[0]?.why ?? 'it was altered after signing';
+    throw decline(409, INTEGRITY, `${g.graphIri}: ${g.state === 'forked' ? 'more than one version claims to be current' : `its current version is not trusted: ${why}`}`);
   }
   const loaded = g.heads[0];
   if (!loaded || !loaded.record || loaded.record.recordKind !== kind) throw decline(409, INTEGRITY, `${g.graphIri} does not hold a ${kind} record`);
@@ -332,6 +377,12 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const demo = deps.demoPersonas && deps.demoPersonas.size > 0 ? deps.demoPersonas : null;
   const draws = deps.draws ?? DRAWS;
   const clock = (): Date => (deps.now ? deps.now() : new Date());
+  const publicReads = deps.publicReads === true;
+  const recordKey = deps.recordKey;
+  const podOrNull = (u: string): string | null => { try { return normalisePodUrl(u); } catch { return null; } };
+  const served: readonly string[] = (deps.servedPods ?? (deps.defaultPodUrl ? [deps.defaultPodUrl] : []))
+    .map(podOrNull).filter((u): u is string => u !== null);
+  const readExposure = `${publicReads ? READS_PUBLIC : READS_SIGNED} ${recordKey ? AT_REST_SEALED : AT_REST_PLAIN}`;
 
   let platformP: Promise<PlatformSigner> | null = null;
   const platform = (): Promise<PlatformSigner> => {
@@ -363,11 +414,16 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     try { podUrl = normalisePodUrl(raw); } catch (e) { throw decline(400, 'The pod URL is not an http(s) URL.', messageOf(e)); }
     let fetchFn: FetchFn;
     try { fetchFn = await openPod(podUrl, deps.fetchFn); } catch (e) { throw decline(400, 'The pod URL is not a safe target.', messageOf(e)); }
+    if (!served.includes(podUrl)) {
+      throw served.length === 0
+        ? decline(403, 'This bridge serves no pod.', 'pod-not-served: the operator sets WRD_DEFAULT_POD_URL or WRD_SERVED_PODS', { env: 'WRD_SERVED_PODS' })
+        : decline(403, `This bridge reads and writes records only on the pods it serves (${served.join(', ')}).`, `pod-not-served: ${podUrl} is not one of them`);
+    }
     const p = await platform();
     const now = clock();
     const trusted = new Set([lower(p.wallet.address), ...(deps.trustedPlatformAddresses ?? []).map(lower)]);
     return {
-      podUrl, fetchFn, now, at: now.toISOString(), view: new PodView(podUrl, fetchFn, trusted, verifyCache, strict), platform: p,
+      podUrl, fetchFn, now, at: now.toISOString(), view: new PodView(podUrl, fetchFn, trusted, verifyCache, strict, recordKey), platform: p,
       platformRef: { did: didOf(p.wallet.address), address: lower(p.wallet.address), keyKind: p.keyKind }, trusted,
     };
   }
@@ -389,6 +445,31 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     }
     return { ...call, actor: opened.signer, actorDid: opened.did, payload: opened.payload, envelope: opened.envelope, nonce };
   }
+
+  /**
+   * Open a signed read (wrd:read-records): shape, intent, pod binding, signature and freshness,
+   * exactly as for a write; then the signer must be an admin or a key the pod's registry holds.
+   * A read changes nothing, so its nonce is not claimed: the same envelope reads again until its
+   * issuedAt leaves the window, which is what lets the web UI sign one read and reuse it.
+   */
+  async function openRead(args: Obj, tool: 'read_records' | 'read_calibration'): Promise<Call> {
+    const raw = args['envelope'];
+    const call = await openCall(args, raw, false);
+    const opened = openEnvelope(raw, 'wrd:read-records', call.podUrl, call.now, window);
+    if (!opened.ok) throw new Declined(refuse(opened.status, opened.error, opened.why, opened.status === 401 ? readVia(tool) : undefined));
+    if (!admins.has(opened.signer)) {
+      const reg = await registryOf(call);
+      if (!memberOf(reg, opened.signer)) {
+        throw decline(403, 'Only an admin or a key in this pod\'s registry can read its records.', `${opened.signer} is not an admin of this bridge and holds no role in this pod's registry${unregisteredHint(reg, opened.signer)}`, via('update_registry'));
+      }
+    }
+    return call;
+  }
+
+  /** The refusal an unsigned GET of the read model gets while reads are not public. */
+  const unsignedRead = (tool: 'read_records' | 'read_calibration'): BridgeRefusal => refuse(401, SIGNED_READ_NEEDED,
+    `this bridge answers unsigned reads only when its operator opens them (WRD_PUBLIC_READS=1); sign a wrd:read-records payload as an admin or a key in the pod's registry and send it as the envelope of wrd.${tool}`,
+    readVia(tool));
 
   async function headOf<K extends RecordKind>(call: Call, entity: string, kind: K): Promise<Head<K> | null> {
     return headIn(await call.view.graph(graphIriOf(entity)), kind);
@@ -454,7 +535,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       derivedFrom: w.derivedFrom ?? [],
     };
     return publishRecord({ descriptor, record, expectHead: w.head?.loaded.descriptorUrl ?? null },
-      { podUrl: call.podUrl, fetchFn: call.fetchFn, platform: call.platform, trusted: call.trusted, mutex, cache: verifyCache });
+      { podUrl: call.podUrl, fetchFn: call.fetchFn, platform: call.platform, trusted: call.trusted, mutex, cache: verifyCache, ...(recordKey ? { recordKey } : {}) });
   }
 
   // ── Shared loads ───────────────────────────────────────────────────────────────────────
@@ -795,7 +876,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${task.record.entityIri} was retired`) };
     const b = needBinding(call.payload);
     if (b.descriptorUrl !== task.loaded.descriptorUrl || b.graphDigest !== task.loaded.graphDigest) {
-      return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('list_records')) };
+      return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('read_records')) };
     }
     const mine = p.ratifications.find((r) => r.party === call.actor);
     if (mine && mine.verdict === verdict && (mine.note ?? '') === (note ?? '')) {
@@ -825,7 +906,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (!cls) return { ...refuse(404, 'This task has not been classified.', `${task.record.entityIri} has no classification`, via('classify_task')) };
     const b = needBinding(call.payload);
     if (b.descriptorUrl !== cls.loaded.descriptorUrl || b.graphDigest !== cls.loaded.graphDigest) {
-      return { ...refuse(409, 'The classification changed since you read it.', `the current version is ${cls.loaded.descriptorUrl}`, via('list_records')) };
+      return { ...refuse(409, 'The classification changed since you read it.', `the current version is ${cls.loaded.descriptorUrl}`, via('read_records')) };
     }
     let answers: ClassificationAnswers | undefined;
     if (call.payload['answers'] !== undefined) {
@@ -864,7 +945,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${task.record.entityIri} was retired`) };
     const b = needBinding(call.payload);
     if (b.descriptorUrl !== plan.loaded.descriptorUrl || b.graphDigest !== plan.loaded.graphDigest) {
-      return { ...refuse(409, 'The plan you read is not this plan.', `the plan's record is ${plan.loaded.descriptorUrl}`, via('list_records')) };
+      return { ...refuse(409, 'The plan you read is not this plan.', `the plan's record is ${plan.loaded.descriptorUrl}`, via('read_records')) };
     }
     const entity = ackEntity(planIri, task.record.entityIri, call.actor);
     const head = await headOf(call, entity, 'Acknowledgement');
@@ -915,7 +996,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${r.taskIri} was retired`) };
       if (r.descriptorUrl !== task.loaded.descriptorUrl || r.graphDigest !== task.loaded.graphDigest) {
-        return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('read_records')) };
       }
       const applied = applyTaskChanges(captureTaskOf(p), r.changes);
       const next = applied.task;
@@ -962,7 +1043,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       if (!wf) return { ...refuse(404, 'No such workflow on this pod.', `${r.workflowIri} has no record on ${call.podUrl}`) };
       requireOperatorPerson(reg, call.actor);
       if (r.descriptorUrl !== wf.loaded.descriptorUrl || r.graphDigest !== wf.loaded.graphDigest) {
-        return { ...refuse(409, 'The workflow changed since you read it.', `the current version is ${wf.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, 'The workflow changed since you read it.', `the current version is ${wf.loaded.descriptorUrl}`, via('read_records')) };
       }
       if (!kindUsable(reg, r.task.taskKind)) return { ...refuse(400, UNKNOWN_KIND, `${r.task.taskKind}: ${KIND_FIX}`, via('update_registry')) };
       partyCheck(r.task.current);
@@ -1002,7 +1083,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     requireOperatorPerson(reg, call.actor);
     if (task.record.status === 'retired') return finishRetirement(call, reg, task, r);
     if (r.descriptorUrl !== task.loaded.descriptorUrl || r.graphDigest !== task.loaded.graphDigest) {
-      return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('list_records')) };
+      return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('read_records')) };
     }
     const wf = await headOf(call, task.record.payload.workflowIri, 'Workflow');
     if (!wf) throw decline(409, INTEGRITY, `the task's workflow ${task.record.payload.workflowIri} has no trusted record`);
@@ -1404,7 +1485,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       case 'wrd:review-agent-run':
         Object.assign(t, { runEnvelopeSha256: null, verdict: null });
-        Object.assign(context, { runEnvelopeSha256: 'sha256Hex(canonicalJson({payload, signature})) of the run envelope you review; wrd.list_records kind=runs lists runs awaiting review with their envelopes' });
+        Object.assign(context, { runEnvelopeSha256: 'sha256Hex(canonicalJson({payload, signature})) of the run envelope you review; wrd.read_records kind=runs lists runs awaiting review with their envelopes' });
         break;
       case 'wrd:grant-autonomy':
         Object.assign(t, { agentAddress: null, taskKind: null });
@@ -1418,6 +1499,18 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       case 'wrd:holder-copy':
         Object.assign(context, { targetPodUrl: 'optional: a pod you hold; without it the bundle is returned for download' });
         break;
+      case 'wrd:read-records':
+        Object.assign(context, { tools: ['wrd.read_records', 'wrd.read_calibration'], reuse: 'the same envelope reads again until issuedAt leaves the window; its nonce is not spent' });
+        break;
+    }
+    if (!publicReads) {
+      // An unsigned call gets the shape and the head binding (public on the descriptors anyway),
+      // never what the bridge read out of a record's graph.
+      for (const path of TEMPLATE_CONTENT[intent] ?? []) clearPath(t, path);
+      return {
+        intent, toolName: TOOL_OF_INTENT[intent], schema: payloadSchema(intent), template: t, fill: nullPaths(t), context: {}, contextWithheld: CONTEXT_WITHHELD,
+        signing: SIGNING_RULE, status: 'templated', computed: true,
+      };
     }
     return {
       intent, toolName: TOOL_OF_INTENT[intent], schema: payloadSchema(intent), template: t, fill: nullPaths(t), context, signing: SIGNING_RULE,
@@ -1494,7 +1587,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const taskIri = needIri(call.payload, 'taskIri');
       const boundText = call.payload['taskTextSha256'];
       if (typeof boundText !== 'string' || !/^[0-9a-f]{64}$/.test(boundText)) {
-        return { ...refuse(400, BAD_PAYLOAD, "payload.taskTextSha256 must be the task's textSha256 (from wrd.list_records): it binds the answers to the description they are about") };
+        return { ...refuse(400, BAD_PAYLOAD, "payload.taskTextSha256 must be the task's textSha256 (from wrd.read_records): it binds the answers to the description they are about") };
       }
       const personNote = maybe(call.payload, 'notes', LIMITS.note);
       const reg = await registryOf(call);
@@ -1506,7 +1599,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${taskIri} was retired`) };
       if (boundText !== tp.textSha256) {
-        return { ...refuse(409, "The task's description changed since you read it; answer for the current text.", `the current description's textSha256 is ${tp.textSha256}`, via('list_records')) };
+        return { ...refuse(409, "The task's description changed since you read it; answer for the current text.", `the current description's textSha256 is ${tp.textSha256}`, via('read_records')) };
       }
       const answers = coerceAnswers(call.payload['answers']);
       if (!answers) return { ...refuse(400, BAD_PAYLOAD, 'answers must give one of the published options for each of the seven questions') };
@@ -1755,7 +1848,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         valuation = await headOf(call, valuationIri, 'Valuation');
         if (!valuation) return { ...refuse(404, 'No such valuation on this pod.', `${valuationIri} has no record on ${call.podUrl}`, via('value_plan')) };
         if (valuation.record.payload.planIri !== planIri) return { ...refuse(409, 'This valuation is for another plan.', `${valuationIri} values ${valuation.record.payload.planIri}`) };
-        if (valuation.record.payload.valuationHash !== valuationHash) return { ...refuse(409, 'The valuation hash does not match the valuation on the pod.', `the record's hash is ${valuation.record.payload.valuationHash}`, via('list_records')) };
+        if (valuation.record.payload.valuationHash !== valuationHash) return { ...refuse(409, 'The valuation hash does not match the valuation on the pod.', `the record's hash is ${valuation.record.payload.valuationHash}`, via('read_records')) };
         const mp = p['measurementPlan'];
         if (!isObj(mp) || !isOneOf(OUTCOME_METRICS, mp['metric']) || !isOneOf(COMPARISON_BASES, mp['comparisonBasis'])
           || typeof mp['windowWeeks'] !== 'number' || !Number.isInteger(mp['windowWeeks']) || mp['windowWeeks'] < 1 || mp['windowWeeks'] > 104) {
@@ -1780,7 +1873,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const inactive = grantChecks.find((g) => !g.active);
       if (inactive) return { ...refuse(409, `No active grant for this agent on this kind of task: ${inactive.why ?? ''}`, `${inactive.taskIri}: ${inactive.why ?? ''}`, via('grant_autonomy')) };
       const decisionIri = entityIri('decision', pp.workflowIri, valuation ? `${planIri}|${valuation.record.payload.valuationHash}` : `${planIri}|probe`);
-      if (await headOf(call, decisionIri, 'Decision')) return { ...refuse(409, 'This decision was already submitted.', `${decisionIri} exists`, via('list_records')) };
+      if (await headOf(call, decisionIri, 'Decision')) return { ...refuse(409, 'This decision was already submitted.', `${decisionIri} exists`, via('read_records')) };
       const busy = await openDecisionOn(call, pp.workflowIri, decisionIri, new Set(changedRows.map((r) => r.taskIri)));
       if (busy) return { ...openDecisionRefusal(busy) };
 
@@ -1863,7 +1956,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         return { ...refuse(403, 'The person accountable for an agent this decision puts on the work cannot countersign it.', `${call.actor} is attested as ${me}, the principal of an agent named on a changed task`) };
       }
       if (recordId !== decision.loaded.recordId || b.descriptorUrl !== decision.loaded.descriptorUrl || b.graphDigest !== decision.loaded.graphDigest) {
-        return { ...refuse(409, DECISION_MOVED, `the current version is ${decision.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, DECISION_MOVED, `the current version is ${decision.loaded.descriptorUrl}`, via('read_records')) };
       }
       if (decision.record.status !== 'submitted') return { ...refuse(409, 'Only a submitted decision can be countersigned or declined.', `${decisionIri} is ${decision.record.status}`) };
       const assignmentsNow = await assignmentStates(call, plan);
@@ -1952,7 +2045,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         return { ...refuse(403, 'The person who approved a decision cannot grade it.', `${call.actor} is attested as ${me}, who countersigned ${decisionIri}`) };
       }
       if (recordId !== decision.loaded.recordId || b.descriptorUrl !== decision.loaded.descriptorUrl || b.graphDigest !== decision.loaded.graphDigest) {
-        return { ...refuse(409, DECISION_MOVED, `the current version is ${decision.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, DECISION_MOVED, `the current version is ${decision.loaded.descriptorUrl}`, via('read_records')) };
       }
       if (decision.record.status !== 'countersigned' || !dp.countersign || dp.countersign.verdict !== 'approve') {
         return { ...refuse(409, 'An outcome can be recorded only for a countersigned decision.', `${decisionIri} is ${decision.record.status}`, via('countersign_decision')) };
@@ -2271,7 +2364,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const head = await headOf(call, grantIri, 'Grant');
       if (!head) return { ...refuse(404, 'No such grant on this pod.', `${grantIri} has no record on ${call.podUrl}`) };
       if (recordId !== head.loaded.recordId || b.descriptorUrl !== head.loaded.descriptorUrl || b.graphDigest !== head.loaded.graphDigest) {
-        return { ...refuse(409, 'The grant changed since you read it.', `the current version is ${head.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, 'The grant changed since you read it.', `the current version is ${head.loaded.descriptorUrl}`, via('read_records')) };
       }
       if (head.record.status === 'revoked') return { ...refuse(409, 'This grant was already revoked.', `${grantIri} is revoked`) };
       const grantedFrom = head.loaded.validFrom;
@@ -2336,7 +2429,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const copied: Array<{ originalDescriptorUrl: string; copyDescriptorUrl: string | null; skipped: boolean }> = [];
       if (target !== null) {
         let targetFetch: FetchFn;
-        try { targetFetch = await openPod(target, deps.fetchFn); } catch (e) { return { ...refuse(400, 'The target pod is not a safe target.', messageOf(e)) }; }
+        // The holder's pod is reached through the holder transport, which never carries the operator's credential.
+        try { targetFetch = await openPod(target, deps.holderFetchFn ?? deps.fetchFn); } catch (e) { return { ...refuse(400, 'The target pod is not a safe target.', messageOf(e)) }; }
         let existing: Set<string>;
         try {
           existing = new Set((await fetchAllManifestEntries(predictManifestUrl(target), targetFetch)).entries.map((e) => e.descriptorUrl));
@@ -2364,288 +2458,326 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     'wrd.envelope_template': async (args) => envelopeTemplate(args),
 
     'wrd.list_records': async (args) => {
-      const kind = typeof args['kind'] === 'string' && args['kind'] !== '' ? args['kind'] : null;
-      const sections = ['registry', 'workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'];
-      if (kind !== null && !sections.includes(kind)) return { ...refuse(400, 'Unknown kind.', `kind must be one of ${sections.join(', ')}`) };
-      const subject = typeof args['subject'] === 'string' && args['subject'] !== '' ? args['subject'] : null;
-      const workflowFilter = typeof args['workflow'] === 'string' && args['workflow'] !== '' ? args['workflow'] : null;
-      const want = (s: string): boolean => kind === null || kind === s;
-      const keep = (iri: string, workflowIri: string | null): boolean => (subject === null || subject === iri) && (workflowFilter === null || workflowFilter === workflowIri);
-      const call = await openCall(args, undefined, false);
-      const reg = await registryOf(call);
-      const snap = await snapshot(call.view);
-      const policy = reg.policy;
+      if (!publicReads) return unsignedRead('read_records');
+      const bad = badListKind(args);
+      if (bad) return bad;
+      return listRecords(await openCall(args, undefined, false), args);
+    },
 
-      const tasksRec = recordsOf(snap, 'Task');
-      const graphByIri = new Map(snap.graphs.map((s) => [s.graphIri, s]));
-      const classificationByTask = new Map(recordsOf(snap, 'Classification').map((c) => [c.record.payload.taskIri, c]));
-      const plansRec = recordsOf(snap, 'Plan');
-      const planByIri = new Map(plansRec.map((pl) => [pl.record.entityIri, pl]));
-      const decisionsRec = recordsOf(snap, 'Decision');
-      const runsRec = recordsOf(snap, 'AgentRun');
-      const workflowsRec = recordsOf(snap, 'Workflow');
-      const workflowOfPlan = (planIri: string): string | null => planByIri.get(planIri)?.record.payload.workflowIri ?? null;
-      const label = (a: string): string => memberOf(reg, a)?.label ?? a;
-      const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
-      const records = snap.graphs.filter((s) => s.record !== null).length;
-
-      const effective = effectiveFrom(decisionsRec.map((d) => d.record), (iri) => planByIri.get(iri)?.record ?? null);
-      // Work a decision put under a grant is checked against the grant NOW: revoked or lapsed, it has no authorised performer.
-      const effectiveGrant = new Map<string, { active: boolean; why: string | null }>();
-      for (const t of tasksRec) {
-        const eff = effective.get(t.record.entityIri);
-        if (!eff || eff.allocation.level !== 'agent-acts-within-grant' || !eff.allocation.agentAddress) continue;
-        const g = await grantState(call, reg, eff.allocation.agentAddress, t.record.payload.taskKind);
-        effectiveGrant.set(t.record.entityIri, { active: g.active, why: g.active ? null : g.why });
-      }
-      const listedTasks = new Set(workflowsRec.flatMap((w) => [...w.record.payload.taskIris, ...w.record.payload.retiredTaskIris]));
-      const workflowByIri = new Map(workflowsRec.map((w) => [w.record.entityIri, w.record]));
-      const acks = new Map(recordsOf(snap, 'Acknowledgement').map((a) => [`${a.record.payload.planIri}|${a.record.payload.taskIri}|${a.record.payload.personAddress}`, a.record]));
-
-      const out: Obj = {
-        podUrl: call.podUrl, complete: snap.complete, status: 'listed', readExposure: READ_EXPOSURE, records, demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null,
-        bridge: {
-          platform: call.platformRef, admins: admins.size,
-          demo: { enabled: demo !== null, personas: demo ? [...demo.values()].map((d) => ({ id: d.id, label: d.label, address: lower(d.wallet.address) })) : [] },
-        },
-        vocabulary: {
-          questions: CLASSIFICATION_QUESTIONS,
-          regimes: [...policy.regimes.values()].map((r) => ({ regime: r.regime, method: r.method, permitsChange: r.permitsChange, requiresProbe: r.requiresProbe, pointValuation: r.pointValuation, requiresExpertEvidence: r.requiresExpertEvidence, permittedLevels: r.permittedLevels, note: r.note })),
-          levels: [...policy.levels.values()].sort((x, y) => x.autonomyRank - y.autonomyRank).map((l) => ({ level: l.level, requiresAgent: l.requiresAgent, requiresPerson: l.requiresPerson, requiresGrant: l.requiresGrant, requiresCheckability: l.requiresCheckability })),
-          rules: [...policy.rules.values()].map((r) => ({ id: r.id, iri: r.iri, condition: r.condition })),
-          grantPolicy: policy.grantPolicy, podPolicy: reg.podPolicy, comparisonBases: COMPARISON_BASES, metrics: OUTCOME_METRICS, inputBases: INPUT_BASES,
-          dispositions: { freedHours: FREED_HOURS_DISPOSITIONS, outcome: OUTCOME_DISPOSITIONS }, distinctPeopleNote: DISTINCT_PEOPLE_NOTE, ontologySha256: published.ontologySha256,
-        },
-      };
-      if (want('registry')) {
-        out['registry'] = { members: [...reg.members.values()], taskKinds: [...reg.kinds.values()], head: reg.head ? headInfo(reg.head.loaded) : null };
-      }
-      if (want('workflows')) {
-        out['workflows'] = workflowsRec.filter((w) => keep(w.record.entityIri, w.record.entityIri)).map((w) => {
-          const p = w.record.payload;
-          return {
-            workflowIri: w.record.entityIri, title: p.title, unitLabel: p.unitLabel, ...(p.description ? { description: p.description } : {}), captureMode: p.captureMode,
-            capturedBy: p.capturedBy.did, ...(p.document ? { document: p.document } : {}), ...(p.documentText !== undefined ? { documentText: p.documentText } : {}),
-            draftedBy: p.draftedBy ?? (p.captureMode === 'document' ? NOT_DECLARED : null), ...(p.draftSha256 ? { draftSha256: p.draftSha256 } : {}),
-            taskIris: p.taskIris, retiredTaskIris: p.retiredTaskIris,
-            ...(p.revision ? { revision: { op: p.revision.op, taskIri: p.revision.taskIri, by: p.revision.by.did, ...(p.revision.repairs ? { repairs: p.revision.repairs } : {}) } } : {}),
-            head: headInfo(w.head), demo: w.record.demo === true,
-          };
-        });
-      }
-      if (want('tasks')) {
-        out['tasks'] = tasksRec.filter((t) => keep(t.record.entityIri, t.record.payload.workflowIri)).map((t) => {
-          const p = t.record.payload;
-          const cls = classificationByTask.get(t.record.entityIri);
-          const clsGraph = graphByIri.get(graphIriOf(classificationEntity(p.workflowIri, t.record.entityIri)));
-          const eff = effective.get(t.record.entityIri);
-          const effGrant = effectiveGrant.get(t.record.entityIri);
-          const inForce = eff?.allocation ?? p.current;
-          const clsP = cls?.record.payload;
-          const currentNote = clsP ? currentAllocationNote(inForce, clsP.regime, clsP.answers, policy) : null;
-          const owed = p.owedRatification ?? [];
-          const reviewed = runsRec.filter((r) => r.record.status === 'reviewed' && r.record.payload.taskIri === t.record.entityIri);
-          const reworked = reviewed.filter((r) => r.record.payload.review?.verdict !== 'accepted').length;
-          const critical = reviewed.filter((r) => r.record.payload.review?.verdict === 'critical-failure').length;
-          const share = reviewed.length > 0 ? reworked / reviewed.length : 0;
-          const suggest = (reviewed.length >= policy.grantPolicy.contraryMinRuns && share > policy.grantPolicy.contraryReworkShare) || critical > 0;
-          return {
-            taskIri: t.record.entityIri, workflowIri: p.workflowIri, name: p.name, description: p.description, textSha256: p.textSha256, current: p.current, performer: p.performer,
-            namedParties: p.namedParties.map((a) => {
-              const r = p.ratifications.find((x) => x.party === a);
-              return { address: a, kind: isAgent(reg, a) ? 'agent' : isPerson(reg, a) ? 'person' : 'unregistered', label: label(a), ratification: r ? { verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at } : null };
-            }),
-            // People a revision removed from the task, whose ratification it still needs.
-            owedRatification: owed.map((a) => {
-              const r = p.ratifications.find((x) => x.party === a);
-              return { address: a, label: label(a), ratification: r ? { verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at } : null };
-            }),
-            taskKind: p.taskKind, taskKindDefinition: p.taskKindDefinition, ...(p.externalTaskTerm ? { externalTaskTerm: p.externalTaskTerm } : {}),
-            effective: eff
-              ? {
-                ...eff.allocation, source: eff.source, decisionIri: eff.decisionIri,
-                ...(effGrant ? { grant: effGrant, suspended: !effGrant.active, ...(effGrant.active ? {} : { suspendedWhy: `grant ${effGrant.why ?? 'inactive'}: ${SUSPENDED}` }) } : {}),
-              }
-              : { ...p.current, source: 'captured' },
-            currentNotPermitted: currentNote,
-            status: t.record.status, quoteStatus: p.quoteStatus, quotes: p.quotes, ...(p.revision ? { revision: { note: p.revision.note ?? null, answers: p.revision.answers, quotesCleared: p.revision.quotesCleared, by: p.revision.by.did } } : {}),
-            ...(p.retirement ? { retirement: { why: p.retirement.why, at: p.retirement.at, by: p.retirement.by.did } } : {}),
-            orphaned: !listedTasks.has(t.record.entityIri),
-            // Retired, but the workflow still lists it: retiring it again finishes the retirement.
-            retirementUnfinished: retirementUnfinished(t.record, workflowByIri.get(p.workflowIri)),
-            classification: cls ? {
-              regime: cls.record.payload.regime, method: cls.record.payload.method, rulesFired: cls.record.payload.rulesFired, notes: cls.record.payload.notes,
-              answers: cls.record.payload.answers,
-              answeredBy: { did: cls.record.payload.answeredBy.did, address: cls.record.payload.answeredBy.address, personRef: cls.record.payload.answeredBy.personRef, role: cls.record.payload.answeredBy.role },
-              status: cls.record.status, current: cls.record.payload.taskTextSha256 === p.textSha256,
-              ratifications: cls.record.payload.ratifications.map((r) => ({ party: r.party, verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at })),
-              disagreement: cls.record.payload.ratifications.filter((r) => r.answers).map((r) => ({ party: r.party, answers: r.answers })),
-              contraryEvidence: reviewed.length > 0 ? { reviewedRuns: reviewed.length, reworkedShare: Math.round(share * 10_000) / 10_000, criticalFailures: critical, suggestReclassify: suggest, note: CONTRARY_NOTE } : null,
-              state: 'ok', trusted: true, head: headInfo(cls.head), demo: cls.record.demo === true,
-            } : clsGraph && (clsGraph.g.state === 'altered' || clsGraph.g.state === 'forked') ? {
-              state: clsGraph.g.state, trusted: false,
-              heads: clsGraph.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, contentBinding: h.authorship.contentBinding, why: h.why })),
-            } : null,
-            link: taskLink(t.record.entityIri), head: headInfo(t.head), demo: t.record.demo === true,
-          };
-        });
-      }
-      if (want('plans')) {
-        const out2: Obj[] = [];
-        for (const pl of plansRec) {
-          const p = pl.record.payload;
-          if (!keep(pl.record.entityIri, p.workflowIri)) continue;
-          let stale: string | null = null;
-          const wf = workflowsRec.find((w) => w.record.entityIri === p.workflowIri);
-          for (const row of p.tasks) {
-            const t = tasksRec.find((x) => x.record.entityIri === row.taskIri);
-            const c = classificationByTask.get(row.taskIri);
-            if (row.changed && (t?.record.status === 'retired' || (wf && !wf.record.payload.taskIris.includes(row.taskIri)))) { stale = RETIRED_IN_PLAN; break; }
-            if (!t || t.record.payload.textSha256 !== p.taskTextSha256[row.taskIri] || !c || c.head.descriptorUrl !== p.classificationHeads[row.taskIri]) { stale = STALE_PLAN; break; }
-          }
-          const assignments = p.tasks.filter((r) => r.changed && r.proposed.personAddress).map((r) => {
-            const a = acks.get(`${pl.record.entityIri}|${r.taskIri}|${r.proposed.personAddress ?? ''}`);
-            const state = a ? a.status : 'not-acknowledged';
-            return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state, ...(a?.payload.note ? { note: a.payload.note } : {}), label: state === 'acknowledged' ? ACKNOWLEDGED : state === 'objected' ? OBJECTED : UNACKNOWLEDGED };
-          });
-          out2.push({ planIri: pl.record.entityIri, workflowIri: p.workflowIri, title: p.title, planKind: p.planKind, tasks: p.tasks, proposedBy: p.proposedBy.did, stale, assignments, head: headInfo(pl.head), demo: pl.record.demo === true });
-        }
-        out['plans'] = out2;
-      }
-      if (want('valuations')) {
-        out['valuations'] = recordsOf(snap, 'Valuation').filter((v) => keep(v.record.entityIri, workflowOfPlan(v.record.payload.planIri))).map((v) => ({
-          valuationIri: v.record.entityIri, planIri: v.record.payload.planIri, valuationHash: v.record.payload.valuationHash, inputs: v.record.payload.inputs, result: v.record.payload.result,
-          expertEvidence: v.record.payload.expertEvidence, unratifiedTasks: v.record.payload.unratifiedTasks, head: headInfo(v.head), demo: v.record.demo === true,
-        }));
-      }
-      if (want('decisions')) {
-        const out3: Obj[] = [];
-        for (const d of decisionsRec) {
-          const p = d.record.payload;
-          if (!keep(d.record.entityIri, workflowOfPlan(p.planIri))) continue;
-          const chain = (await call.view.history(d.s.g)).map((l) => ({
-            version: l.record?.version ?? null, status: l.record?.status ?? null, modalStatus: l.modalStatus, signedBy: l.record?.signers.map((s) => s.did) ?? [],
-            at: l.generatedAt, descriptorUrl: l.descriptorUrl, recordId: l.recordId, graphDigest: l.graphDigest,
-          }));
-          out3.push({
-            decisionIri: d.record.entityIri, decisionKind: p.decisionKind, planIri: p.planIri, ...(p.valuationIri ? { valuationIri: p.valuationIri, valuationHash: p.valuationHash } : {}),
-            status: d.record.status, statusLabel: statusLabelOf(d.record.status, p.decisionKind), decisionLevel: p.decisionLevel,
-            ...(p.prediction ? { prediction: p.prediction } : {}), ...(p.freedHours ? { freedHours: p.freedHours } : {}),
-            ...(p.measurementPlan ? { measurementPlan: p.measurementPlan, basisLabel: p.basisLabel } : {}),
-            subjects: p.subjects, assignments: p.assignments, submittedBy: { did: p.submittedBy.did, personRef: p.submittedBy.personRef },
-            ...(p.preparedBy ? { preparedBy: p.preparedBy } : {}),
-            ...(p.countersign ? { countersign: { verdict: p.countersign.verdict, did: p.countersign.did, personRef: p.countersign.personRef, objectionsConsidered: p.countersign.objectionsConsidered, unacknowledgedConsidered: p.countersign.unacknowledgedConsidered ?? [], assignmentsAtCountersign: p.countersign.assignmentsAtCountersign, at: p.countersign.at } } : {}),
-            ...(p.outcome ? { outcome: { did: p.outcome.did, personRef: p.outcome.personRef, disposition: p.outcome.disposition, ...(p.outcome.dispositionNote ? { dispositionNote: p.outcome.dispositionNote } : {}), at: p.outcome.at, ...(p.outcome.valued ? { valued: p.outcome.valued } : {}), ...(p.outcome.probes ? { probes: p.outcome.probes } : {}) } } : {}),
-            ...(p.probes ? { probes: p.probes } : {}),
-            ...(p.outcome?.probes?.some((x) => x.signal !== 'neither') ? { next: NEXT_RECLASSIFY } : {}),
-            grantChecks: p.grantChecks, chain, head: headInfo(d.head), demo: d.record.demo === true,
-          });
-        }
-        out['decisions'] = out3;
-      }
-      if (want('grants')) {
-        const out4: Obj[] = [];
-        for (const gr of recordsOf(snap, 'Grant')) {
-          const p = gr.record.payload;
-          if (subject !== null && subject !== gr.record.entityIri) continue;
-          const state = await grantState(call, reg, p.agentAddress, p.taskKind);
-          const history = await call.view.history(gr.s.g);
-          const grantedAt = [...history].reverse().find((l) => l.record?.status === 'granted')?.generatedAt ?? null;
-          out4.push({
-            grantIri: gr.record.entityIri, agentAddress: p.agentAddress, principal: p.principal, model: p.model, taskKind: p.taskKind, status: gr.record.status,
-            active: state.active, why: state.active ? null : state.why, evaluation: p.evaluation, evidenceTaskIris: p.evaluation.taskIris, grantedAt,
-            ...(p.revocation ? { revokedAt: p.revocation.at, revocationWhy: p.revocation.why } : {}), head: headInfo(gr.head), demo: gr.record.demo === true,
-          });
-        }
-        out['grants'] = out4;
-      }
-      if (want('runs')) {
-        const agg = new Map<string, { agentAddress: string; taskKind: string; model: string; reviewed: number; actedUnderGrant: number; costs: number[]; currency: string | null }>();
-        const awaiting: Obj[] = [];
-        for (const r of runsRec) {
-          const p = r.record.payload;
-          const k = `${p.agentAddress}|${p.taskKind}|${p.model}`;
-          const a = agg.get(k) ?? { agentAddress: p.agentAddress, taskKind: p.taskKind, model: p.model, reviewed: 0, actedUnderGrant: 0, costs: [], currency: null };
-          if (r.record.status === 'reviewed') a.reviewed += 1; else a.actedUnderGrant += 1;
-          if (r.record.status === 'reviewed' && p.costPerRun && (a.currency === null || a.currency === p.costPerRun.currency)) { a.costs.push(p.costPerRun.amount); a.currency = p.costPerRun.currency; }
-          agg.set(k, a);
-          if (r.record.status === 'acted-under-grant') awaiting.push({ runIri: r.record.entityIri, agentAddress: p.agentAddress, taskIri: p.taskIri, taskKind: p.taskKind, runEnvelope: p.runEnvelope, demo: r.record.demo === true });
-        }
-        out['runs'] = [...agg.values()].map((a) => ({
-          agentAddress: a.agentAddress, taskKind: a.taskKind, model: a.model, reviewed: a.reviewed, actedUnderGrant: a.actedUnderGrant,
-          ...(a.costs.length > 0 ? { reportedCost: { runs: a.costs.length, mean: a.costs.reduce((x, y) => x + y, 0) / a.costs.length, currency: a.currency, basis: REPORTED_COST_BASIS } } : {}),
-        }));
-        out['awaitingReview'] = awaiting;
-      }
-      out['untrusted'] = [
-        ...snap.graphs.flatMap((s) => s.g.untrusted),
-        ...snap.foreign.map((e) => ({ descriptorUrl: e.descriptorUrl, why: 'it is outside this pod\'s wrd/records/ container (for example a holder copy)' })),
-      ];
-      out['forked'] = snap.graphs.filter((s) => s.g.state === 'forked').map((s) => s.graphIri);
-      out['altered'] = snap.graphs.filter((s) => s.g.state === 'altered').map((s) => s.graphIri);
-      out['integrity'] = snap.graphs.filter((s) => s.g.state === 'altered' || s.g.state === 'forked').map((s) => ({
-        graphIri: s.graphIri, state: s.g.state,
-        heads: s.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, trusted: h.authorship.trusted, contentBinding: h.authorship.contentBinding, why: h.why })),
-      }));
-      return out;
+    'wrd.read_records': async (args) => {
+      const bad = badListKind(args);
+      if (bad) return bad;
+      return listRecords(await openRead(args, 'read_records'), args);
     },
 
     'wrd.calibration': async (args) => {
-      const kind = typeof args['kind'] === 'string' && args['kind'] !== '' ? args['kind'] : null;
-      if (kind !== null && kind !== 'predictions' && kind !== 'agents' && kind !== 'probes') return { ...refuse(400, 'Unknown kind.', 'kind must be predictions, agents or probes') };
-      const call = await openCall(args, undefined, false);
-      const reg = await registryOf(call);
-      const snap = await snapshot(call.view);
-      const decisions: DecisionForCalibration[] = [];
-      const probes: ProbeOutcome[] = [];
-      for (const d of recordsOf(snap, 'Decision')) {
-        const p = d.record.payload;
-        const o = p.outcome;
-        if (d.record.status !== 'measured' || !o) continue;
-        const demoRecord = d.record.demo === true;
-        if (p.decisionKind === 'valued' && o.valued && p.prediction) {
-          const issued = p.submittedBy.envelope.payload['issuedAt'];
-          decisions.push({
-            decisionIri: d.record.entityIri, level: p.decisionLevel, metric: p.prediction.metric as OutcomeMetric, basis: o.valued.measured.comparisonBasis,
-            verdict: o.valued.verdict, rampAdjusted: o.valued.rampAdjusted, disposition: o.disposition, measuredBy: o.did,
-            submittedAt: typeof issued === 'string' ? issued : o.at, measuredAt: o.at, demo: demoRecord, shortWindow: o.valued.windowShorterThanPlanned === true,
-          });
-        }
-        for (const pr of o.probes ?? []) probes.push({ decisionIri: d.record.entityIri, taskIri: pr.taskIri, index: pr.index, signal: pr.signal, demo: demoRecord });
-      }
-      const runs: ReviewedRun[] = [];
-      const awaiting: Obj[] = [];
-      for (const r of recordsOf(snap, 'AgentRun')) {
-        const rr = reviewedRunOf(r.record);
-        if (rr) runs.push(rr);
-        else if (r.record.status === 'acted-under-grant') awaiting.push({ runIri: r.record.entityIri, agentAddress: r.record.payload.agentAddress, taskKind: r.record.payload.taskKind });
-      }
-      const policy = reg.policy.grantPolicy;
-      const report = calibrationReport({
-        decisions, runs, probes, minSamples: policy.minSamples, policy,
-        currentModelOf: (did) => memberOf(reg, did.replace(/^did:ethr:/, ''))?.model ?? null,
-      });
-      const agentCells: Obj[] = [];
-      for (const c of report.agentCells) {
-        const address = c.agentDid.replace(/^did:ethr:/, '');
-        const g = await grantState(call, reg, address, c.taskKind);
-        agentCells.push({ ...c, agentAddress: address, principal: memberOf(reg, address)?.principal ?? null, grant: { active: g.active, why: g.active ? null : g.why } });
-      }
-      const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
-      return {
-        podUrl: call.podUrl, complete: snap.complete, status: 'calibrated', computed: true, minSamples: report.minSamples, nominalBandCoverage: report.nominalBandCoverage,
-        demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null,
-        ...(kind === null || kind === 'predictions' ? { predictionCells: report.predictionCells } : {}),
-        ...(kind === null || kind === 'agents' ? { agentCells } : {}),
-        ...(kind === null || kind === 'probes' ? { probeSignals: report.probeSignals } : {}),
-        awaitingAPerson: awaiting, grantPolicy: policy, podPolicy: reg.podPolicy,
-      };
+      if (!publicReads) return unsignedRead('read_calibration');
+      const bad = badCalibrationKind(args);
+      if (bad) return bad;
+      return calibrate(await openCall(args, undefined, false), args);
+    },
+
+    'wrd.read_calibration': async (args) => {
+      const bad = badCalibrationKind(args);
+      if (bad) return bad;
+      return calibrate(await openRead(args, 'read_calibration'), args);
     },
   };
+
+  // ── The read model (the GET when reads are public, the signed read always) ───────────
+
+  const LIST_SECTIONS = ['registry', 'workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'];
+  const kindArg = (args: Obj): string | null => (typeof args['kind'] === 'string' && args['kind'] !== '' ? args['kind'] : null);
+  const badListKind = (args: Obj): BridgeRefusal | null => {
+    const kind = kindArg(args);
+    return kind !== null && !LIST_SECTIONS.includes(kind) ? refuse(400, 'Unknown kind.', `kind must be one of ${LIST_SECTIONS.join(', ')}`) : null;
+  };
+  const badCalibrationKind = (args: Obj): BridgeRefusal | null => {
+    const kind = kindArg(args);
+    return kind !== null && kind !== 'predictions' && kind !== 'agents' && kind !== 'probes' ? refuse(400, 'Unknown kind.', 'kind must be predictions, agents or probes') : null;
+  };
+
+  async function listRecords(call: Call, args: Obj): Promise<Obj> {
+    const kind = kindArg(args);
+    const subject = typeof args['subject'] === 'string' && args['subject'] !== '' ? args['subject'] : null;
+    const workflowFilter = typeof args['workflow'] === 'string' && args['workflow'] !== '' ? args['workflow'] : null;
+    const want = (s: string): boolean => kind === null || kind === s;
+    const keep = (iri: string, workflowIri: string | null): boolean => (subject === null || subject === iri) && (workflowFilter === null || workflowFilter === workflowIri);
+    const reg = await registryOf(call);
+    const snap = await snapshot(call.view);
+    const policy = reg.policy;
+
+    const tasksRec = recordsOf(snap, 'Task');
+    const graphByIri = new Map(snap.graphs.map((s) => [s.graphIri, s]));
+    const classificationByTask = new Map(recordsOf(snap, 'Classification').map((c) => [c.record.payload.taskIri, c]));
+    const plansRec = recordsOf(snap, 'Plan');
+    const planByIri = new Map(plansRec.map((pl) => [pl.record.entityIri, pl]));
+    const decisionsRec = recordsOf(snap, 'Decision');
+    const runsRec = recordsOf(snap, 'AgentRun');
+    const workflowsRec = recordsOf(snap, 'Workflow');
+    const workflowOfPlan = (planIri: string): string | null => planByIri.get(planIri)?.record.payload.workflowIri ?? null;
+    const label = (a: string): string => memberOf(reg, a)?.label ?? a;
+    const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
+    const records = snap.graphs.filter((s) => s.record !== null).length;
+
+    const effective = effectiveFrom(decisionsRec.map((d) => d.record), (iri) => planByIri.get(iri)?.record ?? null);
+    // Work a decision put under a grant is checked against the grant NOW: revoked or lapsed, it has no authorised performer.
+    const effectiveGrant = new Map<string, { active: boolean; why: string | null }>();
+    for (const t of tasksRec) {
+      const eff = effective.get(t.record.entityIri);
+      if (!eff || eff.allocation.level !== 'agent-acts-within-grant' || !eff.allocation.agentAddress) continue;
+      const g = await grantState(call, reg, eff.allocation.agentAddress, t.record.payload.taskKind);
+      effectiveGrant.set(t.record.entityIri, { active: g.active, why: g.active ? null : g.why });
+    }
+    const listedTasks = new Set(workflowsRec.flatMap((w) => [...w.record.payload.taskIris, ...w.record.payload.retiredTaskIris]));
+    const workflowByIri = new Map(workflowsRec.map((w) => [w.record.entityIri, w.record]));
+    const acks = new Map(recordsOf(snap, 'Acknowledgement').map((a) => [`${a.record.payload.planIri}|${a.record.payload.taskIri}|${a.record.payload.personAddress}`, a.record]));
+
+    const out: Obj = {
+      podUrl: call.podUrl, complete: snap.complete, status: 'listed', readExposure, records, demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null,
+      bridge: {
+        platform: call.platformRef, admins: admins.size, reads: publicReads ? 'public' : 'signed', recordsSealed: recordKey !== undefined,
+        demo: { enabled: demo !== null, personas: demo ? [...demo.values()].map((d) => ({ id: d.id, label: d.label, address: lower(d.wallet.address) })) : [] },
+      },
+      vocabulary: {
+        questions: CLASSIFICATION_QUESTIONS,
+        regimes: [...policy.regimes.values()].map((r) => ({ regime: r.regime, method: r.method, permitsChange: r.permitsChange, requiresProbe: r.requiresProbe, pointValuation: r.pointValuation, requiresExpertEvidence: r.requiresExpertEvidence, permittedLevels: r.permittedLevels, note: r.note })),
+        levels: [...policy.levels.values()].sort((x, y) => x.autonomyRank - y.autonomyRank).map((l) => ({ level: l.level, requiresAgent: l.requiresAgent, requiresPerson: l.requiresPerson, requiresGrant: l.requiresGrant, requiresCheckability: l.requiresCheckability })),
+        rules: [...policy.rules.values()].map((r) => ({ id: r.id, iri: r.iri, condition: r.condition })),
+        grantPolicy: policy.grantPolicy, podPolicy: reg.podPolicy, comparisonBases: COMPARISON_BASES, metrics: OUTCOME_METRICS, inputBases: INPUT_BASES,
+        dispositions: { freedHours: FREED_HOURS_DISPOSITIONS, outcome: OUTCOME_DISPOSITIONS }, distinctPeopleNote: DISTINCT_PEOPLE_NOTE, ontologySha256: published.ontologySha256,
+      },
+    };
+    if (want('registry')) {
+      out['registry'] = { members: [...reg.members.values()], taskKinds: [...reg.kinds.values()], head: reg.head ? headInfo(reg.head.loaded) : null };
+    }
+    if (want('workflows')) {
+      out['workflows'] = workflowsRec.filter((w) => keep(w.record.entityIri, w.record.entityIri)).map((w) => {
+        const p = w.record.payload;
+        return {
+          workflowIri: w.record.entityIri, title: p.title, unitLabel: p.unitLabel, ...(p.description ? { description: p.description } : {}), captureMode: p.captureMode,
+          capturedBy: p.capturedBy.did, ...(p.document ? { document: p.document } : {}), ...(p.documentText !== undefined ? { documentText: p.documentText } : {}),
+          draftedBy: p.draftedBy ?? (p.captureMode === 'document' ? NOT_DECLARED : null), ...(p.draftSha256 ? { draftSha256: p.draftSha256 } : {}),
+          taskIris: p.taskIris, retiredTaskIris: p.retiredTaskIris,
+          ...(p.revision ? { revision: { op: p.revision.op, taskIri: p.revision.taskIri, by: p.revision.by.did, ...(p.revision.repairs ? { repairs: p.revision.repairs } : {}) } } : {}),
+          head: headInfo(w.head), demo: w.record.demo === true,
+        };
+      });
+    }
+    if (want('tasks')) {
+      out['tasks'] = tasksRec.filter((t) => keep(t.record.entityIri, t.record.payload.workflowIri)).map((t) => {
+        const p = t.record.payload;
+        const cls = classificationByTask.get(t.record.entityIri);
+        const clsGraph = graphByIri.get(graphIriOf(classificationEntity(p.workflowIri, t.record.entityIri)));
+        const eff = effective.get(t.record.entityIri);
+        const effGrant = effectiveGrant.get(t.record.entityIri);
+        const inForce = eff?.allocation ?? p.current;
+        const clsP = cls?.record.payload;
+        const currentNote = clsP ? currentAllocationNote(inForce, clsP.regime, clsP.answers, policy) : null;
+        const owed = p.owedRatification ?? [];
+        const reviewed = runsRec.filter((r) => r.record.status === 'reviewed' && r.record.payload.taskIri === t.record.entityIri);
+        const reworked = reviewed.filter((r) => r.record.payload.review?.verdict !== 'accepted').length;
+        const critical = reviewed.filter((r) => r.record.payload.review?.verdict === 'critical-failure').length;
+        const share = reviewed.length > 0 ? reworked / reviewed.length : 0;
+        const suggest = (reviewed.length >= policy.grantPolicy.contraryMinRuns && share > policy.grantPolicy.contraryReworkShare) || critical > 0;
+        return {
+          taskIri: t.record.entityIri, workflowIri: p.workflowIri, name: p.name, description: p.description, textSha256: p.textSha256, current: p.current, performer: p.performer,
+          namedParties: p.namedParties.map((a) => {
+            const r = p.ratifications.find((x) => x.party === a);
+            return { address: a, kind: isAgent(reg, a) ? 'agent' : isPerson(reg, a) ? 'person' : 'unregistered', label: label(a), ratification: r ? { verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at } : null };
+          }),
+          // People a revision removed from the task, whose ratification it still needs.
+          owedRatification: owed.map((a) => {
+            const r = p.ratifications.find((x) => x.party === a);
+            return { address: a, label: label(a), ratification: r ? { verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at } : null };
+          }),
+          taskKind: p.taskKind, taskKindDefinition: p.taskKindDefinition, ...(p.externalTaskTerm ? { externalTaskTerm: p.externalTaskTerm } : {}),
+          effective: eff
+            ? {
+              ...eff.allocation, source: eff.source, decisionIri: eff.decisionIri,
+              ...(effGrant ? { grant: effGrant, suspended: !effGrant.active, ...(effGrant.active ? {} : { suspendedWhy: `grant ${effGrant.why ?? 'inactive'}: ${SUSPENDED}` }) } : {}),
+            }
+            : { ...p.current, source: 'captured' },
+          currentNotPermitted: currentNote,
+          status: t.record.status, quoteStatus: p.quoteStatus, quotes: p.quotes, ...(p.revision ? { revision: { note: p.revision.note ?? null, answers: p.revision.answers, quotesCleared: p.revision.quotesCleared, by: p.revision.by.did } } : {}),
+          ...(p.retirement ? { retirement: { why: p.retirement.why, at: p.retirement.at, by: p.retirement.by.did } } : {}),
+          orphaned: !listedTasks.has(t.record.entityIri),
+          // Retired, but the workflow still lists it: retiring it again finishes the retirement.
+          retirementUnfinished: retirementUnfinished(t.record, workflowByIri.get(p.workflowIri)),
+          classification: cls ? {
+            regime: cls.record.payload.regime, method: cls.record.payload.method, rulesFired: cls.record.payload.rulesFired, notes: cls.record.payload.notes,
+            answers: cls.record.payload.answers,
+            answeredBy: { did: cls.record.payload.answeredBy.did, address: cls.record.payload.answeredBy.address, personRef: cls.record.payload.answeredBy.personRef, role: cls.record.payload.answeredBy.role },
+            status: cls.record.status, current: cls.record.payload.taskTextSha256 === p.textSha256,
+            ratifications: cls.record.payload.ratifications.map((r) => ({ party: r.party, verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at })),
+            disagreement: cls.record.payload.ratifications.filter((r) => r.answers).map((r) => ({ party: r.party, answers: r.answers })),
+            contraryEvidence: reviewed.length > 0 ? { reviewedRuns: reviewed.length, reworkedShare: Math.round(share * 10_000) / 10_000, criticalFailures: critical, suggestReclassify: suggest, note: CONTRARY_NOTE } : null,
+            state: 'ok', trusted: true, head: headInfo(cls.head), demo: cls.record.demo === true,
+          } : clsGraph && (clsGraph.g.state === 'altered' || clsGraph.g.state === 'forked') ? {
+            state: clsGraph.g.state, trusted: false,
+            heads: clsGraph.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, contentBinding: h.authorship.contentBinding, why: h.why })),
+          } : null,
+          link: taskLink(t.record.entityIri), head: headInfo(t.head), demo: t.record.demo === true,
+        };
+      });
+    }
+    if (want('plans')) {
+      const out2: Obj[] = [];
+      for (const pl of plansRec) {
+        const p = pl.record.payload;
+        if (!keep(pl.record.entityIri, p.workflowIri)) continue;
+        let stale: string | null = null;
+        const wf = workflowsRec.find((w) => w.record.entityIri === p.workflowIri);
+        for (const row of p.tasks) {
+          const t = tasksRec.find((x) => x.record.entityIri === row.taskIri);
+          const c = classificationByTask.get(row.taskIri);
+          if (row.changed && (t?.record.status === 'retired' || (wf && !wf.record.payload.taskIris.includes(row.taskIri)))) { stale = RETIRED_IN_PLAN; break; }
+          if (!t || t.record.payload.textSha256 !== p.taskTextSha256[row.taskIri] || !c || c.head.descriptorUrl !== p.classificationHeads[row.taskIri]) { stale = STALE_PLAN; break; }
+        }
+        const assignments = p.tasks.filter((r) => r.changed && r.proposed.personAddress).map((r) => {
+          const a = acks.get(`${pl.record.entityIri}|${r.taskIri}|${r.proposed.personAddress ?? ''}`);
+          const state = a ? a.status : 'not-acknowledged';
+          return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state, ...(a?.payload.note ? { note: a.payload.note } : {}), label: state === 'acknowledged' ? ACKNOWLEDGED : state === 'objected' ? OBJECTED : UNACKNOWLEDGED };
+        });
+        out2.push({ planIri: pl.record.entityIri, workflowIri: p.workflowIri, title: p.title, planKind: p.planKind, tasks: p.tasks, proposedBy: p.proposedBy.did, stale, assignments, head: headInfo(pl.head), demo: pl.record.demo === true });
+      }
+      out['plans'] = out2;
+    }
+    if (want('valuations')) {
+      out['valuations'] = recordsOf(snap, 'Valuation').filter((v) => keep(v.record.entityIri, workflowOfPlan(v.record.payload.planIri))).map((v) => ({
+        valuationIri: v.record.entityIri, planIri: v.record.payload.planIri, valuationHash: v.record.payload.valuationHash, inputs: v.record.payload.inputs, result: v.record.payload.result,
+        expertEvidence: v.record.payload.expertEvidence, unratifiedTasks: v.record.payload.unratifiedTasks, head: headInfo(v.head), demo: v.record.demo === true,
+      }));
+    }
+    if (want('decisions')) {
+      const out3: Obj[] = [];
+      for (const d of decisionsRec) {
+        const p = d.record.payload;
+        if (!keep(d.record.entityIri, workflowOfPlan(p.planIri))) continue;
+        const chain = (await call.view.history(d.s.g)).map((l) => ({
+          version: l.record?.version ?? null, status: l.record?.status ?? null, modalStatus: l.modalStatus, signedBy: l.record?.signers.map((s) => s.did) ?? [],
+          at: l.generatedAt, descriptorUrl: l.descriptorUrl, recordId: l.recordId, graphDigest: l.graphDigest,
+        }));
+        out3.push({
+          decisionIri: d.record.entityIri, decisionKind: p.decisionKind, planIri: p.planIri, ...(p.valuationIri ? { valuationIri: p.valuationIri, valuationHash: p.valuationHash } : {}),
+          status: d.record.status, statusLabel: statusLabelOf(d.record.status, p.decisionKind), decisionLevel: p.decisionLevel,
+          ...(p.prediction ? { prediction: p.prediction } : {}), ...(p.freedHours ? { freedHours: p.freedHours } : {}),
+          ...(p.measurementPlan ? { measurementPlan: p.measurementPlan, basisLabel: p.basisLabel } : {}),
+          subjects: p.subjects, assignments: p.assignments, submittedBy: { did: p.submittedBy.did, personRef: p.submittedBy.personRef },
+          ...(p.preparedBy ? { preparedBy: p.preparedBy } : {}),
+          ...(p.countersign ? { countersign: { verdict: p.countersign.verdict, did: p.countersign.did, personRef: p.countersign.personRef, objectionsConsidered: p.countersign.objectionsConsidered, unacknowledgedConsidered: p.countersign.unacknowledgedConsidered ?? [], assignmentsAtCountersign: p.countersign.assignmentsAtCountersign, at: p.countersign.at } } : {}),
+          ...(p.outcome ? { outcome: { did: p.outcome.did, personRef: p.outcome.personRef, disposition: p.outcome.disposition, ...(p.outcome.dispositionNote ? { dispositionNote: p.outcome.dispositionNote } : {}), at: p.outcome.at, ...(p.outcome.valued ? { valued: p.outcome.valued } : {}), ...(p.outcome.probes ? { probes: p.outcome.probes } : {}) } } : {}),
+          ...(p.probes ? { probes: p.probes } : {}),
+          ...(p.outcome?.probes?.some((x) => x.signal !== 'neither') ? { next: NEXT_RECLASSIFY } : {}),
+          grantChecks: p.grantChecks, chain, head: headInfo(d.head), demo: d.record.demo === true,
+        });
+      }
+      out['decisions'] = out3;
+    }
+    if (want('grants')) {
+      const out4: Obj[] = [];
+      for (const gr of recordsOf(snap, 'Grant')) {
+        const p = gr.record.payload;
+        if (subject !== null && subject !== gr.record.entityIri) continue;
+        const state = await grantState(call, reg, p.agentAddress, p.taskKind);
+        const history = await call.view.history(gr.s.g);
+        const grantedAt = [...history].reverse().find((l) => l.record?.status === 'granted')?.generatedAt ?? null;
+        out4.push({
+          grantIri: gr.record.entityIri, agentAddress: p.agentAddress, principal: p.principal, model: p.model, taskKind: p.taskKind, status: gr.record.status,
+          active: state.active, why: state.active ? null : state.why, evaluation: p.evaluation, evidenceTaskIris: p.evaluation.taskIris, grantedAt,
+          ...(p.revocation ? { revokedAt: p.revocation.at, revocationWhy: p.revocation.why } : {}), head: headInfo(gr.head), demo: gr.record.demo === true,
+        });
+      }
+      out['grants'] = out4;
+    }
+    if (want('runs')) {
+      const agg = new Map<string, { agentAddress: string; taskKind: string; model: string; reviewed: number; actedUnderGrant: number; costs: number[]; currency: string | null }>();
+      const awaiting: Obj[] = [];
+      for (const r of runsRec) {
+        const p = r.record.payload;
+        const k = `${p.agentAddress}|${p.taskKind}|${p.model}`;
+        const a = agg.get(k) ?? { agentAddress: p.agentAddress, taskKind: p.taskKind, model: p.model, reviewed: 0, actedUnderGrant: 0, costs: [], currency: null };
+        if (r.record.status === 'reviewed') a.reviewed += 1; else a.actedUnderGrant += 1;
+        if (r.record.status === 'reviewed' && p.costPerRun && (a.currency === null || a.currency === p.costPerRun.currency)) { a.costs.push(p.costPerRun.amount); a.currency = p.costPerRun.currency; }
+        agg.set(k, a);
+        if (r.record.status === 'acted-under-grant') awaiting.push({ runIri: r.record.entityIri, agentAddress: p.agentAddress, taskIri: p.taskIri, taskKind: p.taskKind, runEnvelope: p.runEnvelope, demo: r.record.demo === true });
+      }
+      out['runs'] = [...agg.values()].map((a) => ({
+        agentAddress: a.agentAddress, taskKind: a.taskKind, model: a.model, reviewed: a.reviewed, actedUnderGrant: a.actedUnderGrant,
+        ...(a.costs.length > 0 ? { reportedCost: { runs: a.costs.length, mean: a.costs.reduce((x, y) => x + y, 0) / a.costs.length, currency: a.currency, basis: REPORTED_COST_BASIS } } : {}),
+      }));
+      out['awaitingReview'] = awaiting;
+    }
+    out['untrusted'] = [
+      ...snap.graphs.flatMap((s) => s.g.untrusted),
+      ...snap.foreign.map((e) => ({ descriptorUrl: e.descriptorUrl, why: 'it is outside this pod\'s wrd/records/ container (for example a holder copy)' })),
+    ];
+    out['forked'] = snap.graphs.filter((s) => s.g.state === 'forked').map((s) => s.graphIri);
+    out['altered'] = snap.graphs.filter((s) => s.g.state === 'altered').map((s) => s.graphIri);
+    out['integrity'] = snap.graphs.filter((s) => s.g.state === 'altered' || s.g.state === 'forked').map((s) => ({
+      graphIri: s.graphIri, state: s.g.state,
+      heads: s.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, trusted: h.authorship.trusted, contentBinding: h.authorship.contentBinding, why: h.why })),
+    }));
+    return out;
+  }
+
+  async function calibrate(call: Call, args: Obj): Promise<Obj> {
+    const kind = kindArg(args);
+    const reg = await registryOf(call);
+    const snap = await snapshot(call.view);
+    const decisions: DecisionForCalibration[] = [];
+    const probes: ProbeOutcome[] = [];
+    for (const d of recordsOf(snap, 'Decision')) {
+      const p = d.record.payload;
+      const o = p.outcome;
+      if (d.record.status !== 'measured' || !o) continue;
+      const demoRecord = d.record.demo === true;
+      if (p.decisionKind === 'valued' && o.valued && p.prediction) {
+        const issued = p.submittedBy.envelope.payload['issuedAt'];
+        decisions.push({
+          decisionIri: d.record.entityIri, level: p.decisionLevel, metric: p.prediction.metric as OutcomeMetric, basis: o.valued.measured.comparisonBasis,
+          verdict: o.valued.verdict, rampAdjusted: o.valued.rampAdjusted, disposition: o.disposition, measuredBy: o.did,
+          submittedAt: typeof issued === 'string' ? issued : o.at, measuredAt: o.at, demo: demoRecord, shortWindow: o.valued.windowShorterThanPlanned === true,
+        });
+      }
+      for (const pr of o.probes ?? []) probes.push({ decisionIri: d.record.entityIri, taskIri: pr.taskIri, index: pr.index, signal: pr.signal, demo: demoRecord });
+    }
+    const runs: ReviewedRun[] = [];
+    const awaiting: Obj[] = [];
+    for (const r of recordsOf(snap, 'AgentRun')) {
+      const rr = reviewedRunOf(r.record);
+      if (rr) runs.push(rr);
+      else if (r.record.status === 'acted-under-grant') awaiting.push({ runIri: r.record.entityIri, agentAddress: r.record.payload.agentAddress, taskKind: r.record.payload.taskKind });
+    }
+    const policy = reg.policy.grantPolicy;
+    const report = calibrationReport({
+      decisions, runs, probes, minSamples: policy.minSamples, policy,
+      currentModelOf: (did) => memberOf(reg, did.replace(/^did:ethr:/, ''))?.model ?? null,
+    });
+    const agentCells: Obj[] = [];
+    for (const c of report.agentCells) {
+      const address = c.agentDid.replace(/^did:ethr:/, '');
+      const g = await grantState(call, reg, address, c.taskKind);
+      agentCells.push({ ...c, agentAddress: address, principal: memberOf(reg, address)?.principal ?? null, grant: { active: g.active, why: g.active ? null : g.why } });
+    }
+    const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
+    return {
+      podUrl: call.podUrl, complete: snap.complete, status: 'calibrated', computed: true, minSamples: report.minSamples, nominalBandCoverage: report.nominalBandCoverage,
+      demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null,
+      ...(kind === null || kind === 'predictions' ? { predictionCells: report.predictionCells } : {}),
+      ...(kind === null || kind === 'agents' ? { agentCells } : {}),
+      ...(kind === null || kind === 'probes' ? { probeSignals: report.probeSignals } : {}),
+      awaitingAPerson: awaiting, grantPolicy: policy, podPolicy: reg.podPolicy,
+    };
+  }
 
   if (demo) {
     handlers['wrd.demo_envelope'] = async (args) => {
       const id = args['persona'];
+      // Without a persona: who the demo can sign as, so a page can sign its first read.
+      if (id === undefined || id === null || id === '') {
+        return { personas: [...demo.values()].map((d) => ({ id: d.id, label: d.label, address: lower(d.wallet.address) })), demoKey: true, scriptedLabel: DEMO_LABEL, status: 'listed' };
+      }
       const persona = typeof id === 'string' ? demo.get(id) : undefined;
       if (!persona) return { ...refuse(404, 'No such demo persona.', `persona must be one of ${[...demo.keys()].join(', ')}`) };
       const raw = args['payload'];
@@ -2691,6 +2823,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
 const INTENTS_OF_TOOL = new Map<string, EnvelopeIntent[]>();
 for (const [intent, tool] of Object.entries(TOOL_OF_INTENT) as Array<[EnvelopeIntent, string]>) INTENTS_OF_TOOL.set(tool, [...(INTENTS_OF_TOOL.get(tool) ?? []), intent]);
+// The one intent sent to two tools: a signed read reads the records or their calibration.
+INTENTS_OF_TOOL.set('wrd.read_calibration', ['wrd:read-records']);
 
 /**
  * A malformed payload is answered with the whole shape it should have had, not only the first
@@ -2714,7 +2848,7 @@ function withExpectedPayload(toolName: string, result: unknown): unknown {
 /** The status a failure deserves, as a typed refusal. Unexpected failures are the bridge's (500), never the caller's. */
 function failureOf(e: unknown): BridgeRefusal {
   if (e instanceof Declined) return e.refusal;
-  if (e instanceof StaleHeadError) return refuse(409, 'The record changed since it was read; read it again and retry.', e.message, via('list_records'));
+  if (e instanceof StaleHeadError) return refuse(409, 'The record changed since it was read; read it again and retry.', e.message, via('read_records'));
   if (e instanceof IncompleteManifestError) return refuse(502, "The pod's manifest could not be read in full; nothing was written.", e.message);
   if (e instanceof PodWriteError) return refuse(502, e.status === null ? 'The pod did not accept the write.' : `The pod answered ${e.status} to the write.`, e.message);
   if (e instanceof PodReadError) return refuse(502, e.status === null ? 'The pod could not be read.' : `The pod answered ${e.status} to a read.`, e.message);

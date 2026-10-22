@@ -4,7 +4,9 @@
  *
  * Every write takes a signed envelope and nothing else that names a person: identity is the
  * address recovered from the signature, never an input. No affordance takes a key, a seed, a
- * regime, a modal status, a provenance source or a caller DID.
+ * regime, a modal status, a provenance source or a caller DID. Reads take a signed read too
+ * (wrd.read_records, wrd.read_calibration); the GET read model answers only when the operator
+ * opens reads.
  *
  * `wrdDemoAffordances` holds the one demo-only capability (signing with server-held demo
  * persona keys). Only the offline demo composes it; a production bridge neither advertises nor
@@ -44,6 +46,34 @@ const READS = [{
   label: 'The manifest of wrd records on the pod (only versions signed by a platform key this bridge trusts count)',
   populatedBy: 'urn:iep:action:wrd:capture-workflow',
 }] as const;
+
+const READ_ANNOTATIONS = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
+const READ_ENVELOPE: AffordanceInput = {
+  name: 'envelope', type: 'object', required: true,
+  description: `{payload, signature}: EIP-191 personal_sign over canonicalJson(payload); payload = {intent: "wrd:read-records", podUrl, issuedAt (ISO-8601, within 15 minutes), nonce (16-64 characters)}. Signed by an admin or a key in the pod's registry. A read spends no nonce: the same envelope reads again (records or calibration) until issuedAt leaves the window. Template: wrd.envelope_template with intent=wrd:read-records.`,
+};
+const LIST_INPUTS: AffordanceInput[] = [
+  POD_INPUT,
+  { name: 'kind', type: 'string', required: false, description: 'Only one section.', enum: ['registry', 'workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'] },
+  { name: 'subject', type: 'string', required: false, description: 'Only records about this entity IRI.' },
+  { name: 'workflow', type: 'string', required: false, description: 'Only records of this workflow IRI.' },
+];
+const LIST_OUTPUTS: AffordanceOutput = {
+  description: 'The read model; complete is false when the manifest could not be read in full.',
+  properties: { podUrl: { type: 'string' }, complete: { type: 'boolean' }, status: { type: 'string' }, readExposure: { type: 'string' }, vocabulary: { type: 'object' }, registry: { type: 'object' }, workflows: { type: 'array' }, tasks: { type: 'array' }, plans: { type: 'array' }, valuations: { type: 'array' }, decisions: { type: 'array' }, grants: { type: 'array' }, runs: { type: 'array' }, untrusted: { type: 'array' } },
+  required: ['podUrl', 'complete', 'status'],
+};
+const CALIBRATION_INPUTS: AffordanceInput[] = [
+  POD_INPUT,
+  { name: 'kind', type: 'string', required: false, description: 'Only one section.', enum: ['predictions', 'agents', 'probes'] },
+];
+const CALIBRATION_OUTPUTS: AffordanceOutput = {
+  description: 'Prediction cells, agent cells and probe signals; cells built on demo records are labelled.',
+  properties: { podUrl: { type: 'string' }, status: { type: 'string' }, computed: { type: 'boolean' }, predictionCells: { type: 'array' }, agentCells: { type: 'array' }, probeSignals: { type: 'object' }, awaitingAPerson: { type: 'array' } },
+  required: ['podUrl', 'status'],
+};
+const LIST_DESCRIPTION = 'Read model of every trusted wrd record on the pod: the vocabulary and published policy, the registry, workflows, tasks (with ratifications, classifications and their status), plans, valuations, decisions with their chains, grants, runs, and records set aside as untrusted, forked or altered.';
+const CALIBRATION_DESCRIPTION = 'How well valued decisions predicted their measured outcomes (band coverage against the nominal 0.8, Brier and ordinal distance, per metric, level and whether there was a comparison group), how well each agent judged its own runs against person reviews, and probe signals reported apart.';
 
 
 export const wrdAffordances: ReadonlyArray<Affordance> = [
@@ -309,7 +339,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.envelope_template',
     targetTemplate: '{base}/wrd/envelope_template',
     title: 'Get the payload to sign for a write',
-    description: 'For one write intent: the JSON Schema of its payload, and a template filled from the pod — podUrl, a fresh issuedAt and nonce, and, when you name the record, the head binding (descriptorUrl, graphDigest, recordId) and the rows it needs (for a valuation, one entry per task of the plan). Fields left for you to decide are null and listed in fill. Signs nothing and writes nothing.',
+    description: 'For one write intent (or wrd:read-records): the JSON Schema of its payload, and a template filled from the pod — podUrl, a fresh issuedAt and nonce, and, when you name the record, the head binding (descriptorUrl, graphDigest, recordId) and the rows it needs (for a valuation, one entry per task of the plan). Fields left for you to decide are null and listed in fill. Unless the operator opened reads, what the bridge read out of records (the context, a task description to revise) is withheld: read it with wrd.read_records. Signs nothing and writes nothing.',
     method: 'GET',
     annotations: { title: 'Payload template', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     reads: READS,
@@ -333,41 +363,49 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:wrd:list-records' as IRI,
     toolName: 'wrd.list_records',
     targetTemplate: '{base}/wrd/list_records',
-    title: 'List the records on a pod',
-    description: 'Read model of every trusted wrd record on the pod: the vocabulary and published policy, the registry, workflows, tasks (with ratifications, classifications and their status), plans, valuations, decisions with their chains, grants, runs, and records set aside as untrusted, forked or altered. Unauthenticated in v1: anyone who can reach the bridge can read every record on the pod.',
+    title: 'List the records on a pod (unsigned, when the operator opens reads)',
+    description: `${LIST_DESCRIPTION} Answers 401 unless the operator opened reads to anyone (WRD_PUBLIC_READS=1); otherwise read with wrd.read_records.`,
     method: 'GET',
-    annotations: { title: 'List records', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { title: 'List records', ...READ_ANNOTATIONS },
     reads: READS,
-    inputs: [
-      POD_INPUT,
-      { name: 'kind', type: 'string', required: false, description: 'Only one section.', enum: ['registry', 'workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'] },
-      { name: 'subject', type: 'string', required: false, description: 'Only records about this entity IRI.' },
-      { name: 'workflow', type: 'string', required: false, description: 'Only records of this workflow IRI.' },
-    ],
-    outputs: {
-      description: 'The read model; complete is false when the manifest could not be read in full.',
-      properties: { podUrl: { type: 'string' }, complete: { type: 'boolean' }, status: { type: 'string' }, readExposure: { type: 'string' }, vocabulary: { type: 'object' }, registry: { type: 'object' }, workflows: { type: 'array' }, tasks: { type: 'array' }, plans: { type: 'array' }, valuations: { type: 'array' }, decisions: { type: 'array' }, grants: { type: 'array' }, runs: { type: 'array' }, untrusted: { type: 'array' } },
-      required: ['podUrl', 'complete', 'status'],
-    },
+    inputs: LIST_INPUTS,
+    outputs: LIST_OUTPUTS,
   },
   {
     action: 'urn:iep:action:wrd:calibration' as IRI,
     toolName: 'wrd.calibration',
     targetTemplate: '{base}/wrd/calibration',
-    title: 'Calibration of predictions and agents',
-    description: 'How well valued decisions predicted their measured outcomes (band coverage against the nominal 0.8, Brier and ordinal distance, per metric, level and whether there was a comparison group), how well each agent judged its own runs against person reviews, and probe signals reported apart.',
+    title: 'Calibration of predictions and agents (unsigned, when the operator opens reads)',
+    description: `${CALIBRATION_DESCRIPTION} Answers 401 unless the operator opened reads to anyone (WRD_PUBLIC_READS=1); otherwise read with wrd.read_calibration.`,
     method: 'GET',
-    annotations: { title: 'Calibration', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    annotations: { title: 'Calibration', ...READ_ANNOTATIONS },
     reads: READS,
-    inputs: [
-      POD_INPUT,
-      { name: 'kind', type: 'string', required: false, description: 'Only one section.', enum: ['predictions', 'agents', 'probes'] },
-    ],
-    outputs: {
-      description: 'Prediction cells, agent cells and probe signals; cells built on demo records are labelled.',
-      properties: { podUrl: { type: 'string' }, status: { type: 'string' }, computed: { type: 'boolean' }, predictionCells: { type: 'array' }, agentCells: { type: 'array' }, probeSignals: { type: 'object' }, awaitingAPerson: { type: 'array' } },
-      required: ['podUrl', 'status'],
-    },
+    inputs: CALIBRATION_INPUTS,
+    outputs: CALIBRATION_OUTPUTS,
+  },
+  {
+    action: 'urn:iep:action:wrd:read-records' as IRI,
+    toolName: 'wrd.read_records',
+    targetTemplate: '{base}/wrd/read_records',
+    title: 'Read the records on a pod (signed read)',
+    description: `${LIST_DESCRIPTION} For an admin or a key in the pod's registry, by a signed read; anyone else is refused (403).`,
+    method: 'POST',
+    annotations: { title: 'Read records', ...READ_ANNOTATIONS },
+    reads: READS,
+    inputs: [READ_ENVELOPE, ...LIST_INPUTS],
+    outputs: LIST_OUTPUTS,
+  },
+  {
+    action: 'urn:iep:action:wrd:read-calibration' as IRI,
+    toolName: 'wrd.read_calibration',
+    targetTemplate: '{base}/wrd/read_calibration',
+    title: 'Read the calibration of predictions and agents (signed read)',
+    description: `${CALIBRATION_DESCRIPTION} For an admin or a key in the pod's registry, by the same signed read as wrd.read_records; anyone else is refused (403).`,
+    method: 'POST',
+    annotations: { title: 'Read calibration', ...READ_ANNOTATIONS },
+    reads: READS,
+    inputs: [READ_ENVELOPE, ...CALIBRATION_INPUTS],
+    outputs: CALIBRATION_OUTPUTS,
   },
 ];
 
@@ -378,17 +416,17 @@ export const wrdDemoAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.demo_envelope',
     targetTemplate: '{base}/wrd/demo_envelope',
     title: 'Sign as a demo persona (demo only)',
-    description: 'Offline demo only: signs a payload with a key the demo server generated for a named persona. These are not signatures by real people, and every record written while the demo runs says it is scripted.',
+    description: 'Offline demo only: signs a payload with a key the demo server generated for a named persona. These are not signatures by real people, and every record written while the demo runs says it is scripted. Without a persona it lists the personas.',
     method: 'POST',
     annotations: { title: 'Demo signing', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputs: [
-      { name: 'persona', type: 'string', required: true, description: 'The demo persona id.' },
-      { name: 'payload', type: 'object', required: true, description: 'The envelope payload to sign; issuedAt and nonce are filled when absent.' },
+      { name: 'persona', type: 'string', required: false, description: 'The demo persona id; omit it to list the personas.' },
+      { name: 'payload', type: 'object', required: false, description: 'The envelope payload to sign; issuedAt and nonce are filled when absent. Required with persona.' },
     ],
     outputs: {
-      description: 'The signed envelope and who it was signed as.',
-      properties: { envelope: { type: 'object' }, signer: { type: 'string' }, persona: { type: 'string' }, label: { type: 'string' }, demoKey: { type: 'boolean' }, scriptedLabel: { type: 'string' }, status: { type: 'string' } },
-      required: ['envelope', 'signer'],
+      description: 'The signed envelope and who it was signed as, or (without a persona) the personas.',
+      properties: { envelope: { type: 'object' }, signer: { type: 'string' }, persona: { type: 'string' }, label: { type: 'string' }, personas: { type: 'array' }, demoKey: { type: 'boolean' }, scriptedLabel: { type: 'string' }, status: { type: 'string' } },
+      required: ['status'],
     },
   },
   {

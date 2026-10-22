@@ -3,9 +3,14 @@
  *
  * A Path-A client: it reads the affordance manifest (GET /affordances?format=jsonld) and calls
  * only the targets and methods it declares. Every number shown comes from an affordance
- * response (wrd.list_records, wrd.calibration, or the answer to a write); every change is an
- * envelope signed by the person acting — in their own wallet, or, only in the offline demo, by
- * a persona key the demo server holds, which this page says on every screen.
+ * response (wrd.read_records, wrd.read_calibration, or the answer to a write); every change is
+ * an envelope signed by the person acting — in their own wallet, or, only in the offline demo,
+ * by a persona key the demo server holds, which this page says on every screen.
+ *
+ * Reads are signed too. The page signs one wrd:read-records envelope per signer and pod and
+ * reuses it for up to nine minutes (the bridge accepts it for fifteen, and a read spends no
+ * nonce); a reused read that has gone stale is signed once more. With nothing to sign with, it
+ * tries the unsigned read model, which a bridge answers only when its operator opened reads.
  *
  * Untrusted text (anything read from the pod or typed by a person) reaches the page only as
  * text nodes. No innerHTML, no style attribute: widths are set through the CSSOM, which the
@@ -18,12 +23,15 @@
 const DEMO_BANNER = 'DEMO — keys are generated and held by this demo server. These are not signatures by real people.';
 const EPHEMERAL = 'EPHEMERAL — records will not be trusted after this server restarts';
 const DEMO_KEY = 'DEMO KEY — derived from a published seed';
-const READ_ONLY = 'Read only: this browser has no EIP-191 wallet, so this page cannot sign. Install or enable a wallet that supports personal_sign and reload; the bridge accepts only signed envelopes and never asks for a key.';
+const READ_ONLY = 'No wallet: this browser has no EIP-191 wallet, so this page cannot sign, and it reads the pod only where the bridge serves unsigned reads. Install or enable a wallet that supports personal_sign and reload; the bridge accepts only signed envelopes and never asks for a key.';
+const READ_SIGNING = 'Reading this pod needs your signature too: the page asks your wallet to sign one read and reuses it for up to nine minutes.';
+const READ_ENVELOPE_MS = 9 * 60 * 1000;
 const SIGNING_MEANS = 'Your signature says this description of your work is right, or records why it is not. It is stored with the record, anyone who can read the pod can check it, and you can take a copy of every record about you.';
 const WALLET_STEPS = [
   'Use a browser wallet that supports personal_sign (EIP-191).',
-  'Ask an admin to add your wallet address to this pod\'s registry: until then the bridge refuses your signature.',
+  'Ask an admin to add your wallet address to this pod\'s registry: until then the bridge refuses your signature, for reads as for changes.',
   'Press "Connect wallet" at the top of the page, then sign. The page shows the exact payload before your wallet does.',
+  READ_SIGNING,
 ];
 const PACKET_SENTENCE = 'Give this to your own AI agent; this server drafts nothing.';
 const PREVIEW_LABEL = 'preview — the platform re-checks when you sign';
@@ -63,7 +71,8 @@ const TAB_OF = {
   'wrd.revise_task': 'tasks', 'wrd.ratify_task': 'tasks', 'wrd.classify_task': 'tasks', 'wrd.propose_allocation': 'plan',
   'wrd.value_plan': 'value', 'wrd.submit_decision': 'decisions', 'wrd.countersign_decision': 'decisions', 'wrd.record_outcome': 'decisions',
   'wrd.log_agent_run': 'agents', 'wrd.grant_autonomy': 'agents', 'wrd.revoke_grant': 'agents', 'wrd.holder_copy': 'me',
-  'wrd.list_records': 'tasks', 'wrd.calibration': 'calibration', 'wrd.envelope_template': 'tasks', 'wrd.demo_advance_clock': 'decisions',
+  'wrd.list_records': 'tasks', 'wrd.calibration': 'calibration', 'wrd.read_records': 'tasks', 'wrd.read_calibration': 'calibration',
+  'wrd.envelope_template': 'tasks', 'wrd.demo_advance_clock': 'decisions',
 };
 
 // ── Small pure helpers ───────────────────────────────────────────────────────────────────
@@ -156,9 +165,10 @@ const table = (head, rows) => h('div', { class: 'scroll' }, h('table', null,
 // ── State ────────────────────────────────────────────────────────────────────────────────
 
 const S = {
-  tools: new Map(), data: null, cal: null, mode: 'readonly', persona: '', account: '', tab: 'tasks',
+  tools: new Map(), data: null, cal: null, mode: 'readonly', persona: '', personas: [], account: '', tab: 'tasks',
   workflow: '', plan: '', result: null, panel: null, busy: false, planForm: {}, packet: null, decisionOpen: '',
   pod: new URLSearchParams(location.search).get('pod') ?? '',
+  reads: new Map(),             // signed read envelopes by signer and pod, reused for up to READ_ENVELOPE_MS
 };
 const data = () => S.data || {};
 const reg = () => (S.data && S.data.registry) || { members: [], taskKinds: [], head: null };
@@ -167,7 +177,7 @@ const labelOf = (a) => member(a)?.label ?? short(a);
 const people = () => reg().members.filter((m) => !m.softwareAgent);
 const agentsList = () => reg().members.filter((m) => m.softwareAgent);
 const kindsList = (all) => reg().taskKinds.filter((k) => all || !k.retired);
-const personas = () => data().bridge?.demo?.personas ?? [];
+const personas = () => (S.personas.length ? S.personas : data().bridge?.demo?.personas ?? []);
 const tasks = () => data().tasks ?? [];
 const taskBy = (iri) => tasks().find((t) => t.taskIri === iri);
 const taskName = (iri) => taskBy(iri)?.name ?? short(iri);
@@ -273,14 +283,62 @@ async function showPayload(intent, args) {
 }
 const payloadButton = (intent, args) => h('button', { class: 'small', text: 'What this signs', title: 'The payload schema and a template filled from the pod (reads only)', on: { click: () => showPayload(intent, args) } });
 
+/** Who would sign a read now, or '' when nothing can sign. */
+function readSigner() {
+  if (S.mode === 'demo') return S.persona ? `demo:${S.persona}` : '';
+  return S.mode === 'wallet' && S.account ? `wallet:${S.account}` : '';
+}
+
+/**
+ * Send one signed read through `send`, which posts the envelope to its tool. The envelope is the
+ * one this signer signed for this pod in the last nine minutes, or a new one over the template
+ * wrd.envelope_template fills (which names the pod the bridge resolves). A reused envelope the
+ * bridge calls stale (401: the demo's scripted clock moves) is dropped and signed once more.
+ */
+async function signedRead(send) {
+  const key = `${readSigner()}|${S.pod}`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let envelope;
+    const hit = S.reads.get(key);
+    const reused = Boolean(hit && Date.now() - hit.at < READ_ENVELOPE_MS);
+    if (reused) {
+      envelope = hit.envelope;
+    } else {
+      const t = await call('wrd.envelope_template', { intent: 'wrd:read-records', pod_url: S.pod || undefined });
+      if (!t.ok) return t;
+      try {
+        envelope = await sign({ intent: 'wrd:read-records', podUrl: t.body.template.podUrl });
+      } catch (e) {
+        return { ok: false, status: 0, body: { error: 'The read was not signed.', 'iep:refusalReason': String(e?.message ?? e) } };
+      }
+      S.reads.set(key, { envelope, at: Date.now() });
+    }
+    const r = await send(envelope);
+    if (r.status === 401 && reused && attempt === 0) { S.reads.delete(key); continue; }
+    return r;
+  }
+  return { ok: false, status: 0, body: { error: 'The read was not signed.' } };
+}
+
 async function refresh() {
-  const r = await call('wrd.list_records', { pod_url: S.pod || undefined });
+  const pod = S.pod || undefined;
+  let signed = readSigner() !== '';
+  let r = signed
+    ? await signedRead((envelope) => call('wrd.read_records', { envelope, pod_url: pod }))
+    : await call('wrd.list_records', { pod_url: pod });
+  if (signed && r.status === 403) {
+    // A signer with no role here still reads where the operator opened reads to anyone.
+    const open = await call('wrd.list_records', { pod_url: pod });
+    if (open.ok) { r = open; signed = false; }
+  }
   if (r.ok) S.data = r.body;
-  else { S.data = null; S.result = { tool: 'wrd.list_records', ...r }; }
+  else { S.data = null; S.result = { tool: signed ? 'wrd.read_records' : 'wrd.list_records', ...r }; }
   if (S.data && S.tab === 'calibration') {
-    const c = await call('wrd.calibration', { pod_url: S.pod || undefined });
+    const c = signed
+      ? await signedRead((envelope) => call('wrd.read_calibration', { envelope, pod_url: pod }))
+      : await call('wrd.calibration', { pod_url: pod });
     S.cal = c.ok ? c.body : null;
-    if (!c.ok) S.result = { tool: 'wrd.calibration', ...c };
+    if (!c.ok) S.result = { tool: signed ? 'wrd.read_calibration' : 'wrd.calibration', ...c };
   }
   render();
 }
@@ -298,15 +356,18 @@ async function boot() {
   for (const a of m.affordances ?? []) {
     S.tools.set(a.toolName, { path: new URL(a.target, location.href).pathname, method: a.method, title: a.title ?? a.toolName, action: a.action });
   }
-  await refresh();
-  if (data().bridge?.demo?.enabled) {
+  // The signer is chosen before the first read, because reading is signed: only the demo server
+  // declares its persona signer, and it names its personas when asked without one.
+  if (S.tools.has('wrd.demo_envelope')) {
+    const r = await call('wrd.demo_envelope', {});
+    S.personas = r.ok ? r.body.personas ?? [] : [];
     S.mode = 'demo';
-    S.persona = personas().find((p) => p.id === 'ana')?.id ?? personas()[0]?.id ?? '';
+    S.persona = S.personas.find((p) => p.id === 'ana')?.id ?? S.personas[0]?.id ?? '';
   } else if (window.ethereum) {
     S.mode = 'wallet';
   }
   window.addEventListener('hashchange', render);
-  render();
+  await refresh();
 }
 
 // ── Frame: header strip, tabs, result ────────────────────────────────────────────────────
@@ -316,7 +377,9 @@ function render() {
   if (!root) return;
   root.replaceChildren();
   if (!S.data) {
-    add(root, h('h1', { text: 'Work redesign' }), resultNode(), podPicker());
+    // Nothing read: still offer the way to sign a read (or another signer), and another pod.
+    add(root, h('h1', { text: 'Work redesign' }), resultNode(), h('div', { class: 'stack' }, signerNode()),
+      S.mode === 'wallet' ? h('p', { class: 'small muted', text: READ_SIGNING }) : null, podPicker());
     return;
   }
   const taskIri = taskFromHash();
@@ -349,19 +412,29 @@ function strip() {
       altered + forked + untrusted > 0 ? h('p', { class: 'warnbox small' },
         `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`) : null),
     h('div', { class: 'stack' },
-      S.mode === 'demo' ? [
-        h('div', { class: 'demo-banner', text: DEMO_BANNER }),
-        S.tools.has('wrd.demo_advance_clock') ? demoClockNode() : null,
-        h('div', { class: 'row' }, h('label', { class: 'inline', for: 'persona' }, 'Acting as'),
-          h('select', { id: 'persona', on: { change: (e) => { S.persona = e.target.value; S.panel = null; render(); } } },
-            personas().map((p) => h('option', { value: p.id, selected: p.id === S.persona, text: `${p.label} — ${roles(p.address).join(', ') || (p.id === 'admin' ? 'admin' : 'not registered')}` })))),
-      ] : S.mode === 'wallet' ? h('div', { class: 'row' },
-        S.account ? ['Signing with your wallet ', h('code', { text: S.account })] : h('button', { class: 'primary', text: 'Connect wallet', on: { click: connectWallet } }))
-        : h('p', { class: 'warnbox small', text: READ_ONLY }),
+      signerNode(),
       me ? h('div', { class: 'row small' }, 'Acting address ', h('code', { text: me }),
         m ? [m.roles.map((r) => chip(r)), m.softwareAgent ? chip('software agent', 'warn') : null, m.personRef ? ['person ', h('code', { text: m.personRef })] : null,
           m.principal ? ['principal ', labelOf(m.principal)] : null]
           : chip(S.persona === 'admin' ? 'admin key (signs registry changes only)' : 'not in this pod\'s registry', 'warn')) : null));
+}
+
+/** Who signs: the demo persona picker, the wallet, or why nothing can. Reads are signed as this identity too. */
+function signerNode() {
+  if (S.mode === 'demo') {
+    return [
+      h('div', { class: 'demo-banner', text: DEMO_BANNER }),
+      S.data && S.tools.has('wrd.demo_advance_clock') ? demoClockNode() : null,
+      h('div', { class: 'row' }, h('label', { class: 'inline', for: 'persona' }, 'Acting as'),
+        h('select', { id: 'persona', on: { change: (e) => { S.persona = e.target.value; S.panel = null; S.result = null; refresh(); } } },
+          personas().map((p) => h('option', { value: p.id, selected: p.id === S.persona, text: `${p.label} — ${roles(p.address).join(', ') || (p.id === 'admin' ? 'admin' : 'not registered')}` })))),
+    ];
+  }
+  if (S.mode === 'wallet') {
+    return h('div', { class: 'row' },
+      S.account ? ['Signing with your wallet ', h('code', { text: S.account })] : h('button', { class: 'primary', text: 'Connect wallet', on: { click: connectWallet } }));
+  }
+  return h('p', { class: 'warnbox small', text: READ_ONLY });
 }
 
 /** Demo only: the demo server's clock is scripted, so a visitor's own measurement window can end only when they move it. */
@@ -395,7 +468,8 @@ async function connectWallet() {
     showResult('wallet', { ok: false, status: 0, body: { error: 'The wallet did not connect.', 'iep:refusalReason': String(e?.message ?? e) } });
     return;
   }
-  render();
+  S.result = null;
+  await refresh();
 }
 
 function resultNode() {

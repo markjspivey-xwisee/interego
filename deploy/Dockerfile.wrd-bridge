@@ -100,11 +100,20 @@ ENV WRD_DEFAULT_POD_URL=https://gate.interego.xwisee.com/work-redesign/
 #   WRD_PLATFORM_KEY                the key records are signed with; unset → an EPHEMERAL key, and
 #                                   the startup line says records written now are not trusted
 #                                   after a restart
+#   WRD_RECORD_KEY                  64 hex, a different key: record graphs are sealed to it on the
+#                                   pod; unset → plaintext records, which the gate serves to anyone
+#   WRD_POD_WRITE_SECRET            the gate's operator token, sent under the default pod's path only
 #   WRD_ADMIN_ADDRESSES             who may change the role registry
 #   WRD_TRUSTED_PLATFORM_ADDRESSES  earlier platform keys whose records stay trusted
+#   WRD_SERVED_PODS                 pods records are read and written on; unset → the default pod
+#   WRD_PUBLIC_READS                1 → unsigned reads of every record; unset → signed reads only
 ENV WRD_PLATFORM_KEY=
+ENV WRD_RECORD_KEY=
+ENV WRD_POD_WRITE_SECRET=
 ENV WRD_ADMIN_ADDRESSES=
 ENV WRD_TRUSTED_PLATFORM_ADDRESSES=
+ENV WRD_SERVED_PODS=
+ENV WRD_PUBLIC_READS=
 
 # The commit this image was built from, surfaced at /health by the shared createVerticalBridge
 # factory so a deploy can be VERIFIED rather than assumed.
