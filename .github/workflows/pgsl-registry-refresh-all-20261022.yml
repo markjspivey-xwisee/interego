@@ -1,0 +1,108 @@
+name: Refresh existing private registry credentials
+on:
+  push:
+    branches:
+      - incident/pgsl-registry-refresh-all-20261022
+    paths:
+      - .github/workflows/pgsl-registry-refresh-all-20261022.yml
+permissions:
+  contents: read
+concurrency:
+  group: pgsl-registry-refresh-all-20261022
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate pinned manifests and refresh credentials without deploying
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          const expected=[{"id":"391020be-690a-4d14-85d6-00542d7ddec6","name":"acme-id","image":"ghcr.io/markjspivey-xwisee/interego-acme-id:5fe8edb9c3d341c73cdca356a22aa211c350a6cb"},{"id":"5fb6e2af-ef56-4fd6-ade5-a7c12c2600d7","name":"agp-bridge","image":"ghcr.io/markjspivey-xwisee/interego-agp-bridge:b947daee443c6a1229a0c65498b67548e7d47baa"},{"id":"8b5941b0-e8e9-4a34-94be-bbb930b28261","name":"bridge","image":"ghcr.io/markjspivey-xwisee/interego-bridge:b947daee443c6a1229a0c65498b67548e7d47baa"},{"id":"05ec34ca-da58-464d-a548-69c7ccc95f42","name":"css","image":"ghcr.io/markjspivey-xwisee/interego-css-pgsl:4d41980040f08123bf787523938596d304a77e35"},{"id":"37f2356c-eb41-4298-a119-2976968e807c","name":"css-gate","image":"ghcr.io/markjspivey-xwisee/interego-css-gate:bec6474a1350cbf17e047b79c46731e62d27004d"},{"id":"96ef4ee4-2c51-43fa-a127-cb78fc6a938f","name":"dashboard","image":"ghcr.io/markjspivey-xwisee/interego-dashboard:b947daee443c6a1229a0c65498b67548e7d47baa"},{"id":"8fa4ffed-8171-4785-9828-d770ef26966a","name":"discord","image":"ghcr.io/markjspivey-xwisee/interego-discord:b947daee443c6a1229a0c65498b67548e7d47baa"},{"id":"62242b69-dae2-4798-ae0d-d9ea5234d985","name":"foxxi-bridge","image":"ghcr.io/markjspivey-xwisee/interego-foxxi-bridge:fd209c9ecb456cf309387c80c4da8bda0d10df84"},{"id":"75db1c67-6ca2-41d2-81e5-04eead35a23e","name":"foxxi-dashboard","image":"ghcr.io/markjspivey-xwisee/interego-foxxi-dashboard:b947daee443c6a1229a0c65498b67548e7d47baa"},{"id":"bbf3498b-ab47-454f-9ca9-176cb81586d2","name":"foxxi-microsite","image":"ghcr.io/markjspivey-xwisee/interego-foxxi-microsite:b947daee443c6a1229a0c65498b67548e7d47baa"},{"id":"d168d12f-dfe8-4d54-a901-bc6c0720b16f","name":"foxxi-scorm-player","image":"ghcr.io/markjspivey-xwisee/interego-foxxi-scorm-player:5fe8edb9c3d341c73cdca356a22aa211c350a6cb"},{"id":"9f813936-9df0-4ec9-894c-63c4b09c7eb7","name":"identity","image":"ghcr.io/markjspivey-xwisee/interego-identity:5fe8edb9c3d341c73cdca356a22aa211c350a6cb"},{"id":"79d68de5-970c-4077-9699-8bf03f6cd8ea","name":"jev-harness-bridge","image":"ghcr.io/markjspivey-xwisee/interego-jev-harness-bridge:b947daee443c6a1229a0c65498b67548e7d47baa"},{"id":"ce92583c-996f-49fc-a0c4-dd831b0a24cb","name":"main","image":"ghcr.io/markjspivey-xwisee/interego-main:5fe8edb9c3d341c73cdca356a22aa211c350a6cb"},{"id":"7f48bec7-069a-49b0-af83-deeb14bfb4b2","name":"microsite","image":"ghcr.io/markjspivey-xwisee/interego-microsite:5fe8edb9c3d341c73cdca356a22aa211c350a6cb"},{"id":"10367513-62c2-4574-8bc1-2e0aa4def091","name":"pgsl-browser","image":"ghcr.io/markjspivey-xwisee/interego-pgsl-browser:b947daee443c6a1229a0c65498b67548e7d47baa"},{"id":"3e406472-9e03-4cfc-ac0a-1f3700dadd00","name":"relay","image":"ghcr.io/markjspivey-xwisee/interego-relay:4d41980040f08123bf787523938596d304a77e35"},{"id":"31d193fb-6661-4ab3-b397-a7b95bb9fafc","name":"wsp-bridge","image":"ghcr.io/markjspivey-xwisee/interego-wsp-bridge:b947daee443c6a1229a0c65498b67548e7d47baa"}];
+          const projectId='b88ceabb-7461-4949-81d7-3d29132e7806';
+          const environmentId='449996a2-3533-462f-98c6-4ab4c05dd777';
+          const secret=process.env.GHCR_TOKEN;
+          const projectToken=process.env.RAILWAY_PROJECT_TOKEN;
+          assert.ok(secret&&projectToken,'required existing Actions secret is missing');
+          const say=value=>console.log(JSON.stringify(value));
+          const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+          async function gql(query,variables={},read=false){
+            const attempts=read?3:1;
+            for(let attempt=1;;attempt++){
+              try{
+                const response=await fetch('https://backboard.railway.com/graphql/v2',{
+                  method:'POST',
+                  headers:{'Content-Type':'application/json','Project-Access-Token':projectToken},
+                  body:JSON.stringify({query,variables}),
+                  signal:AbortSignal.timeout(20000)
+                });
+                if(!response.ok)throw Error('Railway HTTP '+response.status);
+                const body=await response.json();
+                if(body.errors?.length)throw Error('Railway GraphQL operation refused');
+                if(!body.data)throw Error('Railway response has no data');
+                return body.data;
+              }catch(error){
+                if(attempt>=attempts)throw error;
+                await pause(attempt*1000);
+              }
+            }
+          }
+          const scope=await gql('{projectToken{projectId environmentId}}',{},true);
+          assert.equal(scope.projectToken.projectId,projectId,'wrong project scope');
+          assert.equal(scope.projectToken.environmentId,environmentId,'wrong environment scope');
+          const serviceQuery='query($s:String!,$e:String!){serviceInstance(serviceId:$s,environmentId:$e){source{image} numReplicas overlapSeconds drainingSeconds latestDeployment{id}}}';
+          const snapshot=async id=>(await gql(serviceQuery,{s:id,e:environmentId},true)).serviceInstance;
+          const before=new Map();
+          for(const service of expected){
+            const state=await snapshot(service.id);
+            assert.equal(state.source?.image,service.image,'pin changed during credential preflight: '+service.name);
+            before.set(service.id,state);
+          }
+          say({phase:'preflight',projectId,environmentId,services:expected.length,mode:'registry-credentials-only'});
+          const receipts=new Map();
+          async function validateManifest(service){
+            const relative=service.image.slice('ghcr.io/'.length);
+            assert.ok(relative.startsWith('markjspivey-xwisee/interego-'),'unexpected image repository');
+            const split=relative.lastIndexOf(':');
+            assert.ok(split>0,'image must have its existing tag');
+            const repository=relative.slice(0,split),tag=relative.slice(split+1);
+            const auth=await fetch('https://ghcr.io/token?service=ghcr.io&scope='+encodeURIComponent('repository:'+repository+':pull'),{
+              headers:{Authorization:'Basic '+Buffer.from('markjspivey-xwisee:'+secret).toString('base64')},
+              signal:AbortSignal.timeout(20000)
+            });
+            assert.ok(auth.ok,'GHCR authentication failed for '+service.name+' HTTP '+auth.status);
+            const body=await auth.json(),bearer=body.token??body.access_token;
+            assert.ok(typeof bearer==='string'&&bearer.length>0,'GHCR returned no bearer');
+            const response=await fetch('https://ghcr.io/v2/'+repository+'/manifests/'+encodeURIComponent(tag),{
+              method:'HEAD',
+              headers:{Authorization:'Bearer '+bearer,Accept:'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'},
+              signal:AbortSignal.timeout(20000)
+            });
+            assert.ok(response.ok,'current manifest not readable for '+service.name+' HTTP '+response.status);
+            const digest=response.headers.get('docker-content-digest');
+            assert.match(digest??'',/^sha256:[0-9a-f]{64}$/,'manifest digest missing');
+            receipts.set(service.id,digest);
+            say({phase:'manifest-validated',service:service.name,image:service.image,digest});
+          }
+          for(let offset=0;offset<expected.length;offset+=4){
+            await Promise.all(expected.slice(offset,offset+4).map(validateManifest));
+          }
+          assert.equal(receipts.size,18,'all current manifests must validate before any credential change');
+          const mutation='mutation($s:String!,$e:String!,$input:ServiceInstanceUpdateInput!){serviceInstanceUpdate(serviceId:$s,environmentId:$e,input:$input)}';
+          for(const service of expected){
+            const current=await snapshot(service.id);
+            assert.deepEqual(current,before.get(service.id),'service changed during credential refresh: '+service.name);
+            const updated=await gql(mutation,{s:service.id,e:environmentId,input:{registryCredentials:{username:'markjspivey-xwisee',password:secret}}});
+            assert.equal(updated.serviceInstanceUpdate,true,'credential update refused for '+service.name);
+            const after=await snapshot(service.id);
+            assert.deepEqual(after,before.get(service.id),'non-credential service state changed for '+service.name);
+            say({phase:'credential-refreshed',service:service.name,credentialUpdateAccepted:true,manifestValidated:true,pinUnchanged:true,replicasUnchanged:true,deploymentUnchanged:true});
+          }
+          say({phase:'complete',services:18,deploymentsTriggered:0,pinsChanged:0,replicasChanged:0});
+          
+          NODE
