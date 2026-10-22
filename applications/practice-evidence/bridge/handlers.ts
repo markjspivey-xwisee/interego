@@ -1220,8 +1220,11 @@ async function startAttempt(call: Call, args: Record<string, unknown>): Promise<
           : `${ctx.attemptBudget.limit.total} attempts have been started on this bridge in the last hour; try again in ${taken.retryAfterSeconds} s.`,
         'attempt-budget-spent', undefined, { scope: taken.scope, retryAfterSeconds: taken.retryAfterSeconds });
     }
+    // The sealed attemptNumber counts every attempt of hers on this scenario, under either key.
+    // The IRI is numbered within its own series only: a keyed series always starts at 1, so how
+    // many plain attempts she had (which anyone holding her address can count) picks out no series.
     const n = mine.length + 1;
-    const iri = attemptIriOf(key, n);
+    const iri = attemptIriOf(key, mine.filter((g) => g.startsWith(prefixes[0]!)).length + 1);
     const at = iso(ctx);
     const spec = sb.scenario;
     const assistance = typeof s.payload['assistance'] === 'string' && s.payload['assistance'] !== '' ? s.payload['assistance'] : undefined;
@@ -1859,8 +1862,9 @@ async function retractReview(call: Call, args: Record<string, unknown>): Promise
 /**
  * Unsigned: anyone who reaches the bridge reads this, and the bridge opens sealed attempts to
  * compute it. So it returns aggregates only, with the small-count rule of results: a rate over 1
- * to k − 1 outcomes is null and only its count stays (CALIBRATION_SMALL_COUNT_RULE); person-judge
- * cells are left out.
+ * to k − 1 outcomes is null and only its count stays, and so is any rate from which one could be
+ * worked out by subtraction, within a cell or between a pooled cell and the rubric-version cells it
+ * pools (CALIBRATION_SMALL_COUNT_RULE); person-judge cells are left out.
  */
 async function calibrationAct(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
@@ -1874,7 +1878,9 @@ async function calibrationAct(call: Call, args: Record<string, unknown>): Promis
   const rubricFilter = typeof args['rubric_hash'] === 'string' && args['rubric_hash'] !== '' ? args['rubric_hash'] : null;
   const judgeFilter = typeof args['judge'] === 'string' && args['judge'] !== '' ? args['judge'] : null;
   const chosen = cells.filter((c) => (rubricFilter === null || c.rubricHash === rubricFilter) && (judgeFilter === null || c.judgeId === judgeFilter));
-  const shown = suppressSmallCells(chosen.filter((c) => c.judgeKind !== 'person'), ctx.resultsK);
+  // A pooled cell is checked against every rubric-version cell it pools, which the same endpoint shows.
+  const versionCells = groupRaw === 'criterion-content' ? cellsFor(ctx, pod, read.bodies, 'rubric-version').cells : cells;
+  const shown = suppressSmallCells(chosen.filter((c) => c.judgeKind !== 'person'), ctx.resultsK, versionCells);
   return {
     podUrl: pod, cells: shown, personJudgeCellsWithheld: chosen.length - shown.length, k: ctx.resultsK, smallCountRule: CALIBRATION_SMALL_COUNT_RULE,
     policy: STANDING_POLICY,

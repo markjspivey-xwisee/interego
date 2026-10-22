@@ -10,11 +10,12 @@
  * fixtures or a fetch double. No environment reads.
  */
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import {
-  canonicalGraphDigest, ContextDescriptor, deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, sha256, validateAgainstShape,
+  canonicalGraphDigest, ContextDescriptor, deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, sha256, signMessageRaw, validateAgainstShape,
   verifySignedAuthorship, type IRI, type Wallet,
 } from '@interego/core';
 import { digestedGraphRegion, discover, parseAuthorshipProofFromDescriptorTurtle } from '@interego/solid';
@@ -837,6 +838,19 @@ describe('queue, calibration and results read the pod; person-judge figures stay
     refused((await H['pev.calibration']!({ group_by: 'per-person' })) as Out, 400, 'group-by-unknown');
     const pooled = ok((await H['pev.calibration']!({ group_by: 'criterion-content' })) as Out);
     expect((pooled['cells'] as Out[]).every((x) => (x['standing'] as Out)['evaluated'] === false)).toBe(true);
+    // A pooled cell is checked against the rubric-version cells it pools: its counts are theirs added
+    // up, and a figure any of them hides is hidden in it too, so no subtraction gives one back.
+    for (const x of pooled['cells'] as Out[]) {
+      const parts = cells.filter((y) => (['judgeId', 'promptTemplateHash', 'criterionId', 'criterionContentHash'] as const).every((f) => y[f] === x[f]));
+      expect(parts.reduce((n, y) => n + Number(y['samples']), 0)).toBe(x['samples']);
+      if (parts.some((y) => y['ratesSuppressed'] === true)) expect(x['ratesSuppressed']).toBe(true);
+      if (parts.some((y) => y['agreementRate'] === null && Number(y['samples']) > 0)) expect([x['agreementRate'], x['meanLevelDistance']]).toEqual([null, null]);
+    }
+    // Where nothing counts as small (k = 1) every pooled figure shows: the bridge found the versions.
+    const wholePooled = ok((await make({ model: scriptedPracticeModel(), resultsK: 1 })['pev.calibration']!({ group_by: 'criterion-content' })) as Out);
+    const pooledCells = wholePooled['cells'] as Out[];
+    expect(pooledCells.length).toBe((pooled['cells'] as Out[]).length);
+    expect(pooledCells.every((x) => x['ratesSuppressed'] === false && (Number(x['samples']) === 0 || typeof x['agreementRate'] === 'number'))).toBe(true);
   }, SLOW);
 
   it('results are for reviewers, authors and admins; small counts are suppressed; person-judge cells appear here', async () => {
@@ -1272,6 +1286,22 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     refused(await act(counting, 'pev.say', W.newcomer, { attemptIri: iri, turnIndex: 1, text: 'Fine.', note: LONE }, {}, on), 400, 'payload-shape');
     refused(await act(counting, 'pev.say', W.newcomer, { attemptIri: iri, turnIndex: 1, text: 'Fine.' }, { llm_api_key: BYOK_KEY, llm_model: 'model-\udc00' }, on), 400, 'payload-shape');
     refused((await counting['pev.draft_scenario_packet']!({ brief: LONE })) as Out, 400, 'payload-shape');
+    // The signed-request form signs `_signed_payload` as sent. JSON.stringify escapes a lone
+    // surrogate, but a client's own serializer may not: raw, it is refused before it is hashed,
+    // under a signature over what a lenient UTF-8 encoder makes of it and under one that recovers no one.
+    const escaped = JSON.stringify({
+      agent_id: `did:ethr:${W.newcomer.address}`, v: 1, action: PEV_ACTION.say, timestamp: new Date(clock.t).toISOString(), nonce: nonce(),
+      pod_url: SEALED, attemptIri: iri, turnIndex: 1, text: LONE,
+    });
+    const raw = escaped.replace('\\ud800', '\ud800');
+    expect([escaped === raw, raw.includes('\ud800')]).toEqual([false, true]);
+    const lenient = await signMessageRaw(W.newcomer, `sha256:${createHash('sha256').update(raw, 'utf8').digest('hex')}`);
+    for (const signature of [lenient, `0x${'11'.repeat(65)}`]) {
+      for (const args of [{ _signed_payload: raw, _signature: signature }, { envelope: { _signed_payload: raw, _signature: signature } }]) {
+        const r = refused((await counting['pev.say']!(args)) as Out, 400, 'payload-shape');
+        expect(String(r['error'])).toMatch(/^_signed_payload must be well-formed text/);
+      }
+    }
     expect([calls, byok.keysSeen.length - keysBefore]).toEqual([0, 0]);
     expect(JSON.stringify([...vault.store].sort())).toBe(snap);
     // What a model returns is not the caller's to fix: a lone surrogate is recorded as U+FFFD and sealed.
@@ -1458,7 +1488,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
   const plainL = make({ ...legacyDeps, model: scriptedPracticeModel() });
   const keyedL = make({ ...legacyDeps, recordKey: RECORD_KEY, model: scriptedPracticeModel() });
 
-  it('attempts started before the key keep their plain IRI and stay the learner\'s; new ones are keyed and counted after them', async () => {
+  it('attempts started before the key keep their plain IRI and stay the learner\'s; new ones are keyed, numbered from 1, and counted after them', async () => {
     for (const [who, role] of [[W.author, 'author'], [W.reviewer, 'reviewer'], [W.reviewer2, 'reviewer']] as const) {
       ok(await act(plainL, 'pev.register_role', W.admin, { address: who.address, role, change: 'add' }, {}, onLegacy));
     }
@@ -1472,15 +1502,36 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     expect([first['attemptIri'], first['attemptNumber']]).toEqual([`urn:pev:attempt:${attemptKey(LEGACY, sIri, W.ben.address)}-1`, 1]);
     // The keyed bridge still finds it by its plain key: the same start envelope does not start a second attempt...
     refused((await keyedL['pev.start_attempt']!({ envelope: env })) as Out, 409, 'envelope-already-used');
-    // ...and his next attempt is keyed and numbered after it.
-    const second = ok(await act(keyedL, 'pev.start_attempt', W.ben, { scenarioIri: sIri, scenarioVersion: 1, coached: false }, {}, onLegacy));
-    expect([second['attemptIri'], second['attemptNumber']])
-      .toEqual([`urn:pev:attempt:${attemptKey(LEGACY, sIri, W.ben.address, attemptIriSecret(RECORD_KEY))}-2`, 2]);
+    // ...and his next attempt is keyed. Its sealed attemptNumber counts the plain one before it,
+    // but its IRI is numbered within the keyed series, from 1.
+    const start = { scenarioIri: sIri, scenarioVersion: 1, coached: false };
+    const keyedBen = `urn:pev:attempt:${attemptKey(LEGACY, sIri, W.ben.address, attemptIriSecret(RECORD_KEY))}`;
+    const second = ok(await act(keyedL, 'pev.start_attempt', W.ben, start, {}, onLegacy));
+    expect([second['attemptIri'], second['attemptNumber']]).toEqual([`${keyedBen}-1`, 2]);
     const mine = ok(await act(keyedL, 'pev.get_attempt', W.ben, {}, {}, onLegacy));
     expect((mine['attempts'] as Out[]).map((a) => [a['attemptIri'], a['attemptNumber']]).sort())
       .toEqual([[first['attemptIri'], 1], [second['attemptIri'], 2]].sort());
     const old = ok(await act(keyedL, 'pev.get_attempt', W.ben, { attemptIri: first['attemptIri'] }, {}, onLegacy));
     expect([old['state'], old['attemptNumber']]).toEqual(['in-conversation', 1]);
+    const third = ok(await act(keyedL, 'pev.start_attempt', W.ben, start, {}, onLegacy));
+    expect([third['attemptIri'], third['attemptNumber']]).toEqual([`${keyedBen}-2`, 3]);
+    // Ana has two plain attempts, Ben one and the newcomer none; then each starts a keyed one.
+    for (let i = 0; i < 2; i++) ok(await act(plainL, 'pev.start_attempt', W.ana, start, {}, onLegacy));
+    const keyedAna = ok(await act(keyedL, 'pev.start_attempt', W.ana, start, {}, onLegacy));
+    expect([keyedAna['attemptIri'], keyedAna['attemptNumber']])
+      .toEqual([`urn:pev:attempt:${attemptKey(LEGACY, sIri, W.ana.address, attemptIriSecret(RECORD_KEY))}-1`, 3]);
+    ok(await act(keyedL, 'pev.start_attempt', W.newcomer, start, {}, onLegacy));
+    // What anyone reads (every byte under the pod but the envelopes): every series of attempt IRIs,
+    // plain or keyed, runs 1, 2, …, so how many plain attempts a candidate address has (which
+    // anyone holding it can count) picks out no keyed series.
+    const series = new Map<string, Set<number>>();
+    for (const [u, b] of vault.store) {
+      if (!u.startsWith(LEGACY) || u.endsWith('.envelope.jose.json')) continue;
+      for (const m of `${u}\n${b}`.matchAll(/urn:pev:attempt:([0-9a-f]{16})-([0-9]+)/g)) series.set(m[1]!, (series.get(m[1]!) ?? new Set()).add(Number(m[2])));
+    }
+    const runs = [...series].map(([k, ns]) => [k, [...ns].sort((x, y) => x - y)] as const);
+    expect(runs.map(([, ns]) => ns.length).sort()).toEqual([1, 1, 1, 2, 2]);
+    for (const [k, ns] of runs) expect(ns, k).toEqual(ns.map((_, i) => i + 1));
   }, SLOW);
 
   it('a scenario head sealed to another key is not "not ratified": the projection is refused naming PEV_RECORD_KEY and nothing is written', async () => {

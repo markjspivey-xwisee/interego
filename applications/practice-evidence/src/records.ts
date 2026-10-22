@@ -326,6 +326,12 @@ export function checkEnvelope(
     message = signedText;
   } else {
     if (typeof found.signedPayload !== 'string' || found.signedPayload.length === 0) return no(401, 'envelope-missing', missing);
+    // The signature is over this text's UTF-8 bytes, and one with a lone surrogate has none: refused
+    // before it is hashed, as any other text that is not well-formed is (the pev-canonical form's
+    // JSON escapes such a code unit, so its payload is checked field by field after this).
+    if (!isWellFormedText(found.signedPayload)) {
+      return no(400, 'payload-shape', '_signed_payload must be well-formed text (it holds half of a UTF-16 surrogate pair, which cannot be stored as sent).');
+    }
     let parsed: unknown;
     try { parsed = JSON.parse(found.signedPayload); } catch { parsed = undefined; }
     if (!isRecord(parsed)) return no(400, 'envelope-payload-format', 'The signed payload must be a JSON object.');

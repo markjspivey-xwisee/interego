@@ -960,6 +960,46 @@ describe('calibration', () => {
     expect(pooled[0]!.standing).toMatchObject({ evaluated: false, why: 'pooled across rubric versions; standing is evaluated per rubric version' });
   });
 
+  it('shows a reader who signed nothing no figure a hidden one follows from by subtraction: pooled versions, and the rest of a subset', () => {
+    const outside = (prefix: string, n: number): string[] => {
+      const out: string[] = [];
+      for (let i = 0; out.length < n; i++) if (!inAuditSample(`urn:pev:attempt:${prefix}${i}-1`)) out.push(`urn:pev:attempt:${prefix}${i}-1`);
+      return out;
+    };
+    const reviewed = (spec: ScenarioSpec, iris: readonly string[], levels: Readonly<Record<string, string>>, saw = true): AttemptBody[] => iris.map((iri) => {
+      const j = judgmentOf(spec, ATTEMPT1, JUDGMENT_CLEAN, 0, BRIDGE_JUDGE);
+      return attemptOf({ spec, iri, state: 'overridden', turns: ATTEMPT1, judgments: [j], reviews: [reviewOf(spec, j, 0, levels, { saw })] });
+    });
+    const cellsOf = (attempts: readonly AttemptBody[], groupBy: 'rubric-version' | 'criterion-content') =>
+      calibrationCells(attempts.flatMap((a) => outcomeRowsOf(a)), { ...CAL, groupBy, auditCoverage: new Map() });
+    const spec = <C extends { criterionId: string }>(cs: readonly C[]): C => cs.find((c) => c.criterionId === 'specific-observation')!;
+    // Version 1: one review, which disagreed with the judge. Version 2 (a weight changed): five that agreed.
+    const v1 = reviewed(MD1, outside('one', 1), { ...ALL_JUDGE, 'specific-observation': 'vague' });
+    const v2 = reviewed(MD2, outside('five', 5), ALL_JUDGE);
+    const versions = cellsOf([...v1, ...v2], 'rubric-version');
+    const pooled = cellsOf([...v1, ...v2], 'criterion-content');
+    const byVersion = suppressSmallCells(versions, 5).filter((c) => c.criterionId === 'specific-observation');
+    expect(byVersion.map((c) => [c.samples, c.agreementRate]).sort()).toEqual([[1, null], [5, 1]]);
+    // The pooled cell has six samples, but its agreement less version 2's would be version 1's one review.
+    expect([spec(pooled).samples, spec(pooled).agreementRate]).toEqual([6, expect.closeTo(5 / 6, 3)]);
+    const shown = spec(suppressSmallCells(pooled, 5, versions));
+    expect([shown.samples, shown.agreementRate, shown.meanBrier, shown.meanLevelDistance, shown.normalisedLevelDistance, shown.unverifiedRate, shown.ratesSuppressed])
+      .toEqual([6, null, null, null, null, null, true]);
+    // A pooled cell with no rubric-version cells to account for it shows no figure at all.
+    expect(suppressSmallCells(pooled, 5).every((c) => c.agreementRate === null && c.meanBrier === null && c.ratesSuppressed)).toBe(true);
+    // With version 1 at five reviews too, nothing is hidden anywhere and the pooled figures show.
+    const v1Five = reviewed(MD1, outside('more', 5), { ...ALL_JUDGE, 'specific-observation': 'vague' });
+    const bigVersions = cellsOf([...v1Five, ...v2], 'rubric-version');
+    const big = spec(suppressSmallCells(cellsOf([...v1Five, ...v2], 'criterion-content'), 5, bigVersions));
+    expect([big.samples, big.agreementRate, big.meanLevelDistance, big.ratesSuppressed]).toEqual([10, 0.5, 0.5, false]);
+    // A blind subset of five in a cell of six: its agreement less the cell's is the one other review's.
+    const blindish = cellsOf([...reviewed(MD2, outside('blind', 5), ALL_JUDGE, false), ...reviewed(MD2, outside('seen', 1), { ...ALL_JUDGE, 'specific-observation': 'vague' })], 'rubric-version');
+    const b = spec(suppressSmallCells(blindish, 5));
+    expect([b.samples, b.blindSamples, typeof b.agreementRate, b.blindAgreementRate, b.ratesSuppressed]).toEqual([6, 5, 'number', null, true]);
+    const evenly = spec(suppressSmallCells(cellsOf([...reviewed(MD2, outside('blind', 5), ALL_JUDGE, false), ...reviewed(MD2, outside('seen', 5), ALL_JUDGE)], 'rubric-version'), 5));
+    expect([evenly.blindAgreementRate, evenly.ratesSuppressed]).toEqual([1, false]);
+  });
+
   it('reports audit-sample coverage and flags it partial', () => {
     const inSample: string[] = [];
     for (let i = 0; inSample.length < 2; i++) if (inAuditSample(`urn:pev:attempt:audit${i}-1`)) inSample.push(`urn:pev:attempt:audit${i}-1`);
