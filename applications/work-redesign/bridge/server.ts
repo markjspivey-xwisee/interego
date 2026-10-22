@@ -22,6 +22,7 @@ import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { wrdAffordances } from '../affordances.js';
 import { WRD_NS, WRD_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { createWrdHandlers, type PlatformSigner } from './handlers.js';
+import { attachUi } from './ui.js';
 
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((s) => s.trim()).filter((s) => s !== '');
 
@@ -50,14 +51,16 @@ const app = createVerticalBridge({
   }),
   deploymentUrl: base,
   ...(defaultPodUrl ? { defaultPodUrl } : {}),
+  hypermediaLinks: [{ label: 'Web UI', href: `${base}/ui`, rel: 'alternate', type: 'text/html' }],
   middleware: (a) => {
     attachOntologyServing(a, {
       mountPath: '/ns/wrd', ontologyIri: WRD_ONTOLOGY_IRI, namespace: WRD_NS,
       ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
     });
+    attachUi(a, { base });
   },
 });
 
 app.listen(PORT, HOST, () => {
-  process.stdout.write(`work-redesign bridge ${base}  MCP ${base}/mcp  (platform ${platform.wallet.address}, ${platform.keyKind})\n`);
+  process.stdout.write(`work-redesign bridge ${base}  MCP ${base}/mcp  UI ${base}/ui  (platform ${platform.wallet.address}, ${platform.keyKind})\n`);
 });
