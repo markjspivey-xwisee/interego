@@ -52,6 +52,14 @@ import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
 import { purgeProvisionalPlayPod } from './provisional-play-cleanup.js';
+import {
+  SurfaceAgentRestores,
+  checkAgentIdForRegistration,
+  foreignCanonicalSuffix,
+  registryAgentScopes,
+  surfaceAgentLabel,
+  type DelegationScope,
+} from './surface-agent-restore.js';
 import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
@@ -1127,13 +1135,9 @@ function defaultAgentForRegistration(
   surfaceAgent: string | undefined,
 ): { agentId: string; label: string } {
   if (surfaceAgent) {
-    const label = surfaceAgent
-      .split('-')
-      .map(p => p.charAt(0).toUpperCase() + p.slice(1))
-      .join(' ');
     return {
       agentId: `${surfaceAgent}-${userId}`,
-      label: `${label} (${displayName})`,
+      label: surfaceAgentLabel(surfaceAgent, displayName),
     };
   }
   return {
@@ -1266,6 +1270,97 @@ function seedIdentity(id: string, type: 'user' | 'agent', name: string, owner?: 
   identities.set(id, rec);
   keys.set(id, generateEd25519());
   log(`Seeded ${type} identity: ${id} (${name})`);
+}
+
+// The janitor (app.listen below) deletes the OWNER of any agent whose id matches this, once
+// the owner is older than its grace window. Module scope so that restoreSurfaceAgent can
+// refuse those ids: restoring `playwright-passkey-<victim>` on an anonymous GET would hand
+// the victim's account to the janitor.
+const TEST_AGENT_PATTERN = new RegExp(process.env['TEST_AGENT_PATTERN'] ?? '^playwright-passkey-');
+
+// Per-surface agents (`<surface>-<userId>`, minted by ensureSurfaceAgent) live only in
+// memory, and the boot-time rebuild restores one placeholder agent per user, not these.
+// After a restart the relay's OAuth sessions keep signing as an agent this server no longer
+// knows, and anything that reads that agent's DID document got a 404. The id names its user,
+// so it is restored on demand (surface-agent-restore.ts): only for a canonical user id of a
+// user known here, never for a reserved id, and only when the user's pod agent registry
+// (which the relay writes on OAuth) lists it or a verified token issued to that user names
+// it, with the scope that registry entry or token records. Anonymous restores are capped per
+// user as a backstop.
+const surfaceAgentRestores = new SurfaceAgentRestores();
+
+// The forms of an agent's DID this server mints (issueTokenResponse, /me), as the relay
+// writes them into `<pod>/agents`.
+const AGENT_DID_PREFIXES = [...new Set([`did:web:${BASE_URL_HOST}:agents:`, `did:web:${BASE_URL_HOST_NO_PORT}:agents:`])];
+
+// One registry read per user per minute at most, however many lookups name that user's
+// agents: an anonymous caller cannot turn DID resolutions into a stream of pod reads. Keys
+// are known users only (restore asks the registry after every other check has passed). A
+// read that failed is retried sooner.
+const POD_REGISTRY_TTL_MS = 60_000;
+const POD_REGISTRY_FAILURE_TTL_MS = 5_000;
+const podRegistryCache = new Map<string, { expires: number; ids: Promise<ReadonlyMap<string, DelegationScope> | null> }>();
+
+async function readPodRegistryAgentScopes(userId: string): Promise<ReadonlyMap<string, DelegationScope> | null> {
+  const url = podAgentRegistryUrl(userId);
+  try {
+    const r = await podFetch(url, { headers: { Accept: 'text/turtle' } });
+    if (r.status === 404) return new Map();
+    if (!r.ok) {
+      log(`WARN: could not read agent registry ${url}: ${r.status} ${r.statusText}`);
+      return null;
+    }
+    return registryAgentScopes(await r.text(), AGENT_DID_PREFIXES);
+  } catch (err) {
+    log(`WARN: could not read agent registry ${url}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/** The agent ids `<pod>/agents` lists for this user, with their scopes; null when it could not be read. */
+function podRegistryAgentScopes(userId: string): Promise<ReadonlyMap<string, DelegationScope> | null> {
+  const now = Date.now();
+  const cached = podRegistryCache.get(userId);
+  if (cached && cached.expires > now) return cached.ids;
+  const entry = { expires: now + POD_REGISTRY_TTL_MS, ids: readPodRegistryAgentScopes(userId) };
+  podRegistryCache.set(userId, entry);
+  void entry.ids.then(ids => {
+    if (ids === null) entry.expires = Math.min(entry.expires, Date.now() + POD_REGISTRY_FAILURE_TTL_MS);
+  });
+  return entry.ids;
+}
+
+/**
+ * Restore a forgotten surface agent as its user's, with the name ensureSurfaceAgent would give
+ * it. `token` is a verified token naming this agent: the user it was issued to and the scope
+ * it was signed with. Without one the user's pod registry must list the agent, and its entry
+ * gives the scope. Never rejects.
+ */
+async function restoreSurfaceAgent(agentId: string, token?: { userId: string; scope: unknown }): Promise<void> {
+  if (identities.has(agentId)) return;
+  try {
+    await surfaceAgentRestores.admit({
+      agentId,
+      lookup: id => identities.get(id),
+      reserved: id => TEST_AGENT_PATTERN.test(id),
+      ...(token !== undefined ? { tokenUserId: token.userId, tokenScope: token.scope } : {}),
+      registryScope: async (userId, id) => (await podRegistryAgentScopes(userId))?.get(id),
+      seed: granted => {
+        seedIdentity(granted.agentId, 'agent', granted.name, granted.userId, granted.scope);
+        log(`Restored surface agent ${granted.agentId} for ${granted.userId} as ${granted.scope} (confirmed by ${granted.confirmedBy})`);
+      },
+    });
+  } catch (err) {
+    log(`WARN: could not restore surface agent ${agentId}: ${(err as Error).message}`);
+  }
+}
+
+/** The agent with this id: in memory, or a forgotten surface agent restored now. */
+async function agentIdentity(agentId: string): Promise<Identity | undefined> {
+  if (!identities.has(agentId)) await restoreSurfaceAgent(agentId);
+  // Restored by this call, or by a lookup that raced it.
+  const identity = identities.get(agentId);
+  return identity?.type === 'agent' ? identity : undefined;
 }
 
 // No in-code seeded users/agents. The server starts with an empty
@@ -1485,7 +1580,11 @@ function parseAndVerifySignature(token: string): { valid: true; payload: SignedT
   } catch {
     return { valid: false, reason: 'Token payload malformed' };
   }
-  if (!payload.userId || !payload.expiresAt) return { valid: false, reason: 'Token payload incomplete' };
+  // issueToken signs string ids only. A token whose agentId is not one (an array, minted by
+  // POST /register-agent before it checked the type) names no agent this server knows.
+  if (typeof payload.userId !== 'string' || !payload.userId || typeof payload.agentId !== 'string' || !payload.expiresAt) {
+    return { valid: false, reason: 'Token payload incomplete' };
+  }
   return { valid: true, payload };
 }
 
@@ -1532,6 +1631,13 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     return { valid: false, reason: (parsed as { valid: false; reason: string }).reason };
   }
   const payload = parsed.payload;
+  // An agent id ending in ANOTHER user's canonical id reads as that user's agent
+  // (surface-agent-restore.ts). This server never issues one now (POST /register-agent
+  // refuses it, and every other issuer names the user's own agents), so such a token was
+  // minted for a squat before that check: it does not verify.
+  if (foreignCanonicalSuffix(payload.agentId, payload.userId) !== null) {
+    return { valid: false, reason: "Token names an agent in another user's namespace" };
+  }
   if (payload.provisionalPlay && (!Number.isInteger(payload.provisionalPlay.expiresAt)
     || payload.provisionalPlay.expiresAt * 1000 <= Date.now())) {
     return { valid: false, reason: 'Provisional owner expired' };
@@ -1578,6 +1684,12 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     // identities-map already bound the trust. A transient pod outage
     // is a partition, not a security event.
   }
+  // The token's agent may be a surface agent forgotten by a restart, as the anonymous DID
+  // document route would restore it. This server signed that agent id for this user, so it
+  // is restored here too (only as this user's `<surface>-<userId>`, with the scope the token
+  // was signed with, without asking the pod registry and uncounted). The record below is the
+  // same either way: nothing the token can do changes.
+  await restoreSurfaceAgent(payload.agentId, { userId: payload.userId, scope: payload.scope });
   const record: TokenRecord = {
     token,
     userId: payload.userId,
@@ -3108,11 +3220,7 @@ function ensureSurfaceAgent(user: Identity, surfaceAgent: string | undefined): I
       return existing;
     }
     if (!existing) {
-      const label = surfaceAgent
-        .split('-')
-        .map(p => p.charAt(0).toUpperCase() + p.slice(1))
-        .join(' ');
-      seedIdentity(surfaceAgentId, 'agent', `${label} (${user.name})`, user.id, 'ReadWrite');
+      seedIdentity(surfaceAgentId, 'agent', surfaceAgentLabel(surfaceAgent, user.name), user.id, 'ReadWrite');
       // FIX A: identity-server no longer touches /profile/card or
       // /<id>/agents on the pod. The relay's /oauth/verify is the single
       // authoritative writer for both, and runs the surface-agent
@@ -3195,6 +3303,18 @@ app.post('/register-agent', tokenLimiter, async (req, res) => {
 
   if (!agentId) {
     res.status(400).json({ error: 'agentId is required' });
+    return;
+  }
+
+  // A plain slug, before anything else looks at it: an array or an object is not an id, and
+  // `cursor-<bob>\n` is one that a URL parser turns into Bob's. Then `<surface>-<userId>` is
+  // how a user's surface agents are named, and a forgotten one is restored from that name
+  // (restoreSurfaceAgent). So an id ending in ANOTHER user's canonical id is theirs, whether
+  // or not this server knows them yet: registering it would make the caller the controller
+  // of what reads as that user's agent.
+  const idCheck = checkAgentIdForRegistration(agentId, userId);
+  if (idCheck.ok === false) {
+    res.status(idCheck.status).json({ error: idCheck.error });
     return;
   }
 
@@ -3389,9 +3509,9 @@ app.get('/users/:id/did.json', (req, res) => {
   res.json(buildDidDocument(identity));
 });
 
-app.get('/agents/:id/did.json', (req, res) => {
-  const identity = identities.get(req.params.id);
-  if (!identity || identity.type !== 'agent') { res.status(404).json({ error: 'Not found' }); return; }
+app.get('/agents/:id/did.json', async (req, res) => {
+  const identity = await agentIdentity(req.params.id);
+  if (!identity) { res.status(404).json({ error: 'Not found' }); return; }
   res.json(buildDidDocument(identity));
 });
 
@@ -3404,9 +3524,9 @@ app.get('/users/:id/profile', (req, res) => {
   res.send(buildWebIdProfile(identity));
 });
 
-app.get('/agents/:id/profile', (req, res) => {
-  const identity = identities.get(req.params.id);
-  if (!identity || identity.type !== 'agent') { res.status(404).json({ error: 'Not found' }); return; }
+app.get('/agents/:id/profile', async (req, res) => {
+  const identity = await agentIdentity(req.params.id);
+  if (!identity) { res.status(404).json({ error: 'Not found' }); return; }
   const did = `did:web:${new URL(BASE_URL).host}:agents:${identity.id}`;
   const owner = identity.owner ?? 'unknown';
   res.setHeader('Content-Type', 'text/turtle');
@@ -4010,6 +4130,10 @@ async function deleteUserCompletely(userId: string): Promise<{ agents: string[];
   }
   identities.delete(userId);
   keys.delete(userId);
+  // Gone from identities, so none of its surface agents can be restored; release its count
+  // and what was read of its registry.
+  surfaceAgentRestores.forgetUser(userId);
+  podRegistryCache.delete(userId);
 
   // Token revocation: deleting the pod's auth-methods.jsonld (below)
   // makes `readAuthMethods` fail for this user; verifyToken handles
@@ -4941,8 +5065,8 @@ app.listen(PORT, () => {
   // crash-recovery cases, identified by an agent name matching
   // TEST_AGENT_PATTERN whose owning user is older than TEST_USER_GRACE_MS.
   // The grace window is intentionally larger than the longest possible
-  // test run so we never race with an in-flight test.
-  const TEST_AGENT_PATTERN = new RegExp(process.env['TEST_AGENT_PATTERN'] ?? '^playwright-passkey-');
+  // test run so we never race with an in-flight test. TEST_AGENT_PATTERN
+  // is at module scope (beside seedIdentity) so restores can refuse it.
   const JANITOR_INTERVAL_MS = parseInt(process.env['JANITOR_INTERVAL_MS'] ?? '300000');     // 5 min
   const TEST_USER_GRACE_MS = parseInt(process.env['TEST_USER_GRACE_MS'] ?? '900000');       // 15 min
   if (JANITOR_INTERVAL_MS > 0) {
