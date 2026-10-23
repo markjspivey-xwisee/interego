@@ -180,7 +180,9 @@ const S = {
 };
 const data = () => S.data || {};
 const reg = () => (S.data && S.data.registry) || { members: [], taskKinds: [], head: null };
-const member = (a) => reg().members.find((m) => m.address === String(a || '').toLowerCase());
+/** A principal as the bridge compares it: a 0x address lower-cased, an Interego user DID (did:web:…:users:…) exactly as spelled. */
+const principalKey = (a) => { const v = String(a || ''); return /^did:web:/.test(v) ? v : v.toLowerCase(); };
+const member = (a) => reg().members.find((m) => m.address === principalKey(a));
 const labelOf = (a) => member(a)?.label ?? short(a);
 const people = () => reg().members.filter((m) => !m.softwareAgent);
 const agentsList = () => reg().members.filter((m) => m.softwareAgent);
@@ -694,9 +696,9 @@ function rolesView() {
     h('h2', { text: 'Who may act on this pod' }),
     h('p', { class: 'small muted', text: `Roles, the person an admin attests is behind each key, agents' principals and declared models. Every change is signed by an admin; this bridge has ${data().bridge?.admins ?? 0} admin address(es).` }),
     r.head ? h('p', { class: 'small' }, 'Registry version ', String(r.head.versions), ' ', demoChip(r.head)) : h('p', { class: 'warnbox', text: 'No registry yet: an admin registers people, agents and task kinds first.' }),
-    table(['Who', 'Address', 'Roles', 'Person / principal', ''], r.members.map((m) => h('tr', null,
+    table(['Who', 'Address or Interego user', 'Roles', 'Person / principal', ''], r.members.map((m) => h('tr', null,
       h('td', null, m.label, m.softwareAgent ? [' ', chip('agent', 'warn'), h('div', { class: 'small muted', text: `model ${m.model}` })] : null),
-      h('td', null, h('code', { text: m.address })),
+      h('td', null, h('code', { text: m.address }), /^did:web:/.test(m.address) ? [' ', chip('relay-attested', 'warn')] : null),
       h('td', null, m.roles.map((x) => chip(x))),
       h('td', { text: m.softwareAgent ? `principal: ${labelOf(m.principal)}` : m.personRef }),
       h('td', null, h('button', { text: 'Edit', on: { click: () => memberPanel(m) } }), h('button', { text: 'Remove', on: { click: () => act('wrd.update_registry', 'wrd:update-registry', { entries: [{ address: m.address, roles: [] }] }) } }))))),
@@ -716,8 +718,8 @@ function memberPanel(m) {
   const st = { address: m?.address ?? '', label: m?.label ?? '', roles: new Set(m?.roles ?? []), personRef: m?.personRef ?? '', principal: m?.principal ?? '', model: m?.model ?? '' };
   const box = (role) => h('label', { class: 'inline' }, h('input', { type: 'checkbox', checked: st.roles.has(role), on: { change: (e) => { if (e.target.checked) st.roles.add(role); else st.roles.delete(role); } } }), role);
   openPanel(m ? `Change ${m.label}` : 'Add a person or agent', h('div', null,
-    h('p', { class: 'small muted', text: 'Only an admin\'s signature changes the registry. A person needs a person reference (the admin\'s attestation of which human holds this key; two keys with one reference are one person). An agent needs the agent role only, an accountable principal (a registered person) and the model it runs on.' }),
-    field('Address (0x…)', input(st.address, (e) => { st.address = e.target.value.trim(); })),
+    h('p', { class: 'small muted', text: 'Only an admin\'s signature changes the registry. A person is a key they hold (its 0x address) or, if they sign in with their Interego account, their user DID (did:web:<identity host>:users:<id>): relay-attested, not a key they hold, so whoever holds the relay\'s key or controls the identity host can act as them. A person needs a person reference (the admin\'s attestation of which human this is; a key and a user DID with one reference are one person). An agent is always a key: it needs the agent role only, an accountable principal (a registered person) and the model it runs on.' }),
+    field('Address (0x…) or Interego user DID (did:web:…:users:…)', input(st.address, (e) => { st.address = e.target.value.trim(); })),
     field('Label', input(st.label, (e) => { st.label = e.target.value; })),
     h('div', null, ['approver', 'operator', 'worker', 'agent'].map(box)),
     field('Person reference (people)', input(st.personRef, (e) => { st.personRef = e.target.value.trim(); })),

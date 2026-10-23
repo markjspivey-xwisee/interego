@@ -30,7 +30,7 @@
 
 wrd:RoleRegistry a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Role registry" ;
-    rdfs:comment "The admin-signed list of the keys that may act on a pod: their roles (approver, operator, worker, agent), the person reference an admin attests is behind each human key, each agent's accountable principal and declared model, the registered kinds of task, and the pod policy." .
+    rdfs:comment "The admin-signed list of the keys, and the Interego user DIDs, that may act on a pod: their roles (approver, operator, worker, agent; an agent is always a key), the person reference an admin attests is behind each human key or user DID, each agent's accountable principal and declared model, the registered kinds of task, and the pod policy." .
 wrd:Workflow a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Workflow" ;
     rdfs:comment "A unit of work a team does repeatedly, captured by hand or from a document, listing its current tasks. Hypothetical: a description of how work is done." .
@@ -267,7 +267,7 @@ wrd:payloadJson a owl:DatatypeProperty ;
     rdfs:comment "Canonical JSON of the whole record; the lossless form the engine reads; the triples beside it are its RDF projection." .
 wrd:signedBy a owl:ObjectProperty ;
     rdfs:label "signed by" ;
-    rdfs:comment "The did:ethr of every verified envelope signer embedded in the record." .
+    rdfs:comment "The DID of every verified envelope signer embedded in the record: the did:ethr of a key the signer holds, or, for a person who signed in with their Interego account, their user DID (did:web:<identity host>:users:<id>), whose envelopes the Interego relay signed for them (relay-delegated: relay-attested, not user-held)." .
 wrd:demoRecord a owl:DatatypeProperty ;
     rdfs:label "demo record" ;
     rdfs:range xsd:boolean ;
@@ -336,7 +336,7 @@ wrd:sourceToken a owl:DatatypeProperty ; rdfs:label "source token" ; rdfs:domain
 # ── Properties: registry, workflow and task ─────────────────────────────────────────────────
 
 wrd:member a owl:ObjectProperty ; rdfs:label "member" ; rdfs:domain wrd:RoleRegistry ;
-    rdfs:comment "A key (as did:ethr) the registry lists." .
+    rdfs:comment "A principal the registry lists: a key (as did:ethr), or a person's Interego user DID (did:web:<identity host>:users:<id>), who acts through requests the Interego relay signs for them." .
 wrd:hasTask a owl:ObjectProperty ; rdfs:label "has task" ; rdfs:domain wrd:Workflow ;
     rdfs:comment "A current task of the workflow." .
 wrd:inWorkflow a owl:ObjectProperty ; rdfs:label "in workflow" ; rdfs:domain wrd:Task ;

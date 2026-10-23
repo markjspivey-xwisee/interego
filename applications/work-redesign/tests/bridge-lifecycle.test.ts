@@ -21,7 +21,7 @@ import {
 } from '@interego/core';
 import {
   publish, fetchAllManifestEntries, predictManifestUrl, parseAuthorshipProofFromDescriptorTurtle, digestedGraphRegion,
-  parseDistributionFromDescriptorTurtle,
+  parseDistributionFromDescriptorTurtle, extractNamedGraphTurtle,
 } from '@interego/solid';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
@@ -33,7 +33,7 @@ import {
 } from '../bridge/pod-helpers.js';
 import { LINKS_MORE_THAN_ONE } from '../bridge/descriptor-rdf.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
-import { envelopeSha256, entityIri, entityIriKey, iriKeyFingerprint, recordKeyFingerprint, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, type WrdRecord } from '../src/records.js';
+import { envelopeSha256, entityIri, entityIriKey, iriKeyFingerprint, recordKeyFingerprint, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, parseRecordGraph, type WrdRecord } from '../src/records.js';
 import { parseEveryQueryPair } from '../bridge/ui.js';
 import { normaliseForQuote } from '../src/work.js';
 import { meanRampFactor, monthsBetween, DEMO_LABEL } from '../src/valuation.js';
@@ -422,6 +422,76 @@ async function recordOutcome(w: World, who: Wallet, decisionIri: string, fields:
   const h = headOfRow(await decisionRow(w, decisionIri));
   return act(w, who, 'record_outcome', { decisionIri, recordId: h.recordId, descriptorUrl: h.descriptorUrl, graphDigest: h.graphDigest, ...fields });
 }
+
+// ── Relay-delegated requests ("Sign in with your Interego account") ─────────────────────
+//
+// The relay's own form, as deploy/mcp-relay/server.ts handleSignRequest builds it: the caller's
+// fields (their podUrl renamed pod_url), then agent_id (the session's agent), subject_pod_url (the
+// caller's OWN pod) and timestamp (the relay's clock), JSON.stringify'd and signed EIP-191 over
+// `sha256:<hex>` by the relay's delegation key. The DID documents the identity host would serve
+// are a map: no network.
+
+const RELAY = wallet('interego-relay', 'agent');
+const NOT_THE_RELAY = wallet('some-other-relay', 'agent');
+const IDENTITY = 'identity.interego.xwisee.com';
+const userDid = (id: string): string => `did:web:${IDENTITY}:users:${id}`;
+const agentDid = (slug: string): string => `did:web:${IDENTITY}:agents:${slug}`;
+const docUrl = (slug: string): string => `https://${IDENTITY}/agents/${slug}/did.json`;
+/** The people who sign in with their Interego account in these tests, and the agents their sessions get. */
+const OLU = userDid('u-pk-0101a0b0c0d0');
+const WEN = userDid('u-pk-0202a0b0c0d0');
+const ZOE = userDid('u-pk-0303a0b0c0d0');
+const ROOT_ADMIN = userDid('u-pk-0404A0B0C0D0');
+const STRANGER = userDid('u-pk-0505a0b0c0d0');
+interface Identity { readonly docs: Map<string, unknown>; readonly fetched: string[] }
+/** The identity host: `<surface>-<user id>` agents, each controlled by its user, as the live host serves them. */
+function identityHost(users: readonly string[], surfaces: readonly string[] = ['work-redesign', 'claude', 'chatgpt']): Identity {
+  const docs = new Map<string, unknown>();
+  for (const u of users) {
+    const id = u.split(':').at(-1) ?? '';
+    for (const s of surfaces) docs.set(docUrl(`${s}-${id}`), { id: agentDid(`${s}-${id}`), controller: u });
+  }
+  return { docs, fetched: [] };
+}
+const slugOf = (surface: string, user: string): string => `${surface}-${user.split(':').at(-1) ?? ''}`;
+const relayDeps = (idh: Identity, extra: Partial<NonNullable<WrdDeps['relayDelegation']>> = {}): Partial<WrdDeps> => ({
+  relayDelegation: {
+    relayAddresses: [RELAY.address], identityHost: IDENTITY,
+    fetchDidDocument: async (url) => {
+      idh.fetched.push(url);
+      if (!idh.docs.has(url)) throw new Error('the identity host answered 404');
+      return idh.docs.get(url);
+    },
+    ...extra,
+  },
+});
+interface RelayOpts { readonly signer?: Wallet; readonly agentId?: string; readonly podUrl?: string | null; readonly subjectPodUrl?: string; readonly timestamp?: string; readonly nonce?: string }
+/** What the relay sends a bridge for `act … sign_payload: true`: {_signed_payload, _signature}. */
+async function relaySigned(w: World, surface: string, user: string, fields: Obj, o: RelayOpts = {}): Promise<{ _signed_payload: string; _signature: string }> {
+  w.nonce += 1;
+  const signed: Obj = {
+    ...fields, ...(o.podUrl === null ? {} : { pod_url: o.podUrl ?? POD }), nonce: o.nonce ?? `relayed-${String(w.nonce).padStart(8, '0')}`,
+    agent_id: o.agentId ?? agentDid(slugOf(surface, user)), subject_pod_url: o.subjectPodUrl ?? `https://pod.example/${user.split(':').at(-1) ?? ''}/`,
+    timestamp: o.timestamp ?? w.clock.now().toISOString(),
+  };
+  const text = JSON.stringify(signed);
+  return { _signed_payload: text, _signature: await signMessageRaw(o.signer ?? RELAY, `sha256:${sha256Hex(text)}`) };
+}
+async function relayAct(w: World, surface: string, user: string, tool: string, fields: Obj, extra: Obj = {}, o: RelayOpts = {}): Promise<Res> {
+  return http(w, 'POST', tool, { ...(await relaySigned(w, surface, user, { intent: must(INTENT[tool], `intent for ${tool}`), ...fields }, o)), ...extra });
+}
+/** A relay-signed read (wrd:read-records). */
+async function relayRead(w: World, surface: string, user: string, o: RelayOpts = {}): Promise<Res> {
+  return http(w, 'POST', 'read_records', await relaySigned(w, surface, user, { intent: 'wrd:read-records' }, o));
+}
+const didPerson = (did: string, roles: string[], personRef: string, label: string): Obj => ({ address: did, roles, label, softwareAgent: false, personRef });
+/** Every version of an entity in a holder's download, as records. */
+const versionsIn = (bundle: Obj[], entity: string): WrdRecord[] => bundle.filter((b) => b['entityIri'] === entity)
+  .map((b) => must(parseRecordGraph(must(extractNamedGraphTurtle(String(b['graphTrig']), graphIriOf(entity)), `graph of ${entity}`)), `record of ${entity}`));
+const MANUAL_TASK = (personAddress: string, n = ''): Obj => ({
+  workflow: { title: `Month-end accruals ${n}`.trim(), unitLabel: 'accrual' },
+  tasks: [{ name: 'Review accruals', description: 'Check open accruals.', currentLevel: 'person', personAddress, taskKind: 'gl-coding' }],
+});
 
 const WEEK = 7 * 86_400_000;
 const plusWeeks = (iso: string, weeks: number): string => new Date(Date.parse(iso) + weeks * WEEK).toISOString();
@@ -3050,6 +3120,245 @@ describe('work-redesign bridge', () => {
     expect(ok(await calibration(w))['unreadable']).toBeUndefined();
     expect(pilot1['status']).toBe('reviewed');
   }, 120_000);
+
+  // ── Relay-delegated identity ("Sign in with your Interego account") ─────────────────
+
+  it('takes a request the Interego relay signed as the person its agent belongs to: an admin named by WRD_ADMIN_DIDS registers user DIDs as members, kept as spelled and never as addresses, and the version says relay-delegated with the agent and the relay address', async () => {
+    const lowered = ROOT_ADMIN.toLowerCase();
+    const idh = identityHost([ROOT_ADMIN, lowered, OLU, WEN]);
+    const w = await world({ ...relayDeps(idh), adminDids: [ROOT_ADMIN] });
+    const reg = ok(await relayAct(w, 'work-redesign', ROOT_ADMIN, 'update_registry', {
+      entries: [...REGISTRY_ENTRIES, didPerson(OLU, ['operator'], 'p-olu', 'Olu'), didPerson(WEN, ['worker'], 'p-wen', 'Wen'),
+        // An agent's accountable principal may be a user DID too.
+        { address: ZED.address, roles: ['agent'], label: 'Olu\'s agent', softwareAgent: true, principal: OLU, model: 'scripted-fixture' }],
+      taskKinds: TASK_KINDS,
+    }), 'registry by an admin user DID');
+    // The person was found from the agent's own document, read where did:web puts it.
+    expect(idh.fetched).toEqual([docUrl(slugOf('work-redesign', ROOT_ADMIN))]);
+    expect(arr(reg['members']).find((m) => m['address'] === OLU)).toEqual({ address: OLU, did: OLU, roles: ['operator'], label: 'Olu', softwareAgent: false, personRef: 'p-olu', principal: null, model: null });
+    expect(arr(reg['members']).find((m) => m['address'] === addr(ZED))).toMatchObject({ principal: OLU, softwareAgent: true });
+    const head = obj(obj((await list(w))['registry'])['head']);
+    expect(head).toMatchObject({ authority: 'relay-delegated', authorisedBy: ROOT_ADMIN, agentId: agentDid(slugOf('work-redesign', ROOT_ADMIN)), relaySigner: addr(RELAY) });
+    expect(head['signedBy']).toEqual([ROOT_ADMIN]);
+    // The registry's graph names its members by their DIDs, the user DIDs as spelled.
+    const graph = String(w.pod.bodies.get(String(head['descriptorUrl']).replace('.ttl', '-graph.trig')));
+    expect(graph).toContain(`wrd:member <${OLU}>`);
+    expect(graph).toContain(`wrd:signedBy <${ROOT_ADMIN}>`);
+    // A user DID is compared exactly as spelled: the same id lower-cased is another user, and not an admin.
+    refused(await relayAct(w, 'work-redesign', lowered, 'update_registry', { taskKinds: TASK_KINDS }), 403, /Only an admin/, /admin user DIDs \(WRD_ADMIN_DIDS\)/);
+    // A person the identity host names is never an agent; a user DID on another host, or an agent's DID, is never a member.
+    refused(await relayAct(w, 'work-redesign', ROOT_ADMIN, 'update_registry', { entries: [{ address: WEN, roles: ['agent'], label: 'x', softwareAgent: true, principal: OLU, model: 'm' }] }), 400, /malformed/, /an agent is registered by the key it signs its runs with/);
+    refused(await relayAct(w, 'work-redesign', ROOT_ADMIN, 'update_registry', { entries: [didPerson('did:web:identity.example.org:users:u-pk-0101a0b0c0d0', ['worker'], 'p-x', 'X')] }), 400, /malformed/, /0x address, or an Interego user DID did:web:identity\.interego\.xwisee\.com:users:<id>/);
+    refused(await relayAct(w, 'work-redesign', ROOT_ADMIN, 'update_registry', { entries: [didPerson(agentDid('claude-u-pk-0101a0b0c0d0'), ['worker'], 'p-x', 'X')] }), 400, /malformed/);
+    // A bridge with no identity host takes no user DID at all.
+    const keyOnly = await sibling(w, {});
+    refused(await act(keyOnly, ADMIN, 'update_registry', { entries: [didPerson(STRANGER, ['worker'], 'p-s', 'S')] }), 400, /malformed/, /address must be a 0x address$/);
+    // The key-held admin keeps working exactly as before, and can register user DIDs too.
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(STRANGER, ['worker'], 'p-stranger', 'Sam')] }));
+    expect(arr(obj((await list(w))['registry'])['members']).some((m) => m['address'] === STRANGER)).toBe(true);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [{ address: STRANGER, roles: [] }] }));
+    expect(arr(obj((await list(w))['registry'])['members']).some((m) => m['address'] === STRANGER)).toBe(false);
+  });
+
+  it('identifies a user DID in the registry as that person everywhere an address is: named on a task, ratifying it, reading, filling a template and taking a holder copy, each record storing the relay-signed envelope with its agent, principal and relay address', async () => {
+    const idh = identityHost([OLU, WEN, STRANGER]);
+    const w = await world(relayDeps(idh));
+    ok(await act(w, ADMIN, 'update_registry', { entries: [...REGISTRY_ENTRIES, didPerson(OLU, ['operator'], 'p-olu', 'Olu'), didPerson(WEN, ['worker'], 'p-wen', 'Wen')], taskKinds: TASK_KINDS }));
+    // Olu, signed in through Claude, captures a workflow naming Wen (a user DID) on its task: no decisive act, so a chat agent may.
+    const cap = ok(await relayAct(w, 'claude', OLU, 'capture_workflow', MANUAL_TASK(WEN)), 'capture by a user DID');
+    const taskIri = String(must(arr(cap['tasks'])[0], 'task')['taskIri']);
+    const row = await taskRow(w, taskIri);
+    expect(arr(row['namedParties'])).toEqual([{ address: WEN, kind: 'person', label: 'Wen', ratification: null }]);
+    expect(row['performer']).toBe(WEN);
+    expect(obj(row['head'])).toMatchObject({ authority: 'relay-delegated', authorisedBy: OLU, agentId: agentDid(slugOf('claude', OLU)), relaySigner: addr(RELAY), signedBy: [OLU] });
+    // Wen ratifies through ChatGPT: she is the person named, by her DID.
+    const ratified = ok(await relayAct(w, 'chatgpt', WEN, 'ratify_task', { subject: 'description', taskIri, ...bound(headOfRow(row)), verdict: 'ratify' }));
+    expect(ratified['status']).toBe('ratified');
+    // Someone else, key-held or relay-delegated, is not named on it.
+    refused(await relayAct(w, 'claude', OLU, 'ratify_task', { subject: 'description', taskIri, ...bound(headOfRow(await taskRow(w, taskIri))), verdict: 'ratify' }), 403, /named on this task/);
+    // Reads by a registered user DID; one nobody registered is refused as an unregistered key is.
+    expect(arr(ok(await relayRead(w, 'chatgpt', WEN))['tasks'])).toHaveLength(1);
+    refused(await relayRead(w, 'claude', STRANGER), 403, /Only an admin or a key in this pod's registry/, /not in the registry at all: an admin registers their user DID/);
+    // The template, filled for a relay-signed read sent in the body (top level, as the relay's act sends it).
+    const filled = ok(await http(w, 'POST', 'read_envelope_template', { intent: 'wrd:classify-task', task_iri: taskIri, ...(await relaySigned(w, 'chatgpt', WEN, { intent: 'wrd:read-records' })) }));
+    expect(obj(filled['template'])['taskTextSha256']).toBe(row['textSha256']);
+    // ...and never in a URL: the GET refuses the relay's signature in its query as it refuses any other.
+    const sig = (await relaySigned(w, 'chatgpt', WEN, { intent: 'wrd:read-records' }))._signature;
+    refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:classify-task&_signature=${sig}`), 400, /never sent in a URL/);
+    // Wen's copy of every record about her work, as a download.
+    const copy = ok(await relayAct(w, 'chatgpt', WEN, 'holder_copy', {}));
+    expect(obj(copy['holder'])).toEqual({ address: WEN, did: WEN });
+    const versions = versionsIn(arr(copy['bundle']), taskIri);
+    expect(versions.map((v) => v.status)).toEqual(['captured', 'ratified']);
+    const last = must(versions.at(-1), 'ratified version');
+    if (last.recordKind !== 'Task') throw new Error('expected a task');
+    // The version records who authorised it and how; the envelope it stores says relay-delegated, with the exact text the relay signed.
+    expect(last.authorisedBy).toMatchObject({ signer: WEN, authority: 'relay-delegated', agentId: agentDid(slugOf('chatgpt', WEN)), relaySigner: addr(RELAY) });
+    expect(last.signers.map((x) => [x.did, x.authority ?? 'key-held'])).toEqual([[WEN, 'relay-delegated']]);
+    const env = must(last.payload.ratifications[0], 'ratification').envelope;
+    expect(env).toMatchObject({ authority: 'relay-delegated', principal: WEN, agentId: agentDid(slugOf('chatgpt', WEN)), relaySigner: addr(RELAY) });
+    const text = JSON.parse(String(env.signedPayload)) as Obj;
+    expect(text).toMatchObject({ intent: 'wrd:ratify-task', pod_url: POD, agent_id: agentDid(slugOf('chatgpt', WEN)) });
+    expect(env.payload).toMatchObject({ podUrl: POD, issuedAt: text['timestamp'] });
+    // The first version: Olu captured it, through Claude.
+    const first = must(versions[0], 'captured version');
+    if (first.recordKind !== 'Task') throw new Error('expected a task');
+    expect(first.payload.capturedBy?.did).toBe(OLU);
+    expect(first.authorisedBy).toMatchObject({ signer: OLU, authority: 'relay-delegated', agentId: agentDid(slugOf('claude', OLU)) });
+  });
+
+  it('takes the relay-signed form only from a trusted relay, for an agent on the identity host whose document names it and a user as its controller, fresh by the relay\'s timestamp, bound to pod_url and never subject_pod_url, once per principal; any other key signing that shape keeps the key-held route', async () => {
+    const idh = identityHost([OLU, WEN]);
+    idh.docs.set(docUrl('claude-mismatch'), { id: agentDid('claude-someone-else'), controller: OLU });
+    idh.docs.set(docUrl('claude-orphan'), { id: agentDid('claude-orphan'), controller: agentDid(slugOf('claude', OLU)) });
+    idh.docs.set(docUrl('claude-elsewhere'), { id: agentDid('claude-elsewhere'), controller: 'did:web:identity.example.org:users:u-pk-0101a0b0c0d0' });
+    const w = await world(relayDeps(idh));
+    await standardAp(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(OLU, ['operator'], 'p-olu', 'Olu'), didPerson(WEN, ['operator'], 'p-wen', 'Wen')] }));
+    const cap = (n: string): Obj => MANUAL_TASK(DEE.address, n);
+    // Another key signing the relay's shape is not relay-delegated: the key-held route answers as it always has (no envelope was sent).
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('a'), {}, { signer: NOT_THE_RELAY }), 401, /signed envelope is required/);
+    // A person's own key signing that shape, naming an admin's agent, the same: a key-held signer never becomes a user DID.
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('b'), {}, { signer: DEE }), 401, /signed envelope is required/);
+    // An altered relay-signed text recovers some other address: not the relay, so the same.
+    const body = await relaySigned(w, 'claude', OLU, { intent: 'wrd:capture-workflow', ...cap('c') });
+    refused(await http(w, 'POST', 'capture_workflow', { ...body, _signed_payload: body._signed_payload.replace('accruals c', 'accruals C') }), 401, /signed envelope is required/);
+    expect(idh.fetched).toEqual([]);
+    // An agent not on the identity host; a document naming another agent; a controller that is not a user on this host; no document.
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('d'), {}, { agentId: 'did:web:identity.example.org:agents:claude-u-pk-0101a0b0c0d0' }), 401, /does not name a person/, /agent-not-on-identity-host/);
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('e'), {}, { agentId: agentDid('claude-mismatch') }), 401, /does not name a person/, /agent-document-mismatch/);
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('f'), {}, { agentId: agentDid('claude-orphan') }), 401, /does not name a person/, /agent-has-no-user/);
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('g'), {}, { agentId: agentDid('claude-elsewhere') }), 401, /does not name a person/, /agent-has-no-user/);
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('h'), {}, { agentId: agentDid('claude-nobody') }), 502, /does not name a person/, /agent-document-unreadable: .*404/);
+    // Fresh by the relay's timestamp, never by a caller's issuedAt: a stale timestamp is refused whatever issuedAt says, and a stale issuedAt is not read.
+    const stale = new Date(w.clock.now().getTime() - 16 * 60_000).toISOString();
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', { ...cap('i'), issuedAt: w.clock.now().toISOString() }, {}, { timestamp: stale }), 401, /stale/, /relay's timestamp/);
+    ok(await relayAct(w, 'claude', OLU, 'capture_workflow', { ...cap('j'), issuedAt: stale }));
+    // The pod is the pod_url the caller named, never subject_pod_url (the caller's own pod), even when that is this pod.
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('k'), {}, { podUrl: null, subjectPodUrl: POD }), 400, /malformed/, /names no pod_url.*subject_pod_url, your own pod, is never read as the pod an act targets/);
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('l'), {}, { podUrl: DEMO_HOLDER_POD, subjectPodUrl: POD }), 403, /only on the pods it serves/);
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('m'), { pod_url: POD }, { podUrl: 'https://192.0.2.10/ap-team/other/' }), 400, /malformed/, /pod_url in the relay-signed payload does not name the pod/);
+    // A nonce is still the caller's to choose, and its format is checked.
+    refused(await relayAct(w, 'claude', OLU, 'capture_workflow', cap('n'), {}, { nonce: 'short' }), 400, /malformed/, /nonce/);
+    // Replay: the same relay-signed request twice is refused, by the person it names (never the relay, which signs for everyone)...
+    ok(await http(w, 'POST', 'capture_workflow', body));
+    const again = refused(await http(w, 'POST', 'capture_workflow', body), 409, /already used/);
+    expect(String(again['iep:refusalReason'])).toContain(OLU);
+    expect(String(again['iep:refusalReason'])).not.toContain(addr(RELAY));
+    // ...under envelope too, as an object or its JSON text: it is the same request.
+    refused(await http(w, 'POST', 'capture_workflow', { envelope: body }), 409, /already used/);
+    refused(await http(w, 'POST', 'capture_workflow', { envelope: JSON.stringify(body) }), 409, /already used/);
+    // ...while another person may use the same nonce: nonces are spent per principal, not per relay address.
+    ok(await relayAct(w, 'claude', WEN, 'capture_workflow', cap('o'), {}, { nonce: String((JSON.parse(body._signed_payload) as Obj)['nonce']) }));
+    // A write to an existing graph replayed after a restart is refused by the pod's own record of who authorised each version (by principal).
+    const ap = must(arr((await list(w))['workflows']).find((x) => x['title'] === 'Supplier invoice processing'), 'workflow');
+    const t1 = String(must(arr(ap['taskIris'])[0], 'task'));
+    const classifyBody = await relaySigned(w, 'claude', OLU, { intent: 'wrd:classify-task', taskIri: t1, taskTextSha256: await textOf(w, t1), answers: ANSWERS.evident });
+    ok(await http(w, 'POST', 'classify_task', classifyBody));
+    const restarted = await sibling(w, relayDeps(idh));
+    const replayed = refused(await http(restarted, 'POST', 'classify_task', classifyBody), 409, /already used/);
+    expect(String(replayed['iep:refusalReason'])).toMatch(new RegExp(`^${OLU} already used the nonce .* on urn:wrd:classification:`));
+  });
+
+  it('never lets a key-held signer stand as a user DID: an envelope dressed as relay-delegated is its signer\'s and is stored without what it claimed', async () => {
+    const idh = identityHost([ROOT_ADMIN]);
+    const w = await world({ ...relayDeps(idh), adminDids: [ROOT_ADMIN] });
+    await register(w);
+    const dress = async (who: Wallet, intent: string, fields: Obj): Promise<Obj> => ({
+      ...(await envelope(w, who, intent, { ...fields, agent_id: agentDid(slugOf('work-redesign', ROOT_ADMIN)), principal: ROOT_ADMIN })),
+      authority: 'relay-delegated', principal: ROOT_ADMIN, agentId: agentDid(slugOf('work-redesign', ROOT_ADMIN)), relaySigner: addr(RELAY), signedPayload: '{}',
+    });
+    // ZED holds no role: dressed as the admin user DID, it is still ZED, and not an admin.
+    refused(await http(w, 'POST', 'update_registry', { envelope: await dress(ZED, 'wrd:update-registry', { taskKinds: TASK_KINDS }) }), 403, /Only an admin/, new RegExp(`^${addr(ZED)} is not one of this bridge's admin addresses`));
+    // Ana is an operator: her dressed capture is hers, key-held, and the stored envelope carries none of the claimed fields.
+    const cap = ok(await http(w, 'POST', 'capture_workflow', { envelope: await dress(ANA, 'wrd:capture-workflow', MANUAL_TASK(DEE.address)) }));
+    const wf = must(arr((await list(w))['workflows']).find((x) => x['workflowIri'] === cap['workflowIri']), 'workflow');
+    expect(obj(wf['head'])).toMatchObject({ authority: 'key-held', authorisedBy: addr(ANA) });
+    expect(wf['capturedBy']).toBe(`did:ethr:${addr(ANA)}`);
+    const copy = ok(await act(w, ANA, 'holder_copy', {}));
+    const stored = must(versionsIn(arr(copy['bundle']), String(cap['workflowIri']))[0], 'workflow version');
+    if (stored.recordKind !== 'Workflow') throw new Error('expected a workflow');
+    expect(Object.keys(stored.payload.capturedBy.envelope).sort()).toEqual(['payload', 'signature']);
+    expect(stored.authorisedBy).toEqual({ signer: addr(ANA), nonce: expect.any(String) });
+  });
+
+  it('takes acts that change who may do what from this bridge\'s web UI agent only unless WRD_CHAT_AGENTS_DECIDE=1; a relay-delegated approver is separated from the work by person reference, and the countersign re-verifies offline when the outcome is recorded', async () => {
+    const idh = identityHost([ZOE, WEN, ROOT_ADMIN]);
+    const w = await world({ ...relayDeps(idh), adminDids: [ROOT_ADMIN] });
+    const { planIri, valuation } = await valuedP1(w);
+    // The registry from a chat agent (Claude, ChatGPT): refused, naming the setting; from the web UI's agent: taken.
+    const change = { entries: [didPerson(ZOE, ['approver'], 'p-zoe', 'Zoe'), didPerson(WEN, ['approver'], 'p-ana', 'Ana, signed in with Interego')] };
+    const chat = refused(await relayAct(w, 'claude', ROOT_ADMIN, 'update_registry', change), 403, /WRD_CHAT_AGENTS_DECIDE=1/, new RegExp(`agent ${agentDid(slugOf('claude', ROOT_ADMIN))}, whose slug does not start work-redesign-`));
+    expect(obj(chat['iep:resolvedBy'])).toEqual({ env: 'WRD_CHAT_AGENTS_DECIDE' });
+    refused(await relayAct(w, 'chatgpt', ROOT_ADMIN, 'update_registry', change), 403, /WRD_CHAT_AGENTS_DECIDE=1/);
+    ok(await relayAct(w, 'work-redesign', ROOT_ADMIN, 'update_registry', change));
+    const submitted = await submitValued(w, planIri, valuation);
+    const decisionIri = String(submitted['decisionIri']);
+    await acknowledgeAll(w, planIri);
+    const sign = async (surface: string, who: string): Promise<Res> => {
+      const h = headOfRow(await decisionRow(w, decisionIri));
+      return relayAct(w, surface, who, 'countersign_decision', { decisionIri, recordId: h.recordId, ...bound(h), verdict: 'approve' });
+    };
+    refused(await sign('claude', ZOE), 403, /WRD_CHAT_AGENTS_DECIDE=1/);
+    // Wen's user DID is attested as Ana, who submitted: separation of duties by person reference holds for a user DID as for a key.
+    refused(await sign('work-redesign', WEN), 403, /submitted a decision cannot countersign it/, new RegExp(`${WEN} is attested as p-ana`));
+    const approved = ok(await sign('work-redesign', ZOE));
+    expect(obj(approved['countersignedBy'])).toEqual({ did: ZOE, personRef: 'p-zoe' });
+    const csAt = String(obj((await decisionRow(w, decisionIri))['countersign'])['at']);
+    w.clock.advance(9 * WEEK);
+    const fields = { disposition: 'kept', measured: { weeklyValueDelta: 100, comparisonBasis: 'staggered', windowStart: csAt, windowEnd: plusWeeks(csAt, 8), method: 'Staggered roll-out across two AP teams' } };
+    // Weeks later the stored countersign is re-verified offline: a bridge that trusts no relay now cannot, and says which setting.
+    const noRelay = await sibling(w, { relayDelegation: { relayAddresses: [], identityHost: IDENTITY, fetchDidDocument: async () => { throw new Error('never read'); } } });
+    refused(await recordOutcome(noRelay, ELI, decisionIri, fields), 409, /countersign on this decision no longer verifies/, /trusts no relay now \(WRD_TRUSTED_RELAY_ADDRESSES\)/);
+    // The bridge that trusts the relay re-verifies it without reading any agent's DID document again.
+    const fetched = idh.fetched.length;
+    const outcome = ok(await recordOutcome(w, ELI, decisionIri, fields));
+    expect(outcome).toMatchObject({ status: 'measured', disposition: 'kept' });
+    expect(idh.fetched).toHaveLength(fetched);
+    // The decision's chain shows who countersigned, by DID, and how.
+    const chain = arr((await decisionRow(w, decisionIri))['chain']);
+    expect(chain.map((c) => c['signedBy'])).toEqual([[`did:ethr:${addr(ANA)}`], [`did:ethr:${addr(ANA)}`, ZOE], [`did:ethr:${addr(ANA)}`, ZOE, `did:ethr:${addr(ELI)}`]]);
+    // The operator can let chat agents decide too.
+    const lifted = await sibling(w, { ...relayDeps(idh, { chatAgentsDecide: true }), adminDids: [ROOT_ADMIN] });
+    ok(await relayAct(lifted, 'claude', ROOT_ADMIN, 'update_registry', { entries: [didPerson(ZOE, ['approver', 'operator'], 'p-zoe', 'Zoe')] }));
+    // Every other act stays open to a chat agent: Zoe, now an operator, captures through Claude.
+    ok(await relayAct(lifted, 'claude', ZOE, 'capture_workflow', MANUAL_TASK(DEE.address)));
+    ok(await relayAct(w, 'chatgpt', ZOE, 'capture_workflow', MANUAL_TASK(DEE.address, 'again')));
+  }, 120_000);
+
+  it('counts budgets and nonces per principal: a registered user DID takes holder copies as a member, never in the strangers\' lane the relay\'s own address would put it, and an unregistered one is a stranger', async () => {
+    const idh = identityHost([OLU, STRANGER]);
+    const w = await world({ ...relayDeps(idh), holderCopyLimits: { strangersPerMinute: 1, concurrent: 2 } });
+    await register(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(OLU, ['operator'], 'p-olu', 'Olu')] }));
+    ok(await relayAct(w, 'claude', OLU, 'capture_workflow', MANUAL_TASK(DEE.address)));
+    // A key nobody registered spends the strangers' budget for this minute (it is charged on arrival, and names nothing here).
+    refused(await act(w, ZED, 'holder_copy', {}), 403, /names this address or carries its signature/);
+    // Olu is a member by his DID: his copies are not the strangers'.
+    for (let i = 0; i < 2; i += 1) expect(obj(ok(await relayAct(w, 'claude', OLU, 'holder_copy', {}))['holder'])['address']).toBe(OLU);
+    // A user DID nobody registered is a stranger, and that budget is spent.
+    refused(await relayAct(w, 'claude', STRANGER, 'holder_copy', {}), 429, /Too many copies/, /neither an admin nor in this pod's registry/);
+  });
+
+  it('takes a relay-signed review of an agent\'s run, the run itself always the agent\'s own key-held envelope, inside the payload the relay signed', async () => {
+    const idh = identityHost([OLU]);
+    const w = await world(relayDeps(idh));
+    const ap = await standardAp(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(OLU, ['operator'], 'p-olu', 'Olu')] }));
+    const run = await runEnvelope(w, 'relay-review-1', ap.t1, 'accepted');
+    const logged = ok(await http(w, 'POST', 'log_agent_run', await relaySigned(w, 'claude', OLU, {
+      intent: 'wrd:review-agent-run', runEnvelopeSha256: envelopeSha256(run), verdict: 'accepted', run_envelope: run,
+    })), 'relay-signed review');
+    expect(logged).toMatchObject({ status: 'reviewed', verdict: 'accepted', countsTowardCalibration: true });
+    // Beside the run envelope as review_envelope, the same.
+    const run2 = await runEnvelope(w, 'relay-review-2', ap.t1, 'accepted');
+    ok(await http(w, 'POST', 'log_agent_run', { run_envelope: run2, review_envelope: await relaySigned(w, 'claude', OLU, { intent: 'wrd:review-agent-run', runEnvelopeSha256: envelopeSha256(run2), verdict: 'reworked' }) }));
+    // A relay-signed review names the run it reviews, as a key-held one does.
+    const run3 = await runEnvelope(w, 'relay-review-3', ap.t1, 'accepted');
+    refused(await http(w, 'POST', 'log_agent_run', await relaySigned(w, 'claude', OLU, { intent: 'wrd:review-agent-run', runEnvelopeSha256: envelopeSha256(run2), verdict: 'accepted', run_envelope: run3 })), 400, /different run envelope/);
+    // The run is the agent's own: a relay-signed run (a person standing in for the agent) is no run at all.
+    refused(await http(w, 'POST', 'log_agent_run', await relaySigned(w, 'claude', OLU, { intent: 'wrd:agent-run', runId: 'relay-run-1', taskIri: ap.t1 })), 401, /signed envelope is required/, /run_envelope/);
+  });
 
   it('answers 502, not 200, when the pod refuses a write with 403', async () => {
     const w = await world();

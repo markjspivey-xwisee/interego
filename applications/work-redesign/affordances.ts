@@ -8,6 +8,12 @@
  * (wrd.read_records, wrd.read_calibration, wrd.read_envelope_template), always in a POST body and
  * never in a URL; the GET read model answers only when the operator opens reads.
  *
+ * Every signed affordance also takes the Interego relay's signed form, `_signed_payload` and
+ * `_signature` (what `act … sign_payload: true` sends from Claude, ChatGPT or this bridge's web
+ * UI): a person who signs in with their Interego account holds no key, and the bridge identifies
+ * them as the user their signed-in agent belongs to when the signature recovers to a relay it
+ * trusts. Relay-attested, not user-held; records made this way say relay-delegated.
+ *
  * `wrdDemoAffordances` holds the one demo-only capability (signing with server-held demo
  * persona keys). Only the offline demo composes it; a production bridge neither advertises nor
  * routes it.
@@ -28,10 +34,26 @@ const POD_INPUT: AffordanceInput = {
  * wrd.envelope_template serves the full JSON Schema and a template, and wrd.read_envelope_template
  * the same filled from the pod for a signed read.
  */
-const envelope = (intent: EnvelopeIntent, name = 'envelope', required = true): AffordanceInput => ({
-  name, type: 'object', required,
-  description: `{payload, signature}: EIP-191 personal_sign over canonicalJson(payload); payload.intent = "${intent}". Every payload also carries podUrl, issuedAt (ISO-8601, within 15 minutes) and a 16-64 character nonce. ${payloadSummary(intent)}. Full JSON Schema and a template: wrd.envelope_template with intent=${intent} (filled from the pod: wrd.read_envelope_template, with a signed read).`,
+const envelope = (intent: EnvelopeIntent, name = 'envelope', alternative = 'Send this, or the relay-signed form (_signed_payload and _signature) instead.'): AffordanceInput => ({
+  // Not required: either this or the relay-signed form authorises the call.
+  name, type: 'object', required: false,
+  description: `{payload, signature}: EIP-191 personal_sign over canonicalJson(payload); payload.intent = "${intent}". Every payload also carries podUrl, issuedAt (ISO-8601, within 15 minutes) and a 16-64 character nonce. ${payloadSummary(intent)}. Full JSON Schema and a template: wrd.envelope_template with intent=${intent} (filled from the pod: wrd.read_envelope_template, with a signed read). ${alternative}`,
 });
+
+/**
+ * The relay-signed form: what the Interego relay's `act` sends with sign_payload: true, for a
+ * person signed in with their Interego account who holds no key. Taken in place of the envelope
+ * input (at the top level of the body, or as that input's value) only when the signature recovers
+ * to a relay the bridge trusts (WRD_TRUSTED_RELAY_ADDRESSES); the person is the user the agent it
+ * names belongs to. Relay-attested, not user-held.
+ */
+const RELAY_INPUTS: readonly AffordanceInput[] = [
+  {
+    name: '_signed_payload', type: 'string', required: false,
+    description: 'Relay-signed form, in place of the envelope: JSON.stringify of the payload you asked the relay to sign (act with sign_payload: true and the same fields as the envelope payload, podUrl and a nonce included; issuedAt is not needed), with the relay\'s agent_id, subject_pod_url (your own pod, never read as the pod an act targets), timestamp, and your podUrl as pod_url. The person acting is the user the agent belongs to (relay-attested, not a key you hold); acts that change who may do what come only from this bridge\'s web UI unless the operator sets WRD_CHAT_AGENTS_DECIDE=1.',
+  },
+  { name: '_signature', type: 'string', required: false, description: "The relay's signature: EIP-191 personal_sign by its delegation key over sha256:<hex sha256 of _signed_payload>. It must recover to a relay this bridge trusts." },
+];
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } as const;
 
@@ -50,8 +72,8 @@ const READS = [{
 
 const READ_ANNOTATIONS = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
 const READ_ENVELOPE: AffordanceInput = {
-  name: 'envelope', type: 'object', required: true,
-  description: `{payload, signature}: EIP-191 personal_sign over canonicalJson(payload); payload = {intent: "wrd:read-records", podUrl, issuedAt (ISO-8601, within 15 minutes), nonce (16-64 characters)}. Signed by an admin or a key in the pod's registry. A read spends no nonce: the same envelope reads again (records or calibration) until issuedAt leaves the window. Template: wrd.envelope_template with intent=wrd:read-records.`,
+  name: 'envelope', type: 'object', required: false,
+  description: `{payload, signature}: EIP-191 personal_sign over canonicalJson(payload); payload = {intent: "wrd:read-records", podUrl, issuedAt (ISO-8601, within 15 minutes), nonce (16-64 characters)}. Signed by an admin or a key in the pod's registry. A read spends no nonce: the same envelope reads again (records or calibration) until issuedAt leaves the window. Template: wrd.envelope_template with intent=wrd:read-records. Or send the relay-signed form (_signed_payload and _signature) of the same payload, as an admin or a user DID in the registry.`,
 };
 const LIST_INPUTS: AffordanceInput[] = [
   POD_INPUT,
@@ -104,7 +126,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'Admin-signed change to the pod\'s role registry: who holds which role (approver, operator, worker, agent), the person reference an admin attests is behind each key, each agent\'s accountable principal and declared model, the task kinds work may be filed under, and a pod policy that may only tighten the published policy.',
     method: 'POST',
     annotations: { title: 'Update the role registry', ...WRITE },
-    inputs: [envelope('wrd:update-registry'), POD_INPUT],
+    inputs: [envelope('wrd:update-registry'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The registry after the change.',
       properties: { registryIri: { type: 'string' }, members: { type: 'array' }, taskKinds: { type: 'array' }, podPolicy: { type: 'object' }, replacedUntrusted: { type: 'boolean' }, graphDigest: { type: 'string' }, ...RECORDED },
@@ -141,6 +163,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     annotations: { title: 'Record a task map', ...WRITE },
     inputs: [
       envelope('wrd:record-task-map'),
+      ...RELAY_INPUTS,
       { name: 'document_text', type: 'string', required: true, description: 'The document the quotes come from; its sha256 must equal payload.document.sha256.' },
       POD_INPUT,
     ],
@@ -158,7 +181,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'Record a workflow and its tasks as an operator describes them: who does each task today (a registered person, a registered agent, or both), at which allocation level, under which registered task kind.',
     method: 'POST',
     annotations: { title: 'Capture a workflow', ...WRITE },
-    inputs: [envelope('wrd:capture-workflow'), POD_INPUT],
+    inputs: [envelope('wrd:capture-workflow'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The workflow and each task with a link for the people named on it.',
       properties: { workflowIri: { type: 'string' }, taskIris: { type: 'array', items: { type: 'string' } }, tasks: { type: 'array' }, ...RECORDED },
@@ -175,6 +198,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     annotations: { title: 'Revise a task', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     inputs: [
       envelope('wrd:revise-task'),
+      ...RELAY_INPUTS,
       { name: 'document_text', type: 'string', required: false, description: "Only with new sourceQuotes: the workflow's document, whose sha256 must match the one recorded." },
       POD_INPUT,
     ],
@@ -192,7 +216,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: "A person or agent named on a task ratifies or disputes its description or its classification (a dispute may carry the party's own answers); a person a plan names to decide, audit or perform acknowledges or objects to that assignment. The signature binds the head read.",
     method: 'POST',
     annotations: { title: 'Ratify or dispute', ...WRITE },
-    inputs: [envelope('wrd:ratify-task'), POD_INPUT],
+    inputs: [envelope('wrd:ratify-task'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The status after the verdict; changed is false when the party had already given the same verdict.',
       properties: { subject: { type: 'string' }, taskIri: { type: 'string' }, changed: { type: 'boolean' }, graphDigest: { type: 'string' }, ...RECORDED },
@@ -207,7 +231,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'Place a task in a regime (Evident, Knowable, Emergent, Turbulent) by the published decision table over seven signed evidence answers, including whether a reviewer can check the output and how soon feedback arrives. The regime picks the method and limits what changes are allowed. Refused (400) when the answers place nothing; there is no default regime.',
     method: 'POST',
     annotations: { title: 'Classify a task', ...WRITE },
-    inputs: [envelope('wrd:classify-task'), POD_INPUT],
+    inputs: [envelope('wrd:classify-task'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The regime, the method it routes to, the published rules that fired, notes, the levels permitted, and who answered.',
       properties: { taskIri: { type: 'string' }, classificationIri: { type: 'string' }, regime: { type: 'string' }, method: { type: 'string' }, regimeSource: { type: 'string' }, rulesFired: { type: 'array', items: { type: 'string' } }, notes: { type: 'array' }, permittedLevels: { type: 'array' }, answeredBy: { type: 'object' }, ...RECORDED },
@@ -222,7 +246,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'Propose a person, an agent, or both for tasks of a workflow, at a level the task\'s regime permits. Refused (409) until every task of the workflow is classified; Turbulent work does not change; Emergent work changes only as 1 to 5 safe-to-fail probes in a probe-only plan; an agent acting within a grant needs an active, earned grant.',
     method: 'POST',
     annotations: { title: 'Propose an allocation', ...WRITE },
-    inputs: [envelope('wrd:propose-allocation'), POD_INPUT],
+    inputs: [envelope('wrd:propose-allocation'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The plan: every task with its current and proposed allocation, the plan kind (valued or probe), and the people it names.',
       properties: { planIri: { type: 'string' }, workflowIri: { type: 'string' }, planKind: { type: 'string' }, tasks: { type: 'array' }, changedTasks: { type: 'array' }, assignments: { type: 'array' }, ...RECORDED },
@@ -237,7 +261,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'Seeded Monte Carlo over low/likely/high inputs, each stating where it came from: P10/P50/P90 for the weekly cash change (freed hours count only where the work is left unfilled) and for the change if freed hours are redeployed, NPV with ramp and discounting, payback, sensitivity, a cost breakdown, freed person-hours and pilot size. Probe plans are not valued: they are submitted as probe decisions.',
     method: 'POST',
     annotations: { title: 'Value a plan', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    inputs: [envelope('wrd:value-plan'), POD_INPUT],
+    inputs: [envelope('wrd:value-plan'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The valuation record; the same plan and inputs return the existing record (reused true).',
       properties: { valuationIri: { type: 'string' }, planIri: { type: 'string' }, valuationHash: { type: 'string' }, seed: { type: 'string' }, draws: { type: 'integer' }, result: { type: 'object' }, expertEvidence: { type: 'array' }, unratifiedTasks: { type: 'array' }, reused: { type: 'boolean' }, ...RECORDED },
@@ -252,7 +276,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'Submit a plan (with its valuation and measurement plan, or as a probe decision) as a Hypothetical decision. Every changed task must be ratified by everyone named on it. Returns exactly what a countersigner signs.',
     method: 'POST',
     annotations: { title: 'Submit a decision', ...WRITE },
-    inputs: [envelope('wrd:submit-decision'), POD_INPUT],
+    inputs: [envelope('wrd:submit-decision'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The submitted decision, its prediction band (valued) or probes, and the binding a countersigner signs.',
       properties: { decisionIri: { type: 'string' }, decisionKind: { type: 'string' }, graphDigest: { type: 'string' }, prediction: { type: 'object' }, probes: { type: 'array' }, decisionLevel: { type: 'string' }, subjects: { type: 'array' }, assignments: { type: 'array' }, basisLabel: { type: 'string' }, ...RECORDED },
@@ -267,7 +291,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'A registered approver approves or declines. Compared by the person an admin attests is behind each key, the approver did not propose, value or submit the plan, is not a person whose work it changes, and is not the accountable principal of an agent it puts on the work. Approval re-checks that every changed task is still ratified and undisputed, names every objection and every assignment not yet acknowledged that it approves over, and is refused while another approved, unmeasured decision changes the same task. Approved decisions become Asserted with the prediction still unmeasured; declined ones Counterfactual.',
     method: 'POST',
     annotations: { title: 'Countersign a decision', ...WRITE },
-    inputs: [envelope('wrd:countersign-decision'), POD_INPUT],
+    inputs: [envelope('wrd:countersign-decision'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The decision after the verdict.',
       properties: { decisionIri: { type: 'string' }, statusLabel: { type: 'string' }, graphDigest: { type: 'string' }, countersignedBy: { type: 'object' }, assignments: { type: 'array' }, grantChecks: { type: 'array' }, ...RECORDED },
@@ -282,7 +306,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'After the measurement window has ended, someone who neither prepared (proposed, valued, submitted) nor countersigned the decision records the measured weekly change (optionally with an interval), its comparison basis, and whether the change was kept, reverted or stopped early. A kept change is measured over the whole declared window; a shorter window is recorded only for a change stopped early or reverted, and stays out of calibration. The platform grades it against the predicted band scaled for the declared ramp, and checks the pilot size against the person-reviewed runs logged in the window. Probe decisions record which declared condition fired for each probe.',
     method: 'POST',
     annotations: { title: 'Record an outcome', ...WRITE },
-    inputs: [envelope('wrd:record-outcome'), POD_INPUT],
+    inputs: [envelope('wrd:record-outcome'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The measured decision with its verdict, or each probe\'s signal.',
       properties: { decisionIri: { type: 'string' }, disposition: { type: 'string' }, valued: { type: 'object' }, probes: { type: 'array' }, next: { type: 'string' }, ...RECORDED },
@@ -298,8 +322,9 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     method: 'POST',
     annotations: { title: 'Log an agent run', ...WRITE },
     inputs: [
-      envelope('wrd:agent-run', 'run_envelope'),
-      envelope('wrd:review-agent-run', 'review_envelope', false),
+      envelope('wrd:agent-run', 'run_envelope', "Always the agent's own signature (an agent signs its runs with its key), and always needed: here, or, with a relay-signed review, as run_envelope inside the payload the relay signed."),
+      envelope('wrd:review-agent-run', 'review_envelope', 'Optional under an active grant; a relay-signed review comes as _signed_payload and _signature instead.'),
+      ...RELAY_INPUTS,
       POD_INPUT,
     ],
     outputs: {
@@ -316,7 +341,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'An approver grants a registered software agent the right to act alone on one registered kind of task, only when earned: at least 20 person-reviewed runs on its currently declared model, of which a person accepted at least 90%; at least 5 distinct registered reviewers the admin attests are different people; and at least 20 runs the agent itself called ready, of which a person accepted at least 90% with no critical failure. People are never given enforced grants.',
     method: 'POST',
     annotations: { title: 'Grant autonomy', ...WRITE },
-    inputs: [envelope('wrd:grant-autonomy'), POD_INPUT],
+    inputs: [envelope('wrd:grant-autonomy'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The grant and the evaluation it rests on.',
       properties: { grantIri: { type: 'string' }, agentAddress: { type: 'string' }, principal: { type: 'string' }, model: { type: 'string' }, taskKind: { type: 'string' }, evaluation: { type: 'object' }, ...RECORDED },
@@ -331,7 +356,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'An approver withdraws a grant: a superseding Retracted record whose validity window ends now, binding the grant head read (recordId, descriptorUrl, graphDigest). Every later use of the grant is refused, and work a decision put under it shows as having no authorised performer.',
     method: 'POST',
     annotations: { title: 'Revoke a grant', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    inputs: [envelope('wrd:revoke-grant'), POD_INPUT],
+    inputs: [envelope('wrd:revoke-grant'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'The revoked grant.',
       properties: { grantIri: { type: 'string' }, revokedAt: { type: 'string' }, why: { type: 'string' }, ...RECORDED },
@@ -346,7 +371,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     description: 'Anyone named in or signing a record pulls a copy of every record describing their work or carrying their signature: to a pod they name (each copy keeps the original platform proof, so it verifies there), or as a download.',
     method: 'POST',
     annotations: { title: 'Take a copy of my record', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    inputs: [envelope('wrd:holder-copy'), POD_INPUT],
+    inputs: [envelope('wrd:holder-copy'), ...RELAY_INPUTS, POD_INPUT],
     outputs: {
       description: 'What was copied (or exported) and the bundle itself.',
       properties: { holder: { type: 'object' }, targetPodUrl: { type: 'string' }, copied: { type: 'array' }, bundle: { type: 'array' }, receiptUrl: { type: 'string' }, platform: { type: 'object' }, ...RECORDED },
@@ -376,9 +401,10 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     reads: READS,
     inputs: [
       {
-        name: 'read_envelope', type: 'object', required: true,
+        name: 'read_envelope', type: 'object', required: false,
         description: `The signed read: ${READ_ENVELOPE.description} In the JSON body, never in a URL.`,
       },
+      ...RELAY_INPUTS,
       ...TEMPLATE_INPUTS,
     ],
     outputs: TEMPLATE_OUTPUTS,
@@ -416,7 +442,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     method: 'POST',
     annotations: { title: 'Read records', ...READ_ANNOTATIONS },
     reads: READS,
-    inputs: [READ_ENVELOPE, ...LIST_INPUTS],
+    inputs: [READ_ENVELOPE, ...RELAY_INPUTS, ...LIST_INPUTS],
     outputs: LIST_OUTPUTS,
   },
   {
@@ -428,7 +454,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     method: 'POST',
     annotations: { title: 'Read calibration', ...READ_ANNOTATIONS },
     reads: READS,
-    inputs: [READ_ENVELOPE, ...CALIBRATION_INPUTS],
+    inputs: [READ_ENVELOPE, ...RELAY_INPUTS, ...CALIBRATION_INPUTS],
     outputs: CALIBRATION_OUTPUTS,
   },
 ];

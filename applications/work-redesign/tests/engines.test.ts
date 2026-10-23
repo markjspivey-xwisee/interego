@@ -29,7 +29,8 @@ import {
   type Tri, type TaskState, type ValuationInputs, type ReviewedRun, type DecisionForCalibration,
 } from '../src/valuation.js';
 import {
-  openEnvelope, verifyStoredEnvelope, NonceLedger, envelopeSha256, didOf, entityIri, scopePrefix, graphIriOf, recordIdFor, slugOf,
+  openEnvelope, verifyStoredEnvelope, bindRelayDelegated, relayPayloadView, NonceLedger, envelopeSha256, didOf, principalKey, principalOfDid, isUserPrincipal, isPersonId,
+  entityIri, scopePrefix, graphIriOf, recordIdFor, slugOf,
   buildGraphTurtle, parseRecordGraph, buildDescriptor, normalisePodUrl, RECORD_KINDS, RECORD_STATUSES,
   type SignedEnvelope, type WrdRecord, type PolicyRef, type RecordSigner, type PlatformRef,
 } from '../src/records.js';
@@ -228,7 +229,17 @@ describe('parties and allocation', () => {
     // A person cannot stand in for the agent, nor an unregistered key for the person.
     expect(checkParties({ level: 'agent-drafts-person-decides', personAddress: PERSON, agentAddress: PERSON2 }, at)).toMatchObject({ ok: false, why: `${PERSON2} is not a registered software agent` });
     expect(checkParties({ level: 'person', personAddress: '0x000000000000000000000000000000000000dead' }, at)).toMatchObject({ ok: false });
-    expect(checkParties({ level: 'person', personAddress: 'ana' }, at)).toMatchObject({ ok: false, why: 'personAddress is not a 0x address' });
+    expect(checkParties({ level: 'person', personAddress: 'ana' }, at)).toMatchObject({ ok: false, why: 'personAddress is neither a 0x address nor an Interego user DID' });
+    // A person may be an Interego user DID (relay-attested), kept as spelled; an agent is always a key's address.
+    const did = 'did:web:identity.interego.xwisee.com:users:u-pk-0A1b2C3d4E5f';
+    const dids = { ...at, isRegisteredPerson: (a: string) => a === PERSON || a === did };
+    expect(checkParties({ level: 'person', personAddress: did }, dids)).toEqual({ ok: true });
+    expect(checkParties({ level: 'person', personAddress: did.toLowerCase() }, dids)).toMatchObject({ ok: false, why: `${did.toLowerCase()} is not a registered person` });
+    expect(checkParties({ level: 'agent-drafts-person-decides', personAddress: PERSON, agentAddress: did }, dids)).toMatchObject({ ok: false, why: 'agentAddress is not a 0x address' });
+    expect(performerOf({ level: 'person', personAddress: did })).toBe(did);
+    expect(namedPartiesOf({ level: 'person-with-agent-assist', personAddress: did, agentAddress: AGENT.address })).toEqual([did, AGENT_ADDR]);
+    expect(coerceChange({ taskIri: T1, proposedLevel: 'person', personAddress: did })).toMatchObject({ personAddress: did });
+    expect(coerceChange({ taskIri: T1, proposedLevel: 'person', agentAddress: did })).toBeNull();
     // Within-grant: never at capture; agent only.
     expect(checkParties({ level: 'agent-acts-within-grant', agentAddress: AGENT_ADDR }, at)).toMatchObject({ ok: false, error: 'A within-grant allocation can only come from a decision.' });
     expect(checkParties({ level: 'agent-acts-within-grant', agentAddress: AGENT_ADDR }, { ...at, atCapture: false })).toEqual({ ok: true });
@@ -818,11 +829,82 @@ describe('envelopes', () => {
     const env = await sign(BO, payload({ intent: 'wrd:countersign-decision', verdict: 'approve' }));
     const weeksLater = new Date(Date.parse(NOW) + 9 * 7 * 86_400_000);
     expect(openEnvelope(env, 'wrd:countersign-decision', POD, weeksLater)).toMatchObject({ ok: false, status: 401 });
-    expect(verifyStoredEnvelope(env, 'wrd:countersign-decision', POD)).toEqual({ ok: true, signer: PERSON2, did: didOf(PERSON2) });
+    expect(verifyStoredEnvelope(env, 'wrd:countersign-decision', POD)).toEqual({ ok: true, signer: PERSON2, did: didOf(PERSON2), authority: 'key-held' });
     expect(verifyStoredEnvelope(env, 'wrd:record-outcome', POD)).toMatchObject({ ok: false });
     expect(verifyStoredEnvelope({ ...env, signature: 'nope' }, 'wrd:countersign-decision', POD)).toMatchObject({ ok: false });
     expect(envelopeSha256(env)).toBe(sha256Hex(canonicalJson({ payload: env.payload, signature: env.signature })));
     expect(envelopeSha256({ ...env, payload: { ...env.payload, verdict: 'decline' } })).not.toBe(envelopeSha256(env));
+  });
+
+  it('keeps the two kinds of principal apart: a user DID is never lower-cased or read as an address, and an address is always lower-cased', () => {
+    const did = 'did:web:identity.interego.xwisee.com:users:u-pk-0A1b2C3d4E5f';
+    expect([isUserPrincipal(did), isPersonId(did), isPersonId(PERSON), isUserPrincipal(PERSON), isPersonId('ana')]).toEqual([true, true, true, false, false]);
+    expect(isUserPrincipal('did:web:identity.interego.xwisee.com:agents:claude-u-pk-1')).toBe(false);
+    expect(principalKey(did)).toBe(did);
+    expect(principalKey(ANA.address)).toBe(PERSON);
+    expect([didOf(did), didOf(ANA.address)]).toEqual([did, `did:ethr:${PERSON}`]);
+    expect([principalOfDid(did), principalOfDid(`did:ethr:${ANA.address}`)]).toEqual([did, PERSON]);
+    // The ledger keys by principal: the same nonce from a DID and from its lower-cased spelling (another user) are two principals.
+    const ledger = new NonceLedger(60_000);
+    const t0 = new Date(NOW);
+    expect(ledger.claim(did, 'nonce-000000000001', t0)).toBe(true);
+    expect(ledger.claim(did, 'nonce-000000000001', t0)).toBe(false);
+    expect(ledger.claim(did.toLowerCase(), 'nonce-000000000001', t0)).toBe(true);
+  });
+
+  it('binds a relay-signed request as a key-held envelope is bound, reading the pod from pod_url and the time from the relay timestamp, and re-verifies it stored, offline', async () => {
+    // Hardhat development key #3 stands in for the relay's delegation key.
+    const relay = importWallet('0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6', 'agent', 'relay');
+    const host = 'identity.interego.xwisee.com';
+    const principal = `did:web:${host}:users:u-pk-f2a9c751075a`;
+    const agentId = `did:web:${host}:agents:claude-u-pk-f2a9c751075a`;
+    // As the relay builds it: the caller's fields (a stale issuedAt of the caller's own among them), then agent_id, subject_pod_url, timestamp.
+    const signed: Record<string, unknown> = {
+      intent: 'wrd:countersign-decision', verdict: 'approve', issuedAt: '2020-01-01T00:00:00.000Z', pod_url: POD, nonce: 'nonce-000000000009',
+      agent_id: agentId, subject_pod_url: 'https://198.51.100.7/mine/', timestamp: NOW,
+    };
+    const text = JSON.stringify(signed);
+    const v = { principal, agentId, relaySigner: relay.address.toLowerCase(), payload: signed, signedPayload: text, signature: await signMessageRaw(relay, `sha256:${sha256Hex(text)}`) };
+    const now = new Date(NOW);
+    const opened = bindRelayDelegated(v, 'wrd:countersign-decision', POD, now);
+    expect(opened).toMatchObject({ ok: true, signer: principal, did: principal, authority: 'relay-delegated', agentId, relaySigner: v.relaySigner });
+    if (!opened.ok) throw new Error('expected the relay-signed request to bind');
+    expect(opened.payload).toEqual(relayPayloadView(signed));
+    expect(opened.payload).toMatchObject({ podUrl: POD, issuedAt: NOW, verdict: 'approve', subject_pod_url: 'https://198.51.100.7/mine/' });
+    expect(opened.envelope).toEqual({ payload: opened.payload, signature: v.signature, authority: 'relay-delegated', signedPayload: text, agentId, principal, relaySigner: v.relaySigner });
+    // Every check a key-held envelope gets, by the relay's fields.
+    expect(bindRelayDelegated(v, 'wrd:record-outcome', POD, now)).toMatchObject({ ok: false, status: 400, why: 'payload.intent must be wrd:record-outcome' });
+    expect(bindRelayDelegated(v, 'wrd:countersign-decision', 'https://198.51.100.7/mine/', now)).toMatchObject({ ok: false, status: 400, why: expect.stringMatching(/does not name the pod/) });
+    const { pod_url: _named, ...unnamed } = signed;
+    expect(bindRelayDelegated({ ...v, payload: { ...unnamed, subject_pod_url: POD } }, 'wrd:countersign-decision', POD, now))
+      .toMatchObject({ ok: false, status: 400, why: expect.stringMatching(/names no pod_url.*subject_pod_url, your own pod, is never read/) });
+    expect(bindRelayDelegated(v, 'wrd:countersign-decision', POD, new Date(Date.parse(NOW) + 16 * 60_000))).toMatchObject({ ok: false, status: 401, why: expect.stringMatching(/relay's timestamp/) });
+    expect(bindRelayDelegated({ ...v, payload: { ...signed, timestamp: 'today' } }, 'wrd:countersign-decision', POD, now)).toMatchObject({ ok: false, status: 400 });
+    expect(bindRelayDelegated({ ...v, payload: { ...signed, nonce: 'short' } }, 'wrd:countersign-decision', POD, now)).toMatchObject({ ok: false, status: 400, why: expect.stringMatching(/nonce/) });
+    // A key-held envelope dressed as a relay-delegated one is opened as what it is: its signer, and nothing it claims is kept.
+    const dressed = { ...(await sign(ANA, payload())), authority: 'relay-delegated', principal, agentId, relaySigner: v.relaySigner, signedPayload: text };
+    const keyHeld = openEnvelope(dressed, 'wrd:classify-task', POD, now);
+    expect(keyHeld).toMatchObject({ ok: true, signer: PERSON, authority: 'key-held' });
+    if (keyHeld.ok) expect(Object.keys(keyHeld.envelope).sort()).toEqual(['payload', 'signature']);
+    // Stored, weeks later: the relay's signature against the relays trusted now, the agent and the payload it signed; no network.
+    const check = { relayAddresses: [relay.address], identityHost: host };
+    const stored: SignedEnvelope = opened.envelope;
+    expect(verifyStoredEnvelope(stored, 'wrd:countersign-decision', POD, check)).toEqual({ ok: true, signer: principal, did: principal, authority: 'relay-delegated' });
+    expect(verifyStoredEnvelope(stored, 'wrd:countersign-decision', POD)).toMatchObject({ ok: false, why: expect.stringMatching(/trusts no relay now/) });
+    expect(verifyStoredEnvelope(stored, 'wrd:countersign-decision', POD, { ...check, relayAddresses: [ANA.address] })).toMatchObject({ ok: false, why: expect.stringMatching(/not a relay this bridge trusts now/) });
+    expect(verifyStoredEnvelope(stored, 'wrd:record-outcome', POD, check)).toMatchObject({ ok: false });
+    expect(verifyStoredEnvelope({ ...stored, agentId: `did:web:${host}:agents:claude-someone-else` }, 'wrd:countersign-decision', POD, check)).toMatchObject({ ok: false, why: expect.stringMatching(/does not name the stored agent/) });
+    expect(verifyStoredEnvelope({ ...stored, relaySigner: PERSON }, 'wrd:countersign-decision', POD, check)).toMatchObject({ ok: false, why: expect.stringMatching(/relaySigner stored/) });
+    expect(verifyStoredEnvelope({ ...stored, payload: { ...stored.payload, verdict: 'decline' } }, 'wrd:countersign-decision', POD, check)).toMatchObject({ ok: false, why: expect.stringMatching(/not the relay-signed text/) });
+    expect(verifyStoredEnvelope({ ...stored, signedPayload: text.replace('approve', 'decline') }, 'wrd:countersign-decision', POD, check)).toMatchObject({ ok: false });
+    expect(verifyStoredEnvelope({ ...stored, principal: `did:web:elsewhere.example:users:u-pk-f2a9c751075a` }, 'wrd:countersign-decision', POD, check)).toMatchObject({ ok: false, why: expect.stringMatching(/not a user on/) });
+    expect(verifyStoredEnvelope({ ...stored, signedPayload: undefined }, 'wrd:countersign-decision', POD, check)).toMatchObject({ ok: false });
+    // ★ What a later reader trusts for the principal: the bridge's word, which the platform's proof covers (the record's
+    // bytes), not the relay's signature, which names only the agent. Offline, another user DID on the host passes here.
+    expect(verifyStoredEnvelope({ ...stored, principal: `did:web:${host}:users:u-pk-0000000000ff` }, 'wrd:countersign-decision', POD, check)).toMatchObject({ ok: true, signer: `did:web:${host}:users:u-pk-0000000000ff` });
+    // The digest binds the relay's text and who it was for, not only payload and signature.
+    expect(envelopeSha256(stored)).not.toBe(sha256Hex(canonicalJson({ payload: stored.payload, signature: stored.signature })));
+    expect(envelopeSha256({ ...stored, principal: `did:web:${host}:users:u-pk-0000000000ff` })).not.toBe(envelopeSha256(stored));
   });
 });
 

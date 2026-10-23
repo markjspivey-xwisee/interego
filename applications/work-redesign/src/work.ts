@@ -19,7 +19,7 @@ import {
   ALLOCATION_LEVELS, CHECKABILITIES, isLevel, isOneOf,
   type AllocationLevel, type Checkability, type EffectivePolicy, type MethodToken, type PublishedPolicy, type Regime,
 } from './ontology.js';
-import { isAbsoluteIri, isAddress } from './records.js';
+import { isAbsoluteIri, isAddress, isPersonId, principalKey } from './records.js';
 import { runsForRuleOfThree } from './valuation.js';
 
 // ── Classification questions ──────────────────────────────────────────────────────────────
@@ -116,16 +116,16 @@ export interface Allocation { readonly level: AllocationLevel; readonly personAd
 /** Levels at which the agent, not the person, performs the work. wrd.ttl's requiresAgent says the same (tested). */
 const AGENT_PERFORMED: ReadonlySet<AllocationLevel> = new Set(['agent-drafts-person-decides', 'agent-acts-person-audits', 'agent-acts-within-grant']);
 
-/** The agent at agent-drafting and agent-acting levels, else the person; lowercase. */
+/** The agent at agent-drafting and agent-acting levels, else the person; as principalKey spells it (an address lowercase, a user DID as it is). */
 export function performerOf(a: Allocation): string {
   const who = AGENT_PERFORMED.has(a.level) ? a.agentAddress : a.personAddress;
-  return (who ?? '').toLowerCase();
+  return principalKey(who ?? '');
 }
 
-/** Every party named on an allocation, lowercase, person first. */
+/** Every party named on an allocation, as principalKey spells them, person first. */
 export function namedPartiesOf(a: Allocation): string[] {
   const out: string[] = [];
-  if (a.personAddress) out.push(a.personAddress.toLowerCase());
+  if (a.personAddress) out.push(principalKey(a.personAddress));
   if (a.agentAddress) out.push(a.agentAddress.toLowerCase());
   return out;
 }
@@ -144,16 +144,17 @@ const partyFail = (error: string, why: string): PartyCheck => ({ ok: false, stat
  * Which parties each level names: person → a person and no agent; person-with-agent-assist →
  * a person, an agent optional; agent-drafts-person-decides and agent-acts-person-audits → both;
  * agent-acts-within-grant → an agent and no person, and never at capture (only a countersigned
- * decision can put work there). Persons must be registered people; agents registered software agents.
+ * decision can put work there). Persons must be registered people (a key's address, or an Interego
+ * user DID); agents registered software agents (always a key's address: an agent signs its runs).
  */
 export function checkParties(a: Allocation, ctx: {
   readonly isRegisteredPerson: (address: string) => boolean;
   readonly isRegisteredAgent: (address: string) => boolean;
   readonly atCapture: boolean;
 }): PartyCheck {
-  if (a.personAddress !== undefined && !isAddress(a.personAddress)) return partyFail(NEEDS_PERSON, 'personAddress is not a 0x address');
+  if (a.personAddress !== undefined && !isPersonId(a.personAddress)) return partyFail(NEEDS_PERSON, 'personAddress is neither a 0x address nor an Interego user DID');
   if (a.agentAddress !== undefined && !isAddress(a.agentAddress)) return partyFail(NEEDS_AGENT, 'agentAddress is not a 0x address');
-  const person = a.personAddress?.toLowerCase();
+  const person = a.personAddress === undefined ? undefined : principalKey(a.personAddress);
   const agent = a.agentAddress?.toLowerCase();
   switch (a.level) {
     case 'person':
@@ -223,7 +224,8 @@ export function coerceChange(v: unknown): AllocationChange | null {
   const o = v as Record<string, unknown>;
   if (typeof o['taskIri'] !== 'string' || o['taskIri'].length === 0 || o['taskIri'].length > 400) return null;
   if (!isLevel(o['proposedLevel'])) return null;
-  for (const k of ['agentAddress', 'personAddress'] as const) if (o[k] !== undefined && !isAddress(o[k])) return null;
+  if (o['agentAddress'] !== undefined && !isAddress(o['agentAddress'])) return null;
+  if (o['personAddress'] !== undefined && !isPersonId(o['personAddress'])) return null;
   let probes: Probe[] | undefined;
   if (o['probes'] !== undefined) {
     if (!Array.isArray(o['probes'])) return null;
@@ -238,7 +240,7 @@ export function coerceChange(v: unknown): AllocationChange | null {
   return {
     taskIri: o['taskIri'], proposedLevel: o['proposedLevel'],
     ...(typeof o['agentAddress'] === 'string' ? { agentAddress: o['agentAddress'].toLowerCase() } : {}),
-    ...(typeof o['personAddress'] === 'string' ? { personAddress: o['personAddress'].toLowerCase() } : {}),
+    ...(typeof o['personAddress'] === 'string' ? { personAddress: principalKey(o['personAddress']) } : {}),
     ...(probes ? { probes } : {}),
   };
 }
@@ -255,7 +257,7 @@ function probesWhy(probes: readonly Probe[] | undefined): string | null {
   return null;
 }
 
-const sameAddress = (a: string | undefined, b: string | undefined): boolean => (a ?? '').toLowerCase() === (b ?? '').toLowerCase();
+const sameAddress = (a: string | undefined, b: string | undefined): boolean => principalKey(a ?? '') === principalKey(b ?? '');
 
 const CLASSIFY_FIRST = 'Classify every task before proposing an allocation.';
 const DISPUTED_DESCRIPTION = 'A disputed task description blocks any change to that task until it is revised and ratified.';
@@ -288,8 +290,8 @@ export function checkAllocation(change: AllocationChange, task: TaskForAllocatio
   const proposed: Allocation = {
     level: change.proposedLevel,
     ...(change.personAddress !== undefined
-      ? { personAddress: change.personAddress.toLowerCase() }
-      : (levelRule.requiresPerson && task.current.personAddress ? { personAddress: task.current.personAddress.toLowerCase() } : {})),
+      ? { personAddress: principalKey(change.personAddress) }
+      : (levelRule.requiresPerson && task.current.personAddress ? { personAddress: principalKey(task.current.personAddress) } : {})),
     ...(change.agentAddress !== undefined ? { agentAddress: change.agentAddress.toLowerCase() } : {}),
   };
   // 2. not a change
@@ -522,9 +524,8 @@ function coerceTask(raw: unknown, path: string, mode: 'manual' | 'document'): Co
   const description = text(o, 'description', LIMITS.taskDescription, path);
   if (typeof description !== 'string') return { ok: false, why: description?.why ?? `${path}.description is required` };
   if (!isLevel(o['currentLevel'])) return { ok: false, why: `${path}.currentLevel must be one of ${ALLOCATION_LEVELS.join(', ')}` };
-  for (const k of ['personAddress', 'agentAddress'] as const) {
-    if (o[k] !== undefined && !isAddress(o[k])) return { ok: false, why: `${path}.${k} must be a 0x address` };
-  }
+  if (o['personAddress'] !== undefined && !isPersonId(o['personAddress'])) return { ok: false, why: `${path}.personAddress must be a 0x address or an Interego user DID` };
+  if (o['agentAddress'] !== undefined && !isAddress(o['agentAddress'])) return { ok: false, why: `${path}.agentAddress must be a 0x address` };
   if (typeof o['taskKind'] !== 'string' || !TASK_KIND_SLUG.test(o['taskKind'])) return { ok: false, why: `${path}.taskKind must be a registered task kind slug` };
   if (o['externalTaskTerm'] !== undefined && !isAbsoluteIri(o['externalTaskTerm'])) return { ok: false, why: `${path}.externalTaskTerm must be an absolute IRI` };
   let sourceQuotes: string[] | undefined;
@@ -542,7 +543,7 @@ function coerceTask(raw: unknown, path: string, mode: 'manual' | 'document'): Co
   }
   const current: Allocation = {
     level: o['currentLevel'],
-    ...(typeof o['personAddress'] === 'string' ? { personAddress: o['personAddress'].toLowerCase() } : {}),
+    ...(typeof o['personAddress'] === 'string' ? { personAddress: principalKey(o['personAddress']) } : {}),
     ...(typeof o['agentAddress'] === 'string' ? { agentAddress: o['agentAddress'].toLowerCase() } : {}),
   };
   return {
@@ -678,8 +679,9 @@ export function coerceRevision(payload: Record<string, unknown>): Coerced<Revisi
   for (const k of ['personAddress', 'agentAddress'] as const) {
     const v = payload[k];
     if (v === undefined) continue;
-    if (v !== null && !isAddress(v)) return { ok: false, why: `${k} must be a 0x address or null` };
-    changes[k] = v === null ? null : v.toLowerCase();
+    const valid = k === 'personAddress' ? isPersonId(v) : isAddress(v);
+    if (v !== null && !valid) return { ok: false, why: `${k} must be ${k === 'personAddress' ? 'a 0x address, an Interego user DID,' : 'a 0x address'} or null` };
+    changes[k] = v === null ? null : principalKey(v as string);
   }
   if (payload['taskKind'] !== undefined) {
     if (typeof payload['taskKind'] !== 'string' || !TASK_KIND_SLUG.test(payload['taskKind'])) return { ok: false, why: 'taskKind must be a registered task kind slug' };
