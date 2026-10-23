@@ -33,6 +33,7 @@ COPY deploy/identity/provisional-play-provider.ts ./
 COPY deploy/identity/provisional-play-routes.ts ./
 COPY deploy/identity/provisional-play-cleanup.ts ./
 COPY deploy/identity/provisional-play-enrollment.ts ./
+COPY deploy/identity/surface-agent-restore.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────

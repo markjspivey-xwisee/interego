@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-23 — Identity: the image carries surface-agent-restore.ts
+
+`deploy/Dockerfile.identity` copies the identity server's sources one file at a time, and did not copy `surface-agent-restore.ts`, which `server.ts` imports since the surface-agent restore. tsc, the identity tests and CI all passed from the repository, but the image build failed with `Cannot find module './surface-agent-restore.js'`, and that failure stopped the auto-deploy of every service on master. The Dockerfile now copies it. `deploy/identity/tests/image-copies-every-source.test.ts` walks the relative imports from `server.ts` and fails when a module it reaches is not copied, as the relay's own test does for `Dockerfile.relay`. It runs with the identity tests.
+
 ## 2026-10-23 — Play guests can follow their own native descriptor heads
 
 Provisional descriptor reads now recognize only this deployment's configured internal/public store alias before applying the same exact guest-pod and resource-path checks. Both the early REST/MCP gate and the durable tool guard receive that configuration, so an internal descriptor URL returned by get_current_head can be read by its owner. Foreign origins, foreign pods, credentials, query/fragment additions, encoded separators and traversal spellings remain refused; mutation policy and quotas are unchanged. Focused tests drive native head-to-descriptor following and refusal cases.
