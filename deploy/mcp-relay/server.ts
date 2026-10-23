@@ -74,6 +74,9 @@ import { fileURLToPath } from 'node:url';
 import { interegoOAuthRouter } from './oauth-router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { InteregoOAuthProvider, renewIdentityToken } from './oauth-provider.js';
+import { assertLivePlay, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, parseProvisionalPlay,
+  ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange,
+  type ProvisionalPlay, type ProvisionalPrincipal } from './provisional-play.js';
 import {
   loadClients as loadOAuthClients,
   loadOneClient as loadOneOAuthClient,
@@ -838,6 +841,10 @@ interface AuthResult {
   agentId?: string;
   scope?: string;
   error?: string;
+  provisionalPlay?: ProvisionalPlay;
+  ownerDid?: string;
+  ownerWebId?: string;
+  podUrl?: string;
 }
 
 async function verifyBearerToken(authHeader: string | undefined): Promise<AuthResult> {
@@ -849,13 +856,19 @@ async function verifyBearerToken(authHeader: string | undefined): Promise<AuthRe
   try {
     const resp = await fetch(`${IDENTITY_URL}/tokens/verify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      redirect: 'error', signal: AbortSignal.timeout(15_000),
+      headers: { 'Content-Type': 'application/json', ...(process.env['IDENTITY_INTROSPECTION_SECRET']
+        ? { Authorization: `Bearer ${process.env['IDENTITY_INTROSPECTION_SECRET']}` } : {}) },
       body: JSON.stringify({ token }),
     });
     if (!resp.ok) return { authenticated: false, error: `Identity server error: ${resp.status}` };
-    const data = await resp.json() as { valid: boolean; userId?: string; agentId?: string; scope?: string; reason?: string };
+    const data = await resp.json() as { valid: boolean; userId?: string; agentId?: string; scope?: string; reason?: string;
+      provisionalPlay?: ProvisionalPlay; ownerDid?: string; ownerWebId?: string; webId?: string; podUrl?: string };
     if (data.valid) {
-      return { authenticated: true, userId: data.userId, agentId: data.agentId, scope: data.scope };
+      const provisionalPlay = parseProvisionalPlay(data.provisionalPlay);
+      if (provisionalPlay) assertLivePlay(provisionalPlay);
+      return { authenticated: true, userId: data.userId, agentId: data.agentId, scope: data.scope,
+        ...(provisionalPlay ? { provisionalPlay, ownerDid: data.ownerDid, ownerWebId: data.ownerWebId ?? data.webId, podUrl: data.podUrl } : {}) };
     }
     return { authenticated: false, error: data.reason ?? 'Invalid token' };
   } catch (err) {
@@ -1486,6 +1499,53 @@ oauthProvider = new InteregoOAuthProvider({
   lookupRefreshTokenByRaw: (token) => loadOAuthRefreshTokenByRaw(token, oauthTokenStoreCfg),
   log: (msg: string) => log(msg),
 });
+
+const provisionalTools = createProvisionalToolGuard({ podUrl: oauthStorePodUrl, fetch: solidFetch, withMutex: withPodMutex,
+  assertUnpublished: async (urn, principal) => {
+    const result = JSON.parse(await handleGetCurrentHead({ urn, pod_name: principal.userId }));
+    if (result.error || !Object.hasOwn(result, 'head')) throw new ProvisionalPlayError(503, 'provisional_head_unavailable');
+    if (result.head || result.forked) throw new ProvisionalPlayError(409, 'provisional_initial_binding_exists');
+  } });
+type PlayAuthContext = { agentId?: string; ownerWebId?: string; ownerDid?: string; userId?: string; podUrl?: string; provisionalPlay?: ProvisionalPlay };
+function playPrincipal(auth: PlayAuthContext): ProvisionalPrincipal {
+  if (!auth.provisionalPlay || !auth.userId || !auth.agentId || !auth.ownerDid || !auth.ownerWebId || !auth.podUrl) {
+    throw new ProvisionalPlayError(401, 'invalid_provisional_authority');
+  }
+  return { userId: auth.userId, agentId: canonicalSessionActorId(auth.agentId, IDENTITY_URL)!,
+    ownerDid: auth.ownerDid, ownerWebId: auth.ownerWebId, podUrl: auth.podUrl, provisionalPlay: auth.provisionalPlay };
+}
+async function callProvisionalTool(name: string, args: ToolArgs, auth: PlayAuthContext, invoke: () => Promise<string>): Promise<string> {
+  try { return await provisionalTools(name, args, playPrincipal(auth), invoke); }
+  catch (error) {
+    if (error instanceof ProvisionalPlayError) return JSON.stringify({ error: error.code, code: error.status });
+    throw error;
+  }
+}
+/** Guest identity bearers on REST receive the same restrictions as their OAuth exchange. */
+async function provisionalRestCall(name: string, args: Record<string, unknown>, authorization: string | undefined): Promise<string | undefined> {
+  if (!authorization?.startsWith('Bearer ')) return undefined;
+  // An unverified payload is ONLY a dispatch hint. Original REST authentication
+  // still verifies every credential before any authenticated action. This avoids
+  // adding a second introspection round trip to existing canonical REST traffic.
+  let hint = false;
+  try {
+    const encoded = authorization.slice(7).replace(/^cg2_/, '').split('.')[0];
+    hint = !!JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')).provisionalPlay;
+  } catch { /* opaque/canonical tokens take their unchanged authentication path */ }
+  if (!hint) return undefined;
+  const auth = await verifyBearerToken(authorization);
+  if (!auth.authenticated || !auth.provisionalPlay) return undefined;
+  const principal = playPrincipal(auth);
+  const tool = declaredTool(name);
+  if (!tool) throw new ProvisionalPlayError(403, 'provisional_tool_forbidden');
+  validateProvisionalTool(name, args, principal);
+  if (!args.owner_webid) args.owner_webid = principal.ownerWebId;
+  injectRestVerifiedIdentity(args, auth, false);
+  args._identity_token = authorization.slice(7);
+  args._session_provisional_play = principal.provisionalPlay;
+  args._session_native_lifecycle = true;
+  return callProvisionalTool(name, args, principal, () => tool.handler(args as ToolArgs));
+}
 
 // ── Tool Handlers ───────────────────────────────────────────
 
@@ -5688,6 +5748,7 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   // dashboard could keep showing primaryAgentId as the headline.
   const identityWithNote = identity ? {
     ...identity,
+    ...(args._session_native_lifecycle === true ? { provisionalPlay: !!args._session_provisional_play } : {}),
     ...(sessionAgent ? {
       sessionAgentNote: 'primaryAgentId is the first agent ever registered for this user; the current connection is using sessionAgent (see top-level field).',
     } : {}),
@@ -6739,6 +6800,7 @@ const RESERVED_WIRE_FIELDS = [
   '_session_bearer', '_session_principal', '_identity_token',
   '_session_agent_did', '_session_agent_id', '_session_user_id',
   '_session_owner_webid',
+  '_session_provisional_play', '_session_native_lifecycle',
   // The pod-selector provenance markers. A dispatcher sets these when IT supplied
   // `pod_url` / `pod_name`, so a handler can tell "the caller named no pod" from "the
   // caller named this pod" — see pod-selector.ts. A forged marker is not an escalation
@@ -12659,7 +12721,7 @@ just demo a publish + discover round-trip on their own pod.`,
 // One Server instance per /mcp request (stateless mode). Wires ListTools
 // and CallTool to the same handler registry used by the REST routes.
 
-function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string } | null): Server {
+function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; ownerDid?: string; userId?: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string; provisionalPlay?: ProvisionalPlay } | null): Server {
   const server = new Server(
     { name: '@interego/mcp-relay', version: MCP_SERVER_VERSION },
     {
@@ -12849,6 +12911,14 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
     }
 
+    if (authContext?.provisionalPlay) {
+      try { validateProvisionalTool(name, (rawArgs ?? {}) as Record<string, unknown>, playPrincipal(authContext)); }
+      catch (error) {
+        const code = error instanceof ProvisionalPlayError ? error.code : 'invalid_provisional_authority';
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: code, code: 403 }) }], isError: true };
+      }
+    }
+
     // FIX D — OAuth-scope write gate. An OAuth bearer issued with only
     // `mcp:read` scope is refused by every write-side tool here, BEFORE
     // any pod state is touched and BEFORE the substrate-level scope
@@ -12869,6 +12939,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // scope claim to gate on.
     if (
       authContext?.oauthScopes
+      && !authContext.provisionalPlay
       && isWriteSideTool(name, rawArgs ?? {})
       && !hasWriteOauthScope(authContext.oauthScopes)
     ) {
@@ -12908,6 +12979,8 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     // Applies to ALL tools, not just writes — lets reads like get_pod_status
     // and discover_context default to "your home pod".
     if (authContext) {
+      args._session_native_lifecycle = !!authContext.oauthScopes;
+      if (authContext.provisionalPlay) args._session_provisional_play = authContext.provisionalPlay;
       if (!args.agent_id) args.agent_id = authContext.agentId;
       if (!args.owner_webid && authContext.ownerWebId) args.owner_webid = authContext.ownerWebId;
       if (authContext.ownerWebId) args._session_owner_webid = authContext.ownerWebId;
@@ -12982,7 +13055,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // project's own name — and an external agent looking for the maintainer in
       // `list_known_pods` picked it, reasonably. `claude-code-vscode-…` collapsed to
       // `claude` the same way. See the helper's header for the measured incident.
-      if (!isReadOnlyResourceCall(name, args) && !isDelegationRepairRequest(name, args)) {
+      if (!authContext.provisionalPlay && !isReadOnlyResourceCall(name, args) && !isDelegationRepairRequest(name, args)) {
         const sessId = (args._session_agent_id as string | undefined) ?? '';
         const surf = surfaceSlugFromAgentId(sessId);
         // ★ NO `?? args.agent_id` FALLBACK. `_session_agent_did` is assigned from
@@ -13074,7 +13147,9 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
           : await clientInteractions.existing(authContext.accessToken, operation.reference, operation.action, payload, owner!);
         if (pending && !['cancelled', 'expired'].includes(String(pending['status']))) return respond(pending);
       }
-      const text = await tool.handler(args);
+      const text = authContext?.provisionalPlay
+        ? await callProvisionalTool(name, args, authContext, () => tool.handler(args))
+        : await tool.handler(args);
       if (canResume) {
         const pending = await clientInteractions.existing(authContext.accessToken, operation.reference, operation.action, payload, owner!);
         if (pending) return respond(pending);
@@ -14148,6 +14223,28 @@ const oauthVerifyLimiter = rateLimit({
   limit: 30,
   standardHeaders: true,
   legacyHeaders: false,
+});
+const provisionalExchangeLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false });
+app.post('/play/provisional/exchange', provisionalExchangeLimiter, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const identity = await verifyProvisionalExchange(req.body, { identityUrl: IDENTITY_URL, fetch });
+    await chargeProvisionalExchange(identity, { podUrl: oauthStorePodUrl, fetch: solidFetch, withMutex: withPodMutex });
+    await claimProvisionalExchange(identity.identityToken, identity.provisionalPlay.expiresAt, { podUrl: oauthStorePodUrl, fetch: solidFetch });
+    // The same registry/profile/delegation writer used by canonical OAuth. Await it
+    // so the first pinned browser SDK call sees a usable own pod.
+    await withPodMutex(identity.podUrl, () => bootstrapPod({ podUrl: identity.podUrl,
+      ownerWebId: identity.ownerWebId as IRI, surfaceAgentIri: identity.agentId as IRI,
+      userName: identity.userId, agentLabel: 'Provisional browser player',
+      userId: identity.userId, identityWebId: identity.ownerWebId }));
+    bootstrappedPods.add(identity.podUrl);
+    const tokens = await oauthProvider.issueProvisionalAccessToken(identity);
+    const expiresAt = oauthProvider.introspectAccessToken(tokens.access_token)!.expiresAt;
+    res.json({ ...tokens, provisional: true, expiresAt: new Date(expiresAt * 1000).toISOString() });
+  } catch (error) {
+    if (error instanceof ProvisionalPlayError) { res.status(error.status).json({ error: error.code }); return; }
+    res.status(503).json({ error: 'provisional_exchange_unavailable' });
+  }
 });
 app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   const { pending_id, method, ...proofBody } = req.body as {
@@ -15466,6 +15563,8 @@ app.post('/verify-token', verifyTokenLimiter, async (req, res) => {
     scope: intro.scope.join(' '),
     expiresAt: intro.expiresAt,
     clientId: intro.clientId,
+    ...(intro.ownerDid ? { ownerDid: intro.ownerDid } : {}),
+    ...(intro.provisionalPlay ? { provisionalPlay: intro.provisionalPlay } : {}),
   });
 });
 
@@ -16167,6 +16266,13 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
   // invoking a PUBLIC tool here could smuggle a forged _identity_token /
   // _session_user_id / _session_agent_did straight into the handler.
   stripReservedWireFields(req.body);
+  try {
+    const result = await provisionalRestCall(req.params.name as string, req.body ?? {}, req.headers.authorization);
+    if (result !== undefined) { res.type('application/ld+json').send(result); return; }
+  } catch (error) {
+    if (error instanceof ProvisionalPlayError) { res.status(error.status).json({ error: error.code }); return; }
+    res.status(503).json({ error: 'provisional_storage_unavailable' }); return;
+  }
   const toolName = req.params.name as string;
   const tool = declaredTool(toolName);
   if (!tool) {
@@ -16631,6 +16737,13 @@ app.post('/messages', messagesLimiter, async (req, res) => {
 
   if (method === 'tools/call') {
     const toolName = params?.name;
+    try {
+      const result = await provisionalRestCall(toolName, { ...(params?.arguments ?? {}) }, req.headers.authorization);
+      if (result !== undefined) { res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: result }], structuredContent: toStructuredContent(result) } }); return; }
+    } catch (error) {
+      const code = error instanceof ProvisionalPlayError ? error.code : 'provisional_storage_unavailable';
+      res.status(error instanceof ProvisionalPlayError ? error.status : 503).json({ jsonrpc: '2.0', id, error: { code: -32000, message: code } }); return;
+    }
     const tool = declaredTool(toolName);
     if (!tool) {
       res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${toolName}` } });
@@ -16729,14 +16842,16 @@ app.post('/messages', messagesLimiter, async (req, res) => {
 // would keep answering 200 while running every tool with no identity attached. Nothing
 // would throw and nothing would fail typecheck. So when a key IS configured and the
 // header is unreadable, refuse rather than degrade.
-function resolveAuthContext(ctx: { authInfo?: AuthInfo; requestInfo?: Request }): { agentId: string; ownerWebId: string; userId: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string } | null {
+function resolveAuthContext(ctx: { authInfo?: AuthInfo; requestInfo?: Request }): { agentId: string; ownerWebId: string; ownerDid?: string; userId: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[]; accessToken?: string; provisionalPlay?: ProvisionalPlay } | null {
   // OAuth-verified request: requireBearerAuth set req.auth, toNodeHandler passed it here
-  const reqAuth = ctx.authInfo as (AuthInfo & { extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } }) | undefined;
+  const reqAuth = ctx.authInfo as (AuthInfo & { extra?: { agentId?: string; ownerWebId?: string; ownerDid?: string; userId?: string; podUrl?: string; identityToken?: string; provisionalPlay?: ProvisionalPlay } }) | undefined;
   if (reqAuth?.extra?.agentId && reqAuth.extra.ownerWebId && reqAuth.extra.userId) {
     return {
       agentId: reqAuth.extra.agentId,
       ownerWebId: reqAuth.extra.ownerWebId,
       userId: reqAuth.extra.userId,
+      ...(reqAuth.extra.ownerDid ? { ownerDid: reqAuth.extra.ownerDid } : {}),
+      ...(reqAuth.extra.provisionalPlay ? { provisionalPlay: reqAuth.extra.provisionalPlay } : {}),
       // Thread the identity-server-provided podUrl through. Today identity
       // derives it from userId so this is equivalent to ${CSS_URL}${userId}/,
       // but when identity layer adds preferred-pod overlays (e.g. one user
@@ -17188,3 +17303,4 @@ if ((process.env['RELAY_PRUNE_DEAD_CLIENTS'] ?? '').trim() === '1') {
     }
   })();
 }
+

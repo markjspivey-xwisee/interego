@@ -49,6 +49,7 @@ import {
 } from '@interego/core';
 
 import type { InteregoAuthInfo, ResolvedIdentity } from './oauth-provider.js';
+import { parseProvisionalPlay, type ProvisionalPlay } from './provisional-play.js';
 import { mapBounded, POD_HYDRATE_CONCURRENCY } from './bounded-map.js';
 
 // ── Configuration ────────────────────────────────────────────
@@ -167,6 +168,7 @@ interface PersistedAccessToken {
   scopes: string[];
   /** Unix seconds — matches AuthInfo.expiresAt. */
   expiresAt: number;
+  resource?: string;
   extra: {
     agentId: string;
     ownerWebId: string;
@@ -175,6 +177,8 @@ interface PersistedAccessToken {
     /** Plaintext bearer (legacy) or self-recipient envelope (sealed). */
     identityToken: string | EncryptedFacetValue;
     cnf?: { jkt: string };
+    ownerDid?: string;
+    provisionalPlay?: ProvisionalPlay;
   };
 }
 
@@ -227,6 +231,7 @@ export async function persistAccessToken(
     clientId: info.clientId,
     scopes: info.scopes,
     expiresAt: info.expiresAt ?? Math.floor(Date.now() / 1000),
+    ...(info.resource ? { resource: info.resource.href } : {}),
     extra: {
       agentId: info.extra.agentId,
       ownerWebId: info.extra.ownerWebId,
@@ -234,13 +239,21 @@ export async function persistAccessToken(
       podUrl: info.extra.podUrl,
       identityToken: sealIdentityToken(info.extra.identityToken, cfg),
       ...(info.extra.cnf ? { cnf: info.extra.cnf } : {}),
+      ...(info.extra.ownerDid ? { ownerDid: info.extra.ownerDid } : {}),
+      ...(info.extra.provisionalPlay ? { provisionalPlay: parseProvisionalPlay(info.extra.provisionalPlay) } : {}),
     },
   };
 
+  const serialized = JSON.stringify(body, null, 2);
+  // A fixed guest can obtain at most 256 records. Bound each sealed record too,
+  // so provider field or envelope size cannot turn that count into unbounded bytes.
+  if (info.extra.provisionalPlay && Buffer.byteLength(serialized, 'utf8') > 16 * 1024) {
+    throw new Error('Provisional OAuth record exceeds its storage limit');
+  }
   const r = await fetchFn(url, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/ld+json' },
-    body: JSON.stringify(body, null, 2),
+    body: serialized,
   });
   if (!r.ok) {
     throw new Error(`PUT ${url} failed: ${r.status} ${r.statusText}`);
@@ -380,6 +393,7 @@ export async function loadAccessTokenByRaw(
       clientId: body.clientId,
       scopes: body.scopes,
       expiresAt: body.expiresAt,
+      ...(body.resource ? { resource: new URL(body.resource) } : {}),
       extra: {
         agentId: body.extra.agentId,
         ownerWebId: body.extra.ownerWebId,
@@ -387,6 +401,8 @@ export async function loadAccessTokenByRaw(
         podUrl: body.extra.podUrl,
         identityToken,
         ...(body.extra.cnf ? { cnf: body.extra.cnf } : {}),
+        ...(body.extra.ownerDid ? { ownerDid: body.extra.ownerDid } : {}),
+        ...(body.extra.provisionalPlay ? { provisionalPlay: parseProvisionalPlay(body.extra.provisionalPlay) } : {}),
       },
     };
     return info;
@@ -511,6 +527,7 @@ export async function loadAccessTokens(
         clientId: body.clientId,
         scopes: body.scopes,
         expiresAt: body.expiresAt,
+        ...(body.resource ? { resource: new URL(body.resource) } : {}),
         extra: {
           agentId: body.extra.agentId,
           ownerWebId: body.extra.ownerWebId,
@@ -518,6 +535,8 @@ export async function loadAccessTokens(
           podUrl: body.extra.podUrl,
           identityToken,
           ...(body.extra.cnf ? { cnf: body.extra.cnf } : {}),
+          ...(body.extra.ownerDid ? { ownerDid: body.extra.ownerDid } : {}),
+          ...(body.extra.provisionalPlay ? { provisionalPlay: parseProvisionalPlay(body.extra.provisionalPlay) } : {}),
         },
       };
       out.set(body.token_sha256, info);
@@ -636,3 +655,4 @@ export async function loadRefreshTokenByRaw(
     return null;
   }
 }
+

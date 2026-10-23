@@ -140,6 +140,7 @@ const DISPATCH_SITES = [
   ['/mcp tools/call', 'async function callWithSession(', 'const tool = declaredTool(name);'],
   ['/mcp request observer', "server.setRequestHandler('tools/call'", 'declaredTool(req.params.name)'],
   ['interop invokeCapability', 'const verb = capability.split', 'const tool = declaredTool(verb);'],
+  ['provisional REST tools/call', 'async function provisionalRestCall(', 'const tool = declaredTool(name);'],
   ['POST /tool/:name', "app.post('/tool/:name'", 'const tool = declaredTool(toolName);'],
   ['/messages tools/call', "if (method === 'tools/call')", 'const tool = declaredTool(toolName);'],
 ] as const;
@@ -149,7 +150,7 @@ for (const [site, start, call] of DISPATCH_SITES) {
   assert.ok(server.indexOf(call, at) >= 0 && server.indexOf(call, at) - at < 6000, `${site} resolves through declaredTool`);
 }
 assert.equal((server.match(/declaredTool\(/g) ?? []).length, DISPATCH_SITES.length + 1,
-  'every resolution is one of the five dispatch sites or the per-operation schema route');
+  'every resolution is one of the six dispatch sites or the per-operation schema route');
 assert.match(server, /const declaredTool = declaredToolResolver\(TOOLS\);/);
 assert.doesNotMatch(server, /\bTOOLS\[/, 'a bare index into TOOLS resolves prototype members too');
 assert.doesNotMatch(server, /Object\.keys\(TOOLS\)/, 'every published name list comes from TOOL_SURFACE');
@@ -175,3 +176,4 @@ assert.match(server, /return TOOL_SURFACE\.tools\.map\(t => \(\{/, 'the interop 
 assert.match(server, /capabilities:\s*\{\s*tools:\s*\{\s*listChanged:\s*false\s*\}/);
 
 console.log('tool-surface: one fail-closed declared schema projection, content identity, and transport parity verified');
+
