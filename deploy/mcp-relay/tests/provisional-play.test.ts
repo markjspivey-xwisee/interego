@@ -272,3 +272,58 @@ test('tool limit counters are requested and persisted as opaque JSON before and 
   const record = [...p.files.values()][0].body as { entries: Record<string, { attempts: number; result: string }> };
   assert.equal(record.entries.recipient.attempts, 1); assert.equal(record.entries.recipient.result, result);
 });
+
+const storeAliases = { internalStoreUrl: 'http://css.internal:3456/', publicStoreUrl: 'https://gate.example/' };
+test('a provisional native head can be followed through the configured internal store alias', async () => {
+  const internalPod = 'http://css.internal:3456/' + principal.userId + '/';
+  const descriptor = internalPod + 'context-graphs/00000000-0000-4000-8000-000000000001.ttl';
+  const guard = createProvisionalToolGuard({ podUrl: 'http://css.internal:3456/svc/', withMutex: mutex,
+    fetch: async () => { assert.fail('read tools must not write counters'); },
+    assertUnpublished: async () => {}, storeAliases });
+  const head = JSON.parse(await guard('get_current_head', { urn: provisionalGraphs(principal)[0] }, principal,
+    async () => JSON.stringify({ podUrl: internalPod, head: { descriptorUrl: descriptor } })));
+  const args = { url: head.head.descriptorUrl };
+  // The REST/MCP early gate and guarded invocation receive the same configured aliases.
+  assert.equal(validateProvisionalTool('get_descriptor', args, principal, storeAliases), undefined);
+  const result = await guard('get_descriptor', args, principal, async () => '@prefix iep: <urn:iep:> .');
+  assert.equal(result, '@prefix iep: <urn:iep:> .');
+  assert.equal(args.url, descriptor); assert.equal(principal.podUrl, 'https://gate.example/u-guest-1/');
+  validateProvisionalTool('get_descriptor', { url: internalPod + 'agents' }, principal, storeAliases);
+  assert.throws(() => validateProvisionalTool('get_descriptor', args, principal), code('provisional_resource_forbidden'));
+});
+test('read aliases retain exact guest, store origin, base path and descriptor confinement', () => {
+  const suffix = '/u-guest-1/context-graphs/a.ttl';
+  for (const url of [
+    'http://css.internal:3456/u-victim/context-graphs/a.ttl',
+    'http://css.internal:3457' + suffix,
+    'https://css.internal:3456' + suffix,
+    'http://css.internal.evil:3456' + suffix,
+    'http://metadata.google.internal' + suffix,
+    'http://user:password@css.internal:3456' + suffix,
+    'http://css.internal:3456' + suffix + '?other=1',
+    'http://css.internal:3456' + suffix + '#other',
+    'http://css.internal:3456/u-guest-1/context-graphs/%2f..%2f..%2fu-victim%2fa.ttl',
+    'http://css.internal:3456/u-guest-1/context-graphs/%5ca.ttl',
+    'http://css.internal:3456/u-guest-1/context-graphs/../../u-victim/a.ttl',
+    'http://css.internal:3456/u-guest-1/auth-methods.jsonld',
+    'https://gate.example.evil' + suffix,
+  ]) assert.throws(() => validateProvisionalTool('get_descriptor', { url }, principal, storeAliases),
+    code('provisional_resource_forbidden'), url);
+  const rooted = { internalStoreUrl: 'http://css.internal:3456/solid/', publicStoreUrl: 'https://gate.example/' };
+  validateProvisionalTool('get_descriptor', { url: 'http://css.internal:3456/solid' + suffix }, principal, rooted);
+  assert.throws(() => validateProvisionalTool('get_descriptor', { url: 'http://css.internal:3456/solidevil' + suffix }, principal, rooted),
+    code('provisional_resource_forbidden'));
+});
+
+test('public and internal resource spellings reject traversal before URL normalization', () => {
+  for (const origin of ['https://gate.example', 'http://css.internal:3456']) {
+    for (const path of [
+      '/u-guest-1/context-graphs/../a.ttl',
+      '/u-guest-1/context-graphs/%2e%2e/a.ttl',
+      '/u-guest-1/context-graphs/.%2e/a.ttl',
+      '/u-guest-1/context-graphs/..\\..\\u-victim\\a.ttl',
+      '/u-guest-1/context-graphs/a%2fb.ttl',
+    ]) assert.throws(() => validateProvisionalTool('get_descriptor', { url: origin + path }, principal, storeAliases),
+      code('provisional_resource_forbidden'));
+  }
+});

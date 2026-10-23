@@ -187,8 +187,26 @@ export function provisionalGraphs(p: ProvisionalPrincipal): string[] {
   const suffix = playHash(p.ownerDid);
   return ['urn:graph:hallowmarch:player-profile:' + suffix, 'urn:graph:hallowmarch:player-profile-index:' + suffix];
 }
+export interface ProvisionalStoreAliases { internalStoreUrl: string; publicStoreUrl: string }
+/** Only a configured store alias may change spelling; the own-pod check still decides access. */
+function publicProvisionalReadUrl(target: string, aliases?: ProvisionalStoreAliases): string | undefined {
+  if (target.includes('\\') || /%(?:2f|5c|00)/i.test(target)
+    || /(?:^|\/)(?:\.|%2e){1,2}(?=\/|[?#]|$)/i.test(target)) return undefined;
+  if (!aliases) return target;
+  try {
+    const input = new URL(target), internal = new URL(aliases.internalStoreUrl), pub = new URL(aliases.publicStoreUrl);
+    if (input.origin !== internal.origin) return target;
+    if (![internal, pub].every(base => ['http:', 'https:'].includes(base.protocol)
+      && !base.username && !base.password && !base.search && !base.hash && base.pathname.endsWith('/'))
+      || input.username || input.password || input.search || input.hash
+      || /%(?:2f|5c|00)/i.test(input.pathname) || !input.pathname.startsWith(internal.pathname)) return undefined;
+    return pub.origin + pub.pathname + input.pathname.slice(internal.pathname.length);
+  } catch { return undefined; }
+}
+
 /** Returns a finite durable reservation key for mutations, otherwise undefined. */
-export function validateProvisionalTool(name: string, args: Record<string, unknown>, p: ProvisionalPrincipal): string | undefined {
+export function validateProvisionalTool(name: string, args: Record<string, unknown>, p: ProvisionalPrincipal,
+  storeAliases?: ProvisionalStoreAliases): string | undefined {
   assertLivePlay(p.provisionalPlay);
   if (!PROVISIONAL_TOOLS.has(name)) refuse(403, 'provisional_tool_forbidden');
   samePodSelector(args, p);
@@ -199,7 +217,8 @@ export function validateProvisionalTool(name: string, args: Record<string, unkno
     return;
   }
   if (name === 'get_descriptor' || name === 'get_encrypted_graph') {
-    const target = name === 'get_descriptor' ? args.url ?? args.descriptor_url : args.url;
+    const requested = name === 'get_descriptor' ? args.url ?? args.descriptor_url : args.url;
+    const target = typeof requested === 'string' ? publicProvisionalReadUrl(requested, storeAliases) : undefined;
     if (typeof target !== 'string' || (!new RegExp('^' + escapeRegex(p.podUrl) + 'context-graphs/[^/?#]+\\.ttl$').test(target)
       && !(name === 'get_descriptor' && target === p.podUrl + 'agents'))) refuse(403, 'provisional_resource_forbidden');
     return;
@@ -235,9 +254,10 @@ interface SealedPlayEnvelope {
 export function createProvisionalToolGuard(cfg: {
   podUrl: string; fetch: PlayFetch; withMutex: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
   assertUnpublished: (graphIri: string, principal: ProvisionalPrincipal) => Promise<void>;
+  storeAliases?: ProvisionalStoreAliases;
 }) {
   return async (name: string, args: Record<string, unknown>, p: ProvisionalPrincipal, invoke: () => Promise<string>): Promise<string> => {
-    const reservation = validateProvisionalTool(name, args, p);
+    const reservation = validateProvisionalTool(name, args, p, cfg.storeAliases);
     if (!reservation) return invoke();
     const url = cfg.podUrl.replace(/\/$/, '') + '/play-limits/' + playHash(p.userId) + '.jsonld';
     return cfg.withMutex(url, async () => {
