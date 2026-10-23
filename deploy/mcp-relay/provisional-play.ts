@@ -11,6 +11,19 @@ export interface ProvisionalPrincipal {
   userId: string; agentId: string; ownerWebId: string; ownerDid: string; podUrl: string;
   provisionalPlay: ProvisionalPlay;
 }
+/** Bootstrap only the configured store's internal URL; bearer-visible identity stays public. */
+export async function bootstrapProvisionalPod(p: ProvisionalPrincipal, cfg: {
+  toInternalPodUrl: (url: string) => string | undefined;
+  withMutex: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
+  bootstrap: (podUrl: string) => Promise<void>;
+  markBootstrapped: (podUrl: string) => void;
+}): Promise<void> {
+  const internal = cfg.toInternalPodUrl(p.podUrl);
+  if (!internal) refuse(503, 'provisional_store_unavailable');
+  await cfg.withMutex(internal, () => cfg.bootstrap(internal));
+  cfg.markBootstrapped(internal);
+}
+
 export interface PlayFetchInit {
   method?: string; redirect?: 'error'; signal?: AbortSignal;
   headers?: Record<string, string>; body?: string;
@@ -107,7 +120,7 @@ export async function claimProvisionalExchange(identityToken: string, expiresAt:
   podUrl: string; fetch: PlayFetch;
 }): Promise<void> {
   const response = await cfg.fetch(cfg.podUrl.replace(/\/$/, '') + '/play-exchanges/' + playHash(identityToken) + '.jsonld', {
-    method: 'PUT', headers: { 'Content-Type': 'application/ld+json', 'If-None-Match': '*' },
+    method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-None-Match': '*' },
     body: JSON.stringify({ '@type': 'urn:iep:relay:ProvisionalExchange', expiresAt }),
   });
   if (response.status === 412 || response.status === 409) refuse(409, 'provisional_exchange_replayed');
@@ -126,18 +139,34 @@ export async function chargeProvisionalExchange(p: ProvisionalPrincipal, cfg: {
   const binding = playHash(JSON.stringify([p.userId, p.provisionalPlay.audience,
     p.provisionalPlay.proofKeyThumbprint, p.provisionalPlay.expiresAt]));
   await cfg.withMutex(url, async () => {
-    const response = await cfg.fetch(url, { method: 'GET' });
+    const response = await cfg.fetch(url, { method: 'GET', headers: { Accept: 'application/json, text/turtle;q=0.5' } });
     if (!response.ok && response.status !== 404) refuse(503, 'provisional_exchange_budget_unavailable');
-    const budget = response.status === 404
-      ? { binding, expiresAt: p.provisionalPlay.expiresAt, attempts: 0 }
-      : jsonRecord(await response.json());
+    const etag = response.headers?.get('etag');
+    let budget: Record<string, unknown>;
+    if (response.status === 404) {
+      budget = { binding, expiresAt: p.provisionalPlay.expiresAt, attempts: 0 };
+    } else {
+      if (!etag) refuse(503, 'provisional_exchange_budget_unavailable');
+      const mediaType = response.headers?.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+      const body = await response.text();
+      if (mediaType === 'text/turtle' && body.trim() === '') {
+        // The old plain object was PUT as JSON-LD and became an empty RDF graph.
+        // Only its first 404 -> If-None-Match write could succeed: every later
+        // read threw while parsing the empty body, before incrementing. Charge
+        // the next attempt as 2, under the same resource's ETag, never as 1.
+        budget = { binding, expiresAt: p.provisionalPlay.expiresAt, attempts: 1 };
+      } else {
+        if (mediaType !== 'application/json') refuse(503, 'provisional_exchange_budget_unavailable');
+        try { budget = jsonRecord(JSON.parse(body)); }
+        catch { refuse(503, 'provisional_exchange_budget_unavailable'); }
+      }
+    }
     if (budget.binding !== binding || budget.expiresAt !== p.provisionalPlay.expiresAt
       || typeof budget.attempts !== 'number' || !Number.isSafeInteger(budget.attempts) || budget.attempts < 0) refuse(403, 'provisional_exchange_budget_mismatch');
     if (budget.attempts >= PROVISIONAL_EXCHANGE_LIMIT) refuse(429, 'provisional_exchange_limit');
-    const etag = response.headers?.get('etag');
     if (response.status !== 404 && !etag) refuse(503, 'provisional_exchange_budget_unavailable');
     const saved = await cfg.fetch(url, { method: 'PUT',
-      headers: { 'Content-Type': 'application/ld+json', ...(response.status === 404 ? { 'If-None-Match': '*' } : { 'If-Match': etag ?? '' }) },
+      headers: { 'Content-Type': 'application/json', ...(response.status === 404 ? { 'If-None-Match': '*' } : { 'If-Match': etag ?? '' }) },
       body: JSON.stringify({ binding, expiresAt: p.provisionalPlay.expiresAt, attempts: budget.attempts + 1 }),
     });
     if (!saved.ok) refuse(saved.status === 412 ? 409 : 503, 'provisional_exchange_budget_unavailable');
@@ -213,7 +242,7 @@ export function createProvisionalToolGuard(cfg: {
     const url = cfg.podUrl.replace(/\/$/, '') + '/play-limits/' + playHash(p.userId) + '.jsonld';
     return cfg.withMutex(url, async () => {
       assertLivePlay(p.provisionalPlay);
-      const r = await cfg.fetch(url, { method: 'GET' });
+      const r = await cfg.fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
       if (!r.ok && r.status !== 404) refuse(503, 'provisional_limits_unavailable');
       const record: LimitRecord = r.status === 404 ? { expiresAt: p.provisionalPlay.expiresAt, entries: {} } : await r.json() as LimitRecord;
       if (record.expiresAt !== p.provisionalPlay.expiresAt || !record.entries || Object.keys(record.entries).length > 3) refuse(403, 'provisional_limits_mismatch');
@@ -242,7 +271,7 @@ export function createProvisionalToolGuard(cfg: {
         record.entries[reservation] = { fingerprint, attempts: (existing?.attempts ?? 0) + 1,
           ...(name === 'register_agent' ? { publicKey: args.encryption_public_key as string } : {}) };
         const saved = await cfg.fetch(url, { method: 'PUT',
-          headers: { 'Content-Type': 'application/ld+json', ...(r.status === 404 ? { 'If-None-Match': '*' } : { 'If-Match': etag ?? '' }) },
+          headers: { 'Content-Type': 'application/json', ...(r.status === 404 ? { 'If-None-Match': '*' } : { 'If-Match': etag ?? '' }) },
           body: JSON.stringify(record) });
         if (!saved.ok) refuse(saved.status === 412 ? 409 : 503, 'provisional_limits_unavailable');
       }
@@ -250,13 +279,13 @@ export function createProvisionalToolGuard(cfg: {
       let parsed: Record<string, unknown>;
       try { parsed = jsonRecord(JSON.parse(result)); } catch { return result; }
       if (!parsed.error && Buffer.byteLength(result, 'utf8') <= 32 * 1024) {
-        const current = await cfg.fetch(url, { method: 'GET' });
+        const current = await cfg.fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
         const etag = current.headers?.get('etag');
         if (!current.ok || !etag) refuse(503, 'provisional_limits_unavailable');
         const completed = await current.json() as LimitRecord;
         if (completed.entries[reservation]?.fingerprint !== fingerprint) refuse(409, 'provisional_initial_binding_exists');
         completed.entries[reservation]!.result = result;
-        const saved = await cfg.fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/ld+json', 'If-Match': etag }, body: JSON.stringify(completed) });
+        const saved = await cfg.fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'If-Match': etag }, body: JSON.stringify(completed) });
         if (!saved.ok) refuse(503, 'provisional_limits_unavailable');
       }
       return result;

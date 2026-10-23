@@ -74,7 +74,7 @@ import { fileURLToPath } from 'node:url';
 import { interegoOAuthRouter } from './oauth-router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/express';
 import { InteregoOAuthProvider, renewIdentityToken } from './oauth-provider.js';
-import { assertLivePlay, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, parseProvisionalPlay,
+import { assertLivePlay, bootstrapProvisionalPod, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, parseProvisionalPlay,
   ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange,
   type ProvisionalPlay, type ProvisionalPrincipal } from './provisional-play.js';
 import {
@@ -14233,11 +14233,14 @@ app.post('/play/provisional/exchange', provisionalExchangeLimiter, async (req, r
     await claimProvisionalExchange(identity.identityToken, identity.provisionalPlay.expiresAt, { podUrl: oauthStorePodUrl, fetch: solidFetch });
     // The same registry/profile/delegation writer used by canonical OAuth. Await it
     // so the first pinned browser SDK call sees a usable own pod.
-    await withPodMutex(identity.podUrl, () => bootstrapPod({ podUrl: identity.podUrl,
-      ownerWebId: identity.ownerWebId as IRI, surfaceAgentIri: identity.agentId as IRI,
-      userName: identity.userId, agentLabel: 'Provisional browser player',
-      userId: identity.userId, identityWebId: identity.ownerWebId }));
-    bootstrappedPods.add(identity.podUrl);
+    await bootstrapProvisionalPod(identity, {
+      toInternalPodUrl, withMutex: withPodMutex,
+      bootstrap: podUrl => bootstrapPod({ podUrl,
+        ownerWebId: identity.ownerWebId as IRI, surfaceAgentIri: identity.agentId as IRI,
+        userName: identity.userId, agentLabel: 'Provisional browser player',
+        userId: identity.userId, identityWebId: identity.ownerWebId }),
+      markBootstrapped: podUrl => { bootstrappedPods.add(podUrl); },
+    });
     const tokens = await oauthProvider.issueProvisionalAccessToken(identity);
     const expiresAt = oauthProvider.introspectAccessToken(tokens.access_token)!.expiresAt;
     res.json({ ...tokens, provisional: true, expiresAt: new Date(expiresAt * 1000).toISOString() });
