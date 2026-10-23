@@ -24,7 +24,7 @@ export async function provisionPlayAnchor(storage: PlayAnchorStorage, claims: Pl
   attestation: string, maxPods: number, receipt: PlayReceipt): Promise<string> {
   const now = storage.now ?? (() => Math.floor(Date.now() / 1000));
   // Conditional writes protect the same owner even if a process restarts or two
-  // requests race. Directory capacity additionally requires one admission writer.
+  // requests race. New owners reserve the durable lifetime budget before writing.
   for (let attempt = 0; attempt < 3; attempt++) {
     const existing = await storage.read(claims.userId);
     const document = existing?.document ?? storage.empty(claims);

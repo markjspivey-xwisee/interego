@@ -3001,7 +3001,6 @@ const provisionalPlay = createProvisionalPlayProvider({
   clientsJson: process.env['PROVISIONAL_PLAY_CLIENTS'],
   ttlSeconds: Number(process.env['PROVISIONAL_PLAY_TTL_SECONDS'] ?? 86400),
   maxPods: Number(process.env['PROVISIONAL_PLAY_MAX_PODS'] ?? 100),
-  listPods: () => listPods(podFetch, CSS_URL),
   empty: claims => emptyAuthMethods(claims.userId, 'Play guest', claims.authenticatedAgentId) as unknown as import('./provisional-play-store.js').PlayAnchorDocument,
   committed: document => {
     const methods = normaliseAuthMethods(document, document.userId);

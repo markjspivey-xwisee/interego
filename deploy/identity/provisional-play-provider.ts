@@ -15,7 +15,6 @@ export interface PlayProviderOptions {
   ttlSeconds?: number;
   maxPods?: number;
   fetcher?: typeof fetch;
-  listPods(): Promise<string[]>;
   empty(claims: PlayClaims): PlayAnchorDocument;
   committed(document: PlayAnchorDocument): void;
   issueCredential(claims: PlayClaims): Promise<Record<string, unknown>>;
@@ -44,7 +43,7 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
   // One admission writer per deployment. Canonical anchor CAS separately
   // prevents duplicate/replayed issuance across restarts and concurrent requests.
   let admission = Promise.resolve();
-  const play = new ProvisionalPlay({
+  const play: ProvisionalPlay = new ProvisionalPlay({
     issuer: options.issuer, publicPodBase: options.publicPodBase, signingKey: options.signingKey,
     clients, ttlSeconds: options.ttlSeconds ?? 86400, maxPods: options.maxPods ?? 100,
     verifyGrantSignature: async (grant, client) => {
@@ -104,10 +103,6 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
               return true;
             },
             validate: value => play.open(value),
-            checkActiveCapacity: async maximum => {
-              const pods = await options.listPods();
-              if (pods.filter(name => name.startsWith('u-try-play-')).length >= maximum) throw new PlayError(503, 'provisional_play_capacity');
-            },
           }, owner, anchor, limit),
           empty: options.empty, validate: anchor => play.open(anchor), committed: options.committed,
         }, claims, attestation, maxPods, receipt);
