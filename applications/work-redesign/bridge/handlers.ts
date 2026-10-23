@@ -8,10 +8,16 @@
  * they may do (403) → (7) lifecycle state and the head the signer bound (409/422) → (8) the
  * engines in ../src (400/409) → (9) publish (409 stale, 500 shape, 502 transport).
  *
- * Identity is only ever the address recovered from an envelope's signature. Roles, the person
- * an admin attests is behind each key, agents' principals and declared models all come from
- * the pod's role registry, whose every change an admin signed. Separation of duties compares
- * those person references, never keys, and never anything a caller typed.
+ * Identity is the principal an envelope's signature establishes, never anything a caller typed:
+ * the address recovered from a key the person holds, or, for a request the Interego relay signed
+ * for a person who signs in with their Interego account (relay-delegated: the relay's signature
+ * recovers to a relay this bridge trusts, and the identity host says whose agent it signed for),
+ * that person's user DID. A user DID is never lower-cased into an address or the other way round.
+ * Roles, the person an admin attests is behind each key or DID, agents' principals and declared
+ * models all come from the pod's role registry, whose every change an admin signed. Separation of
+ * duties compares those person references, never keys, and never anything a caller typed. Acts
+ * that change who may do what take a relay-delegated request only from this bridge's own web UI
+ * (an agent whose slug starts work-redesign-), unless the operator lets chat agents decide.
  *
  * Reads are scoped: wrd.read_records, wrd.read_calibration and wrd.read_envelope_template answer
  * a signed read (wrd:read-records), always in a POST body, from an admin or a key the registry
@@ -38,7 +44,7 @@
  * flag. No environment reads: bridge/server.ts composes this with its configuration.
  */
 import { randomBytes } from 'node:crypto';
-import { canonicalJson, sha256Hex, createWallet, signMessageRaw, type EncryptionKeyPair, type FetchFn, type ManifestEntry, type Wallet } from '@interego/core';
+import { canonicalJson, sha256Hex, createWallet, signMessageRaw, recoverMessageSigner, type EncryptionKeyPair, type FetchFn, type ManifestEntry, type Wallet } from '@interego/core';
 import { fetchAllManifestEntries, predictManifestUrl, PublishShapeViolationError } from '@interego/solid';
 import { refuse, type BridgeRefusal } from '../../_shared/vertical-bridge/refusal.js';
 import {
@@ -59,14 +65,16 @@ import {
   DRAWS, DEMO_LABEL, DISTINCT_PEOPLE_NOTE, NOMINAL_BAND_COVERAGE, NO_COMPARISON_GROUP, RUN_ALTERNATIVES, REPORTED_COST_BASIS,
   type DecisionForCalibration, type GrantEvaluation, type ProbeOutcome, type ReviewedRun, type RunAnswer, type ValuationResult,
 } from '../src/valuation.js';
-import { payloadSchema, isEnvelopeIntent } from '../src/payloads.js';
+import { payloadSchema, isEnvelopeIntent, RELAY_SIGNING } from '../src/payloads.js';
+import { openRelayDelegated, relayEnvelopeOf, agentSlugOf, isUserDid, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import {
-  openEnvelope, verifyStoredEnvelope, NonceLedger, envelopeSha256, didOf, isAddress, isIsoInstant, entityIri, entityIriKey, scopePrefix, graphIriOf,
+  openEnvelope, verifyStoredEnvelope, bindRelayDelegated, NonceLedger, envelopeSha256, didOf, isAddress, isUserPrincipal, principalKey, principalOfDid,
+  isIsoInstant, entityIri, entityIriKey, scopePrefix, graphIriOf,
   recordIdFor, normalisePodUrl, illFormedTextPath, iriKeyFingerprint, fingerprintOfIri, fingerprintOfRecord, kindOfIri, DEFAULT_ENVELOPE_WINDOW, ENTITY_IRI_PATTERN,
   UNKEYED_RECORD_URL,
   type DecisionPayload, type DescriptorSpec, type EntityKind, type EnvelopeIntent, type ExpertEvidenceBasis, type MeasuredValue,
-  type MeasurementPlan, type PartyVerdict, type PlanTaskRow, type PlatformRef, type PolicyRef, type RecordKind, type RecordOf,
-  type RecordSigner, type RegistryMember, type RegistryTaskKind, type SignedEnvelope, type TaskPayload, type WrdRecord,
+  type MeasurementPlan, type OpenedEnvelope, type PartyVerdict, type PlanTaskRow, type PlatformRef, type PolicyRef, type RecordKind, type RecordOf,
+  type RecordSigner, type RegistryMember, type RegistryTaskKind, type SignedEnvelope, type StoredRelayCheck, type TaskPayload, type WrdRecord,
 } from '../src/records.js';
 import {
   PodView, publishRecord, copyRecordToHolder, openPod, modalFor, isSealedShut, KeyedMutex, StaleHeadError, PodWriteError, PodReadError,
@@ -100,8 +108,43 @@ export interface WrdDeps {
   readonly platform?: PlatformSigner;
   /** Further platform signers whose records are trusted (key rotation). */
   readonly trustedPlatformAddresses?: readonly string[];
-  /** May sign wrd:update-registry. */
+  /** May sign wrd:update-registry: 0x addresses (compared lower-cased); anything else throws, so a user DID never enters the admins lower-cased (it goes in adminDids). */
   readonly adminAddresses?: readonly string[];
+  /**
+   * Interego user DIDs (did:web:<identity host>:users:<id>) who are admins too, alongside
+   * adminAddresses: a person who signs in with their Interego account, through a relay-delegated
+   * request. Kept exactly as spelled; a value that is not a user DID throws.
+   */
+  readonly adminDids?: readonly string[];
+  /**
+   * Relay-delegated identity ("Sign in with your Interego account"). A request in the relay's
+   * signed shape ({_signed_payload, _signature}, at the top level of the body or under the
+   * envelope input) is taken as relay-delegated only when its signature recovers to one of
+   * `relayAddresses`; it then names the person the agent it was signed for belongs to (its DID
+   * document on `identityHost`, read through `fetchDidDocument`), and is checked as a key-held
+   * envelope is. Any other request in that shape keeps the key-held route. Absent, or with no
+   * relay address, no request is relay-delegated; with an identityHost, the registry still accepts
+   * user DIDs on it. RELAY-ATTESTED, NOT USER-HELD: whoever holds a listed relay key, or controls
+   * the identity host, can act here as any person.
+   */
+  readonly relayDelegation?: {
+    /** 0x addresses of the relay delegation keys trusted for new requests (compared lower-cased). */
+    readonly relayAddresses: readonly string[];
+    /**
+     * 0x addresses of relay delegation keys retired from new requests (key rotation): no request
+     * they sign now is relay-delegated, and a stored countersign they signed still re-verifies
+     * when its outcome is recorded (verifyStoredEnvelope reads these and relayAddresses).
+     */
+    readonly retiredRelayAddresses?: readonly string[];
+    /** The identity host, e.g. identity.interego.xwisee.com. */
+    readonly identityHost: string;
+    /** GET a DID document by URL; SSRF-guarded, time-limited, size-capped and cached by the caller (server.ts). */
+    readonly fetchDidDocument: (url: string) => Promise<unknown>;
+    /** True lifts the limit on decisive acts (DECISIVE_INTENTS) to this bridge's own UI agent: WRD_CHAT_AGENTS_DECIDE=1. */
+    readonly chatAgentsDecide?: boolean;
+    /** The relay a person signs in through, reported in the read model for the web UI (WRD_RELAY_URL). */
+    readonly relayUrl?: string;
+  };
   /** ONLY the offline demo sets this: adds the wrd.demo_envelope handler and marks every record demo. */
   readonly demoPersonas?: ReadonlyMap<string, DemoPersona>;
   /** ONLY the offline demo sets this (with demoPersonas): moves its scripted clock forward, for wrd.demo_advance_clock. */
@@ -168,7 +211,23 @@ const CLOCK_SKEW = 'The clock reads earlier than the start of what is being with
 const UNKNOWN_KIND = 'This task kind is not registered, or was retired.';
 const KIND_FIX = 'an admin declares task kinds in the registry';
 const SUSPENDED = 'this work has no authorised performer until a new decision changes it';
-const SIGNING_RULE = 'Sign EIP-191 personal_sign over canonicalJson(payload) — keys sorted recursively, arrays in order, undefined dropped — and send {payload, signature} as the envelope input of toolName.';
+const SIGNING_RULE = `Sign EIP-191 personal_sign over canonicalJson(payload) — keys sorted recursively, arrays in order, undefined dropped — and send {payload, signature} as the envelope input of toolName. ${RELAY_SIGNING}`;
+/**
+ * Acts that change who may do what: the registry (roles, admins' attestations, agents'
+ * principals), approving or declining a decision (and approving over an objection or silence),
+ * recording an approved decision's outcome (reverted or stopped early, it takes the decision's
+ * allocation out of force, which for a within-grant change withdraws an agent's authority as a
+ * revocation does; kept, it closes the measurement for good), and granting or withdrawing an
+ * agent's autonomy. A relay-delegated request for one of these is taken only from this bridge's
+ * own web UI, whose agent slug starts UI_AGENT_PREFIX (the relay derives it from the OAuth
+ * client's name), unless the operator sets WRD_CHAT_AGENTS_DECIDE=1.
+ */
+const DECISIVE_INTENTS: ReadonlySet<EnvelopeIntent> = new Set(['wrd:update-registry', 'wrd:countersign-decision', 'wrd:record-outcome', 'wrd:grant-autonomy', 'wrd:revoke-grant']);
+const UI_AGENT_PREFIX = 'work-redesign-';
+/** The arguments wrd.envelope_template reads beside pod_url; a relay-signed read may name them under `template` in its signed payload. */
+const TEMPLATE_ARGS = ['intent', 'subject', 'task_iri', 'workflow_iri', 'plan_iri', 'decision_iri', 'grant_iri'] as const;
+const CHAT_AGENT_DECIDES = 'This act changes who may do what, and a chat agent signed it in: it is taken from this bridge\'s own web UI, or from a chat agent only when the operator sets WRD_CHAT_AGENTS_DECIDE=1.';
+const RELAY_UNVERIFIED = 'The relay-signed request does not name a person this bridge can verify.';
 /** The tool each write intent is sent to. */
 const TOOL_OF_INTENT: Readonly<Record<EnvelopeIntent, string>> = {
   'wrd:update-registry': 'wrd.update_registry', 'wrd:capture-workflow': 'wrd.capture_workflow', 'wrd:record-task-map': 'wrd.record_task_map',
@@ -362,32 +421,42 @@ interface Registry {
   readonly podPolicy: PodPolicy | null;
   readonly policy: EffectivePolicy;
 }
-const memberOf = (reg: Registry, a: string | undefined): RegistryMember | undefined => (a ? reg.members.get(lower(a)) : undefined);
+/** A registry entry by principal: an address lower-cased, a user DID as spelled (principalKey). */
+const memberOf = (reg: Registry, a: string | undefined): RegistryMember | undefined => (a ? reg.members.get(principalKey(a)) : undefined);
 const isPerson = (reg: Registry, a: string | undefined): boolean => { const m = memberOf(reg, a); return !!m && !m.softwareAgent; };
 const isAgent = (reg: Registry, a: string | undefined): boolean => { const m = memberOf(reg, a); return !!m && m.softwareAgent && m.roles.includes('agent'); };
 const holds = (reg: Registry, a: string, role: RegistryRole): boolean => {
   const m = memberOf(reg, a);
   return !!m && m.roles.includes(role) && (role === 'agent' ? m.softwareAgent : !m.softwareAgent);
 };
-/** The person an admin attests is behind a key; an unregistered key is only ever its own person. */
-const personRefOf = (reg: Registry, a: string): string => memberOf(reg, a)?.personRef ?? `address:${lower(a)}`;
-const addressOfDid = (did: string): string => lower(did.replace(/^did:ethr:/, ''));
+/**
+ * The person an admin attests is behind a key or a user DID; an unregistered key is only ever its
+ * own person (`address:<0x>`), and an unregistered user DID its own (the DID): never the same.
+ */
+const personRefOf = (reg: Registry, a: string): string => memberOf(reg, a)?.personRef ?? (isUserPrincipal(a) ? a : `address:${lower(a)}`);
+/** The principal a stored did names (a did:ethr's address, a user DID itself). */
+const addressOfDid = (did: string): string => principalOfDid(did);
 /**
  * Added to a role refusal when the recovered address is not in the registry at all. A payload
  * changed after signing does not fail the signature check: it recovers a different address, so
  * "this key holds no role" may really mean "these bytes were altered".
  */
-const unregisteredHint = (reg: Registry, a: string): string => (memberOf(reg, a)
-  ? '' : '. This address is not in the registry at all: if the envelope was signed by a registered key, its payload was changed after signing');
+const unregisteredHint = (reg: Registry, a: string): string => (memberOf(reg, a) ? ''
+  : isUserPrincipal(a) ? '. This Interego user is not in the registry at all: an admin registers their user DID'
+    : '. This address is not in the registry at all: if the envelope was signed by a registered key, its payload was changed after signing');
 const kindUsable = (reg: Registry, slug: string): RegistryTaskKind | null => {
   const k = reg.kinds.get(slug);
   return k && !k.retired ? k : null;
 };
 
 function signerOf(reg: Registry, address: string, facetRole: 'Curator' | 'Validator', acted: string): RecordSigner {
-  const a = lower(address);
+  const a = principalKey(address);
   const m = reg.members.get(a);
-  return { did: didOf(a), address: a, personRef: m && !m.softwareAgent ? m.personRef : null, softwareAgent: m?.softwareAgent ?? false, facetRole, acted };
+  return {
+    did: didOf(a), address: a, personRef: m && !m.softwareAgent ? m.personRef : null, softwareAgent: m?.softwareAgent ?? false, facetRole, acted,
+    // A user DID holds no key: whatever it signed, the relay signed for it.
+    ...(isUserPrincipal(a) ? { authority: 'relay-delegated' as const } : {}),
+  };
 }
 
 function verdictStatus(parties: readonly string[], verdicts: ReadonlyArray<{ readonly party: string; readonly verdict: string }>): 'open' | 'ratified' | 'disputed' {
@@ -478,7 +547,24 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   let strangerCopiesInProgress = 0;
   const mutex = new KeyedMutex();
   const verifyCache: VerifyCache = new Map();
-  const admins = new Set((deps.adminAddresses ?? []).map(lower));
+  for (const a of deps.adminAddresses ?? []) if (!isAddress(a)) throw new TypeError(`adminAddresses holds ${String(a).slice(0, 120)}, which is not a 0x address (40 hex characters); a user DID is an admin through adminDids`);
+  for (const d of deps.adminDids ?? []) if (!isUserPrincipal(d)) throw new TypeError(`adminDids holds ${String(d).slice(0, 120)}, which is not an Interego user DID (did:web:<host>:users:<id>)`);
+  /** Admins by principal: addresses lower-cased, user DIDs as spelled (principalKey), so neither can stand for the other. */
+  const admins = new Set([...(deps.adminAddresses ?? []).map(lower), ...(deps.adminDids ?? [])]);
+  const isAdmin = (principal: string): boolean => admins.has(principalKey(principal));
+  const relay = deps.relayDelegation;
+  /** The identity host user DIDs must be on to enter the registry or act; null when none is configured (then no DID does either). */
+  const identityHost = relay ? relay.identityHost.toLowerCase() : null;
+  const relayAddresses = new Set((relay?.relayAddresses ?? []).map(lower));
+  /** The verifier's policy; null when no relay is trusted, and then no request is relay-delegated. */
+  const relayPolicy: RelayDelegationPolicy | null = relay && identityHost !== null && relayAddresses.size > 0
+    ? { relayAddresses: [...relayAddresses], identityHost, fetchDidDocument: relay.fetchDidDocument } : null;
+  /** Relay keys retired from new requests: read only where a stored envelope is re-checked. */
+  const retiredRelays = new Set((relay?.retiredRelayAddresses ?? []).map(lower));
+  /** What a stored relay-delegated envelope is re-checked against, offline (verifyStoredEnvelope): the relays trusted now and the retired ones. */
+  const storedRelay: StoredRelayCheck | undefined = identityHost === null ? undefined : { relayAddresses: [...new Set([...relayAddresses, ...retiredRelays])], identityHost };
+  /** A user DID this bridge accepts as a principal: one on its identity host. */
+  const isHostUser = (v: unknown): v is string => typeof v === 'string' && identityHost !== null && isUserDid(v, identityHost);
   const demo = deps.demoPersonas && deps.demoPersonas.size > 0 ? deps.demoPersonas : null;
   const draws = deps.draws ?? DRAWS;
   const clock = (): Date => (deps.now ? deps.now() : new Date());
@@ -509,6 +595,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   }
   interface Signed extends Call {
     readonly actor: string; readonly actorDid: string; readonly payload: Obj; readonly envelope: SignedEnvelope; readonly nonce: string;
+    /** Set when the relay signed this call for the actor (relay-delegated): the agent it signed for and the relay address. */
+    readonly relayed?: { readonly agentId: string; readonly relaySigner: string };
   }
 
   const envelopePod = (raw: unknown): string | undefined => {
@@ -541,27 +629,99 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     };
   }
 
+  // ── Relay-delegated requests ─────────────────────────────────────────────────────────
+
+  /** A request in the relay's signed shape whose signature recovers to a relay this bridge trusts. */
+  interface RelayForm { readonly signedPayload: string; readonly signature: string; readonly parsed: Obj | null }
+  /**
+   * The relay-signed form of a request (under `key`, or at the top level of the body, where the
+   * relay's act puts it), but only when its signature over sha256 of the signed text recovers to
+   * a relay this bridge trusts; otherwise null, and the request takes the key-held route exactly as
+   * before (a request any other key signed in the same shape included). Reads no network.
+   */
+  function relayFormIn(args: Obj, key: string): RelayForm | null {
+    if (relayPolicy === null) return null;
+    const found = relayEnvelopeOf(key === 'envelope' ? args : { ...args, envelope: args[key] });
+    if (found === null || typeof found.signedPayload !== 'string' || typeof found.signature !== 'string') return null;
+    if (found.signedPayload === '' || !/^0x[0-9a-fA-F]{130}$/.test(found.signature)) return null;
+    let signer: string;
+    try { signer = recoverMessageSigner(`sha256:${sha256Hex(found.signedPayload)}`, found.signature).toLowerCase(); } catch { return null; }
+    if (!relayAddresses.has(signer)) return null;
+    let parsed: Obj | null = null;
+    try { const v: unknown = JSON.parse(found.signedPayload); parsed = isObj(v) ? v : null; } catch { parsed = null; }
+    return { signedPayload: found.signedPayload, signature: found.signature, parsed };
+  }
+  /** What openCall reads the pod from for a relay-signed request: its pod_url, never subject_pod_url. */
+  const relayPodCarrier = (form: RelayForm): Obj => ({ payload: { ...(typeof form.parsed?.['pod_url'] === 'string' ? { podUrl: form.parsed['pod_url'] } : {}) } });
+  /**
+   * Open a trusted relay-signed request for the current call: openRelayDelegated names the
+   * person (reading the agent's DID document from the identity host), then bindRelayDelegated
+   * checks it as openEnvelope checks a key-held envelope (intent, pod_url, nonce, the relay's
+   * timestamp within the window).
+   */
+  async function openRelay(form: RelayForm, intent: EnvelopeIntent, call: Call, win = window): Promise<OpenedEnvelope> {
+    if (relayPolicy === null) return { ok: false, status: 401, error: RELAY_UNVERIFIED, why: 'this bridge trusts no relay (WRD_TRUSTED_RELAY_ADDRESSES)' };
+    const v = await openRelayDelegated(form.signedPayload, form.signature, relayPolicy);
+    if (!v.ok) return { ok: false, status: v.status, error: RELAY_UNVERIFIED, why: `${v.code}: ${v.message}` };
+    return bindRelayDelegated(v, intent, call.podUrl, call.now, win);
+  }
+  /**
+   * The limit on decisive acts: a relay-delegated request for one of DECISIVE_INTENTS is refused
+   * (403, naming WRD_CHAT_AGENTS_DECIDE) unless its agent is this bridge's own web UI (its slug
+   * starts UI_AGENT_PREFIX) or the operator lifted the limit. Key-held envelopes are not affected.
+   */
+  function refuseChatDecision(opened: Extract<OpenedEnvelope, { ok: true }>, intent: EnvelopeIntent): void {
+    if (opened.authority !== 'relay-delegated' || !DECISIVE_INTENTS.has(intent) || relay?.chatAgentsDecide === true) return;
+    const slug = identityHost === null ? null : agentSlugOf(opened.agentId ?? '', identityHost);
+    if (slug !== null && slug.startsWith(UI_AGENT_PREFIX)) return;
+    throw decline(403, CHAT_AGENT_DECIDES,
+      `${intent} was signed by the relay for ${opened.signer} through the agent ${opened.agentId ?? '(none)'}, whose slug does not start ${UI_AGENT_PREFIX} (this bridge's web UI); the operator sets WRD_CHAT_AGENTS_DECIDE=1 to take decisive acts from chat agents too`,
+      { env: 'WRD_CHAT_AGENTS_DECIDE' });
+  }
+  /** The envelope that authorises a call, by either route: relay-delegated when relayFormIn found a trusted relay form, else key-held. */
+  async function openAuthorising(call: Call, form: RelayForm | null, raw: unknown, intent: EnvelopeIntent, win = window): Promise<OpenedEnvelope> {
+    return form ? openRelay(form, intent, call, win) : openEnvelope(raw, intent, call.podUrl, call.now, win);
+  }
+
   /**
    * Open the envelope that authorises this call, then claim its nonce in the in-process ledger —
    * only for a signer the registry knows (or an admin), so keys nobody registered cannot fill
    * the ledger (wrd.holder_copy claims any other signer's too, within the budget it bounds them by).
    * Every write is also checked against the pod itself (write(), below), which is the replay
-   * protection that survives a restart and holds across bridge processes.
+   * protection that survives a restart and holds across bridge processes. Both are by principal:
+   * a relay-delegated request spends its nonce as the person it names, never as the relay, which
+   * signs for everyone.
    */
   async function openSigned(args: Obj, intent: EnvelopeIntent, key = 'envelope'): Promise<Signed> {
-    const raw = args[key];
-    const call = await openCall(args, raw, true);
-    const opened = openEnvelope(raw, intent, call.podUrl, call.now, window);
+    const form = relayFormIn(args, key);
+    const raw = form ? undefined : args[key];
+    const call = await openCall(args, form ? relayPodCarrier(form) : raw, true);
+    const opened = await openAuthorising(call, form, raw, intent);
     if (!opened.ok) throw new Declined(refuse(opened.status, opened.error, opened.why));
+    refuseChatDecision(opened, intent);
     const nonce = String(opened.payload['nonce']);
     // Nothing is written on a pod holding records written under another record key, whoever signs (write() checks again).
     // Checked before the registry is read: on such a pod the registry may be sealed to that key, and the refusal names it.
     await refuseKeyConflict(call);
-    if (admins.has(opened.signer) || memberOf(await registryOf(call), opened.signer)) {
+    if (isAdmin(opened.signer) || memberOf(await registryOf(call), opened.signer)) {
       if (!ledger.claim(opened.signer, nonce, call.now)) throw decline(409, REPLAYED, `${opened.signer} already used the nonce ${nonce} on this bridge`);
     }
-    return { ...call, actor: opened.signer, actorDid: opened.did, payload: opened.payload, envelope: opened.envelope, nonce };
+    return {
+      ...call, actor: opened.signer, actorDid: opened.did, payload: opened.payload, envelope: opened.envelope, nonce,
+      ...(opened.authority === 'relay-delegated' ? { relayed: { agentId: opened.agentId ?? '', relaySigner: opened.relaySigner ?? '' } } : {}),
+    };
   }
+
+  /**
+   * The document text a call sends: beside the envelope, or, for a relay-delegated request (the
+   * relay's act POSTs only the signed pair), inside the payload the relay signed, whose sha256 is
+   * bound as it is beside the envelope. `signed` says it came from the signed payload: the record
+   * then keeps it whatever the payload says about storing it, since it stores the text the relay
+   * signed, so the callers take it from there only where the document's text is stored anyway.
+   */
+  const documentTextOf = (args: Obj, call: Signed): { readonly text: unknown; readonly signed: boolean } =>
+    args['document_text'] === undefined && call.relayed ? { text: call.payload['document_text'], signed: true } : { text: args['document_text'], signed: false };
+  const RELAY_DOCUMENT_KEPT = 'document_text inside the relay-signed payload is kept with the record, which stores the text the relay signed';
 
   /**
    * Open a signed read (wrd:read-records): shape, intent, pod binding, signature and freshness,
@@ -570,23 +730,24 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
    * issuedAt leaves the window, which is what lets the web UI sign one read and reuse it.
    */
   async function openRead(args: Obj, tool: 'read_records' | 'read_calibration'): Promise<Call> {
-    const raw = args['envelope'];
-    const call = await openCall(args, raw, false);
-    await authoriseRead(call, raw, tool);
+    const form = relayFormIn(args, 'envelope');
+    const raw = form ? undefined : args['envelope'];
+    const call = await openCall(args, form ? relayPodCarrier(form) : raw, false);
+    await authoriseRead(call, await openAuthorising(call, form, raw, 'wrd:read-records'), tool);
     return call;
   }
 
   /**
-   * Check a signed read (wrd:read-records) against an open call: shape, intent, pod binding,
-   * signature and freshness; then the signer must be an admin, or a key the pod's registry holds.
+   * Check an opened signed read (wrd:read-records, key-held or relay-delegated, already checked for
+   * shape, intent, pod binding, signature and freshness): the signer must be an admin, or a key or
+   * user DID the pod's registry holds.
    * Registry membership is decided on the WHOLE manifest: a lenient view would read an older
    * registry when the version that removed this key sits behind a segment that did not answer,
    * so for any signer but an admin an incomplete walk is refused as a write's is (502).
    */
-  async function authoriseRead(call: Call, raw: unknown, tool: SignedReadTool): Promise<void> {
-    const opened = openEnvelope(raw, 'wrd:read-records', call.podUrl, call.now, window);
+  async function authoriseRead(call: Call, opened: OpenedEnvelope, tool: SignedReadTool): Promise<void> {
     if (!opened.ok) throw new Declined(refuse(opened.status, opened.error, opened.why, opened.status === 401 ? readVia(tool) : undefined));
-    if (admins.has(opened.signer)) return;
+    if (isAdmin(opened.signer)) return;
     if (!(await call.view.walk()).complete) throw new IncompleteManifestError(call.podUrl);
     const reg = await registryForRead(call);
     if (!memberOf(reg, opened.signer)) {
@@ -796,7 +957,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const signers = dedupeSigners(w.signers);
     const record = {
       recordKind: w.kind, entityIri: w.entity, version, status: w.status, payload: w.payload, signers, platform: call.platformRef,
-      authorisedBy: { signer: call.actor, nonce: call.nonce },
+      authorisedBy: {
+        signer: call.actor, nonce: call.nonce,
+        // A version the relay signed for the actor says so, so a reader can tell it from a key-held one.
+        ...(call.relayed ? { authority: 'relay-delegated' as const, agentId: call.relayed.agentId, relaySigner: call.relayed.relaySigner } : {}),
+      },
       ...(demo ? { demo: true as const } : {}),
     } as unknown as WrdRecord;
     const descriptor: DescriptorSpec = {
@@ -1030,7 +1195,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   }
 
   /** The tuple a person's acknowledgement of their assignment on a plan's task is keyed by. */
-  const ackTuple = (planIri: string, taskIri: string, person: string): readonly [string, string] => [planIri, `${taskIri}|${lower(person)}`];
+  const ackTuple = (planIri: string, taskIri: string, person: string): readonly [string, string] => [planIri, `${taskIri}|${principalKey(person)}`];
   const ackEntity = (call: Call, planIri: string, taskIri: string, person: string): Promise<string> =>
     resolveEntity(call, 'acknowledgement', ...ackTuple(planIri, taskIri, person));
   async function assignmentStates(call: Call, plan: Head<'Plan'>): Promise<DecisionPayload['assignments']> {
@@ -1093,10 +1258,13 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (!c.ok) return { ...refuse(400, BAD_PAYLOAD, c.why) };
     let documentText: string | null = null;
     if (mode === 'document') {
-      const t = args['document_text'];
-      if (typeof t !== 'string' || t.trim() === '') return { ...refuse(400, 'The document text is required.', 'send document_text beside the envelope; its sha256 is what the payload binds') };
+      const { text: t, signed } = documentTextOf(args, call);
+      if (typeof t !== 'string' || t.trim() === '') return { ...refuse(400, 'The document text is required.', 'send document_text beside the envelope, or, relay-signed, inside the payload the relay signs; its sha256 is what the payload binds') };
       if (t.length > LIMITS.documentChars) return { ...refuse(400, 'The document is too long.', `document_text is longer than ${LIMITS.documentChars} characters`) };
       if (sha256Hex(t) !== c.value.document?.sha256) return { ...refuse(400, 'The document is not the one the signer bound.', 'sha256(document_text) differs from payload.document.sha256') };
+      if (signed && c.value.document?.storeText !== true) {
+        return { ...refuse(400, 'This document would be stored with the record.', `${RELAY_DOCUMENT_KEPT}, so it is taken only with payload.document.storeText true; or send document_text beside the signed pair, as this bridge's web UI does`) };
+      }
       documentText = t;
     }
     for (const [i, t] of c.value.tasks.entries()) {
@@ -1254,9 +1422,12 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (!wf) throw decline(409, INTEGRITY, `the task's workflow ${workflowIri} has no trusted record`);
     const doc = wf.record.payload.document;
     if (!doc) throw decline(400, 'Quotes need a document, and this workflow was captured by hand.', 'remove sourceQuotes, or capture the workflow from its document');
-    const text = args['document_text'];
+    const { text, signed } = documentTextOf(args, call);
     if (typeof text !== 'string' || sha256Hex(text) !== doc.sha256) {
-      throw decline(400, 'The document is not the one this workflow was captured from.', 'send document_text whose sha256 equals the workflow\'s document.sha256');
+      throw decline(400, 'The document is not the one this workflow was captured from.', 'send document_text whose sha256 equals the workflow\'s document.sha256, beside the envelope or, relay-signed, inside the payload the relay signs');
+    }
+    if (signed && !doc.textStored) {
+      throw decline(400, 'This document would be stored with the record.', `${RELAY_DOCUMENT_KEPT}, and this workflow did not store its document text; send document_text beside the signed pair, as this bridge's web UI does`);
     }
     const v = verifyTaskQuotes(text, [{ sourceQuotes: quotes }]);
     return [...(v.perTask[0] ?? [])];
@@ -1453,11 +1624,17 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       for (const [i, raw] of entries.entries()) {
         if (!isObj(raw)) throw bad(`entries[${i}] must be an object`);
         const address = raw['address'];
-        if (!isAddress(address)) throw bad(`entries[${i}].address must be a 0x address`);
-        const a = lower(address);
+        const roles = raw['roles'];
+        // A key's 0x address, or, for a person who signs in with their Interego account, their user
+        // DID on this bridge's identity host (kept as spelled: never lower-cased into an address).
+        // A DID already listed can always be removed, whatever host is configured now.
+        const removing = Array.isArray(roles) && roles.length === 0;
+        if (!isAddress(address) && !isHostUser(address) && !(removing && isUserPrincipal(address) && members.has(address))) {
+          throw bad(`entries[${i}].address must be a 0x address${identityHost === null ? '' : `, or an Interego user DID did:web:${identityHost}:users:<id>`}`);
+        }
+        const a = principalKey(address);
         if (seen.has(a)) throw bad(`entries[${i}]: ${a} appears twice in one change`);
         seen.add(a);
-        const roles = raw['roles'];
         if (!Array.isArray(roles) || !roles.every((r) => isOneOf(REGISTRY_ROLES, r))) throw bad(`entries[${i}].roles must be a list of ${REGISTRY_ROLES.join(', ')}`);
         if (roles.length === 0) { members.delete(a); continue; }
         const uniqueRoles = [...new Set(roles as RegistryRole[])].sort();
@@ -1468,17 +1645,20 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         const isAgentEntry = uniqueRoles.includes('agent');
         if (isAgentEntry !== softwareAgent) throw bad(`entries[${i}]: the agent role and softwareAgent: true go together`);
         if (isAgentEntry && uniqueRoles.length > 1) throw bad(`entries[${i}]: an agent holds the agent role only; approver, operator and worker are roles of people`);
+        if (isAgentEntry && isUserPrincipal(a)) throw bad(`entries[${i}]: ${a} is a person the Interego identity host names; an agent is registered by the key it signs its runs with`);
         if (isAgentEntry) {
           const principal = raw['principal'];
           const model = raw['model'];
-          if (!isAddress(principal)) throw bad(`entries[${i}].principal is required: the address of the registered person accountable for this agent`);
+          if (!isAddress(principal) && !isHostUser(principal)) {
+            throw bad(`entries[${i}].principal is required: the address${identityHost === null ? '' : ' or Interego user DID'} of the registered person accountable for this agent`);
+          }
           if (typeof model !== 'string' || model.trim() === '' || model.length > 120) throw bad(`entries[${i}].model is required: the model the agent runs on, 1 to 120 characters`);
           if (raw['personRef'] !== undefined) throw bad(`entries[${i}].personRef belongs to people; an agent has a principal instead`);
-          members.set(a, { address: a, did: didOf(a), roles: uniqueRoles, label, softwareAgent: true, personRef: null, principal: lower(principal), model });
+          members.set(a, { address: a, did: didOf(a), roles: uniqueRoles, label, softwareAgent: true, personRef: null, principal: principalKey(principal), model });
         } else {
           const personRef = raw['personRef'];
           if (typeof personRef !== 'string' || !PERSON_REF.test(personRef)) {
-            throw bad(`entries[${i}].personRef is required: the admin's stable reference for the person who holds this key (1 to 80 of [A-Za-z0-9_.:-])`);
+            throw bad(`entries[${i}].personRef is required: the admin's stable reference for the person who holds this key or user DID (1 to 80 of [A-Za-z0-9_.:-]; give a person's key and their user DID the same one to make them one person)`);
           }
           if (raw['principal'] !== undefined || raw['model'] !== undefined) throw bad(`entries[${i}]: principal and model belong to agents`);
           members.set(a, { address: a, did: didOf(a), roles: uniqueRoles, label, softwareAgent: false, personRef, principal: null, model: null });
@@ -1588,6 +1768,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     descriptorUrl: l.descriptorUrl, recordId: l.recordId, modalStatus: l.modalStatus, graphDigest: l.graphDigest,
     versions: l.record?.version ?? null, validFrom: l.validFrom, ...(l.validUntil ? { validUntil: l.validUntil } : {}),
     signedBy: l.record?.signers.map((s) => s.did) ?? [], trusted: l.authorship.trusted, contentBinding: l.authorship.contentBinding,
+    // Who authorised this version, and how: a key the signer holds, or the relay signing for a person who holds none.
+    ...(l.record?.authorisedBy?.authority === 'relay-delegated'
+      ? { authority: 'relay-delegated', authorisedBy: l.record.authorisedBy.signer, agentId: l.record.authorisedBy.agentId ?? null, relaySigner: l.record.authorisedBy.relaySigner ?? null }
+      : l.record?.authorisedBy ? { authority: 'key-held', authorisedBy: l.record.authorisedBy.signer } : {}),
   });
 
   // ── Payload templates ────────────────────────────────────────────────────────────────
@@ -1636,12 +1820,20 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
    * not depend on one either: it never branches on a plan's kind, a decision's kind or a task's
    * retirement. `signed` is true for wrd.read_envelope_template, which needs the signed read.
    */
-  async function envelopeTemplate(args: Obj, signed: boolean): Promise<unknown> {
+  async function envelopeTemplate(body: Obj, signed: boolean): Promise<unknown> {
+    // A relay-signed read arrives under read_envelope or at the top level of the body; a key-held one under read_envelope.
+    const relayRead = signed ? relayFormIn(body, 'read_envelope') : null;
+    // The relay's act POSTs only the signed pair, and the read's own intent is wrd:read-records, so
+    // a relay-signed read names the template it asks for under `template` in the payload the relay
+    // signed; an argument beside the pair still wins.
+    const named = relayRead?.parsed?.['template'];
+    const asked: Obj = isObj(named) ? named : {};
+    const args: Obj = { ...Object.fromEntries(TEMPLATE_ARGS.filter((k) => typeof asked[k] === 'string').map((k) => [k, asked[k]])), ...body };
     const intent = args['intent'];
-    if (!isEnvelopeIntent(intent)) return { ...refuse(400, 'Unknown intent.', `intent must be one of ${Object.keys(TOOL_OF_INTENT).join(', ')}`) };
-    const signedRead = signed ? readEnvelopeArg(args) : undefined;
-    const call = await openCall(args, signedRead, false);
-    if (signed) await authoriseRead(call, signedRead, 'read_envelope_template');
+    if (!isEnvelopeIntent(intent)) return { ...refuse(400, 'Unknown intent.', `intent must be one of ${Object.keys(TOOL_OF_INTENT).join(', ')}${relayRead ? ' (relay-signed: under template in the payload the relay signs)' : ''}`) };
+    const signedRead = signed && !relayRead ? readEnvelopeArg(args) : undefined;
+    const call = await openCall(args, relayRead ? relayPodCarrier(relayRead) : signedRead, false);
+    if (signed) await authoriseRead(call, await openAuthorising(call, relayRead, signedRead, 'wrd:read-records'), 'read_envelope_template');
     const full = publicReads || signed;
     // The registry is read only to fill context, which an unsigned call does not get.
     const reg = full ? await registryForRead(call) : null;
@@ -1967,9 +2159,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const handlers: Record<string, WrdHandler> = {
     'wrd.update_registry': async (args) => {
       const call = await openSigned(args, 'wrd:update-registry');
-      if (admins.size === 0) return { ...refuse(403, 'This bridge has no admin addresses configured.', 'nobody can change the registry until the bridge is started with admin addresses') };
+      if (admins.size === 0) return { ...refuse(403, 'This bridge has no admin addresses configured.', 'nobody can change the registry until the bridge is started with admin addresses or admin user DIDs (WRD_ADMIN_ADDRESSES, WRD_ADMIN_DIDS)') };
       const reg = await registryOf(call);
-      if (!admins.has(call.actor)) return { ...refuse(403, 'Only an admin can change the registry.', `${call.actor} is not one of this bridge's admin addresses`) };
+      if (!isAdmin(call.actor)) return { ...refuse(403, 'Only an admin can change the registry.', `${call.actor} is not one of this bridge's admin ${isUserPrincipal(call.actor) ? 'user DIDs (WRD_ADMIN_DIDS)' : 'addresses (WRD_ADMIN_ADDRESSES)'}`) };
       const merged = mergeRegistry(reg, call.payload);
       const replacedUntrusted = reg.head === null && reg.graph.untrusted.length > 0;
       const w = await write(call, {
@@ -2452,7 +2644,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const w = await write(call, {
         kind: 'Decision', entity: decisionIri, status, payload, head: decision,
         signers: [
-          signerOf(reg, dp.submittedBy.did.replace(/^did:ethr:/, ''), 'Curator', 'submitted'),
+          signerOf(reg, principalOfDid(dp.submittedBy.did), 'Curator', 'submitted'),
           signerOf(reg, call.actor, 'Validator', status),
         ],
       });
@@ -2495,9 +2687,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         return { ...refuse(409, 'An outcome can be recorded only for a countersigned decision.', `${decisionIri} is ${decision.record.status}`, via('countersign_decision')) };
       }
       // The countersign is weeks old by design: re-verify the stored envelope against the CURRENT
-      // registry and the same separation rules, never the modal status alone.
+      // registry and the same separation rules, never the modal status alone. A relay-delegated one
+      // is re-verified offline: the relay's signature against the relays trusted now, the agent and
+      // principal stored beside it (verifyStoredEnvelope); the agent's DID document is not re-read.
       const cs = dp.countersign;
-      const stored = verifyStoredEnvelope(cs.envelope, 'wrd:countersign-decision', call.podUrl);
+      const stored = verifyStoredEnvelope(cs.envelope, 'wrd:countersign-decision', call.podUrl, storedRelay);
       const approver = stored.ok ? stored.signer : '';
       const approverRef = approver ? personRefOf(reg, approver) : '';
       const subjectRefs = new Set(dp.subjects.flatMap((s) => [s.personRef, personRefOf(reg, s.address)]));
@@ -2630,8 +2824,13 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     },
 
     'wrd.log_agent_run': async (args) => {
-      const runRaw = args['run_envelope'];
-      const reviewRaw = args['review_envelope'];
+      // The review may be relay-delegated (a person signed in with their Interego account): under
+      // review_envelope, or at the top level of the body as the relay's act sends it, in which case
+      // the agent's own run envelope may travel inside the payload the relay signed. The run itself
+      // is always key-held: an agent signs its runs with its own key.
+      const reviewRelay = relayFormIn(args, 'review_envelope');
+      const runRaw = args['run_envelope'] ?? reviewRelay?.parsed?.['run_envelope'];
+      const reviewRaw = reviewRelay ? undefined : args['review_envelope'];
       const call = await openCall(args, runRaw, true);
       // The run may be an hour old (logged under a grant, reviewed later): check it as a stored envelope first, freshness later.
       const runOpened = openEnvelope(runRaw, 'wrd:agent-run', call.podUrl, call.now, { pastMs: Number.POSITIVE_INFINITY, futureMs: window.futureMs });
@@ -2640,8 +2839,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       await refuseKeyConflict(call);
       const reg = await registryOf(call);
       let review: Extract<ReturnType<typeof openEnvelope>, { ok: true }> | null = null;
-      if (reviewRaw !== undefined && reviewRaw !== null) {
-        const r = openEnvelope(reviewRaw, 'wrd:review-agent-run', call.podUrl, call.now, window);
+      if (reviewRelay !== null || (reviewRaw !== undefined && reviewRaw !== null)) {
+        const r = await openAuthorising(call, reviewRelay, reviewRaw, 'wrd:review-agent-run');
         if (!r.ok) return { ...refuse(r.status, r.error, `review_envelope: ${r.why}`) };
         // The review authorises this call: its nonce is claimed as soon as it verifies (for a key the registry knows), like every other write's envelope.
         if (memberOf(reg, r.signer) && !ledger.claim(r.signer, String(r.payload['nonce']), call.now)) return { ...refuse(409, REPLAYED, `${r.signer} already used the nonce ${String(r.payload['nonce'])}`) };
@@ -2733,7 +2932,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const status = reviewPart ? 'reviewed' : 'acted-under-grant';
       // The record id carries the nonce of the envelope that authorises THIS write: the review's when there is one.
       const authorising: Signed = review
-        ? { ...call, actor: review.signer, actorDid: review.did, payload: review.payload, envelope: review.envelope, nonce: String(review.payload['nonce']) }
+        ? {
+          ...call, actor: review.signer, actorDid: review.did, payload: review.payload, envelope: review.envelope, nonce: String(review.payload['nonce']),
+          ...(review.authority === 'relay-delegated' ? { relayed: { agentId: review.agentId ?? '', relaySigner: review.relaySigner ?? '' } } : {}),
+        }
         : { ...call, actor: agent, actorDid: runOpened.did, payload: rp, envelope: runOpened.envelope, nonce: String(rp['nonce']) };
       const w = await write(authorising, {
         kind: 'AgentRun', entity, status, head,
@@ -2829,7 +3031,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       // claimed the nonce of an admin or a registered key; any other signer (a key made for the purpose
       // costs nothing, and someone removed from the registry is one) draws on one budget shared by all of
       // them, and its nonce is claimed too, so no envelope is answered twice.
-      const stranger = !admins.has(call.actor) && !memberOf(await registryOf(call), call.actor);
+      const stranger = !isAdmin(call.actor) && !memberOf(await registryOf(call), call.actor);
       // Wall-clock time, not the bridge's clock (which the offline demo scripts): this bounds load, not what a record says.
       const t = Date.now();
       while (strangerCopies.length > 0 && (strangerCopies[0] ?? t) <= t - 60_000) strangerCopies.shift();
@@ -3091,6 +3293,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       ...(plaintext ? { plaintext } : {}),
       bridge: {
         platform: call.platformRef, admins: admins.size, reads: publicReads ? 'public' : 'signed', recordsSealed: recordKey !== undefined,
+        // Sign in with an Interego account: relay-attested, not user-held (see README, "Signing in with an Interego account").
+        relayDelegation: relayPolicy === null ? { enabled: false, identityHost, relayUrl: relay?.relayUrl ?? null, retiredRelays: [...retiredRelays] }
+          : { enabled: true, trustedRelays: relayPolicy.relayAddresses, retiredRelays: [...retiredRelays], identityHost, relayUrl: relay?.relayUrl ?? null, uiAgentPrefix: UI_AGENT_PREFIX, chatAgentsDecide: relay?.chatAgentsDecide === true, decisiveIntents: [...DECISIVE_INTENTS] },
         demo: { enabled: demo !== null, personas: demo ? [...demo.values()].map((d) => ({ id: d.id, label: d.label, address: lower(d.wallet.address) })) : [] },
       },
       vocabulary: {
@@ -3391,7 +3596,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const policy = reg.policy.grantPolicy;
     const report = calibrationReport({
       decisions, runs, probes, minSamples: policy.minSamples, policy,
-      currentModelOf: (did) => memberOf(reg, did.replace(/^did:ethr:/, ''))?.model ?? null,
+      currentModelOf: (did) => memberOf(reg, principalOfDid(did))?.model ?? null,
     });
     // Cells are computed from the records that open. A decision or run that does not open (its
     // kind is public in its IRI, its metric, level, agent and kind of task are not) may belong to
@@ -3405,7 +3610,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const mark = (why: string | null): Obj => (why === null ? {} : { unreadable: why });
     const agentCells: Obj[] = [];
     for (const c of report.agentCells) {
-      const address = c.agentDid.replace(/^did:ethr:/, '');
+      const address = principalOfDid(c.agentDid);
       agentCells.push({ ...c, agentAddress: address, principal: memberOf(reg, address)?.principal ?? null, grant: await grantView(call, reg, address, c.taskKind), ...mark(marks.agentCells) });
     }
     const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;

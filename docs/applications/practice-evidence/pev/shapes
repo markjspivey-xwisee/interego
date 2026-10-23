@@ -188,7 +188,8 @@ pevsh:RoleRegistryShape a sh:NodeShape ;
 
 pevsh:RoleAssignmentShape a sh:NodeShape ;
     sh:targetClass pev:RoleAssignment ;
-    sh:property [ sh:path pev:address ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^0x[0-9a-fA-F]{40}$" ] ;
+    sh:property [ sh:path pev:address ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^(0x[0-9a-fA-F]{40}|did:web:[a-z0-9.-]+:users:[A-Za-z0-9._-]{1,128})$" ;
+        sh:message "A member is an address, or a person's Interego DID (did:web:<identity host>:users:<id>)." ] ;
     sh:property [ sh:path pev:role ; sh:minCount 1 ; sh:in ( "reviewer" "author" "judge" "agent" "learner" ) ] .
 
 pevsh:ProjectionAuditShape a sh:NodeShape ;

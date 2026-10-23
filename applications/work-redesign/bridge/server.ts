@@ -9,8 +9,19 @@
  *                                   never binds every interface unless told to. Bound to
  *                                   loopback, it answers only the Host names 127.0.0.1, localhost
  *                                   and [::1] on PORT and the host of BRIDGE_DEPLOYMENT_URL, and
- *                                   refuses any other (421): the DNS-rebinding guard
- *   BRIDGE_DEPLOYMENT_URL           the public base URL (default http://127.0.0.1:<PORT>)
+ *                                   refuses any other (421): the DNS-rebinding guard. Bound to
+ *                                   any other address (the image, behind Railway's edge), it
+ *                                   trusts one proxy hop for the client address (req.ip) the web
+ *                                   UI's sign-in routes count relay calls by; on loopback none
+ *   WRD_TRUST_PROXY_HOPS            0 to 4: how many proxies in front of the bridge set
+ *                                   X-Forwarded-For, for that client address, whatever HOST is.
+ *                                   Unset: 1 off loopback, 0 on it. A loopback bridge behind a
+ *                                   reverse proxy on the same machine sets 1, or every caller is
+ *                                   the proxy's address and the per-address limits act as the
+ *                                   bridge's own; a bridge reached with no proxy in front sets 0,
+ *                                   or a caller names its own address. Any other value stops the
+ *                                   bridge
+ *   BRIDGE_DEPLOYMENT_URL          the public base URL (default http://127.0.0.1:<PORT>)
  *   WRD_DEFAULT_POD_URL             the pod to use when a call names none
  *   WRD_SERVED_PODS                 comma list of the pods records are read from and written to;
  *                                   default the default pod. A call naming any other pod is
@@ -63,7 +74,39 @@
  *                                   it to 1. Read as it is, like WRD_REQUIRE_RECORD_KEY: any other
  *                                   value, blank or whitespace included, stops the bridge (exit 1,
  *                                   saying why)
- *   WRD_ADMIN_ADDRESSES             comma list of addresses that may change the role registry
+ *   WRD_ADMIN_ADDRESSES             comma list of 0x addresses that may change the role registry; a
+ *                                   value that is not one (a user DID goes in WRD_ADMIN_DIDS) stops
+ *                                   the bridge
+ *   WRD_ADMIN_DIDS                  comma list of did:web:<WRD_IDENTITY_HOST>:users:<id>: people who
+ *                                   sign in with their Interego account and are admins too. Not
+ *                                   baked into the image; a malformed value stops the bridge
+ *   WRD_TRUSTED_RELAY_ADDRESSES     comma list of 0x addresses of Interego relay delegation keys. A
+ *                                   request in the relay's signed shape whose signature recovers to
+ *                                   one is relay-delegated: the person is the user the signed-in
+ *                                   agent belongs to, read from WRD_IDENTITY_HOST. RELAY-ATTESTED,
+ *                                   NOT USER-HELD: whoever holds a listed key, or controls the
+ *                                   identity host, can act here as any person. Empty → no request is
+ *                                   relay-delegated. A malformed value stops the bridge
+ *   WRD_RETIRED_RELAY_ADDRESSES     comma list of 0x addresses of relay delegation keys retired from
+ *                                   new requests (key rotation): no request they sign now is
+ *                                   relay-delegated, and a countersign they signed still re-verifies
+ *                                   when its outcome is recorded. An address in both lists, a
+ *                                   malformed one, or one set without WRD_IDENTITY_HOST stops the
+ *                                   bridge
+ *   WRD_IDENTITY_HOST               the identity host agents and users are on (a bare host name);
+ *                                   required with a relay address or an admin DID
+ *   WRD_RELAY_URL                   the relay a person signs in through (http(s) base URL), reported
+ *                                   to the web UI, whose "Sign in with your Interego account" goes
+ *                                   through it (bridge/ui.ts; on only with a trusted relay address).
+ *                                   The relay's OAuth access token a person signs in with (about
+ *                                   an hour) passes through this bridge on every signature, and the
+ *                                   relay's /identity-token trades it for their identity-server
+ *                                   token (good on the account itself for up to a day), so its
+ *                                   operator is trusted with their account for that day
+ *   WRD_CHAT_AGENTS_DECIDE          1 → acts that change who may do what (the registry, countersign,
+ *                                   an outcome, grant, revoke) are taken from chat agents too; unset or 0 → only
+ *                                   from this bridge's web UI (agent slug work-redesign-…); any other
+ *                                   value stops the bridge
  *   WRD_TRUSTED_PLATFORM_ADDRESSES  comma list of earlier platform keys whose records stay trusted.
  *                                   An address that signed records on the pod stays listed for as
  *                                   long as the pod is used: dropping it cuts every line holding a
@@ -76,6 +119,8 @@ import { wrdAffordances } from '../affordances.js';
 import { WRD_NS, WRD_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { createWrdHandlers, type PlatformSigner } from './handlers.js';
 import { operatorPodFetch } from './pod-helpers.js';
+import { didDocumentFetcher, parseRelaySignIn } from './relay-sign-in.js';
+import { isAddress } from '../src/records.js';
 import { attachUi, hostAllowlistGuard, isLoopbackBind, parseEveryQueryPair, servedHostNames } from './ui.js';
 
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((s) => s.trim()).filter((s) => s !== '');
@@ -90,6 +135,14 @@ const PORT = parseInt(env('PORT') ?? '6100', 10);
 const HOST = env('HOST') ?? '127.0.0.1';
 const base = (env('BRIDGE_DEPLOYMENT_URL') ?? `http://127.0.0.1:${PORT}`).replace(/\/$/, '');
 const loopback = isLoopbackBind(HOST);
+// The client address the web UI's sign-in routes limit relay calls by (req.ip) is the one this many
+// proxy hops in front saw. A malformed value stops the bridge rather than count every caller as one.
+const proxyHopsValue = env('WRD_TRUST_PROXY_HOPS');
+if (proxyHopsValue !== undefined && !/^[0-4]$/.test(proxyHopsValue)) {
+  process.stderr.write(`work-redesign bridge did not start: WRD_TRUST_PROXY_HOPS is ${JSON.stringify(proxyHopsValue.slice(0, 40))}; set it to how many proxies in front of the bridge set X-Forwarded-For (0 to 4), or unset it for 1 off loopback and 0 on loopback\n`);
+  process.exit(1);
+}
+const proxyHops = proxyHopsValue !== undefined ? Number(proxyHopsValue) : loopback ? 0 : 1;
 const defaultPodUrl = env('WRD_DEFAULT_POD_URL');
 const servedPods = list(env('WRD_SERVED_PODS') ?? defaultPodUrl);
 const writeSecret = env('WRD_POD_WRITE_SECRET');
@@ -99,6 +152,26 @@ const requireRecordKeyValue = process.env['WRD_REQUIRE_RECORD_KEY'];
 const requirePlatformKeyValue = process.env['WRD_REQUIRE_PLATFORM_KEY'];
 const publicReads = env('WRD_PUBLIC_READS') === '1';
 const key = env('WRD_PLATFORM_KEY');
+const adminAddresses = list(env('WRD_ADMIN_ADDRESSES'));
+
+// Sign in with an Interego account (relay-delegated): every value is checked here, and a malformed
+// one stops the bridge, as a malformed key does, rather than switch the route off or on unseen.
+const signInRead = parseRelaySignIn({
+  relays: env('WRD_TRUSTED_RELAY_ADDRESSES'), retiredRelays: env('WRD_RETIRED_RELAY_ADDRESSES'), identityHost: env('WRD_IDENTITY_HOST'), relayUrl: env('WRD_RELAY_URL'),
+  adminDids: env('WRD_ADMIN_DIDS'), chatAgentsDecide: env('WRD_CHAT_AGENTS_DECIDE'),
+});
+if (!signInRead.ok) {
+  process.stderr.write(`work-redesign bridge did not start: ${signInRead.why}\n`);
+  process.exit(1);
+}
+const signIn = signInRead.config;
+// An admin address is an address: a user DID read here would be lower-cased into another user
+// (a user DID is compared as spelled), so one in this list stops the bridge rather than admit the wrong person.
+const notAnAddress = adminAddresses.find((a): boolean => !isAddress(a));
+if (notAnAddress !== undefined) {
+  process.stderr.write(`work-redesign bridge did not start: WRD_ADMIN_ADDRESSES holds ${JSON.stringify(notAnAddress.slice(0, 120))}, which is not a 0x address (40 hex characters); a user DID is an admin through WRD_ADMIN_DIDS\n`);
+  process.exit(1);
+}
 
 // The guard is on only for exactly 1 and off only for 0 or unset: any other value, blank or
 // whitespace included, is a misconfiguration that would otherwise switch it off without a word.
@@ -152,6 +225,11 @@ if (key) {
 }
 
 const baseFetch = globalThis.fetch.bind(globalThis);
+const identityHost = signIn.identityHost;
+// One DID-document reader (and so one cache) for the handlers and the web UI's sign-in.
+const fetchDidDocument = didDocumentFetcher(baseFetch);
+const uiRelayPolicy = identityHost !== null && signIn.relayAddresses.length > 0
+  ? { relayAddresses: signIn.relayAddresses, identityHost, fetchDidDocument } : null;
 const app = createVerticalBridge({
   verticalName: 'work-redesign',
   affordances: wrdAffordances,
@@ -164,8 +242,16 @@ const app = createVerticalBridge({
     ...(recordKey ? { recordKey } : {}),
     publicReads,
     platform,
-    adminAddresses: list(env('WRD_ADMIN_ADDRESSES')),
+    adminAddresses,
+    adminDids: signIn.adminDids,
     trustedPlatformAddresses: list(env('WRD_TRUSTED_PLATFORM_ADDRESSES')),
+    // Agents' DID documents are read through the SSRF guard, 8 s and 64 KiB at most, kept ten minutes.
+    ...(identityHost !== null ? {
+      relayDelegation: {
+        relayAddresses: signIn.relayAddresses, retiredRelayAddresses: signIn.retiredRelayAddresses, identityHost, fetchDidDocument,
+        chatAgentsDecide: signIn.chatAgentsDecide, ...(signIn.relayUrl !== null ? { relayUrl: signIn.relayUrl } : {}),
+      },
+    } : {}),
   }),
   deploymentUrl: base,
   ...(defaultPodUrl ? { defaultPodUrl } : {}),
@@ -173,13 +259,19 @@ const app = createVerticalBridge({
   middleware: (a) => {
     // First, so it stands in front of the ontology, the UI and every route the factory mounts after this hook.
     if (loopback) a.use(hostAllowlistGuard(servedHostNames(PORT, base)));
+    // The web UI's sign-in routes limit each client address (req.ip) on their relay calls. In the
+    // image the bridge listens behind Railway's edge, one proxy hop, so req.ip is the client only
+    // when that hop is trusted; a loopback bridge trusts none unless WRD_TRUST_PROXY_HOPS says a
+    // proxy on the same machine stands in front, so no caller picks its own address.
+    if (proxyHops > 0) a.set('trust proxy', proxyHops);
     // Every query parameter reaches the handlers, so the GET template's signed-read check sees past the default parser's first 1000.
     parseEveryQueryPair(a);
     attachOntologyServing(a, {
       mountPath: '/ns/wrd', ontologyIri: WRD_ONTOLOGY_IRI, namespace: WRD_NS,
       ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
     });
-    attachUi(a, { base });
+    // "Sign in with your Interego account" in the web UI, through WRD_RELAY_URL; it names a person only through a relay this bridge trusts.
+    attachUi(a, { base, ...(signIn.relayUrl !== null ? { signIn: { relayUrl: signIn.relayUrl, policy: uiRelayPolicy } } : {}) });
   },
 });
 
@@ -188,6 +280,17 @@ process.stdout.write(`work-redesign: pod credential: ${writeSecret ? 'configured
 process.stdout.write(recordKey
   ? `work-redesign: records written from now on are sealed to the record key (public key ${recordKey.publicKey}); records written before it stay plaintext on the pod (the read model counts them under plaintext); descriptors and the manifest stay public\n`
   : 'work-redesign: WARNING: no WRD_RECORD_KEY — records are written in PLAINTEXT, and on a pod that serves anonymous reads (the gate does) anyone can read every record\n');
+process.stdout.write(signIn.relayAddresses.length > 0
+  ? `work-redesign: sign-in with an Interego account: RELAY-ATTESTED, not user-held: requests the relay (${signIn.relayAddresses.join(', ')}) signs act as the user their agent belongs to on ${identityHost ?? ''}; whoever holds that key or controls that host can act as anyone here. Decisive acts from chat agents: ${signIn.chatAgentsDecide ? 'taken (WRD_CHAT_AGENTS_DECIDE=1)' : 'refused (only this bridge\'s web UI; WRD_CHAT_AGENTS_DECIDE=1 lifts it)'}; ${signIn.adminDids.length} admin DID(s); ${signIn.retiredRelayAddresses.length} retired relay key(s) whose stored countersigns still re-verify\n`
+  : 'work-redesign: sign-in with an Interego account: off (WRD_TRUSTED_RELAY_ADDRESSES is empty); every signature is a key its signer holds\n');
+process.stdout.write(signIn.relayUrl !== null && uiRelayPolicy !== null
+  ? `work-redesign: web UI sign-in with an Interego account: through ${signIn.relayUrl}, as the client ${base}/ui/oauth/client.json (a Client ID Metadata Document; where the relay cannot read it, as for an http deployment URL, the same metadata is registered once by Dynamic Client Registration when the page first asks how to sign in). The relay's OAuth access token a person signs in with (about an hour; it lets its holder call the relay's tools as them, and the relay's /identity-token trades it for their identity-server token, good on the account itself for up to a day) passes through this bridge on every signature: whoever runs it is trusted with that account for up to a day after each sign-in\n`
+  : `work-redesign: web UI sign-in with an Interego account: off (${signIn.relayUrl === null ? 'WRD_RELAY_URL is not set' : 'no trusted relay: WRD_TRUSTED_RELAY_ADDRESSES is empty'})\n`);
+if (signIn.relayUrl !== null && uiRelayPolicy !== null) {
+  process.stdout.write(proxyHops > 0
+    ? `work-redesign: web UI sign-in limits count each caller by the address ${proxyHops} proxy hop(s) in front saw (X-Forwarded-For; ${proxyHopsValue !== undefined ? `WRD_TRUST_PROXY_HOPS=${proxyHops}` : 'off loopback'})\n`
+    : `work-redesign: web UI sign-in limits count each caller by the address that connects to the bridge (no proxy hop trusted${proxyHopsValue !== undefined ? ', WRD_TRUST_PROXY_HOPS=0' : ' on loopback'}); behind a reverse proxy every caller is the proxy's address, so set WRD_TRUST_PROXY_HOPS to the hops in front\n`);
+}
 process.stdout.write(`work-redesign: reads: ${publicReads ? 'PUBLIC (WRD_PUBLIC_READS=1): anyone who can reach this bridge reads every record' : 'signed reads only (wrd.read_records, wrd.read_calibration); unsigned GETs answer 401'}\n`);
 
 // Express 5 hands a failed bind to this callback rather than throwing, so it is handled here:
