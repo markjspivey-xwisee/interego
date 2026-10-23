@@ -2550,6 +2550,18 @@ function percentOf(x: { readonly use: string; readonly percent?: string } | unde
   return x && x.use === 'pass-gate' ? x.percent : undefined;
 }
 
+/**
+ * Who a signed read was read as: the principal, how the bridge knows it (a key the person holds,
+ * or the Interego relay signing for their agent), and for a relay-delegated read the agent and the
+ * relay address. The web UI shows a person signed in with their Interego account this principal,
+ * the DID they give an admin to be given a role, from this answer and from nothing it guessed.
+ */
+function signedAsOf(s: Signed): Out {
+  return s.relay
+    ? { principal: s.signer, authority: 'relay-delegated', agentId: s.relay.agentId, relaySigner: s.relay.relaySigner }
+    : { principal: s.signer, authority: 'key-held' };
+}
+
 async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
   const s = await signedAct(call, args, 'getAttempt', {
@@ -2578,7 +2590,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
           ...(reviewed && review.assessment.use === 'pass-gate' ? { finalMeetsPassRule: review.assessment.meetsPassRule } : {}),
         };
       });
-    return { podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit };
+    return { podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, signedAs: signedAsOf(s) };
   }
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
@@ -2625,6 +2637,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
         : { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: v.body.kind === 'attempt' ? v.body.state : null, modalStatus: v.modalStatus, contentDeleted: false })),
     authorship: h.rec.authorship, keyKind: a.keyKind, evidenceKind: a.evidenceKind, label: PRACTICE_LABEL, provisionalLabel: PROVISIONAL_LABEL,
     nextActions: nextFor(ctx, a, s.signer, roles, e.eligible),
+    signedAs: signedAsOf(s),
   };
 }
 

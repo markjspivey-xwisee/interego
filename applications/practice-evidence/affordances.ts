@@ -344,7 +344,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.getAttempt as IRI,
     toolName: 'pev.get_attempt',
     title: 'Read an attempt',
-    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next. Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Payload: {attemptIri?}.',
+    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next. Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Either answer says who the caller was read as (signedAs: the principal, and for a request the Interego relay signed, its agent). Payload: {attemptIri?}.',
     method: 'POST',
     targetTemplate: '{base}/pev/get_attempt',
     annotations: hints('Read an attempt', true, false, true, true),

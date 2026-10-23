@@ -655,7 +655,10 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     expect(server).toMatch(/const modelFor = env\('PEV_BRIDGE_MODEL_FOR'\) === 'anyone' \? 'anyone' : 'registered';/);
     expect(server).toMatch(/bridgeModelFor: modelFor, budgets,/);
     expect(server).toMatch(/if \(loopback\) a\.use\(hostAllowlistGuard\(allowedHosts\)\);/);
-    expect(server).toContain('attachUi(a);');
+    // The UI, with Interego sign-in when there is a relay to sign in through and the route trusts it.
+    expect(server).toContain('attachUi(a, uiSignIn && relayUrl !== undefined');
+    expect(server).toContain("const uiSignIn = relayUrl !== undefined && relayAddresses.length > 0 && identityHost !== undefined;");
+    expect(server).toContain('relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback })');
     expect(server).toContain("{ label: 'Web UI', href: `${base}/ui`, rel: 'alternate', type: 'text/html' }");
     expect(server).not.toMatch(/scriptedTextModel|scriptedPracticeModel|demo\/run/);
   });
