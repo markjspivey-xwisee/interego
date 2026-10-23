@@ -7,6 +7,12 @@
  * the actor: no input names a person, a provenance, a modal status or a key. The one exception
  * is a per-request model key (llm_api_key with llm_model), used for one call and never stored.
  *
+ * Every signed affordance declares the `{_signed_payload, _signature}` inputs beside `envelope`,
+ * so a person signed in with their Interego account reaches it from Claude or ChatGPT with the
+ * relay's `act {descriptor_url, action_iri, payload, sign_payload: true}`: the relay signs the
+ * payload for the session's agent and posts that pair as the body. The bridge then reads the
+ * person as the agent's controller (relay-attested, not user-held; see the README).
+ *
  * Reads that need identity are POST with readOnlyHint true, because the envelope travels in the
  * body. Every action IRI comes from PEV_ACTION, the same table the handlers check envelopes
  * against, so an envelope signed for one act cannot be replayed at another.
@@ -20,8 +26,11 @@ const ENVELOPE: readonly AffordanceInput[] = [
     name: 'envelope', type: 'object', required: false,
     description: 'The signed act: {payload, signature}, where signature is an EIP-191 personal_sign over canonicalJson(payload); or {_signed_payload, _signature} (sha256-prefixed form). A JSON string of either is also read. The payload carries v: 1, action (this affordance\'s action IRI), issuedAt, nonce, podUrl and the fields this act names. The signer is the actor.',
   },
-  { name: '_signed_payload', type: 'string', required: false, description: 'Alternative envelope form: the signed JSON text. Its agent_id must name the signer\'s own key.' },
-  { name: '_signature', type: 'string', required: false, description: 'Alternative envelope form: the signature over sha256 of _signed_payload.' },
+  {
+    name: '_signed_payload', type: 'string', required: false,
+    description: 'The signed-request form, at the top level: the signed JSON text. Signed by your own key, its agent_id names that key (did:ethr:<address>). Signed by the Interego relay (act with sign_payload: true, after you sign in with your Interego account), its agent_id is your session\'s agent, its timestamp is the relay\'s, and pod_url (podUrl in what you ask it to sign) is the pod you act on; you then act as that agent\'s controller, relay-attested rather than with a key you hold.',
+  },
+  { name: '_signature', type: 'string', required: false, description: 'The signed-request form: the EIP-191 signature over sha256:<hex sha256 of _signed_payload>, by your own key or by the Interego relay\'s delegation key.' },
   { name: 'pod_url', type: 'string', required: false, description: 'The pod acted on. When given it must equal the payload\'s podUrl.' },
 ];
 
@@ -48,7 +57,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.registerRole as IRI,
     toolName: 'pev.register_role',
     title: 'Add or remove a role on this pod',
-    description: 'An admin (an address configured on this bridge) adds or removes reviewer, author, judge, agent or learner for an address. Payload: {address, role, change: add|remove}. The registry is a signed record that supersedes its previous version; reviews are later checked against the registry as it stood when they were signed. An envelope the registry already applied is refused, on any process. The learner role matters on a bridge that lends its own model only to registered addresses.',
+    description: 'An admin (an address or Interego DID configured on this bridge) adds or removes reviewer, author, judge, agent or learner for a member: an address, or a person\'s Interego DID did:web:<identity host>:users:<id>. Payload: {address, role, change: add|remove}. Signed in through the relay, it is taken from this bridge\'s own web UI unless the operator lets chat agents decide. The registry is a signed record that supersedes its previous version; reviews are later checked against the registry as it stood when they were signed. An envelope the registry already applied is refused, on any process. The learner role matters on a bridge that lends its own model only to registered addresses.',
     method: 'POST',
     targetTemplate: '{base}/pev/register_role',
     annotations: hints('Change a role', false, false, true, true),
@@ -95,7 +104,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.ratifyScenario as IRI,
     toolName: 'pev.ratify_scenario',
     title: 'Ratify a published rubric version',
-    description: 'A reviewer who is a person and did not author this version ratifies it. Payload: {scenarioIri, version, scenarioHash}. Results on a version leave as evidence only once it is ratified.',
+    description: 'A reviewer who is a person and did not author this version ratifies it (signed in through the relay: from this bridge\'s own web UI, unless the operator lets chat agents decide). Payload: {scenarioIri, version, scenarioHash}. Results on a version leave as evidence only once it is ratified.',
     method: 'POST',
     targetTemplate: '{base}/pev/ratify_scenario',
     annotations: hints('Ratify a rubric', false, false, false, true),
@@ -121,7 +130,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.startAttempt as IRI,
     toolName: 'pev.start_attempt',
     title: 'Start a practice attempt',
-    description: 'The signer becomes the learner. Payload: {scenarioIri, scenarioVersion, coached: true|false, assistance?}. Saying whether you are coached is required. The attempt opens with the other person\'s first line. Attempts started per signer and in total are limited per hour (429 when spent). The attempt number counts attempts by this signing key on this scenario.',
+    description: 'The signer becomes the learner. Payload: {scenarioIri, scenarioVersion, coached: true|false, assistance?}. Saying whether you are coached is required. The attempt opens with the other person\'s first line. Attempts started per signer and in total are limited per hour (429 when spent). The attempt number counts attempts by this principal (a signing key, or a person signed in with their Interego account) on this scenario.',
     method: 'POST',
     targetTemplate: '{base}/pev/start_attempt',
     annotations: hints('Start practising', false, false, false, true),
@@ -220,7 +229,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.countersignAttempt as IRI,
     toolName: 'pev.countersign_attempt',
     title: 'Countersign an attempt as judged',
-    description: 'A reviewer who is a person, not the learner and not a judge of the attempt, confirms every level the primary judgment chose. Payload: {attemptIri, target, levels: [{criterionId, levelId}] for every criterion, sawJudgeLevelsFirst}. A criterion whose quote did not check out must be overridden instead. The record becomes Asserted.',
+    description: 'A reviewer who is a person, not the learner and not a judge of the attempt, confirms every level the primary judgment chose (signed in through the relay: from this bridge\'s own web UI, unless the operator lets chat agents decide). Payload: {attemptIri, target, levels: [{criterionId, levelId}] for every criterion, sawJudgeLevelsFirst}. A criterion whose quote did not check out must be overridden instead. The record becomes Asserted.',
     method: 'POST',
     targetTemplate: '{base}/pev/countersign_attempt',
     annotations: hints('Countersign', false, false, false, true),
@@ -231,7 +240,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.overrideAttempt as IRI,
     toolName: 'pev.override_attempt',
     title: 'Set the levels of an attempt',
-    description: 'A reviewer sets every level, with a reason (10 to 1000 characters) wherever a level differs from the primary judgment or its quote did not check out. Payload as countersign, with why per changed criterion. The judgment stays in the record beside the review.',
+    description: 'A reviewer sets every level, with a reason (10 to 1000 characters) wherever a level differs from the primary judgment or its quote did not check out (signed in through the relay: from this bridge\'s own web UI, unless the operator lets chat agents decide). Payload as countersign, with why per changed criterion. The judgment stays in the record beside the review.',
     method: 'POST',
     targetTemplate: '{base}/pev/override_attempt',
     annotations: hints('Override', false, false, false, true),
@@ -253,7 +262,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.retractReview as IRI,
     toolName: 'pev.retract_review',
     title: 'Withdraw a review for cause',
-    description: 'An admin withdraws the standing review, saying why. Payload: {attemptIri, target, why}. The record becomes Retracted for the interval the review stood, the learner sees why, and the attempt returns to the queue.',
+    description: 'An admin withdraws the standing review, saying why (signed in through the relay: from this bridge\'s own web UI, unless the operator lets chat agents decide). Payload: {attemptIri, target, why}. The record becomes Retracted for the interval the review stood, the learner sees why, and the attempt returns to the queue.',
     method: 'POST',
     targetTemplate: '{base}/pev/retract_review',
     annotations: hints('Withdraw a review', false, true, false, true),
@@ -324,7 +333,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.redactAttempt as IRI,
     toolName: 'pev.redact_attempt',
     title: 'Remove the transcript from this pod',
-    description: 'The learner (or an admin, saying why) removes the attempt\'s text from the operator pod: a Retracted, text-free version is published and earlier graphs are deleted. Hashes and levels stay, so a copy the learner holds can still be checked. Payload: {attemptIri, target, why?}.',
+    description: 'The learner (or an admin, saying why) removes the attempt\'s text from the operator pod: a Retracted, text-free version is published and earlier graphs are deleted. Hashes and levels stay, so a copy the learner holds can still be checked. An admin removing another learner\'s transcript and signed in through the relay takes it from this bridge\'s own web UI, unless the operator lets chat agents decide. Payload: {attemptIri, target, why?}.',
     method: 'POST',
     targetTemplate: '{base}/pev/redact_attempt',
     annotations: hints('Remove the transcript', false, true, true, true),
@@ -335,7 +344,7 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     action: PEV_ACTION.getAttempt as IRI,
     toolName: 'pev.get_attempt',
     title: 'Read an attempt',
-    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next. Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Payload: {attemptIri?}.',
+    description: 'The learner, a reviewer, a judge of the attempt or an admin reads it: turns, every judgment with checked quotes and their offsets, the provisional and final results (computed by the platform), reviews, reopenings, versions, authorship, what the next level asks for, and the acts this caller can take next. Without attemptIri: the caller\'s attempts (or all, for a reviewer or admin). Either answer says who the caller was read as (signedAs: the principal, and for a request the Interego relay signed, its agent). Payload: {attemptIri?}.',
     method: 'POST',
     targetTemplate: '{base}/pev/get_attempt',
     annotations: hints('Read an attempt', true, false, true, true),

@@ -32,8 +32,9 @@ import {
   type JudgeCriterionInput, type JudgmentResult, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
 import {
-  actorOf, applyRoleChange, attemptIri, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, didOf, fingerprintOfAttemptIri, fingerprintOfRecordUrl, iriKeyFingerprint,
-  isWellFormedText, modalFor, toWellFormedText,
+  actorOf, applyRoleChange, attemptIri, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, checkRelayPayload, didOf, fingerprintOfAttemptIri, fingerprintOfRecordUrl, iriKeyFingerprint,
+  isPrincipal, isWellFormedText, modalFor, principalDid, principalKey, principalOfDid, relayDelegatedEnvelope, reverifyStoredEnvelope, samePrincipal,
+  signedRequestOf, signedRequestSigner, toWellFormedText,
   modelAgentIri, NonceLedger, nextActionsFor, nextActionView, recordBodyFromGraph, recordGraphTurtle, recordIdFor,
   redactBody, registryIri, rubricIriOf, scenarioIri, signDraftReceipt, signEnvelope, signedRequestEnvelope, slugFor,
   standingReview, verifyDraftReceipt, REDACTION_NOTE, EXPORT_VERIFY_STEPS,
@@ -804,11 +805,11 @@ describe('envelopes', () => {
     }
   });
 
-  it('form B: refuses a relay-mediated signature whose agent_id names someone else', async () => {
+  it('form B: refuses a key that is no trusted relay signing for an agent_id that names someone else', async () => {
     const relayMade = await signedRequestEnvelope(platform, { agent_id: didOf(learnerW.address), v: 1, action, timestamp: NOW.toISOString(), nonce: 'nonce-0123456789abcdef', pod_url: POD });
     const r = checkEnvelope({ envelope: relayMade }, action, NOW);
     expect(code(r)).toBe('401 signer-is-not-the-named-agent');
-    expect(!r.ok && r.message).toContain('sign with your own wallet');
+    expect(!r.ok && r.message).toContain('Sign with your own wallet');
     const sp = 'not json at all';
     const sig = await signMessageRaw(learnerW, `sha256:${sha256Hex(sp)}`);
     expect(code(checkEnvelope({ _signed_payload: sp, _signature: sig }, action, NOW))).toBe('400 envelope-payload-format');
@@ -1595,6 +1596,165 @@ describe('roles', () => {
     expect(applyRoleChange(b.entries, reviewerW.address, 'judge', 'remove').changed).toBe(false);
     const c = applyRoleChange(applyRoleChange(b.entries, reviewerW.address, 'agent', 'remove').entries, reviewerW.address, 'reviewer', 'remove');
     expect(c.entries).toEqual([]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  Relay-delegated identity (Interego sign-in): the pure half
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('relay-delegated identity: principals, the relay payload, stored envelopes', () => {
+  const IDH = 'identity.example.test';
+  const relayW = importWallet(`0x${sha256('pev-engines:relay')}`, 'agent', 'relay');
+  const USER = `did:web:${IDH}:users:u-pk-0123456789ab`;
+  const AGENT = `did:web:${IDH}:agents:claude-u-pk-0123456789ab`;
+  const action = PEV_ACTION.say;
+  const code = (r: { ok: boolean; status?: number; code?: string }): string => (r.ok ? 'ok' : `${r.status} ${r.code}`);
+  const relayBody = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    v: 1, action, nonce: 'nonce-0123456789abcdef', pod_url: POD, attemptIri: 'urn:pev:attempt:x-1',
+    agent_id: AGENT, subject_pod_url: 'https://pods.example.test/u-pk-0123456789ab/', timestamp: NOW.toISOString(), ...over,
+  });
+  async function relaySigned(body: Record<string, unknown>, by = relayW): Promise<{ sp: string; sig: string }> {
+    const sp = JSON.stringify(body);
+    return { sp, sig: await signMessageRaw(by, `sha256:${sha256Hex(sp)}`) };
+  }
+
+  it('a principal is an address (any case) or a user DID (exactly): the two never collide, and a DID is never lower-cased', () => {
+    const upper = `did:web:${IDH}:users:U-PK-ABC`;
+    expect(principalKey(learnerW.address)).toBe(learnerW.address.toLowerCase());
+    expect(principalKey(upper)).toBe(upper);
+    expect(samePrincipal(learnerW.address, learnerW.address.toLowerCase())).toBe(true);
+    expect(samePrincipal(upper, upper.toLowerCase())).toBe(false);
+    expect(samePrincipal(USER, learnerW.address)).toBe(false);
+    expect(principalDid(USER)).toBe(USER);
+    expect(principalDid(learnerW.address)).toBe(didOf(learnerW.address));
+    expect(principalOfDid(didOf(learnerW.address))).toBe(learnerW.address);
+    expect(principalOfDid(USER)).toBe(USER);
+    expect(actorOf(USER, false)).toEqual({ address: USER, did: USER, serverHeldDemoKey: false });
+    expect([isPrincipal(USER, IDH), isPrincipal(AGENT, IDH), isPrincipal(USER, null), isPrincipal(learnerW.address, null), isPrincipal('did:web:other.example.test:users:u-1', IDH)])
+      .toEqual([true, false, false, true, false]);
+    // Two DIDs that differ only in case are two members; an address in either case is one.
+    const a = applyRoleChange(applyRoleChange([], upper, 'reviewer', 'add').entries, upper.toLowerCase(), 'reviewer', 'add');
+    expect([a.changed, a.entries.map((e) => e.address).sort()]).toEqual([true, [upper.toLowerCase(), upper].sort()]);
+    const b = applyRoleChange(applyRoleChange([], USER, 'author', 'add').entries, learnerW.address, 'author', 'add');
+    expect(b.entries.map((e) => e.address).sort()).toEqual([learnerW.address, USER].sort());
+    // Attempt keys: a DID learner is hashed as she is, never as a lower-cased string.
+    const sIri = 'urn:pev:scenario:0123456789abcdef';
+    expect(attemptKey(POD, sIri, upper)).not.toBe(attemptKey(POD, sIri, upper.toLowerCase()));
+    expect(attemptKey(POD, sIri, learnerW.address)).toBe(attemptKey(POD, sIri, learnerW.address.toLowerCase()));
+    // The nonce ledger is per principal: the same nonce is the person's, not shared across people.
+    const ledger = new NonceLedger(1200_000);
+    expect(ledger.consume(USER, 'n-0123456789abcdef', NOW)).toBe(true);
+    expect(ledger.consume(USER, 'n-0123456789abcdef', NOW)).toBe(false);
+    expect(ledger.consume(upper, 'n-0123456789abcdef', NOW)).toBe(true);
+    expect(ledger.consume(learnerW.address, 'n-0123456789abcdef', NOW)).toBe(true);
+  });
+
+  it('a relay payload is fresh by the relay\'s timestamp and targets pod_url: never a caller\'s issuedAt, podUrl or subject_pod_url', () => {
+    const ok = checkRelayPayload(JSON.stringify(relayBody({ issuedAt: at(-3600) })), action, NOW);
+    expect(ok.ok && [ok.issuedAt, ok.podUrl, ok.payload['issuedAt']]).toEqual([NOW.toISOString(), POD, at(-3600)]);
+    expect(code(checkRelayPayload(JSON.stringify(relayBody({ timestamp: at(-11 * 60), issuedAt: NOW.toISOString() })), action, NOW))).toBe('401 envelope-expired');
+    expect(code(checkRelayPayload(JSON.stringify(relayBody({ timestamp: at(3 * 60) })), action, NOW))).toBe('401 envelope-expired');
+    const noStamp = relayBody({ issuedAt: NOW.toISOString() });
+    delete noStamp['timestamp'];
+    expect(code(checkRelayPayload(JSON.stringify(noStamp), action, NOW))).toBe('401 envelope-expired');
+    const noPod = relayBody({ podUrl: POD });
+    delete noPod['pod_url'];
+    const r = checkRelayPayload(JSON.stringify(noPod), action, NOW);
+    expect(code(r)).toBe('400 envelope-pod-missing');
+    expect(!r.ok && r.message).toContain('subject_pod_url, your own pod, is never read');
+    const other = checkRelayPayload(JSON.stringify(relayBody({ pod_url: 'https://other.example.test/p/', subject_pod_url: POD })), action, NOW);
+    expect(other.ok && other.podUrl).toBe('https://other.example.test/p/');
+    expect(code(checkRelayPayload(JSON.stringify(relayBody()), PEV_ACTION.endConversation, NOW))).toBe('400 envelope-for-another-action');
+    expect(code(checkRelayPayload(JSON.stringify(relayBody({ v: 2 })), action, NOW))).toBe('400 envelope-version');
+    expect(code(checkRelayPayload(JSON.stringify(relayBody({ nonce: 'short' })), action, NOW))).toBe('400 nonce-format');
+    expect(code(checkRelayPayload('not json', action, NOW))).toBe('400 envelope-payload-format');
+    expect(code(checkRelayPayload('{"v":1,"text":"\uD800"}', action, NOW))).toBe('400 payload-shape');
+  });
+
+  it('the relay form is found where checkEnvelope finds it, and its signer recovered from sha256:<hex>', async () => {
+    const { sp, sig } = await relaySigned(relayBody());
+    for (const args of [{ _signed_payload: sp, _signature: sig }, { envelope: { _signed_payload: sp, _signature: sig } }, { envelope: JSON.stringify({ _signed_payload: sp, _signature: sig }) }]) {
+      const found = signedRequestOf(args);
+      expect(found).toEqual({ signedPayload: sp, signature: sig });
+      expect(signedRequestSigner(found!)).toBe(relayW.address.toLowerCase());
+    }
+    // `envelope` wins, as it does for checkEnvelope: a form-A envelope beside a top-level pair is form A.
+    expect(signedRequestOf({ envelope: { payload: {}, signature: SIG }, _signed_payload: sp, _signature: sig })).toBeNull();
+    expect(signedRequestOf({ _signed_payload: sp, _signature: '0x12' })).toBeNull();
+  });
+
+  it('a key-held signer cannot claim a DID principal: its agent_id must name its own key', async () => {
+    for (const agentId of [AGENT, USER]) {
+      const env = await signedRequestEnvelope(learnerW, { agent_id: agentId, v: 1, action, timestamp: NOW.toISOString(), nonce: 'nonce-0123456789abcdef', pod_url: POD });
+      const r = checkEnvelope({ ...env }, action, NOW);
+      expect(code(r)).toBe('401 signer-is-not-the-named-agent');
+      expect(!r.ok && r.message).toContain('PEV_TRUSTED_RELAY_ADDRESSES');
+    }
+  });
+
+  it('an accepted relay request is stored with authority relay-delegated, the principal, the agent and the relay', async () => {
+    const { sp, sig } = await relaySigned(relayBody());
+    const checked = checkRelayPayload(sp, action, NOW);
+    if (!checked.ok) throw new Error(checked.message);
+    const env = relayDelegatedEnvelope({ principal: USER, agentId: AGENT, relaySigner: relayW.address, signedPayload: sp, signature: sig }, checked);
+    expect([env.signer, env.signerDid, env.authority, env.payload['podUrl'], env.payload['issuedAt']]).toEqual([USER, USER, 'relay-delegated', POD, NOW.toISOString()]);
+    expect(env.stored).toEqual({
+      form: 'signed-request', signature: sig, payloadSha256: sha256(sp), signedPayload: sp,
+      authority: 'relay-delegated', principal: USER, agentId: AGENT, relaySigner: relayW.address.toLowerCase(),
+    });
+    expect(env.relay).toEqual({ authority: 'relay-delegated', principal: USER, agentId: AGENT, relaySigner: relayW.address.toLowerCase() });
+  });
+
+  it('re-verifies a stored envelope with no network: a relay one only against a relay still trusted, the stored agent and a user principal', async () => {
+    const trust = { relayAddresses: [relayW.address.toLowerCase()], identityHost: IDH };
+    const { sp, sig } = await relaySigned(relayBody());
+    const stored: StoredEnvelope = {
+      form: 'signed-request', signature: sig, payloadSha256: sha256(sp), signedPayload: sp,
+      authority: 'relay-delegated', principal: USER, agentId: AGENT, relaySigner: relayW.address.toLowerCase(),
+    };
+    const ok = reverifyStoredEnvelope(stored, trust);
+    expect(ok && [ok.signer, ok.authority, ok.payload['agent_id']]).toEqual([USER, 'relay-delegated', AGENT]);
+    expect(reverifyStoredEnvelope(stored, { relayAddresses: [], identityHost: IDH })).toBeNull();
+    expect(reverifyStoredEnvelope(stored, { ...trust, identityHost: null })).toBeNull();
+    expect(reverifyStoredEnvelope(stored, { ...trust, identityHost: 'other.example.test' })).toBeNull();
+    expect(reverifyStoredEnvelope({ ...stored, relaySigner: reviewerW.address.toLowerCase() }, trust)).toBeNull();
+    expect(reverifyStoredEnvelope({ ...stored, agentId: `did:web:${IDH}:agents:someone-else` }, trust)).toBeNull();
+    expect(reverifyStoredEnvelope({ ...stored, principal: AGENT }, trust)).toBeNull();
+    expect(reverifyStoredEnvelope({ ...stored, principal: learnerW.address }, trust)).toBeNull();
+    expect(reverifyStoredEnvelope({ ...stored, payloadSha256: sha256('other') }, trust)).toBeNull();
+    // The same relay signature with no authority stored is a key-held form B whose agent_id is not its signer.
+    const { authority: _a, principal: _p, agentId: _g, relaySigner: _r, ...bare } = stored;
+    expect(reverifyStoredEnvelope(bare, trust)).toBeNull();
+    // Key-held envelopes re-verify as before, and a form A one cannot carry a relay authority.
+    const formA = await signEnvelope(learnerW, { v: 1, action, issuedAt: NOW.toISOString(), nonce: 'nonce-0123456789abcdef', podUrl: POD });
+    const storedA: StoredEnvelope = { form: 'pev-canonical', signature: formA.signature, payloadSha256: sha256(canonicalJson(formA.payload)), payload: formA.payload };
+    expect(reverifyStoredEnvelope(storedA, trust)?.signer).toBe(learnerW.address);
+    expect(reverifyStoredEnvelope({ ...storedA, authority: 'relay-delegated', principal: USER }, trust)).toBeNull();
+    const formB = await signedRequestEnvelope(learnerW, { v: 1, action, timestamp: NOW.toISOString(), nonce: 'nonce-0123456789abcdef', pod_url: POD });
+    const storedB: StoredEnvelope = { form: 'signed-request', signature: formB._signature, payloadSha256: sha256(formB._signed_payload), signedPayload: formB._signed_payload };
+    expect(reverifyStoredEnvelope(storedB, trust)).toMatchObject({ signer: learnerW.address, authority: 'key-held' });
+  });
+
+  it('a role registry with a DID member is a shape-valid graph; redaction keeps who stood behind a relay envelope', () => {
+    const registry: RoleRegistryBody = {
+      ...REGISTRY, entries: applyRoleChange(REGISTRY.entries, USER, 'reviewer', 'add').entries,
+      change: { address: USER, role: 'reviewer', change: 'add', by: USER }, actor: actorOf(USER, false),
+    };
+    const ttl = recordGraphTurtle(registry);
+    expect(conforms(ttl).results).toEqual([]);
+    expect(ttl).toContain(`pev:address "${USER}"`);
+    const back = recordBodyFromGraph(ttl);
+    expect('body' in back && back.body).toEqual(JSON.parse(canonicalJson(registry)));
+    expect(conforms(ttl.replace(`pev:address "${USER}"`, `pev:address "${AGENT}"`)).conforms).toBe(false);
+    const relayEnv: StoredEnvelope = { ...ENVELOPE, form: 'signed-request', signedPayload: '{}', authority: 'relay-delegated', principal: USER, agentId: AGENT, relaySigner: relayW.address.toLowerCase() };
+    const a = lifecycle().overridden;
+    const target = { recordId: 'urn:pev:record:x', descriptorUrl: `${POD}pev/records/x.ttl`, graphDigest: `graph-nquads-sha256:${'0'.repeat(64)}` };
+    const redacted = redactBody({ ...a, startEnvelope: relayEnv }, { by: actorOf(USER, false), role: 'learner', at: at(330), envelope: relayEnv, target }, at(330));
+    expect(redacted.startEnvelope).toEqual({
+      form: 'signed-request', signature: SIG, payloadSha256: ENVELOPE.payloadSha256,
+      authority: 'relay-delegated', principal: USER, agentId: AGENT, relaySigner: relayW.address.toLowerCase(), redacted: true,
+    });
   });
 });
 

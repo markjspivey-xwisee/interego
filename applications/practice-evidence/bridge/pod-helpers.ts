@@ -70,7 +70,7 @@ import {
 } from '@interego/solid';
 import { PEV_SHAPES_NS, readShapesTurtle } from '../src/ontology.js';
 import {
-  fingerprintOfAttemptIri, fingerprintOfRecordUrl, graphIriOf, isWellFormedText, podBase, recordBodyFromGraph, registryIri, RECORD_CLASS,
+  fingerprintOfAttemptIri, fingerprintOfRecordUrl, graphIriOf, isWellFormedText, podBase, principalKey, recordBodyFromGraph, registryIri, RECORD_CLASS,
   type PevRecordBody, type Role, type RoleRegistryBody,
 } from '../src/records.js';
 
@@ -439,6 +439,48 @@ function guarded(fetchFn?: typeof fetch, opts: { readonly followRedirects?: bool
   const b = fetchFn ? (fetchFn as Budgeted)[BUDGETED] : undefined;
   const inner = b ? cappedFetch(b.inner, MAX_RESPONSE_BYTES, b.budget) : cappedFetch(base(fetchFn));
   return guardedFetchFn(opts.followRedirects === false ? refusingRedirects(inner) : inner) as unknown as FetchFn;
+}
+
+/** The most a DID document may be (relay-delegated sign-in reads an agent's from the identity host). */
+export const DID_DOCUMENT_MAX_BYTES = 64 * 1024;
+/** How long one DID-document read may take, DNS look-ups, redirects and body included. */
+export const DID_DOCUMENT_TIMEOUT_MS = 8_000;
+
+/**
+ * GET a DID document, as relay-delegated sign-in reads an agent's from the identity host: through
+ * the substrate's SSRF guard (`guardedFetchFn`, which re-checks every redirect hop), within
+ * `timeoutMs` in all, reading at most `maxBytes`, and parsed as JSON. A non-2xx answer, a body over
+ * the limit, a timeout or text that is not JSON throws, and the verifier then refuses the request
+ * (502 `agent-document-unreadable`, saying why). It sends no credential. server.ts wraps it in
+ * `cachedDidDocuments`; tests inject a fetch of their own instead, so no test reaches the network.
+ *
+ * "In all" includes the guard's DNS look-ups, which run before each hop's request and which no
+ * AbortSignal reaches: the read races a deadline of its own, and at the deadline it aborts the
+ * signal too, so a request that would start after a slow look-up ends at once and holds no socket.
+ */
+export function didDocumentFetch(baseFetch: typeof fetch, o: { readonly timeoutMs?: number; readonly maxBytes?: number } = {}): (url: string) => Promise<unknown> {
+  const timeoutMs = o.timeoutMs ?? DID_DOCUMENT_TIMEOUT_MS;
+  const get = guardedFetchFn(cappedFetch(baseFetch, o.maxBytes ?? DID_DOCUMENT_MAX_BYTES)) as unknown as typeof fetch;
+  return async (url: string): Promise<unknown> => {
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = (async (): Promise<unknown> => {
+      const res = await get(url, { method: 'GET', headers: { accept: 'application/did+json, application/json' }, signal: abort.signal });
+      if (res.status < 200 || res.status > 299) throw new Error(`the identity host answered HTTP ${res.status}`);
+      const text = await res.text();
+      try { return JSON.parse(text) as unknown; } catch { throw new Error('the DID document is not JSON'); }
+    })();
+    // The read that loses the race still settles (the abort ends it); handled here, so it is not an unhandled rejection.
+    read.catch(() => undefined);
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => { abort.abort(); reject(new Error(`the identity host gave no answer within ${timeoutMs} ms`)); }, timeoutMs);
+    });
+    try {
+      return await Promise.race([read, deadline]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
 }
 
 /**
@@ -1090,7 +1132,8 @@ export interface RoleRegistryView {
 function rolesMap(body: PevRecordBody | undefined): Map<string, ReadonlySet<Role>> {
   const out = new Map<string, ReadonlySet<Role>>();
   if (!body || body.kind !== 'role-registry') return out;
-  for (const e of (body as RoleRegistryBody).entries) out.set(e.address.toLowerCase(), new Set(e.roles));
+  // Keyed by principal: an address lower case, a person's user DID exactly as registered.
+  for (const e of (body as RoleRegistryBody).entries) out.set(principalKey(e.address), new Set(e.roles));
   return out;
 }
 

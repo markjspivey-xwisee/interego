@@ -48,6 +48,7 @@ import { attachUi, hostAllowlistGuard, isLoopbackBind, parseEveryQueryPair, serv
 import { runDemo, memoryPod, demoClock, DEMO_REFUSALS, DEMO_POD, DEMO_HOLDER_POD, DEMO_RECORD_KEY, type MemoryPod, type DemoReport } from '../demo/run.js';
 import { h16, entityIriKey, iriKeyFingerprint } from '../src/records.js';
 import { walkManifest } from '../bridge/pod-helpers.js';
+import { parseRelaySignIn, cappedDidDocumentGet, didDocumentFetcher, DID_DOCUMENT_MAX_BYTES } from '../bridge/relay-sign-in.js';
 
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8').split('\r\n').join('\n');
 const APP_JS = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
@@ -635,6 +636,108 @@ describe('work-redesign offline demo and web UI', () => {
     }
   }, 300_000);
 
+  it('reads the sign-in settings strictly: relay addresses (trusted and retired), the identity host, the relay URL, admin DIDs and WRD_CHAT_AGENTS_DECIDE, each malformed value refused with what is wrong', () => {
+    const RELAY_ADDRESS = '0x276E11D2229D3a96Dc96356C15C03c7F83201eBc';
+    const HOST = 'identity.interego.xwisee.com';
+    const ADMIN_DID = `did:web:${HOST}:users:u-pk-f2a9c751075a`;
+    const RETIRED = '0x00000000000000000000000000000000000000Aa';
+    expect(parseRelaySignIn({})).toEqual({ ok: true, config: { relayAddresses: [], retiredRelayAddresses: [], identityHost: null, relayUrl: null, adminDids: [], chatAgentsDecide: false } });
+    expect(parseRelaySignIn({ relays: ` ${RELAY_ADDRESS}, `, retiredRelays: RETIRED, identityHost: 'Identity.Interego.Xwisee.com', relayUrl: 'https://relay.interego.xwisee.com/', adminDids: ADMIN_DID, chatAgentsDecide: '1' }))
+      .toEqual({ ok: true, config: { relayAddresses: [RELAY_ADDRESS.toLowerCase()], retiredRelayAddresses: [RETIRED.toLowerCase()], identityHost: HOST, relayUrl: 'https://relay.interego.xwisee.com', adminDids: [ADMIN_DID], chatAgentsDecide: true } });
+    // A retired key alone (sign-in off for new requests) still re-checks what it signed.
+    expect(parseRelaySignIn({ retiredRelays: RETIRED, identityHost: HOST })).toMatchObject({ ok: true, config: { relayAddresses: [], retiredRelayAddresses: [RETIRED.toLowerCase()] } });
+    expect(parseRelaySignIn({ chatAgentsDecide: '0' })).toMatchObject({ ok: true, config: { chatAgentsDecide: false } });
+    const no = (v: Parameters<typeof parseRelaySignIn>[0]): string => { const r = parseRelaySignIn(v); return r.ok ? 'accepted' : r.why; };
+    expect(no({ relays: '0x123', identityHost: HOST })).toMatch(/^WRD_TRUSTED_RELAY_ADDRESSES holds "0x123", which is not a 0x address/);
+    expect(no({ relays: RELAY_ADDRESS })).toMatch(/^WRD_TRUSTED_RELAY_ADDRESSES is set and WRD_IDENTITY_HOST is not/);
+    expect(no({ retiredRelays: '0x123', identityHost: HOST })).toMatch(/^WRD_RETIRED_RELAY_ADDRESSES holds "0x123", which is not a 0x address/);
+    expect(no({ retiredRelays: ADMIN_DID, identityHost: HOST })).toMatch(/^WRD_RETIRED_RELAY_ADDRESSES holds/);
+    expect(no({ retiredRelays: RETIRED })).toMatch(/^WRD_RETIRED_RELAY_ADDRESSES is set and WRD_IDENTITY_HOST is not/);
+    expect(no({ relays: RELAY_ADDRESS, retiredRelays: RELAY_ADDRESS.toLowerCase(), identityHost: HOST })).toMatch(new RegExp(`^WRD_RETIRED_RELAY_ADDRESSES holds ${RELAY_ADDRESS.toLowerCase()}, which WRD_TRUSTED_RELAY_ADDRESSES lists too`));
+    for (const h of ['https://identity.interego.xwisee.com', 'identity.interego.xwisee.com:443', 'identity.interego.xwisee.com/agents', 'localhost', 'a b.example']) {
+      expect(no({ identityHost: h }), h).toMatch(/^WRD_IDENTITY_HOST must be a bare host name/);
+    }
+    for (const u of ['ftp://relay.example', 'relay.interego.xwisee.com', 'https://relay.example/?x=1', 'https://user:pw@relay.example']) expect(no({ relayUrl: u }), u).toMatch(/^WRD_RELAY_URL must be/);
+    expect(no({ adminDids: ADMIN_DID })).toMatch(/^WRD_ADMIN_DIDS is set and WRD_IDENTITY_HOST is not/);
+    expect(no({ identityHost: HOST, adminDids: RELAY_ADDRESS })).toMatch(new RegExp(`^WRD_ADMIN_DIDS holds "${RELAY_ADDRESS}", which is not did:web:identity\\.interego\\.xwisee\\.com:users:<id>`));
+    expect(no({ identityHost: HOST, adminDids: 'did:web:identity.example.org:users:u-pk-f2a9c751075a' })).toMatch(/^WRD_ADMIN_DIDS holds/);
+    expect(no({ identityHost: HOST, adminDids: `did:web:${HOST}:agents:claude-u-pk-f2a9c751075a` })).toMatch(/^WRD_ADMIN_DIDS holds/);
+    expect(no({ chatAgentsDecide: 'yes' })).toMatch(/^WRD_CHAT_AGENTS_DECIDE is neither 1 nor 0/);
+  });
+
+  it('reads an agent\'s DID document as JSON within 8 s and 64 KiB, through the SSRF guard, and answers nothing else', async () => {
+    const doc = { id: 'did:web:identity.example:agents:a', controller: 'did:web:identity.example:users:u' };
+    // globalThis.Response: this module's `Response` type is express's.
+    type FetchResponse = globalThis.Response;
+    const at = (r: () => FetchResponse) => cappedDidDocumentGet(async () => r());
+    expect(await at(() => new Response(JSON.stringify(doc)))('https://identity.example/agents/a/did.json')).toEqual(doc);
+    await expect(at(() => new Response('{}', { status: 404 }))('u')).rejects.toThrow('the identity host answered 404');
+    await expect(at(() => new Response('{}', { status: 302, headers: { location: 'https://elsewhere.example/' } }))('u')).rejects.toThrow('answered 302');
+    await expect(at(() => new Response('not json'))('u')).rejects.toThrow();
+    // Past the cap: by its declared length before anything is read, and while it is read when it declares none.
+    await expect(at(() => new Response('{}', { headers: { 'content-length': String(DID_DOCUMENT_MAX_BYTES + 1) } }))('u')).rejects.toThrow(`over ${DID_DOCUMENT_MAX_BYTES} bytes`);
+    const chunk = new TextEncoder().encode(' '.repeat(16 * 1024));
+    const endless = (): FetchResponse => new Response(new ReadableStream<Uint8Array>({ pull(c) { c.enqueue(chunk); } }));
+    await expect(at(endless)('u')).rejects.toThrow(`over ${DID_DOCUMENT_MAX_BYTES} bytes`);
+    // An identity host that does not answer in time is given up on.
+    const silent = cappedDidDocumentGet((_url, init) => new Promise((_, reject) => {
+      (init?.['signal'] as AbortSignal).addEventListener('abort', () => reject(new Error('aborted')));
+    }), 50);
+    await expect(silent('u')).rejects.toThrow('the identity host did not answer within 50 ms');
+    // What server.ts composes refuses a private or loopback target before any request is made.
+    let asked = 0;
+    const guarded = didDocumentFetcher((async () => { asked += 1; return new Response(JSON.stringify(doc)); }) as unknown as typeof fetch);
+    await expect(guarded('https://127.0.0.1/agents/a/did.json')).rejects.toThrow(/private|loopback/);
+    await expect(guarded('https://10.0.0.5/agents/a/did.json')).rejects.toThrow(/private|loopback/);
+    expect(asked).toBe(0);
+  });
+
+  it('the production server reads the sign-in settings at startup: off without a relay address, relay-attested with one (saying so), and any malformed value stops it, saying which, as does an admin address that is not an address', async () => {
+    const RELAY_ADDRESS = '0x276e11d2229d3a96dc96356c15c03c7f83201ebc';
+    const HOST = 'identity.interego.xwisee.com';
+    const IMAGE = { WRD_TRUSTED_RELAY_ADDRESSES: RELAY_ADDRESS, WRD_IDENTITY_HOST: HOST, WRD_RELAY_URL: 'https://relay.interego.xwisee.com' };
+    const cases: ReadonlyArray<readonly [NodeJS.ProcessEnv, RegExp | null, RegExp | null]> = [
+      [{}, null, /sign-in with an Interego account: off \(WRD_TRUSTED_RELAY_ADDRESSES is empty\)/],
+      [{ ...IMAGE, WRD_ADMIN_DIDS: `did:web:${HOST}:users:u-pk-f2a9c751075a` }, null, new RegExp(`RELAY-ATTESTED, not user-held: requests the relay \\(${RELAY_ADDRESS}\\) signs act as the user their agent belongs to on ${HOST.replace(/\./g, '\\.')}.*refused \\(only this bridge's web UI; WRD_CHAT_AGENTS_DECIDE=1 lifts it\\); 1 admin DID\\(s\\)`)],
+      [{ ...IMAGE, WRD_CHAT_AGENTS_DECIDE: '1' }, null, /Decisive acts from chat agents: taken \(WRD_CHAT_AGENTS_DECIDE=1\)[\s\S]*web UI sign-in limits count each caller by the address that connects to the bridge \(no proxy hop trusted on loopback\); behind a reverse proxy every caller is the proxy's address, so set WRD_TRUST_PROXY_HOPS to the hops in front/],
+      [{ ...IMAGE, WRD_TRUSTED_RELAY_ADDRESSES: '' }, null, /sign-in with an Interego account: off/],
+      [{ ...IMAGE, WRD_TRUSTED_RELAY_ADDRESSES: '0x123' }, /did not start: WRD_TRUSTED_RELAY_ADDRESSES holds "0x123", which is not a 0x address/, null],
+      [{ WRD_TRUSTED_RELAY_ADDRESSES: RELAY_ADDRESS }, /did not start: WRD_TRUSTED_RELAY_ADDRESSES is set and WRD_IDENTITY_HOST is not/, null],
+      [{ ...IMAGE, WRD_IDENTITY_HOST: `https://${HOST}` }, /did not start: WRD_IDENTITY_HOST must be a bare host name/, null],
+      [{ ...IMAGE, WRD_RELAY_URL: 'relay.interego.xwisee.com' }, /did not start: WRD_RELAY_URL must be the relay's http\(s\) base URL/, null],
+      [{ ...IMAGE, WRD_ADMIN_DIDS: RELAY_ADDRESS }, /did not start: WRD_ADMIN_DIDS holds "0x276e11d2229d3a96dc96356c15c03c7f83201ebc", which is not did:web:identity\.interego\.xwisee\.com:users:<id>/, null],
+      [{ WRD_ADMIN_DIDS: `did:web:${HOST}:users:u-pk-f2a9c751075a` }, /did not start: WRD_ADMIN_DIDS is set and WRD_IDENTITY_HOST is not/, null],
+      [{ ...IMAGE, WRD_CHAT_AGENTS_DECIDE: 'yes' }, /did not start: WRD_CHAT_AGENTS_DECIDE is neither 1 nor 0/, null],
+      [{ ...IMAGE, WRD_RETIRED_RELAY_ADDRESSES: '0x00000000000000000000000000000000000000aa' }, null, /0 admin DID\(s\); 1 retired relay key\(s\) whose stored countersigns still re-verify/],
+      [{ ...IMAGE, WRD_RETIRED_RELAY_ADDRESSES: RELAY_ADDRESS }, /did not start: WRD_RETIRED_RELAY_ADDRESSES holds 0x276e11d2229d3a96dc96356c15c03c7f83201ebc, which WRD_TRUSTED_RELAY_ADDRESSES lists too/, null],
+      [{ ...IMAGE, WRD_RETIRED_RELAY_ADDRESSES: 'nope' }, /did not start: WRD_RETIRED_RELAY_ADDRESSES holds "nope", which is not a 0x address/, null],
+      // A user DID in the address list would be lower-cased into another user: it stops the bridge, pointing at WRD_ADMIN_DIDS.
+      [{ ...IMAGE, WRD_ADMIN_ADDRESSES: `0x${'ab'.repeat(20)}, did:web:${HOST}:users:u-pk-0404A0B0C0D0` }, new RegExp(`did not start: WRD_ADMIN_ADDRESSES holds "did:web:${HOST.replace(/\./g, '\\.')}:users:u-pk-0404A0B0C0D0", which is not a 0x address \\(40 hex characters\\); a user DID is an admin through WRD_ADMIN_DIDS`), null],
+      [{ WRD_ADMIN_ADDRESSES: `0x${'ab'.repeat(20)}` }, null, /sign-in with an Interego account: off/],
+      // The client address the web UI's sign-in limits count by: on loopback no proxy hop unless WRD_TRUST_PROXY_HOPS names how many stand in front; any other value stops the bridge.
+      [{ ...IMAGE, WRD_TRUST_PROXY_HOPS: '1' }, null, /web UI sign-in limits count each caller by the address 1 proxy hop\(s\) in front saw \(X-Forwarded-For; WRD_TRUST_PROXY_HOPS=1\)/],
+      [{ ...IMAGE, WRD_TRUST_PROXY_HOPS: 'yes' }, /did not start: WRD_TRUST_PROXY_HOPS is "yes"; set it to how many proxies in front of the bridge set X-Forwarded-For \(0 to 4\)/, null],
+      [{ WRD_TRUST_PROXY_HOPS: '5' }, /did not start: WRD_TRUST_PROXY_HOPS is "5"/, null],
+    ];
+    const runs = await startEach(cases.map(([env]) => env));
+    for (const [i, [env, stops, says]] of cases.entries()) {
+      const r = must(runs[i], 'run');
+      const label = JSON.stringify(env);
+      if (stops) expect([label, r.started, r.status, stops.test(r.stderr)]).toEqual([label, false, 1, true]);
+      else expect([label, r.started, /did not start/.test(r.stderr), (says ?? /./).test(r.stdout)]).toEqual([label, true, false, true]);
+    }
+    // The image bakes in the live relay's delegation address, the identity host and the relay, declares the rest, and bakes no admin DID.
+    const dockerfile = readFileSync(new URL('../../../deploy/Dockerfile.wrd-bridge', import.meta.url), 'utf8');
+    expect(dockerfile).toMatch(new RegExp(`^ENV WRD_TRUSTED_RELAY_ADDRESSES=${RELAY_ADDRESS}$`, 'm'));
+    expect(dockerfile).toMatch(/^ENV WRD_IDENTITY_HOST=identity\.interego\.xwisee\.com$/m);
+    expect(dockerfile).toMatch(/^ENV WRD_RELAY_URL=https:\/\/relay\.interego\.xwisee\.com$/m);
+    expect(dockerfile).toMatch(/^ENV WRD_ADMIN_DIDS=$/m);
+    expect(dockerfile).toMatch(/^ENV WRD_CHAT_AGENTS_DECIDE=$/m);
+    expect(dockerfile).toMatch(/^ENV WRD_RETIRED_RELAY_ADDRESSES=$/m);
+    expect(dockerfile).toMatch(/ROTATING THE RELAY KEY/);
+    expect(dockerfile).toMatch(/RELAY-ATTESTED, NOT USER-HELD/);
+  }, 300_000);
+
   it('the web UI, run in a DOM against a demo-composed bridge, signs one read per signer and reuses it, sending it only in a POST body, never in a URL; a signer with no role is refused and can switch back; with nothing to sign it meets the 401', async () => {
     const pod = memoryPod();
     const clock = demoClock();
@@ -971,6 +1074,14 @@ describe('work-redesign offline demo and web UI', () => {
     expect(server).toMatch(/if \(host === '::' && \(err as NodeJS\.ErrnoException\)\.code === 'EAFNOSUPPORT'\) \{ listen\('0\.0\.0\.0'\); return; \}/);
     // The first statement of the hook, so the guard stands in front of the ontology, the UI and every route the factory mounts after it.
     expect(server).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(loopback\) a\.use\(hostAllowlistGuard\(servedHostNames\(PORT, base\)\)\);\n/);
+    // Off loopback (the image, behind Railway's edge) it trusts one proxy hop, so the sign-in routes' per-address limits count the client, not the edge; on loopback none, so no caller names its own address,
+    // unless WRD_TRUST_PROXY_HOPS (0 to 4) says how many stand in front, as a reverse proxy on the same machine does.
+    expect(server).toMatch(/^const proxyHops = proxyHopsValue !== undefined \? Number\(proxyHopsValue\) : loopback \? 0 : 1;$/m);
+    expect(server).toMatch(/^const proxyHopsValue = env\('WRD_TRUST_PROXY_HOPS'\);$/m);
+    expect(server).toMatch(/if \(proxyHopsValue !== undefined && !\/\^\[0-4\]\$\/\.test\(proxyHopsValue\)\) \{\n[^\n]*did not start: WRD_TRUST_PROXY_HOPS is [^\n]*\n\s*process\.exit\(1\);/);
+    expect(server).toMatch(/^\s*if \(proxyHops > 0\) a\.set\('trust proxy', proxyHops\);$/m);
+    expect(server.match(/trust proxy/g)).toHaveLength(1);
+    expect(demo).not.toMatch(/trust proxy/);
     expect(demo).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*a\.use\(hostAllowlistGuard\(servedHostNames\(port, base\)\)\);\n\s*attachUi\(a, \{ base \}\);/);
     // Both parse every query parameter, so the GET template's signed-read check sees past the default parser's first 1000 pairs.
     for (const src of [server, demo]) expect(/middleware: \(a\) => \{\n([\s\S]*?)\n\s*\},\n/.exec(src)?.[1]).toMatch(/^\s*parseEveryQueryPair\(a\);$/m);

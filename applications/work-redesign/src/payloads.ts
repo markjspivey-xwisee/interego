@@ -19,7 +19,7 @@ import {
 } from './ontology.js';
 import { CLASSIFICATION_QUESTIONS, LIMITS } from './work.js';
 import { MAX_INPUT, RUN_ALTERNATIVES, STATE_FIELDS } from './valuation.js';
-import { ENTITY_IRI_PATTERN, type EnvelopeIntent } from './records.js';
+import { ENTITY_IRI_PATTERN, USER_PRINCIPAL_PATTERN, type EnvelopeIntent } from './records.js';
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
 
@@ -33,6 +33,11 @@ const keyed = (values: JsonSchema, description: string): JsonSchema => ({ type: 
 
 const iriOf = (what: string): JsonSchema => ({ type: 'string', pattern: ENTITY_IRI_PATTERN, description: `the ${what} IRI (urn:wrd:…), from wrd.read_records` });
 const ADDRESS: JsonSchema = { type: 'string', pattern: '^0x[0-9a-fA-F]{40}$', description: 'a 0x address registered on the pod' };
+/** A person: the 0x address of a key they hold, or their Interego user DID (relay-attested: they sign in with their Interego account and hold no key). */
+const PERSON: JsonSchema = {
+  type: 'string', pattern: `^(?:0x[0-9a-fA-F]{40}|${USER_PRINCIPAL_PATTERN})$`,
+  description: 'a person registered on the pod: a 0x address, or an Interego user DID did:web:<identity host>:users:<id>',
+};
 const HEX64: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 const HEAD = {
   descriptorUrl: text('the head you read: its descriptorUrl, from wrd.read_records'),
@@ -68,7 +73,7 @@ const CAPTURE_TASK = (withQuotes: boolean): JsonSchema => obj({
   name: text('verb first', LIMITS.taskName),
   description: text('', LIMITS.taskDescription),
   currentLevel: oneOf(ALLOCATION_LEVELS.filter((l) => l !== 'agent-acts-within-grant'), 'who does it today (within-grant work only comes from a decision)'),
-  personAddress: ADDRESS,
+  personAddress: PERSON,
   agentAddress: ADDRESS,
   taskKind: text('a task kind slug registered on the pod'),
   externalTaskTerm: text('optional absolute IRI of a published task statement'),
@@ -101,9 +106,9 @@ const FIELDS: Readonly<Record<EnvelopeIntent, { readonly properties: Record<stri
     description: 'Admin only. At least one of entries, taskKinds, podPolicy.',
     properties: {
       entries: list(obj({
-        address: ADDRESS, roles: list(oneOf(REGISTRY_ROLES, ''), 0, 4, 'empty removes the address'), label: text('', 80), softwareAgent: { type: 'boolean' },
+        address: { ...PERSON, description: 'the key (0x address) or, for a person who signs in with their Interego account, their user DID; agents are always a key' }, roles: list(oneOf(REGISTRY_ROLES, ''), 0, 4, 'empty removes the address'), label: text('', 80), softwareAgent: { type: 'boolean' },
         personRef: text("people only: the admin's stable reference for the person behind this key", 80),
-        principal: { ...ADDRESS, description: 'agents only: the registered person accountable for the agent' }, model: text('agents only: the model the agent runs on', 120),
+        principal: { ...PERSON, description: 'agents only: the registered person accountable for the agent (an address or a user DID)' }, model: text('agents only: the model the agent runs on', 120),
       }, ['address', 'roles']), 0, 50),
       taskKinds: list(obj({ slug: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,62}$' }, label: text('', 80), definition: text('one sentence', 300), retire: { type: 'boolean', enum: [true] } }, ['slug']), 0, 100),
       podPolicy: { type: ['object', 'null'], description: 'tightens the published policy: maxLevel, floor, minSamples, minHumanConfirmations, minDistinctConfirmers; null clears' },
@@ -126,7 +131,7 @@ const FIELDS: Readonly<Record<EnvelopeIntent, { readonly properties: Record<stri
     properties: {
       op: oneOf(['revise', 'add', 'retire'], ''), taskIri: iriOf('task (revise, retire)'), workflowIri: iriOf('workflow (add)'), ...HEAD,
       name: text('', LIMITS.taskName), description: text('', LIMITS.taskDescription), currentLevel: oneOf(ALLOCATION_LEVELS, ''),
-      personAddress: { type: ['string', 'null'], description: 'a 0x address, or null to remove' }, agentAddress: { type: ['string', 'null'], description: 'a 0x address, or null to remove' },
+      personAddress: { type: ['string', 'null'], description: 'a 0x address or an Interego user DID, or null to remove' }, agentAddress: { type: ['string', 'null'], description: 'a 0x address, or null to remove' },
       taskKind: text(''), externalTaskTerm: text(''), sourceQuotes: list(text('', LIMITS.quoteChars), 1, LIMITS.quotesPerTask),
       task: CAPTURE_TASK(false), note: NOTE, why: text('retire: why', LIMITS.note),
     },
@@ -150,7 +155,7 @@ const FIELDS: Readonly<Record<EnvelopeIntent, { readonly properties: Record<stri
     description: 'A registered operator (person). Every task of the workflow must be classified; an agent named on a task needs its classification ratified.',
     properties: {
       workflowIri: iriOf('workflow'), title: text('', LIMITS.workflowTitle),
-      changes: list(obj({ taskIri: iriOf('task'), proposedLevel: oneOf(ALLOCATION_LEVELS, ''), personAddress: ADDRESS, agentAddress: ADDRESS, probes: list(PROBE, 1, 5, 'Emergent work only') }, ['taskIri', 'proposedLevel']), 1, LIMITS.tasks),
+      changes: list(obj({ taskIri: iriOf('task'), proposedLevel: oneOf(ALLOCATION_LEVELS, ''), personAddress: PERSON, agentAddress: ADDRESS, probes: list(PROBE, 1, 5, 'Emergent work only') }, ['taskIri', 'proposedLevel']), 1, LIMITS.tasks),
     },
     required: ['workflowIri', 'title', 'changes'],
   },
@@ -222,13 +227,16 @@ const FIELDS: Readonly<Record<EnvelopeIntent, { readonly properties: Record<stri
 export const ENVELOPE_INTENTS: readonly EnvelopeIntent[] = Object.keys(FIELDS) as EnvelopeIntent[];
 export const isEnvelopeIntent = (v: unknown): v is EnvelopeIntent => typeof v === 'string' && (ENVELOPE_INTENTS as readonly string[]).includes(v);
 
+/** The other way to sign, for a person who signs in with their Interego account and holds no key. */
+export const RELAY_SIGNING = 'Or, signed in to Interego (Claude, ChatGPT, this bridge\'s web UI), ask the relay to sign it: act with sign_payload: true and this payload; the relay sends {_signed_payload, _signature}, carrying podUrl as pod_url and its own timestamp in place of issuedAt, and the person acting is the user the signed-in agent belongs to (relay-attested, not a key they hold).';
+
 /** The JSON Schema of one intent's payload. */
 export function payloadSchema(intent: EnvelopeIntent): JsonSchema {
   const f = FIELDS[intent];
   return {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
     title: `${intent} payload`,
-    description: `${f.description} Sign EIP-191 personal_sign over canonicalJson(payload) (keys sorted recursively, arrays in order) and send {payload, signature}.`,
+    description: `${f.description} Sign EIP-191 personal_sign over canonicalJson(payload) (keys sorted recursively, arrays in order) and send {payload, signature}. ${RELAY_SIGNING}`,
     type: 'object',
     properties: { intent: { const: intent }, ...COMMON, ...f.properties },
     required: ['intent', 'podUrl', 'issuedAt', 'nonce', ...f.required],
