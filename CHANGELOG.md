@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-23 — Provisional Play uses internal bootstrap writes and durable JSON counters
+
+The relay now translates a provider-verified public pod URL to this deployment's internal store before bootstrapping it. The mutex and bootstrap cache use the internal spelling while the public identity remains unchanged. Previously Play reached the public storage gate without a bearer and its profile writes returned 401.
+
+Relay Play control records now request and persist opaque JSON instead of treating uncontexted objects as JSON-LD. A recognized empty legacy Turtle exchange budget with an ETag is migrated by CAS as the second attempt: its original first write consumed one attempt, and every subsequent legacy read failed before incrementing. Other malformed records fail closed. The lifetime exchange cap remains 256, and the three tool reservations retain their existing three-attempt bound. Focused tests cover internal routing, preserved public identity, CAS migration races, invalid records, unchanged limits, and JSON media on durable tool counters.
+
 ## 2026-10-23 — Work-redesign: an affordance manifest the relay can parse
 
 The work-redesign bridge's served affordance manifest named the store its reads come from as `<pod>/.well-known/context-graphs`. The shared serializer writes a store straight into an IRI, so the manifest held `<<pod>/…>`, which is not Turtle. Every route answered, but the relay's `act` could neither parse the manifest nor slice an affordance out of it. That left every work-redesign action unreachable from Claude and ChatGPT, signed or not. The store is now named by an IRI, as Foxxi's are. A test in `applications/work-redesign/tests/demo-and-ui.test.ts` parses the served manifest whole with the core parser and resolves every action from it the way `act` does. It fails on the old manifest with the same parse error the relay hit.
