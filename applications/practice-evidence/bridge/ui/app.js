@@ -14,7 +14,8 @@
 //   · interego mode: the person signs in with their Interego account on the relay's own sign-in
 //     page (PKCE S256, a random state checked on return), and the relay signs every act for the
 //     agent of that session, through this bridge's ui/relay/sign (relay-attested, not user-held).
-//     The account token is kept in sessionStorage only, and sent only to ui/relay/sign.
+//     The relay's OAuth access token for that sign-in (it lasts about an hour) is kept in
+//     sessionStorage only, forgotten when it expires, and sent only to ui/relay/sign.
 // The page never holds a private key. Every request it makes goes to this bridge's own origin.
 //
 // Untrusted text (everything that came from a pod, a person or a model) is rendered through
@@ -56,7 +57,7 @@ const S = {
   needPod: false,
   bridge: null,                 // list_scenarios' `bridge`: routes, key kind, platform address, demo signing
   mode: 'paste',                // 'demo' | 'wallet' | 'paste' | 'interego'
-  interego: null,               // { bearer, at, agentId, principal } while signed in with an Interego account
+  interego: null,               // { accessToken, at, expiresAt, agentId, principal } while signed in with an Interego account
   demoRoles: [],
   role: 'learner',
   account: null,
@@ -345,7 +346,13 @@ function pasteSign(payload) {
 const SESSION_KEY = 'pev.interego.session';
 const PENDING_KEY = 'pev.interego.pending';
 const PENDING_MS = 15 * 60 * 1000;
+/** The longest this tab keeps a sign-in, whatever it is told: the relay's access tokens last an hour. */
+const SIGN_IN_MAX_MS = 60 * 60 * 1000;
 const CALLBACK_PATH = /\/ui\/oauth\/callback$/;
+const SIGN_IN_ENDED = 'Your Interego sign-in has ended: the relay\'s access token this tab held lasts about an hour, and the tab has forgotten it. Sign in again to go on.';
+/** The timer that forgets the sign-in at its expiry, and whether the page is up to say so. */
+let signInTimer = null;
+let pageReady = false;
 
 function sessionGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
 function sessionPut(k, v) { try { sessionStorage.setItem(k, v); return true; } catch { return false; } }
@@ -439,35 +446,76 @@ async function finishInteregoSignIn() {
       method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ code, code_verifier: pending.verifier, state }),
     });
-    if (typeof r.bearer !== 'string' || !r.bearer) return note('Interego sign-in did not finish: this bridge gave back no account token.');
+    const expiresIn = Number(r.expiresIn);
+    if (typeof r.accessToken !== 'string' || !r.accessToken || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+      return note('Interego sign-in did not finish: this bridge gave back no access token.');
+    }
     const at = Date.now();
-    if (!sessionPut(SESSION_KEY, JSON.stringify({ bearer: r.bearer, at }))) return note('This browser keeps no session storage for this page, so the sign-in cannot be kept.');
-    S.interego = { bearer: r.bearer, at, agentId: null, principal: null };
+    const kept = { accessToken: r.accessToken, at, expiresAt: at + Math.min(expiresIn * 1000, SIGN_IN_MAX_MS) };
+    if (!sessionPut(SESSION_KEY, JSON.stringify(kept))) return note('This browser keeps no session storage for this page, so the sign-in cannot be kept.');
+    keepInterego(kept);
     return null;
   } catch (e) {
     return refusalBox(e);
   }
 }
 
-/** A sign-in kept in this tab, if any. */
+/** Hold a sign-in in this tab until its expiry, when a timer forgets it. */
+function keepInterego(k) {
+  S.interego = { accessToken: k.accessToken, at: k.at, expiresAt: k.expiresAt, agentId: null, principal: null };
+  if (signInTimer !== null) clearTimeout(signInTimer);
+  signInTimer = setTimeout(() => { signInTimer = null; interegoEnded(); }, Math.max(0, k.expiresAt - Date.now()));
+}
+
+/** A sign-in kept in this tab, if any. One past its expiry, or claiming to last past an hour from now, is forgotten here. */
 function restoreInteregoSession() {
   const k = sessionJson(SESSION_KEY);
-  if (k && typeof k.bearer === 'string' && k.bearer) S.interego = { bearer: k.bearer, at: Number(k.at) || 0, agentId: null, principal: null };
+  if (!k) return null;
+  const expiresAt = Number(k.expiresAt);
+  const now = Date.now();
+  if (typeof k.accessToken !== 'string' || !k.accessToken || !Number.isFinite(expiresAt) || expiresAt > now + SIGN_IN_MAX_MS) {
+    sessionDrop(SESSION_KEY);
+    return null;
+  }
+  if (expiresAt <= now) {
+    sessionDrop(SESSION_KEY);
+    return h('div', { class: 'refusal', role: 'alert' }, h('p', { text: SIGN_IN_ENDED }));
+  }
+  keepInterego({ accessToken: k.accessToken, at: Number(k.at) || 0, expiresAt });
+  return null;
+}
+
+/** The sign-in reached its expiry: forget it and, once the page is up, say so. */
+function interegoEnded() {
+  if (!S.interego) return;
+  forgetInterego();
+  if (!pageReady) return;
+  renderHeader();
+  route();
+  clear($('#signing')).append(h('div', { class: 'refusal', role: 'alert' }, h('p', { text: SIGN_IN_ENDED })));
 }
 
 /** Have the relay sign one unsigned act, through this bridge (the page reaches nothing else). */
 async function relaySign(payload) {
   const i = S.interego;
-  if (!i || !i.bearer) throw new Error('Sign in with your Interego account first.');
+  if (!i || !i.accessToken) throw new Error('Sign in with your Interego account first.');
+  if (Date.now() >= i.expiresAt) {
+    forgetInterego();
+    renderHeader();
+    throw new Error(SIGN_IN_ENDED);
+  }
   let r;
   try {
     r = await uiCall('ui/relay/sign', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${i.bearer}` },
+      headers: { 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${i.accessToken}` },
       body: JSON.stringify({ payload }),
     });
   } catch (e) {
-    if (e instanceof Refused && (e.code === 'interego-sign-in-expired' || e.code === 'interego-bearer-missing')) forgetInterego();
+    if (e instanceof Refused && (e.code === 'interego-sign-in-expired' || e.code === 'interego-bearer-missing')) {
+      forgetInterego();
+      renderHeader();
+    }
     throw e;
   }
   // Which agent the relay signed for, read from what it signed, not supposed.
@@ -490,8 +538,9 @@ async function confirmInteregoSignIn() {
   renderHeader();
 }
 
-/** Drop the sign-in from this tab: the token, the agent and every read signed with it. */
+/** Drop the sign-in from this tab: the token, its timer, the agent and every read signed with it. */
 function forgetInterego() {
+  if (signInTimer !== null) { clearTimeout(signInTimer); signInTimer = null; }
   sessionDrop(SESSION_KEY);
   sessionDrop(PENDING_KEY);
   S.interego = null;
@@ -499,11 +548,21 @@ function forgetInterego() {
   S.readEnvelopes.clear();
 }
 
+/** What signing out does and does not do, in plain words: it revokes nothing at the relay. */
+function signedOutWords(expiresAt) {
+  const until = Number.isFinite(expiresAt) && expiresAt > Date.now() ? ` at ${new Date(expiresAt).toLocaleTimeString()}` : '';
+  return 'Signed out of this tab: it no longer holds your sign-in and will send it nowhere. Nothing was revoked. '
+    + `The Interego relay offers no way to revoke the access token this tab held, so the relay accepts it until it expires${until}, an hour at most after you signed in, `
+    + 'and until then whoever has a copy can call the relay\'s tools as you. This bridge carried it on every act it signed and was trusted with it for that hour; it keeps no copy. '
+    + 'Your Interego account, your passkey and your other sign-ins are unchanged.';
+}
+
 function signOutInterego() {
+  const expiresAt = S.interego ? S.interego.expiresAt : Number.NaN;
   forgetInterego();
-  clear($('#signing'));
   renderHeader();
   route();
+  clear($('#signing')).append(h('div', { class: 'panel', id: 'interego-signed-out', role: 'status' }, h('p', { text: signedOutWords(expiresAt) })));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -632,7 +691,8 @@ function renderHeader() {
     // Where a wallet shows its address: the DID a person gives an admin to be given a role here.
     bar.append(h('div', { class: 'row' }, h('label', { class: 'inline' }, 'Your Interego DID, for an admin to give you a role: ',
       h('input', { type: 'text', id: 'interego-did', readOnly: true, value: S.interego.principal, size: 60, 'aria-label': 'Your Interego DID' }))));
-    bar.append(muted('Relay-attested, not user-held: the Interego relay signs each act for this agent and this bridge reads it as you. Your account token passes through this bridge on every act it signs.'));
+    const until = new Date(S.interego.expiresAt).toLocaleTimeString();
+    bar.append(muted(`Relay-attested, not user-held: the Interego relay signs each act for this agent and this bridge reads it as you. This tab holds the relay's access token for this sign-in until ${until} (an hour at most): it passes through this bridge on every act it signs, and while it lasts whoever holds it can call the relay's tools as you.`));
   }
 
   const key = h('input', { type: 'password', autocomplete: 'off', placeholder: 'API key', value: S.byok.key, 'aria-label': 'Your model key', oninput: (e) => { S.byok.key = e.target.value; } });
@@ -1683,7 +1743,7 @@ async function loadBridge() {
 
 async function main() {
   // The relay's answer to a sign-in arrives here; the page turns itself back into /ui first.
-  const signInNote = CALLBACK_PATH.test(location.pathname) ? await finishInteregoSignIn() : (restoreInteregoSession(), null);
+  const signInNote = CALLBACK_PATH.test(location.pathname) ? await finishInteregoSignIn() : restoreInteregoSession();
   try {
     await loadManifest();
     await detectSigning();
@@ -1695,6 +1755,7 @@ async function main() {
   if (S.interego && interegoOffered()) S.mode = 'interego';
   else if (S.interego) forgetInterego();
   renderHeader();
+  pageReady = true;
   if (signInNote) $('#signing').append(signInNote);
   window.addEventListener('hashchange', route);
   if (S.mode === 'interego') await confirmInteregoSignIn();

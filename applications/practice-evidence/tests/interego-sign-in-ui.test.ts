@@ -7,10 +7,13 @@
  * that behaves as deploy/mcp-relay does where this flow touches it: its authorization server
  * metadata (CIMD advertised), Client ID Metadata Documents read from the client's own URL (the
  * client_name slugified into the agent's slug, as surfaceAgentFromClient does), dynamic
- * registration, PKCE S256 at the token endpoint, /identity-token, and /tool/sign_request, which
- * signs as handleSignRequest does (the caller's fields with underscore and reserved keys dropped,
- * podUrl kept as pod_url, then the session's agent_id, the caller's own pod as subject_pod_url and
- * the relay's timestamp; EIP-191 over sha256:<hex>) with a generated relay key.
+ * registration, PKCE S256 at the token endpoint (an access token that lasts an hour), and POST /mcp,
+ * which takes that access token as a plain Bearer, serves a tools/call with no initialize, answers
+ * as JSON or as Server-Sent Events, and runs sign_request as handleSignRequest does (the caller's
+ * fields with underscore and reserved keys dropped, podUrl kept as pod_url, then the session's
+ * agent_id, the caller's own pod as subject_pod_url and the relay's timestamp; EIP-191 over
+ * sha256:<hex>) with a generated relay key. It also answers /identity-token and /tool/sign_request
+ * as the relay does, so that a bridge calling either would work, and the tests assert it never does.
  *
  * A browser navigation is the one thing jsdom cannot do: the page's location.assign to the relay is
  * reported by jsdom as "not implemented" and read here from the link the page shows beside it, and
@@ -59,7 +62,14 @@ const b64url = (b: Buffer): string => b.toString('base64url');
 //  The relay, as an in-process fetch
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-interface RelayCall { readonly method: string; readonly url: string; readonly authorization: string | null; readonly body: string }
+interface RelayCall {
+  readonly method: string; readonly url: string; readonly authorization: string | null; readonly body: string;
+  readonly accept: string | null; readonly contentType: string | null; readonly mcpSession: string | null;
+}
+/** What the stubbed relay's /mcp answers next, in place of a signed request. */
+type McpFault = 'rpc-error' | 'is-error' | 'error-text' | 'scope' | 'other-id';
+/** Every stubbed relay this file makes, so the last test can look at every call any bridge made. */
+const allRelays: { readonly calls: readonly RelayCall[] }[] = [];
 
 /** The identity host's agents, minted as the relay mints them at sign-in (`<surface>-<userId>`). */
 const agentDocs = new Map<string, unknown>();
@@ -68,21 +78,90 @@ const fetchDidDocument = async (url: string): Promise<unknown> => {
   return agentDocs.get(url);
 };
 
-function stubRelay(o: { readonly cimd: boolean }) {
+function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; readonly grantScope?: string }) {
   const calls: RelayCall[] = [];
   const registered = new Map<string, Out>();
   const codes = new Map<string, { clientId: string; redirectUri: string; challenge: string; resource: string; scope: string; slug: string }>();
-  const access = new Map<string, string>();
+  /** Access tokens the token endpoint issued, each with its agent, its identity-server token and when it expires. */
+  const access = new Map<string, { slug: string; idToken: string; expiresAt: number }>();
   const identity = new Map<string, { slug: string }>();
+  const issued: string[] = [];
+  const refreshIssued: string[] = [];
+  /** The JSON-RPC requests /mcp was sent, in order. */
+  const rpcs: Out[] = [];
+  const state = { answerAs: 'sse' as 'sse' | 'json', faults: [] as McpFault[] };
   const json = (status: number, body: unknown, headers: Record<string, string> = {}): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
+
+  /** sign_request as handleSignRequest runs it, for the session's agent, answered as the relay's tool text. */
+  async function signRequest(slug: string, args: Out): Promise<string> {
+    const reserved = new Set(['agent_id', 'timestamp', '_signature', '_signed_payload', 'subject_pod_url', 'payload', 'pod_name', 'owner_webid', 'owner_name']);
+    const p = (args['payload'] ?? {}) as Out;
+    const safe: Out = Object.fromEntries(Object.entries(p).filter(([k]) => !k.startsWith('_') && !reserved.has(k)));
+    const asked = p['pod_url'] ?? p['podUrl'];
+    delete safe['pod_url'];
+    delete safe['podUrl'];
+    if (typeof asked === 'string') safe['pod_url'] = asked;
+    const agentId = `did:web:${IDH}:agents:${slug}`;
+    const sp = JSON.stringify({ ...safe, agent_id: agentId, subject_pod_url: `https://pods.ui.test/${USER}/`, timestamp: new Date().toISOString() });
+    return JSON.stringify({
+      _signature: await signMessageRaw(RELAY_KEY, `sha256:${sha256Hex(sp)}`), _signed_payload: sp, signed_as: agentId,
+      signatureAuthority: 'relay', signingNote: 'This is a relay-mediated signature.', anchor: `did:ethr:${RELAY_KEY.address}`,
+      hint: 'Pass this object as the `payload` of `act` on a rev-196 signed-request affordance.',
+    });
+  }
+
+  /** POST /mcp as the relay serves it: a plain Bearer access token, then a stateless tools/call. */
+  async function mcp(bearer: string, headers: Headers, body: string): Promise<Response> {
+    const who = access.get(bearer);
+    if (!who || who.expiresAt <= Date.now()) {
+      return json(401, { error: 'invalid_token', error_description: 'Invalid or expired token' }, { 'www-authenticate': 'Bearer error="invalid_token"' });
+    }
+    const accept = headers.get('accept') ?? '';
+    if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
+      return json(406, { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Not Acceptable: Client must accept both application/json and text/event-stream' } });
+    }
+    if (!(headers.get('content-type') ?? '').startsWith('application/json')) return json(415, { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Unsupported Media Type' } });
+    const rpc = JSON.parse(body) as Out;
+    rpcs.push(rpc);
+    const id = rpc['id'];
+    const params = (rpc['params'] ?? {}) as Out;
+    let message: Out;
+    if (rpc['method'] !== 'tools/call') {
+      message = { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${String(rpc['method'])}` } };
+    } else if (params['name'] !== 'sign_request') {
+      message = { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Unknown tool: ${String(params['name'])}` }], isError: true } };
+    } else {
+      const fault = state.faults.shift();
+      // The relay strips reserved wire fields and injects the session's identity itself.
+      const args = Object.fromEntries(Object.entries((params['arguments'] ?? {}) as Out).filter(([k]) => !k.startsWith('_')));
+      if (fault === 'rpc-error') message = { jsonrpc: '2.0', id, error: { code: -32603, message: `Internal error for the bearer ${bearer}` } };
+      else if (fault === 'is-error') message = { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: `Error: pod bootstrap failed for ${bearer}` }], isError: true } };
+      else if (fault === 'scope') {
+        message = { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify({ error: 'insufficient_scope', code: 403, requiredScope: ['mcp', 'mcp:write'], grantedScope: ['mcp:read'] }) }], isError: true } };
+      } else if (fault === 'error-text') {
+        const text = JSON.stringify({ error: 'sign_request: signing failed: the delegation key is not loaded' });
+        message = { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], structuredContent: JSON.parse(text) as Out } };
+      } else {
+        const text = await signRequest(who.slug, args);
+        message = { jsonrpc: '2.0', id: fault === 'other-id' ? `${String(id)}-not-this-one` : id, result: { content: [{ type: 'text', text }], structuredContent: JSON.parse(text) as Out } };
+      }
+    }
+    if (state.answerAs === 'json') return json(200, message);
+    // As the streamable HTTP transport answers: events, a notification before the answer.
+    const note = { jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data: 'signing' } };
+    return new Response(`event: message\ndata: ${JSON.stringify(note)}\n\nevent: message\ndata: ${JSON.stringify(message)}\n\n`, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  }
 
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const method = (init?.method ?? 'GET').toUpperCase();
     const headers = new Headers(init?.headers);
     const body = typeof init?.body === 'string' ? init.body : '';
-    calls.push({ method, url, authorization: headers.get('authorization'), body });
+    calls.push({
+      method, url, authorization: headers.get('authorization'), body,
+      accept: headers.get('accept'), contentType: headers.get('content-type'), mcpSession: headers.get('mcp-session-id'),
+    });
     const u = new URL(url);
     if (u.origin !== RELAY) return json(404, { error: 'not this relay' });
     const bearer = (headers.get('authorization') ?? '').replace(/^Bearer /, '');
@@ -111,37 +190,37 @@ function stubRelay(o: { readonly cimd: boolean }) {
           return json(400, { error: 'invalid_grant', error_description: 'code_verifier does not match the challenge' });
         }
         const token = randomBytes(32).toString('hex');
+        const expiresIn = o.expiresIn ?? 3600;
         const idToken = `cg2_${b64url(Buffer.from(JSON.stringify({ userId: USER, agentId: c.slug })))}.${b64url(randomBytes(32))}`;
-        access.set(token, idToken);
+        access.set(token, { slug: c.slug, idToken, expiresAt: Date.now() + expiresIn * 1000 });
         identity.set(idToken, { slug: c.slug });
-        return json(200, { access_token: token, token_type: 'Bearer', expires_in: 3600, refresh_token: randomBytes(32).toString('hex'), scope: c.scope });
+        issued.push(token);
+        const refresh = randomBytes(32).toString('hex');
+        refreshIssued.push(refresh);
+        return json(200, { access_token: token, token_type: 'Bearer', expires_in: expiresIn, refresh_token: refresh, scope: o.grantScope ?? c.scope });
       }
+      case 'POST /mcp':
+        return mcp(bearer, headers, body);
+      // The relay's other two ways in, answered as it answers them: this bridge must use neither.
       case 'GET /identity-token': {
-        const idToken = access.get(bearer);
-        return idToken ? json(200, { identityToken: idToken, expiresAt: 0, userId: USER }) : json(401, { error: 'Invalid access token' });
+        const a = access.get(bearer);
+        return a ? json(200, { identityToken: a.idToken, expiresAt: 0, userId: USER }) : json(401, { error: 'Invalid access token' });
       }
       case 'POST /tool/sign_request': {
         const who = identity.get(bearer);
         if (!who) return json(401, { error: 'Authentication required for write operations', detail: 'Invalid token' });
-        const args = JSON.parse(body) as Out;
-        const reserved = new Set(['agent_id', 'timestamp', '_signature', '_signed_payload', 'subject_pod_url', 'payload', 'pod_name', 'owner_webid', 'owner_name']);
-        const p = (args['payload'] ?? {}) as Out;
-        const safe: Out = Object.fromEntries(Object.entries(p).filter(([k]) => !k.startsWith('_') && !reserved.has(k)));
-        const asked = p['pod_url'] ?? p['podUrl'];
-        delete safe['pod_url'];
-        delete safe['podUrl'];
-        if (typeof asked === 'string') safe['pod_url'] = asked;
-        const agentId = `did:web:${IDH}:agents:${who.slug}`;
-        const sp = JSON.stringify({ ...safe, agent_id: agentId, subject_pod_url: `https://pods.ui.test/${USER}/`, timestamp: new Date().toISOString() });
-        return json(200, {
-          _signature: await signMessageRaw(RELAY_KEY, `sha256:${sha256Hex(sp)}`), _signed_payload: sp, signed_as: agentId,
-          signatureAuthority: 'relay', signingNote: 'This is a relay-mediated signature.', anchor: `did:ethr:${RELAY_KEY.address}`,
-        });
+        return json(200, JSON.parse(await signRequest(who.slug, JSON.parse(body) as Out)) as Out);
       }
       default:
         return json(404, { error: `no route ${method} ${u.pathname}` });
     }
   }) as typeof fetch;
+
+  /** The relay stops taking an access token, as it does once the token's hour is over. */
+  function expire(token: string): void {
+    const a = access.get(token);
+    if (a) a.expiresAt = 0;
+  }
 
   /**
    * The person signs in on the relay's own page (their passkey): the relay reads the client (its
@@ -178,7 +257,9 @@ function stubRelay(o: { readonly cimd: boolean }) {
     return back.href;
   }
 
-  return { fetchFn, calls, registered, signIn };
+  const stub = { fetchFn, calls, registered, issued, refreshIssued, rpcs, signIn, expire, state };
+  allRelays.push(stub);
+  return stub;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -214,6 +295,8 @@ interface Page {
   readonly w: JSDOM['window'];
   readonly errors: string[];
   readonly asked: string[];
+  /** Timers of a minute or more the page set (the sign-in's expiry), held here to be fired by the test. */
+  readonly long: { readonly ms: number; readonly fire: () => void }[];
   until<T>(fn: () => T | null | undefined | false, what: string, ms?: number): Promise<T>;
   q(sel: string): HTMLElement | null;
   text(sel: string): string;
@@ -237,11 +320,27 @@ async function openPage(l: TestListener, path: string, session: Record<string, s
   };
   w['TextEncoder'] = TextEncoder;
   Object.defineProperty(w.crypto, 'subtle', { value: globalThis.crypto.subtle });
+  // A timer of a minute or more is held, not run: the test fires the sign-in's expiry itself.
+  const long: { ms: number; fire: () => void }[] = [];
+  const held = new Set<number>();
+  let nextHeld = 1_000_000_000;
+  const realSet = w.setTimeout.bind(w);
+  const realClear = w.clearTimeout.bind(w);
+  Object.assign(w, {
+    setTimeout: (fn: unknown, ms?: number, ...a: unknown[]): number => {
+      if (typeof fn !== 'function' || !(Number(ms) >= 60_000)) return realSet(fn as () => void, ms, ...a);
+      const id = nextHeld++;
+      held.add(id);
+      long.push({ ms: Number(ms), fire: () => { if (held.delete(id)) (fn as (...x: unknown[]) => void)(...a); } });
+      return id;
+    },
+    clearTimeout: (id?: number): void => { if (id !== undefined && held.delete(id)) return; realClear(id); },
+  });
   for (const [k, v] of Object.entries(session)) w.sessionStorage.setItem(k, v);
   w.eval(await (await fetch(`${l.base}/ui/app.js`)).text());
   const d = w.document;
   return {
-    w, errors, asked,
+    w, errors, asked, long,
     async until<T>(fn: () => T | null | undefined | false, what: string, ms = 60_000): Promise<T> {
       const t0 = Date.now();
       for (;;) {
@@ -280,6 +379,37 @@ const nonce = (): string => `signin-ui-nonce-${String(++nonceN).padStart(8, '0')
 async function direct(tool: string, w: Wallet, action: string, fields: Out = {}): Promise<Out> {
   return (await handlers[tool]!({ envelope: await signEnvelope(w, { v: 1, action, issuedAt: new Date().toISOString(), nonce: nonce(), podUrl: DEMO_POD, ...fields }) })) as Out;
 }
+
+/**
+ * A sign-in finished without a page: the person signs in at the relay (the CIMD client of an https
+ * deployment), and the code goes to the bridge's exchange. The exchange's answer.
+ */
+async function exchangeDirect(l: TestListener, stub: ReturnType<typeof stubRelay>, headers: Record<string, string> = {}): Promise<{ status: number; json: Out }> {
+  const verifier = b64url(randomBytes(32));
+  const state = b64url(randomBytes(24));
+  const authorize = new URL(`${RELAY}/authorize`);
+  for (const [k, v] of Object.entries({
+    response_type: 'code', client_id: `${DEPLOY}/ui/oauth/client.json`, redirect_uri: `${DEPLOY}/ui/oauth/callback`,
+    code_challenge: b64url(createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256', state, scope: 'mcp', resource: `${RELAY}/`,
+  })) authorize.searchParams.set(k, v);
+  const code = new URL(await stub.signIn(authorize.href, (u) => u.replace(DEPLOY, l.base))).searchParams.get('code') ?? '';
+  const r = await fetch(`${l.base}/ui/oauth/exchange`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ code, code_verifier: verifier, state }),
+  });
+  return { status: r.status, json: (await r.json()) as Out };
+}
+
+/** One act's payload signed through the bridge's /ui/relay/sign with `token`. */
+async function signThrough(l: TestListener, token: string, headers: Record<string, string> = {}): Promise<{ status: number; json: Out }> {
+  const r = await fetch(`${l.base}/ui/relay/sign`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers },
+    body: JSON.stringify({ payload: { v: 1, action: PEV_ACTION.getAttempt, nonce: nonce(), podUrl: DEMO_POD } }),
+  });
+  return { status: r.status, json: (await r.json()) as Out };
+}
+
+/** The relay calls that reached a path. */
+const callsTo = (stub: { readonly calls: readonly RelayCall[] }, path: string): RelayCall[] => stub.calls.filter((c) => c.url === `${RELAY}${path}`);
 
 const relay = stubRelay({ cimd: true });
 let bridge: TestListener;
@@ -350,20 +480,87 @@ describe('the sign-in routes: the client document, the start, and their refusals
       const r = await post({ payload }, auth);
       expect([r.status, r.json['iep:refusalReason'], r.json['kind']], String(auth)).toEqual([401, 'interego-bearer-missing', 'refusal']);
     }
+    const unknown = `Bearer ${'5e'.repeat(32)}`;
     for (const bad of [{}, { payload: { ...payload, action: 'urn:iep:action:foxxi:review-record' } }, { payload: { ...payload, v: 2 } }, { payload: { v: 1, action: PEV_ACTION.getAttempt } }]) {
-      const r = await post(bad, 'Bearer cg2_abcdefghijklmnop.qrstuvwxyz');
+      const r = await post(bad, unknown);
       expect([r.status, r.json['iep:refusalReason']], JSON.stringify(bad)).toEqual([400, 'payload-shape']);
     }
-    const big = await post({ payload: { ...payload, filler: 'x'.repeat(70 * 1024) } }, 'Bearer cg2_abcdefghijklmnop.qrstuvwxyz');
+    const big = await post({ payload: { ...payload, filler: 'x'.repeat(70 * 1024) } }, unknown);
     expect([big.status, big.json['iep:refusalReason']]).toEqual([413, 'payload-too-large']);
-    const malformed = await fetch(`${bridge.base}/ui/relay/sign`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer cg2_abcdefghijklmnop.qrstuvwxyz' }, body: '{ not json' });
+    const malformed = await fetch(`${bridge.base}/ui/relay/sign`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: unknown }, body: '{ not json' });
     expect([malformed.status, ((await malformed.json()) as Out)['iep:refusalReason']]).toEqual([400, 'body-unreadable']);
     expect(relay.calls.length).toBe(before);
-    // A bearer the relay does not know: the relay is asked, and its refusal comes back as a sign-in to redo.
-    const stale = await post({ payload }, 'Bearer cg2_abcdefghijklmnop.qrstuvwxyz');
+    // A bearer the relay does not know: the relay's /mcp is asked, and its 401 comes back as a sign-in to redo.
+    const stale = await post({ payload }, unknown);
     expect([stale.status, stale.json['iep:refusalReason']]).toEqual([401, 'interego-sign-in-expired']);
-    expect(relay.calls.slice(before).map((c) => `${c.method} ${c.url}`)).toEqual([`POST ${RELAY}/tool/sign_request`]);
-    expect(JSON.stringify(stale.json)).not.toContain('cg2_abcdefghijklmnop');
+    expect(relay.calls.slice(before).map((c) => `${c.method} ${c.url}`)).toEqual([`POST ${RELAY}/mcp`]);
+    expect(JSON.stringify(stale.json)).not.toContain('5e5e5e5e');
+  });
+
+  it('the exchange gives the page the relay\'s access token and its expiry only; the sign route is one tools/call at /mcp, JSON or SSE', async () => {
+    const before = relay.calls.length;
+    const ex = await exchangeDirect(bridge, relay);
+    const token = relay.issued.at(-1) ?? '';
+    // Only the code exchange: no /identity-token, and the refresh token the relay sent is not passed on.
+    expect([ex.status, Object.keys(ex.json).sort(), ex.json['accessToken'], ex.json['expiresIn']]).toEqual([200, ['accessToken', 'expiresIn', 'note', 'relay', 'signedIn'], token, 3600]);
+    expect(JSON.stringify(ex.json)).not.toContain(relay.refreshIssued.at(-1) ?? 'none');
+    expect(relay.calls.slice(before).map((c) => `${c.method} ${new URL(c.url).pathname}`).filter((x) => !x.includes('/.well-known/'))).toEqual(['POST /token']);
+
+    const agent = `did:web:${IDH}:agents:${WEB_UI_AGENT_PREFIX}${USER}`;
+    for (const answerAs of ['json', 'sse'] as const) {
+      relay.state.answerAs = answerAs;
+      const r = await signThrough(bridge, token);
+      expect([r.status, Object.keys(r.json).sort()], answerAs).toEqual([200, ['_signature', '_signed_payload']]);
+      expect(JSON.parse(String(r.json['_signed_payload']))).toMatchObject({ action: PEV_ACTION.getAttempt, pod_url: DEMO_POD, agent_id: agent });
+      // The request: a plain Bearer, both answer types accepted, no session, and a tools/call of sign_request whose arguments are the payload alone.
+      const call = callsTo(relay, '/mcp').at(-1)!;
+      expect([call.authorization, call.accept, call.contentType, call.mcpSession]).toEqual([`Bearer ${token}`, 'application/json, text/event-stream', 'application/json', null]);
+      const rpc = relay.rpcs.at(-1)!;
+      expect([rpc['jsonrpc'], rpc['method'], (rpc['params'] as Out)['name'], Object.keys((rpc['params'] as Out)['arguments'] as Out)]).toEqual(['2.0', 'tools/call', 'sign_request', ['payload']]);
+    }
+    // No initialize, ever, and a fresh id on every request.
+    expect(relay.rpcs.filter((r) => r['method'] !== 'tools/call')).toEqual([]);
+    const ids = relay.rpcs.map((r) => r['id']);
+    expect(new Set(ids).size).toBe(ids.length);
+
+    // What the relay answers instead of a signed request is a clean refusal, with the token nowhere in it, over JSON and SSE alike.
+    for (const answerAs of ['json', 'sse'] as const) {
+      relay.state.answerAs = answerAs;
+      for (const [fault, says] of [
+        ['rpc-error', 'Internal error for the bearer [withheld]'], ['is-error', 'Error: pod bootstrap failed for [withheld]'],
+        ['error-text', 'the delegation key is not loaded'], ['scope', 'no write scope'], ['other-id', 'no JSON-RPC answer to this request'],
+      ] as const) {
+        relay.state.faults.push(fault);
+        const r = await signThrough(bridge, token);
+        expect([r.status, r.json['iep:refusalReason']], `${answerAs} ${fault}`).toEqual([502, 'relay-refused-signing']);
+        expect(String(r.json['error']), `${answerAs} ${fault}`).toContain(says);
+        expect(JSON.stringify(r.json)).not.toContain(token);
+      }
+    }
+    relay.state.answerAs = 'sse';
+    // A refusal is not a sign-in that ended: the same token still signs.
+    expect((await signThrough(bridge, token)).status).toBe(200);
+
+    // Once the relay stops taking the token (its hour is over), the bridge says so as a sign-in to redo, then from memory at no relay call.
+    relay.expire(token);
+    const expired = await signThrough(bridge, token);
+    expect([expired.status, expired.json['iep:refusalReason']]).toEqual([401, 'interego-sign-in-expired']);
+    const asked = callsTo(relay, '/mcp').length;
+    expect((await signThrough(bridge, token)).json['iep:refusalReason']).toBe('interego-sign-in-expired');
+    expect(callsTo(relay, '/mcp').length).toBe(asked);
+    expect(relay.calls.slice(before).filter((c) => /^\/(identity-token|tool\/)/.test(new URL(c.url).pathname))).toEqual([]);
+  });
+
+  it('keeps a sign-in no longer than an hour, and refuses one with no write scope', async () => {
+    const long = stubRelay({ cimd: true, expiresIn: 86_400 });
+    const l = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: long.fetchFn });
+    const ex = await exchangeDirect(l, long);
+    expect([ex.status, ex.json['expiresIn']]).toEqual([200, 3600]);
+    const readOnly = stubRelay({ cimd: true, grantScope: 'mcp:read' });
+    const r = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: readOnly.fetchFn });
+    const refused = await exchangeDirect(r, readOnly);
+    expect([refused.status, refused.json['iep:refusalReason'], 'accessToken' in refused.json]).toEqual([502, 'relay-token-unusable', false]);
+    expect(JSON.stringify(refused.json)).not.toContain(readOnly.issued.at(-1) ?? 'none');
   });
 
   it('refuses a code exchange of the wrong shape without calling the relay; with sign-in off every route says so', async () => {
@@ -417,68 +614,55 @@ describe('the sign-in routes: the client document, the start, and their refusals
       limits: { total: 14, unproven: 8, unprovenPerClient: 4, perSignIn: 5 },
     }, { trustProxy: true });
     const from = (ip: string): Record<string, string> => ({ 'x-forwarded-for': ip });
-    const relayed = (path: string): number => lim.calls.filter((c) => c.url === `${RELAY}${path}`).length;
-    // A person signs in from 203.0.113.1: the metadata, the code and the account token, three relay calls.
-    const verifier = b64url(randomBytes(32));
-    const state = b64url(randomBytes(24));
-    const authorize = new URL(`${RELAY}/authorize`);
-    for (const [k, v] of Object.entries({
-      response_type: 'code', client_id: `${DEPLOY}/ui/oauth/client.json`, redirect_uri: `${DEPLOY}/ui/oauth/callback`,
-      code_challenge: b64url(createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256', state, scope: 'mcp', resource: `${RELAY}/`,
-    })) authorize.searchParams.set(k, v);
-    const code = new URL(await lim.signIn(authorize.href, (u) => u.replace(DEPLOY, l.base))).searchParams.get('code') ?? '';
-    const ex = await fetch(`${l.base}/ui/oauth/exchange`, {
-      method: 'POST', headers: { 'content-type': 'application/json', ...from('203.0.113.1') }, body: JSON.stringify({ code, code_verifier: verifier, state }),
-    });
-    const bearer = String(((await ex.json()) as Out)['bearer']);
-    expect(ex.status).toBe(200);
+    const relayed = (path: string): number => callsTo(lim, path).length;
+    // A person signs in from 203.0.113.1: the relay's metadata and the code, two relay calls.
+    const ex = await exchangeDirect(l, lim, from('203.0.113.1'));
+    expect([ex.status, relayed('/.well-known/oauth-authorization-server') + relayed('/token')]).toEqual([200, 2]);
+    const bearer = String(ex.json['accessToken']);
     const sign = async (token: string, ip: string): Promise<Out> => {
-      const r = await fetch(`${l.base}/ui/relay/sign`, {
-        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...from(ip) },
-        body: JSON.stringify({ payload: { v: 1, action: PEV_ACTION.getAttempt, nonce: nonce(), podUrl: DEMO_POD } }),
-      });
-      const j = (await r.json()) as Out;
-      return { status: r.status, code: j['iep:refusalReason'] ?? null, retryAfterSeconds: j['retryAfterSeconds'] ?? null };
+      const r = await signThrough(l, token, from(ip));
+      return { status: r.status, code: r.json['iep:refusalReason'] ?? null, retryAfterSeconds: r.json['retryAfterSeconds'] ?? null };
     };
     expect((await sign(bearer, '203.0.113.1'))['status']).toBe(200);
 
     // A stranger with made-up tokens, from one address: four reach the relay (each refused), then the bridge refuses on its own.
-    const signs = relayed('/tool/sign_request');
+    const signs = relayed('/mcp');
     const made = Array.from({ length: 10 }, (_, i) => `madeup${i}${'A'.repeat(16)}`);
     const one: Out[] = [];
     for (const t of made) one.push(await sign(t, '198.51.100.7'));
     expect(one.map((r) => r['code'])).toEqual([...Array<string>(4).fill('interego-sign-in-expired'), ...Array<string>(6).fill('relay-calls-limited')]);
     expect([one[4]?.['status'], Number(one[4]?.['retryAfterSeconds']) > 0]).toEqual([429, true]);
-    expect(relayed('/tool/sign_request') - signs).toBe(4);
+    expect(relayed('/mcp') - signs).toBe(4);
     // A token the relay refused is refused again from memory, from any address, at no relay call.
     expect((await sign(made[0] ?? '', '198.51.100.8'))['code']).toBe('interego-sign-in-expired');
-    expect(relayed('/tool/sign_request') - signs).toBe(4);
-    // Strangers from many addresses together spend only what is left for callers not signed in (8 - 3 - 4 = 1).
+    expect(relayed('/mcp') - signs).toBe(4);
+    // Strangers from many addresses together spend only what is left for callers not signed in (8 - 2 - 4 = 2).
     const many: Out[] = [];
     for (let i = 0; i < 6; i++) many.push(await sign(`other${i}${'B'.repeat(16)}`, `198.51.100.${20 + i}`));
-    expect(many.map((r) => r['code'])).toEqual(['interego-sign-in-expired', ...Array<string>(5).fill('relay-busy')]);
-    expect(relayed('/tool/sign_request') - signs).toBe(5);
+    expect(many.map((r) => r['code'])).toEqual(['interego-sign-in-expired', 'interego-sign-in-expired', ...Array<string>(4).fill('relay-busy')]);
+    expect(relayed('/mcp') - signs).toBe(6);
     // The person signed in still signs, up to her own limit (5 a minute): the strangers spent none of it.
     const hers: Out[] = [];
     for (let i = 0; i < 5; i++) hers.push(await sign(bearer, '203.0.113.1'));
     expect(hers.map((r) => r['status'])).toEqual([200, 200, 200, 200, 429]);
     expect(hers[4]?.['code']).toBe('relay-calls-limited');
 
-    // A minute on. Made-up codes from one address: two exchanges (two calls each) reach the relay, then the bridge refuses on its own.
+    // A minute on. Made-up codes from one address: four exchanges (one call each) reach the relay, then the bridge refuses on its own.
     clock += 61_000;
     expect((await sign(bearer, '203.0.113.1'))['status']).toBe(200);
     const tokens = relayed('/token');
     const exchanges: unknown[] = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       const r = await fetch(`${l.base}/ui/oauth/exchange`, {
         method: 'POST', headers: { 'content-type': 'application/json', ...from('198.51.100.7') },
         body: JSON.stringify({ code: `madeupcode${i}xxxxxxxx`, code_verifier: 'a'.repeat(43), state: 'b'.repeat(16) }),
       });
       exchanges.push(((await r.json()) as Out)['iep:refusalReason']);
     }
-    expect(exchanges).toEqual(['oauth-code-refused', 'oauth-code-refused', 'relay-calls-limited', 'relay-calls-limited', 'relay-calls-limited']);
-    expect(relayed('/token') - tokens).toBe(2);
+    expect(exchanges).toEqual([...Array<string>(4).fill('oauth-code-refused'), 'relay-calls-limited', 'relay-calls-limited']);
+    expect(relayed('/token') - tokens).toBe(4);
     expect((await sign(bearer, '203.0.113.1'))['status']).toBe(200);
+    expect([relayed('/identity-token'), lim.calls.filter((c) => c.url.startsWith(`${RELAY}/tool/`)).length]).toEqual([0, 0]);
   });
 
   it('the DID-document read ends at its deadline, a slow DNS look-up included, and the request after the look-up is aborted', async () => {
@@ -513,6 +697,9 @@ describe('the sign-in routes: the client document, the start, and their refusals
 
 describe('the web UI signs a person in with their Interego account and has the relay sign every act', () => {
   it('button → the relay with PKCE and a state → callback → exchange → acts the bridge reads as relay-delegated → sign-out', async () => {
+    // The relay answers /mcp as Server-Sent Events until the act below, which it answers as JSON.
+    relay.state.answerAs = 'sse';
+    const relayCallsBefore = relay.calls.length;
     // ── The button: the relay's authorize URL, with a PKCE S256 challenge of a verifier only this tab holds.
     const p1 = await openPage(bridge, '/ui');
     await p1.until(() => p1.q('article.scenario'), 'the scenarios');
@@ -544,18 +731,24 @@ describe('the web UI signs a person in with their Interego account and has the r
     // The code left the address bar first; the page is /ui again, on the view it left from.
     expect([p2.w.location.pathname, p2.w.location.search, p2.w.location.hash]).toEqual(['/ui', '', pending.back]);
     expect((p2.q('#interego-did') as HTMLInputElement).value).toBe(PRINCIPAL);
-    // The account token is in this tab's sessionStorage only; the verifier and the state are gone.
-    const kept = JSON.parse(p2.session(SESSION_KEY) ?? 'null') as { bearer: string };
-    const bearer = kept.bearer;
-    expect(bearer).toMatch(/^cg2_/);
+    // The relay's access token, and when it expires, are in this tab's sessionStorage only; the verifier and the state are gone.
+    const kept = JSON.parse(p2.session(SESSION_KEY) ?? 'null') as { accessToken: string; at: number; expiresAt: number };
+    const bearer = kept.accessToken;
+    expect(Object.keys(kept).sort()).toEqual(['accessToken', 'at', 'expiresAt']);
+    expect(bearer).toBe(relay.issued.at(-1));
+    expect(kept.expiresAt - kept.at > 3_590_000 && kept.expiresAt - kept.at <= 3_600_000).toBe(true);
+    // The tab will forget it at that expiry: one timer, set for it.
+    expect(p2.long.map((t) => t.ms > 3_590_000 && t.ms <= 3_600_000)).toEqual([true]);
     expect(p2.session(PENDING_KEY)).toBeNull();
     expect(p2.w.localStorage.length).toBe(0);
     const exchange = relay.calls.filter((c) => c.url === `${RELAY}/token`).at(-1)!;
     expect(new URLSearchParams(exchange.body).get('code_verifier')).toBe(pending.verifier);
-    // Every relay call carried the bearer in its Authorization header and nowhere else.
+    // Every relay call carried the bearer in its Authorization header and nowhere else; the page's
+    // who-am-I was a signed read through /mcp (the bridge's own answer names the principal).
     expect(relay.calls.every((c) => !c.url.includes(bearer) && !c.body.includes(bearer) && !c.url.includes(code))).toBe(true);
-    expect(relay.calls.filter((c) => c.url === `${RELAY}/tool/sign_request`).at(-1)?.authorization).toBe(`Bearer ${bearer}`);
+    expect(callsTo(relay, '/mcp').at(-1)?.authorization).toBe(`Bearer ${bearer}`);
     // The sign route answers with the relay's two fields and nothing else the relay said.
+    relay.state.answerAs = 'json';
     const direct = await fetch(`${bridge.base}/ui/relay/sign`, {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${bearer}` },
       body: JSON.stringify({ payload: { v: 1, action: PEV_ACTION.getAttempt, nonce: nonce(), podUrl: DEMO_POD } }),
@@ -581,6 +774,7 @@ describe('the web UI signs a person in with their Interego account and has the r
     expect(a.startEnvelope).toMatchObject({ form: 'signed-request', authority: 'relay-delegated', principal: PRINCIPAL, agentId: agent, relaySigner: RELAY_KEY.address.toLowerCase() });
 
     // ── A decisive act from the web UI's own agent: the admin (by DID) gives another person a role.
+    relay.state.answerAs = 'sse';
     p2.w.location.hash = '#/roles';
     await p2.until(() => p2.q(`button[data-action="${PEV_ACTION.registerRole}"]`), 'the roles form');
     const field = p2.q('input[aria-label="Address"]') as HTMLInputElement;
@@ -590,15 +784,53 @@ describe('the web UI signs a person in with their Interego account and has the r
     expect([...p2.w.document.querySelectorAll('#view .outcome tr')].some((tr) => (tr.textContent ?? '').includes(OTHER))).toBe(true);
     expect(p2.errors).toEqual([]);
 
-    // ── Sign-out: the token leaves the tab, and the next act is not signed by the relay.
-    const signs = relay.calls.filter((c) => c.url === `${RELAY}/tool/sign_request`).length;
+    // ── Sign-out: the token leaves the tab, the page says plainly that nothing was revoked, and the next act is not signed by the relay.
+    const signs = callsTo(relay, '/mcp').length;
     p2.q('#interego-sign-out')!.click();
     await p2.until(() => p2.text('#acting-as') === 'whoever signs (paste mode)', 'paste mode again');
     expect([p2.session(SESSION_KEY), p2.q('#interego-did'), p2.q('#interego-sign-in')?.textContent]).toEqual([null, null, 'Sign in with your Interego account']);
+    const out = p2.text('#interego-signed-out');
+    for (const says of ['Nothing was revoked', 'offers no way to revoke', 'until it expires', 'whoever has a copy can call the relay\'s tools as you', 'keeps no copy']) expect(out).toContain(says);
+    expect(p2.long.length).toBe(1);
+    p2.long[0]?.fire();
+    expect(p2.text('#signing')).not.toContain('has ended');
     p2.w.location.hash = '#/mine';
     await p2.until(() => p2.q('#signing textarea[readonly]'), 'the paste signing panel');
-    expect(relay.calls.filter((c) => c.url === `${RELAY}/tool/sign_request`).length).toBe(signs);
+    expect(callsTo(relay, '/mcp').length).toBe(signs);
     expect(p2.errors).toEqual([]);
+    // Every act was a tools/call at /mcp with the access token: no /identity-token, no /tool/.
+    const used = new Set(relay.calls.slice(relayCallsBefore).map((c) => `${c.method} ${new URL(c.url).pathname}`));
+    expect([used.has('POST /token'), used.has('POST /mcp')]).toEqual([true, true]);
+    expect([...used].filter((x) => !['GET /.well-known/oauth-authorization-server', 'POST /token', 'POST /mcp'].includes(x))).toEqual([]);
+  }, SLOW);
+
+  it('forgets the access token at its expiry: one past it is dropped when the page loads, and the timer drops one that expires while the page is open', async () => {
+    const ex = await exchangeDirect(bridge, relay);
+    const token = String(ex.json['accessToken']);
+    // Kept past its expiry: dropped on load, said so, and never sent.
+    const stale = await openPage(bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ accessToken: token, at: Date.now() - 3_700_000, expiresAt: Date.now() - 100_000 }) });
+    await stale.until(() => stale.q('article.scenario'), 'the scenarios');
+    expect([stale.text('#acting-as'), stale.session(SESSION_KEY), stale.text('#signing').includes('has ended')]).toEqual(['whoever signs (paste mode)', null, true]);
+    // Kept in an older shape with no expiry, or claiming to last past an hour: dropped the same way.
+    for (const kept of [{ bearer: token, at: Date.now() }, { accessToken: token, at: Date.now(), expiresAt: Date.now() + 2 * 3_600_000 }]) {
+      const p = await openPage(bridge, '/ui', { [SESSION_KEY]: JSON.stringify(kept) });
+      await p.until(() => p.q('article.scenario'), 'the scenarios');
+      expect([p.text('#acting-as'), p.session(SESSION_KEY)]).toEqual(['whoever signs (paste mode)', null]);
+      expect([...stale.asked, ...p.asked].filter((x) => x === 'POST /ui/relay/sign')).toEqual([]);
+    }
+    // Live: signed in, until its timer fires at the expiry.
+    const p = await openPage(bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ accessToken: token, at: Date.now(), expiresAt: Date.now() + 3_600_000 }) });
+    const agent = `did:web:${IDH}:agents:${WEB_UI_AGENT_PREFIX}${USER}`;
+    await p.until(() => p.text('#acting-as') === `Signed in as ${PRINCIPAL} via ${agent}`, 'the signed-in principal and agent');
+    expect(p.text('#bar')).toContain('This tab holds the relay\'s access token for this sign-in until');
+    expect(p.long.map((t) => t.ms > 3_590_000 && t.ms <= 3_600_000)).toEqual([true]);
+    const signsBefore = p.asked.filter((x) => x === 'POST /ui/relay/sign').length;
+    p.long[0]?.fire();
+    await p.until(() => p.text('#acting-as') === 'whoever signs (paste mode)', 'paste mode at the expiry');
+    expect([p.session(SESSION_KEY), p.text('#signing').includes('Your Interego sign-in has ended')]).toEqual([null, true]);
+    await p.until(() => p.q('article.scenario'), 'the scenarios again');
+    expect(p.asked.filter((x) => x === 'POST /ui/relay/sign').length).toBe(signsBefore);
+    expect([...stale.errors, ...p.errors]).toEqual([]);
   }, SLOW);
 
   it('an answer that does not carry the state this tab sent is refused: no exchange, nothing kept, and the sign-in the tab started still waits', async () => {
@@ -646,4 +878,12 @@ describe('the web UI signs a person in with their Interego account and has the r
     await answer.until(() => answer.text('#signing').includes('the relay answered "access_denied"'), 'the relay\'s error');
     expect([answer.session(PENDING_KEY), answer.session(SESSION_KEY), answer.errors]).toEqual([null, null, []]);
   }, SLOW);
+});
+
+describe('the relay\'s account-token routes', () => {
+  it('no bridge in this file ever called /identity-token or /tool/ at the relay: every sign went to /mcp with the access token', () => {
+    const all = allRelays.flatMap((r) => r.calls);
+    expect(all.filter((c) => c.url.startsWith(`${RELAY}/mcp`)).length).toBeGreaterThan(20);
+    expect(all.filter((c) => /^\/(identity-token|tool\/)/.test(new URL(c.url).pathname)).map((c) => `${c.method} ${c.url}`)).toEqual([]);
+  });
 });

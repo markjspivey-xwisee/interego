@@ -76,9 +76,10 @@
  *                                   trusted, it turns on the web UI's "Sign in with your Interego
  *                                   account" (ui.ts): the person signs in on the relay's own page,
  *                                   and every act is signed by the relay through this bridge, so
- *                                   the account token passes through the bridge (never logged or
- *                                   kept). The OAuth client id is BRIDGE_DEPLOYMENT_URL/ui/oauth/
- *                                   client.json when that is https; otherwise it registers by DCR.
+ *                                   the relay's OAuth access token for that sign-in (an hour)
+ *                                   passes through the bridge (never logged or kept). The OAuth
+ *                                   client id is BRIDGE_DEPLOYMENT_URL/ui/oauth/client.json when
+ *                                   that is https; otherwise it registers by DCR.
  *   PEV_CHAT_AGENTS_DECIDE=1        lets a chat agent signed in through the relay (claude-…,
  *                                   chatgpt-…) take the decisive acts: register_role,
  *                                   ratify_scenario, countersign_attempt, override_attempt,
@@ -386,7 +387,7 @@ async function main(): Promise<void> {
     : `  Interego sign-in: off (PEV_TRUSTED_RELAY_ADDRESSES is empty): only keys a person holds sign acts${adminDids.length > 0 ? `; the ${adminDids.length} admin DID(s) in PEV_ADMIN_DIDS cannot act until it is on` : ''}`);
   if (relayAddresses.length > 0) {
     say(uiSignIn
-      ? `  web UI sign-in: ON, through ${relayUrl ?? ''}, as the OAuth client "Practice Evidence" (${base.startsWith('https://') ? `its Client ID Metadata Document is ${base}/ui/oauth/client.json, if the relay takes one; otherwise it registers dynamically` : 'registered dynamically: the deployment URL is not https, so the relay cannot read a Client ID Metadata Document'}). The account token a person signs in with passes through this bridge on every act it signs and is never logged or kept`
+      ? `  web UI sign-in: ON, through ${relayUrl ?? ''}, as the OAuth client "Practice Evidence" (${base.startsWith('https://') ? `its Client ID Metadata Document is ${base}/ui/oauth/client.json, if the relay takes one; otherwise it registers dynamically` : 'registered dynamically: the deployment URL is not https, so the relay cannot read a Client ID Metadata Document'}). The relay's access token a person signs in with (it lasts an hour) passes through this bridge on every act it signs and is never logged or kept`
       : '  web UI sign-in: off (PEV_RELAY_URL is not set): people sign in through Claude, ChatGPT or another relay client only');
   }
   for (const line of (await describeStartup(deps)).lines) say(`  ${line}`);

@@ -24,20 +24,25 @@
  *                               its asset URLs one level up. The code is in the query; the page
  *                               takes it out of the address bar before doing anything else.
  *   POST /ui/oauth/exchange     {code, code_verifier, state}: the code for an access token at the
- *                               relay's token endpoint, then that access token for the account
- *                               token the relay's REST tools take (GET <relay>/identity-token).
- *                               Only the account token is returned; the access and refresh tokens
- *                               are dropped here.
- *   POST /ui/relay/sign         {payload} with that account token as `Authorization: Bearer`: the
- *                               relay's sign_request, answered with only {_signature, _signed_payload}.
+ *                               relay's token endpoint, and nothing more. The page gets that OAuth
+ *                               access token and how long it lasts (at most SIGN_IN_MAX_SECONDS);
+ *                               a refresh token the relay sends anyway is dropped here.
+ *   POST /ui/relay/sign         {payload} with that access token as `Authorization: Bearer`: one
+ *                               MCP tools/call of the relay's sign_request at <relay>/mcp, where the
+ *                               relay itself names the session's agent, answered with only
+ *                               {_signature, _signed_payload}.
  *
- * The account token is a credential for the person's Interego account, not only for this bridge:
- * it passes through this bridge on every sign request, so the operator is trusted with it for the
- * session. This module never logs, stores or echoes a bearer or a code, never puts either in a URL
- * it serves, and drops both from any relay text it passes on. Every relay call has a deadline and a
- * size cap and follows no redirect; at most MAX_RELAY_CALLS_IN_FLIGHT run at once, and this bridge
- * makes at most RELAY_LIMITS calls a minute, so a caller who is not signed in cannot spend the
- * relay's per-address budget that everyone signed in here shares (see RelayLimits).
+ * The access token is the relay's, for this sign-in: until it expires (an hour, as the relay is
+ * written) whoever holds it can call the relay's tools as the person. It is not the identity
+ * server's account token, which this bridge never asks for (though the relay's GET /identity-token
+ * trades any write-scoped access token for it, so a holder could). It passes through this bridge
+ * on every sign request, so the operator is trusted with it for the session. This module never
+ * logs, stores or echoes a bearer or a code, never puts either in a URL it serves, and drops both
+ * from any relay text it passes on (it keeps only a sha256 of a token, to count its calls). Every
+ * relay call has a deadline and a size cap and follows no redirect; at most
+ * MAX_RELAY_CALLS_IN_FLIGHT run at once, and this bridge makes at most RELAY_LIMITS calls a
+ * minute, so a caller who is not signed in cannot spend the relay calls that everyone signed in
+ * here shares (see RelayLimits).
  *
  * Every UI response carries a Content-Security-Policy that allows only this origin's own script,
  * style and fetches, and no inline script or style; the shells have neither, and the client
@@ -49,7 +54,7 @@
  * 127.0.0.1. Cross-site POSTs are already blocked by the JSON-only body parser and the absence of
  * CORS headers; this closes the rebinding path.
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { guardedFetchFn } from '@interego/core';
@@ -105,8 +110,13 @@ function secure(res: Response): void {
 
 /** The OAuth client name the relay turns into the agent slug (`practice-evidence-<userId>`). */
 export const PEV_UI_CLIENT_NAME = 'Practice Evidence';
-/** The relay's scope that reaches its REST tools (and so sign_request): read and write. */
+/** The relay's scope for its write-side tools on /mcp, sign_request among them (an mcp:read token is refused there). */
 export const INTEREGO_SCOPE = 'mcp';
+/**
+ * The longest the page keeps a sign-in: the relay's access tokens last an hour (its tokenTtlSec),
+ * and a longer `expires_in`, or none, is taken as this.
+ */
+export const SIGN_IN_MAX_SECONDS = 3600;
 /** One relay call, from the first byte sent to the last read, DNS look-up included. */
 export const RELAY_CALL_TIMEOUT_MS = 10_000;
 /** The most one relay answer may be. */
@@ -121,20 +131,21 @@ export const MAX_RELAY_CALLS_IN_FLIGHT = 32;
 const METADATA_TTL_MS = 10 * 60_000;
 
 /**
- * How many relay calls this bridge makes a minute. The relay limits /tool/<name>, /token and
- * /identity-token to 60 a minute each per client address, before it checks any credential, and
- * every call this bridge makes comes from its one address: so whoever makes the bridge call the
- * relay spends a budget every person signed in here shares. These limits keep it within the
- * relay's and keep a caller with no sign-in from spending it:
+ * How many relay calls this bridge makes a minute. Every call it makes comes from its one address,
+ * and the relay limits some routes per client address before it checks any credential: /token to
+ * 60 a minute and 50 every 15 minutes, /register to 20 an hour (it sets no per-address limit on
+ * /mcp). So whoever makes this bridge call the relay spends what every person signed in here
+ * shares, and each made-up token posted to /ui/relay/sign costs the relay a token check. These
+ * limits bound what this bridge asks of the relay and keep a caller with no sign-in from spending it:
  *
- *   total            every relay call, under the relay's 60
- *   unproven         calls made for no account token the relay has accepted here: a code
+ *   total            every relay call
+ *   unproven         calls made for no access token the relay has accepted here: a code
  *                    exchange, the sign-in set-up (metadata, registration), a sign with a token
  *                    this bridge has not seen the relay accept. A stranger can spend only these,
  *                    so people already signed in keep the rest of the total.
  *   unprovenPerClient  of those, from one client address (req.ip: server.ts trusts one proxy hop
  *                    on a deployment, so it is the address Railway's edge saw)
- *   perSignIn        calls for one account token the relay accepted here
+ *   perSignIn        calls for one access token the relay accepted here
  *
  * A token the relay refuses is answered from memory for a minute, so it costs no further call.
  */
@@ -148,8 +159,8 @@ export const RELAY_LIMITS: RelayLimits = { total: 50, unproven: 20, unprovenPerC
 const LIMIT_WINDOW_MS = 60_000;
 /** How long a token the relay refused is answered from memory. */
 const REFUSED_TOKEN_MS = 60_000;
-/** How long a token the relay accepted counts as signed in here (the identity host's last 24 hours). */
-const ACCEPTED_TOKEN_MS = 24 * 60 * 60_000;
+/** How long a token the relay accepted in a sign counts as signed in here: no access token it issues lasts longer. */
+const ACCEPTED_TOKEN_MS = SIGN_IN_MAX_SECONDS * 1000;
 /** The most tokens each memory holds; the oldest goes first. */
 const TOKEN_MEMORY_MAX = 4096;
 
@@ -185,15 +196,16 @@ class TokenMemory {
     this.until.delete(h);
     return false;
   }
-  add(h: string): void {
+  /** Remember `h` for this memory's time, or for `ttlMs` when that is shorter. */
+  add(h: string, ttlMs?: number): void {
     this.until.delete(h);
-    this.until.set(h, this.now() + this.ttlMs);
+    this.until.set(h, this.now() + Math.min(this.ttlMs, ttlMs ?? this.ttlMs));
     while (this.until.size > TOKEN_MEMORY_MAX) { const first = this.until.keys().next(); if (first.done) break; this.until.delete(first.value); }
   }
   delete(h: string): void { this.until.delete(h); }
 }
 
-/** Who a relay call is made for: the client's address, and the hash of an account token the relay accepted here (or null). */
+/** Who a relay call is made for: the client's address, and the hash of an access token the relay accepted here (or null). */
 interface Caller { readonly client: string; readonly signIn: string | null }
 const tokenHash = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex');
 const clientOf = (req: Request): string => req.ip ?? req.socket.remoteAddress ?? 'unknown';
@@ -277,6 +289,39 @@ function tooLarge(req: Request, max: number): boolean {
 }
 
 /**
+ * The JSON-RPC answer to request `id` in a body from the relay's /mcp: one JSON message (or a
+ * batch), or Server-Sent Events, each event's `data:` lines joined, any notification before it
+ * passed over. Null when no answer to `id` is there.
+ */
+export function mcpAnswer(text: string, id: string): Record<string, unknown> | null {
+  const t = text.trim();
+  const messages: unknown[] = [];
+  if (t.startsWith('{') || t.startsWith('[')) {
+    try { const v = JSON.parse(t) as unknown; messages.push(...(Array.isArray(v) ? v : [v])); } catch { return null; }
+  } else {
+    for (const event of t.split(/\r?\n\r?\n/)) {
+      const data = event.split(/\r?\n/).filter((l) => l.startsWith('data:')).map((l) => l.slice(5).replace(/^ /, '')).join('\n');
+      if (!data) continue;
+      try { messages.push(JSON.parse(data) as unknown); } catch { /* not a message: passed over */ }
+    }
+  }
+  for (const m of messages) if (isRecord(m) && m['jsonrpc'] === '2.0' && m['id'] === id && ('result' in m || 'error' in m)) return m;
+  return null;
+}
+
+/** A tools/call result's value as the relay answers it: its structuredContent, or the JSON of its first text. */
+function toolValue(result: Record<string, unknown>): Record<string, unknown> | null {
+  if (isRecord(result['structuredContent'])) return result['structuredContent'];
+  const text = firstText(result);
+  if (text === null) return null;
+  try { const v = JSON.parse(text) as unknown; return isRecord(v) ? v : null; } catch { return null; }
+}
+function firstText(result: Record<string, unknown>): string | null {
+  const c: unknown = Array.isArray(result['content']) ? (result['content'] as unknown[])[0] : undefined;
+  return isRecord(c) && typeof c['text'] === 'string' ? c['text'] : null;
+}
+
+/**
  * The fetch for relay calls that server.ts composes: no redirect is followed (a credential must
  * not follow one anywhere), every answer is read up to `RELAY_MAX_BYTES`, and every target goes
  * through the substrate's SSRF guard unless `privateRelay` (the operator's relay is on loopback,
@@ -320,7 +365,7 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
   const now = o.now ?? ((): number => Date.now());
   const limits: RelayLimits = { ...RELAY_LIMITS, ...o.limits };
   const windows = new MinuteWindows(now);
-  /** Account tokens the relay accepted from this bridge (a sign-in it finished, a sign it made), and ones it refused. */
+  /** Access tokens the relay issued or accepted through this bridge (a sign-in it finished, a sign it made), and ones it refused, by sha256. */
   const accepted = new TokenMemory(ACCEPTED_TOKEN_MS, now);
   const refused = new TokenMemory(REFUSED_TOKEN_MS, now);
 
@@ -349,10 +394,10 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
   }
 
   /**
-   * One relay call: within the deadline, capped, its JSON parsed (null when it is not JSON).
+   * One relay call: within the deadline, capped, its text and its JSON (null when it is not JSON).
    * `caller` is admitted for it first (`admit`); null when the route admitted its calls already.
    */
-  async function relayJson(url: string, init: RequestInit, secrets: readonly string[], caller: Caller | null): Promise<{ readonly status: number; readonly json: unknown; readonly retryAfter: string | null }> {
+  async function relayJson(url: string, init: RequestInit, secrets: readonly string[], caller: Caller | null): Promise<{ readonly status: number; readonly text: string; readonly json: unknown; readonly retryAfter: string | null }> {
     if (inFlight >= MAX_RELAY_CALLS_IN_FLIGHT) {
       throw new Declined(503, 'This bridge is waiting on the Interego relay for many people at once; try again in a moment.', 'relay-busy', { retryAfterSeconds: 5 });
     }
@@ -365,7 +410,7 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
         const text = await res.text();
         let json: unknown = null;
         try { json = JSON.parse(text) as unknown; } catch { json = null; }
-        return { status: res.status, json, retryAfter: res.headers.get('retry-after') };
+        return { status: res.status, text, json, retryAfter: res.headers.get('retry-after') };
       })();
       // The call that loses the race to the deadline still settles (its signal aborts it); handled here, so it is not an unhandled rejection.
       call.catch(() => undefined);
@@ -449,8 +494,8 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
 
   /**
    * The client's metadata: in the CIMD with its client_id, in a DCR request without one. Only the
-   * authorization code grant: the page keeps the account token the relay gives it for as long as it
-   * lasts and then signs in again, rather than keep a refresh token (a 14-day credential) in the
+   * authorization code grant: the page keeps the access token the relay gives it until it expires
+   * (an hour) and then signs in again, rather than keep a refresh token (a 14-day credential) in the
    * browser.
    */
   const clientMetadata = (withId: boolean): Record<string, unknown> => ({
@@ -508,12 +553,10 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       const caller: Caller = { client: clientOf(req), signIn: null };
       const meta = await metadata(caller);
       const { clientId } = await clientIdFor(meta, caller);
-      // Both calls of the exchange are admitted before the first, so a code is never spent on half of one.
-      admit(caller, 2);
       const form = new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: redirectUri, client_id: clientId, resource });
       const t = await relayJson(meta.tokenEndpoint, {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: form.toString(),
-      }, [code, verifier], null);
+      }, [code, verifier], caller);
       const tj = isRecord(t.json) ? t.json : {};
       if (t.status !== 200) {
         const err = typeof tj['error'] === 'string' && OAUTH_ERROR.test(tj['error']) ? tj['error'] : null;
@@ -526,22 +569,22 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       if (typeof tokenType === 'string' && tokenType.toLowerCase() !== 'bearer') {
         throw new Declined(502, `The Interego relay issued a ${scrub(tokenType, [access])} token, which this page cannot present.`, 'relay-token-unusable');
       }
-      // The relay's REST tools take the account token behind this access token, not the access token itself.
-      const id = await relayJson(`${relayBase}/identity-token`, { method: 'GET', headers: { authorization: `Bearer ${access}`, accept: 'application/json' } }, [access, code, verifier], null);
-      const ij = isRecord(id.json) ? id.json : {};
-      const bearer = ij['identityToken'];
-      if (id.status !== 200 || typeof bearer !== 'string' || bearerOf(`Bearer ${bearer}`) === null) {
-        throw new Declined(502, id.status === 403
-          ? `The Interego relay gave this sign-in no write scope, so it cannot sign acts (it asked for "${INTEREGO_SCOPE}").`
-          : `The Interego relay did not give this sign-in its account token (HTTP ${id.status}).`, 'relay-token-unusable');
+      // sign_request is one of the relay's write-side tools: a token granted only mcp:read cannot sign.
+      const granted = typeof tj['scope'] === 'string' ? tj['scope'].split(/\s+/) : null;
+      if (granted !== null && !granted.includes('mcp') && !granted.includes('mcp:write')) {
+        throw new Declined(502, `The Interego relay gave this sign-in no write scope, so it cannot sign acts (it asked for "${INTEREGO_SCOPE}").`, 'relay-token-unusable');
       }
-      // The relay issued it: signs with it count against its own sign-in from now on.
-      const h = tokenHash(bearer);
+      // How long the page keeps it: what the relay says, never more than an hour. The refresh token
+      // the relay may send as well is not read, kept or passed on.
+      const said = tj['expires_in'];
+      const expiresIn = typeof said === 'number' && Number.isFinite(said) && said >= 1 ? Math.min(Math.floor(said), SIGN_IN_MAX_SECONDS) : SIGN_IN_MAX_SECONDS;
+      // The relay issued it: signs with it count against its own sign-in from now on, until it expires.
+      const h = tokenHash(access);
       refused.delete(h);
-      accepted.add(h);
+      accepted.add(h, expiresIn * 1000);
       res.json({
-        signedIn: true, bearer, relay: relay.origin,
-        note: 'Keep this token in this tab only and send it only to this bridge\'s ui/relay/sign. It is a credential for your Interego account, and it passes through this bridge on every act it signs.',
+        signedIn: true, accessToken: access, expiresIn, relay: relay.origin,
+        note: 'Keep this token in this tab only, forget it when it expires, and send it only to this bridge\'s ui/relay/sign. It is the Interego relay\'s access token for this sign-in: until it expires, whoever holds it can call the relay\'s tools as you, and it passes through this bridge on every act it signs.',
       });
     } catch (e) { send(res, e); }
   });
@@ -551,7 +594,7 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
     try {
       const bearer = bearerOf(req.headers.authorization);
       if (bearer === null) {
-        throw new Declined(401, 'Sign in with your Interego account first: this route takes the account token the sign-in gave this page, as Authorization: Bearer.', 'interego-bearer-missing');
+        throw new Declined(401, 'Sign in with your Interego account first: this route takes the access token the sign-in gave this page, as Authorization: Bearer.', 'interego-bearer-missing');
       }
       if (tooLarge(req, SIGN_PAYLOAD_MAX_BYTES)) throw new Declined(413, `A payload to sign is at most ${SIGN_PAYLOAD_MAX_BYTES} bytes.`, 'payload-too-large');
       const payload = isRecord(req.body) ? req.body['payload'] : undefined;
@@ -563,10 +606,13 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       // A token the relay refused in the last minute is refused again from memory, at no relay call.
       const h = tokenHash(bearer);
       if (refused.has(h)) throw expired();
-      const r = await relayJson(`${relayBase}/tool/sign_request`, {
+      // One MCP tools/call with no initialize: the relay serves a request with no session as a
+      // stateless one, and names the session's agent itself (agent_id), from the token.
+      const rpcId = randomUUID();
+      const r = await relayJson(`${relayBase}/mcp`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({ payload }),
+        headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: rpcId, method: 'tools/call', params: { name: 'sign_request', arguments: { payload } } }),
       }, [bearer], { client: clientOf(req), signIn: accepted.has(h) ? h : null });
       if (r.status === 401 || r.status === 403) {
         accepted.delete(h);
@@ -576,9 +622,23 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       if (r.status === 429) {
         throw new Declined(429, 'The Interego relay is limiting how often this bridge asks it to sign; try again in a minute.', 'relay-busy', { retryAfterSeconds: Number(r.retryAfter) || 60 });
       }
-      const j = isRecord(r.json) ? r.json : {};
-      if (r.status !== 200 || typeof j['error'] === 'string') {
-        throw new Declined(502, `The Interego relay did not sign this act${typeof j['error'] === 'string' ? `: ${scrub(j['error'], [bearer])}` : ` (HTTP ${r.status})`}.`, 'relay-refused-signing');
+      const notSigned = (why: string): Declined => new Declined(502, `The Interego relay did not sign this act: ${why}.`, 'relay-refused-signing');
+      if (r.status !== 200) {
+        const said = isRecord(r.json) && typeof r.json['error'] === 'string' ? scrub(r.json['error'], [bearer]) : '';
+        throw notSigned(said ? `${said} (HTTP ${r.status})` : `HTTP ${r.status}`);
+      }
+      const answer = mcpAnswer(r.text, rpcId);
+      if (answer === null) throw notSigned('its answer held no JSON-RPC answer to this request');
+      if ('error' in answer) {
+        const e = answer['error'];
+        throw notSigned(isRecord(e) && typeof e['message'] === 'string' ? scrub(e['message'], [bearer]) || 'a JSON-RPC error' : 'a JSON-RPC error');
+      }
+      const result = isRecord(answer['result']) ? answer['result'] : {};
+      const j = toolValue(result);
+      const relayError = j !== null && typeof j['error'] === 'string' ? j['error'] : null;
+      if (relayError === 'insufficient_scope') throw notSigned(`it gave this sign-in no write scope (it asked for "${INTEREGO_SCOPE}")`);
+      if (result['isError'] === true || relayError !== null || j === null) {
+        throw notSigned(scrub(relayError ?? firstText(result), [bearer]) || 'its answer was not a signed request');
       }
       const signedPayload = j['_signed_payload'];
       const signature = j['_signature'];
@@ -591,7 +651,8 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       if (!isRecord(signed) || signed['action'] !== payload['action'] || signed['nonce'] !== payload['nonce']) {
         throw new Declined(502, 'The Interego relay signed something other than this act.', 'relay-signed-something-else');
       }
-      accepted.add(h);
+      // Kept as long as it was (a token this bridge's exchange issued is remembered until it expires).
+      if (!accepted.has(h)) accepted.add(h);
       res.json({ _signature: signature, _signed_payload: signedPayload });
     } catch (e) { send(res, e); }
   });
