@@ -572,7 +572,8 @@ describe('work-redesign bridge', () => {
     ok(await http(w, 'POST', 'capture_workflow', { envelope: once }));
     refused(await http(w, 'POST', 'capture_workflow', { envelope: once }), 409, /already used/);
 
-    refused(await http(w, 'POST', 'capture_workflow', { envelope: await envelope(w, ANA, 'wrd:capture-workflow', fields, { podUrl: 'http://127.0.0.1:9/pod/' }), pod_url: 'http://127.0.0.1:9/pod/' }), 400, /not a safe target/);
+    // A pod the bridge does not serve is refused before its name is resolved, whatever it resolves to.
+    refused(await http(w, 'POST', 'capture_workflow', { envelope: await envelope(w, ANA, 'wrd:capture-workflow', fields, { podUrl: 'http://127.0.0.1:9/pod/' }), pod_url: 'http://127.0.0.1:9/pod/' }), 403, /only on the pods it serves/);
   });
 
   it('changes the registry only with an admin envelope (401 without, 403 non-admin) and requires personRef for people and principal and model for agents', async () => {
@@ -1630,6 +1631,11 @@ describe('work-redesign bridge', () => {
     refused(await http(w, 'POST', 'capture_workflow', { envelope: await envelope(w, ANA, 'wrd:capture-workflow', fields, { podUrl: OTHER }) }), 403, /only on the pods it serves/, /^pod-not-served: https:\/\/192\.0\.2\.99\/other\/ is not one of them$/);
     refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, ADMIN, { podUrl: OTHER }), pod_url: OTHER }), 403, /only on the pods it serves/, /pod-not-served/);
     refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:read-records&pod_url=${encodeURIComponent(OTHER)}`), 403, /only on the pods it serves/, /pod-not-served/);
+    // The served list is checked before any name is resolved: an unserved loopback, private or internal
+    // name gets the same refusal as any other, so an unsigned caller learns nothing about where it resolves.
+    for (const unserved of ['http://127.0.0.1:9/x/', 'https://10.0.0.5/pod/', 'http://svc.railway.internal/pod/']) {
+      refused(await http(w, 'GET', 'envelope_template', undefined, `?intent=wrd:read-records&pod_url=${encodeURIComponent(unserved)}`), 403, /only on the pods it serves/, /pod-not-served/);
+    }
     // Served pods are compared normalised: an upper-case host, the default port and no trailing slash name the same pod.
     const loose = await world({ servedPods: ['HTTPS://192.0.2.10:443/ap-team'] });
     expect(ok(await http(loose, 'POST', 'read_records', { envelope: await readEnvelope(loose) }))['podUrl']).toBe(POD);
@@ -2678,6 +2684,34 @@ describe('work-redesign bridge', () => {
     hold = null;
     ok(await first, 'the held copy');
     ok(await act(w, ANA, 'holder_copy', {}), 'Ana\'s copy, after');
+  }, 120_000);
+
+  it('keeps strangers to their own holder-copy lane: while one stranger\'s copy is in progress a second stranger is refused (429) and still spends the budget, and an admin\'s or a member\'s copy is never refused for it', async () => {
+    let hold: Promise<void> | null = null;
+    const w = await world((pod) => ({
+      recordKey: K1, holderCopyLimits: { strangersPerMinute: 3, concurrent: 1 },
+      fetchFn: async (url, init) => {
+        if (hold && /\/task-[0-9a-f]{16}[^/]*-graph\.envelope\.jose\.json$/.test(String(url))) await hold;
+        return pod.fetchFn(url, init);
+      },
+    }));
+    await register(w);
+    await captureAp(w);
+    const stranger = (id: string): Wallet => wallet(`stranger-${id}`);
+    let release: () => void = () => undefined;
+    hold = new Promise<void>((r) => { release = r; });
+    const held = act(w, stranger('a'), 'holder_copy', {});
+    await new Promise((r) => setTimeout(r, 300));
+    refused(await act(w, stranger('b'), 'holder_copy', {}), 429, /Too many copies/, /one holder copy at a time for keys that are neither an admin nor in this pod's registry/);
+    const member = act(w, DEE, 'holder_copy', {});
+    await new Promise((r) => setTimeout(r, 300));
+    release();
+    hold = null;
+    expect((await member).status, 'a member\'s copy is not refused while the strangers\' lane is full').not.toBe(429);
+    expect((await held).status).not.toBe(429);
+    // Three calls a minute, charged on arrival: the busy refusal above was the second, so one more is answered and the next is refused.
+    expect((await act(w, stranger('c'), 'holder_copy', {})).status).not.toBe(429);
+    refused(await act(w, stranger('d'), 'holder_copy', {}), 429, /Too many copies/, /at most 3 holder copies a minute/);
   }, 120_000);
 
   it('never reads a line short for an edit to an earlier version of its own key: with only its iep:describes or its link edited, its proof broken, or its manifest entry removed, a write that checks the whole line refuses (409), a replayed registry change among them, the holder\'s copy refuses, and a decision\'s chain says it is incomplete; restored, the replay is refused as a replay and every line reads whole', async () => {

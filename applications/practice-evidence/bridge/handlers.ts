@@ -145,6 +145,8 @@ export interface PevDeps {
    * checked again on every read; see `VerifiedRecords`.
    */
   readonly recordCacheMs?: number;
+  /** The monotonic clock (ms) that record keep times are measured on (default performance.now). */
+  readonly recordCacheClock?: () => number;
   /** What one act may read from pods in all (bytes, default ACT_READ_BUDGET_BYTES). */
   readonly actReadBudgetBytes?: number;
   /**
@@ -372,7 +374,7 @@ function makeContext(deps: PevDeps): Ctx {
     },
     homePage: deps.deploymentUrl ?? 'http://127.0.0.1:6110',
     resultsK: deps.resultsK ?? RESULTS_K,
-    verified: new VerifiedRecords(deps.recordCacheMs ?? RECORD_CACHE_TTL_MS, RECORD_CACHE_MAX_BYTES),
+    verified: new VerifiedRecords(deps.recordCacheMs ?? RECORD_CACHE_TTL_MS, RECORD_CACHE_MAX_BYTES, deps.recordCacheClock),
     writes: { n: 0 },
     actReadBudgetBytes: deps.actReadBudgetBytes ?? ACT_READ_BUDGET_BYTES,
     assertPublicPod: deps.assertPublicPod ?? assertSafeFetchTarget,

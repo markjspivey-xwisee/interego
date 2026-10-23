@@ -111,14 +111,15 @@ export interface WrdDeps {
   /** Monte Carlo draws; default DRAWS (5000), recorded on every valuation. */
   readonly draws?: number;
   /**
-   * wrd.holder_copy reads every version on the pod. Default: at most HOLDER_COPY_STRANGERS_PER_MINUTE
-   * calls a minute from signers neither an admin nor in the registry, together (their keys cost
-   * nothing to make), and HOLDER_COPY_CONCURRENT copies in progress at once, whoever signs.
+   * wrd.holder_copy reads every version on the pod. Default: signers neither an admin nor in the
+   * registry (their keys cost nothing to make) share one lane, one copy at a time, and
+   * HOLDER_COPY_STRANGERS_PER_MINUTE calls a minute, charged when a call arrives; admins and
+   * registry members have their own HOLDER_COPY_CONCURRENT copies at once, which strangers never take.
    */
   readonly holderCopyLimits?: { readonly strangersPerMinute: number; readonly concurrent: number };
 }
 
-/** The default holderCopyLimits: a few copies a minute from keys the registry does not hold, and two copies at once. */
+/** The default holderCopyLimits: a few copies a minute, one at a time, from keys the registry does not hold, and two at once for admins and members. */
 export const HOLDER_COPY_STRANGERS_PER_MINUTE = 4;
 export const HOLDER_COPY_CONCURRENT = 2;
 
@@ -472,7 +473,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const copyLimits = deps.holderCopyLimits ?? { strangersPerMinute: HOLDER_COPY_STRANGERS_PER_MINUTE, concurrent: HOLDER_COPY_CONCURRENT };
   /** When each recent holder copy from a key the registry does not hold was let through (the last minute's). */
   const strangerCopies: number[] = [];
+  /** Copies in progress for admins and registry members, and for every other signer, kept apart. */
   let copiesInProgress = 0;
+  let strangerCopiesInProgress = 0;
   const mutex = new KeyedMutex();
   const verifyCache: VerifyCache = new Map();
   const admins = new Set((deps.adminAddresses ?? []).map(lower));
@@ -520,13 +523,15 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (!raw) throw decline(400, 'No pod to read or write.', 'pass pod_url, set payload.podUrl, or configure the bridge with a default pod');
     let podUrl: string;
     try { podUrl = normalisePodUrl(raw); } catch (e) { throw decline(400, 'The pod URL is not an http(s) URL.', messageOf(e)); }
-    let fetchFn: FetchFn;
-    try { fetchFn = await openPod(podUrl, deps.fetchFn); } catch (e) { throw decline(400, 'The pod URL is not a safe target.', messageOf(e)); }
+    // The served list first, with no network: resolving a caller's host before refusing it would
+    // let anyone tell a privately resolving name from any other by the refusal it gets.
     if (!served.includes(podUrl)) {
       throw served.length === 0
         ? decline(403, 'This bridge serves no pod.', 'pod-not-served: the operator sets WRD_DEFAULT_POD_URL or WRD_SERVED_PODS', { env: 'WRD_SERVED_PODS' })
         : decline(403, `This bridge reads and writes records only on the pods it serves (${served.join(', ')}).`, `pod-not-served: ${podUrl} is not one of them`);
     }
+    let fetchFn: FetchFn;
+    try { fetchFn = await openPod(podUrl, deps.fetchFn); } catch (e) { throw decline(400, 'The pod URL is not a safe target.', messageOf(e)); }
     const p = await platform();
     const now = clock();
     const trusted = new Set([lower(p.wallet.address), ...(deps.trustedPlatformAddresses ?? []).map(lower)]);
@@ -2828,15 +2833,27 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       // Wall-clock time, not the bridge's clock (which the offline demo scripts): this bounds load, not what a record says.
       const t = Date.now();
       while (strangerCopies.length > 0 && (strangerCopies[0] ?? t) <= t - 60_000) strangerCopies.shift();
-      if (stranger && strangerCopies.length >= copyLimits.strangersPerMinute) {
-        return { ...refuse(429, HOLDER_COPY_BUSY, `this bridge answers at most ${copyLimits.strangersPerMinute} holder copies a minute from keys that are neither an admin nor in this pod's registry, all such keys together; try again in a minute`) };
-      }
-      if (copiesInProgress >= copyLimits.concurrent) {
-        return { ...refuse(429, HOLDER_COPY_BUSY, `this bridge makes at most ${copyLimits.concurrent} holder copies at once; try again shortly`) };
-      }
       if (stranger) {
+        // Strangers have their own lane, so keys made for the purpose can never hold the slots an
+        // admin or a member needs, and a stranger's call is charged when it arrives, whether or not
+        // its lane is free, so filling the lane does not leave the budget untouched.
+        if (strangerCopies.length >= copyLimits.strangersPerMinute) {
+          return { ...refuse(429, HOLDER_COPY_BUSY, `this bridge answers at most ${copyLimits.strangersPerMinute} holder copies a minute from keys that are neither an admin nor in this pod's registry, all such keys together; try again in a minute`) };
+        }
         if (!ledger.claim(call.actor, call.nonce, call.now)) return { ...refuse(409, REPLAYED, `${call.actor} already used the nonce ${call.nonce} on this bridge`) };
         strangerCopies.push(t);
+        if (strangerCopiesInProgress >= 1) {
+          return { ...refuse(429, HOLDER_COPY_BUSY, 'this bridge makes one holder copy at a time for keys that are neither an admin nor in this pod\'s registry; try again shortly with a fresh envelope') };
+        }
+        strangerCopiesInProgress += 1;
+        try {
+          return await holderCopy(call);
+        } finally {
+          strangerCopiesInProgress -= 1;
+        }
+      }
+      if (copiesInProgress >= copyLimits.concurrent) {
+        return { ...refuse(429, HOLDER_COPY_BUSY, `this bridge makes at most ${copyLimits.concurrent} holder copies at once for admins and registry members; try again shortly`) };
       }
       copiesInProgress += 1;
       try {

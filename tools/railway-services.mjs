@@ -90,9 +90,12 @@ export const SERVICES = {
   'jev-harness-bridge': { repo: 'interego-jev-harness-bridge', health: '/health' },
   // work-redesign and practice-evidence. Added after both services were created, like agp-bridge.
   // Singletons: each keeps its replay ledger, locks and hourly budgets in process, so a second
-  // container would accept an envelope the first already spent.
-  'wrd-bridge': { repo: 'interego-wrd-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0 },
-  'pev-bridge': { repo: 'interego-pev-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0 },
+  // container would accept an envelope the first already spent. As with css, these settings
+  // only SHRINK the two-container window on a deploy (tests/railway-singleton.test.ts); they do
+  // not close it. What is left is the seconds between the successor going live and the old
+  // container's SIGTERM, during which a replayed envelope could be accepted once more.
+  'wrd-bridge': { repo: 'interego-wrd-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
+  'pev-bridge': { repo: 'interego-pev-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
   bridge: { repo: 'interego-bridge', health: '/health' },
   dashboard: { repo: 'interego-dashboard', health: '/health' },
   'pgsl-browser': { repo: 'interego-pgsl-browser', health: '/health' },

@@ -1053,6 +1053,8 @@ describe('records come from the pod, and the pod plumbing holds', () => {
     const html = (url: string): Answer => (u) => (u === url ? new Response('<!doctype html><title>Sign in</title>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }) : null);
     const linkTo = (elsewhere: string): Answer => (u) => (u === head ? new Response(descriptor.split(graph).join(elsewhere), { status: 200, headers: { 'content-type': 'text/turtle' } }) : null);
     const elsewhere = ['https://pod.example.test/elsewhere/pev/records/x-graph.trig', `${POD}${PEV_COPIES_CONTAINER}x-graph.trig`];
+    const redirectTarget = `${POD}${PEV_RECORDS_CONTAINER}redirected-graph.trig`;
+    const redirectTo = (url: string, to: string): Answer => (u) => (u === url ? new Response(null, { status: 302, headers: { location: to } }) : null);
     const cases: readonly (readonly [string, Answer, RegExp, boolean])[] = [
       ['its descriptor answered 401', at(head, 401, 'Unauthorized'), /the pod answers HTTP 401 for its descriptor \(this bridge may not read it/, false],
       ['its descriptor answered 403', at(head, 403, 'Forbidden'), /the pod answers HTTP 403 for its descriptor/, false],
@@ -1063,13 +1065,17 @@ describe('records come from the pod, and the pod plumbing holds', () => {
       // Same origin, but another pod, and another container of this pod: neither is fetched.
       ['its graph linked to another pod on the same host', linkTo(elsewhere[0]!), /points its graph outside its own container on the pod/, true],
       ['its graph linked to another container of this pod', linkTo(elsewhere[1]!), /points its graph outside its own container on the pod/, true],
+      // A redirect is not followed, even to the record's own container: the SSRF guard would follow it,
+      // re-checking only for private addresses, with the operator's credential on a hop under the pod.
+      ['its descriptor answered with a redirect', redirectTo(head, redirectTarget), /the pod answered 302 \(a redirect\) for its descriptor, and a redirect is not followed/, false],
+      ['its graph answered with a redirect', redirectTo(graph, redirectTarget), /the pod answered 302 \(a redirect\) for its graph, and a redirect is not followed/, false],
     ];
     for (const [what, answer, why, complete] of cases) {
       const r = refused(await act(bridge(answer), 'pev.get_attempt', W.ben, { attemptIri: S['b2'] }), 409, 'record-not-trusted');
       expect([r['descriptorUrl'], String(r['error'])], what).toEqual([head, expect.stringMatching(why)]);
       expect(await listings(bridge(answer)), what).toEqual(plusOne(complete));
     }
-    expect(seen.filter((u) => elsewhere.includes(u))).toEqual([]);
+    expect(seen.filter((u) => elsewhere.includes(u) || u === redirectTarget)).toEqual([]);
     // A graph answered 503 after the substrate's retries: the same, named by its status.
     const busy = at(graph, 503, 'Service Unavailable');
     const r503 = refused(await act(bridge(busy), 'pev.get_attempt', W.ben, { attemptIri: S['b2'] }), 409, 'record-not-trusted');
@@ -2477,7 +2483,9 @@ describe('records read and found trusted are kept across acts, for a bounded tim
   it('a record changed in place after it was verified is read again once its entry expires; a bridge that keeps nothing reads it at once', async () => {
     await setup();
     expect(RECORD_CACHE_TTL_MS).toBe(300_000);
-    const h = make(cdeps({ recordCacheMs: 2000 }));
+    // Keep time is measured on a clock the test moves, so a slow run cannot expire the entry early.
+    let clock = 0;
+    const h = make(cdeps({ recordCacheMs: 2000, recordCacheClock: () => clock }));
     const head = String(ok(await act(h, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on))['headDescriptorUrl']);
     const graph = graphUrlOf(cpod.store, head)!;
     const original = cpod.store.get(graph)!;
@@ -2487,7 +2495,7 @@ describe('records read and found trusted are kept across acts, for a bounded tim
       expect(ok(await act(h, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on))['headDescriptorUrl']).toBe(head);
       // a bridge reading the pod now refuses it;
       refused(await act(make(cdeps({ recordCacheMs: 0 })), 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on), 409, 'record-not-trusted');
-      await new Promise((r) => setTimeout(r, 2100));
+      clock = 2001;
       // and so does the first, once its entry has expired.
       refused(await act(h, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on), 409, 'record-not-trusted');
     } finally {

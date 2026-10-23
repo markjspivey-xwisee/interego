@@ -408,10 +408,37 @@ export function budgetOf(fetchFn?: typeof fetch): ReadBudget | null {
   return fetchFn ? ((fetchFn as Budgeted)[BUDGETED]?.budget ?? null) : null;
 }
 
-/** The guarded, size-capped fetch, typed as the substrate's FetchFn; budgeted when `fetchFn` carries a budget. */
-function guarded(fetchFn?: typeof fetch): FetchFn {
+/** A record's descriptor or graph the pod answered with a redirect. */
+export class RecordRedirected extends Error {
+  constructor(readonly url: string, readonly status: number) {
+    super(`the pod answered ${status} (a redirect) for ${url}`);
+    this.name = 'RecordRedirected';
+  }
+}
+
+/**
+ * Refuses a redirect below the SSRF guard. The guard follows a GET's redirect itself, re-checking each
+ * hop only for private addresses, so a same-container link could otherwise be answered from another
+ * path or pod on the host, with the operator's credential re-added on a hop under the pod.
+ */
+function refusingRedirects(f: typeof fetch): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const res = await f(input, init);
+    if (res.status >= 300 && res.status < 400) {
+      throw new RecordRedirected(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, res.status);
+    }
+    return res;
+  }) as typeof fetch;
+}
+
+/**
+ * The guarded, size-capped fetch, typed as the substrate's FetchFn; budgeted when `fetchFn` carries a
+ * budget. With `followRedirects: false` (record reads) a redirect is refused rather than followed.
+ */
+function guarded(fetchFn?: typeof fetch, opts: { readonly followRedirects?: boolean } = {}): FetchFn {
   const b = fetchFn ? (fetchFn as Budgeted)[BUDGETED] : undefined;
-  return guardedFetchFn(b ? cappedFetch(b.inner, MAX_RESPONSE_BYTES, b.budget) : cappedFetch(base(fetchFn))) as unknown as FetchFn;
+  const inner = b ? cappedFetch(b.inner, MAX_RESPONSE_BYTES, b.budget) : cappedFetch(base(fetchFn));
+  return guardedFetchFn(opts.followRedirects === false ? refusingRedirects(inner) : inner) as unknown as FetchFn;
 }
 
 /**
@@ -716,7 +743,8 @@ function servedAs(contentType: string | null): string {
 }
 
 async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatform, fetchFn?: typeof fetch): Promise<ReadRecord> {
-  const f = guarded(fetchFn);
+  // A record is read at the URL its manifest entry and descriptor name, never where a redirect points.
+  const f = guarded(fetchFn, { followRedirects: false });
   const origin = originOf(descriptorUrl);
   let res: Awaited<ReturnType<FetchFn>>;
   try {
@@ -724,6 +752,7 @@ async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatfor
   } catch (e) {
     // The pod answered, with more than this bridge reads: an unreadable record, not a failed request.
     if (e instanceof ResponseOverLimit) throw overLimit(descriptorUrl, 'descriptor', e);
+    if (e instanceof RecordRedirected) throw new RecordUnreadable(descriptorUrl, `the pod answered ${e.status} (a redirect) for its descriptor, and a redirect is not followed`, e.status);
     if (e instanceof ReadBudgetSpent) throw e;
     throw new PodTransportFailed(`reading ${descriptorUrl} did not complete: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`, 'read', null, origin);
   }
@@ -751,6 +780,7 @@ async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatfor
   } catch (e) {
     if (e instanceof RecordUnreadable || e instanceof ReadBudgetSpent) throw e;
     if (e instanceof ResponseOverLimit) throw overLimit(descriptorUrl, 'graph', e);
+    if (e instanceof RecordRedirected) throw new RecordUnreadable(descriptorUrl, `the pod answered ${e.status} (a redirect) for its graph, and a redirect is not followed`, e.status);
     const msg = e instanceof Error ? e.message : String(e);
     const status = graphStatus(msg, dist.accessURL);
     if (status === 404 || status === 410) throw new GraphMissing(descriptorUrl, dist.accessURL, proof?.descriptorId ?? null, descriptorTurtle);
