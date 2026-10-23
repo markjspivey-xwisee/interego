@@ -9,7 +9,12 @@
  *      `signing.relayAnchor`);
  *   2. `agent_id` names an agent on the configured identity host, `did:web:<host>:agents:<slug>`;
  *   3. that agent's DID document, fetched from the identity host, has that id and a `controller`
- *      that is a user on the same host, `did:web:<host>:users:<id>`: the principal.
+ *      that is a user on the same host, `did:web:<host>:users:<id>`: the principal. When the agent's
+ *      id ends in a canonical user id (`<surface>-u-pk-…`, `-u-eth-…`, `-u-did-…`, as the relay
+ *      mints them), the controller must be that user: the identity host lets any account register
+ *      an unused agent id, so one it has forgotten can be claimed by someone else, whose document
+ *      would otherwise credit the original owner's acts to them. The id alone is never enough to
+ *      name a person: the agent's own document is always required.
  *
  * ★ WHAT THIS TRUSTS. The relay key can sign for any agent, and the identity host says whose agent
  * it is. So whoever holds the relay's delegation key, or controls the identity host, can act as any
@@ -68,6 +73,11 @@ export function isUserDid(did: string, identityHost: string): boolean {
   return m !== null && SLUG.test(m[1] ?? '');
 }
 
+/** The canonical user id a relay agent's slug ends with (`<surface>-<userId>`), or null. */
+export function userIdOfAgentSlug(slug: string): string | null {
+  return /-(u-(?:pk|eth|did)-[0-9a-f]{12})$/.exec(slug)?.[1] ?? null;
+}
+
 /** Where a did:web agent's document is served: `https://<host>/agents/<slug>/did.json`. */
 export const agentDidDocumentUrl = (identityHost: string, slug: string): string =>
   `https://${identityHost}/agents/${encodeURIComponent(slug)}/did.json`;
@@ -124,6 +134,10 @@ export async function openRelayDelegated(
   const controller = d['controller'];
   if (typeof controller !== 'string' || !isUserDid(controller, policy.identityHost)) {
     return no(401, 'agent-has-no-user', `${agentId} is not controlled by a user on ${policy.identityHost}.`);
+  }
+  const named = userIdOfAgentSlug(slug);
+  if (named !== null && controller !== `did:web:${policy.identityHost}:users:${named}`) {
+    return no(401, 'agent-has-no-user', `${agentId} names the user ${named}, but its document names ${controller} as its controller.`);
   }
   return { ok: true, principal: controller, agentId, relaySigner, payload: p, signedPayload, signature };
 }
