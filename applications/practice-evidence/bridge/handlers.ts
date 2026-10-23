@@ -7,7 +7,8 @@
  *
  * ── ONE ORDER FOR EVERY ACT (§6.2) ──────────────────────────────────────────────────────────
  *   1. the signed envelope and every payload check that needs no record   → 401 / 400
- *   2. the pod: named in the signed payload, public, and served          → 400 / 403;
+ *   2. the pod: named in the signed payload and served (from the URL
+ *      alone, before its name is resolved), then public                   → 403 / 400;
  *      its records under no record key but this bridge's (key marks), read
  *      from the manifest before any record, the role registry included     → 409
  *   3. the nonce (writes): a signed envelope acts once                   → 409
@@ -72,9 +73,11 @@ import {
 } from '../src/calibration.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
 import {
-  createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, publishPevRecord, readChain,
-  readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship, underPod,
-  ChainForked, GraphMissing, PodTransportFailed, RecordNotSealable, RecordSealed, RecordUnreadable, PEV_COPIES_CONTAINER,
+  createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
+  readCache, readChain, readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship,
+  underPod, withReadBudget,
+  ChainForked, GraphMissing, PodTransportFailed, ReadBudget, ReadBudgetSpent, RecordNotSealable, RecordSealed, RecordUnreadable, VerifiedRecords,
+  ACT_READ_BUDGET_BYTES, PEV_COPIES_CONTAINER, RECORD_CACHE_MAX_BYTES, RECORD_CACHE_TTL_MS,
   type DeletedVersion, type KeyMark, type ReadCache, type ReadRecord, type RoleRegistryView, type TrustedPlatform,
 } from './pod-helpers.js';
 
@@ -136,6 +139,20 @@ export interface PevDeps {
   readonly bridgeModelFor?: 'anyone' | 'registered';
   /** Per-hour limits held in this process: model calls on the operator's key, and attempts started. */
   readonly budgets?: { readonly modelCallsPerHour?: HourlyLimit; readonly attemptsPerHour?: HourlyLimit };
+  /**
+   * How long a record read from the pod and found trusted where it sits is reused by later acts
+   * without reading it again (ms, default RECORD_CACHE_TTL_MS; 0 reuses nothing). Where it sits is
+   * checked again on every read; see `VerifiedRecords`.
+   */
+  readonly recordCacheMs?: number;
+  /** What one act may read from pods in all (bytes, default ACT_READ_BUDGET_BYTES). */
+  readonly actReadBudgetBytes?: number;
+  /**
+   * How a pod URL is checked to be a public http(s) address before anything is fetched from it
+   * (its DNS name resolved). Default `assertSafeFetchTarget`. It is called only for a pod this
+   * bridge serves (or a holder pod it is asked to copy to), never for one it does not serve.
+   */
+  readonly assertPublicPod?: (podUrl: string) => Promise<void>;
 }
 
 /** A per-hour limit for one signer and for everyone together. */
@@ -226,6 +243,14 @@ function refusalFor(e: unknown): Out {
       descriptorUrl: e.descriptorUrl,
     };
   }
+  if (e instanceof ReadBudgetSpent) {
+    return {
+      ...refuse(409,
+        `This act stopped reading the pod at ${e.limit} bytes, the most this bridge reads for one act, before it had the records it needs; nothing was written. No record this bridge writes is that large: someone who can write the pod may have planted large files.`,
+        'read-limit-reached'),
+      readLimitBytes: e.limit,
+    };
+  }
   if (e instanceof PodTransportFailed) {
     if (e.refusedStatus !== null && e.direction === 'write') {
       return {
@@ -274,9 +299,38 @@ interface Ctx {
   readonly timeouts: { readonly counterpart: Timeouts; readonly judge: Timeouts; readonly draft: Timeouts };
   readonly homePage: string;
   readonly resultsK: number;
+  /** Records read and found trusted, reused across acts (`VerifiedRecords`). */
+  readonly verified: VerifiedRecords;
+  /** How many records this handler set has written: an act that sees it move re-reads the manifest under its lock. */
+  readonly writes: { n: number };
+  readonly actReadBudgetBytes: number;
+  readonly assertPublicPod: (podUrl: string) => Promise<void>;
 }
 
-interface Call { readonly ctx: Ctx; readonly cache: ReadCache }
+/**
+ * One act: what it has read (`cache`), and `read`, the operator-pod fetch every read of the act
+ * goes through, counted against the act's read budget. Writes go through `ctx.fetchFn`.
+ */
+interface Call {
+  readonly ctx: Ctx; readonly cache: ReadCache; readonly budget: ReadBudget; readonly read: typeof fetch;
+  /** `ctx.writes.n` when the act began: the records this handler set had written by then. */
+  readonly writesAtStart: number;
+}
+
+/**
+ * The lock on one graph, for one act. When this handler set wrote any record since the act began
+ * (another act's write, which may have moved this graph while the act waited), taking the lock
+ * forgets the manifests the act read before it, so what it reads under the lock is the pod as it is
+ * once the lock is held. Otherwise the manifest it read stands: a write by another process in
+ * between is caught as before, by the fresh read of the heads right before the publish and the
+ * publish's own compare-and-set.
+ */
+function locked<T>(call: Call, key: string, fn: () => Promise<T>): Promise<T> {
+  return call.ctx.lock(key, () => {
+    if (call.ctx.writes.n !== call.writesAtStart) call.cache.manifests?.clear();
+    return fn();
+  });
+}
 
 function makeContext(deps: PevDeps): Ctx {
   const lower = (xs: readonly string[] | undefined): string[] => (xs ?? []).filter((x) => isAddress(x)).map((x) => x.toLowerCase());
@@ -318,6 +372,10 @@ function makeContext(deps: PevDeps): Ctx {
     },
     homePage: deps.deploymentUrl ?? 'http://127.0.0.1:6110',
     resultsK: deps.resultsK ?? RESULTS_K,
+    verified: new VerifiedRecords(deps.recordCacheMs ?? RECORD_CACHE_TTL_MS, RECORD_CACHE_MAX_BYTES),
+    writes: { n: 0 },
+    actReadBudgetBytes: deps.actReadBudgetBytes ?? ACT_READ_BUDGET_BYTES,
+    assertPublicPod: deps.assertPublicPod ?? assertSafeFetchTarget,
   };
 }
 
@@ -431,16 +489,35 @@ interface Signed {
   readonly actor: Actor; readonly at: string;
 }
 
-async function publicPod(raw: string): Promise<string> {
-  let pod: string;
+function notPublic(raw: string): Declined {
+  return decline(400, `The pod ${raw} is not a public http(s) address this bridge may reach.`, 'pod-not-public');
+}
+
+/** The pod base of a caller's pod URL, normalised by the URL parser; never resolved or fetched. */
+function podOf(raw: string): string {
+  const n = normalPod(raw);
+  if (n === null) throw notPublic(raw);
+  return n;
+}
+
+/** Resolve a pod's host and refuse it unless every address is public (`assertPublicPod`). */
+async function assertPublic(ctx: Ctx, raw: string, pod: string): Promise<void> {
   try {
-    const n = normalPod(raw);
-    if (n === null) throw new Error('scheme');
-    pod = n;
-    await assertSafeFetchTarget(pod);
+    await ctx.assertPublicPod(pod);
   } catch {
-    throw decline(400, `The pod ${raw} is not a public http(s) address this bridge may reach.`, 'pod-not-public');
+    throw notPublic(raw);
   }
+}
+
+/**
+ * A caller's pod, refused unless this bridge serves it, and only then resolved: an unserved pod is
+ * refused (403 pod-not-served) from the URL alone, with no DNS lookup and no request, so the answer
+ * cannot tell a caller which names resolve to private addresses (an internal service's name, say).
+ */
+async function servedPublicPod(ctx: Ctx, raw: string): Promise<string> {
+  const pod = podOf(raw);
+  if (!servesPod(ctx, pod)) throw notServed(ctx);
+  await assertPublic(ctx, raw, pod);
   return pod;
 }
 
@@ -477,9 +554,8 @@ async function signedAct(
   if (typeof argPod === 'string' && argPod.trim() !== '' && podBase(argPod.trim()) !== podBase(podUrl)) {
     throw decline(400, 'pod_url names a different pod than the one in the signed payload.', 'pod-url-differs');
   }
-  const pod = await publicPod(podUrl);
-  if (!servesPod(ctx, pod)) throw notServed(ctx);
-  await refuseOnKeyMismatch(ctx, pod);
+  const pod = await servedPublicPod(ctx, podUrl);
+  await refuseOnKeyMismatch(call, pod);
   const nonce = String(env.payload['nonce']);
   if ((o.nonce ?? o.write ?? false) && !ctx.ledger.consume(env.signer, nonce, now)) {
     throw decline(409, 'This signed envelope was already used; sign a new one.', 'envelope-already-used');
@@ -569,9 +645,9 @@ function keyMismatchDecline(ctx: Ctx, m: KeyMismatch): Declined {
  * Every act but the scenario list, first thing on the pod: refused (keyMismatchDecline) when the
  * pod's own records name a record key that is not this bridge's (any, when it holds none).
  */
-async function refuseOnKeyMismatch(ctx: Ctx, pod: string): Promise<void> {
-  const mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn), pod));
-  if (mismatch) throw keyMismatchDecline(ctx, mismatch);
+async function refuseOnKeyMismatch(call: Call, pod: string): Promise<void> {
+  const mismatch = keyMismatchIn(call.ctx, keyMarksOf(await podEntries(pod, call.read, call.cache), pod));
+  if (mismatch) throw keyMismatchDecline(call.ctx, mismatch);
 }
 
 /** What the scenario list, the one read still answered, carries when the pod's records are under another key. */
@@ -597,9 +673,7 @@ function sealedDecline(n: number, what: string): Declined {
 async function readPod(ctx: Ctx, args: Record<string, unknown>): Promise<string> {
   const raw = typeof args['pod_url'] === 'string' && args['pod_url'].trim() !== '' ? args['pod_url'].trim() : ctx.deps.defaultPodUrl;
   if (!raw) throw decline(400, 'Name a pod: pass pod_url (this bridge has no default pod).', 'no-pod');
-  const pod = await publicPod(raw);
-  if (!servesPod(ctx, pod)) throw notServed(ctx);
-  return pod;
+  return servedPublicPod(ctx, raw);
 }
 
 function actOf(s: Signed, key: PevActionKey): AttemptAct {
@@ -631,7 +705,7 @@ interface ScenarioHead { readonly rec: ReadRecord; readonly body: ScenarioBody; 
 async function attemptHead(call: Call, pod: string, iri: string): Promise<AttemptHead> {
   const missing = decline(404, 'No attempt with this IRI is on this pod.', 'attempt-not-found');
   if (!ATTEMPT_IRI.test(iri)) throw missing;
-  const h = await readHead(pod, iri, call.ctx.trusted, call.ctx.fetchFn, call.cache);
+  const h = await readHead(pod, iri, call.ctx.trusted, call.read, call.cache);
   if (!h.head) throw missing;
   if (!isTrusted(h.head)) throw untrusted(h.head);
   if (h.head.body.kind !== 'attempt') throw missing;
@@ -640,7 +714,7 @@ async function attemptHead(call: Call, pod: string, iri: string): Promise<Attemp
 
 async function scenarioHead(call: Call, pod: string, iri: string): Promise<ScenarioHead | null> {
   if (!SCENARIO_IRI.test(iri)) return null;
-  const h = await readHead(pod, iri, call.ctx.trusted, call.ctx.fetchFn, call.cache);
+  const h = await readHead(pod, iri, call.ctx.trusted, call.read, call.cache);
   if (!h.head) return null;
   if (!isTrusted(h.head)) throw untrusted(h.head);
   if (h.head.body.kind !== 'scenario') return null;
@@ -650,7 +724,7 @@ async function scenarioHead(call: Call, pod: string, iri: string): Promise<Scena
 interface Roles { readonly view: RoleRegistryView; of(address: string): ReadonlySet<Role> }
 
 async function rolesOn(call: Call, pod: string): Promise<Roles> {
-  const view = await readRoleRegistry(pod, call.ctx.trusted, call.ctx.fetchFn, call.cache);
+  const view = await readRoleRegistry(pod, call.ctx.trusted, call.read, call.cache);
   if (!view.trusted && view.head) throw untrusted(view.head);
   return { view, of: (address: string) => view.roles.get(address.toLowerCase()) ?? new Set<Role>() };
 }
@@ -778,7 +852,7 @@ async function writeRecord(call: Call, w: {
   }
   const moved = (): Declined => decline(409, 'The record changed while you were acting; read it again and sign a new act.', 'chain-moved',
     undefined, w.disclosure ? { disclosure: w.disclosure } : undefined);
-  const fresh = await refreshHeads(w.pod, graphIri, ctx.fetchFn);
+  const fresh = await refreshHeads(w.pod, graphIri, call.read);
   const expected = w.prev ? [w.prev.descriptorUrl] : [];
   if (fresh.length !== expected.length || fresh.some((h, i) => h !== expected[i])) throw moved();
   try {
@@ -789,6 +863,7 @@ async function writeRecord(call: Call, w: {
       ...(w.prev ? { supersedes: w.prev.descriptorUrl, currentHeads: fresh } : {}), fetchFn: ctx.fetchFn,
       ...(ctx.trusted.recordKey ? { sealTo: ctx.trusted.recordKey } : {}),
     });
+    ctx.writes.n += 1;
     return { descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl, recordId, graphDigest: digest.digest };
   } catch (e) {
     if (e instanceof PublishPreconditionFailedError) throw moved();
@@ -921,7 +996,7 @@ interface Ratification { readonly ratified: boolean; readonly ratifiedBy: string
 async function ratificationOf(call: Call, pod: string, a: AttemptBody): Promise<Ratification> {
   let chain: readonly (ReadRecord | DeletedVersion)[];
   try {
-    chain = await readChain(pod, a.scenario.scenarioIri, call.ctx.trusted, call.ctx.fetchFn, call.cache);
+    chain = await readChain(pod, a.scenario.scenarioIri, call.ctx.trusted, call.read, call.cache);
   } catch (e) {
     if (e instanceof ChainForked) {
       throw decline(409, `The scenario ${a.scenario.scenarioIri} has ${e.heads.length} competing latest versions, so whether the rubric version this attempt used was ratified cannot be read; nothing is claimed about it.`,
@@ -974,10 +1049,10 @@ async function eligibility(call: Call, pod: string, h: AttemptHead): Promise<Eli
   // cannot be read at all (sealed to another key, an envelope naming this key that does not open,
   // its graph gone) is unknown, not "not verifiable": the RecordUnreadable or GraphMissing goes on
   // to the caller as a 409 saying why, and no skip audit is written.
-  const before = await readRecord(review.target.descriptorUrl, call.ctx.trusted, call.ctx.fetchFn, call.cache);
+  const before = await readRecord(review.target.descriptorUrl, call.ctx.trusted, call.read, call.cache);
   if (!isTrusted(before) || placementProblem(before.body, pod, a.attemptIri) !== undefined
     || before.recordId !== review.target.recordId || before.graphDigest !== review.target.graphDigest) return notVerifiable;
-  const asOf = await readRoleRegistryAt(pod, review.reviewedAt, call.ctx.trusted, call.ctx.fetchFn, call.cache);
+  const asOf = await readRoleRegistryAt(pod, review.reviewedAt, call.ctx.trusted, call.read, call.cache);
   const held = asOf.roles.get(review.reviewer.address.toLowerCase()) ?? new Set<Role>();
   if (!held.has('reviewer') || held.has('agent')) return notVerifiable;
   const rat = await ratificationOf(call, pod, a);
@@ -1063,8 +1138,8 @@ async function registerRole(call: Call, args: Record<string, unknown>): Promise<
     },
   });
   const reg = registryIri(s.pod);
-  return ctx.lock(`${s.pod}|${reg}`, async () => {
-    const h = await readHead(s.pod, reg, ctx.trusted, ctx.fetchFn, call.cache);
+  return locked(call, `${s.pod}|${reg}`, async () => {
+    const h = await readHead(s.pod, reg, ctx.trusted, call.read, call.cache);
     if (h.head && (!isTrusted(h.head) || h.head.body.kind !== 'role-registry')) throw untrusted(h.head);
     if (!isAdmin(ctx, s.signer)) throw decline(403, 'Only an admin address configured on this bridge may change roles.', 'not-an-admin');
     const current = h.head && h.head.body.kind === 'role-registry' ? h.head.body : null;
@@ -1154,8 +1229,8 @@ async function authorScenario(call: Call, args: Record<string, unknown>): Promis
   const assistance = declaredAssistance(ctx, s, spec);
   const basedOn = s.payload['basedOnVersion'];
   const iri = scenarioIriOf(s.pod, spec.scenarioKey);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
-    const h = await readHead(s.pod, iri, ctx.trusted, ctx.fetchFn, call.cache);
+  return locked(call, `${s.pod}|${iri}`, async () => {
+    const h = await readHead(s.pod, iri, ctx.trusted, call.read, call.cache);
     if (h.head && (!isTrusted(h.head) || h.head.body.kind !== 'scenario')) throw untrusted(h.head);
     const head = h.head && h.head.body.kind === 'scenario' ? h.head.body : null;
     if (!head && basedOnVersion(basedOn) !== null) {
@@ -1253,7 +1328,7 @@ async function ratifyScenario(call: Call, args: Record<string, unknown>): Promis
     },
   });
   const iri = String(s.payload['scenarioIri']);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await scenarioHead(call, s.pod, iri);
     if (!h) throw decline(404, 'No scenario with this IRI is on this pod.', 'scenario-not-found');
     const b = h.body;
@@ -1298,12 +1373,12 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
   const pod = await readPod(ctx, args);
   const one = typeof args['scenario_iri'] === 'string' && args['scenario_iri'].trim() !== '' ? args['scenario_iri'].trim() : null;
   if (one) {
-    const mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn), pod));
+    const mismatch = keyMismatchIn(ctx, keyMarksOf(await podEntries(pod, call.read, call.cache), pod));
     let h: ScenarioHead | null;
     let chain: readonly (ReadRecord | DeletedVersion)[];
     try {
       h = await scenarioHead(call, pod, one);
-      chain = h ? await readChain(pod, one, ctx.trusted, ctx.fetchFn, call.cache) : [];
+      chain = h ? await readChain(pod, one, ctx.trusted, call.read, call.cache) : [];
     } catch (e) {
       // A scenario sealed on a pod whose records are under another key: the refusal names both keys.
       if (mismatch && e instanceof RecordSealed) throw keyMismatchDecline(ctx, mismatch);
@@ -1319,7 +1394,7 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
     };
   }
   const drafts = args['include_drafts'] === true || args['include_drafts'] === 'true';
-  const read = await readHeadsOfKind(pod, 'scenario', ctx.trusted, { max: 500, fetchFn: ctx.fetchFn, cache: call.cache });
+  const read = await readHeadsOfKind(pod, 'scenario', ctx.trusted, { max: 500, fetchFn: call.read, cache: call.cache });
   const scenarios = read.records
     .flatMap((r) => (r.body.kind === 'scenario' && (drafts || r.body.status !== 'draft') ? [scenarioView(r, r.body)] : []))
     .sort((x, y) => String(x['title']).localeCompare(String(y['title'])));
@@ -1327,6 +1402,7 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
   return {
     podUrl: pod, scenarios, untrustedRecordsSkipped: read.untrusted + read.forked, sealedRecordsSkipped: read.sealed, complete: read.complete,
     ...(read.sealed > 0 ? { sealedRecords: sealedScenariosMark(read.sealed) } : {}),
+    ...readLimitMark(call, read.readLimitReached),
     ...(mismatch ? { recordKeyMismatch: keyMismatchMark(ctx, mismatch) } : {}),
     bridge: bridgeRoute(ctx),
   };
@@ -1361,8 +1437,8 @@ async function startAttempt(call: Call, args: Record<string, unknown>): Promise<
   // learner); attempts started before the key keep their plain key and are still this learner's.
   const keys = attemptKeysOf(ctx, s.pod, sIri, s.signer);
   const key = keys[0]!;
-  return ctx.lock(`${s.pod}|attempts|${key}`, async () => {
-    const all = await listEntries(s.pod, ctx.fetchFn);
+  return locked(call, `${s.pod}|attempts|${key}`, async () => {
+    const all = await podEntries(s.pod, call.read, call.cache);
     // This lookup is by learner: on the manifest it is made from, every record must be under this
     // bridge's key (or plaintext), or her attempts under another key would read as none.
     const mismatch = keyMismatchIn(ctx, keyMarksOf(all, s.pod));
@@ -1429,7 +1505,7 @@ async function notAStartedEnvelope(call: Call, s: Signed, all: readonly Manifest
   const since = call.ctx.now().getTime() - (2 * call.ctx.maxAgeMs + 120_000);
   const recent = mine.filter((g) => all.some((e) => e.describes.includes(g) && (e.validFrom === undefined || Date.parse(e.validFrom) >= since)));
   for (const g of recent) {
-    const h = await readHead(s.pod, g, call.ctx.trusted, call.ctx.fetchFn, call.cache);
+    const h = await readHead(s.pod, g, call.ctx.trusted, call.read, call.cache);
     if (h.head && h.head.body.kind === 'attempt' && h.head.body.acts.some((x) => x.payloadSha256 === s.payloadSha256)) {
       throw decline(409, 'This signed envelope already started an attempt; sign a new one.', 'envelope-already-used');
     }
@@ -1495,7 +1571,7 @@ async function say(call: Call, args: Record<string, unknown>): Promise<Out> {
     },
   });
   const iri = needAttemptIri(s.payload);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await conversationHead(call, s, iri, turnIndex);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
     const model = routeFor(call, args, { action: A.counterpartPacket, then: A.recordTurns }, { signer: s.signer, roles });
@@ -1562,7 +1638,7 @@ async function recordTurns(call: Call, args: Record<string, unknown>): Promise<O
     },
   });
   const iri = needAttemptIri(s.payload);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await conversationHead(call, s, iri, turnIndex);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
     const learner: Turn = { index: turnIndex, speaker: 'learner', text: learnerText, textSha256: sha256(learnerText), at: s.at, source: 'learner-signed', envelope: s.stored };
@@ -1587,7 +1663,7 @@ async function endConversation(call: Call, args: Record<string, unknown>): Promi
     checks: (p) => { needAttemptIri(p); turnIndex = needInt(p, 'turnIndex', 1, 10_000); },
   });
   const iri = needAttemptIri(s.payload);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await conversationHead(call, s, iri, turnIndex);
     if (learnerTurnCount(h.body.turns) === 0) {
       throw decline(409, 'Say something first; an attempt with no learner line has nothing to judge.', 'no-learner-turns');
@@ -1650,7 +1726,7 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
   const { ctx } = call;
   const s = await signedAct(call, args, 'judgeAttempt', { write: true, checks: (p) => { needAttemptIri(p); } });
   const iri = needAttemptIri(s.payload);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const isLearner = sameAddress(h.body.learner.address, s.signer);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
@@ -1715,7 +1791,7 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
     },
   });
   const iri = needAttemptIri(s.payload);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
     if (sameAddress(h.body.learner.address, s.signer)) throw decline(403, 'The learner cannot judge their own attempt.', 'judge-is-the-learner');
@@ -1759,9 +1835,13 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
  * (`records-sealed`); both name PEV_RECORD_KEY. Untrusted and forked heads, and heads over the
  * read limit, are skipped and counted.
  */
-async function attemptBodies(call: Call, pod: string, what: string): Promise<{ readonly heads: readonly ReadRecord[]; readonly bodies: readonly AttemptBody[]; readonly untrusted: number; readonly complete: boolean }> {
+async function attemptBodies(call: Call, pod: string, what: string): Promise<{
+  readonly heads: readonly ReadRecord[]; readonly bodies: readonly AttemptBody[]; readonly untrusted: number; readonly complete: boolean;
+  /** `readLimitReached` (with the act's limit and why) when the act's read budget left heads unread; else nothing. */
+  readonly limit: Out;
+}> {
   const read = await readHeadsOfKind(pod, 'attempt', call.ctx.trusted, {
-    max: 2000, fetchFn: call.ctx.fetchFn, cache: call.cache,
+    max: 2000, fetchFn: call.read, cache: call.cache,
     beforeReading: (marks) => {
       const mismatch = keyMismatchIn(call.ctx, marks);
       if (mismatch) throw keyMismatchDecline(call.ctx, mismatch);
@@ -1769,7 +1849,25 @@ async function attemptBodies(call: Call, pod: string, what: string): Promise<{ r
   });
   if (read.sealed > 0) throw sealedDecline(read.sealed, what);
   const heads = read.records.filter((r) => r.body.kind === 'attempt');
-  return { heads, bodies: heads.map((r) => r.body as AttemptBody), untrusted: read.untrusted + read.forked, complete: read.complete };
+  return {
+    heads, bodies: heads.map((r) => r.body as AttemptBody), untrusted: read.untrusted + read.forked, complete: read.complete,
+    limit: readLimitMark(call, read.readLimitReached),
+  };
+}
+
+/**
+ * What a listing carries when the act's read budget ran out before it had read every head: the
+ * limit, and that the answer is not the whole pod (it also says `complete: false`).
+ */
+function readLimitMark(call: Call, reached: boolean): Out {
+  if (!reached) return {};
+  const bytes = call.ctx.actReadBudgetBytes;
+  return {
+    readLimitReached: {
+      bytes,
+      note: `This answer stopped reading the pod at ${bytes} bytes, the most this bridge reads for one act, so it is not the whole pod. Records this bridge has read and checked are reused for a while, so asking again can read further; no record this bridge writes is that large, so someone who can write the pod may have planted large files.`,
+    },
+  };
 }
 
 function cellsFor(ctx: Ctx, pod: string, bodies: readonly AttemptBody[], groupBy: 'rubric-version' | 'criterion-content'): { cells: CalibrationCellView[]; outcomes: number } {
@@ -1816,7 +1914,7 @@ async function reviewQueueAct(call: Call, args: Record<string, unknown>): Promis
   });
   return {
     podUrl: s.pod, entries, awaitingReview: q.awaitingReview, excludedAsConflicted: q.excludedAsConflicted, weights: q.weights,
-    computedAt: iso(ctx), attemptsRead: read.heads.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete,
+    computedAt: iso(ctx), attemptsRead: read.heads.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit,
   };
 }
 
@@ -1918,7 +2016,7 @@ async function countersignAttempt(call: Call, args: Record<string, unknown>): Pr
   const s = await signedAct(call, args, 'countersignAttempt', { write: true, checks: reviewChecks });
   const iri = needAttemptIri(s.payload);
   const picks = levelPicks(s.payload);
-  return call.ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const { h, primary, roles } = await reviewable(call, s, iri, picks);
     if (primary.unverifiedCriteria.length > 0) {
       throw decline(409, `A quote did not check out for ${primary.unverifiedCriteria.join(', ')}; set those levels yourself with an override.`, 'unverified-criteria-need-override',
@@ -1941,7 +2039,7 @@ async function overrideAttempt(call: Call, args: Record<string, unknown>): Promi
   const s = await signedAct(call, args, 'overrideAttempt', { write: true, checks: reviewChecks });
   const iri = needAttemptIri(s.payload);
   const picks = levelPicks(s.payload);
-  return call.ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const { h, primary, roles } = await reviewable(call, s, iri, picks);
     const needWhyFor: string[] = [];
     let changes = false;
@@ -1973,7 +2071,7 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     checks: (p) => { needWhy(p, true); needAttemptIri(p); needTarget(p); },
   });
   const iri = needAttemptIri(s.payload);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const a = h.body;
     if (!sameAddress(a.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may contest its review.', 'not-the-learner');
@@ -2010,7 +2108,7 @@ async function retractReview(call: Call, args: Record<string, unknown>): Promise
     checks: (p) => { needWhy(p, true); needAttemptIri(p); needTarget(p); },
   });
   const iri = needAttemptIri(s.payload);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const a = h.body;
     if (!isAdmin(ctx, s.signer)) throw decline(403, 'Only an admin may withdraw a review for cause.', 'not-an-admin');
@@ -2068,7 +2166,7 @@ async function calibrationAct(call: Call, args: Record<string, unknown>): Promis
     podUrl: pod, cells: shown, personJudgeCellsWithheld: chosen.length - shown.length, k: ctx.resultsK, smallCountRule: CALIBRATION_SMALL_COUNT_RULE,
     policy: STANDING_POLICY,
     auditSampleRate: AUDIT_SAMPLE_RATE, minSamplesForAsserted: STANDING_POLICY.minSamples, outcomesRead: outcomes,
-    attemptsRead: read.heads.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, computedAt: iso(ctx), metricNote: METRIC_NOTE,
+    attemptsRead: read.heads.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit, computedAt: iso(ctx), metricNote: METRIC_NOTE,
   };
 }
 
@@ -2101,7 +2199,7 @@ async function scenarioResultsAct(call: Call, args: Record<string, unknown>): Pr
   const { cells } = cellsFor(ctx, s.pod, mine, 'rubric-version');
   return {
     ...view, personJudgeCells: cells.filter((c) => c.judgeKind === 'person'),
-    attemptsRead: mine.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete,
+    attemptsRead: mine.length, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit,
   };
 }
 
@@ -2170,7 +2268,7 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
  * chains in from elsewhere (a forged `supersedes`) is never returned, copied or deleted.
  */
 async function trustedChain(call: Call, pod: string, iri: string): Promise<readonly (ReadRecord | DeletedVersion)[]> {
-  const chain = await readChain(pod, iri, call.ctx.trusted, call.ctx.fetchFn, call.cache);
+  const chain = await readChain(pod, iri, call.ctx.trusted, call.read, call.cache);
   for (const v of chain) if (!isDeleted(v) && !isTrusted(v)) throw untrusted(v);
   return chain;
 }
@@ -2184,14 +2282,17 @@ async function holderCopy(call: Call, args: Record<string, unknown>): Promise<Ou
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
   if (!sameAddress(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may copy it.', 'not-the-learner');
-  let target: string;
-  try {
-    target = await publicPod(String(s.payload['targetPodUrl']));
-  } catch {
-    throw decline(400, 'targetPodUrl must be a public http(s) pod address.', 'target-pod-not-public');
-  }
+  const notPublicTarget = (): Declined => decline(400, 'targetPodUrl must be a public http(s) pod address.', 'target-pod-not-public');
+  const target = normalPod(String(s.payload['targetPodUrl']));
+  if (target === null) throw notPublicTarget();
+  // A served pod is refused from the URL alone, before the target's name is resolved.
   if (target === s.pod || (ctx.served ?? []).includes(target)) {
     throw decline(400, 'Copy to a pod you hold, not to a pod this bridge writes its records to.', 'target-pod-is-served');
+  }
+  try {
+    await ctx.assertPublicPod(target);
+  } catch {
+    throw notPublicTarget();
   }
   const chain = await trustedChain(call, s.pod, iri);
   const copies: Out[] = [];
@@ -2228,12 +2329,15 @@ async function holderCopy(call: Call, args: Record<string, unknown>): Promise<Ou
     throw e;
   }
   let copiesVerified = 0;
-  const copyCache: ReadCache = new Map();
+  // Read back from the holder pod, never from the operator pod's cache, within the act's read budget.
+  const copyCache: ReadCache = { records: new Map() };
+  const holderRead = withReadBudget(ctx.holderFetchFn, call.budget);
   for (const c of copies) {
     try {
-      const back = await readRecord(String(c['copyDescriptorUrl']), ctx.trusted, ctx.holderFetchFn, copyCache);
+      const back = await readRecord(String(c['copyDescriptorUrl']), ctx.trusted, holderRead, copyCache);
       if (isTrusted(back) && back.recordId === c['recordId']) copiesVerified += 1;
     } catch (e) {
+      if (e instanceof ReadBudgetSpent) break;
       if (!(e instanceof RecordUnreadable || e instanceof GraphMissing || e instanceof PodTransportFailed)) throw e;
     }
   }
@@ -2266,6 +2370,8 @@ async function deleteEarlierGraphs(call: Call, pod: string, chain: readonly (Rea
     if (v.descriptorUrl === keep) continue;
     if (isDeleted(v)) { deleted += 1; continue; }
     if (!v.graphUrl.startsWith(pod)) { stillPresent.push(v.graphUrl); continue; }
+    // Its text is gone from the pod: no later act may hand it back from the records kept across acts.
+    call.ctx.verified.drop(v.descriptorUrl);
     const r = await deleteResource(v.graphUrl, call.ctx.fetchFn);
     if (r === 'deleted' || r === 'absent') deleted += 1; else stillPresent.push(v.graphUrl);
   }
@@ -2280,7 +2386,7 @@ async function redactAttempt(call: Call, args: Record<string, unknown>): Promise
   });
   const iri = needAttemptIri(s.payload);
   const why = needWhy(s.payload, false);
-  return ctx.lock(`${s.pod}|${iri}`, async () => {
+  return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const a = h.body;
     const isLearner = sameAddress(a.learner.address, s.signer);
@@ -2349,7 +2455,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
           ...(reviewed && review.assessment.use === 'pass-gate' ? { finalMeetsPassRule: review.assessment.meetsPassRule } : {}),
         };
       });
-    return { podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete };
+    return { podUrl: s.pod, attempts: list, untrustedRecordsSkipped: read.untrusted, complete: read.complete, ...read.limit };
   }
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
@@ -2359,7 +2465,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
     throw decline(403, 'Only the learner, a reviewer, a judge of this attempt or an admin may read it.', 'not-entitled');
   }
   const [e, rat, chain] = await Promise.all([
-    eligibility(call, s.pod, h), ratificationOf(call, s.pod, a), readChain(s.pod, iri, ctx.trusted, ctx.fetchFn, call.cache),
+    eligibility(call, s.pod, h), ratificationOf(call, s.pod, a), readChain(s.pod, iri, ctx.trusted, call.read, call.cache),
   ]);
   const review = standingReview(a);
   const judged = a.judgments.length > 0;
@@ -2432,7 +2538,8 @@ type Act = (call: Call, args: Record<string, unknown>) => Promise<Out>;
 export function createPevHandlers(deps: PevDeps): Record<string, AffordanceHandler> {
   const ctx = makeContext(deps);
   const run = (act: Act): AffordanceHandler => async (args: Record<string, unknown>) => {
-    const call: Call = { ctx, cache: new Map() };
+    const budget = new ReadBudget(ctx.actReadBudgetBytes);
+    const call: Call = { ctx, cache: readCache(ctx.verified), budget, read: withReadBudget(ctx.fetchFn, budget), writesAtStart: ctx.writes.n };
     try {
       return await act(call, args ?? {});
     } catch (e) {

@@ -23,7 +23,8 @@ import { digestedGraphRegion, discover, parseAuthorshipProofFromDescriptorTurtle
 import { createPevHandlers, describeStartup, type PevDeps } from '../bridge/handlers.js';
 import {
   cappedFetch, isDeleted, isTrusted, operatorPodFetch, publishPevRecord, readChain, readHead, readRecord, readRoleRegistry, RecordNotSealable, RecordSealed,
-  RecordUnreadable, ResponseOverLimit, MAX_RESPONSE_BYTES, PEV_COPIES_CONTAINER, PEV_RECORDS_CONTAINER,
+  RecordUnreadable, ReadBudget, ReadBudgetSpent, ResponseOverLimit, VerifiedRecords, ACT_READ_BUDGET_BYTES, MAX_RESPONSE_BYTES, PEV_COPIES_CONTAINER,
+  PEV_RECORDS_CONTAINER, RECORD_CACHE_TTL_MS, readCache, readHeadsOfKind, recordBytes, withReadBudget,
 } from '../bridge/pod-helpers.js';
 import { DEMO_LINES, FABRICATED_QUOTE, demoKey, demoScenarioInput, graphUrlOf, inMemoryPod, operatorPlaintext, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION, readShapesTurtle, toolNameOf } from '../src/ontology.js';
@@ -34,7 +35,7 @@ import {
 } from '../src/practice.js';
 import {
   attemptIriSecret, attemptKey, didOf, fingerprintOfAttemptIri, fingerprintOfRecordUrl, iriKeyFingerprint, modelAgentIri, recordGraphTurtle, recordLocal, registryIri, signEnvelope,
-  signedRequestEnvelope, type PevRecordBody,
+  signedRequestEnvelope, RECORD_CLASS, type PevRecordBody,
 } from '../src/records.js';
 import { CMI5_CATEGORY_PREFIX, statementProblems, VERB_COMPLETED } from '../src/projections.js';
 
@@ -927,7 +928,9 @@ describe('records come from the pod, and the pod plumbing holds', () => {
     // Served pods are compared after URL normalisation: an upper-case host and a default port still match.
     ok((await make({ servedPods: ['HTTPS://POD.example.test:443/practice'] })['pev.list_scenarios']!({ pod_url: POD })) as Out);
     refused(await act(H, 'pev.register_role', W.admin, { address: W.ana.address, role: 'author', change: 'add' }, { pod_url: OTHER_POD }), 400, 'pod-url-differs');
-    refused((await H['pev.list_scenarios']!({ pod_url: 'http://127.0.0.1:9/' })) as Out, 400, 'pod-not-public');
+    // A private address is refused as one only on a pod this bridge serves: an unserved one is not served, as any other.
+    refused((await H['pev.list_scenarios']!({ pod_url: 'http://127.0.0.1:9/' })) as Out, 403, 'pod-not-served');
+    refused((await make({ servedPods: '*' })['pev.list_scenarios']!({ pod_url: 'http://127.0.0.1:9/' })) as Out, 400, 'pod-not-public');
     const fresh = inMemoryPod();
     const writeRefused = make({ fetchFn: (async (i: RequestInfo | URL, init?: RequestInit) => ((init?.method ?? 'GET') === 'GET' ? fresh.fetchFn(i, init) : new Response('no', { status: 401, statusText: 'Unauthorized' }))) as typeof fetch });
     const w = refused(await act(writeRefused, 'pev.register_role', W.admin, { address: W.ana.address, role: 'author', change: 'add' }), 502, 'pod-refused-write');
@@ -979,6 +982,181 @@ describe('records come from the pod, and the pod plumbing holds', () => {
     const small = await cappedFetch((async () => new Response('hello', { status: 200, headers: { etag: '"v1"' } })) as typeof fetch, 32)('https://pod.example.test/practice/x.ttl');
     expect([small.status, small.headers.get('etag'), await small.text()]).toEqual([200, '"v1"', 'hello']);
     expect((await cappedFetch((async () => new Response(null, { status: 304 })) as typeof fetch, 32)('https://pod.example.test/x')).status).toBe(304);
+  }, SLOW);
+
+  it('refuses a pod it does not serve from its URL alone: no name is resolved and nothing is fetched, so a private name reads as any other', async () => {
+    const resolved: string[] = [];
+    const resolver = async (u: string): Promise<void> => {
+      resolved.push(u);
+      if (/\.internal\/|\/\/10\.|\/\/127\./.test(u)) throw new Error('target host resolves to a private/loopback/link-local address');
+    };
+    const h = make({ assertPublicPod: resolver });
+    const requests = pod.requests.length;
+    // An internal service's name, a private literal and a public name this bridge does not serve.
+    const unserved = ['https://postgres.railway.internal/p/', 'http://10.0.0.7:3000/p/', 'https://unserved-public.example.test/p/'];
+    const answers: Out[] = [];
+    for (const p of unserved) {
+      answers.push((await h['pev.list_scenarios']!({ pod_url: p })) as Out);
+      answers.push((await h['pev.calibration']!({ pod_url: p })) as Out);
+      answers.push(await act(h, 'pev.get_attempt', W.ana, {}, {}, { pod: p }));
+      answers.push(await act(h, 'pev.register_role', W.admin, { address: W.ana.address, role: 'author', change: 'add' }, {}, { pod: p }));
+    }
+    for (const a of answers) refused(a, 403, 'pod-not-served');
+    // One answer for all of them, word for word: nothing in it depends on where a name resolves.
+    expect(new Set(answers.map((a) => JSON.stringify(a))).size).toBe(1);
+    expect([resolved, pod.requests.length - requests]).toEqual([[], 0]);
+    // The same with the default check (DNS): an unserved private literal is refused as not served.
+    const dflt = make();
+    expect(JSON.stringify((await dflt['pev.list_scenarios']!({ pod_url: 'http://127.0.0.1:9/p/' })) as Out))
+      .toBe(JSON.stringify((await dflt['pev.list_scenarios']!({ pod_url: unserved[2] })) as Out));
+    // A served pod is resolved, and only then refused as private; one that resolves publicly goes on to the pod.
+    refused((await make({ servedPods: '*', assertPublicPod: resolver })['pev.list_scenarios']!({ pod_url: unserved[0] })) as Out, 400, 'pod-not-public');
+    ok((await h['pev.list_scenarios']!({ pod_url: POD })) as Out);
+    expect(resolved).toEqual([unserved[0], POD]);
+    // A holder copy's target is checked against the served pods before its name is resolved too.
+    resolved.length = 0;
+    refused(await act(h, 'pev.holder_copy', W.ana, { attemptIri: S['a2'], targetPodUrl: 'HTTPS://POD.example.test:443/practice' }), 400, 'target-pod-is-served');
+    expect(resolved).toEqual([POD]);
+  }, SLOW);
+
+  it('a record the pod answers with an error status, or whose graph link leaves its container, is unreadable and named: refused on its own, skipped by every listing, which says when it is incomplete', async () => {
+    const view = ok(await act(H, 'pev.get_attempt', W.ben, { attemptIri: S['b2'] }));
+    const head = String(view['headDescriptorUrl']);
+    const graph = graphUrlOf(pod.store, head)!;
+    const descriptor = pod.store.get(head)!;
+    const sIri = String((view['scenario'] as Out)['scenarioIri']);
+    type Answer = (url: string) => Response | null;
+    const seen: string[] = [];
+    /** A bridge whose pod answers the GETs `answer` names, and is otherwise the pod. */
+    const bridge = (answer?: Answer): Handlers => make({
+      fetchFn: operatorPodFetch(POD, SECRET, (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        seen.push(url);
+        const got = (init?.method ?? 'GET') === 'GET' && answer ? answer(url) : null;
+        return got ?? pod.fetchFn(input, init);
+      }) as typeof fetch),
+    });
+    const at = (url: string, status: number, statusText = ''): Answer => (u) => (u === url ? new Response('no', { status, statusText }) : null);
+    const listings = async (h: Handlers): Promise<(readonly [number, unknown])[]> => {
+      const out: (readonly [number, unknown])[] = [];
+      for (const r of [
+        (await h['pev.calibration']!({})) as Out,
+        await act(h, 'pev.get_attempt', W.ben, {}),
+        await act(h, 'pev.review_queue', W.reviewer3, {}),
+        await act(h, 'pev.scenario_results', W.reviewer3, { scenarioIri: sIri }),
+      ]) out.push([Number(ok(r)['untrustedRecordsSkipped']), r['complete']] as const);
+      return out;
+    };
+    const baseline = await listings(bridge());
+    expect(baseline.map(([, complete]) => complete)).toEqual([true, true, true, true]);
+    const plusOne = (complete: boolean): (readonly [number, unknown])[] => baseline.map(([n]) => [n + 1, complete] as const);
+    const html = (url: string): Answer => (u) => (u === url ? new Response('<!doctype html><title>Sign in</title>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }) : null);
+    const linkTo = (elsewhere: string): Answer => (u) => (u === head ? new Response(descriptor.split(graph).join(elsewhere), { status: 200, headers: { 'content-type': 'text/turtle' } }) : null);
+    const elsewhere = ['https://pod.example.test/elsewhere/pev/records/x-graph.trig', `${POD}${PEV_COPIES_CONTAINER}x-graph.trig`];
+    const cases: readonly (readonly [string, Answer, RegExp, boolean])[] = [
+      ['its descriptor answered 401', at(head, 401, 'Unauthorized'), /the pod answers HTTP 401 for its descriptor \(this bridge may not read it/, false],
+      ['its descriptor answered 403', at(head, 403, 'Forbidden'), /the pod answers HTTP 403 for its descriptor/, false],
+      ['its descriptor answered 500', at(head, 500, 'Internal Server Error'), /the pod answers HTTP 500 for its descriptor, so it is not read/, false],
+      ['its graph answered 403', at(graph, 403, 'Forbidden'), /the pod answers HTTP 403 for its graph/, false],
+      ['its descriptor served as HTML', html(head), /names no graph distribution \(the pod serves it as text\/html\)/, true],
+      ['its graph served as HTML', html(graph), /the signed graph region cannot be located .*\(the pod serves it as text\/html\)/, true],
+      // Same origin, but another pod, and another container of this pod: neither is fetched.
+      ['its graph linked to another pod on the same host', linkTo(elsewhere[0]!), /points its graph outside its own container on the pod/, true],
+      ['its graph linked to another container of this pod', linkTo(elsewhere[1]!), /points its graph outside its own container on the pod/, true],
+    ];
+    for (const [what, answer, why, complete] of cases) {
+      const r = refused(await act(bridge(answer), 'pev.get_attempt', W.ben, { attemptIri: S['b2'] }), 409, 'record-not-trusted');
+      expect([r['descriptorUrl'], String(r['error'])], what).toEqual([head, expect.stringMatching(why)]);
+      expect(await listings(bridge(answer)), what).toEqual(plusOne(complete));
+    }
+    expect(seen.filter((u) => elsewhere.includes(u))).toEqual([]);
+    // A graph answered 503 after the substrate's retries: the same, named by its status.
+    const busy = at(graph, 503, 'Service Unavailable');
+    const r503 = refused(await act(bridge(busy), 'pev.get_attempt', W.ben, { attemptIri: S['b2'] }), 409, 'record-not-trusted');
+    expect(String(r503['error'])).toContain('the pod answers HTTP 503 for its graph, after retries, so it is not read');
+    const cal = ok((await bridge(busy)['pev.calibration']!({})) as Out);
+    expect([cal['untrustedRecordsSkipped'], cal['complete']]).toEqual([baseline[0]![0] + 1, false]);
+    // A request that gets no answer at all is the pod's failure, not the record's: 502, as before.
+    const down: Answer = (u) => { if (u === head) throw new Error('the connection was refused'); return null; };
+    refused(await act(bridge(down), 'pev.get_attempt', W.ben, { attemptIri: S['b2'] }), 502, 'pod-unreachable');
+    refused((await bridge(down)['pev.calibration']!({})) as Out, 502, 'pod-unreachable');
+    // So is a manifest the pod will not serve.
+    refused((await bridge(at(`${POD}.well-known/context-graphs`, 403, 'Forbidden'))['pev.calibration']!({})) as Out, 502, 'pod-refused-read');
+  }, SLOW);
+
+  it('one act reads at most its read budget: a listing over planted near-limit files stops, holds only what it uses and says it is incomplete; a read that needs more is refused', async () => {
+    const view = ok(await act(H, 'pev.get_attempt', W.ben, { attemptIri: S['b2'] }));
+    const head = String(view['headDescriptorUrl']);
+    const graph = graphUrlOf(pod.store, head)!;
+    const descriptor = pod.store.get(head)!;
+    const MANIFEST = `${POD}.well-known/context-graphs`;
+    const saved = new Map(pod.store);
+    const padded = (bytes: string): string => `${bytes}\n# ${'x'.repeat(MAX_RESPONSE_BYTES - 64 * 1024 - bytes.length)}\n`;
+    // Someone who can write the pod plants one graph just under the read limit (a real record's
+    // graph with a comment after it, so it opens and verifies) and 24 descriptors linking to it,
+    // each the only head of an attempt of its own: each is read, found misplaced and skipped.
+    const planted = `${POD}${PEV_RECORDS_CONTAINER}planted-padded-graph.trig`;
+    pod.store.set(planted, padded(pod.store.get(graph)!));
+    let entries = '';
+    for (let i = 0; i < 24; i++) {
+      const d = `${POD}${PEV_RECORDS_CONTAINER}planted-${i}.ttl`;
+      pod.store.set(d, descriptor.split(graph).join(planted));
+      entries += `\n<${d}> a iep:ManifestEntry ;\n    iep:describes <urn:pev:attempt:${(0xf000000000000000n + BigInt(i)).toString(16)}-1> ;\n    dct:conformsTo <${RECORD_CLASS.attempt}> ;\n    iep:modalStatus iep:Hypothetical .\n`;
+    }
+    pod.store.set(MANIFEST, `${pod.store.get(MANIFEST)!}${entries}`);
+    try {
+      let served = 0;
+      const counting = operatorPodFetch(POD, SECRET, (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if ((init?.method ?? 'GET') === 'GET' && String(input) === planted) served += pod.store.get(planted)!.length;
+        return pod.fetchFn(input, init);
+      }) as typeof fetch);
+      const heap0 = process.memoryUsage().heapUsed;
+      let peak = heap0;
+      const timer = setInterval(() => { peak = Math.max(peak, process.memoryUsage().heapUsed); }, 5);
+      let cal: Out;
+      try {
+        cal = (await make({ fetchFn: counting })['pev.calibration']!({})) as Out;
+      } finally {
+        clearInterval(timer);
+      }
+      peak = Math.max(peak, process.memoryUsage().heapUsed);
+      ok(cal);
+      expect([cal['complete'], (cal['readLimitReached'] as Out)['bytes']]).toEqual([false, ACT_READ_BUDGET_BYTES]);
+      expect(String((cal['readLimitReached'] as Out)['note'])).toContain('so it is not the whole pod');
+      // It read the planted graph up to its budget (with the response that crossed it), not 24 times.
+      expect(served).toBeGreaterThan(0);
+      expect(served).toBeLessThanOrEqual(ACT_READ_BUDGET_BYTES + MAX_RESPONSE_BYTES);
+      // And held only what it used: keeping every planted record it read took this heap past 400 MB.
+      expect(peak - heap0).toBeLessThan(200 * 1024 * 1024);
+      // A listing keeps in the act's read cache only the heads it returns; each skipped one is dropped.
+      const cache = readCache();
+      const budget = new ReadBudget();
+      const read = await readHeadsOfKind(POD, 'attempt', TRUSTED, { max: 2000, fetchFn: withReadBudget(operatorPodFetch(POD, SECRET, pod.fetchFn), budget), cache });
+      expect([read.readLimitReached, read.complete, budget.spent, cache.records.size]).toEqual([true, false, true, read.records.length]);
+    } finally {
+      pod.store.clear();
+      for (const [k, v] of saved) pod.store.set(k, v);
+    }
+    // A single read that needs more than the budget (every version of an attempt padded to near
+    // the limit) is refused saying so: never a crash, and never an answer from part of the chain.
+    const chain = await readChain(POD, S['b2']!, TRUSTED, pod.fetchFn);
+    const graphs = chain.flatMap((v) => (isDeleted(v) ? [] : [v.graphUrl]));
+    expect(graphs.length).toBeGreaterThanOrEqual(5);
+    try {
+      for (const g of graphs) pod.store.set(g, padded(saved.get(g)!));
+      const one = refused(await act(make(), 'pev.get_attempt', W.ben, { attemptIri: S['b2'] }), 409, 'read-limit-reached');
+      expect([one['readLimitBytes'], String(one['error'])]).toEqual([ACT_READ_BUDGET_BYTES, expect.stringContaining('nothing was written')]);
+    } finally {
+      for (const g of graphs) pod.store.set(g, saved.get(g)!);
+    }
+    // The pod as it was: the same reads answer in full.
+    expect(ok(await act(make(), 'pev.get_attempt', W.ben, { attemptIri: S['b2'] }))['headDescriptorUrl']).toBe(head);
+    expect(ok((await make()['pev.calibration']!({})) as Out)['complete']).toBe(true);
+    // The budget is counted in this process, never reported as the pod's failure.
+    const b = new ReadBudget(10);
+    expect([b.charge(8), b.charge(3), b.spent, b.bytesRead]).toEqual([true, false, true, 11]);
+    await expect(cappedFetch((async () => new Response('x'.repeat(64))) as typeof fetch, 1024, new ReadBudget(32))('https://pod.example.test/practice/x.ttl'))
+      .rejects.toBeInstanceOf(ReadBudgetSpent);
   }, SLOW);
 
   it('demo signing is off unless configured; when on, its envelopes act and the record says a server-held key signed', async () => {
@@ -1177,6 +1355,12 @@ describe('with a record key, operator-pod records are sealed to it, still verify
   /** The same operator before PEV_RECORD_KEY was set. */
   const beforeKey = make(sealedDeps);
   const keyed = make({ ...sealedDeps, recordKey: RECORD_KEY, model: scriptedPracticeModel() });
+  /**
+   * The same bridge keeping no record across acts, so every read reaches the pod: what the tests
+   * below change in place on the pod, a bridge that verified the record before reads again only
+   * once its kept copy expires (see 'records read and found trusted are kept across acts').
+   */
+  const uncached = make({ ...sealedDeps, recordKey: RECORD_KEY, model: scriptedPracticeModel(), recordCacheMs: 0 });
   const under = (prefix: string): string[] => [...vault.store.keys()].filter((u) => u.startsWith(prefix)).sort();
   const V: Record<string, string> = {};
 
@@ -1443,7 +1627,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     const graph = graphUrlOf(vault.store, head)!;
     const original = vault.store.get(graph)!;
     const env = JSON.parse(original) as { content: Out; wrappedKeys: Out[] };
-    const baseline = Number(ok(await act(keyed, 'pev.get_attempt', W.ana, {}, {}, on))['untrustedRecordsSkipped']);
+    const baseline = Number(ok(await act(uncached, 'pev.get_attempt', W.ana, {}, {}, on))['untrustedRecordsSkipped']);
     // Anyone can seal bytes to the bridge's public key: a sender key of their own, a content key wrapped for the bridge.
     const forger = deriveEncryptionKeyPair(key('forger'), 'pev-records');
     const sealedToBridge = (bytes: Uint8Array): string => {
@@ -1465,7 +1649,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     try {
       for (const [what, bytes, why] of cases) {
         vault.store.set(graph, bytes);
-        const r = refused(await act(keyed, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on), 409, 'record-not-trusted');
+        const r = refused(await act(uncached, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on), 409, 'record-not-trusted');
         expect(String(r['error']), what).toMatch(why);
         expect(String(r['error']), what).toContain('its graph envelope names this bridge\'s record key but cannot be opened');
         // Not a key problem (this is the key), and not the pod's failure.
@@ -1473,7 +1657,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
         const thrown = await readRecord(head, KEYED, vault.fetchFn).then(() => null, (e: unknown) => e);
         expect([thrown instanceof RecordUnreadable, thrown instanceof RecordSealed], what).toEqual([true, false]);
         // A listing counts it with the untrusted records, not the sealed ones: this key is the one that wrote it.
-        const mine = ok(await act(keyed, 'pev.get_attempt', W.ana, {}, {}, on));
+        const mine = ok(await act(uncached, 'pev.get_attempt', W.ana, {}, {}, on));
         expect([mine['untrustedRecordsSkipped'], mine['complete']], what).toEqual([baseline + 1, true]);
       }
     } finally {
@@ -1485,7 +1669,8 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     // why, and nothing is written (no skip audit).
     // Ben's lines are his own (later tests search the pod for Ana's), so no quote checks out and his
     // reviewer says why for every level.
-    const fresh = make({ ...sealedDeps, recordKey: RECORD_KEY, model: scriptedPracticeModel() });
+    // It keeps no record across acts: the records changed in place below are read from the pod.
+    const fresh = make({ ...sealedDeps, recordKey: RECORD_KEY, model: scriptedPracticeModel(), recordCacheMs: 0 });
     const bIri = String(ok(await act(fresh, 'pev.start_attempt', W.ben, { scenarioIri: V['scenario'], scenarioVersion: 1, coached: false }, {}, on))['attemptIri']);
     ok(await act(fresh, 'pev.say', W.ben, { attemptIri: bIri, turnIndex: 1, text: 'The report came in on Friday, a day after it was due.' }, {}, on));
     ok(await act(fresh, 'pev.end_conversation', W.ben, { attemptIri: bIri, turnIndex: 3 }, {}, on));
@@ -1527,7 +1712,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
       ]) out.push([ok(r)['untrustedRecordsSkipped'], r['complete']]);
       return out;
     };
-    const baseline = await listings(keyed);
+    const baseline = await listings(uncached);
     const plusOne = baseline.map(([n, complete]) => [Number(n) + 1, complete] as const);
     expect(baseline.map(([, complete]) => complete)).toEqual([true, true, true, true]);
     const unchanged = JSON.stringify([...vault.store].sort());
@@ -1536,24 +1721,24 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     const env = JSON.parse(original) as Out;
     vault.store.set(graph, JSON.stringify({ ...env, padding: 'x'.repeat(MAX_RESPONSE_BYTES) }));
     try {
-      const r = refused(await act(keyed, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on), 409, 'record-not-trusted');
+      const r = refused(await act(uncached, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on), 409, 'record-not-trusted');
       expect([r['descriptorUrl'], r['iep:resolvedBy'], String(r['error'])])
         .toEqual([head, undefined, expect.stringContaining(`its graph is over this bridge's read limit of ${MAX_RESPONSE_BYTES} bytes, so it is not read`)]);
-      expect(await listings(keyed)).toEqual(plusOne);
+      expect(await listings(uncached)).toEqual(plusOne);
     } finally {
       vault.store.set(graph, original);
     }
     // The same at a scenario head: the scenario list still answers, counting it with the untrusted.
-    const listed = ok((await keyed['pev.list_scenarios']!({})) as Out);
+    const listed = ok((await uncached['pev.list_scenarios']!({})) as Out);
     const sHead = String((listed['scenarios'] as Out[]).find((x) => x['scenarioIri'] === V['scenario'])!['descriptorUrl']);
     const sGraph = graphUrlOf(vault.store, sHead)!;
     const sOriginal = vault.store.get(sGraph)!;
     vault.store.set(sGraph, JSON.stringify({ ...(JSON.parse(sOriginal) as Out), padding: 'x'.repeat(MAX_RESPONSE_BYTES) }));
     try {
-      const without = ok((await keyed['pev.list_scenarios']!({})) as Out);
+      const without = ok((await uncached['pev.list_scenarios']!({})) as Out);
       expect([(without['scenarios'] as Out[]).some((x) => x['scenarioIri'] === V['scenario']), without['untrustedRecordsSkipped'], without['sealedRecordsSkipped']])
         .toEqual([false, Number(listed['untrustedRecordsSkipped']) + 1, 0]);
-      const one = refused((await keyed['pev.list_scenarios']!({ scenario_iri: V['scenario'] })) as Out, 409, 'record-not-trusted');
+      const one = refused((await uncached['pev.list_scenarios']!({ scenario_iri: V['scenario'] })) as Out, 409, 'record-not-trusted');
       expect([one['descriptorUrl'], String(one['error'])]).toEqual([sHead, expect.stringContaining('its graph is over this bridge\'s read limit')]);
     } finally {
       vault.store.set(sGraph, sOriginal);
@@ -2008,6 +2193,12 @@ describe('with a record key, operator-pod records are sealed to it, still verify
           refused(r, 409, 'record-not-trusted');
           expect([r['iep:resolvedBy'], String(r['error']).includes(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key')]).toEqual([{ env: 'PEV_RECORD_KEY' }, true]);
         }
+        // scenario_results reads the scenario's own head before the attempts: with that head sealed
+        // (the registry still plaintext) it is refused on the scenario, not with records-sealed.
+        const res = refused(await act(h, 'pev.scenario_results', W.reviewer, { scenarioIri: sIri }, {}, onLate), 409, 'record-not-trusted');
+        expect([res['iep:resolvedBy'], String(res['descriptorUrl']).startsWith(`${LATE}${PEV_RECORDS_CONTAINER}scenario-`), res['sealedRecordsSkipped'], res['podKey']])
+          .toEqual([{ env: 'PEV_RECORD_KEY' }, true, undefined, undefined]);
+        expect(String(res['error'])).toContain(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key');
       }
       expect(stored()).toBe(before);
     } finally {
@@ -2213,6 +2404,127 @@ describe('with a record key, operator-pod records are sealed to it, still verify
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 //  Source: a success never says no
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('records read and found trusted are kept across acts, for a bounded time', () => {
+  const CPOD = 'https://cache-pod.example.test/practice/';
+  const cpod = inMemoryPod();
+  const on = { pod: CPOD };
+  const gets = (): number => cpod.requests.filter((r) => r.method === 'GET').length;
+  const cdeps = (o: Partial<PevDeps> = {}): Partial<PevDeps> => ({ fetchFn: cpod.fetchFn, holderFetchFn: cpod.fetchFn, defaultPodUrl: CPOD, model: scriptedPracticeModel(), ...o });
+  const C: Record<string, string> = {};
+
+  /** Roles, a ratified scenario, and Ana's attempt two lines in, written by a bridge of its own. */
+  const setup = async (): Promise<void> => {
+    if (C['attempt']) return;
+    const h = make(cdeps());
+    for (const [who, role] of [[W.author, 'author'], [W.reviewer, 'reviewer']] as const) {
+      ok(await act(h, 'pev.register_role', W.admin, { address: who.address, role, change: 'add' }, {}, on));
+    }
+    const p = ok(await act(h, 'pev.author_scenario', W.author, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } }, {}, on));
+    ok(await act(h, 'pev.ratify_scenario', W.reviewer, { scenarioIri: p['scenarioIri'], version: 1, scenarioHash: p['scenarioHash'] }, {}, on));
+    C['attempt'] = String(ok(await act(h, 'pev.start_attempt', W.ana, { scenarioIri: p['scenarioIri'], scenarioVersion: 1, coached: false }, {}, on))['attemptIri']);
+    for (const [k, turnIndex] of [[0, 1], [1, 3]] as const) ok(await act(h, 'pev.say', W.ana, { attemptIri: C['attempt'], turnIndex, text: DEMO_LINES.ana[k] }, {}, on));
+  };
+
+  it('the next act reads the manifest and only the records it has not seen; where a kept record sits is checked on every read', async () => {
+    await setup();
+    /** GETs to the pod of: reading the attempt, reading it again, then calibration. */
+    const costs = async (h: Handlers): Promise<number[]> => {
+      const out: number[] = [];
+      for (const read of [
+        () => act(h, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on),
+        () => act(h, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on),
+        async () => (await h['pev.calibration']!({})) as Out,
+      ]) {
+        const g0 = gets();
+        ok(await read());
+        out.push(gets() - g0);
+      }
+      return out;
+    };
+    const keeping = make(cdeps());
+    const kept = await costs(keeping);
+    const none = await costs(make(cdeps({ recordCacheMs: 0 })));
+    // The first read is the same either way; after it, a bridge that keeps records reads only the manifest.
+    expect(kept[0]).toBe(none[0]);
+    expect(none[0]).toBeGreaterThan(5);
+    expect([kept[1], kept[2]]).toEqual([1, 1]);
+    expect(none[1]).toBe(none[0]);
+    // A new line adds one version: the next read fetches the manifest and that version, nothing else.
+    ok(await act(keeping, 'pev.say', W.ana, { attemptIri: C['attempt'], turnIndex: 5, text: DEMO_LINES.ana[2] }, {}, on));
+    const g0 = gets();
+    const view = ok(await act(keeping, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on));
+    expect(gets() - g0).toBe(3);
+    // Where a kept record sits is read from the manifest every time: filed under another attempt as
+    // well, her head is not fetched again, and still refused there as not belonging to it.
+    const head = String(view['headDescriptorUrl']);
+    const MANIFEST = `${CPOD}.well-known/context-graphs`;
+    const manifest = cpod.store.get(MANIFEST)!;
+    const other = 'urn:pev:attempt:00000000000000ab-1';
+    const opener = `<${head}> a iep:ManifestEntry ;`;
+    expect(manifest.includes(opener)).toBe(true);
+    cpod.store.set(MANIFEST, manifest.replace(opener, `${opener}\n    iep:describes <${other}> ;`));
+    try {
+      const before = cpod.requests.length;
+      const r = refused(await act(keeping, 'pev.get_attempt', W.ana, { attemptIri: other }, {}, on), 409, 'record-not-trusted');
+      expect(String(r['misplaced'])).toContain('its signed body describes another graph');
+      expect(cpod.requests.slice(before).filter((q) => q.url === head)).toEqual([]);
+    } finally {
+      cpod.store.set(MANIFEST, manifest);
+    }
+  }, SLOW);
+
+  it('a record changed in place after it was verified is read again once its entry expires; a bridge that keeps nothing reads it at once', async () => {
+    await setup();
+    expect(RECORD_CACHE_TTL_MS).toBe(300_000);
+    const h = make(cdeps({ recordCacheMs: 2000 }));
+    const head = String(ok(await act(h, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on))['headDescriptorUrl']);
+    const graph = graphUrlOf(cpod.store, head)!;
+    const original = cpod.store.get(graph)!;
+    cpod.store.set(graph, 'not a record graph any more');
+    try {
+      // The bridge that verified it goes on with the bytes it verified, for at most its keep time;
+      expect(ok(await act(h, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on))['headDescriptorUrl']).toBe(head);
+      // a bridge reading the pod now refuses it;
+      refused(await act(make(cdeps({ recordCacheMs: 0 })), 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on), 409, 'record-not-trusted');
+      await new Promise((r) => setTimeout(r, 2100));
+      // and so does the first, once its entry has expired.
+      refused(await act(h, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on), 409, 'record-not-trusted');
+    } finally {
+      cpod.store.set(graph, original);
+    }
+    // What is kept is bounded by age and by size: the least recently used go first, and a record
+    // over an eighth of the bound is not kept at all.
+    let t = 0;
+    const rec = await readRecord(head, TRUSTED, cpod.fetchFn);
+    const v = new VerifiedRecords(1000, recordBytes(rec) * 8, () => t);
+    const copy = (u: string): typeof rec => ({ ...rec, descriptorUrl: u });
+    for (let i = 0; i < 9; i++) v.keep(copy(`${CPOD}r${i}.ttl`));
+    expect([v.size, v.get(`${CPOD}r0.ttl`), v.get(`${CPOD}r8.ttl`)?.descriptorUrl]).toEqual([8, undefined, `${CPOD}r8.ttl`]);
+    t = 1000;
+    expect([v.get(`${CPOD}r8.ttl`), v.size]).toEqual([undefined, 7]);
+    const small = new VerifiedRecords(1000, recordBytes(rec) * 7, () => 0);
+    small.keep(rec);
+    expect(small.size).toBe(0);
+  }, SLOW);
+
+  it('a redaction by another process is never undone from what a bridge kept: the earlier versions are read again and come back deleted', async () => {
+    await setup();
+    const reader = make(cdeps());
+    const before = ok(await act(reader, 'pev.export_record', W.ana, { attemptIri: C['attempt'] }, {}, on));
+    expect(JSON.stringify(before).includes(DEMO_LINES.ana[0])).toBe(true);
+    // Another bridge process redacts it.
+    const other = make(cdeps());
+    const t = ok(await act(other, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on))['currentTarget'];
+    ok(await act(other, 'pev.redact_attempt', W.ana, { attemptIri: C['attempt'], target: t }, {}, on));
+    const after = ok(await act(reader, 'pev.export_record', W.ana, { attemptIri: C['attempt'] }, {}, on));
+    const versions = after['versions'] as Out[];
+    expect(versions.map((x) => x['contentDeleted'])).toEqual([...versions.slice(1).map(() => true), false]);
+    for (const line of DEMO_LINES.ana) expect(JSON.stringify(after).includes(line)).toBe(false);
+    const view = ok(await act(reader, 'pev.get_attempt', W.ana, { attemptIri: C['attempt'] }, {}, on));
+    expect((view['turns'] as Out[]).every((x) => x['text'] === undefined)).toBe(true);
+  }, SLOW);
+});
 
 describe('the handlers decline only through refuse(), and a success never reads as a decline', () => {
   it('every answer literal in handlers.ts is a refuse(…) or carries no decline word, and no key is named reason', () => {

@@ -33,7 +33,7 @@ import {
 import { inAuditSample } from '../src/calibration.js';
 import { PEV_ACTION, PEV_NS } from '../src/ontology.js';
 import * as practice from '../src/practice.js';
-import { signEnvelope, signedRequestEnvelope } from '../src/records.js';
+import { signEnvelope, signedRequestEnvelope, RECORD_CLASS } from '../src/records.js';
 
 type Out = Record<string, unknown>;
 type Handlers = Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
@@ -311,7 +311,11 @@ const button = (action: string, extra = ''): string => `button[data-action="${ac
 
 describe('the web UI works, driven in a DOM against the real handlers', () => {
   it('a learner practises with the disclosed scripted model, is judged, a reviewer reviews, and only then can the learner project', async () => {
-    const p = await openUi(demo);
+    const asked: string[] = [];
+    const p = await openUi(demo, (w) => {
+      const f = w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
+      w['fetch'] = (input: unknown, init?: RequestInit): Promise<Response> => { asked.push(String(input)); return f(input, init); };
+    });
     await p.until(() => p.text('#bar').includes('DEMO MODE'), 'the demo banner');
     expect(p.text('#bar')).toContain('SCRIPTED: offline fixture, no model ran');
     await asRole(p, 'learner');
@@ -320,12 +324,16 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
     card.querySelector<HTMLElement>(button(PEV_ACTION.startAttempt))!.click();
     await p.until(() => p.q('#line'), 'the conversation');
+    const askedBefore = asked.length;
     for (const line of DEMO_LINES.ana) {
       const before = p.all('.bubble').length;
       p.set(p.q('#line'), line);
       p.click('#send');
       await p.until(() => p.all('.bubble').length === before + 2, `the reply to "${line.slice(0, 24)}…"`);
     }
+    // Each line is shown from the act's own answer: the attempt is not read again after it.
+    const during = asked.slice(askedBefore).map((u) => new URL(u, 'http://x/').pathname);
+    expect([during.filter((u) => u.endsWith('/pev/say')).length, during.filter((u) => u.endsWith('/pev/get_attempt'))]).toEqual([DEMO_LINES.ana.length, []]);
     const replies = p.all('.bubble.them').slice(1);
     expect(replies.map((b) => b.querySelector('.text')?.textContent)).toEqual(DEMO_LINES.sam.map((x) => x.replace(' (end of conversation)', '')));
     expect(replies.every((b) => (b.textContent ?? '').includes('scripted fixture: no model ran'))).toBe(true);
@@ -387,6 +395,59 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect((statement['verb'] as Out)['id']).toBe('http://adlnet.gov/expapi/verbs/completed');
     expect(((statement['context'] as Out)['extensions'] as Out)[`${PEV_NS}practiceEvidence`]).toBe(true);
     expect(p.text('#projection')).toContain('Nothing was sent anywhere.');
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('an answer that is not the whole pod says so first, and no view then says the pod holds nothing', async () => {
+    // A pod of its own, where two heads (a scenario and an attempt) answer 503: every listing over it is incomplete.
+    const GAPPY = 'https://gappy-pod.demo.test/practice/';
+    const gp = inMemoryPod();
+    const unreadable = new Set<string>();
+    const gappy = (async (input: RequestInfo | URL, init?: RequestInit) => ((init?.method ?? 'GET') === 'GET' && unreadable.has(String(input))
+      ? new Response('busy', { status: 503, statusText: 'Service Unavailable' }) : gp.fetchFn(input, init))) as typeof fetch;
+    const handlers = createPevHandlers({
+      ...base, fetchFn: gappy, holderFetchFn: gappy, defaultPodUrl: GAPPY, servedPods: [GAPPY], model: scriptedPracticeModel(), demoSigner: demoSignerOf(W),
+    }) as Handlers;
+    const registered = (await handlers['pev.register_role']!({
+      envelope: await signEnvelope(W.admin, { v: 1, action: PEV_ACTION.registerRole, issuedAt: new Date().toISOString(), nonce: nonce(), podUrl: GAPPY, address: W.reviewer.address, role: 'reviewer', change: 'add' }),
+    })) as Out;
+    expect(registered['changed']).toBe(true);
+    const MANIFEST = `${GAPPY}.well-known/context-graphs`;
+    const planted = [
+      [`${GAPPY}pev/records/scenario-planted.ttl`, 'urn:pev:scenario:00000000000000aa', RECORD_CLASS.scenario],
+      [`${GAPPY}pev/records/attempt-planted.ttl`, 'urn:pev:attempt:00000000000000aa-1', RECORD_CLASS.attempt],
+    ] as const;
+    let manifest = gp.store.get(MANIFEST)!;
+    for (const [d, iri, cls] of planted) {
+      unreadable.add(d);
+      manifest += `\n<${d}> a iep:ManifestEntry ;\n    iep:describes <${iri}> ;\n    dct:conformsTo <${cls}> ;\n    iep:modalStatus iep:Hypothetical .\n`;
+    }
+    gp.store.set(MANIFEST, manifest);
+    const l = await serve(handlers);
+    const p = await openUi(l);
+    const view = (): string => p.text('#view');
+    const shows = async (heading: string, empty: string): Promise<void> => {
+      await p.until(() => p.text('#view h2') === heading && p.q('#view .incomplete'), `${heading}, marked incomplete`);
+      expect(view(), heading).toContain('Not the whole pod: some records on it could not be read');
+      expect(view(), heading).toContain('could not be read or are not signed by a platform key this bridge trusts');
+      expect(view().includes(empty), heading).toBe(false);
+    };
+    await shows('Practise a scenario', 'No published scenarios on this pod yet');
+    p.w.location.hash = '#/calibration';
+    await shows('Calibration of the judges', 'No reviewed outcomes yet.');
+    await asRole(p, 'learner');
+    p.w.location.hash = '#/mine';
+    await shows('Attempts', 'No attempts yet.');
+    await asRole(p, 'reviewer');
+    p.w.location.hash = '#/review';
+    await shows('Review queue', 'Nothing waits for you.');
+    expect(view()).toContain('At least 0 attempt(s) await review.');
+    // Once the pod answers for them (they are not there: the manifest names nothing it holds), the
+    // answers are whole again, and the empty prompts come back.
+    unreadable.clear();
+    p.w.location.hash = '#/practice';
+    await p.until(() => p.text('#view h2') === 'Practise a scenario' && view().includes('No published scenarios on this pod yet'), 'the whole, empty list');
+    expect(p.q('#view .incomplete')).toBeNull();
     expect(p.errors).toEqual([]);
   }, SLOW);
 

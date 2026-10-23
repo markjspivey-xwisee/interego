@@ -493,13 +493,33 @@ async function viewPractice(root) {
   S.pod = r.podUrl;
   S.bridge = r.bridge;
   renderHeader();
-  // A scenario this bridge cannot open (sealed to another record key) is never shown as absent.
-  if (!r.scenarios.length) root.append(muted(r.complete === false ? 'This bridge opens no published scenario on this pod (see below).' : 'No published scenarios on this pod yet. An author publishes one under Author.'));
+  // A scenario this bridge cannot open (sealed to another record key, or not read) is never shown as absent.
+  root.append(...coverageNotes(r));
+  if (!r.scenarios.length && whole(r)) root.append(muted('No published scenarios on this pod yet. An author publishes one under Author.'));
   for (const s of r.scenarios) root.append(scenarioCard(s));
-  if (r.untrustedRecordsSkipped) root.append(muted(`${r.untrustedRecordsSkipped} record(s) on this pod are not signed by a platform key this bridge trusts; they are not shown.`));
-  if (r.sealedRecords) root.append(muted(r.sealedRecords.note));
-  if (r.recordKeyMismatch) root.append(muted(r.recordKeyMismatch.note));
 }
+
+/**
+ * What an answer read from the pod says about how much of the pod it covers. When it is not the
+ * whole pod (`complete: false`: records sealed to another key, records the pod would not serve, or
+ * the act's read limit reached) the page says so first, and shows no "none yet" prompt: an empty
+ * list then means only that nothing could be read.
+ */
+function coverageNotes(r) {
+  const out = [];
+  if (!whole(r)) {
+    out.push(h('p', { class: 'warn incomplete', role: 'status',
+      text: 'Not the whole pod: some records on it could not be read, so this shows only what could be. Something missing here may be among them.' }));
+  }
+  if (r.readLimitReached) out.push(muted(r.readLimitReached.note));
+  if (r.untrustedRecordsSkipped) out.push(muted(`${r.untrustedRecordsSkipped} record(s) on this pod could not be read or are not signed by a platform key this bridge trusts; they are not shown.`));
+  if (r.sealedRecords) out.push(muted(r.sealedRecords.note));
+  if (r.recordKeyMismatch) out.push(muted(r.recordKeyMismatch.note));
+  return out;
+}
+
+/** True unless the answer says it is not the whole pod. */
+function whole(r) { return r.complete !== false; }
 
 function rubricTable(rubric, use) {
   const gate = use === 'pass-gate';
@@ -655,9 +675,9 @@ function conversationPanel(v) {
     const send = (endAfter) => async () => {
       const text = box.value;
       if (!text.trim()) return h('p', { class: 'refusal-inline', text: 'Write your line first.' });
-      await act(ACT.say, { attemptIri: v.attemptIri, turnIndex, text, ...(endAfter ? { endAfter: true } : {}) }, { byok: true });
+      const r = await act(ACT.say, { attemptIri: v.attemptIri, turnIndex, text, ...(endAfter ? { endAfter: true } : {}) }, { byok: true });
       S.unsent.delete(v.attemptIri);
-      route();
+      afterExchange(v, r);
       return null;
     };
     if (hasNext(v, 'say')) {
@@ -677,6 +697,30 @@ function conversationPanel(v) {
   return sec;
 }
 
+/**
+ * After a recorded exchange that leaves the conversation going, the attempt is shown as the act's
+ * own answer leaves it (its two new lines, the end proposal, the acts that follow and the new
+ * version), without reading the attempt again. An exchange that ended the conversation, or an
+ * answer without those fields, reads the attempt again. A page that has moved to another view
+ * meanwhile is left as it is.
+ */
+function afterExchange(v, r) {
+  if (!r || r.state !== 'in-conversation' || !r.learnerTurn || !r.counterpartTurn || !Array.isArray(r.nextActions)) { route(); return; }
+  const shown = $('#view .attempt');
+  if (!shown || shown.dataset.attempt !== v.attemptIri) return;
+  const them = r.counterpartTurn;
+  const next = {
+    ...v, state: r.state, nextActions: r.nextActions, counterpartControlledBy: r.counterpartControlledBy, currentTarget: r.currentTarget,
+    headDescriptorUrl: r.descriptorUrl,
+    turns: [...v.turns,
+      { index: r.learnerTurn.index, speaker: 'learner', text: r.learnerTurn.text },
+      { index: them.index, speaker: 'counterpart', text: them.text, ...(them.disclosure ? { disclosure: them.disclosure } : {}), ...(them.endSignal ? { endSignal: true } : {}) }],
+    versions: [...(v.versions || []), { descriptorUrl: r.descriptorUrl, recordId: r.currentTarget ? r.currentTarget.recordId : null, state: r.state, modalStatus: v.modalStatus, contentDeleted: false }],
+  };
+  if (r.endProposed) next.endProposedAtTurn = them.index; else delete next.endProposedAtTurn;
+  shown.replaceWith(renderAttempt(next, {}));
+}
+
 function packetTurnForm(v, box, out, turnIndex) {
   const packetOut = h('div', { class: 'outcome' });
   const theirs = h('textarea', { rows: 2, maxlength: 4000, placeholder: 'Their line, as your agent wrote it (or "(end of conversation)")', 'aria-label': 'Their line' });
@@ -689,12 +733,12 @@ function packetTurnForm(v, box, out, turnIndex) {
     return h('div', {}, muted(p.instructions), jsonBlock(p.request));
   }) });
   const recBtn = h('button', { type: 'button', text: 'Record both lines', dataset: { action: ACT.recordTurns }, onclick: () => busy(recBtn, out, async () => {
-    await act(ACT.recordTurns, {
+    const r = await act(ACT.recordTurns, {
       attemptIri: v.attemptIri, turnIndex, learnerText: box.value, counterpartText: theirs.value,
       counterpartDisclosure: { provider: provider.value.trim(), model: model.value.trim() }, ...(endAfter.checked ? { endAfter: true } : {}),
     });
     S.unsent.delete(v.attemptIri);
-    route();
+    afterExchange(v, r);
     return null;
   }) });
   return h('details', { class: 'packet', open: !hasNext(v, 'say') },
@@ -949,9 +993,10 @@ async function viewQueue(root) {
   root.append(h('h2', { text: 'Review queue' }));
   const q = await act(ACT.reviewQueue, { limit: 50 }, { read: true });
   for (const e of q.entries) S.queueEntries.set(e.attemptIri, e);
-  root.append(muted(`${q.awaitingReview} attempt(s) await review. ${q.excludedAsConflicted} left out because you are their learner, a judge of them or an earlier reviewer.`));
+  root.append(...coverageNotes(q));
+  root.append(muted(`${whole(q) ? '' : 'At least '}${q.awaitingReview} attempt(s) await review. ${q.excludedAsConflicted} left out because you are their learner, a judge of them or an earlier reviewer.`));
   root.append(muted(`Priority = ${Object.entries(q.weights).map(([k, w]) => `${w} × ${FACTOR_WORDS[k] || k}`).join(' + ')}. Reopened attempts come first.`));
-  if (!q.entries.length) root.append(muted('Nothing waits for you.'));
+  if (!q.entries.length && whole(q)) root.append(muted('Nothing waits for you.'));
   for (const e of q.entries) {
     const card = h('article', { class: 'card queue-entry', dataset: { attempt: e.attemptIri } },
       h('h3', {}, e.scenarioTitle, ' ', h('span', { class: `state state-${e.state}`, text: STATE_WORDS[e.state] || e.state }), e.reopened ? chip('reopened', 'warn') : null),
@@ -1079,7 +1124,7 @@ function resultsCsv(r) {
 
 async function viewResults(root, scenarioIri) {
   const r = await act(ACT.scenarioResults, { scenarioIri }, { read: true });
-  root.append(h('h2', { text: 'Results' }), h('p', { class: 'label', text: r.label }));
+  root.append(h('h2', { text: 'Results' }), h('p', { class: 'label', text: r.label }), ...coverageNotes(r));
   const c = r.counts;
   root.append(h('p', { text: `${c.attempts} attempt(s); ${c.authorTestExcluded} author test(s) left out; ${c.redacted} with the transcript removed.` }),
     h('p', { class: 'facts' }, Object.entries(c.byState).filter(([, n]) => n > 0).map(([s, n]) => chip(`${STATE_WORDS[s] || s}: ${n}`))));
@@ -1127,11 +1172,12 @@ async function viewCalibration(root) {
   root.append(h('div', { class: 'toolbar' }, h('h2', { text: 'Calibration of the judges' }),
     h('label', { class: 'inline' }, pooled, ' pool across rubric versions with the same criterion text (information only)')));
   const r = await invoke(ACT.calibration, podArgs({ group_by: S.pooled ? 'criterion-content' : undefined }));
+  root.append(...coverageNotes(r));
   root.append(h('p', { class: 'label', text: r.metricNote }));
   if (r.smallCountRule) root.append(muted(r.smallCountRule.replace(/k − 1/g, String(r.k - 1))));
   root.append(muted(`Policy for standing: agreement of at least ${r.policy.floor} over at least ${r.policy.minSamples} reviewed outcomes, from at least ${r.policy.minDistinctHumanConfirmers} different people. A cell stays Hypothetical below ${r.minSamplesForAsserted} samples. ${r.attemptsRead} attempt(s) and ${r.outcomesRead} outcome row(s) read; ${r.personJudgeCellsWithheld} cell(s) of people who judged are left out here.`));
-  if (!r.cells.length) root.append(muted('No reviewed outcomes yet.'));
-  else root.append(calibrationTable(r.cells));
+  if (r.cells.length) root.append(calibrationTable(r.cells));
+  else if (whole(r)) root.append(muted('No reviewed outcomes yet.'));
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -1388,8 +1434,9 @@ function viewRoles(root) {
 async function viewMine(root) {
   root.append(h('h2', { text: 'Attempts' }));
   const r = await act(ACT.getAttempt, {}, { read: true });
+  root.append(...coverageNotes(r));
   root.append(muted('Your own attempts; a reviewer or an admin sees every attempt on the pod except authors\' tests.'));
-  if (!r.attempts.length) { root.append(muted('No attempts yet.')); return; }
+  if (!r.attempts.length) { if (whole(r)) root.append(muted('No attempts yet.')); return; }
   root.append(h('table', { class: 'mine' }, h('thead', {}, h('tr', {}, ['scenario', 'attempt', 'state', 'started', 'result'].map((x) => h('th', { text: x })))),
     h('tbody', {}, r.attempts.map((a) => h('tr', {},
       h('td', {}, h('a', { href: attemptHash(a.attemptIri), text: a.scenarioTitle })),

@@ -17,9 +17,28 @@
  * then ends at an older, correctly placed version. That needs an anchor outside the pod.
  *
  * Every response body is read with a size limit, and a descriptor's graph is fetched only from
- * the descriptor's own host, so one read cannot make the bridge fetch from anywhere else. A record
- * whose descriptor or graph is over the limit is a `RecordUnreadable` (the pod answered; anyone who
- * can write it can plant such a file), so a listing counts it with the untrusted records.
+ * the descriptor's own container (where every record a bridge writes has it), so one read cannot
+ * make the bridge fetch from anywhere else: not another host, and not another pod or path on the
+ * same host. A record whose descriptor or graph is over the limit, or for which the pod answers an
+ * error status (401, 403, 5xx; for a graph, after the substrate's retries), is a `RecordUnreadable`
+ * naming why (the pod answered; anyone who can write it can plant such a file, or a link to a
+ * resource this bridge may not read), so a listing counts it with the untrusted records and, when
+ * the pod answered an error status, says it is incomplete. Only a request that fails (no answer)
+ * and a manifest that cannot be read are a `PodTransportFailed`.
+ *
+ * What one act reads is bounded as a whole too: every read of an act goes through one `ReadBudget`
+ * (`ACT_READ_BUDGET_BYTES`, four times the per-response limit), so a pod writer who plants many
+ * large files cannot make one act hold them all. A listing that reaches it stops reading and says it
+ * is incomplete; any other read that reaches it is a `ReadBudgetSpent`. A record a listing reads and
+ * skips is dropped from the act's read cache at once, so only the records an answer uses are held.
+ *
+ * Records are written once, so a record read, checked and found trusted where it sits is kept
+ * across acts (`VerifiedRecords`, by descriptor URL, for at most `RECORD_CACHE_TTL_MS` and
+ * `RECORD_CACHE_MAX_BYTES` in all): an act re-reads the pod's manifest, and only the records it has
+ * not seen. Where a record sits (its graph, its pod, its place in the chain) is checked again from
+ * the manifest on every read; only its bytes are reused. So a record a pod writer changes in place
+ * after it was verified is read again only once its entry expires, and a version whose head says
+ * the chain was redacted is always read again, never served from the cache.
  *
  * Encryption at rest: with a record key (`TrustedPlatform.recordKey`), operator-pod records are
  * written with their graph sealed to that key alone, as `<slug>-graph.envelope.jose.json`; the
@@ -99,7 +118,95 @@ export interface DeletedVersion {
   readonly contentDeleted: true;
 }
 
-export type ReadCache = Map<string, Promise<ReadRecord>>;
+/**
+ * What one act has read: each record once (in flight or done), each pod's manifest once until it is
+ * cleared (`manifests`), and the records kept across acts (`verified`).
+ */
+export interface ReadCache {
+  readonly records: Map<string, Promise<ReadRecord>>;
+  /**
+   * The manifest entries of each pod this act read, by pod base. Absent: every read goes to the
+   * pod. The handlers clear it when an act takes its lock after the same bridge wrote a record
+   * meanwhile, so what it reads under the lock includes that write.
+   */
+  readonly manifests?: Map<string, Promise<ManifestEntry[]>>;
+  readonly verified?: VerifiedRecords;
+}
+
+/** A read cache for one act. */
+export function readCache(verified?: VerifiedRecords): ReadCache {
+  return { records: new Map(), manifests: new Map(), ...(verified ? { verified } : {}) };
+}
+
+/** How long a verified record is reused before it is read from the pod again. */
+export const RECORD_CACHE_TTL_MS = 300_000;
+/** The most the verified records kept across acts may hold, by `recordBytes`. */
+export const RECORD_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+
+/** An estimate of what a read record holds in memory: its texts, at two bytes a character, the region twice (it is also the body). */
+export function recordBytes(r: ReadRecord): number {
+  return 2 * (r.descriptorTurtle.length + r.graphContent.length + 2 * r.regionTurtle.length);
+}
+
+/**
+ * Records read, checked and found trusted where they sit, kept across acts by descriptor URL. A
+ * record this bridge writes never changes once written, so reusing one saves reading its
+ * descriptor and graph again; where it sits is checked again on every read by its caller. An entry
+ * is dropped once it is `ttlMs` old (counted from when it was read), and the least recently used
+ * are dropped while the entries hold more than `maxBytes`; a record over an eighth of that is not
+ * kept. `ttlMs` 0 keeps nothing.
+ */
+export class VerifiedRecords {
+  private readonly byUrl = new Map<string, { readonly rec: ReadRecord; readonly at: number; readonly bytes: number }>();
+  private held = 0;
+  private readonly clock: () => number;
+
+  constructor(readonly ttlMs: number = RECORD_CACHE_TTL_MS, readonly maxBytes: number = RECORD_CACHE_MAX_BYTES, clock?: () => number) {
+    this.clock = clock ?? ((): number => performance.now());
+  }
+
+  get(url: string): ReadRecord | undefined {
+    const e = this.byUrl.get(url);
+    if (!e) return undefined;
+    if (this.clock() - e.at >= this.ttlMs) { this.drop(url); return undefined; }
+    this.byUrl.delete(url);
+    this.byUrl.set(url, e);
+    return e.rec;
+  }
+
+  keep(rec: ReadRecord): void {
+    if (this.ttlMs <= 0 || rec.misplaced !== undefined || this.byUrl.has(rec.descriptorUrl)) return;
+    const bytes = recordBytes(rec);
+    if (bytes > this.maxBytes / 8) return;
+    this.byUrl.set(rec.descriptorUrl, { rec, at: this.clock(), bytes });
+    this.held += bytes;
+    for (const url of this.byUrl.keys()) {
+      if (this.held <= this.maxBytes) break;
+      this.drop(url);
+    }
+  }
+
+  drop(url: string): void {
+    const e = this.byUrl.get(url);
+    if (!e) return;
+    this.byUrl.delete(url);
+    this.held -= e.bytes;
+  }
+
+  /** How many records are kept, and what they hold by `recordBytes`. */
+  get size(): number { return this.byUrl.size; }
+  get bytes(): number { return this.held; }
+}
+
+/** Keep a record across acts when it is trusted where it was read. */
+function keepIfTrusted(cache: ReadCache | undefined, r: ReadRecord): void {
+  if (cache?.verified && isTrusted(r)) cache.verified.keep(r);
+}
+
+/** Drop a record from the act's read cache: it was read and skipped, so nothing holds its bytes. */
+function forget(cache: ReadCache | undefined, url: string): void {
+  cache?.records.delete(url);
+}
 
 /** The pod could not be read or written. `refusedStatus` is set when the pod answered 401 or 403. */
 export class PodTransportFailed extends Error {
@@ -114,12 +221,21 @@ export class PodTransportFailed extends Error {
   }
 }
 
-/** A record that cannot be read as a pev record: no distribution, no region, or a body whose hash does not match. */
+/**
+ * A record that cannot be read as a pev record: no distribution, no region, a body whose hash does
+ * not match, a response over the read limit, or an error status the pod answered for its
+ * descriptor or graph (`status`, the HTTP status, when that is why).
+ */
 export class RecordUnreadable extends Error {
-  constructor(readonly descriptorUrl: string, why: string) {
+  constructor(readonly descriptorUrl: string, why: string, readonly status: number | null = null) {
     super(why);
     this.name = 'RecordUnreadable';
   }
+}
+
+/** True when the pod answered an error status for the record that leaves what it holds unknown (not a 404 or 410). */
+export function unanswered(e: RecordUnreadable): boolean {
+  return e.status !== null && e.status !== 404 && e.status !== 410;
 }
 
 /**
@@ -199,12 +315,48 @@ export class ResponseOverLimit extends Error {
   }
 }
 
+/** The most one act reads from pods, over every response it reads: four times the per-response limit. */
+export const ACT_READ_BUDGET_BYTES = 4 * MAX_RESPONSE_BYTES;
+
+/** One act went past what it may read from pods in all (`ReadBudget`). Raised in this process: never the pod's failure. */
+export class ReadBudgetSpent extends Error {
+  constructor(readonly limit: number) {
+    super(`this act has read its limit of ${limit} bytes from the pod`);
+    this.name = 'ReadBudgetSpent';
+  }
+}
+
+/**
+ * What one act may read from pods, over every response together. Each response is capped on its
+ * own (`MAX_RESPONSE_BYTES`); this caps their sum, so many large planted files cannot make one act
+ * hold them all. Once spent it stays spent, and every further read of the act is refused before it
+ * is sent.
+ */
+export class ReadBudget {
+  private used = 0;
+  private over = false;
+  constructor(readonly limit: number = ACT_READ_BUDGET_BYTES) {}
+
+  /** Count `n` bytes read; false from the first byte past the limit on. */
+  charge(n: number): boolean {
+    this.used += n;
+    if (this.used > this.limit) this.over = true;
+    return !this.over;
+  }
+
+  get spent(): boolean { return this.over; }
+  get bytesRead(): number { return this.used; }
+}
+
 /**
  * Read every response body with a byte limit, so a hostile pod cannot make the bridge buffer an
  * unbounded body. A response over the limit is a `ResponseOverLimit`, never a truncated record.
+ * With a `budget`, every byte read also counts against the act's budget, and a response that
+ * takes it past its limit (or any request once it is spent) is a `ReadBudgetSpent`.
  */
-export function cappedFetch(f: typeof fetch, maxBytes = MAX_RESPONSE_BYTES): typeof fetch {
+export function cappedFetch(f: typeof fetch, maxBytes = MAX_RESPONSE_BYTES, budget?: ReadBudget): typeof fetch {
   const capped = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    if (budget?.spent) throw new ReadBudgetSpent(budget.limit);
     const res = await f(input, init);
     const declared = Number(res.headers.get('content-length') ?? Number.NaN);
     if (Number.isFinite(declared) && declared > maxBytes) {
@@ -219,9 +371,14 @@ export function cappedFetch(f: typeof fetch, maxBytes = MAX_RESPONSE_BYTES): typ
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
+      const within = budget ? budget.charge(value.byteLength) : true;
       if (total > maxBytes) {
         await reader.cancel().catch(() => undefined);
         throw new ResponseOverLimit(maxBytes, null);
+      }
+      if (!within) {
+        await reader.cancel().catch(() => undefined);
+        throw new ReadBudgetSpent(budget!.limit);
       }
       chunks.push(value);
     }
@@ -233,9 +390,28 @@ export function cappedFetch(f: typeof fetch, maxBytes = MAX_RESPONSE_BYTES): typ
   return capped as typeof fetch;
 }
 
-/** The guarded, size-capped fetch, typed as the substrate's FetchFn. */
+const BUDGETED: unique symbol = Symbol('pev.readBudget');
+type Budgeted = typeof fetch & { readonly [BUDGETED]?: { readonly inner: typeof fetch; readonly budget: ReadBudget } };
+
+/**
+ * `fetchFn`, with every response read through it here counted against `budget`. Every reader in
+ * this module takes it as its fetch; writes are given the plain one.
+ */
+export function withReadBudget(fetchFn: typeof fetch, budget: ReadBudget): typeof fetch {
+  const f = ((input: RequestInfo | URL, init?: RequestInit) => fetchFn(input, init)) as Budgeted;
+  Object.defineProperty(f, BUDGETED, { value: { inner: fetchFn, budget } });
+  return f;
+}
+
+/** The read budget a fetch carries (`withReadBudget`), or null. */
+export function budgetOf(fetchFn?: typeof fetch): ReadBudget | null {
+  return fetchFn ? ((fetchFn as Budgeted)[BUDGETED]?.budget ?? null) : null;
+}
+
+/** The guarded, size-capped fetch, typed as the substrate's FetchFn; budgeted when `fetchFn` carries a budget. */
 function guarded(fetchFn?: typeof fetch): FetchFn {
-  return guardedFetchFn(cappedFetch(base(fetchFn))) as unknown as FetchFn;
+  const b = fetchFn ? (fetchFn as Budgeted)[BUDGETED] : undefined;
+  return guardedFetchFn(b ? cappedFetch(b.inner, MAX_RESPONSE_BYTES, b.budget) : cappedFetch(base(fetchFn))) as unknown as FetchFn;
 }
 
 /**
@@ -347,15 +523,38 @@ export async function deleteResource(url: string, fetchFn?: typeof fetch): Promi
   }
 }
 
-/** The pod's manifest entries, all or those describing one graph. */
+/**
+ * The pod's manifest entries, all or those describing one graph. A manifest that cannot be read is
+ * a `PodTransportFailed`; one whose reading took the act past its read budget (the substrate reports
+ * an archive segment it could not read, without saying why) is a `ReadBudgetSpent`.
+ */
 export async function listEntries(podUrl: string, fetchFn?: typeof fetch, graphIri?: string): Promise<ManifestEntry[]> {
   try {
     return await discover(podUrl, graphIri !== undefined ? { graphIri } : {}, { fetch: guarded(fetchFn) });
   } catch (e) {
+    if (e instanceof ReadBudgetSpent) throw e;
+    const budget = budgetOf(fetchFn);
+    if (budget?.spent) throw new ReadBudgetSpent(budget.limit);
     const refused = podRefusal(e);
     const why = e instanceof Error ? e.message : String(e);
     throw new PodTransportFailed(`reading the manifest of ${originOf(podUrl)} did not complete: ${why.slice(0, 200)}`, 'read', refused?.status ?? null, originOf(podUrl));
   }
+}
+
+/**
+ * Every manifest entry of the pod, read once per act when `cache` keeps manifests (until they are
+ * cleared), else read now.
+ */
+export function podEntries(podUrl: string, fetchFn?: typeof fetch, cache?: ReadCache): Promise<ManifestEntry[]> {
+  const memo = cache?.manifests;
+  if (!memo) return listEntries(podUrl, fetchFn);
+  const key = normalPod(podUrl) ?? podUrl;
+  const hit = memo.get(key);
+  if (hit) return hit;
+  const p = listEntries(podUrl, fetchFn);
+  memo.set(key, p);
+  p.catch(() => { if (memo.get(key) === p) memo.delete(key); });
+  return p;
 }
 
 /** The descriptor URLs describing `graphIri` that no other entry supersedes. */
@@ -397,6 +596,21 @@ export function underPod(url: string, podUrl: string): boolean {
   try { return pod !== null && new URL(url).href.startsWith(pod); } catch { return false; }
 }
 
+/**
+ * True when `url` is a resource directly in the container that holds `descriptorUrl`: where
+ * `publish` puts every record's graph beside its descriptor. A descriptor is read only from under
+ * its pod, so a graph in its container is under that pod too.
+ */
+export function inSameContainer(url: string, descriptorUrl: string): boolean {
+  try {
+    const container = new URL('.', new URL(descriptorUrl)).href;
+    const href = new URL(url).href;
+    return href.startsWith(container) && href.length > container.length && !href.slice(container.length).includes('/');
+  } catch {
+    return false;
+  }
+}
+
 /** Why a signed body does not belong at (pod, graph): another graph, or written for another pod. */
 export function placementProblem(body: PevRecordBody, podUrl: string, graphIri: string): string | undefined {
   if (graphIriOf(body) !== graphIri) return 'its signed body describes another graph than the one this pod files it under';
@@ -416,15 +630,26 @@ function misplace(r: ReadRecord, why: string | undefined): ReadRecord {
 
 /**
  * Read one record by its descriptor URL and check it. The graph URL is followed from the
- * descriptor's distribution link, never rebuilt from a file name. A sealed graph is opened with
- * `trusted.recordKey`, and the proof is checked over the opened bytes; one this bridge cannot open
- * is a `RecordSealed`.
+ * descriptor's distribution link, never rebuilt from a file name, and only within the descriptor's
+ * own container. A sealed graph is opened with `trusted.recordKey`, and the proof is checked over
+ * the opened bytes; one this bridge cannot open is a `RecordSealed`.
+ *
+ * With a cache, a record kept across acts (`cache.verified`) is reused, and one read earlier in the
+ * act is read once. `fresh` reads it from the pod whatever is cached, and drops it from the cache.
  */
-export function readRecord(descriptorUrl: string, trusted: TrustedPlatform, fetchFn?: typeof fetch, cache?: ReadCache): Promise<ReadRecord> {
-  const hit = cache?.get(descriptorUrl);
-  if (hit) return hit;
+export function readRecord(
+  descriptorUrl: string, trusted: TrustedPlatform, fetchFn?: typeof fetch, cache?: ReadCache, o: { readonly fresh?: boolean } = {},
+): Promise<ReadRecord> {
+  if (o.fresh) {
+    cache?.verified?.drop(descriptorUrl);
+  } else {
+    const kept = cache?.verified?.get(descriptorUrl);
+    if (kept) return Promise.resolve(kept);
+    const hit = cache?.records.get(descriptorUrl);
+    if (hit) return hit;
+  }
   const pending = readRecordUncached(descriptorUrl, trusted, fetchFn);
-  cache?.set(descriptorUrl, pending);
+  cache?.records.set(descriptorUrl, pending);
   return pending;
 }
 
@@ -461,6 +686,35 @@ function overLimit(descriptorUrl: string, what: 'descriptor' | 'graph', e: Respo
   return new RecordUnreadable(descriptorUrl, `its ${what} is over this bridge's read limit of ${e.limit} bytes${e.declared !== null ? ` (the pod declares ${e.declared})` : ''}, so it is not read`);
 }
 
+/**
+ * A record whose descriptor or graph the pod answered with an error status: the pod answered, so
+ * it is this record that cannot be read, not the pod that cannot be reached. Anyone who can write
+ * the pod can plant a record whose graph link answers 401 or 403 (a resource this bridge may not
+ * read), so one such record never makes a listing fail.
+ */
+function answeredWith(descriptorUrl: string, what: 'descriptor' | 'graph', status: number): RecordUnreadable {
+  const why = status === 401 || status === 403
+    ? ' (this bridge may not read it: if the operator pod refuses this bridge its own records, the operator sets PEV_POD_WRITE_SECRET)'
+    : status >= 500 && what === 'graph' ? ', after retries' : '';
+  return new RecordUnreadable(descriptorUrl, `the pod answers HTTP ${status} for its ${what}${why}, so it is not read`, status);
+}
+
+/** The status in the substrate's `Failed to GET <url>: <status> <text>` for this graph URL, or null. */
+function graphStatus(message: string, graphUrl: string): number | null {
+  const prefix = `Failed to GET ${graphUrl}: `;
+  if (!message.startsWith(prefix)) return null;
+  const m = /^(\d{3})\b/.exec(message.slice(prefix.length));
+  return m ? Number(m[1]) : null;
+}
+
+/** RDF, an envelope, or untyped text: what a descriptor or graph may be served as. */
+const READABLE_TYPE = /turtle|trig|n-?triples|n-?quads|\bn3\b|json|text\/plain|octet-stream/i;
+
+/** ` (the pod serves it as <type>)` when a response that could not be read was served as something else, or ''. */
+function servedAs(contentType: string | null): string {
+  return contentType && !READABLE_TYPE.test(contentType) ? ` (the pod serves it as ${contentType.split(';')[0]!.trim().slice(0, 60)})` : '';
+}
+
 async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatform, fetchFn?: typeof fetch): Promise<ReadRecord> {
   const f = guarded(fetchFn);
   const origin = originOf(descriptorUrl);
@@ -470,40 +724,43 @@ async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatfor
   } catch (e) {
     // The pod answered, with more than this bridge reads: an unreadable record, not a failed request.
     if (e instanceof ResponseOverLimit) throw overLimit(descriptorUrl, 'descriptor', e);
+    if (e instanceof ReadBudgetSpent) throw e;
     throw new PodTransportFailed(`reading ${descriptorUrl} did not complete: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`, 'read', null, origin);
   }
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      throw new PodTransportFailed(`descriptor GET ${descriptorUrl} -> ${res.status}`, 'read', res.status, origin);
-    }
-    if (res.status === 404) throw new RecordUnreadable(descriptorUrl, 'the manifest names a descriptor the pod does not hold');
-    throw new PodTransportFailed(`descriptor GET ${descriptorUrl} -> ${res.status}`, 'read', null, origin);
+    if (res.status === 404 || res.status === 410) throw new RecordUnreadable(descriptorUrl, 'the manifest names a descriptor the pod does not hold', res.status);
+    throw answeredWith(descriptorUrl, 'descriptor', res.status);
   }
   const descriptorTurtle = await res.text();
   const proof = parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle);
   const dist = parseDistributionFromDescriptorTurtle(descriptorTurtle);
-  if (!dist) throw new RecordUnreadable(descriptorUrl, 'the descriptor names no graph distribution');
-  if (originOf(dist.accessURL) !== origin) throw new RecordUnreadable(descriptorUrl, 'the descriptor points its graph at another host');
-  let opened: { readonly content: string | null; readonly encrypted: boolean };
+  if (!dist) throw new RecordUnreadable(descriptorUrl, `the descriptor names no graph distribution${servedAs(res.headers?.get('content-type') ?? null)}`);
+  // Never another host, and never another pod or path on this one: where the bridge's credential
+  // may reach, or a resource of someone else's it may not read.
+  if (!inSameContainer(dist.accessURL, descriptorUrl)) {
+    throw new RecordUnreadable(descriptorUrl, 'the descriptor points its graph outside its own container on the pod, so the graph is not read');
+  }
+  let opened: { readonly content: string | null; readonly encrypted: boolean; readonly mediaType: string };
   try {
     // fetchGraphContent asks for `application/jose+json` first, passes plaintext through, and hands
     // an envelope to openSealed, which opens it here, in this process: whatever goes wrong there
-    // is a RecordUnreadable it throws itself, so only the request can reach the catch below. A
-    // graph over the read limit (cappedFetch, which the substrate does not retry) is the pod's
-    // answer, not a failed request.
+    // is a RecordUnreadable it throws itself. A graph over the read limit (cappedFetch, which the
+    // substrate does not retry) or answered with an error status (after the substrate's retries of
+    // a 5xx) is the pod's answer; only a request that got no answer is a failed request.
     opened = await fetchGraphContent(dist.accessURL, { fetch: f, openEnvelope: (env) => openSealed(descriptorUrl, env, trusted.recordKey) });
   } catch (e) {
-    if (e instanceof RecordUnreadable) throw e;
+    if (e instanceof RecordUnreadable || e instanceof ReadBudgetSpent) throw e;
     if (e instanceof ResponseOverLimit) throw overLimit(descriptorUrl, 'graph', e);
     const msg = e instanceof Error ? e.message : String(e);
-    if (/:\s*(404|410)\b/.test(msg)) throw new GraphMissing(descriptorUrl, dist.accessURL, proof?.descriptorId ?? null, descriptorTurtle);
-    const refused = podRefusal(e);
-    throw new PodTransportFailed(`reading ${dist.accessURL} did not complete: ${msg.slice(0, 200)}`, 'read', refused?.status ?? null, originOf(dist.accessURL));
+    const status = graphStatus(msg, dist.accessURL);
+    if (status === 404 || status === 410) throw new GraphMissing(descriptorUrl, dist.accessURL, proof?.descriptorId ?? null, descriptorTurtle);
+    if (status !== null) throw answeredWith(descriptorUrl, 'graph', status);
+    throw new PodTransportFailed(`reading ${dist.accessURL} did not complete: ${msg.slice(0, 200)}`, 'read', null, originOf(dist.accessURL));
   }
   if (opened.content === null) throw new RecordSealed(descriptorUrl, trusted.recordKey !== undefined);
   const graphContent = opened.content;
   const region = digestedGraphRegion({ descriptorTurtle, graphContent });
-  if (!region.ok) throw new RecordUnreadable(descriptorUrl, `the signed graph region cannot be located (${region.why})`);
+  if (!region.ok) throw new RecordUnreadable(descriptorUrl, `the signed graph region cannot be located (${region.why})${servedAs(opened.mediaType)}`);
   const parsed = recordBodyFromGraph(region.turtle);
   if ('unreadable' in parsed) throw new RecordUnreadable(descriptorUrl, parsed.unreadable);
   const graphDigest = canonicalGraphDigest(region.turtle) ?? '';
@@ -536,7 +793,7 @@ export interface HeadRead {
  * this pod and its signed seq equals the number of versions the pod holds.
  */
 export async function readHead(podUrl: string, graphIri: string, trusted: TrustedPlatform, fetchFn?: typeof fetch, cache?: ReadCache): Promise<HeadRead> {
-  const entries = (await listEntries(podUrl, fetchFn, graphIri)).filter((e) => e.describes.includes(graphIri));
+  const entries = (await podEntries(podUrl, fetchFn, cache)).filter((e) => e.describes.includes(graphIri));
   const heads = headsOf(entries, graphIri);
   const seq = entries.length + 1;
   if (heads.length === 0) return { head: null, heads, seq, entries };
@@ -545,7 +802,9 @@ export async function readHead(podUrl: string, graphIri: string, trusted: Truste
   if (!underPod(url, podUrl)) throw new RecordUnreadable(url, 'the pod\'s manifest names a record outside the pod');
   try {
     const rec = await readRecord(url, trusted, fetchFn, cache);
-    return { head: misplace(rec, placementProblem(rec.body, podUrl, graphIri) ?? seqProblem(rec.body, entries.length)), heads, seq, entries };
+    const head = misplace(rec, placementProblem(rec.body, podUrl, graphIri) ?? seqProblem(rec.body, entries.length));
+    keepIfTrusted(cache, head);
+    return { head, heads, seq, entries };
   } catch (e) {
     if (e instanceof GraphMissing) throw new RecordUnreadable(e.descriptorUrl, 'the head record\'s graph is not on the pod');
     throw e;
@@ -563,6 +822,9 @@ export async function readHead(podUrl: string, graphIri: string, trusted: Truste
  * fetched, so a forged chain cannot make this bridge open, with its record key, a record the
  * caller is not entitled to. A record opened anyway (a manifest that files one descriptor under
  * two graphs) is marked misplaced by its signed body, and callers use only trusted versions.
+ *
+ * Under a trusted redacted head every earlier version is read from the pod, never from the records
+ * kept across acts: its graph was deleted, and a kept copy would hand back the removed text.
  */
 export async function readChain(
   podUrl: string, graphIri: string, trusted: TrustedPlatform, fetchFn?: typeof fetch, cache?: ReadCache,
@@ -582,7 +844,7 @@ export async function readChain(
       throw new RecordUnreadable(next, 'the pod\'s manifest chains this record to a version it does not file under the same graph; that version is not opened');
     }
     try {
-      const rec = await readRecord(next, trusted, fetchFn, cache);
+      const rec = await readRecord(next, trusted, fetchFn, cache, { fresh: redactedHead });
       newestFirst.push(misplace(rec, placementProblem(rec.body, podUrl, graphIri)));
     } catch (e) {
       if (e instanceof GraphMissing && redactedHead) {
@@ -595,7 +857,9 @@ export async function readChain(
     }
     next = byUrl.get(next)?.supersedes?.[0];
   }
-  return linked(newestFirst.reverse());
+  const chain = linked(newestFirst.reverse());
+  if (!redactedHead) for (const v of chain) if (!isDeleted(v)) keepIfTrusted(cache, v);
+  return chain;
 }
 
 /**
@@ -699,7 +963,17 @@ export interface HeadsOfKind {
    * one that failed a check, so an answer computed without it would read its absence as a fact.
    */
   readonly sealed: number;
-  /** False when the cap left graphs unread or any head was sealed: the records are not all there are. */
+  /**
+   * Of the untrusted, the heads for which the pod answered an error status (401, 403, 5xx) for the
+   * descriptor or the graph: what they hold is unknown, so the read is incomplete.
+   */
+  readonly unanswered: number;
+  /** True when the act's read budget ran out before every head was read (`ReadBudget`). */
+  readonly readLimitReached: boolean;
+  /**
+   * False when the cap or the act's read budget left graphs unread, or any head was sealed or
+   * answered with an error status: the records are not all there are.
+   */
   readonly complete: boolean;
   /** The key marks of the pod's own records in the manifest this read walked (every kind): see `keyMarksOf`. */
   readonly keyMarks: readonly KeyMark[];
@@ -708,15 +982,18 @@ export interface HeadsOfKind {
 /**
  * The trusted heads of every chain of one record kind on a pod, found through the manifest's
  * `dct:conformsTo`. Untrusted, unreadable and forked chains are skipped and counted; sealed heads
- * are skipped and counted apart, and make the read incomplete. `beforeReading` sees the key marks
- * of the manifest before any record is read, and may refuse by throwing.
+ * are skipped and counted apart, and make the read incomplete, as do heads the pod answered with an
+ * error status. `beforeReading` sees the key marks of the manifest before any record is read, and
+ * may refuse by throwing. A head read and skipped is dropped from the act's read cache at once, so
+ * the act holds only the records it returns; once the act's read budget runs out, nothing more is
+ * read from the pod (heads kept from earlier acts are still used) and the read is incomplete.
  */
 export async function readHeadsOfKind(
   podUrl: string, kind: PevRecordBody['kind'], trusted: TrustedPlatform,
   o: { readonly max: number; readonly fetchFn?: typeof fetch; readonly cache?: ReadCache; readonly beforeReading?: (marks: readonly KeyMark[]) => void },
 ): Promise<HeadsOfKind> {
   const cls = RECORD_CLASS[kind];
-  const all = await listEntries(podUrl, o.fetchFn);
+  const all = await podEntries(podUrl, o.fetchFn, o.cache);
   const keyMarks = keyMarksOf(all, podUrl);
   o.beforeReading?.(keyMarks);
   const groups = new Map<string, ManifestEntry[]>();
@@ -732,22 +1009,44 @@ export async function readHeadsOfKind(
   let untrusted = 0;
   let forked = 0;
   let sealed = 0;
+  let unansweredHeads = 0;
+  let readLimitReached = false;
+  const budget = budgetOf(o.fetchFn);
   for (const g of graphs.slice(0, o.max)) {
     const group = groups.get(g) ?? [];
     const heads = headsOf(group, g);
     if (heads.length !== 1) { forked += 1; continue; }
-    if (!underPod(heads[0]!, podUrl)) { untrusted += 1; continue; }
+    const url = heads[0]!;
+    if (!underPod(url, podUrl)) { untrusted += 1; continue; }
+    // Once the budget is spent, only heads kept from earlier acts are still used: they cost no read.
+    if (budget?.spent && o.cache?.verified?.get(url) === undefined) { readLimitReached = true; continue; }
     try {
-      const read = await readRecord(heads[0]!, trusted, o.fetchFn, o.cache);
+      const read = await readRecord(url, trusted, o.fetchFn, o.cache);
       const r = misplace(read, placementProblem(read.body, podUrl, g) ?? seqProblem(read.body, group.length));
-      if (isTrusted(r) && r.body.kind === kind) records.push(r); else untrusted += 1;
+      if (isTrusted(r) && r.body.kind === kind) {
+        records.push(r);
+        keepIfTrusted(o.cache, r);
+      } else {
+        untrusted += 1;
+        forget(o.cache, url);
+      }
     } catch (e) {
+      forget(o.cache, url);
+      if (e instanceof ReadBudgetSpent) { readLimitReached = true; continue; }
       if (e instanceof RecordSealed) { sealed += 1; continue; }
-      if (e instanceof RecordUnreadable || e instanceof GraphMissing) { untrusted += 1; continue; }
+      if (e instanceof RecordUnreadable) {
+        untrusted += 1;
+        if (unanswered(e)) unansweredHeads += 1;
+        continue;
+      }
+      if (e instanceof GraphMissing) { untrusted += 1; continue; }
       throw e;
     }
   }
-  return { records, untrusted, forked, sealed, complete: graphs.length <= o.max && sealed === 0, keyMarks };
+  return {
+    records, untrusted, forked, sealed, unanswered: unansweredHeads, readLimitReached,
+    complete: graphs.length <= o.max && sealed === 0 && unansweredHeads === 0 && !readLimitReached, keyMarks,
+  };
 }
 
 export interface RoleRegistryView {
