@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { importWallet, signMessageRaw, sha256Hex, type Wallet } from '@interego/core';
 import {
-  openRelayDelegated, relayEnvelopeOf, agentSlugOf, isUserDid, agentDidDocumentUrl, cachedDidDocuments, type RelayDelegationPolicy,
+  openRelayDelegated, relayEnvelopeOf, agentSlugOf, isUserDid, agentDidDocumentUrl, userIdOfAgentSlug, cachedDidDocuments, type RelayDelegationPolicy,
 } from '../src/relay-delegated.js';
 
 const HOST = 'identity.interego.xwisee.com';
@@ -99,6 +99,20 @@ describe('relay-delegated identity: the verifier', () => {
       expect(await at({ agent_id: `did:web:${HOST}:agents:${slug}` }), slug).toMatchObject({ ok: false, status: 401, code: 'agent-has-no-user' });
     }
     expect(await at({ agent_id: `did:web:${HOST}:agents:claude-not-an-object` })).toMatchObject({ ok: false, code: 'agent-document-mismatch' });
+  });
+
+  // The identity host lets any account register an unused agent id, so a forgotten relay agent can be
+  // claimed by someone else: an agent whose id names a user must be controlled by that user.
+  it('refuses an agent whose id names one user and whose document names another as controller, and never names a person from the id alone', async () => {
+    const f = await relayForm({ intent: 'wrd:read-records', pod_url: 'https://pod.example/team/', nonce: 'nonce-000000000003' });
+    const squatted = documents([[AGENT_URL, { id: AGENT, controller: `did:web:${HOST}:users:u-pk-ffffffffffff` }]]);
+    expect(await openRelayDelegated(f._signed_payload, f._signature, policyOf(squatted.get))).toMatchObject({ ok: false, status: 401, code: 'agent-has-no-user' });
+    // The agent's own document is required: the user's existing names no one.
+    const forgotten = documents([[`https://${HOST}/users/u-pk-f2a9c751075a/did.json`, { id: USER }]]);
+    expect(await openRelayDelegated(f._signed_payload, f._signature, policyOf(forgotten.get))).toMatchObject({ ok: false, status: 502, code: 'agent-document-unreadable' });
+    expect(forgotten.fetched).toEqual([AGENT_URL]);
+    expect([userIdOfAgentSlug('claude-u-pk-f2a9c751075a'), userIdOfAgentSlug('work-redesign-u-did-0123456789ab'), userIdOfAgentSlug('claude-markj')])
+      .toEqual(['u-pk-f2a9c751075a', 'u-did-0123456789ab', null]);
   });
 
   it('reads the slug and the user only on the configured host, and finds the relay form at the top level of a body or under envelope (an object or its JSON text)', () => {
