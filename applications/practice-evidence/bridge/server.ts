@@ -57,6 +57,37 @@
  *                                   leaves it): unlike every other variable, a blank value here is
  *                                   not read as unset. Surrounding whitespace is ignored.
  *   PEV_ADMIN_ADDRESSES             addresses that may change roles and withdraw reviews
+ *   PEV_ADMIN_DIDS                  people who may change roles and withdraw reviews when they sign
+ *                                   in with their Interego account: did:web:<PEV_IDENTITY_HOST>:
+ *                                   users:<id>, comma-separated. Not baked into the image.
+ *   PEV_TRUSTED_RELAY_ADDRESSES     Interego sign-in: the relay delegation addresses whose signed
+ *                                   requests act as the person whose agent they name (comma list;
+ *                                   the image sets the live relay's). Empty → the route is off and
+ *                                   only keys a person holds sign acts. RELAY-ATTESTED, NOT
+ *                                   USER-HELD: whoever holds a listed key, or controls the identity
+ *                                   host, can act as any person here; records made this way carry
+ *                                   authority relay-delegated.
+ *   PEV_IDENTITY_HOST               the host agents and users live on (identity.interego.xwisee.com
+ *                                   in the image): an agent's DID document is read from
+ *                                   https://<host>/agents/<slug>/did.json and its controller, a
+ *                                   did:web:<host>:users:<id>, is the person
+ *   PEV_RELAY_URL                   the relay a person signs in through, reported to the web UI
+ *                                   (https://relay.interego.xwisee.com in the image). With a relay
+ *                                   trusted, it turns on the web UI's "Sign in with your Interego
+ *                                   account" (ui.ts): the person signs in on the relay's own page,
+ *                                   and every act is signed by the relay through this bridge, so
+ *                                   the relay's OAuth access token for that sign-in (an hour)
+ *                                   passes through the bridge (never logged or kept). The OAuth
+ *                                   client id is BRIDGE_DEPLOYMENT_URL/ui/oauth/client.json when
+ *                                   that is https; otherwise it registers by DCR.
+ *   PEV_CHAT_AGENTS_DECIDE=1        lets a chat agent signed in through the relay (claude-…,
+ *                                   chatgpt-…) take the decisive acts: register_role,
+ *                                   ratify_scenario, countersign_attempt, override_attempt,
+ *                                   retract_review, and redact_attempt on another learner's
+ *                                   attempt; by default only this bridge's own web UI
+ *                                   (practice-evidence-… agents) may
+ *                                   Each of these five settings, malformed, stops the
+ *                                   bridge before it listens.
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
  *                                   route (this bridge never picks a model)
@@ -74,12 +105,13 @@ import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { attemptIriSecret, freshNonce, iriKeyFingerprint, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
+import { cachedDidDocuments, isUserDid } from '../src/relay-delegated.js';
 import {
-  createPevHandlers, describeStartup, DEFAULT_BUDGETS, DEMO_ROLE_NAMES,
+  createPevHandlers, describeStartup, DECISIVE_ACTS, DECISIVE_ON_ANOTHERS_ATTEMPT, DEFAULT_BUDGETS, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX,
   type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
 } from './handlers.js';
-import { operatorPodFetch } from './pod-helpers.js';
-import { attachUi, hostAllowlistGuard } from './ui.js';
+import { didDocumentFetch, operatorPodFetch } from './pod-helpers.js';
+import { attachUi, hostAllowlistGuard, relayCallFetch } from './ui.js';
 
 const say = (line: string): void => { process.stdout.write(`${line}\n`); };
 const warn = (line: string): void => { process.stderr.write(`${line}\n`); };
@@ -90,6 +122,8 @@ const env = (name: string): string | undefined => {
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((x) => x.trim()).filter((x) => x !== '');
 /** PEV_RECORD_KEY: 32 bytes as hex, an optional 0x prefix. */
 const RECORD_KEY_HEX = /^(0x)?[0-9a-fA-F]{64}$/;
+/** PEV_IDENTITY_HOST: a lower-case DNS name with no scheme, port or path (did:web names it as it is). */
+const IDENTITY_HOST = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
 
 const PORT = parseInt(env('PORT') ?? '6110', 10);
 const HOST = env('HOST') ?? '127.0.0.1';
@@ -97,6 +131,13 @@ const base = (env('BRIDGE_DEPLOYMENT_URL') ?? `http://127.0.0.1:${PORT}`).replac
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 const loopback = LOOPBACK.has(HOST);
 const baseIsLoopback = ((): boolean => { try { return LOOPBACK.has(new URL(base).hostname); } catch { return false; } })();
+/** PEV_RELAY_URL: https, or http on a loopback host for a local relay. */
+const relayUrlOk = (raw: string): boolean => {
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' || (u.protocol === 'http:' && LOOPBACK.has(u.hostname));
+  } catch { return false; }
+};
 
 /** "<per signer>,<total>" as an hourly limit; the default when absent or not two positive integers. */
 function hourly(name: string, fallback: HourlyLimit): HourlyLimit {
@@ -182,6 +223,58 @@ async function main(): Promise<void> {
     if (bad.length > 0) warn(`${name}: ignoring ${bad.length} value(s) that are not 0x addresses`);
   }
 
+  // ── Interego sign-in (relay-delegated identity). Relay-attested, not user-held: every one of
+  // these decides who can act as whom, so a malformed value stops the bridge instead of being read
+  // as something nobody meant.
+  const relayAddresses = list(env('PEV_TRUSTED_RELAY_ADDRESSES'));
+  const badRelay = relayAddresses.filter((x): boolean => !isAddress(x));
+  if (badRelay.length > 0) {
+    warn(`PEV_TRUSTED_RELAY_ADDRESSES: ${badRelay.length} value(s) are not 0x addresses (40 hex digits): ${badRelay.map((x) => JSON.stringify(x.slice(0, 50))).join(', ')}. A relay address decides whose requests act as any person here, so a mistyped one is not ignored. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const identityHost = env('PEV_IDENTITY_HOST');
+  if (identityHost !== undefined && !IDENTITY_HOST.test(identityHost)) {
+    warn(`PEV_IDENTITY_HOST is ${JSON.stringify(identityHost.slice(0, 80))}; it takes a lower-case host name with no scheme, port or path, such as identity.interego.xwisee.com. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (relayAddresses.length > 0 && identityHost === undefined) {
+    warn('PEV_TRUSTED_RELAY_ADDRESSES is set and PEV_IDENTITY_HOST is not: a relay-signed request names an agent on the identity host, and without one no agent can be checked. Set PEV_IDENTITY_HOST (identity.interego.xwisee.com), or empty PEV_TRUSTED_RELAY_ADDRESSES to turn Interego sign-in off. Not listening.');
+    process.exitCode = 1;
+    return;
+  }
+  const adminDids = list(env('PEV_ADMIN_DIDS'));
+  if (adminDids.length > 0 && identityHost === undefined) {
+    warn('PEV_ADMIN_DIDS is set and PEV_IDENTITY_HOST is not: an admin DID is did:web:<identity host>:users:<id>. Set PEV_IDENTITY_HOST. Not listening.');
+    process.exitCode = 1;
+    return;
+  }
+  const badDids = identityHost === undefined ? [] : adminDids.filter((d) => !isUserDid(d, identityHost));
+  if (badDids.length > 0) {
+    warn(`PEV_ADMIN_DIDS: ${badDids.length} value(s) are not did:web:${identityHost ?? ''}:users:<id>: ${badDids.map((x) => JSON.stringify(x.slice(0, 120))).join(', ')}. An admin is a person (a user, never an agent) on the identity host. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const relayUrl = env('PEV_RELAY_URL');
+  if (relayUrl !== undefined && !relayUrlOk(relayUrl)) {
+    warn(`PEV_RELAY_URL is ${JSON.stringify(relayUrl.slice(0, 120))}; it takes the relay's https URL, such as https://relay.interego.xwisee.com (http only on a loopback host). Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const decideRaw = env('PEV_CHAT_AGENTS_DECIDE');
+  if (decideRaw !== undefined && decideRaw !== '1' && decideRaw !== '0') {
+    warn(`PEV_CHAT_AGENTS_DECIDE is ${JSON.stringify(decideRaw.slice(0, 40))}; it takes 1 (chat agents signed in through the relay may take the decisive acts: change roles, ratify a rubric, countersign or override a judgment, withdraw a review, remove another learner's transcript) or 0. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const chatAgentsDecide = decideRaw === '1';
+  // The web UI's "Sign in with your Interego account": on when there is a relay to sign in through
+  // and the route trusts it. Its relay calls follow no redirect, are capped and timed, and go through
+  // the SSRF guard unless the operator's relay is on loopback (a local relay, which the guard refuses).
+  const uiSignIn = relayUrl !== undefined && relayAddresses.length > 0 && identityHost !== undefined;
+  const relayIsLoopback = relayUrl !== undefined && ((): boolean => { try { return LOOPBACK.has(new URL(relayUrl).hostname); } catch { return false; } })();
+
   const llmKey = env('PEV_LLM_API_KEY') ?? env('ANTHROPIC_API_KEY');
   const llmModel = env('PEV_LLM_MODEL');
   const model: TextModel | undefined = llmKey && llmModel
@@ -219,6 +312,16 @@ async function main(): Promise<void> {
     trustedPlatformAddresses: trusted.filter((x) => isAddress(x)),
     ...(recordKey ? { recordKey } : {}),
     adminAddresses: [...admins.filter((x) => isAddress(x)), ...(demoAdmin ? [demoAdmin.address] : [])],
+    // The agent's DID document is read SSRF-guarded, in 8 s, at most 64 KiB, and kept 10 minutes.
+    ...(identityHost !== undefined ? {
+      relayDelegation: {
+        relayAddresses: relayAddresses.map((x) => x.toLowerCase()), identityHost,
+        fetchDidDocument: cachedDidDocuments(didDocumentFetch(globalThis.fetch.bind(globalThis))),
+      },
+      adminDids,
+    } : {}),
+    chatAgentsDecide,
+    ...(relayUrl !== undefined ? { relayUrl } : {}),
     fetchFn: operatorPodFetch(defaultPodUrl, writeSecret, baseFetch),
     holderFetchFn: baseFetch,
     byokFetch: baseFetch,
@@ -245,12 +348,18 @@ async function main(): Promise<void> {
       { label: 'pev ontology', href: `${base}/ns/pev`, rel: 'describedby', type: 'text/turtle' },
     ],
     middleware: (a) => {
+      // The web UI's sign-in routes limit each client address (req.ip) on its relay calls. In the
+      // image the bridge listens behind Railway's edge, one proxy hop, so req.ip is the client only
+      // when that hop is trusted; a loopback bridge trusts none, so no caller picks its own address.
+      if (!loopback) a.set('trust proxy', 1);
       if (loopback) a.use(hostAllowlistGuard(allowedHosts));
       attachOntologyServing(a, {
         mountPath: '/ns/pev', ontologyIri: PEV_ONTOLOGY_IRI, namespace: PEV_NS,
         ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
       });
-      attachUi(a);
+      attachUi(a, uiSignIn && relayUrl !== undefined
+        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }) } }
+        : {});
     },
   });
 
@@ -271,7 +380,16 @@ async function main(): Promise<void> {
       ? '  model route: none: a key is set but PEV_LLM_MODEL is not, and this bridge never picks a model; packet routes only'
       : '  model route: none: packet routes only (or a per-request key)');
   say(`  attempts per hour: ${budgets.attemptsPerHour.perSigner} per signer, ${budgets.attemptsPerHour.total} in total (counted in this process only)`);
-  say(`  admins: ${deps.adminAddresses?.length ?? 0}`);
+  say(`  admins: ${deps.adminAddresses?.length ?? 0} address(es), ${relayAddresses.length > 0 ? adminDids.length : 0} Interego DID(s)`);
+  const decisive = `${[...DECISIVE_ACTS].join(', ')}, and ${[...DECISIVE_ON_ANOTHERS_ATTEMPT].join(', ')} on another learner's attempt`;
+  say(relayAddresses.length > 0 && identityHost !== undefined
+    ? `  Interego sign-in: ON, relay-attested, not user-held. A request the relay (${relayAddresses.join(', ')}) signs for an agent on ${identityHost} acts as that agent's controller there, a did:web:${identityHost}:users:… person; whoever holds that relay delegation key, or controls ${identityHost}, can act as any person on this bridge. Records made this way carry authority relay-delegated. ${chatAgentsDecide ? `Chat agents may take ${decisive} (PEV_CHAT_AGENTS_DECIDE=1).` : `Only this bridge's web UI (${WEB_UI_AGENT_PREFIX}… agents) may take ${decisive}; PEV_CHAT_AGENTS_DECIDE=1 lets chat agents.`} Relay: ${relayUrl ?? 'PEV_RELAY_URL not set'}`
+    : `  Interego sign-in: off (PEV_TRUSTED_RELAY_ADDRESSES is empty): only keys a person holds sign acts${adminDids.length > 0 ? `; the ${adminDids.length} admin DID(s) in PEV_ADMIN_DIDS cannot act until it is on` : ''}`);
+  if (relayAddresses.length > 0) {
+    say(uiSignIn
+      ? `  web UI sign-in: ON, through ${relayUrl ?? ''}, as the OAuth client "Practice Evidence" (${base.startsWith('https://') ? `its Client ID Metadata Document is ${base}/ui/oauth/client.json, if the relay takes one; otherwise it registers dynamically` : 'registered dynamically: the deployment URL is not https, so the relay cannot read a Client ID Metadata Document'}). The relay's access token a person signs in with (it lasts an hour) passes through this bridge on every act it signs and is never logged or kept`
+      : '  web UI sign-in: off (PEV_RELAY_URL is not set): people sign in through Claude, ChatGPT or another relay client only');
+  }
   for (const line of (await describeStartup(deps)).lines) say(`  ${line}`);
 
   if (demoSigner && demoAdmin) {

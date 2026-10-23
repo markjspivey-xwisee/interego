@@ -26,7 +26,7 @@ import {
   type AssessmentUse, type CriterionSpec, type JudgeChosenBy, type JudgmentResult, type ScenarioSpec,
 } from './practice.js';
 import {
-  LIFECYCLE_STATES, standingReview,
+  LIFECYCLE_STATES, principalKey, principalOfDid, standingReview,
   type AttemptBody, type LifecycleState, type RecordTarget, type ReviewResult,
 } from './records.js';
 
@@ -166,7 +166,7 @@ export interface CalibrationCellView {
 
 const hitRate = (rows: readonly OutcomeRow[]): number | null => ratio(rows.filter((r) => r.loopOutcome.hit).length, rows.length);
 const distinctPeople = (rows: readonly OutcomeRow[]): number =>
-  new Set(rows.filter((r) => r.loopOutcome.confirmedByKind === 'human').map((r) => r.reviewerDid.toLowerCase())).size;
+  new Set(rows.filter((r) => r.loopOutcome.confirmedByKind === 'human').map((r) => principalKey(principalOfDid(r.reviewerDid)))).size;
 
 /** Standing for one (judge × prompt × rubric version × criterion). It is reported and changes nothing. */
 export function standingFor(
@@ -303,7 +303,7 @@ export interface QueueCandidate {
   readonly attemptIri: string; readonly state: 'judged' | 'contested' | 'review-retracted'; readonly judgedAt: string;
   readonly scenarioSpec: ScenarioSpec; readonly rubricHash: string; readonly judgments: readonly JudgmentResult[];
   readonly counterpartControlledBy: 'platform' | 'learner-model' | 'learner'; readonly learnerDid: string;
-  /** The learner, the judge signers and earlier reviewers, as lowercase addresses. */
+  /** The learner, the judge signers and earlier reviewers, as principal keys (`principalKey`). */
   readonly excludedReviewers: readonly string[];
   readonly currentTarget: RecordTarget;
   readonly authorTest?: boolean;
@@ -373,7 +373,7 @@ export function priorityOf(w: QueueWhy): number {
 export function reviewQueue(
   candidates: readonly QueueCandidate[], cells: readonly CalibrationCellView[], o: { limit: number; reviewer: string },
 ): { readonly entries: readonly QueueEntry[]; readonly awaitingReview: number; readonly excludedAsConflicted: number; readonly weights: typeof QUEUE_WEIGHTS } {
-  const reviewer = o.reviewer.toLowerCase();
+  const reviewer = principalKey(o.reviewer);
   let excludedAsConflicted = 0;
   const entries: QueueEntry[] = [];
   for (const c of candidates) {
@@ -388,7 +388,7 @@ export function reviewQueue(
       }));
       if (awaitingAPerson(loop, []).length === 0) continue;
     }
-    if (c.excludedReviewers.some((x) => x.toLowerCase() === reviewer)) { excludedAsConflicted += 1; continue; }
+    if (c.excludedReviewers.some((x) => principalKey(x) === reviewer)) { excludedAsConflicted += 1; continue; }
     const why = queueFactors(c, cells);
     const primary = c.judgments[0];
     entries.push({

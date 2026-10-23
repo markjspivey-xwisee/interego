@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import nacl from 'tweetnacl';
 import {
-  canonicalGraphDigest, ContextDescriptor, deriveEncryptionKeyPair, generateContentKey, importWallet, makeWalletDelegationVerifier, sha256, signMessageRaw,
+  canonicalGraphDigest, ContextDescriptor, deriveEncryptionKeyPair, generateContentKey, importWallet, makeWalletDelegationVerifier, sha256, sha256Hex, signMessageRaw,
   validateAgainstShape, verifySignedAuthorship, wrapKeyForRecipient, type IRI, type Wallet,
 } from '@interego/core';
 import { digestedGraphRegion, discover, parseAuthorshipProofFromDescriptorTurtle } from '@interego/solid';
@@ -2610,4 +2610,289 @@ describe('the handlers decline only through refuse(), and a success never reads 
     expect(writes).toBeGreaterThanOrEqual(14);
     expect(after.filter((x) => !x.endsWith('await deleteEarlierGraphs'))).toEqual([]);
   });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  Interego sign-in: relay-delegated identity
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('Interego sign-in: a request the relay signed acts as the person whose agent it names', () => {
+  const RPOD = 'https://signin-pod.example.test/practice/';
+  const rpod = inMemoryPod();
+  const IDH = 'identity.example.test';
+  const RELAY = wallet('interego-relay', 'agent');
+  const userDid = (id: string): string => `did:web:${IDH}:users:${id}`;
+  const agentDid = (slug: string): string => `did:web:${IDH}:agents:${slug}`;
+  const docUrl = (slug: string): string => `https://${IDH}/agents/${slug}/did.json`;
+  /** The identity host, as an injected fetch: DID documents by URL, every read logged. No network. */
+  const docs = new Map<string, unknown>();
+  const docReads: string[] = [];
+  const fetchDidDocument = async (url: string): Promise<unknown> => {
+    docReads.push(url);
+    if (!docs.has(url)) throw new Error('the identity host answered HTTP 404');
+    return docs.get(url);
+  };
+  const agentOf = (slug: string, controller: string): string => {
+    docs.set(docUrl(slug), { '@context': ['https://www.w3.org/ns/did/v1'], id: agentDid(slug), controller });
+    return agentDid(slug);
+  };
+  const P = {
+    admin: userDid('u-pk-0000000000a1'), author: userDid('u-pk-0000000000b2'), reviewer: userDid('u-pk-0000000000c3'),
+    ana: userDid('u-pk-0000000000d4'), ben: userDid('u-pk-0000000000e5'),
+  };
+  const AG = {
+    adminUi: agentOf('practice-evidence-u-pk-0000000000a1', P.admin), adminChat: agentOf('claude-u-pk-0000000000a1', P.admin),
+    author: agentOf('claude-u-pk-0000000000b2', P.author),
+    reviewerChat: agentOf('chatgpt-u-pk-0000000000c3', P.reviewer), reviewerUi: agentOf('practice-evidence-u-pk-0000000000c3', P.reviewer),
+    ana: agentOf('claude-u-pk-0000000000d4', P.ana), anaOther: agentOf('chatgpt-u-pk-0000000000d4', P.ana),
+    ben: agentOf('claude-u-pk-0000000000e5', P.ben),
+  };
+  const relayDeps = (over: Partial<PevDeps> = {}): PevDeps => ({
+    ...base, fetchFn: rpod.fetchFn, holderFetchFn: rpod.fetchFn, defaultPodUrl: RPOD, adminAddresses: [W.admin.address], adminDids: [P.admin],
+    relayDelegation: { relayAddresses: [RELAY.address], identityHost: IDH, fetchDidDocument }, model: scriptedPracticeModel(), ...over,
+  });
+  const RH = createPevHandlers(relayDeps()) as Handlers;
+  const rsnap = (): string => JSON.stringify([...rpod.store].sort());
+
+  /**
+   * What the relay's sign_request posts: the caller's fields (underscore keys and its reserved
+   * names dropped), a caller's podUrl kept as pod_url, then the session's agent_id, the caller's
+   * OWN pod as subject_pod_url and the relay's timestamp; signed as EIP-191 over sha256:<hex>.
+   */
+  async function relaySigned(agentId: string, payload: Out, o: { timestamp?: string; by?: Wallet; subjectPod?: string } = {}): Promise<{ _signed_payload: string; _signature: string }> {
+    const reserved = new Set(['agent_id', 'timestamp', '_signature', '_signed_payload', 'subject_pod_url', 'payload', 'pod_name', 'owner_webid', 'owner_name']);
+    const safe: Out = Object.fromEntries(Object.entries(payload).filter(([k]) => !k.startsWith('_') && !reserved.has(k)));
+    const asked = payload['pod_url'] ?? payload['podUrl'];
+    delete safe['pod_url'];
+    delete safe['podUrl'];
+    if (typeof asked === 'string') safe['pod_url'] = asked;
+    const sp = JSON.stringify({ ...safe, agent_id: agentId, subject_pod_url: o.subjectPod ?? 'https://pods.example.test/self/', timestamp: o.timestamp ?? new Date(clock.t).toISOString() });
+    return { _signed_payload: sp, _signature: await signMessageRaw(o.by ?? RELAY, `sha256:${sha256Hex(sp)}`) };
+  }
+  const payloadFor = (tool: string, payload: Out): Out => ({ v: 1, action: actionOf(tool), nonce: nonce(), podUrl: RPOD, ...payload });
+  async function ract(h: Handlers, tool: string, agentId: string, payload: Out = {}, o: { timestamp?: string; by?: Wallet; subjectPod?: string } = {}): Promise<Out> {
+    return (await h[tool]!({ ...(await relaySigned(agentId, payloadFor(tool, payload), o)) })) as Out;
+  }
+  const X: Record<string, string> = {};
+  const headBody = async (iri: string): Promise<PevRecordBody> => {
+    const h = await readHead(RPOD, iri, TRUSTED, rpod.fetchFn);
+    if (!h.head || !isTrusted(h.head)) throw new Error(`no trusted head for ${iri}`);
+    return h.head.body;
+  };
+
+  it('an admin named in PEV_ADMIN_DIDS registers people by their Interego DID from the web UI; the record says relay-delegated', async () => {
+    const first = ok(await ract(RH, 'pev.register_role', AG.adminUi, { address: P.author, role: 'author', change: 'add' }));
+    expect(first['changed']).toBe(true);
+    for (const [who, role] of [[P.reviewer, 'reviewer'], [P.ana, 'learner'], [P.ben, 'learner']] as const) {
+      ok(await ract(RH, 'pev.register_role', AG.adminUi, { address: who, role, change: 'add' }));
+    }
+    // A key-held admin still changes roles, and a DID and an address are two members.
+    const last = ok(await act(RH, 'pev.register_role', W.admin, { address: W.reviewer.address, role: 'reviewer', change: 'add' }, {}, { pod: RPOD }));
+    const entries = last['entries'] as { address: string; roles: string[] }[];
+    expect(entries.map((e) => [e.address, e.roles])).toEqual(expect.arrayContaining([[P.author, ['author']], [P.reviewer, ['reviewer']], [W.reviewer.address, ['reviewer']]]));
+    // The DID is kept exactly: never lower-cased, never read as an address.
+    refused(await ract(RH, 'pev.register_role', AG.adminUi, { address: agentDid('claude-u-pk-0000000000d4'), role: 'author', change: 'add' }), 400, 'address-format');
+    refused(await ract(RH, 'pev.register_role', AG.adminUi, { address: 'did:web:other.example.test:users:u-1', role: 'author', change: 'add' }), 400, 'address-format');
+    const rec = await readRecord(String(first['descriptorUrl']), TRUSTED, rpod.fetchFn);
+    expect(isTrusted(rec)).toBe(true);
+    expect(validateAgainstShape(rec.regionTurtle, readShapesTurtle(), { entailment: 'rdfs' }).conforms).toBe(true);
+    const body = rec.body as Extract<PevRecordBody, { kind: 'role-registry' }>;
+    expect(body.change).toEqual({ address: P.author, role: 'author', change: 'add', by: P.admin });
+    expect(body.actor).toEqual({ address: P.admin, did: P.admin, serverHeldDemoKey: false });
+    expect(body.envelope).toMatchObject({ form: 'signed-request', authority: 'relay-delegated', principal: P.admin, agentId: AG.adminUi, relaySigner: RELAY.address.toLowerCase() });
+    // The descriptor (public) names the admin as its Curator, as it does a key-held admin.
+    expect(rpod.store.get(String(first['descriptorUrl']))).toContain(P.admin);
+    // A member registered by DID is not an admin: only PEV_ADMIN_DIDS makes one.
+    refused(await ract(RH, 'pev.register_role', agentOf('practice-evidence-u-pk-0000000000b2', P.author), { address: P.ben, role: 'author', change: 'add' }), 403, 'not-an-admin');
+    // The scenario list tells a client what this route trusts.
+    const signIn = ((ok((await RH['pev.list_scenarios']!({})) as Out))['bridge'] as Out)['interegoSignIn'] as Out;
+    expect([signIn['authority'], signIn['identityHost'], signIn['relayAddresses'], signIn['webUiAgentPrefix'], signIn['chatAgentsDecide']])
+      .toEqual(['relay-delegated', IDH, [RELAY.address.toLowerCase()], 'practice-evidence-', false]);
+    expect([signIn['decisiveActs'], signIn['decisiveWhenNotTheLearner']]).toEqual([
+      [PEV_ACTION.registerRole, PEV_ACTION.ratifyScenario, PEV_ACTION.countersignAttempt, PEV_ACTION.overrideAttempt, PEV_ACTION.retractReview],
+      [PEV_ACTION.redactAttempt],
+    ]);
+    expect(String(signIn['trust'])).toContain('not user-held');
+  }, SLOW);
+
+  it('a decisive act from a chat agent is refused naming PEV_CHAT_AGENTS_DECIDE, before anything is read or written; setting it lifts the limit', async () => {
+    const before = rsnap();
+    const podRequests = rpod.requests.length;
+    const r = refused(await ract(RH, 'pev.register_role', AG.adminChat, { address: P.ben, role: 'reviewer', change: 'add' }), 403, 'chat-agent-may-not-decide');
+    expect([(r['iep:resolvedBy'] as Out)['env'], r['agentId']]).toEqual(['PEV_CHAT_AGENTS_DECIDE', AG.adminChat]);
+    const missing = 'urn:pev:attempt:0123456789abcdef-1';
+    const target = { recordId: 'urn:pev:record:0123456789abcdef', descriptorUrl: `${RPOD}pev/records/x.ttl`, graphDigest: `graph-nquads-sha256:${'0'.repeat(64)}` };
+    refused(await ract(RH, 'pev.retract_review', AG.adminChat, { attemptIri: missing, target, why: 'Withdrawn for a test of the limit.' }), 403, 'chat-agent-may-not-decide');
+    refused(await ract(RH, 'pev.override_attempt', AG.reviewerChat, { attemptIri: missing, target, levels: [], sawJudgeLevelsFirst: true }), 403, 'chat-agent-may-not-decide');
+    // A countersign is a reviewer's verdict as an override is (it takes the judge's levels as the
+    // reviewer's own), and a ratification puts a reviewer's name behind a rubric: both are limited too.
+    refused(await ract(RH, 'pev.countersign_attempt', AG.reviewerChat, { attemptIri: missing, target, levels: [], sawJudgeLevelsFirst: true }), 403, 'chat-agent-may-not-decide');
+    refused(await ract(RH, 'pev.ratify_scenario', AG.reviewerChat, { scenarioIri: 'urn:pev:scenario:0123456789abcdef', version: 1, scenarioHash: '0'.repeat(64) }), 403, 'chat-agent-may-not-decide');
+    // Nothing was read from the pod, let alone written: the refusal comes before step 2.
+    expect([rsnap() === before, rpod.requests.length]).toEqual([true, podRequests]);
+    // From the web UI's agent the same acts go on to their own checks.
+    refused(await ract(RH, 'pev.retract_review', AG.adminUi, { attemptIri: missing, target, why: 'Withdrawn for a test of the limit.' }), 404, 'attempt-not-found');
+    refused(await ract(RH, 'pev.override_attempt', AG.reviewerUi, { attemptIri: missing, target, levels: [], sawJudgeLevelsFirst: true }), 404, 'attempt-not-found');
+    refused(await ract(RH, 'pev.countersign_attempt', AG.reviewerUi, { attemptIri: missing, target, levels: [], sawJudgeLevelsFirst: true }), 404, 'attempt-not-found');
+    // PEV_CHAT_AGENTS_DECIDE=1: the chat agent may.
+    const decide = createPevHandlers(relayDeps({ chatAgentsDecide: true })) as Handlers;
+    expect(ok(await ract(decide, 'pev.register_role', AG.adminChat, { address: P.ben, role: 'reviewer', change: 'add' }))['changed']).toBe(true);
+    expect(ok(await ract(decide, 'pev.register_role', AG.adminChat, { address: P.ben, role: 'reviewer', change: 'remove' }))['changed']).toBe(true);
+    // Every other act is open to a chat agent the rules already allow.
+    expect(ok(await ract(RH, 'pev.review_queue', AG.reviewerChat))['entries']).toEqual([]);
+  }, SLOW);
+
+  it('registry membership by DID: an author signed in through a chat agent writes a scenario, and the reviewer ratifies it from the web UI', async () => {
+    const pub = ok(await ract(RH, 'pev.author_scenario', AG.author, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } }));
+    X['sc'] = String(pub['scenarioIri']);
+    const sc = await headBody(X['sc']) as Extract<PevRecordBody, { kind: 'scenario' }>;
+    expect([sc.versionAuthors, sc.actor.did, sc.envelope.authority, sc.draftAssistance]).toEqual([[P.author], P.author, 'relay-delegated', { used: false, declaredBy: P.author }]);
+    expect(rpod.store.get(String(pub['descriptorUrl']))).toContain(P.author);
+    // The same scenario as a key-held stranger: not an author, as before.
+    refused(await act(RH, 'pev.author_scenario', W.stranger, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } }, {}, { pod: RPOD }), 403, 'not-an-author');
+    // The author's own DID, through another agent, cannot ratify what she wrote; the reviewer can.
+    refused(await ract(RH, 'pev.ratify_scenario', agentOf('practice-evidence-u-pk-0000000000b2', P.author), { scenarioIri: X['sc'], version: 1, scenarioHash: pub['scenarioHash'] }), 403, 'ratifier-is-the-author');
+    // A ratification is decisive: not from the reviewer's chat agent, from her web UI agent.
+    refused(await ract(RH, 'pev.ratify_scenario', AG.reviewerChat, { scenarioIri: X['sc'], version: 1, scenarioHash: pub['scenarioHash'] }), 403, 'chat-agent-may-not-decide');
+    const rat = ok(await ract(RH, 'pev.ratify_scenario', AG.reviewerUi, { scenarioIri: X['sc'], version: 1, scenarioHash: pub['scenarioHash'] }));
+    expect(rat['ratifiedBy']).toBe(P.reviewer);
+  }, SLOW);
+
+  it('a learner signed in through two chat agents practises as one person: the attempt is keyed by her DID and every act says relay-delegated', async () => {
+    const start = ok(await ract(RH, 'pev.start_attempt', AG.ana, { scenarioIri: X['sc'], scenarioVersion: 1, coached: false }));
+    X['a'] = String(start['attemptIri']);
+    expect(X['a']).toBe(`urn:pev:attempt:${attemptKey(RPOD, X['sc']!, P.ana)}-1`);
+    expect(start['learnerKind']).toBe('person');
+    ok(await ract(RH, 'pev.say', AG.anaOther, { attemptIri: X['a'], turnIndex: 1, text: DEMO_LINES.ana[0] }));
+    refused(await ract(RH, 'pev.say', AG.ben, { attemptIri: X['a'], turnIndex: 3, text: 'Not my attempt.' }), 403, 'not-the-learner');
+    // A key-held signer is never her, whatever it names.
+    refused(await act(RH, 'pev.say', W.ana, { attemptIri: X['a'], turnIndex: 3, text: 'Not my attempt either.' }, {}, { pod: RPOD }), 403, 'not-the-learner');
+    ok(await ract(RH, 'pev.say', AG.ana, { attemptIri: X['a'], turnIndex: 3, text: DEMO_LINES.ana[1] }));
+    ok(await ract(RH, 'pev.end_conversation', AG.ana, { attemptIri: X['a'], turnIndex: 5 }));
+    ok(await ract(RH, 'pev.judge_attempt', AG.ana, { attemptIri: X['a'] }));
+    const a = await headBody(X['a']) as Extract<PevRecordBody, { kind: 'attempt' }>;
+    expect(a.learner).toEqual({ address: P.ana, did: P.ana, serverHeldDemoKey: false, kind: 'person' });
+    expect(a.startEnvelope).toMatchObject({ authority: 'relay-delegated', principal: P.ana, agentId: AG.ana });
+    expect(a.acts.map((x) => [x.signer, x.authority, x.agentId, x.relaySigner])).toEqual([
+      [P.ana, 'relay-delegated', AG.ana, RELAY.address.toLowerCase()], [P.ana, 'relay-delegated', AG.anaOther, RELAY.address.toLowerCase()],
+      [P.ana, 'relay-delegated', AG.ana, RELAY.address.toLowerCase()], [P.ana, 'relay-delegated', AG.ana, RELAY.address.toLowerCase()],
+      [P.ana, 'relay-delegated', AG.ana, RELAY.address.toLowerCase()],
+    ]);
+    expect(a.judgments[0]?.requestedBy).toEqual({ did: P.ana, role: 'learner' });
+    const mine = ok(await ract(RH, 'pev.get_attempt', AG.anaOther));
+    expect((mine['attempts'] as Out[]).map((x) => x['attemptIri'])).toEqual([X['a']]);
+  }, SLOW);
+
+  it('a reviewer signed in from the web UI overrides; the learner projects and exports; a bridge that no longer trusts the relay cannot verify that review', async () => {
+    const view = ok(await ract(RH, 'pev.get_attempt', AG.reviewerChat, { attemptIri: X['a'] }));
+    const judged = (view['judgments'] as JudgmentResult[])[0]!;
+    const rubric = view['rubric'] as ScenarioSpec['rubric'];
+    const lv = rubric.criteria.map((c, i) => {
+      const was = judged.criteria.find((x) => x.criterionId === c.id)!.levelId;
+      const levelId = i === 0 ? c.levels.find((l) => l.id !== was)!.id : was;
+      return { criterionId: c.id, levelId, why: 'Set by the reviewer, who read the whole transcript.' };
+    });
+    // The learner cannot review her own attempt through any agent of hers.
+    refused(await ract(RH, 'pev.override_attempt', agentOf('practice-evidence-u-pk-0000000000d4', P.ana), { attemptIri: X['a'], target: view['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }), 403, 'reviewer-is-the-learner');
+    const o = ok(await ract(RH, 'pev.override_attempt', AG.reviewerUi, { attemptIri: X['a'], target: view['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }));
+    expect([o['state'], o['reviewer'], o['projectable']]).toEqual(['overridden', P.reviewer, true]);
+    expect(rpod.store.get(String(o['descriptorUrl']))).toContain(P.reviewer);
+    const p = ok(await ract(RH, 'pev.project_attempt', AG.ana, { attemptIri: X['a'], format: 'xapi' }));
+    expect(((p['statement'] as Out)['actor'] as Out)['account']).toMatchObject({ name: P.ana });
+    const ex = ok(await ract(RH, 'pev.export_record', AG.ana, { attemptIri: X['a'] }));
+    expect([ex['relayAddresses'], ex['identityHost']]).toEqual([[RELAY.address.toLowerCase()], IDH]);
+    expect((ex['verify'] as string[]).some((x) => x.includes('relay-delegated'))).toBe(true);
+    // A bridge that no longer lists the relay: the route is off, and the review it attested does
+    // not re-verify, so the attempt cannot leave as evidence there (a skip audit says so).
+    const off = createPevHandlers(relayDeps({ relayDelegation: { relayAddresses: [], identityHost: IDH, fetchDidDocument } })) as Handlers;
+    refused(await ract(off, 'pev.get_attempt', AG.ana, { attemptIri: X['a'] }), 401, 'signer-is-not-the-named-agent');
+    const skipped = refused(await act(off, 'pev.project_attempt', W.admin, { attemptIri: X['a'], format: 'xapi' }, {}, { pod: RPOD }), 409, 'countersign-not-verifiable');
+    expect(skipped['skipAudit']).toBeDefined();
+    expect(((ok((await off['pev.list_scenarios']!({})) as Out))['bridge'] as Out)['interegoSignIn']).toBeNull();
+  }, SLOW);
+
+  it('refuses an untrusted signer, an agent off the identity host, a document naming another id or no user, a stale timestamp, and a replay by principal', async () => {
+    const before = rsnap();
+    const reg = (agentId: string, o: { timestamp?: string; by?: Wallet } = {}): Promise<Out> => ract(RH, 'pev.register_role', agentId, { address: P.ben, role: 'author', change: 'add' }, o);
+    // The relay shape signed by any other key: refused as a key-held envelope, as before. Neither
+    // that nor an agent off the identity host makes the bridge read a DID document.
+    const reads = docReads.length;
+    refused(await reg(AG.adminUi, { by: W.mallory }), 401, 'signer-is-not-the-named-agent');
+    refused(await reg('did:web:other.example.test:agents:practice-evidence-u-pk-0000000000a1'), 401, 'agent-not-on-identity-host');
+    expect(docReads.length).toBe(reads);
+    docs.set(docUrl('practice-evidence-mismatch'), { id: agentDid('practice-evidence-someone-else'), controller: P.admin });
+    refused(await reg(agentDid('practice-evidence-mismatch')), 401, 'agent-document-mismatch');
+    refused(await reg(agentOf('practice-evidence-orphan', AG.adminUi)), 401, 'agent-has-no-user');
+    refused(await reg(agentOf('practice-evidence-elsewhere', 'did:web:other.example.test:users:u-pk-0000000000a1')), 401, 'agent-has-no-user');
+    refused(await reg(agentDid('practice-evidence-gone')), 502, 'agent-document-unreadable');
+    // Freshness is the relay's timestamp: a fresh issuedAt in the payload does not make a stale one fresh.
+    const stale = new Date(clock.t - 11 * 60_000).toISOString();
+    refused((await RH['pev.register_role']!({ ...(await relaySigned(AG.adminUi, payloadFor('pev.register_role', { address: P.ben, role: 'author', change: 'add', issuedAt: new Date(clock.t).toISOString() }), { timestamp: stale })) })) as Out, 401, 'envelope-expired');
+    expect(rsnap()).toBe(before);
+    // The same relay envelope twice: the second is a replay.
+    const once = await relaySigned(AG.adminUi, payloadFor('pev.register_role', { address: P.ben, role: 'author', change: 'add' }));
+    ok((await RH['pev.register_role']!({ ...once })) as Out);
+    refused((await RH['pev.register_role']!({ ...once })) as Out, 409, 'envelope-already-used');
+    // Replays are counted per person, not per relay: Ben re-signing his nonce through the relay is
+    // refused, and Ana may use the same nonce, because she is someone else.
+    const n = nonce();
+    ok(await ract(RH, 'pev.start_attempt', AG.ben, { scenarioIri: X['sc'], scenarioVersion: 1, coached: true, nonce: n }));
+    refused(await ract(RH, 'pev.start_attempt', AG.ben, { scenarioIri: X['sc'], scenarioVersion: 1, coached: true, nonce: n }), 409, 'envelope-already-used');
+    const second = ok(await ract(RH, 'pev.start_attempt', AG.ana, { scenarioIri: X['sc'], scenarioVersion: 1, coached: true, nonce: n }));
+    expect(second['attemptNumber']).toBe(2);
+  }, SLOW);
+
+  it('reads the pod from pod_url only: subject_pod_url, the caller\'s own pod, is never the pod an act targets', async () => {
+    const before = rsnap();
+    const bare = { v: 1, action: PEV_ACTION.getAttempt, nonce: nonce() };
+    const noPod = await relaySigned(AG.ana, bare, { subjectPod: RPOD });
+    const r = refused((await RH['pev.get_attempt']!({ ...noPod })) as Out, 400, 'envelope-pod-missing');
+    expect(String(r['error'])).toContain('subject_pod_url');
+    const elsewhere = await relaySigned(AG.ana, { ...bare, nonce: nonce(), pod_url: OTHER_POD }, { subjectPod: RPOD });
+    refused((await RH['pev.get_attempt']!({ ...elsewhere })) as Out, 403, 'pod-not-served');
+    // A pod_url beside the body that names another pod than the signed one is refused, as for a key-held envelope.
+    const signed = await relaySigned(AG.ana, payloadFor('pev.get_attempt', {}));
+    refused((await RH['pev.get_attempt']!({ ...signed, pod_url: OTHER_POD })) as Out, 400, 'pod-url-differs');
+    // Under `envelope`, as an MCP client may send it, the same request is read.
+    expect(ok((await RH['pev.get_attempt']!({ envelope: signed })) as Out)['attempts']).toBeDefined();
+    expect(rsnap()).toBe(before);
+  }, SLOW);
+
+  it('a key-held signer cannot claim a DID principal, whatever its agent_id names', async () => {
+    const before = rsnap();
+    for (const agentId of [AG.ana, P.ana]) {
+      const own = await signedRequestEnvelope(W.mallory, { agent_id: agentId, ...payloadFor('pev.get_attempt', {}), timestamp: new Date(clock.t).toISOString() });
+      refused((await RH['pev.get_attempt']!({ ...own })) as Out, 401, 'signer-is-not-the-named-agent');
+    }
+    // A relay-signed request on a bridge with no relay configured at all is refused the same way.
+    const none = createPevHandlers({ ...base, fetchFn: rpod.fetchFn, holderFetchFn: rpod.fetchFn, defaultPodUrl: RPOD }) as Handlers;
+    refused(await ract(none, 'pev.get_attempt', AG.ana), 401, 'signer-is-not-the-named-agent');
+    refused(await act(none, 'pev.register_role', W.admin, { address: P.ana, role: 'author', change: 'add' }, {}, { pod: RPOD }), 400, 'address-format');
+    expect(rsnap()).toBe(before);
+  }, SLOW);
+
+  it('counts budgets per principal: two agents of one person share hers, and another person has his own', async () => {
+    const tight = createPevHandlers(relayDeps({ budgets: { attemptsPerHour: { perSigner: 1, total: 50 }, modelCallsPerHour: { perSigner: 1, total: 50 } } })) as Handlers;
+    const a3 = ok(await ract(tight, 'pev.start_attempt', AG.ana, { scenarioIri: X['sc'], scenarioVersion: 1, coached: false }));
+    const spent = refused(await ract(tight, 'pev.start_attempt', AG.anaOther, { scenarioIri: X['sc'], scenarioVersion: 1, coached: false }), 429, 'attempt-budget-spent');
+    expect(spent['scope']).toBe('signer');
+    const b2 = ok(await ract(tight, 'pev.start_attempt', AG.ben, { scenarioIri: X['sc'], scenarioVersion: 1, coached: false }));
+    ok(await ract(tight, 'pev.say', AG.ana, { attemptIri: a3['attemptIri'], turnIndex: 1, text: DEMO_LINES.ana[0] }));
+    expect(refused(await ract(tight, 'pev.say', AG.anaOther, { attemptIri: a3['attemptIri'], turnIndex: 3, text: DEMO_LINES.ana[1] }), 429, 'model-budget-spent')['scope']).toBe('signer');
+    ok(await ract(tight, 'pev.say', AG.ben, { attemptIri: b2['attemptIri'], turnIndex: 1, text: DEMO_LINES.ana[0] }));
+  }, SLOW);
+
+  it('an admin removing another learner\'s transcript is decisive: refused from a chat agent once the attempt is read, writing nothing; the learner removes her own from any agent', async () => {
+    const start = ok(await ract(RH, 'pev.start_attempt', AG.ana, { scenarioIri: X['sc'], scenarioVersion: 1, coached: false }));
+    const iri = String(start['attemptIri']);
+    const view = ok(await ract(RH, 'pev.get_attempt', AG.ana, { attemptIri: iri }));
+    const before = rsnap();
+    const r = refused(await ract(RH, 'pev.redact_attempt', AG.adminChat, { attemptIri: iri, target: view['currentTarget'], why: 'Removed for a test of the chat-agent limit.' }), 403, 'chat-agent-may-not-decide');
+    expect([(r['iep:resolvedBy'] as Out)['env'], r['agentId']]).toEqual(['PEV_CHAT_AGENTS_DECIDE', AG.adminChat]);
+    expect(rsnap()).toBe(before);
+    // From the admin's web UI agent the act goes on to its own checks; a learner's own redaction is open from any agent.
+    refused(await ract(RH, 'pev.redact_attempt', AG.adminUi, { attemptIri: iri, target: view['currentTarget'] }), 400, 'why-required-for-admin');
+    const mine = ok(await ract(RH, 'pev.redact_attempt', AG.anaOther, { attemptIri: iri, target: view['currentTarget'] }));
+    expect([mine['state'], mine['changed']]).toEqual(['redacted', true]);
+  }, SLOW);
 });
