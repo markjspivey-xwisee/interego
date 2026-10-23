@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-23 — Play guests can follow their own native descriptor heads
+
+Provisional descriptor reads now recognize only this deployment's configured internal/public store alias before applying the same exact guest-pod and resource-path checks. Both the early REST/MCP gate and the durable tool guard receive that configuration, so an internal descriptor URL returned by get_current_head can be read by its owner. Foreign origins, foreign pods, credentials, query/fragment additions, encoded separators and traversal spellings remain refused; mutation policy and quotas are unchanged. Focused tests drive native head-to-descriptor following and refusal cases.
+
 ## 2026-10-23 — Provisional Play uses internal bootstrap writes and durable JSON counters
 
 The relay now translates a provider-verified public pod URL to this deployment's internal store before bootstrapping it. The mutex and bootstrap cache use the internal spelling while the public identity remains unchanged. Previously Play reached the public storage gate without a bearer and its profile writes returned 401.

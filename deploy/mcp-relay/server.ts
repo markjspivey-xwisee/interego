@@ -1500,7 +1500,9 @@ oauthProvider = new InteregoOAuthProvider({
   log: (msg: string) => log(msg),
 });
 
+const provisionalStoreAliases = { internalStoreUrl: CSS_URL, publicStoreUrl: CSS_PUBLIC_URL };
 const provisionalTools = createProvisionalToolGuard({ podUrl: oauthStorePodUrl, fetch: solidFetch, withMutex: withPodMutex,
+  storeAliases: provisionalStoreAliases,
   assertUnpublished: async (urn, principal) => {
     const result = JSON.parse(await handleGetCurrentHead({ urn, pod_name: principal.userId }));
     if (result.error || !Object.hasOwn(result, 'head')) throw new ProvisionalPlayError(503, 'provisional_head_unavailable');
@@ -1538,7 +1540,7 @@ async function provisionalRestCall(name: string, args: Record<string, unknown>, 
   const principal = playPrincipal(auth);
   const tool = declaredTool(name);
   if (!tool) throw new ProvisionalPlayError(403, 'provisional_tool_forbidden');
-  validateProvisionalTool(name, args, principal);
+  validateProvisionalTool(name, args, principal, provisionalStoreAliases);
   if (!args.owner_webid) args.owner_webid = principal.ownerWebId;
   injectRestVerifiedIdentity(args, auth, false);
   args._identity_token = authorization.slice(7);
@@ -12912,7 +12914,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; own
     }
 
     if (authContext?.provisionalPlay) {
-      try { validateProvisionalTool(name, (rawArgs ?? {}) as Record<string, unknown>, playPrincipal(authContext)); }
+      try { validateProvisionalTool(name, (rawArgs ?? {}) as Record<string, unknown>, playPrincipal(authContext), provisionalStoreAliases); }
       catch (error) {
         const code = error instanceof ProvisionalPlayError ? error.code : 'invalid_provisional_authority';
         return { content: [{ type: 'text' as const, text: JSON.stringify({ error: code, code: 403 }) }], isError: true };
