@@ -13,6 +13,7 @@
  *
  * Pure: no environment reads, no network, no clock (every time is passed in).
  */
+import { createHmac } from 'node:crypto';
 import {
   canonicalJson, sha256Hex, recoverMessageSigner, parseTrig, findSubjectsOfType, readStringValue, ContextDescriptor, validate, turtleIriRef,
   type ContextDescriptorData, type IRI,
@@ -87,7 +88,7 @@ export interface SignedEnvelope { readonly payload: Record<string, unknown>; rea
 export type EnvelopeIntent = 'wrd:update-registry' | 'wrd:capture-workflow' | 'wrd:record-task-map' | 'wrd:revise-task'
   | 'wrd:ratify-task' | 'wrd:classify-task' | 'wrd:propose-allocation' | 'wrd:value-plan' | 'wrd:submit-decision'
   | 'wrd:countersign-decision' | 'wrd:record-outcome' | 'wrd:agent-run' | 'wrd:review-agent-run' | 'wrd:grant-autonomy'
-  | 'wrd:revoke-grant' | 'wrd:holder-copy';
+  | 'wrd:revoke-grant' | 'wrd:holder-copy' | 'wrd:read-records';
 
 /** The exact string an envelope's signature covers. */
 export const envelopeMessage = (payload: Record<string, unknown>): string => canonicalJson(payload);
@@ -209,13 +210,130 @@ export class NonceLedger {
 export const h16 = (seed: string): string => sha256Hex(seed).slice(0, 16);
 export type EntityKind = 'registry' | 'workflow' | 'task' | 'classification' | 'plan' | 'valuation' | 'decision'
   | 'acknowledgement' | 'run' | 'grant' | 'holder-copy';
-/** `urn:wrd:<kind>:<h16(scope)>:<h16(id)>` — the scope segment lets a reader select graphs from the manifest before reading any. */
-export const entityIri = (kind: EntityKind, scope: string, id: string): string => `urn:wrd:${kind}:${h16(scope)}:${h16(id)}`;
-export const scopePrefix = (kind: EntityKind, scope: string): string => `urn:wrd:${kind}:${h16(scope)}:`;
+
+/**
+ * The key entity IRIs are derived under when the bridge holds a record key: an HMAC-SHA256 of the
+ * record key pair's secret key under the label `wrd-entity-iri`, as hex. Every bridge holding the
+ * same WRD_RECORD_KEY derives the same one, and it is never the key graphs are sealed with.
+ */
+export function entityIriKey(recordKey: { readonly secretKey: string }): string {
+  return createHmac('sha256', Buffer.from(recordKey.secretKey, 'base64')).update('wrd-entity-iri', 'utf8').digest('hex');
+}
+/**
+ * The public identifier of the key entity IRIs are derived under: the first 8 hex of
+ * HMAC-SHA256(key, 'wrd-iri-key-fingerprint'). Every keyed IRI carries it, so a bridge can tell
+ * that a pod holds IRIs derived under a key it does not hold before it answers a lookup from
+ * their absence. It names the key and reveals nothing about it: an HMAC output under a secret key
+ * says nothing about the key, and 32 bits tell apart the few keys one pod ever sees.
+ */
+export function iriKeyFingerprint(key: string): string {
+  return createHmac('sha256', Buffer.from(key, 'hex')).update('wrd-iri-key-fingerprint', 'utf8').digest('hex').slice(0, 8);
+}
+/** A record key's public fingerprint: the one its keyed IRIs carry, and the one the ids of the versions sealed to it end with (recordIdFor). */
+export const recordKeyFingerprint = (recordKey: { readonly secretKey: string }): string => iriKeyFingerprint(entityIriKey(recordKey));
+/** Where a segment sits in an entity IRI; part of what a keyed segment is derived from. */
+type SegmentPosition = 'scope' | 'id';
+/**
+ * One 16-hex segment: sha256 of the seed, or, under `key` (hex), HMAC-SHA256 of
+ * `kind \0 position \0 seed`. The kind and position separate the domains: one seed (an agent's
+ * address, a workflow IRI) gives unrelated segments in a grant's scope and a holder copy's, or in
+ * a task's scope and a plan's, so equal keyed segments only ever mean the same seed in the same
+ * kind of entity at the same position.
+ */
+const segment = (kind: EntityKind, position: SegmentPosition, seed: string, key?: string): string => (key === undefined
+  ? h16(seed)
+  : createHmac('sha256', Buffer.from(key, 'hex')).update(`${kind}\u0000${position}\u0000${seed}`, 'utf8').digest('hex').slice(0, 16));
+/** `k<fingerprint>:` in a keyed IRI, nothing in an unkeyed one. */
+const keyMark = (key?: string): string => (key === undefined ? '' : `k${iriKeyFingerprint(key)}:`);
+/**
+ * `urn:wrd:<kind>:<seg(scope)>:<seg(id)>` unkeyed, `urn:wrd:<kind>:k<fingerprint>:<seg(scope)>:<seg(id)>`
+ * keyed. The scope segment lets a reader select graphs of one kind from the manifest before
+ * reading any. The graph IRIs are public (the manifest names them), so without `key` anyone who
+ * can guess a tuple (an address, a task, a kind of task) recovers it from the hash; with `key`
+ * (entityIriKey of the record key) only a holder of the record key can, and the fingerprint
+ * (iriKeyFingerprint) says which key it was.
+ */
+export const entityIri = (kind: EntityKind, scope: string, id: string, key?: string): string =>
+  `urn:wrd:${kind}:${keyMark(key)}${segment(kind, 'scope', scope, key)}:${segment(kind, 'id', id, key)}`;
+export const scopePrefix = (kind: EntityKind, scope: string, key?: string): string => `urn:wrd:${kind}:${keyMark(key)}${segment(kind, 'scope', scope, key)}:`;
+/** An entity IRI, keyed or not, as a JSON Schema / RegExp pattern. */
+export const ENTITY_IRI_PATTERN = '^urn:wrd:[a-z-]+:(?:k[0-9a-f]{8}:)?[0-9a-f]{16}:[0-9a-f]{16}$';
+/** The key fingerprint an entity or graph IRI carries (see iriKeyFingerprint), or null for an unkeyed one. */
+export const fingerprintOfIri = (iri: string): string | null => /^urn:wrd:[a-z-]+:k([0-9a-f]{8}):/.exec(iri)?.[1] ?? null;
+/** The kind of entity an entity or graph IRI names: public in the IRI, keyed or not. */
+export const kindOfIri = (iri: string): string | null => /^urn:wrd:([a-z-]+):/.exec(iri)?.[1] ?? null;
+
+/** A UTF-16 code unit that is half of a surrogate pair with no other half. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+/** True when `s` is well-formed UTF-16 (no lone surrogate): text a UTF-8 encoder keeps as it is. */
+export const isWellFormedText = (s: string): boolean => !LONE_SURROGATE.test(s);
+/**
+ * The path of the first string in `v` (keys included) that is not well-formed UTF-16, or null.
+ * Such text cannot be sealed, hashed or stored as what was sent.
+ *
+ * The walk has no depth bound: it keeps its own stack (so a deeply nested value cannot overflow
+ * the call stack) and visits every string however deep it sits, because a bound past which it
+ * stopped looking would read as "well-formed" and let such text through. Each object is visited
+ * once, so a value that refers to itself still ends; a path is spelled out only for the one
+ * string it reports.
+ */
+export function illFormedTextPath(v: unknown, path = 'input'): string | null {
+  interface Step { readonly value: unknown; readonly parent: Step | null; readonly seg: string }
+  const spell = (s: Step, suffix = ''): string => {
+    const segs: string[] = [];
+    for (let at: Step | null = s; at !== null; at = at.parent) segs.push(at.seg);
+    return segs.reverse().join('') + suffix;
+  };
+  const stack: Step[] = [{ value: v, parent: null, seg: path }];
+  const seen = new WeakSet<object>();
+  for (let step = stack.pop(); step !== undefined; step = stack.pop()) {
+    const x = step.value;
+    if (typeof x === 'string') {
+      if (!isWellFormedText(x)) return spell(step);
+      continue;
+    }
+    if (typeof x !== 'object' || x === null || seen.has(x)) continue;
+    seen.add(x);
+    const children: Step[] = [];
+    if (Array.isArray(x)) {
+      for (const [i, c] of x.entries()) children.push({ value: c, parent: step, seg: `[${i}]` });
+    } else {
+      for (const [k, c] of Object.entries(x)) {
+        if (!isWellFormedText(k)) return spell(step, ' (a key)');
+        children.push({ value: c, parent: step, seg: `.${k}` });
+      }
+    }
+    // Pushed in reverse, so the first such string in document order is the one reported.
+    for (const c of children.reverse()) stack.push(c);
+  }
+  return null;
+}
 export const graphIriOf = (entity: string): string => `${entity}:graph`;
-/** One id per write attempt: the nonce makes it unique, so a retry never lands on a partial write's URL. */
-export const recordIdFor = (kind: EntityKind, graphIri: string, version: number, nonce: string): string =>
-  `urn:wrd:record:${kind}-${h16(`${graphIri}|${version}|${nonce}`)}`;
+/**
+ * One id per write attempt: the nonce makes it unique, so a retry never lands on a partial write's
+ * URL. A version written with a record key (its graph sealed to that key) ends `-k<fingerprint>`,
+ * the key's public fingerprint (iriKeyFingerprint of its entityIriKey, as in a keyed IRI). The id
+ * is what the platform's authorship proof signs, and the descriptor sits at the URL predicted from
+ * the id's last segment, so for every version a trusted platform key signed, the manifest names
+ * which record key it was written under, or that it was written without one, before anything is
+ * read: a pod writer can neither add the mark nor change it without the proof failing.
+ */
+export const recordIdFor = (kind: EntityKind, graphIri: string, version: number, nonce: string, keyFingerprint?: string | null): string =>
+  `urn:wrd:record:${kind}-${h16(`${graphIri}|${version}|${nonce}`)}${keyFingerprint ? `-k${keyFingerprint}` : ''}`;
+/**
+ * The record key fingerprint a record id, or the URL of the descriptor it names, ends with (see
+ * recordIdFor); null for a version written without a record key.
+ */
+export const fingerprintOfRecord = (idOrUrl: string): string | null => /-k([0-9a-f]{8})(?:\.ttl)?$/.exec(idOrUrl)?.[1] ?? null;
+/**
+ * The kind of entity a record id names (recordIdFor: `urn:wrd:record:<kind>-<16 hex>[-k<fp>]`), as
+ * kindOfIri spells it, or null for an id of another shape. The platform's proof signs the id, so
+ * for a version a trusted key signed where its proof says, this is signed too, whatever happened
+ * to its graph or its descriptor's iep:describes.
+ */
+export const kindOfRecord = (recordId: string): string | null => /^urn:wrd:record:([a-z-]+)-[0-9a-f]{16}(?:-k[0-9a-f]{8})?$/.exec(recordId)?.[1] ?? null;
+/** The URL shape of a version written without a record key: `<kind>-<16 hex>.ttl` (its graph is plaintext on the pod). */
+export const UNKEYED_RECORD_URL = /\/[a-z-]+-[0-9a-f]{16}\.ttl$/;
 export function slugOf(recordId: string): string {
   const i = recordId.lastIndexOf(':');
   return i < 0 ? recordId : recordId.slice(i + 1);
