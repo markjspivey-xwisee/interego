@@ -14,10 +14,24 @@ function adapterFixture(overrides: { verified?: boolean; subject?: string; canSi
   let issued = 0;
   let recoveredMessage = '';
   let failPodWrite = false;
+  const ownerLocks = new Map<string, Promise<void>>();
+  let observeOwner = (_userId: string) => {};
+  const withOwnerLock = async <T>(userId: string, work: () => Promise<T>): Promise<T> => {
+    observeOwner(userId);
+    const before = ownerLocks.get(userId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>(done => { release = done; });
+    const tail = before.then(() => gate);
+    ownerLocks.set(userId, tail);
+    await before;
+    try { return await work(); }
+    finally { release(); if (ownerLocks.get(userId) === tail) ownerLocks.delete(userId); }
+  };
   const options = {
     issuer: 'https://identity.example', cssUrl: 'https://css.internal.example/', publicPodBase: 'https://pods.example/',
     relayUrl: 'https://relay.example', signingKey: Buffer.alloc(32, 1), stableSigningKey: true,
     clientsJson: JSON.stringify({ [audience]: client }), maxPods: overrides.maxPods,
+    withOwnerLock,
     empty: (c: PlayClaims) => ({ userId: c.userId, agentId: c.authenticatedAgentId }), committed: () => {},
     issueCredential: async () => { issued++; return { token: 'private-browser-credential' }; },
     recoverSigner: async (message: string) => { recoveredMessage = message; return overrides.recover ?? anchor; },
@@ -66,6 +80,7 @@ function adapterFixture(overrides: { verified?: boolean; subject?: string; canSi
     }).toString('base64url') };
   };
   return { play, options, body, freshBody, calls, documents, failPodWrites: (value: boolean) => { failPodWrite = value; },
+    onOwnerQueued: (observer: (userId: string) => void) => { observeOwner = observer; },
     get issued() { return issued; }, get message() { return recoveredMessage; } };
 }
 test('adapter composes fixed native verification and conditional pod/admission writes before reply', async () => {
@@ -146,3 +161,43 @@ test('separate provider writers cannot race past one native CAS admission', asyn
   const pods = f.calls.filter(row => row.url.includes('/u-try-play-') && row.url.endsWith('/') && row.init?.method === 'PUT');
   assert.equal(pods.length, 1);
 });
+
+test('bootstrap receipts and enrollment share the owner lock and preserve each other', { timeout: 5000 }, async () => {
+  const f = adapterFixture();
+  const first = await f.play.bootstrap(f.body);
+  const userId = f.play.open(String(first.attestation)).userId;
+  const url = `${f.options.cssUrl}${userId}/auth-methods.jsonld`;
+  let entered!: () => void, release!: () => void, queued!: () => void;
+  const enrollmentEntered = new Promise<void>(done => { entered = done; });
+  const finishEnrollment = new Promise<void>(done => { release = done; });
+  const providerQueued = new Promise<void>(done => { queued = done; });
+  const ownerLock = f.options.withOwnerLock;
+  const enrollment = ownerLock(userId, async () => {
+    const current = f.documents.get(url)!;
+    const candidate = JSON.parse(current.body);
+    candidate.webAuthnCredentials = [{ id: 'verified-passkey' }];
+    entered();
+    await finishEnrollment;
+    f.documents.set(url, { body: JSON.stringify(candidate), revision: current.revision + 1 });
+  });
+  await enrollmentEntered;
+  f.onOwnerQueued(owner => {
+    assert.equal(owner, userId);
+    queued();
+  });
+  const grant = f.freshBody(), baseline = f.calls.length;
+  const bootstrap = f.play.bootstrap(grant);
+  await providerQueued;
+  assert.equal(f.calls.slice(baseline).some(call => call.url === url), false,
+    'bootstrap must not read the pre-enrollment document outside the owner lock');
+  release();
+  await enrollment;
+  await bootstrap;
+  const confirmed = JSON.parse(f.documents.get(url)!.body);
+  assert.deepEqual(confirmed.webAuthnCredentials, [{ id: 'verified-passkey' }]);
+  assert.equal(confirmed.provisionalPlayReceipts.length, 2);
+  await assert.rejects(f.play.bootstrap(grant),
+    (error: unknown) => error instanceof PlayError && error.code === 'play_grant_already_used');
+  assert.deepEqual(JSON.parse(f.documents.get(url)!.body).webAuthnCredentials, [{ id: 'verified-passkey' }]);
+});
+

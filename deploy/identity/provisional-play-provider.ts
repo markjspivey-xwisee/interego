@@ -15,6 +15,8 @@ export interface PlayProviderOptions {
   ttlSeconds?: number;
   maxPods?: number;
   fetcher?: typeof fetch;
+  /** Share the identity host's owner lock with credential mutations and cleanup. */
+  withOwnerLock<T>(userId: string, work: () => Promise<T>): Promise<T>;
   empty(claims: PlayClaims): PlayAnchorDocument;
   committed(document: PlayAnchorDocument): void;
   issueCredential(claims: PlayClaims): Promise<Record<string, unknown>>;
@@ -69,7 +71,9 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
       admission = new Promise(resolve => { release = resolve; });
       await before;
       try {
-        return await provisionPlayAnchor({
+        // The complete read/CAS transaction shares credential ownership's lock:
+        // an unconditional credential PUT must not erase a new replay receipt.
+        return await options.withOwnerLock(claims.userId, () => provisionPlayAnchor({
           read,
           write: async (userId, document, etag) => {
             if (etag === null) {
@@ -105,7 +109,7 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
             validate: value => play.open(value),
           }, owner, anchor, limit),
           empty: options.empty, validate: anchor => play.open(anchor), committed: options.committed,
-        }, claims, attestation, maxPods, receipt);
+        }, claims, attestation, maxPods, receipt));
       } finally { release(); }
     },
     issueCredential: options.issueCredential,

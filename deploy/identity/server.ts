@@ -52,6 +52,7 @@ import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
 import { purgeProvisionalPlayPod } from './provisional-play-cleanup.js';
+import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -694,7 +695,7 @@ async function fetchPodAuthMethods(
     // Passive callers (the index rebuild) must not materialize a file just because the
     // container exists: that would turn every service pod and inert pim:Storage shell into
     // a phantom user on every restart.
-    if (!createIfMissing) return emptyAuthMethods(userId);
+    if (!createIfMissing || userId.startsWith('u-try-play-')) return emptyAuthMethods(userId);
     // First touch from an active auth flow — write an empty file so the caller
     // can append to it without racing other writers.
     const empty = emptyAuthMethods(userId);
@@ -731,6 +732,58 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
   // Record that auth-methods.jsonld now exists on the pod so future
   // restarts can short-circuit re-writes (relay's bootstrappedPods pattern).
   bootstrapUserIds.add(userId);
+}
+
+async function commitCredentialEnrollment(
+  userId: string,
+  context: string,
+  update: (methods: AuthMethods) => boolean | void,
+  synchronous = false,
+): Promise<void> {
+  if (userId.startsWith('u-try-play-')) {
+    await enrollProvisionalCredential({
+      userId,
+      withOwnerLock: work => withIdentityPodMutex(userId, work),
+      read: () => fetchPodAuthMethods(userId, { createIfMissing: false }),
+      validate: methods => {
+        // A permanently claimed owner keeps this namespace. Its durable
+        // credential, rather than an expired guest anchor, is authoritative.
+        if (hasAnyCredential(methods)) return;
+        const owner = provisionalPlay.open(methods.provisionalPlayAnchor);
+        if (owner.userId !== userId) throw new Error('Provisional owner binding mismatch');
+      },
+      update,
+      persist: methods => putPodAuthMethods(userId, methods),
+    });
+    return;
+  }
+  const methods = await readAuthMethods(userId);
+  if (update(methods) === false) return;
+  if (synchronous) {
+    await putPodAuthMethods(userId, methods);
+  } else {
+    inlineApplyAuthMethods(userId, methods);
+    scheduleDeferredAuthMethodsWrite(userId, methods, context);
+  }
+}
+
+async function authenticatePlayOwnerPasskey(
+  userId: string,
+  response: import('@simplewebauthn/server').AuthenticationResponseJSON,
+  challenge: string,
+  rpId: string,
+  origin: string,
+): Promise<void> {
+  await withIdentityPodMutex(userId, async () => {
+    // Authentication writes the whole document to advance the counter. Its
+    // verification must therefore use the same locked snapshot as enrollment.
+    const methods = await fetchPodAuthMethods(userId, { createIfMissing: false });
+    const credential = methods.webAuthnCredentials.find(c => c.id === response.id);
+    if (!credential) throw new Error('Credential indexed but not on file');
+    await authenticatePasskey({ credential, response, challenge, rpId, origin,
+      persist: () => putPodAuthMethods(userId, methods),
+    });
+  });
 }
 
 // ── Pod-side WebID profile/card mirror (DEPRECATED — see FIX A) ──
@@ -2290,14 +2343,18 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-wallet (authenticated) path — append if not already bound.
-    const methods = await readAuthMethods(user.id);
-    if (!methods.walletAddresses.includes(recoveredAddress)) {
-      methods.walletAddresses.push(recoveredAddress);
-      inlineApplyAuthMethods(user.id, methods);
-      scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-add-wallet');
-      if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'add-wallet' });
-      log(`Wallet ${recoveredAddress} linked to existing user ${user.id}`);
+    try {
+      await commitCredentialEnrollment(user.id, 'siwe-add-wallet', methods => {
+        if (methods.walletAddresses.includes(recoveredAddress)) return false;
+        methods.walletAddresses.push(recoveredAddress);
+      });
+    } catch (err) {
+      log(`SIWE credential enrollment not confirmed for ${user.id}: ${(err as Error).message}`);
+      res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
+      return;
     }
+    if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'add-wallet' });
+    log(`Wallet ${recoveredAddress} linked to existing user ${user.id}`);
   }
 
   res.json(await issueTokenResponse(user, surfaceAgent));
@@ -2554,31 +2611,28 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     log(`First-time WebAuthn registration: ${targetUserId} defaultAgent=${def.agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   }
 
-  const methods = await readAuthMethods(targetUserId);
-  if (!methods.name || methods.name === targetUserId) {
-    methods.name = user.name;
+  try {
+    await commitCredentialEnrollment(targetUserId, 'webauthn-register', methods => {
+      if (!methods.name || methods.name === targetUserId) methods.name = user.name;
+      if (!methods.agentId) {
+        const a = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId);
+        if (a) methods.agentId = a.id;
+      }
+      methods.webAuthnCredentials.push({
+        id: credentialId,
+        publicKey: Buffer.from(credential.publicKey).toString('base64url'),
+        counter: credential.counter,
+        transports: (response.response?.transports as string[] | undefined) ?? [],
+        createdAt: new Date().toISOString(),
+        rpId: ch.rpId ?? RP_ID,
+        rpOrigin: ch.rpOrigin ?? RP_ORIGIN,
+      });
+    });
+  } catch (err) {
+    log(`WebAuthn credential enrollment not confirmed for ${targetUserId}: ${(err as Error).message}`);
+    res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
+    return;
   }
-  if (!methods.agentId) {
-    const a = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId);
-    if (a) methods.agentId = a.id;
-  }
-  methods.webAuthnCredentials.push({
-    id: credentialId,
-    publicKey: Buffer.from(credential.publicKey).toString('base64url'),
-    counter: credential.counter,
-    transports: (response.response?.transports as string[] | undefined) ?? [],
-    createdAt: new Date().toISOString(),
-    rpId: ch.rpId ?? RP_ID,
-    rpOrigin: ch.rpOrigin ?? RP_ORIGIN,
-  });
-  // Defer the ~2.5s CSS PUT off the hot response path — same shape as
-  // /auth/did and /auth/siwe. The credential is added to the in-memory
-  // index synchronously via inlineApplyAuthMethods so any concurrent
-  // verifyToken sees it; the pod write is just durability. Note: this
-  // does NOT apply to /auth/webauthn/authenticate, whose synchronous
-  // persist is load-bearing for WebAuthn §6.1.1 clone detection.
-  inlineApplyAuthMethods(targetUserId, methods);
-  scheduleDeferredAuthMethodsWrite(targetUserId, methods, 'webauthn-register');
   // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
   // Single authoritative pod-side writer is the relay's /oauth/verify
   // handler — see deploy/mcp-relay/server.ts. See SIWE first-touch comment
@@ -2647,10 +2701,15 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
   }
 
   try {
-    await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
-      rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
-      persist: () => putPodAuthMethods(userId, methods),
-    });
+    if (userId.startsWith('u-try-play-')) {
+      await authenticatePlayOwnerPasskey(userId, response, expectedChallenge,
+        ch.rpId ?? RP_ID, ch.rpOrigin ?? RP_ORIGIN);
+    } else {
+      await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
+        rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
+        persist: () => putPodAuthMethods(userId, methods),
+      });
+    }
   } catch (err) {
     if (err instanceof PasskeyPersistenceError) {
       log(`WARN: refused passkey auth — ${(err as Error).message}`);
@@ -2887,20 +2946,23 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
-    const methods = await readAuthMethods(user.id);
-    if (!methods.didKeys.some(k => k.did === did)) {
-      methods.didKeys.push({
-        did,
-        publicKeyMultibase: canonicalPublicKeyMultibase,
-        keyType: 'Ed25519VerificationKey2020',
-        createdAt: new Date().toISOString(),
+    try {
+      await commitCredentialEnrollment(user.id, 'did-add-did', methods => {
+        if (methods.didKeys.some(k => k.did === did)) return false;
+        methods.didKeys.push({
+          did,
+          publicKeyMultibase: canonicalPublicKeyMultibase,
+          keyType: 'Ed25519VerificationKey2020',
+          createdAt: new Date().toISOString(),
+        });
       });
-      // FIX A: defer the pod-side PUT — same shape as first-time branch.
-      inlineApplyAuthMethods(user.id, methods);
-      scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-add-did');
-      if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'add-did' });
-      log(`DID ${did} linked to existing user ${user.id}`);
+    } catch (err) {
+      log(`DID credential enrollment not confirmed for ${user.id}: ${(err as Error).message}`);
+      res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
+      return;
     }
+    if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'add-did' });
+    log(`DID ${did} linked to existing user ${user.id}`);
   }
 
   const tokenStart = timingEnabled() ? startTiming() : 0;
@@ -3001,6 +3063,7 @@ const provisionalPlay = createProvisionalPlayProvider({
   clientsJson: process.env['PROVISIONAL_PLAY_CLIENTS'],
   ttlSeconds: Number(process.env['PROVISIONAL_PLAY_TTL_SECONDS'] ?? 86400),
   maxPods: Number(process.env['PROVISIONAL_PLAY_MAX_PODS'] ?? 100),
+  withOwnerLock: withIdentityPodMutex,
   empty: claims => emptyAuthMethods(claims.userId, 'Play guest', claims.authenticatedAgentId) as unknown as import('./provisional-play-store.js').PlayAnchorDocument,
   committed: document => {
     const methods = normaliseAuthMethods(document, document.userId);
@@ -3606,15 +3669,14 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
   }
 
   const addr = (walletAddress as string).toLowerCase();
-  const methods = await readAuthMethods(userId);
-  if (!methods.walletAddresses.includes(addr)) {
-    methods.walletAddresses.push(addr);
-    try {
-      await putPodAuthMethods(userId, methods);
-    } catch (err) {
-      res.status(500).json({ error: `Failed to persist wallet to pod: ${(err as Error).message}` });
-      return;
-    }
+  try {
+    await commitCredentialEnrollment(userId, 'wallet-link', methods => {
+      if (methods.walletAddresses.includes(addr)) return false;
+      methods.walletAddresses.push(addr);
+    }, true);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to persist wallet to pod: ${(err as Error).message}` });
+    return;
   }
   log(`Linked wallet ${addr} to user ${userId}`);
 
@@ -3787,21 +3849,26 @@ app.delete('/auth-methods/me/webauthn/:credentialId', authEnrollLimiter, async (
   if (!user) return;
   const credentialId = decodeURIComponent((req.params['credentialId'] as string | undefined) ?? '');
   if (!credentialId) { res.status(400).json({ error: 'credentialId required' }); return; }
-  const methods = await readAuthMethods(user.id);
-  const before = methods.webAuthnCredentials.length;
-  const next = methods.webAuthnCredentials.filter(c => c.id !== credentialId);
-  if (next.length === before) { res.status(404).json({ error: 'Credential not found' }); return; }
-  // Lockout guard: refuse to remove the user's last auth method of any kind.
-  const remainingTotal = next.length + methods.walletAddresses.length + methods.didKeys.length;
-  if (remainingTotal === 0) {
-    res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
-    return;
+  let remaining = 0;
+  try {
+    await commitCredentialEnrollment(user.id, 'webauthn-remove', methods => {
+      const before = methods.webAuthnCredentials.length;
+      const next = methods.webAuthnCredentials.filter(c => c.id !== credentialId);
+      if (next.length === before) { res.status(404).json({ error: 'Credential not found' }); return false; }
+      // Evaluate lockout against the latest document while holding the owner lock.
+      const remainingTotal = next.length + methods.walletAddresses.length + methods.didKeys.length;
+      if (remainingTotal === 0) {
+        res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
+        return false;
+      }
+      methods.webAuthnCredentials = next;
+      remaining = next.length;
+    }, true);
   }
-  methods.webAuthnCredentials = next;
-  try { await putPodAuthMethods(user.id, methods); }
   catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
+  if (res.headersSent) return;
   log(`Removed WebAuthn credential ${credentialId} for ${user.id}`);
-  res.json({ removed: true, credentialId, remaining: next.length });
+  res.json({ removed: true, credentialId, remaining });
 });
 
 /**
@@ -3814,20 +3881,25 @@ app.delete('/auth-methods/me/wallet/:address', authEnrollLimiter, async (req, re
   if (!user) return;
   const address = ((req.params['address'] as string | undefined) ?? '').toLowerCase();
   if (!address) { res.status(400).json({ error: 'address required' }); return; }
-  const methods = await readAuthMethods(user.id);
-  const before = methods.walletAddresses.length;
-  const next = methods.walletAddresses.filter(a => a.toLowerCase() !== address);
-  if (next.length === before) { res.status(404).json({ error: 'Wallet not found' }); return; }
-  const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.didKeys.length;
-  if (remainingTotal === 0) {
-    res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
-    return;
+  let remaining = 0;
+  try {
+    await commitCredentialEnrollment(user.id, 'wallet-remove', methods => {
+      const before = methods.walletAddresses.length;
+      const next = methods.walletAddresses.filter(a => a.toLowerCase() !== address);
+      if (next.length === before) { res.status(404).json({ error: 'Wallet not found' }); return false; }
+      const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.didKeys.length;
+      if (remainingTotal === 0) {
+        res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
+        return false;
+      }
+      methods.walletAddresses = next;
+      remaining = next.length;
+    }, true);
   }
-  methods.walletAddresses = next;
-  try { await putPodAuthMethods(user.id, methods); }
   catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
+  if (res.headersSent) return;
   log(`Removed wallet ${address} for ${user.id}`);
-  res.json({ removed: true, walletAddress: address, remaining: next.length });
+  res.json({ removed: true, walletAddress: address, remaining });
 });
 
 /**
@@ -3841,20 +3913,25 @@ app.delete('/auth-methods/me/did', authEnrollLimiter, async (req, res) => {
   if (!user) return;
   const did: string | undefined = req.body?.did;
   if (!did) { res.status(400).json({ error: 'did required in body' }); return; }
-  const methods = await readAuthMethods(user.id);
-  const before = methods.didKeys.length;
-  const next = methods.didKeys.filter(k => k.did !== did);
-  if (next.length === before) { res.status(404).json({ error: 'DID not found' }); return; }
-  const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.walletAddresses.length;
-  if (remainingTotal === 0) {
-    res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
-    return;
+  let remaining = 0;
+  try {
+    await commitCredentialEnrollment(user.id, 'did-remove', methods => {
+      const before = methods.didKeys.length;
+      const next = methods.didKeys.filter(k => k.did !== did);
+      if (next.length === before) { res.status(404).json({ error: 'DID not found' }); return false; }
+      const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.walletAddresses.length;
+      if (remainingTotal === 0) {
+        res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
+        return false;
+      }
+      methods.didKeys = next;
+      remaining = next.length;
+    }, true);
   }
-  methods.didKeys = next;
-  try { await putPodAuthMethods(user.id, methods); }
   catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
+  if (res.headersSent) return;
   log(`Removed DID ${did} for ${user.id}`);
-  res.json({ removed: true, did, remaining: next.length });
+  res.json({ removed: true, did, remaining });
 });
 
 /**
@@ -3880,22 +3957,26 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
   // refuses anything below the pod's current value. The cache is
   // invalidated via putPodAuthMethods so the next verify sees the
   // bumped epoch immediately.
-  let methods: AuthMethods;
+  let previousEpoch = 0;
+  let newEpoch = 0;
   try {
-    methods = await readAuthMethods(user.id, /* allowStale */ false);
-  } catch (err) {
-    res.status(500).json({ error: `Failed to read auth-methods: ${(err as Error).message}` });
-    return;
-  }
-  const newEpoch = (methods.sessionEpoch ?? 0) + 1;
-  const updated: AuthMethods = { ...methods, sessionEpoch: newEpoch };
-  try {
-    await putPodAuthMethods(user.id, updated);
+    if (user.id.startsWith('u-try-play-')) {
+      await commitCredentialEnrollment(user.id, 'sign-out-everywhere', methods => {
+        previousEpoch = methods.sessionEpoch ?? 0;
+        newEpoch = previousEpoch + 1;
+        methods.sessionEpoch = newEpoch;
+      }, true);
+    } else {
+      const methods = await readAuthMethods(user.id, false);
+      previousEpoch = methods.sessionEpoch ?? 0;
+      newEpoch = previousEpoch + 1;
+      await putPodAuthMethods(user.id, { ...methods, sessionEpoch: newEpoch });
+    }
   } catch (err) {
     res.status(500).json({ error: `Failed to persist sessionEpoch bump: ${(err as Error).message}` });
     return;
   }
-  log(`Signed out everywhere for ${user.id} — sessionEpoch ${methods.sessionEpoch ?? 0} → ${newEpoch}`);
+  log(`Signed out everywhere for ${user.id} — sessionEpoch ${previousEpoch} → ${newEpoch}`);
   res.json({ revoked: true, userId: user.id, sessionEpoch: newEpoch });
 });
 
@@ -3956,7 +4037,9 @@ async function deleteUserCompletely(userId: string): Promise<{ agents: string[];
 app.post('/users/me/delete', tokenLimiter, async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
-  const result = await deleteUserCompletely(user.id);
+  const result = user.id.startsWith('u-try-play-')
+    ? await withIdentityPodMutex(user.id, () => deleteUserCompletely(user.id))
+    : await deleteUserCompletely(user.id);
   log(`Deleted user ${user.id} (agents removed: ${result.agents.join(', ') || 'none'})`);
   res.json({ deleted: true, userId: user.id, ...result });
 });
