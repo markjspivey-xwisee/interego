@@ -12,7 +12,15 @@
  *                                   refuses any other (421): the DNS-rebinding guard. Bound to
  *                                   any other address (the image, behind Railway's edge), it
  *                                   trusts one proxy hop for the client address (req.ip) the web
- *                                   UI's sign-in routes count relay calls by
+ *                                   UI's sign-in routes count relay calls by; on loopback none
+ *   WRD_TRUST_PROXY_HOPS            0 to 4: how many proxies in front of the bridge set
+ *                                   X-Forwarded-For, for that client address, whatever HOST is.
+ *                                   Unset: 1 off loopback, 0 on it. A loopback bridge behind a
+ *                                   reverse proxy on the same machine sets 1, or every caller is
+ *                                   the proxy's address and the per-address limits act as the
+ *                                   bridge's own; a bridge reached with no proxy in front sets 0,
+ *                                   or a caller names its own address. Any other value stops the
+ *                                   bridge
  *   BRIDGE_DEPLOYMENT_URL          the public base URL (default http://127.0.0.1:<PORT>)
  *   WRD_DEFAULT_POD_URL             the pod to use when a call names none
  *   WRD_SERVED_PODS                 comma list of the pods records are read from and written to;
@@ -127,6 +135,14 @@ const PORT = parseInt(env('PORT') ?? '6100', 10);
 const HOST = env('HOST') ?? '127.0.0.1';
 const base = (env('BRIDGE_DEPLOYMENT_URL') ?? `http://127.0.0.1:${PORT}`).replace(/\/$/, '');
 const loopback = isLoopbackBind(HOST);
+// The client address the web UI's sign-in routes limit relay calls by (req.ip) is the one this many
+// proxy hops in front saw. A malformed value stops the bridge rather than count every caller as one.
+const proxyHopsValue = env('WRD_TRUST_PROXY_HOPS');
+if (proxyHopsValue !== undefined && !/^[0-4]$/.test(proxyHopsValue)) {
+  process.stderr.write(`work-redesign bridge did not start: WRD_TRUST_PROXY_HOPS is ${JSON.stringify(proxyHopsValue.slice(0, 40))}; set it to how many proxies in front of the bridge set X-Forwarded-For (0 to 4), or unset it for 1 off loopback and 0 on loopback\n`);
+  process.exit(1);
+}
+const proxyHops = proxyHopsValue !== undefined ? Number(proxyHopsValue) : loopback ? 0 : 1;
 const defaultPodUrl = env('WRD_DEFAULT_POD_URL');
 const servedPods = list(env('WRD_SERVED_PODS') ?? defaultPodUrl);
 const writeSecret = env('WRD_POD_WRITE_SECRET');
@@ -245,8 +261,9 @@ const app = createVerticalBridge({
     if (loopback) a.use(hostAllowlistGuard(servedHostNames(PORT, base)));
     // The web UI's sign-in routes limit each client address (req.ip) on their relay calls. In the
     // image the bridge listens behind Railway's edge, one proxy hop, so req.ip is the client only
-    // when that hop is trusted; a loopback bridge trusts none, so no caller picks its own address.
-    if (!loopback) a.set('trust proxy', 1);
+    // when that hop is trusted; a loopback bridge trusts none unless WRD_TRUST_PROXY_HOPS says a
+    // proxy on the same machine stands in front, so no caller picks its own address.
+    if (proxyHops > 0) a.set('trust proxy', proxyHops);
     // Every query parameter reaches the handlers, so the GET template's signed-read check sees past the default parser's first 1000.
     parseEveryQueryPair(a);
     attachOntologyServing(a, {
@@ -269,6 +286,11 @@ process.stdout.write(signIn.relayAddresses.length > 0
 process.stdout.write(signIn.relayUrl !== null && uiRelayPolicy !== null
   ? `work-redesign: web UI sign-in with an Interego account: through ${signIn.relayUrl}, as the client ${base}/ui/oauth/client.json (a Client ID Metadata Document; where the relay cannot read it, as for an http deployment URL, the same metadata is registered once by Dynamic Client Registration when the page first asks how to sign in). The relay's OAuth access token a person signs in with (about an hour; it lets its holder call the relay's tools as them, and the relay's /identity-token trades it for their identity-server token, good on the account itself for up to a day) passes through this bridge on every signature: whoever runs it is trusted with that account for up to a day after each sign-in\n`
   : `work-redesign: web UI sign-in with an Interego account: off (${signIn.relayUrl === null ? 'WRD_RELAY_URL is not set' : 'no trusted relay: WRD_TRUSTED_RELAY_ADDRESSES is empty'})\n`);
+if (signIn.relayUrl !== null && uiRelayPolicy !== null) {
+  process.stdout.write(proxyHops > 0
+    ? `work-redesign: web UI sign-in limits count each caller by the address ${proxyHops} proxy hop(s) in front saw (X-Forwarded-For; ${proxyHopsValue !== undefined ? `WRD_TRUST_PROXY_HOPS=${proxyHops}` : 'off loopback'})\n`
+    : `work-redesign: web UI sign-in limits count each caller by the address that connects to the bridge (no proxy hop trusted${proxyHopsValue !== undefined ? ', WRD_TRUST_PROXY_HOPS=0' : ' on loopback'}); behind a reverse proxy every caller is the proxy's address, so set WRD_TRUST_PROXY_HOPS to the hops in front\n`);
+}
 process.stdout.write(`work-redesign: reads: ${publicReads ? 'PUBLIC (WRD_PUBLIC_READS=1): anyone who can reach this bridge reads every record' : 'signed reads only (wrd.read_records, wrd.read_calibration); unsigned GETs answer 401'}\n`);
 
 // Express 5 hands a failed bind to this callback rather than throwing, so it is handled here:

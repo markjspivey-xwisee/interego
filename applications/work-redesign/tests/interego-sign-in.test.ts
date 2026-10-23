@@ -24,7 +24,11 @@
  * sign-in; POST /ui/relay/sign refusing without a bearer (and what else it refuses, never echoing
  * a bearer or a code); the relay limits, with a clock the test moves and X-Forwarded-For naming
  * each caller (a stranger refused by the bridge alone, a refused token not sent again, the person
- * signed in signing on, code exchanges inside a 15-minute budget); and the client's metadata document as
+ * signed in signing on, code exchanges inside a 15-minute budget; each person signed in on budgets
+ * of their own, so one account's three tokens at their full rate and other accounts at theirs leave
+ * another person signing; and the calls at once, two for one person, a pool for people signed in
+ * and a smaller one for callers not signed in, against a relay that holds its answers); and the
+ * client's metadata document as
  * the relay's CIMD reader requires it (deploy/mcp-relay/oauth-provider.ts), with Dynamic Client
  * Registration where the relay cannot read it.
  */
@@ -75,7 +79,7 @@ const NOT_STARTED_HERE = 'This tab did not start this sign-in, so nothing in the
  * slug, then `-<user id>`, is the agent of the session.
  */
 const surfaceSlug = (clientName: string): string => clientName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-const agentOf = (surface: string): string => `did:web:${IDENTITY}:agents:${surface}-${USER_ID}`;
+const agentOf = (surface: string, user = USER_ID): string => `did:web:${IDENTITY}:agents:${surface}-${user}`;
 
 interface Seen { readonly method: string; readonly path: string; readonly authorization: string | null; readonly body: unknown }
 /** One POST /mcp as the relay received it, and how the stub answered it. */
@@ -91,12 +95,16 @@ interface StubRelay {
   readonly mcp: McpCall[];
   /** Every access token and refresh token the token endpoint issued. */
   readonly issued: Array<{ readonly access: string; readonly refresh: string }>;
-  /** The relay's sign-in page: the person signs in, and the relay mints a code for the authorize URL the page sent the tab to. */
-  authorize(url: string): Promise<string>;
-  /** An access token the relay issued for this UI's surface, as its token endpoint would (scope `mcp` unless given). */
-  mint(scopes?: readonly string[]): string;
+  /** The relay's sign-in page: the person (USER_ID unless given) signs in, and the relay mints a code for the authorize URL the page sent the tab to. */
+  authorize(url: string, user?: string): Promise<string>;
+  /** An access token the relay issued for this UI's surface, as its token endpoint would (scope `mcp` unless given), for USER_ID unless another user is given. */
+  mint(scopes?: readonly string[], user?: string): string;
   /** The access token ends now: the relay answers 401 for it, as it does after its hour. */
   expire(token: string): void;
+  /** Hold every POST /mcp from now until the function returned is called, as a relay slow to answer does. */
+  hold(): () => void;
+  /** How many POST /mcp are held now. */
+  held(): number;
 }
 
 /** A stub of the relay's surfaces the bridge calls, signing as RELAY for the session's agent with `clock`'s time. */
@@ -105,8 +113,10 @@ async function stubRelay(bridgeBase: () => string, clock: { now(): Date }, opts:
   const seen: Seen[] = [];
   const mcp: McpCall[] = [];
   const issued: Array<{ access: string; refresh: string }> = [];
-  const codes = new Map<string, { challenge: string; clientId: string; redirectUri: string; surface: string; scope: string }>();
-  const access = new Map<string, { surface: string; scopes: readonly string[]; expiresAt: number }>();
+  const codes = new Map<string, { challenge: string; clientId: string; redirectUri: string; surface: string; scope: string; user: string }>();
+  const access = new Map<string, { surface: string; scopes: readonly string[]; expiresAt: number; user: string }>();
+  let gate: Promise<void> | null = null;
+  let waiting = 0;
   const registered = new Map<string, Obj>();
   let base = '';
   app.use(express.json(), express.urlencoded({ extended: false }));
@@ -136,7 +146,7 @@ async function stubRelay(bridgeBase: () => string, clock: { now(): Date }, opts:
     codes.delete(String(b['code']));
     const t = `acc-${hex(16)}`;
     const refresh = `ref-${hex(16)}`;
-    access.set(t, { surface: c.surface, scopes: c.scope.split(' '), expiresAt: Date.now() + 3600_000 });
+    access.set(t, { surface: c.surface, scopes: c.scope.split(' '), expiresAt: Date.now() + 3600_000, user: c.user });
     issued.push({ access: t, refresh });
     // As the relay's: an hour's access token, and a refresh token the bridge must drop.
     res.json({ access_token: t, token_type: 'Bearer', expires_in: 3600, refresh_token: refresh, scope: c.scope });
@@ -152,6 +162,8 @@ async function stubRelay(bridgeBase: () => string, clock: { now(): Date }, opts:
   // answer comes as server-sent events (a log notification first) and as JSON by turns; a nonce
   // starting stub- makes it a JSON-RPC error, a tool error or the tool's own {error}.
   app.post('/mcp', async (req, res) => {
+    // A relay slow to answer: every call waits here, before its bearer is checked.
+    if (gate !== null) { waiting += 1; await gate; waiting -= 1; }
     const token = bearer(req.headers.authorization);
     const a = access.get(token);
     const call = objOf(req.body);
@@ -201,8 +213,8 @@ async function stubRelay(bridgeBase: () => string, clock: { now(): Date }, opts:
     delete safe['pod_url'];
     delete safe['podUrl'];
     if (typeof asked === 'string') safe['pod_url'] = asked;
-    const text = JSON.stringify({ ...safe, agent_id: agentOf(a.surface), subject_pod_url: `https://pod.example/${USER_ID}/`, timestamp: clock.now().toISOString() });
-    const answer = JSON.stringify({ _signature: await signMessageRaw(RELAY, `sha256:${sha256Hex(text)}`), _signed_payload: text, signed_as: agentOf(a.surface), signatureAuthority: 'relay' });
+    const text = JSON.stringify({ ...safe, agent_id: agentOf(a.surface, a.user), subject_pod_url: `https://pod.example/${a.user}/`, timestamp: clock.now().toISOString() });
+    const answer = JSON.stringify({ _signature: await signMessageRaw(RELAY, `sha256:${sha256Hex(text)}`), _signed_payload: text, signed_as: agentOf(a.surface, a.user), signatureAuthority: 'relay' });
     // The relay attaches structuredContent; the JSON answers here carry the text alone, the form a lenient server sends.
     send({ jsonrpc: '2.0', id, result: answeredAs === 'sse' ? { content: [{ type: 'text', text: answer }], structuredContent: JSON.parse(answer) as Obj } : { content: [{ type: 'text', text: answer }] } });
   });
@@ -211,16 +223,22 @@ async function stubRelay(bridgeBase: () => string, clock: { now(): Date }, opts:
   base = l.base;
   return {
     base, seen, mcp, issued,
-    mint(scopes = ['mcp']) {
+    mint(scopes = ['mcp'], user = USER_ID) {
       const t = `acc-${hex(16)}`;
-      access.set(t, { surface: surfaceSlug(SIGN_IN_CLIENT_NAME), scopes, expiresAt: Date.now() + 3600_000 });
+      access.set(t, { surface: surfaceSlug(SIGN_IN_CLIENT_NAME), scopes, expiresAt: Date.now() + 3600_000, user });
       return t;
     },
+    hold() {
+      let release: () => void = () => undefined;
+      gate = new Promise<void>((r) => { release = r; });
+      return () => { gate = null; release(); };
+    },
+    held: () => waiting,
     expire(token) {
       const a = access.get(token);
       if (a) access.set(token, { ...a, expiresAt: Date.now() - 1 });
     },
-    async authorize(url) {
+    async authorize(url, user = USER_ID) {
       const u = new URL(url);
       const p = Object.fromEntries(u.searchParams);
       if (`${u.origin}${u.pathname}` !== `${base}/authorize`) throw new Error(`the page went to ${u.origin}${u.pathname}, not the relay's authorize endpoint`);
@@ -235,18 +253,18 @@ async function stubRelay(bridgeBase: () => string, clock: { now(): Date }, opts:
       }
       if (!(client['redirect_uris'] as unknown[]).includes(p['redirect_uri'])) throw new Error('unregistered redirect_uri');
       const code = hex(32);
-      codes.set(code, { challenge: String(p['code_challenge']), clientId, redirectUri: String(p['redirect_uri']), surface: surfaceSlug(String(client['client_name'])), scope: String(p['scope'] ?? 'mcp') });
+      codes.set(code, { challenge: String(p['code_challenge']), clientId, redirectUri: String(p['redirect_uri']), surface: surfaceSlug(String(client['client_name'])), scope: String(p['scope'] ?? 'mcp'), user });
       return code;
     },
   };
 }
 
-/** The identity host: each surface's agent of the one person, controlled by them, as the live host serves them. */
+/** The identity host: each surface's agent of a person, controlled by them, as the live host serves them. */
 const didDocuments = (fetched: string[]): RelayDelegationPolicy['fetchDidDocument'] => async (url) => {
   fetched.push(url);
-  const m = new RegExp(`^https://${IDENTITY.replace(/\./g, '\\.')}/agents/([a-z-]+-${USER_ID})/did\\.json$`).exec(url);
+  const m = new RegExp(`^https://${IDENTITY.replace(/\./g, '\\.')}/agents/([a-z-]+-(u-pk-[0-9a-f]{12}))/did\\.json$`).exec(url);
   if (!m) throw new Error('the identity host answered 404');
-  return { id: `did:web:${IDENTITY}:agents:${m[1]}`, controller: PERSON };
+  return { id: `did:web:${IDENTITY}:agents:${m[1]}`, controller: `did:web:${IDENTITY}:users:${m[2]}` };
 };
 
 interface World {
@@ -376,6 +394,37 @@ const post = async (url: string, body: unknown, headers: Record<string, string> 
   try { j = objOf(JSON.parse(text)); } catch { j = {}; }
   return { status: r.status, body: j, text, retryAfter: r.headers.get('retry-after') };
 };
+
+interface Signed { readonly status: number; readonly code: unknown; readonly retry: unknown; readonly header: string | null; readonly why: string }
+/** What the relay limits are tested with, against a world whose app trusts one proxy hop, so X-Forwarded-For names each caller. */
+function limitMoves(w: World): {
+  relayed(path: string): number;
+  sign(token: string, ip: string): Promise<Signed>;
+  codeFor(user?: string): Promise<{ code: string; verifier: string }>;
+  exchange(code: string, verifier: string, ip: string): ReturnType<typeof post>;
+} {
+  const from = (ip: string): Record<string, string> => ({ 'x-forwarded-for': ip });
+  let nonce = 0;
+  return {
+    relayed: (path) => w.relay.seen.filter((s) => s.path === path).length,
+    async sign(token, ip) {
+      const r = await post(`${w.bridge}/ui/relay/sign`, { payload: { intent: 'wrd:read-records', podUrl: DEMO_POD, nonce: `limits-${String(nonce++).padStart(12, '0')}` } }, { authorization: `Bearer ${token}`, ...from(ip) });
+      expect(r.text).not.toContain(token);
+      return { status: r.status, code: r.body['code'] ?? null, retry: r.body['retryAfterSeconds'] ?? null, header: r.retryAfter, why: String(r.body['iep:refusalReason'] ?? '') };
+    },
+    /** A code the relay mints for this UI's client, as its sign-in page would for `user`, and the verifier it is bound to. */
+    async codeFor(user = USER_ID) {
+      const verifier = hex(24);
+      const u = new URL(`${w.relay.base}/authorize`);
+      for (const [k, v] of Object.entries({
+        response_type: 'code', client_id: `${DEPLOYED}/ui/oauth/client.json`, redirect_uri: `${DEPLOYED}/ui/oauth/callback`, scope: 'mcp',
+        state: hex(16), code_challenge: b64urlSha256(verifier), code_challenge_method: 'S256',
+      })) u.searchParams.set(k, v);
+      return { code: await w.relay.authorize(u.href, user), verifier };
+    },
+    exchange: (code, verifier, ip) => post(`${w.bridge}/ui/oauth/exchange`, { code, code_verifier: verifier, state: hex(16) }, from(ip)),
+  };
+}
 
 describe('work-redesign web UI: sign in with your Interego account', () => {
   it('signs a person in through the relay and signs every act there: the button, an authorize URL with PKCE S256 and a state, the callback exchanged server-side, a decisive act taken as relay-delegated, the person and agent named from the bridge and the signed text, and sign-out', async () => {
@@ -763,35 +812,20 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect((await post(sign, { payload }, { authorization: `Bearer acc-${'1'.repeat(32)}`, origin: w.bridge })).status).toBe(401);
     expect(asked()).toBe(beforeShape + 1);
 
+    // The one sign that went through named its person, from the agent's document (the same one whoami reads); none that failed read any.
+    expect([...new Set(w.fetched)]).toEqual([`https://${IDENTITY}/agents/work-redesign-${USER_ID}/did.json`]);
     // whoami: only a request a trusted relay signed names anyone.
+    const fetchedBefore = w.fetched.length;
     const unsigned = await post(`${w.bridge}/ui/relay/whoami`, { _signed_payload: JSON.stringify({ agent_id: agentOf('work-redesign') }), _signature: `0x${'1b'.repeat(65)}` });
     expect(unsigned.status).toBe(401);
     expect(String(unsigned.body['iep:refusalReason'])).toMatch(/^(signature-unrecoverable|relay-not-trusted): /);
-    expect(w.fetched).toEqual([]);
+    expect(w.fetched).toHaveLength(fetchedBefore);
   }, 60_000);
 
   it('keeps its relay calls under limits a stranger cannot spend: made-up tokens and codes from one address reach the relay a few times and are then refused by the bridge alone, a refused token is not sent again, strangers from many addresses reach only what is left for callers not signed in while the person signed in goes on signing, and code exchanges stay inside a 15-minute budget', async () => {
     let clock = Date.now();
-    const w = await world({ trustProxy: true, now: () => clock, limits: { total: 14, unproven: 8, unprovenPerClient: 4, perSignIn: 5, exchanges: 7, exchangesPerClient: 5 } });
-    const from = (ip: string): Record<string, string> => ({ 'x-forwarded-for': ip });
-    const relayed = (path: string): number => w.relay.seen.filter((s) => s.path === path).length;
-    let nonce = 0;
-    const sign = async (token: string, ip: string): Promise<{ status: number; code: unknown; retry: unknown; header: string | null }> => {
-      const r = await post(`${w.bridge}/ui/relay/sign`, { payload: { intent: 'wrd:read-records', podUrl: DEMO_POD, nonce: `limits-${String(nonce++).padStart(12, '0')}` } }, { authorization: `Bearer ${token}`, ...from(ip) });
-      expect(r.text).not.toContain(token);
-      return { status: r.status, code: r.body['code'] ?? null, retry: r.body['retryAfterSeconds'] ?? null, header: r.retryAfter };
-    };
-    /** A code the relay mints for this UI's client, as its sign-in page would, and the verifier it is bound to. */
-    const codeFor = async (): Promise<{ code: string; verifier: string }> => {
-      const verifier = hex(24);
-      const u = new URL(`${w.relay.base}/authorize`);
-      for (const [k, v] of Object.entries({
-        response_type: 'code', client_id: `${DEPLOYED}/ui/oauth/client.json`, redirect_uri: `${DEPLOYED}/ui/oauth/callback`, scope: 'mcp',
-        state: hex(16), code_challenge: b64urlSha256(verifier), code_challenge_method: 'S256',
-      })) u.searchParams.set(k, v);
-      return { code: await w.relay.authorize(u.href), verifier };
-    };
-    const exchange = (code: string, verifier: string, ip: string): ReturnType<typeof post> => post(`${w.bridge}/ui/oauth/exchange`, { code, code_verifier: verifier, state: hex(16) }, from(ip));
+    const w = await world({ trustProxy: true, now: () => clock, limits: { unproven: 8, unprovenPerClient: 4, perSignIn: 5, exchanges: 7, exchangesPerClient: 5 } });
+    const { relayed, sign, codeFor, exchange } = limitMoves(w);
 
     // A person signs in from 203.0.113.1: the relay's metadata and the code, two relay calls; then she signs.
     const mine = await codeFor();
@@ -803,7 +837,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     // A stranger with made-up tokens, from one address: four reach the relay (each refused), then the bridge refuses on its own, saying when to try again.
     const signs = relayed('/mcp');
     const made = Array.from({ length: 10 }, (_, i) => `acc-madeup${i}${'a'.repeat(20)}`);
-    const one: Array<Awaited<ReturnType<typeof sign>>> = [];
+    const one: Signed[] = [];
     for (const t of made) one.push(await sign(t, '198.51.100.7'));
     expect(one.map((r) => r.code)).toEqual([...Array<string>(4).fill('interego-sign-in-expired'), ...Array<string>(6).fill('relay-calls-limited')]);
     expect([one[4]?.status, Number(one[4]?.retry) > 0, one[4]?.header]).toEqual([429, true, String(one[4]?.retry)]);
@@ -812,13 +846,13 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect([(await sign(made[0] ?? '', '198.51.100.8')).code, relayed('/mcp') - signs]).toEqual(['interego-sign-in-expired', 4]);
     expect(w.relay.seen.filter((s) => s.authorization === `Bearer ${made[0] ?? ''}`)).toHaveLength(1);
     // Strangers from many addresses together reach only what is left for callers not signed in (8 - 2 - 4 = 2).
-    const many: Array<Awaited<ReturnType<typeof sign>>> = [];
+    const many: Signed[] = [];
     for (let i = 0; i < 6; i++) many.push(await sign(`acc-other${i}${'b'.repeat(20)}`, `198.51.100.${20 + i}`));
     expect(many.map((r) => r.code)).toEqual(['interego-sign-in-expired', 'interego-sign-in-expired', ...Array<string>(4).fill('relay-busy')]);
     expect([many[2]?.status, Number(many[2]?.retry) > 0]).toEqual([429, true]);
     expect(relayed('/mcp') - signs).toBe(6);
     // The person signed in still signs, up to her own limit (5 a minute): the strangers spent none of it.
-    const hers: Array<Awaited<ReturnType<typeof sign>>> = [];
+    const hers: Signed[] = [];
     for (let i = 0; i < 5; i++) hers.push(await sign(bearer, '203.0.113.1'));
     expect(hers.map((r) => r.status)).toEqual([200, 200, 200, 200, 429]);
     expect(hers[4]?.code).toBe('relay-calls-limited');
@@ -858,7 +892,7 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(w.relay.seen.filter((s) => s.path === '/identity-token' || s.path.startsWith('/tool/'))).toEqual([]);
 
     // With no relay call left, how to sign in is a 429 the relay never saw, and the page says why instead of offering nothing.
-    const spent = await world({ limits: { total: 0 } });
+    const spent = await world({ limits: { unproven: 0 } });
     const cfg = await fetch(`${spent.bridge}/ui/oauth/config`);
     const cj = objOf(await cfg.json());
     expect([cfg.status, cj['kind'], cj['code'], cj['retryAfterSeconds'], cfg.headers.get('retry-after')]).toEqual([429, 'refusal', 'relay-busy', 60, '60']);
@@ -868,6 +902,89 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(page.text()).toContain('try again in 60 s');
     expect(page.text()).not.toContain(SIGN_IN);
     expect(page.errors).toEqual([]);
+  }, 60_000);
+
+  it('keeps each person signed in on budgets of their own: three tokens of one account at their full rate, other accounts at theirs and strangers spending all they may leave another person signed in signing on, since no budget a signed-in call is counted in is anyone else\'s', async () => {
+    const clock = Date.now();
+    const w = await world({ trustProxy: true, now: () => clock });
+    const { relayed, sign, codeFor, exchange } = limitMoves(w);
+    const ok = (rs: readonly Signed[]): number => rs.filter((r) => r.status === 200).length;
+    // She signs in through this bridge and signs once.
+    const hers = await codeFor();
+    const ex = await exchange(hers.code, hers.verifier, '203.0.113.1');
+    expect(ex.status).toBe(200);
+    const bearer = String(ex.body['token']);
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+
+    // Anyone can make an Interego account. This one holds three tokens: one from this bridge's own sign-in, two from the relay directly, each taken here by one sign.
+    const ACCOUNT = 'u-pk-a77acce0a77a';
+    const own = await codeFor(ACCOUNT);
+    const a1 = String((await exchange(own.code, own.verifier, '198.51.100.66')).body['token']);
+    const a2 = w.relay.mint(['mcp'], ACCOUNT);
+    const a3 = w.relay.mint(['mcp'], ACCOUNT);
+    expect([(await sign(a2, '198.51.100.66')).status, (await sign(a3, '198.51.100.66')).status]).toEqual([200, 200]);
+    // Each token signs at its full rate, 20 a minute: the account has 40 a minute over all its sign-ins (a1's first sign, which named the person, counted for that sign-in alone), and the rest is refused as that person's own limit.
+    const theirs: Signed[] = [];
+    for (const t of [a1, a2, a3]) for (let i = 0; i < 20; i++) theirs.push(await sign(t, '198.51.100.66'));
+    expect([ok(theirs), theirs.slice(41).map((r) => r.code)]).toEqual([41, Array<string>(19).fill('relay-calls-limited')]);
+    expect(theirs[41]?.why).toBe('this bridge\'s limit of 40 relay calls a minute for one person, over all their sign-ins is reached; the relay was not asked');
+    // Two more accounts, two tokens each, at their full rate: every call goes through, far past the 50 a minute a bridge-wide count of signed-in calls would have stopped at.
+    const others: Signed[] = [];
+    for (const [i, account] of ['u-pk-b0b0b0b0b0b0', 'u-pk-c0c0c0c0c0c0'].entries()) {
+      const tokens = [w.relay.mint(['mcp'], account), w.relay.mint(['mcp'], account)];
+      for (const t of tokens) expect((await sign(t, `198.51.100.${67 + i}`)).status).toBe(200);
+      for (const t of tokens) for (let n = 0; n < 20; n++) others.push(await sign(t, `198.51.100.${67 + i}`));
+    }
+    expect(ok(others)).toBe(80);
+    // Strangers from many addresses spend what callers not signed in may (20 a minute, of which 9 are spent: her sign-in's two calls, a1's exchange, and the six signs that took tokens here), and are then refused by the bridge alone.
+    const strangers: Signed[] = [];
+    for (let i = 0; i < 14; i++) strangers.push(await sign(`acc-stranger${i}${'d'.repeat(20)}`, `198.51.100.${100 + i}`));
+    expect(strangers.map((r) => r.code)).toEqual([...Array<string>(11).fill('interego-sign-in-expired'), 'relay-busy', 'relay-busy', 'relay-busy']);
+    // She signs on, at her full rate, all the while: 20 in the minute, then her own limit, as one sign-in.
+    const mine: Signed[] = [];
+    for (let i = 0; i < 20; i++) mine.push(await sign(bearer, '203.0.113.1'));
+    expect([ok(mine), mine[19]?.code, mine[19]?.why]).toEqual([19, 'relay-calls-limited', 'this bridge\'s limit of 20 relay calls a minute for one sign-in is reached; the relay was not asked']);
+    // In that one minute the relay signed 1 + 2 + 41 + 4 + 80 + 19 = 147 times through the bridge.
+    expect(w.relay.mcp.filter((m) => m.answeredAs !== 'refused')).toHaveLength(147);
+    expect(relayed('/token')).toBe(2);
+    expect(w.relay.seen.filter((s) => s.path === '/identity-token' || s.path.startsWith('/tool/'))).toEqual([]);
+  }, 60_000);
+
+  it('runs only so many relay calls at once: at most two for one person, a pool for people signed in that callers not signed in never touch, and a smaller one for those callers, each refused 429 before the relay is asked', async () => {
+    const w = await world({ trustProxy: true, limits: { perPersonAtOnce: 2, signedInAtOnce: 4, unprovenAtOnce: 2 } });
+    const { sign, codeFor, exchange } = limitMoves(w);
+    const hers = await codeFor();
+    const bearer = String((await exchange(hers.code, hers.verifier, '203.0.113.1')).body['token']);
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+    const a = ['u-pk-a77acce0a77a', 'u-pk-a77acce0a77a', 'u-pk-a77acce0a77a', 'u-pk-b0b0b0b0b0b0', 'u-pk-b0b0b0b0b0b0'].map((u) => w.relay.mint(['mcp'], u));
+    for (const t of a) expect((await sign(t, '198.51.100.66')).status).toBe(200);
+    const heldUntil = async (n: number): Promise<void> => {
+      for (let i = 0; w.relay.held() < n; i++) {
+        if (i > 400) throw new Error(`the relay holds ${w.relay.held()} calls, not ${n}`);
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    };
+    const release = w.relay.hold();
+    // One person: two calls at once reach the relay, a third is refused as that person's own limit.
+    const running = [sign(a[0] ?? '', '198.51.100.66'), sign(a[1] ?? '', '198.51.100.66')];
+    await heldUntil(2);
+    const third = await sign(a[2] ?? '', '198.51.100.66');
+    expect([third.status, third.code, third.retry, third.why]).toEqual([429, 'relay-calls-limited', 1, 'at most 2 relay calls run at once for one person; the relay was not asked']);
+    // Another person and she still get theirs, up to the pool for people signed in (four here).
+    running.push(sign(a[3] ?? '', '198.51.100.67'), sign(bearer, '203.0.113.1'));
+    await heldUntil(4);
+    const full = await sign(a[4] ?? '', '198.51.100.67');
+    expect([full.status, full.code, full.why]).toEqual([429, 'relay-busy', 'at most 4 relay calls run at once for people signed in; the relay was not asked']);
+    // Callers not signed in have places of their own (two here), which the signed-in pool being full does not take away, and are refused beyond them.
+    running.push(sign(`acc-stranger0${'e'.repeat(20)}`, '198.51.100.90'), sign(`acc-stranger1${'e'.repeat(20)}`, '198.51.100.91'));
+    await heldUntil(6);
+    const stranger = await sign(`acc-stranger2${'e'.repeat(20)}`, '198.51.100.92');
+    expect([stranger.status, stranger.code, stranger.why]).toEqual([429, 'relay-busy', 'at most 2 relay calls run at once for callers the relay has not accepted here; the relay was not asked']);
+    expect(w.relay.held()).toBe(6);
+    release();
+    expect((await Promise.all(running)).map((r) => r.code ?? r.status)).toEqual([200, 200, 200, 200, 'interego-sign-in-expired', 'interego-sign-in-expired']);
+    // Each place is given back when its call ends.
+    expect([(await sign(a[2] ?? '', '198.51.100.66')).status, (await sign(a[4] ?? '', '198.51.100.67')).status, (await sign(bearer, '203.0.113.1')).status]).toEqual([200, 200, 200]);
   }, 60_000);
 
   it('serves the client\'s metadata document as the relay\'s CIMD reader requires it (client_id its own URL, https redirect, no client secret), says how the client is registered, and falls back to Dynamic Client Registration where the relay cannot read it', async () => {

@@ -699,7 +699,7 @@ describe('work-redesign offline demo and web UI', () => {
     const cases: ReadonlyArray<readonly [NodeJS.ProcessEnv, RegExp | null, RegExp | null]> = [
       [{}, null, /sign-in with an Interego account: off \(WRD_TRUSTED_RELAY_ADDRESSES is empty\)/],
       [{ ...IMAGE, WRD_ADMIN_DIDS: `did:web:${HOST}:users:u-pk-f2a9c751075a` }, null, new RegExp(`RELAY-ATTESTED, not user-held: requests the relay \\(${RELAY_ADDRESS}\\) signs act as the user their agent belongs to on ${HOST.replace(/\./g, '\\.')}.*refused \\(only this bridge's web UI; WRD_CHAT_AGENTS_DECIDE=1 lifts it\\); 1 admin DID\\(s\\)`)],
-      [{ ...IMAGE, WRD_CHAT_AGENTS_DECIDE: '1' }, null, /Decisive acts from chat agents: taken \(WRD_CHAT_AGENTS_DECIDE=1\)/],
+      [{ ...IMAGE, WRD_CHAT_AGENTS_DECIDE: '1' }, null, /Decisive acts from chat agents: taken \(WRD_CHAT_AGENTS_DECIDE=1\)[\s\S]*web UI sign-in limits count each caller by the address that connects to the bridge \(no proxy hop trusted on loopback\); behind a reverse proxy every caller is the proxy's address, so set WRD_TRUST_PROXY_HOPS to the hops in front/],
       [{ ...IMAGE, WRD_TRUSTED_RELAY_ADDRESSES: '' }, null, /sign-in with an Interego account: off/],
       [{ ...IMAGE, WRD_TRUSTED_RELAY_ADDRESSES: '0x123' }, /did not start: WRD_TRUSTED_RELAY_ADDRESSES holds "0x123", which is not a 0x address/, null],
       [{ WRD_TRUSTED_RELAY_ADDRESSES: RELAY_ADDRESS }, /did not start: WRD_TRUSTED_RELAY_ADDRESSES is set and WRD_IDENTITY_HOST is not/, null],
@@ -714,6 +714,10 @@ describe('work-redesign offline demo and web UI', () => {
       // A user DID in the address list would be lower-cased into another user: it stops the bridge, pointing at WRD_ADMIN_DIDS.
       [{ ...IMAGE, WRD_ADMIN_ADDRESSES: `0x${'ab'.repeat(20)}, did:web:${HOST}:users:u-pk-0404A0B0C0D0` }, new RegExp(`did not start: WRD_ADMIN_ADDRESSES holds "did:web:${HOST.replace(/\./g, '\\.')}:users:u-pk-0404A0B0C0D0", which is not a 0x address \\(40 hex characters\\); a user DID is an admin through WRD_ADMIN_DIDS`), null],
       [{ WRD_ADMIN_ADDRESSES: `0x${'ab'.repeat(20)}` }, null, /sign-in with an Interego account: off/],
+      // The client address the web UI's sign-in limits count by: on loopback no proxy hop unless WRD_TRUST_PROXY_HOPS names how many stand in front; any other value stops the bridge.
+      [{ ...IMAGE, WRD_TRUST_PROXY_HOPS: '1' }, null, /web UI sign-in limits count each caller by the address 1 proxy hop\(s\) in front saw \(X-Forwarded-For; WRD_TRUST_PROXY_HOPS=1\)/],
+      [{ ...IMAGE, WRD_TRUST_PROXY_HOPS: 'yes' }, /did not start: WRD_TRUST_PROXY_HOPS is "yes"; set it to how many proxies in front of the bridge set X-Forwarded-For \(0 to 4\)/, null],
+      [{ WRD_TRUST_PROXY_HOPS: '5' }, /did not start: WRD_TRUST_PROXY_HOPS is "5"/, null],
     ];
     const runs = await startEach(cases.map(([env]) => env));
     for (const [i, [env, stops, says]] of cases.entries()) {
@@ -1070,8 +1074,12 @@ describe('work-redesign offline demo and web UI', () => {
     expect(server).toMatch(/if \(host === '::' && \(err as NodeJS\.ErrnoException\)\.code === 'EAFNOSUPPORT'\) \{ listen\('0\.0\.0\.0'\); return; \}/);
     // The first statement of the hook, so the guard stands in front of the ontology, the UI and every route the factory mounts after it.
     expect(server).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(loopback\) a\.use\(hostAllowlistGuard\(servedHostNames\(PORT, base\)\)\);\n/);
-    // Off loopback (the image, behind Railway's edge) it trusts one proxy hop, so the sign-in routes' per-address limits count the client, not the edge; on loopback none, so no caller names its own address.
-    expect(server).toMatch(/^\s*if \(!loopback\) a\.set\('trust proxy', 1\);$/m);
+    // Off loopback (the image, behind Railway's edge) it trusts one proxy hop, so the sign-in routes' per-address limits count the client, not the edge; on loopback none, so no caller names its own address,
+    // unless WRD_TRUST_PROXY_HOPS (0 to 4) says how many stand in front, as a reverse proxy on the same machine does.
+    expect(server).toMatch(/^const proxyHops = proxyHopsValue !== undefined \? Number\(proxyHopsValue\) : loopback \? 0 : 1;$/m);
+    expect(server).toMatch(/^const proxyHopsValue = env\('WRD_TRUST_PROXY_HOPS'\);$/m);
+    expect(server).toMatch(/if \(proxyHopsValue !== undefined && !\/\^\[0-4\]\$\/\.test\(proxyHopsValue\)\) \{\n[^\n]*did not start: WRD_TRUST_PROXY_HOPS is [^\n]*\n\s*process\.exit\(1\);/);
+    expect(server).toMatch(/^\s*if \(proxyHops > 0\) a\.set\('trust proxy', proxyHops\);$/m);
     expect(server.match(/trust proxy/g)).toHaveLength(1);
     expect(demo).not.toMatch(/trust proxy/);
     expect(demo).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*a\.use\(hostAllowlistGuard\(servedHostNames\(port, base\)\)\);\n\s*attachUi\(a, \{ base \}\);/);
