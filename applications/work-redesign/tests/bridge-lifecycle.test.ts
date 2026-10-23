@@ -1610,7 +1610,7 @@ describe('work-redesign bridge', () => {
     for (const [extra, shut, bridgeKey] of [[{ recordKey: K2 }, SEALED_OTHER_KEY, `holds the one with fingerprint k${iriKeyFingerprint(entityIriKey(K2))}`], [{}, SEALED_NO_KEY, 'holds no record key']] as const) {
       const other = await sibling(w, extra);
       const read = refused(await http(other, 'POST', 'read_records', { envelope: await readEnvelope(other) }), 409, /derived under a record key this bridge does not hold/,
-        new RegExp(`fingerprint ${k1}, and this bridge ${bridgeKey} \\(WRD_RECORD_KEY\\).*nor can it use the pod's registry \\(urn:wrd:registry:[0-9a-f:]+graph: ${shut.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\), so it answers no read, whoever signs it`));
+        new RegExp(`fingerprint ${k1}, and this bridge ${bridgeKey} \\(WRD_RECORD_KEY\\).*nor can it use the pod's registry \\(urn:wrd:registry:[0-9a-f:]+graph: its current version \\(.+\\) is not trusted: ${shut.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\), so it answers no read, whoever signs it`));
       expect(read['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
       const wrote = refused(await act(other, ADMIN, 'update_registry', { entries: [person(ZED, ['worker'], 'p-zed', 'Zed')] }), 409, /derived under a record key this bridge does not hold/,
         new RegExp(`derived under the record key with fingerprint ${k1}, and this bridge ${bridgeKey} \\(WRD_RECORD_KEY\\)`));
@@ -2018,7 +2018,7 @@ describe('work-redesign bridge', () => {
     corruptSealed(w, sealedGraphUrl(w, disputed.descriptorUrl));
     expect(await taskRow(w, ap.t1)).toMatchObject({ status: 'ratified' });
     const copy = refused(await act(w, CY, 'holder_copy', {}), 409, /cannot tell whether they name you/,
-      new RegExp(`do not open in full, for example ${graphIriOf(ap.t1)}: an earlier version \\(${disputed.descriptorUrl}\\) is not trusted: .*WRD_RECORD_KEY`));
+      new RegExp(`cannot be read in full, for example ${graphIriOf(ap.t1)}: an earlier version \\(${disputed.descriptorUrl}\\) is not trusted: .*WRD_RECORD_KEY`));
     expect(copy['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
     expect(JSON.stringify(copy)).not.toContain(cyNote);
     // The durable replay check reads the whole line: a write to T1 refuses rather than check part of it.
@@ -2395,7 +2395,7 @@ describe('work-redesign bridge', () => {
     for (const bridge of [w, await sibling(w, { recordKey: K1 })]) {
       for (const who of [CY, ANA, ADMIN]) {
         for (const tool of ['read_records', 'read_calibration']) {
-          refused(await http(bridge, 'POST', tool, { envelope: await readEnvelope(bridge, who) }), 409, /altered after signing/, new RegExp(`${registryGraph}: its current version is not trusted: its descriptor was altered after signing: its iep:describes no longer names the graph its proof covers`));
+          refused(await http(bridge, 'POST', tool, { envelope: await readEnvelope(bridge, who) }), 409, /altered after signing/, new RegExp(`${registryGraph}: its current version \\(${regUrl}\\) is not trusted: its descriptor was altered after signing: its iep:describes no longer names the graph its proof covers`));
         }
       }
       refused(await act(bridge, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1Now), verdict: 'ratify' }), 409, /altered after signing/, /iep:describes no longer names/);
@@ -2410,6 +2410,183 @@ describe('work-redesign bridge', () => {
     expect([arr(restored['forked']), arr(restored['altered'])]).toEqual([[], []]);
     ok(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: 'after-restore-kind', label: 'Another', definition: 'Another kind.' }] }));
   }, 120_000);
+
+  it('never reads a line short for an edit to an earlier version of its own key: with only its iep:describes or its link edited, its proof broken, or its manifest entry removed, a write that checks the whole line refuses (409), a replayed registry change among them, the holder\'s copy refuses, and a decision\'s chain says it is incomplete; restored, the replay is refused as a replay and every line reads whole', async () => {
+    const w = await world({ recordKey: K1 });
+    const { ap, planIri, valuation } = await valuedP1(w);
+    const decisionIri = String((await submitValued(w, planIri, valuation))['decisionIri']);
+    await acknowledgeAll(w, planIri);
+    ok(await countersign(w, BO, decisionIri, 'approve'));
+    // The admin adds Zed (the envelope kept) and removes him again: the version that added him is an earlier version of the registry.
+    const zed = (roles: string[]): Obj => ({ entries: [person(ZED, roles, 'p-zed', 'Zed')] });
+    const addZed = await envelope(w, ADMIN, 'wrd:update-registry', zed(['operator']));
+    const added = String(ok(await http(w, 'POST', 'update_registry', { envelope: addZed }))['descriptorUrl']);
+    ok(await act(w, ADMIN, 'update_registry', zed([])));
+    const zedReads = async (bridge: World): Promise<number> => (await http(bridge, 'POST', 'read_records', { envelope: await readEnvelope(bridge, ZED) })).status;
+    expect(await zedReads(w)).toBe(403);
+    const t1Graph = graphIriOf(ap.t1);
+    const registryGraph = graphIriOf(entityIri('registry', POD, 'registry'));
+    const t1First = must((await manifest(w)).find((e) => e.describes.includes(t1Graph) && (e.supersedes ?? []).length === 0), 'T1 v1').descriptorUrl;
+    const t1Head = headOfRow(await taskRow(w, ap.t1));
+    const chain = arr((await decisionRow(w, decisionIri))['chain']);
+    expect(chain.map((v) => v['status'])).toEqual(['submitted', 'countersigned']);
+    const decisionFirst = String(must(chain[0])['descriptorUrl']);
+    const t1Copied = async (): Promise<string[]> => arr(ok(await act(w, CY, 'holder_copy', {}))['bundle']).filter((b) => b['entityIri'] === ap.t1).map((b) => String(b['descriptorUrl']));
+    expect(await t1Copied()).toEqual([t1First, t1Head.descriptorUrl]);
+    const manifestUrl = predictManifestUrl(POD);
+    const entryOf = (url: string): string => must(must(w.pod.bodies.get(manifestUrl), 'manifest').split('\n\n').find((b) => b.startsWith(`<${url}> a iep:ManifestEntry`)), `the entry of ${url}`);
+    interface Edit { readonly url: string; readonly from: string; readonly to: string }
+    const missing = 'an earlier version is missing: .+ is version \\d+, and no trusted version \\d+ of this graph is listed as the one it supersedes';
+    const edits: ReadonlyArray<{ readonly name: string; readonly edit: (url: string) => Edit; readonly why: string; readonly registryToo: boolean }> = [
+      {
+        name: 'its iep:describes', registryToo: true, why: 'an earlier version \\(.+\\) is not trusted: its descriptor was altered after signing: its iep:describes no longer names',
+        edit: (url) => ({ url, from: must(/iep:describes <[^>]+>/.exec(must(w.pod.bodies.get(url))))[0], to: `iep:describes <${graphIriOf(ap.t2)}>` }),
+      },
+      {
+        name: 'its link to its graph', registryToo: true, why: 'an earlier version \\(.+\\) is not trusted: its graph is not at the URL its descriptor names \\(404\\)',
+        edit: (url) => ({ url, from: `hydra:target <${sealedGraphUrl(w, url)}>`, to: `hydra:target <${POD}${WRD_CONTAINER}nothing-graph.envelope.jose.json>` }),
+      },
+      {
+        name: 'its proof', registryToo: true, why: `${missing} \\(.+ is, and is set aside: its authorship signature does not verify\\)`,
+        edit: (url) => {
+          const m = must(/iep:proofValue "0x([0-9a-f])/.exec(must(w.pod.bodies.get(url))));
+          return { url, from: m[0], to: `iep:proofValue "0x${m[1] === '0' ? '1' : '0'}` };
+        },
+      },
+      // Removing the entry of the registry's earlier version would leave the one before it unsuperseded: a fork, every call 409. Tasks and decisions only.
+      { name: 'its manifest entry', registryToo: false, why: `${missing}: it was deleted`, edit: (url) => ({ url: manifestUrl, from: `\n\n${entryOf(url)}`, to: '' }) },
+    ];
+    for (const { name, edit, why, registryToo } of edits) {
+      // Every successful holder's copy writes its receipt, so the count is taken afresh.
+      const before = (await manifest(w)).length;
+      const originals = new Map<string, string>();
+      for (const target of [t1First, decisionFirst, ...(registryToo ? [added] : [])]) {
+        const e = edit(target);
+        if (!originals.has(e.url)) originals.set(e.url, must(w.pod.bodies.get(e.url)));
+        w.pod.tamper(e.url, e.from, e.to);
+      }
+      const cut = (graphIri: string): RegExp => new RegExp(`${graphIri}: ${why}`);
+      // The bridge that wrote it, and a fresh one (another replica, or after a restart, with an empty nonce ledger).
+      const fresh = await sibling(w, { recordKey: K1 });
+      for (const bridge of [w, fresh]) {
+        // The holder's copy refuses rather than come back with T1's line, or the decision's, short; nothing is sealed, so no setting is named.
+        const copy = refused(await act(bridge, CY, 'holder_copy', {}), 409, /are missing an earlier version, so it cannot tell whether they name you/, /graph\(s\) cannot be read in full/);
+        expect([name, copy['iep:resolvedBy']]).toEqual([name, undefined]);
+        // A write to T1 checks its whole line for a replay: refused, rather than checked against part of it.
+        refused(await act(bridge, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1Head), verdict: 'dispute', note: `after ${name}` }), 409, /altered after signing/, cut(t1Graph));
+        const row = await decisionRow(bridge, decisionIri);
+        expect([name, arr(row['chain']).map((v) => v['status'])]).toEqual([name, ['countersigned']]);
+        expect(String(row['chainUnreadable'])).toMatch(new RegExp(`the chain below is incomplete: ${cut(graphIriOf(decisionIri)).source}`));
+      }
+      if (registryToo) {
+        // The envelope that added Zed, replayed where no ledger remembers it: the durable check cannot read the registry's whole line, so it refuses.
+        refused(await http(fresh, 'POST', 'update_registry', { envelope: addZed }), 409, /altered after signing/, cut(registryGraph));
+        expect(await zedReads(fresh)).toBe(403);
+      }
+      for (const [url, body] of originals) w.pod.tamper(url, must(w.pod.bodies.get(url)), body);
+      // Nothing was written while the edit stood.
+      expect([name, (await manifest(w)).length]).toEqual([name, before]);
+      // Restored: the replay is refused as a replay, the copy holds T1's whole line, and the decision's chain is whole.
+      refused(await http(await sibling(w, { recordKey: K1 }), 'POST', 'update_registry', { envelope: addZed }), 409, /already used/, /on urn:wrd:registry/);
+      expect([name, await t1Copied()]).toEqual([name, [t1First, t1Head.descriptorUrl]]);
+      const back = await decisionRow(w, decisionIri);
+      expect([name, arr(back['chain']).length, back['chainUnreadable']]).toEqual([name, 2, undefined]);
+    }
+    expect(await zedReads(w)).toBe(403);
+    ok(await ratify(w, CY, ap.t1, 'dispute', 'after every restore'));
+  }, 180_000);
+
+  it('never lets supersedes links in the manifest alone make an older version current or a graph absent: a link from an entry to itself is ignored, a head whose link to the version before it is pointed at itself leaves two current versions, and links that form a cycle leave none; those answer 409, nothing reads as absent and no write proceeds, and once the line is restored the graph reads from the same head with no fork; a task and the registry alike', async () => {
+    const w = await world({ recordKey: K1 });
+    await register(w);
+    const ap = await captureAp(w);
+    ok(await ratify(w, CY, ap.t1));
+    ok(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: 'links-kind-0', label: 'Another', definition: 'Another kind.' }] }));
+    const t1Graph = graphIriOf(ap.t1);
+    const registryGraph = graphIriOf(entityIri('registry', POD, 'registry'));
+    const manifestUrl = predictManifestUrl(POD);
+    const entryOf = (url: string): string => must(must(w.pod.bodies.get(manifestUrl), 'manifest').split('\n\n').find((b) => b.startsWith(`<${url}> a iep:ManifestEntry`)), `the entry of ${url}`);
+    const supersededBy = (url: string): string => must(/iep:supersedes <([^>]+)>/.exec(entryOf(url))?.[1], `what ${url} supersedes`);
+    const withLine = (entry: string, line: string): string => entry.replace(/(iep:describes <[^>]+> ;)/, `$1\n    ${line} ;`);
+    const registryHead = async (): Promise<string> => String(obj(obj((await list(w))['registry'])['head'])['descriptorUrl']);
+    const cases: ReadonlyArray<{ readonly name: string; readonly edit: (head: string, prev: string) => readonly [string, string, string]; readonly why: RegExp | null }> = [
+      { name: 'the head\'s link to the version before it pointed at itself', why: /more than one version claims to be current/,
+        edit: (head, prev) => [head, `iep:supersedes <${prev}>`, `iep:supersedes <${head}>`] },
+      { name: 'the version before the head also superseding the head', why: /no version claims to be current: the supersedes links the manifest lists for its versions form a cycle/,
+        edit: (head, prev) => [prev, entryOf(prev), withLine(entryOf(prev), `iep:supersedes <${head}>`)] },
+      { name: 'the head\'s entry also superseding itself', why: null, edit: (head) => [head, entryOf(head), withLine(entryOf(head), `iep:supersedes <${head}>`)] },
+    ];
+    for (const { name, edit, why } of cases) {
+      // A task.
+      const t1 = headOfRow(await taskRow(w, ap.t1));
+      const [t1Entry, t1From, t1To] = edit(t1.descriptorUrl, supersededBy(t1.descriptorUrl));
+      const t1Block = entryOf(t1Entry);
+      const t1Edited = t1Block.replace(t1From, t1To);
+      w.pod.tamper(manifestUrl, t1Block, t1Edited);
+      const before = (await manifest(w)).length;
+      const listed = await list(w);
+      if (why === null) {
+        // Ignored: the head is current and trusted, and a write bound to it goes on from it (nothing older becomes current).
+        expect([name, arr(listed['forked']), arr(listed['altered'])]).toEqual([name, [], []]);
+        expect(headOfRow(await taskRow(w, ap.t1)).descriptorUrl).toBe(t1.descriptorUrl);
+        ok(await act(w, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1), verdict: 'dispute', note: `with ${name}` }));
+        expect((await manifest(w)).length).toBe(before + 1);
+      } else {
+        // Never absent: T1 is forked and says why, and a write bound to its head is refused.
+        expect([name, arr(listed['forked'])]).toEqual([name, [t1Graph]]);
+        expect(arr(listed['tasks']).map((t) => t['taskIri'])).not.toContain(ap.t1);
+        expect(String(must(arr(listed['integrity']).find((i) => i['graphIri'] === t1Graph), 'T1 integrity')['why'])).toMatch(why);
+        refused(await act(w, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1), verdict: 'dispute', note: `with ${name}` }), 409, /more than one version claims to be current/, new RegExp(`${t1Graph}: ${why.source}`));
+        expect((await manifest(w)).length).toBe(before);
+      }
+      w.pod.tamper(manifestUrl, t1Edited, t1Block);
+      const t1Back = await list(w);
+      expect([name, arr(t1Back['forked']), arr(t1Back['altered'])]).toEqual([name, [], []]);
+      const t1Now = headOfRow(await taskRow(w, ap.t1));
+      if (why !== null) expect(t1Now).toEqual(t1);
+      else expect(supersededBy(t1Now.descriptorUrl)).toBe(t1.descriptorUrl);
+
+      // The registry.
+      const reg = await registryHead();
+      const [regEntry, regFrom, regTo] = edit(reg, supersededBy(reg));
+      const regBlock = entryOf(regEntry);
+      const regEdited = regBlock.replace(regFrom, regTo);
+      w.pod.tamper(manifestUrl, regBlock, regEdited);
+      const regBefore = (await manifest(w)).length;
+      const change = await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: `links-kind-${regBefore}`, label: 'Another', definition: 'Another kind.' }] });
+      if (why === null) {
+        expect(supersededBy(String(ok(change, name)['descriptorUrl']))).toBe(reg);
+      } else {
+        // Never a second registry started as if there were none: every change and every read answers 409.
+        refused(change, 409, /more than one version claims to be current/, new RegExp(`${registryGraph}: ${why.source}`));
+        refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w) }), 409, /more than one version claims to be current/, new RegExp(`${registryGraph}: ${why.source}`));
+        expect((await manifest(w)).length).toBe(regBefore);
+      }
+      w.pod.tamper(manifestUrl, regEdited, regBlock);
+      const regBack = await list(w);
+      expect([name, arr(regBack['forked']), arr(regBack['altered'])]).toEqual([name, [], []]);
+      expect(obj(obj(regBack['registry'])['head'])).toMatchObject({ trusted: true });
+      if (why !== null) expect(await registryHead()).toBe(reg);
+    }
+
+    // A version of another task that does not open, listed under T1's graph by the manifest, makes T1 answer 409 naming that version, not T1's own.
+    const t1 = headOfRow(await taskRow(w, ap.t1));
+    ok(await ratify(w, DEE, ap.t2));
+    const t2First = must((await manifest(w)).find((e) => e.describes.includes(graphIriOf(ap.t2)) && (e.supersedes ?? []).length === 0), 'T2 v1').descriptorUrl;
+    const t2Sealed = sealedGraphUrl(w, t2First);
+    const t2Bytes = must(w.pod.bodies.get(t2Sealed));
+    corruptSealed(w, t2Sealed);
+    const t2Block = entryOf(t2First);
+    const t2Listed = withLine(t2Block, `iep:describes <${t1Graph}>`);
+    w.pod.tamper(manifestUrl, t2Block, t2Listed);
+    const r = refused(await act(w, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1), verdict: 'ratify' }), 409, /altered after signing/,
+      new RegExp(`${t1Graph}: more than one version claims to be current, and one of them \\(${t2First}\\) is not trusted: its graph is sealed to a key this bridge does not hold`));
+    expect(r['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
+    w.pod.tamper(manifestUrl, t2Listed, t2Block);
+    w.pod.tamper(t2Sealed, must(w.pod.bodies.get(t2Sealed)), t2Bytes);
+    ok(await act(w, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1), verdict: 'ratify' }));
+    expect(arr((await list(w))['forked'])).toEqual([]);
+  }, 180_000);
 
   it('on a pod whose registry was written under another record key (the usual go-live order), refuses every write and every read, by an admin, a registered key or any other, with the key mismatch naming WRD_RECORD_KEY and both fingerprints, never as one sealed record; the key\'s own bridge goes on', async () => {
     const reEscape = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -2429,7 +2606,7 @@ describe('work-redesign bridge', () => {
         const [error, mismatch] = phase === 'the registry alone'
           ? [/sealed to a record key this bridge does not hold/, `${reEscape(registryGraph)} \\(${reEscape(regUrl)}\\) is sealed to the record key with fingerprint k${fp1} \\(its record id, which the platform signed, names it\\), and this bridge ${reEscape(bridgeKey)} \\(WRD_RECORD_KEY\\)`]
           : [/derived under a record key this bridge does not hold/, `was derived under the record key with fingerprint k${fp1}, and this bridge ${reEscape(bridgeKey)} \\(WRD_RECORD_KEY\\)`];
-        const readWhy = new RegExp(`${mismatch}.*; nor can it use the pod's registry \\(${reEscape(registryGraph)}: ${reEscape(shut)}\\), so it answers no read, whoever signs it, until it runs with that key`);
+        const readWhy = new RegExp(`${mismatch}.*; nor can it use the pod's registry \\(${reEscape(registryGraph)}: its current version \\(${reEscape(POD)}${WRD_CONTAINER}registry-[0-9a-f]{16}-k${fp1}\\.ttl\\) is not trusted: ${reEscape(shut)}\\), so it answers no read, whoever signs it, until it runs with that key`);
         const writeWhy = new RegExp(`${mismatch}.*; it writes nothing and looks nothing up by tuple until it runs with that key`);
         for (const publicReads of [false, true]) {
           const other = await sibling(w, { ...extra, publicReads });

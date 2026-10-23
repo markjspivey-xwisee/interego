@@ -70,8 +70,8 @@ import {
 } from '../src/records.js';
 import {
   PodView, publishRecord, copyRecordToHolder, openPod, modalFor, isSealedShut, KeyedMutex, StaleHeadError, PodWriteError, PodReadError,
-  IncompleteManifestError, RecordNotSealableError,
-  type GraphHeads, type LoadedRecord, type PlatformSigner, type VerifyCache,
+  IncompleteManifestError, RecordNotSealableError, MORE_THAN_ONE_CURRENT,
+  type GraphHeads, type LineCut, type LoadedRecord, type PlatformSigner, type VerifyCache,
 } from './pod-helpers.js';
 
 export type { PlatformSigner };
@@ -272,14 +272,22 @@ const ENTITY_KIND: Readonly<Record<RecordKind, EntityKind>> = {
 
 interface Head<K extends RecordKind> { readonly loaded: LoadedRecord; readonly record: RecordOf<K>; readonly graph: GraphHeads }
 
-/** The refusal for a graph whose current version is sealed and does not open: 409, naming the setting that opens it. */
-const sealedRefusal = (g: GraphHeads): Declined => {
-  const why = g.heads.find(isSealedShut)?.why ?? 'its graph is sealed and does not open';
-  return decline(409, INTEGRITY, `${g.graphIri}: its current version is not trusted: ${why}`, { env: 'WRD_RECORD_KEY' });
+/**
+ * Why a forked or altered graph cannot be used, naming the head that is not trusted (a sealed one
+ * first): its descriptor need not be one the graph's own chain wrote, since a manifest listing can
+ * put a version of another graph of the kind among its heads (see ofGraph), so the operator is
+ * pointed at the bytes to restore. A fork of trusted heads, or of none (a cycle), says which.
+ */
+const unusableWhy = (g: GraphHeads): string => {
+  const bad = g.heads.find(isSealedShut) ?? g.heads.find((h) => !h.authorship.trusted);
+  const why = bad?.why ?? 'it was altered after signing';
+  if (g.state === 'forked') return `${g.why ?? MORE_THAN_ONE_CURRENT}${bad ? `, and one of them (${bad.descriptorUrl}) is not trusted: ${why}` : ''}`;
+  return `its current version${bad ? ` (${bad.descriptorUrl})` : ''} is not trusted: ${why}`;
 };
-/** Why a graph's line is cut short by an earlier version that is sealed and does not open (see PodView.line). */
-const sealedVersionWhy = (graphIri: string, sealed: LoadedRecord): string =>
-  `${graphIri}: an earlier version (${sealed.descriptorUrl}) is not trusted: ${sealed.why ?? 'its graph is sealed and does not open'}`;
+/** The refusal for a graph a head of which is sealed and does not open: 409, naming that head and the setting that opens it. */
+const sealedRefusal = (g: GraphHeads): Declined => decline(409, INTEGRITY, `${g.graphIri}: ${unusableWhy(g)}`, { env: 'WRD_RECORD_KEY' });
+/** Why a graph's line does not reach its first version (see PodView.line). */
+const cutWhy = (graphIri: string, cut: LineCut): string => `${graphIri}: ${cut.why}`;
 
 /**
  * The current version of a graph as a record of `kind`, null when the graph is absent; 409 when
@@ -290,9 +298,8 @@ function headIn<K extends RecordKind>(g: GraphHeads, kind: K): Head<K> | null {
   if (g.state === 'absent') return null;
   if (g.state !== 'ok') {
     if (g.heads.some(isSealedShut)) throw sealedRefusal(g);
-    // An altered head says why: changed bytes or modal status.
-    const why = g.heads[0]?.why ?? 'it was altered after signing';
-    throw decline(409, INTEGRITY, `${g.graphIri}: ${g.state === 'forked' ? 'more than one version claims to be current' : `its current version is not trusted: ${why}`}`);
+    // A forked graph says which way (two current versions, or none); an altered head says which and why: changed bytes, modal status, describes or link.
+    throw decline(409, INTEGRITY, `${g.graphIri}: ${unusableWhy(g)}`);
   }
   const loaded = g.heads[0];
   if (!loaded || !loaded.record || loaded.record.recordKind !== kind) throw decline(409, INTEGRITY, `${g.graphIri} does not hold a ${kind} record`);
@@ -710,8 +717,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (c) {
       const g = await call.view.graph(graphIriOf(entityIri('registry', call.podUrl, 'registry')));
       if (g.state === 'forked' || g.state === 'altered') {
-        const why = g.state === 'forked' ? 'more than one version claims to be current' : g.heads[0]?.why ?? 'its current version is not trusted';
-        throw keyConflictRefusal(c, `nor can it use the pod's registry (${g.graphIri}: ${why}), so it answers no read, whoever signs it, until it runs with that key`);
+        throw keyConflictRefusal(c, `nor can it use the pod's registry (${g.graphIri}: ${unusableWhy(g)}), so it answers no read, whoever signs it, until it runs with that key`);
       }
     }
     return registryOf(call);
@@ -722,13 +728,14 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   interface Written { readonly descriptorUrl: string; readonly graphUrl: string; readonly recordId: string; readonly graphDigest: string }
 
   /**
-   * A graph's whole trusted line, oldest first, for an answer that depends on all of it: 409,
-   * naming WRD_RECORD_KEY, when a version in it is sealed and does not open, never the part of
-   * the line after it as if it were the whole.
+   * A graph's whole trusted line, oldest first, for an answer that depends on all of it: 409 when
+   * the line does not reach its first version (PodView.line: an earlier version that is not
+   * trusted, or one that is missing), naming WRD_RECORD_KEY when that version is sealed and does
+   * not open, never the part of the line after it as if it were the whole.
    */
   async function wholeLine(call: Call, g: GraphHeads): Promise<LoadedRecord[]> {
     const l = await call.view.line(g);
-    if (l.sealed) throw decline(409, INTEGRITY, sealedVersionWhy(g.graphIri, l.sealed), { env: 'WRD_RECORD_KEY' });
+    if (l.cut) throw decline(409, INTEGRITY, cutWhy(g.graphIri, l.cut), l.cut.sealed ? { env: 'WRD_RECORD_KEY' } : undefined);
     return l.versions;
   }
 
@@ -2698,22 +2705,28 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       const reg = await registryOf(call);
       const snap = await snapshot(call.view);
-      // A record this bridge cannot open may name the holder: a copy without it would read as
-      // "nothing else names you". Refused, naming the setting, rather than answered short. That
-      // holds for an earlier version as much as for a current one: a line cut short at a version
-      // that does not open would come back without it and every version before it.
-      const shut: string[] = snap.graphs.filter((s) => s.g.heads.some(isSealedShut))
-        .map((s) => `${s.graphIri}: ${s.g.heads.find(isSealedShut)?.why ?? ''}`);
+      // A record this bridge cannot read may name the holder: a copy without it would read as
+      // "nothing else names you". Refused rather than answered short, naming the setting when it is
+      // sealed. That holds for a current version that is sealed, altered or forked, and for an
+      // earlier version as much as a current one: a line that does not reach its first version
+      // (PodView.line) would come back without it and every version before it.
+      const shut: Array<{ readonly why: string; readonly sealed: boolean }> = snap.graphs
+        .filter((s) => s.g.state === 'altered' || s.g.state === 'forked')
+        .map((s) => (s.g.heads.some(isSealedShut) ? { why: `${s.graphIri}: ${s.g.heads.find(isSealedShut)?.why ?? ''}`, sealed: true } : { why: whyUnusable(s), sealed: false }));
       const lines = new Map<string, LoadedRecord[]>();
       for (const s of snap.graphs) {
         if (s.g.state !== 'ok') continue;
         const l = await call.view.line(s.g);
-        if (l.sealed) shut.push(sealedVersionWhy(s.graphIri, l.sealed));
+        if (l.cut) shut.push({ why: cutWhy(s.graphIri, l.cut), sealed: l.cut.sealed });
         lines.set(s.graphIri, l.versions);
       }
       if (shut.length > 0) {
-        return { ...refuse(409, 'Some records on this pod are sealed to a key this bridge does not hold, so it cannot tell whether they name you; nothing was copied.',
-          `${shut.length} graph(s) do not open in full, for example ${shut[0] ?? ''}`, { env: 'WRD_RECORD_KEY' }) };
+        // A sealed one is named first: the setting that opens it is the likeliest fix.
+        const sealed = shut.filter((x) => x.sealed);
+        return { ...refuse(409, sealed.length > 0
+          ? 'Some records on this pod are sealed to a key this bridge does not hold, so it cannot tell whether they name you; nothing was copied.'
+          : 'Some records on this pod were altered after signing, have more than one current version or none, or are missing an earlier version, so it cannot tell whether they name you; nothing was copied.',
+        `${shut.length} graph(s) cannot be read in full, for example ${(sealed[0] ?? shut[0])?.why ?? ''}`, sealed.length > 0 ? { env: 'WRD_RECORD_KEY' } : undefined) };
       }
       const me = call.actor;
       const selected = new Set<string>();
@@ -2856,8 +2869,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const sealedOf = (snap: Snapshot): Obj[] => snap.graphs.filter((s) => s.g.heads.some(isSealedShut))
     .map((s) => ({ graphIri: s.graphIri, why: s.g.heads.find(isSealedShut)?.why ?? null }));
   /** Why a graph cannot be used: the head's own why, which names WRD_RECORD_KEY when it is sealed and does not open. */
-  const whyUnusable = (s: SnapGraph): string => `${s.graphIri}: ${s.g.state === 'forked' ? 'more than one version claims to be current'
-    : s.g.heads.find(isSealedShut)?.why ?? s.g.heads[0]?.why ?? 'its current version is not trusted'}`;
+  const whyUnusable = (s: SnapGraph): string => `${s.graphIri}: ${unusableWhy(s.g)}`;
   /** The whys of some graphs, the first three spelled out (every one is listed under sealed, altered or forked). */
   const whysOf = (shut: readonly SnapGraph[]): string =>
     `${shut.slice(0, 3).map(whyUnusable).join('; ')}${shut.length > 3 ? `; and ${shut.length - 3} more, listed under sealed, altered or forked` : ''}`;
@@ -3150,7 +3162,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           // An acknowledgement that exists and cannot be read is not "not acknowledged".
           const shutGraph = a ? undefined : unusable(iriForms('acknowledgement', ...ackTuple(pl.record.entityIri, r.taskIri, r.proposed.personAddress ?? '')));
           // Found by tuple: where acknowledgements are keyed under another record key, one not found is unknown, not "not acknowledged".
-          const shut = shutGraph ? shutGraph.g.heads[0]?.why ?? shutGraph.g.state : a ? null : absenceUnknown('acknowledgement');
+          const shut = shutGraph ? unusableWhy(shutGraph.g) : a ? null : absenceUnknown('acknowledgement');
           if (shut !== null) return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state: 'unreadable', label: `${UNREADABLE_ACK}: ${shut}` };
           const state = a ? a.status : 'not-acknowledged';
           return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state, ...(a?.payload.note ? { note: a.payload.note } : {}), label: state === 'acknowledged' ? ACKNOWLEDGED : state === 'objected' ? OBJECTED : UNACKNOWLEDGED };
@@ -3179,9 +3191,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           version: l.record?.version ?? null, status: l.record?.status ?? null, modalStatus: l.modalStatus, signedBy: l.record?.signers.map((s) => s.did) ?? [],
           at: l.generatedAt, descriptorUrl: l.descriptorUrl, recordId: l.recordId, graphDigest: l.graphDigest,
         }));
-        // A chain cut short at an earlier version that does not open says so: never shown as the whole chain.
-        const chainCut = line.sealed ? sealedVersionWhy(d.s.graphIri, line.sealed) : null;
-        if (chainCut !== null) cutLines.push({ graphIri: d.s.graphIri, why: chainCut });
+        // A chain that does not reach its first version says so: never shown as the whole chain. A sealed version is also listed under sealed.
+        const chainCut = line.cut ? cutWhy(d.s.graphIri, line.cut) : null;
+        if (chainCut !== null && line.cut?.sealed) cutLines.push({ graphIri: d.s.graphIri, why: chainCut });
         out3.push({
           decisionIri: d.record.entityIri, decisionKind: p.decisionKind, planIri: p.planIri, ...(p.valuationIri ? { valuationIri: p.valuationIri, valuationHash: p.valuationHash } : {}),
           status: d.record.status, statusLabel: statusLabelOf(d.record.status, p.decisionKind), decisionLevel: p.decisionLevel,
@@ -3207,8 +3219,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         const state = await grantView(call, reg, p.agentAddress, p.taskKind);
         const line = await call.view.line(gr.s.g);
         const grantedAt = [...line.versions].reverse().find((l) => l.record?.status === 'granted')?.generatedAt ?? null;
-        const chainCut = line.sealed ? sealedVersionWhy(gr.s.graphIri, line.sealed) : null;
-        if (chainCut !== null) cutLines.push({ graphIri: gr.s.graphIri, why: chainCut });
+        const chainCut = line.cut ? cutWhy(gr.s.graphIri, line.cut) : null;
+        if (chainCut !== null && line.cut?.sealed) cutLines.push({ graphIri: gr.s.graphIri, why: chainCut });
         out4.push({
           grantIri: gr.record.entityIri, agentAddress: p.agentAddress, principal: p.principal, model: p.model, taskKind: p.taskKind, status: gr.record.status,
           active: state.active, why: state.why, evaluation: p.evaluation, evidenceTaskIris: p.evaluation.taskIris, grantedAt,
@@ -3258,7 +3270,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (conflict) out['recordKeyMismatch'] = keyConflictNote(conflict);
     out['altered'] = snap.graphs.filter((s) => s.g.state === 'altered').map((s) => s.graphIri);
     out['integrity'] = snap.graphs.filter((s) => s.g.state === 'altered' || s.g.state === 'forked').map((s) => ({
-      graphIri: s.graphIri, state: s.g.state,
+      graphIri: s.graphIri, state: s.g.state, why: s.g.why,
       heads: s.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, trusted: h.authorship.trusted, contentBinding: h.authorship.contentBinding, why: h.why })),
     }));
     return out;

@@ -20,8 +20,15 @@
  * current again; once the bytes are restored it is trusted again.
  *
  * What this cannot stop, and says so in the README: a party with write access to the pod can
- * delete files, or overwrite a genuine descriptor's unsigned facets in place. v1 relies on the
- * pod's own access control for that.
+ * delete files, or overwrite a genuine descriptor's unsigned facets in place. Deleting a current
+ * version's descriptor, editing it so its proof no longer verifies or no longer names the URL it
+ * sits at, or removing its manifest entry, listing it under another graph, or changing the URL
+ * the entry names, makes it ineligible or leaves it out of its graph's candidates, so the version
+ * before it becomes current again: writes proceed from that version, and once the bytes are
+ * restored the graph is forked (409). Nothing signed records which version is current, so none of
+ * this can be told apart from a version that was never written. v1 relies on the pod's own access
+ * control for that. A whole line, by contrast, is never read short (PodView.line): every version
+ * records its number in its signed content.
  *
  * ── SEALED GRAPHS ────────────────────────────────────────────────────────────────────────────
  * Given the bridge's record key, every new version's graph is sealed to it (publish's encrypt
@@ -39,10 +46,16 @@
  *
  * ── WHAT THE MANIFEST SAYS IS ONLY A HINT ─────────────────────────────────────────────────────
  * Which descriptors describe a graph, and which version supersedes which, are read from the
- * manifest, which anyone able to write the pod can edit. So a version counts toward a graph, and
- * a supersedes link is followed, only when the record's signed content names that graph: a link
- * someone added from one chain into another never puts another entity's record (opened with the
- * record key) into this graph's heads or its history.
+ * manifest, which anyone able to write the pod can edit. So a version whose content its proof
+ * binds counts toward a graph, and a supersedes link is followed, only when that signed content
+ * names the graph: a link someone added from one chain into another never puts another entity's
+ * record (opened with the record key) into this graph's heads or its history. The exception is a
+ * version a trusted key signed where its proof says whose content cannot be read or no longer
+ * matches its proof: it counts, never as trusted, toward any graph of the kind its signed record
+ * id names that the manifest lists it under (ofGraph), so such a listing, or a link to it from a
+ * chain of that kind, can make that graph answer 409; it never puts anything in a read. A
+ * supersedes link from an entry to itself is ignored, and versions whose links leave none of them
+ * current (a cycle) make the graph answer 409, never "absent".
  *
  * No environment reads. The only network is the injected fetch, always behind guardedFetchFn.
  */
@@ -74,10 +87,10 @@ export interface PlatformSigner { readonly wallet: Wallet; readonly keyKind: 'co
 export class IncompleteManifestError extends Error {
   constructor(readonly podUrl: string) { super(`the manifest of ${podUrl} could not be read in full`); }
 }
-/** The head the caller read is no longer the head, or the graph already exists (409). */
+/** The head the caller read is no longer the head, or the graph already exists (409). `why` says why a graph that is not ok has no usable head. */
 export class StaleHeadError extends Error {
-  constructor(readonly graphIri: string, readonly heads: readonly string[]) {
-    super(`${graphIri}: the current version is ${heads.length === 0 ? 'absent' : heads.join(', ')}, not the version this write was based on`);
+  constructor(readonly graphIri: string, readonly heads: readonly string[], why: string | null = null) {
+    super(`${graphIri}: the current version is ${heads.length === 0 ? (why === null ? 'absent' : 'none') : heads.join(', ')}${why === null ? '' : ` (${why})`}, not the version this write was based on`);
   }
 }
 /** The pod refused or failed a write (502, with the pod's status when it gave one). */
@@ -614,34 +627,51 @@ export function ofGraph(l: LoadedRecord, graphIri: string): boolean {
 
 export interface GraphHeads {
   readonly graphIri: string;
-  /** Eligible heads (after setting ineligible ones aside). */
+  /** Eligible heads (after setting ineligible ones aside). Empty when absent, and when the versions' links leave none current. */
   readonly heads: readonly LoadedRecord[];
   /** The entries still in play: every entry describing the graph, minus those set aside. */
   readonly chain: readonly ManifestEntry[];
   readonly state: 'absent' | 'ok' | 'forked' | 'altered';
+  /** Why a forked or altered graph cannot be used (the head's own why when it is altered); null when absent or ok. */
+  readonly why: string | null;
   /** Descriptors set aside, with why. */
   readonly untrusted: ReadonlyArray<{ readonly descriptorUrl: string; readonly why: string }>;
 }
+
+/** Why a graph with more than one eligible head answers 409. */
+export const MORE_THAN_ONE_CURRENT = 'more than one version claims to be current';
+/** Why a graph whose eligible versions all supersede one another answers 409 (forked), never "absent". */
+export const NONE_CURRENT = 'no version claims to be current: the supersedes links the manifest lists for its versions form a cycle';
 
 /**
  * Lazy eligibility: compute heads over the entries; read each head; set aside any that is not
  * eligible (with its supersede links) and recompute; repeat until every head read is eligible.
  * More than one eligible head is a fork; one whose bytes or modal status changed after
  * signing is altered.
+ *
+ * Two things only the manifest says are never enough to hide a version from the heads: a
+ * supersedes link from an entry to its own descriptorUrl is ignored (it says nothing about which
+ * version is current), and when every candidate is superseded by another (a cycle), every one is
+ * read: those set aside are dropped with their links as ever, and when every one left is eligible
+ * the graph is forked, with heads empty and NONE_CURRENT as why. "Absent" means no candidate is
+ * left at all, so a manifest edit alone never makes a graph read as one that was never written.
  */
 export async function headsFor(graphIri: string, entries: readonly ManifestEntry[],
   read: (e: ManifestEntry) => Promise<LoadedRecord>): Promise<GraphHeads> {
   let candidates = entries.filter((e) => e.describes.includes(graphIri));
   const untrusted: { descriptorUrl: string; why: string }[] = [];
   for (;;) {
-    const superseded = new Set(candidates.flatMap((e) => e.supersedes ?? []));
+    const superseded = new Set(candidates.flatMap((e) => (e.supersedes ?? []).filter((u) => u !== e.descriptorUrl)));
     const headEntries = candidates.filter((e) => !superseded.has(e.descriptorUrl));
-    const loaded = await Promise.all(headEntries.map(read));
+    const cycle = headEntries.length === 0 && candidates.length > 0;
+    const loaded = await Promise.all((cycle ? candidates : headEntries).map(read));
     const bad = loaded.filter((l) => !l.authorship.eligible || !ofGraph(l, graphIri));
     if (bad.length === 0) {
+      if (cycle) return { graphIri, heads: [], chain: candidates, state: 'forked', why: NONE_CURRENT, untrusted };
       const only = loaded[0];
       const state = loaded.length === 0 ? 'absent' : loaded.length > 1 ? 'forked' : only && only.authorship.trusted ? 'ok' : 'altered';
-      return { graphIri, heads: loaded, chain: candidates, state, untrusted };
+      const why = state === 'forked' ? MORE_THAN_ONE_CURRENT : state === 'altered' ? only?.why ?? 'it was altered after signing' : null;
+      return { graphIri, heads: loaded, chain: candidates, state, why, untrusted };
     }
     for (const b of bad) {
       untrusted.push({
@@ -706,46 +736,76 @@ export class PodView {
   /**
    * The trusted versions of a graph's current line, oldest first: from a trusted single head,
    * back along supersedes links. A link is followed only to a trusted version of THIS graph (see
-   * ofGraph): one added to the manifest from this chain into another entity's, which the bridge
-   * could open, is passed over, so no caller reads another entity's record through this chain.
-   * The line stops at the first version that is not trusted.
+   * ofGraph) whose signed version number is one less than the version it was reached from: one
+   * added to the manifest from this chain into another entity's, which the bridge could open, is
+   * passed over, so no caller reads another entity's record through this chain, and one added to
+   * skip a version is passed over too. The walk ends at version 1.
    *
-   * `sealed` is the first version of this graph the walk met that is sealed and does not open
-   * (isSealedShut), or null. When it is set the line may be cut short there: the versions before
-   * it are missing, and a caller that would answer from the whole line refuses (409, naming
-   * WRD_RECORD_KEY) or marks its answer rather than answer from part of it.
+   * `cut` is set when the line is not whole, or null: the first version of this graph the walk met
+   * that is eligible but not trusted, whatever the reason (sealed and not opening, its graph
+   * changed, missing or not found, its iep:describes or link edited), or else, when the walk could
+   * not reach version 1, the version it stopped at: the version before it was deleted, set aside
+   * (its proof broken, say) or left out of the manifest. Every version's number is in its signed
+   * content, so no edit to the pod can make a line read whole when it is not. A caller that would
+   * answer from the whole line refuses (409; naming WRD_RECORD_KEY only when `cut.sealed`) or marks
+   * its answer rather than answer from part of it.
    */
-  async line(g: GraphHeads): Promise<{ readonly versions: LoadedRecord[]; readonly sealed: LoadedRecord | null }> {
+  async line(g: GraphHeads): Promise<{ readonly versions: LoadedRecord[]; readonly cut: LineCut | null }> {
     const head = g.heads[0];
-    if (g.heads.length !== 1 || !head || !head.authorship.trusted || !ofGraph(head, g.graphIri)) return { versions: [], sealed: null };
+    if (g.heads.length !== 1 || !head || !head.authorship.trusted || !ofGraph(head, g.graphIri)) return { versions: [], cut: null };
     const byUrl = new Map(g.chain.map((e) => [e.descriptorUrl, e]));
     const out: LoadedRecord[] = [head];
-    const seen = new Set([head.descriptorUrl]);
-    let sealed: LoadedRecord | null = null;
+    const inLine = new Set([head.descriptorUrl]);
+    let cut: LineCut | null = null;
     let cursor: LoadedRecord = head;
-    for (;;) {
+    // The version each step must reach; versions strictly decrease, so the walk ends however the links run.
+    for (let want = (cursor.record?.version ?? 1) - 1; want >= 1; want -= 1) {
       let prev: LoadedRecord | null = null;
-      // Every link is read (not only up to the first trusted one), so a sealed version is never passed over unseen.
+      let setAside: LoadedRecord | null = null;
+      // Every link is read (not only up to the first trusted one), so a version that is not trusted is never passed over unseen.
       for (const u of cursor.supersedes) {
         const entry = byUrl.get(u);
-        if (!entry || seen.has(u)) continue;
-        seen.add(u);
+        if (!entry || inLine.has(u)) continue;
         const loaded = await this.read(entry);
         if (!ofGraph(loaded, g.graphIri)) continue;
-        if (loaded.authorship.trusted) prev ??= loaded;
-        else if (isSealedShut(loaded)) sealed ??= loaded;
+        if (loaded.authorship.trusted) {
+          if (loaded.record?.version === want) prev ??= loaded;
+        } else if (loaded.authorship.eligible) {
+          cut ??= { descriptorUrl: loaded.descriptorUrl, why: `an earlier version (${loaded.descriptorUrl}) is not trusted: ${loaded.why ?? 'it is not trusted'}`, sealed: isSealedShut(loaded) };
+        } else {
+          setAside ??= loaded;
+        }
       }
-      if (!prev) break;
+      if (!prev) {
+        cut ??= {
+          descriptorUrl: cursor.descriptorUrl,
+          why: `an earlier version is missing: ${cursor.descriptorUrl} is version ${want + 1}, and no trusted version ${want} of this graph is listed as the one it supersedes${setAside
+            ? ` (${setAside.descriptorUrl} is, and is set aside: ${setAside.why ?? 'it is not eligible'})` : ''}: it was deleted, its proof no longer verifies, or its manifest entry was removed or changed`,
+          sealed: false,
+        };
+        break;
+      }
       out.push(prev);
+      inLine.add(prev.descriptorUrl);
       cursor = prev;
     }
-    return { versions: out.reverse(), sealed };
+    return { versions: out.reverse(), cut };
   }
 
   /** The versions of `line`, for a caller that does not answer from the whole line. */
   async history(g: GraphHeads): Promise<LoadedRecord[]> {
     return (await this.line(g)).versions;
   }
+}
+
+/** Where a graph's line stops short of its first version (see PodView.line). */
+export interface LineCut {
+  /** The version the walk met that is not trusted, or the oldest trusted version it reached when the one before that is missing. */
+  readonly descriptorUrl: string;
+  /** Why, in plain words, without the graph IRI. */
+  readonly why: string;
+  /** The version is sealed and does not open (isSealedShut): the setting that opens it is WRD_RECORD_KEY. */
+  readonly sealed: boolean;
 }
 
 // ── Publishing ───────────────────────────────────────────────────────────────────────────
@@ -836,10 +896,11 @@ export async function publishRecord(spec: PublishSpec, ctx: PublishContext): Pro
     if (!walk.complete) throw new IncompleteManifestError(ctx.podUrl);
     const current = await headsFor(graphIri, walk.entries, (e) => readRecord(e, ctx.podUrl, ctx.fetchFn, ctx.trusted, ctx.cache, WRD_CONTAINER, ctx.recordKey));
     const heads = current.heads.map((h) => h.descriptorUrl);
+    // A new graph only where none is listed at all: a graph whose versions' links leave none current has no head, and is not absent.
     if (spec.expectHead === null) {
-      if (heads.length > 0) throw new StaleHeadError(graphIri, heads);
+      if (current.state !== 'absent') throw new StaleHeadError(graphIri, heads, current.why);
     } else if (current.state !== 'ok' || heads[0] !== spec.expectHead) {
-      throw new StaleHeadError(graphIri, heads);
+      throw new StaleHeadError(graphIri, heads, current.why);
     }
     try {
       const r = await publish(descriptor, graphTurtle, ctx.podUrl, {
