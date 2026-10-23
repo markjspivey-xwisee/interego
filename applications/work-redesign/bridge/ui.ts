@@ -144,6 +144,7 @@ details > summary { cursor: pointer; color: var(--muted); }
   .print-only { display: block; padding: 1rem; color: #000; background: #fff; }
   .print-only table { font-size: 10pt; }
   .print-only .chip { border: 1px solid #000; background: #fff; color: #000; }
+  .print-only .badbox { border: 1px solid #000; border-left-width: 4px; background: #fff; color: #000; }
 }
 `;
 

@@ -5,30 +5,42 @@
  * compare-and-swap on a freshly read head, and copy records to a pod their holder names.
  *
  * ── HEAD ELIGIBILITY (normative) ─────────────────────────────────────────────────────────────
- * A descriptor counts toward a graph's heads only if it sits in `<pod>/wrd/records/`, carries
- * an authorship proof whose signature verifies, was signed by a platform key this bridge
- * trusts, and sits at exactly the URL its own proof's descriptorId predicts. Anything else — a
- * holder copy, a descriptor someone appended without a trusted proof, a genuine descriptor
- * replayed to another URL — is set aside with a reason and never becomes current. Eligibility is
- * decided from the descriptor alone, before its graph is looked at, so it never depends on what
- * a party able to write the pod did to the graph, the descriptor's link to it, or its
- * iep:describes. A head that IS eligible but whose graph bytes no longer match the signed digest,
- * whose graph is missing, does not open or cannot be found in its document, whose descriptor's
- * iep:describes no longer names the graph its proof covers, or whose descriptor's modal status no
- * longer matches the status its signed payload records, is "altered": every lifecycle call on
- * that graph refuses (409) rather than act on it, and the version before it never becomes
- * current again; once the bytes are restored it is trusted again.
+ * A descriptor counts toward a graph's heads only if it sits in `<pod>/wrd/records/` and holds an
+ * authorship proof whose signature verifies, made by a platform key this bridge trusts, whose
+ * signed descriptorId predicts exactly the URL the descriptor sits at. Anything else — a holder
+ * copy, a descriptor someone appended without a trusted proof, a genuine descriptor replayed to
+ * another URL — is set aside with a reason and never becomes current. Eligibility is decided from
+ * that signed proof alone, before the graph is looked at: every proof the descriptor states as RDF,
+ * and every `iep:authorshipProof [ … ]` block in its text (comments included, and with comments
+ * blanked), is a candidate (authorshipProofsIn), and the one that verifies under a trusted key and
+ * names this URL places it (placeBy). The descriptor's subject is not consulted for placement: the
+ * signature covers the descriptorId and the URL must be the one that id predicts, so a proof places
+ * exactly one URL, the one it was signed for, and a subject line is unsigned bytes that a pod writer
+ * can edit as freely as any other. So eligibility never depends on what a party able to write the
+ * pod did to the graph, the descriptor's link to it, its iep:describes, its layout (whitespace, line
+ * breaks, `a` or rdf:type, prefixed or full IRIs), its comments, its subject, or a decoy block placed
+ * above the real one. A head that IS eligible but whose graph bytes no longer match the signed
+ * digest, whose graph is missing, does not open or cannot be found in its document, whose
+ * descriptor's iep:describes no longer names the graph its proof covers, whose descriptor's modal
+ * status no longer matches the status its signed payload records, or whose descriptor, read as RDF,
+ * no longer parses, no longer types the signed record id as an iep:ContextDescriptor, or states an
+ * authorship proof other than the one that places it (or that one only in a comment), is
+ * "altered": every lifecycle call on that graph refuses (409) rather than act on it, and the
+ * version before it never becomes current again; once the bytes are restored it is trusted again.
+ * An edit that changes nothing the bridge reads as RDF (layout, comments) leaves it trusted.
  *
  * What this cannot stop, and says so in the README: a party with write access to the pod can
  * delete files, or overwrite a genuine descriptor's unsigned facets in place. Deleting a current
- * version's descriptor, editing it so its proof no longer verifies or no longer names the URL it
- * sits at, or removing its manifest entry, listing it under another graph, or changing the URL
- * the entry names, makes it ineligible or leaves it out of its graph's candidates, so the version
- * before it becomes current again: writes proceed from that version, and once the bytes are
- * restored the graph is forked (409). Nothing signed records which version is current, so none of
- * this can be told apart from a version that was never written. v1 relies on the pod's own access
- * control for that. A whole line, by contrast, is never read short (PodView.line): every version
- * records its number in its signed content.
+ * version's descriptor, removing or breaking its proof so that no proof it holds, as RDF or in
+ * its text, verifies under a trusted key and names the URL it sits at, or removing its manifest
+ * entry (changing the entry's dct:conformsTo so it names no wrd: kind does the same), listing it
+ * under another graph, or changing the URL the entry names, makes it ineligible or leaves it out
+ * of its graph's candidates, so the version before it becomes current again: writes proceed from
+ * that version, and once the bytes are restored the graph is forked (409). These, and only these,
+ * act as a deletion would. Nothing signed records which version is current, so none of this can be
+ * told apart from a version that was never written. v1 relies on the pod's own access control for
+ * that. A whole line, by contrast, is never read short (PodView.line): every version records its
+ * number in its signed content.
  *
  * ── SEALED GRAPHS ────────────────────────────────────────────────────────────────────────────
  * Given the bridge's record key, every new version's graph is sealed to it (publish's encrypt
@@ -61,8 +73,10 @@
  */
 import {
   assertSafeFetchTarget, guardedFetchFn, canonicalGraphDigest, canonicalGraphDigestResult, createSignedAuthorship,
-  makeWalletDelegationSigner, makeWalletDelegationVerifier, verifySignedAuthorship, sha256Hex, openEncryptedEnvelope, turtleIriRef,
+  makeWalletDelegationSigner, makeWalletDelegationVerifier, verifySignedAuthorship, sha256Hex, openEncryptedEnvelope, canonicalJson,
+  turtleIriRef, parseTrig, findSubjectsOfType, readStringValue, readIriValue, CG,
   type AuthorshipProof, type EncryptedEnvelope, type EncryptionKeyPair, type FetchFn, type IRI, type ManifestEntry, type Wallet,
+  type ParsedDocument, type ParsedSubject,
 } from '@interego/core';
 import {
   publish, fetchAllManifestEntries, predictManifestUrl, predictDescriptorUrl, parseAuthorshipProofFromDescriptorTurtle,
@@ -222,7 +236,11 @@ export interface Authorship {
   readonly signerAddress: string | null;
   /** signatureValid ∧ the signer is a platform key this bridge trusts. */
   readonly signedByTrustedKey: boolean;
-  /** The descriptor's URL is the one its own proof's descriptorId predicts, and the descriptor names that id. */
+  /**
+   * The descriptor's URL is the one its proof's signed descriptorId predicts: the proof is chosen
+   * among every proof the descriptor holds, as RDF or as a block in its text (authorshipProofsIn),
+   * by what it signs, never by the descriptor's formatting.
+   */
   readonly atPredictedUrl: boolean;
   /** 'bound' | 'mismatched' | 'declared' | 'unbound' (from verifySignedAuthorship). */
   readonly contentBinding: string;
@@ -290,73 +308,299 @@ async function getText(url: string, fetchFn: FetchFn, accept: string): Promise<{
   return { status: res.status, body: await res.text() };
 }
 
-/** What a descriptor and its graph document say on their own, before any pod or URL is consulted. */
-interface BytesRead {
-  readonly graphIri: string;
-  readonly graphTurtle: string;
-  readonly graphDigest: string;
-  readonly proof: AuthorshipProof | null;
-  readonly subjectId: string | null;
-  readonly verified: Verified;
-  readonly record: WrdRecord | null;
-  readonly modalStatus: string | undefined;
-  readonly modalMatches: boolean;
+// ── Which proof places a record ─────────────────────────────────────────────────────────
+
+/** The iep: namespace (core's CG). The parser reads the deprecated cg: spelling into it as well. */
+const IEP_NS: string = CG;
+const IEP_CONTEXT_DESCRIPTOR = `${IEP_NS}ContextDescriptor` as IRI;
+const IEP_AUTHORSHIP_PROOF = `${IEP_NS}authorshipProof` as IRI;
+const IEP_MODAL_STATUS = `${IEP_NS}modalStatus` as IRI;
+/** The scheme a proof that names none is read with, as parseAuthorshipProofFromDescriptorTurtle reads it. */
+const DEFAULT_PROOF_SCHEME = 'EcdsaSecp256k1Signature2019';
+/**
+ * The most text read inside one `iep:authorshipProof [ … ]` block. A proof publish writes is well
+ * under a kilobyte; the bound keeps the scan linear in the descriptor's length however many
+ * unclosed blocks a descriptor holds.
+ */
+const PROOF_BLOCK_MAX = 2048;
+
+/** A descriptor read as RDF, or null when it does not parse. */
+function parseDescriptor(descriptorTurtle: string): ParsedDocument | null {
+  try { return parseTrig(descriptorTurtle); } catch { return null; }
 }
 
 /**
- * Verify a descriptor and its graph document from their bytes alone: the region of the graph
- * document the proof covers is digested; the platform authorship proof is verified against that
- * digest; and when it answers 'mismatched' it is verified once more without an observed hash,
- * to learn whether the signature itself is intact. Verification results are cached by the sha256
- * of the bytes, so a re-read of unchanged bytes costs no signature check, and a changed byte
- * cannot reuse an old verdict. readRecord adds what only a pod can answer (where the record sits);
- * verifyHolderBundle uses this as it is.
+ * The authorship proof an RDF node states, field by field, read as parseAuthorshipProofFromDescriptorTurtle
+ * reads a block (the same required fields, the same default scheme); null when a required field is missing.
  */
-async function readBytes(descriptorTurtle: string, graphContent: string, fallbackModal: string | undefined, cache?: VerifyCache):
+function proofOfNode(node: ParsedSubject): AuthorshipProof | null {
+  const lit = (name: string): string | undefined => readStringValue(node, `${IEP_NS}${name}` as IRI);
+  const ref = (name: string): IRI | undefined => readIriValue(node, `${IEP_NS}${name}` as IRI);
+  const issuer = ref('issuer');
+  const verificationMethod = ref('verificationMethod');
+  const signerAddress = lit('signerAddress');
+  const created = lit('created');
+  const ownerWebId = ref('ownerWebId');
+  const descriptorId = ref('descriptorId');
+  const proofValue = lit('proofValue');
+  const agentDid = lit('agentDid');
+  const contentHash = lit('contentHash');
+  if (!issuer || !verificationMethod || !signerAddress || !created || !ownerWebId || !descriptorId || !proofValue) return null;
+  return {
+    issuer, verificationMethod, signerAddress, created, ownerWebId, descriptorId, proofValue, scheme: lit('scheme') || DEFAULT_PROOF_SCHEME,
+    ...(agentDid ? { agentDid } : {}), ...(contentHash ? { contentHash } : {}),
+  };
+}
+
+/**
+ * Every object of iep:authorshipProof a descriptor states as RDF, in document order, each read as a
+ * proof (proofOfNode), or null when it names no node with the fields a proof needs.
+ */
+function statedProofs(doc: ParsedDocument): Array<AuthorshipProof | null> {
+  return doc.subjects.flatMap((s) => s.properties.get(IEP_AUTHORSHIP_PROOF) ?? []).map((t) => {
+    const node = t.kind === 'bnode' ? doc.subjects.find((s) => typeof s.subject === 'object' && s.subject.bnode === t.id)
+      : t.kind === 'iri' ? doc.subjects.find((s) => s.subject === t.iri) : undefined;
+    return node ? proofOfNode(node) : null;
+  });
+}
+
+/**
+ * A Turtle document with every comment blanked to spaces, so offsets hold. IRI references and
+ * string literals are copied as they are, so a `#` inside one is not taken for a comment. Not a
+ * parser, and never needed to be exact: it only lets authorshipProofsIn read a proof block that a
+ * comment would otherwise cut short (a `]` inside it) or swallow (an unclosed `[` above it).
+ */
+function blankTurtleComments(ttl: string): string {
+  let out = '';
+  let i = 0;
+  while (i < ttl.length) {
+    const c = ttl.charAt(i);
+    if (c === '#') {
+      const nl = ttl.indexOf('\n', i);
+      const stop = nl < 0 ? ttl.length : nl;
+      out += ' '.repeat(stop - i);
+      i = stop;
+      continue;
+    }
+    if (c === '<') {
+      // An IRI reference holds no '<', '>', space or line break of its own, so it ends at the first
+      // '>'; a '<' that meets one of the others first opens none and is copied as it is. Stopping
+      // there keeps the whole pass linear in the text's length.
+      let j = i + 1;
+      while (j < ttl.length && !'<> \t\r\n'.includes(ttl.charAt(j))) j += 1;
+      if (ttl.charAt(j) === '>') {
+        out += ttl.slice(i, j + 1);
+        i = j + 1;
+        continue;
+      }
+    }
+    if (c === '"' || c === "'") {
+      const quote = ttl.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      let j = i + quote.length;
+      while (j < ttl.length && !ttl.startsWith(quote, j) && (quote.length === 3 || ttl.charAt(j) !== '\n')) j += ttl.charAt(j) === '\\' ? 2 : 1;
+      const stop = Math.min(ttl.length, ttl.startsWith(quote, j) ? j + quote.length : j);
+      out += ttl.slice(i, stop);
+      i = stop;
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * Every authorship proof a descriptor holds, distinct, in the order they are met: first those it
+ * states as RDF (however it spells them: prefixed or full IRIs, any layout, a `]` inside a literal),
+ * then the `iep:authorshipProof [ … ]` blocks of its text with its comments blanked, then those of
+ * the text as it is (comments included). A text block is read from every place the predicate
+ * occurs, so one that a decoy above it opens and never closes cannot swallow it (up to
+ * PROOF_BLOCK_MAX characters of it), and each is parsed by the same reader publish's own proof is
+ * checked with; the text is read as well as the RDF so
+ * that a proof a comment holds, or one in a descriptor that no longer parses, is still found. Which
+ * one places the record is decided by placeBy, from what each one signs; nothing about the
+ * descriptor's layout counts.
+ */
+function authorshipProofsIn(descriptorTurtle: string, doc: ParsedDocument | null = parseDescriptor(descriptorTurtle)): AuthorshipProof[] {
+  const seen = new Set<string>();
+  const out: AuthorshipProof[] = [];
+  const add = (proof: AuthorshipProof | null): void => {
+    if (!proof) return;
+    const k = canonicalJson(proof);
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(proof);
+  };
+  for (const proof of doc ? statedProofs(doc) : []) add(proof);
+  for (const text of [blankTurtleComments(descriptorTurtle), descriptorTurtle]) {
+    const block = new RegExp(`iep:authorshipProof\\s*\\[([^\\]]{0,${PROOF_BLOCK_MAX}})\\]`, 'g');
+    for (let m = block.exec(text); m !== null; m = block.exec(text)) {
+      block.lastIndex = m.index + 1;
+      add(parseAuthorshipProofFromDescriptorTurtle(`iep:authorshipProof [${m[1] ?? ''}]`));
+    }
+  }
+  return out;
+}
+
+/**
+ * Verify one proof: against the graph's digest when there is one, and when that answers
+ * 'mismatched' once more without it, to learn whether the signature itself is intact. Cached by
+ * what the verdict depends on (the proof's fields and the observed digest), so a re-read costs no
+ * signature check, and nothing else a byte of the descriptor holds can reuse or change a verdict.
+ */
+async function verifyProof(proof: AuthorshipProof, contentHash: string | null, cache?: VerifyCache): Promise<Verified> {
+  const key = sha256Hex(`${contentHash ?? 'descriptor-only'}\u0000${canonicalJson(proof)}`);
+  const hit = cache?.get(key);
+  if (hit) return hit;
+  const verifier = makeWalletDelegationVerifier();
+  let verified: Verified;
+  if (contentHash) {
+    const first = await verifySignedAuthorship(proof, verifier, { contentHash });
+    const signatureValid = first.contentBinding === 'mismatched' ? (await verifySignedAuthorship(proof, verifier)).valid : first.valid;
+    verified = { signatureValid, contentBinding: first.contentBinding };
+  } else {
+    const v = await verifySignedAuthorship(proof, verifier);
+    verified = { signatureValid: v.valid, contentBinding: v.contentBinding };
+  }
+  if (cache) {
+    if (cache.size >= VERIFY_CACHE_LIMIT) cache.clear();
+    cache.set(key, verified);
+  }
+  return verified;
+}
+
+/** The proof that places a record and what it establishes. */
+interface Placement {
+  readonly proof: AuthorshipProof | null;
+  readonly verified: Verified;
+  /** The signature verifies and its signer is one of the keys the check accepts. */
+  readonly bySigner: boolean;
+  /** Its signed descriptorId predicts the URL the descriptor was read at; null where there is no URL to check (a download). */
+  readonly placed: boolean | null;
+}
+
+/**
+ * Which of a descriptor's proofs places it: the first, in authorshipProofsIn's order, whose
+ * signature verifies, made by one of `signers`, whose descriptorId predicts the URL (`places`),
+ * preferring one that binds `contentHash`. Only a candidate that claims such a signer and that URL
+ * is verified, and the first candidate always is, so that when none places the record the reason
+ * given is the first one's (the proof the descriptor states as RDF, when it states one). So a decoy
+ * (a comment, a block for another record, a block that does not verify) never hides the proof that
+ * places a record, and never places one itself: placement rests on a signature alone. `doc` is the
+ * descriptor read as RDF (parseDescriptor), null when it does not parse.
+ */
+async function placeBy(descriptorTurtle: string, doc: ParsedDocument | null, contentHash: string | null, signers: ReadonlySet<string>,
+  places: ((p: AuthorshipProof) => boolean) | null, cache?: VerifyCache): Promise<Placement> {
+  let first: Placement | null = null;
+  let chosen: Placement | null = null;
+  for (const [i, proof] of authorshipProofsIn(descriptorTurtle, doc).entries()) {
+    const claimed = signers.has(proof.signerAddress.toLowerCase());
+    const placed = places === null ? null : places(proof);
+    const fits = claimed && placed !== false;
+    if (!fits && i > 0) continue;
+    const verified = await verifyProof(proof, contentHash, cache);
+    const p: Placement = { proof, verified, bySigner: verified.signatureValid && claimed, placed };
+    if (i === 0) first = p;
+    if (fits && verified.signatureValid) {
+      if (verified.contentBinding === 'bound') return p;
+      chosen ??= p;
+    }
+  }
+  return chosen ?? first ?? { proof: null, verified: { signatureValid: false, contentBinding: 'unbound' }, bySigner: false, placed: null };
+}
+
+/** Whether a proof's signed descriptorId predicts the URL `entry` names, in `container` of `podUrl`. */
+const placesAt = (entry: ManifestEntry, podUrl: string, container: string) => (proof: AuthorshipProof): boolean =>
+  entry.descriptorUrl === predictDescriptorUrl(podUrl, proof.descriptorId, { containerPath: container, descriptorSlug: slugOf(proof.descriptorId) });
+
+/** Why a version whose descriptor no longer parses as Turtle is not trusted. */
+export const DESCRIPTOR_UNPARSEABLE = 'its descriptor was altered after signing: it no longer parses as Turtle';
+/** Why a version whose descriptor no longer states, as RDF, the record id its proof signs is not trusted. */
+export const SUBJECT_ALTERED = 'its descriptor was altered after signing: it no longer types the record id its proof signs as an iep:ContextDescriptor';
+/** Why a version whose descriptor's RDF carries another authorship proof, or its own only in a comment, is not trusted. */
+export const PROOF_ALTERED = 'its descriptor was altered after signing: as RDF it no longer carries the authorship proof that places it, and only that one';
+
+/**
+ * Why a descriptor, read as RDF, does not say what the proof that places it signs, or null when
+ * it does: it parses, it types the signed record id as an iep:ContextDescriptor, and it states
+ * exactly one iep:authorshipProof, that one. How it is laid out (whitespace, line breaks, `a` or
+ * rdf:type, prefixed or full IRIs, where the proof sits) and its comments do not count. Asked only
+ * once a proof has been found, and never part of placement, so none of this ever sets a version
+ * aside: a version that is otherwise eligible is altered.
+ */
+function rdfDisagrees(doc: ParsedDocument | null, proof: AuthorshipProof): string | null {
+  if (doc === null) return DESCRIPTOR_UNPARSEABLE;
+  if (!findSubjectsOfType(doc, IEP_CONTEXT_DESCRIPTOR).some((s) => s.subject === proof.descriptorId)) return SUBJECT_ALTERED;
+  const stated = statedProofs(doc);
+  const only = stated.length === 1 ? stated[0] : null;
+  return only && canonicalJson(only) === canonicalJson(proof) ? null : PROOF_ALTERED;
+}
+
+/**
+ * The modal status a descriptor states. Read as RDF when it parses, so a comment restating another
+ * status never stands in for the one the descriptor states: the one iep: status it states, or
+ * undefined when it states more than one, or one outside iep: (which then matches no signed
+ * status). Read from its text only when it does not parse (and is altered for that anyway).
+ * `fallback` (the manifest's) when it states none.
+ */
+function modalStatusOf(descriptorTurtle: string, doc: ParsedDocument | null, fallback: string | undefined): string | undefined {
+  if (doc === null) return firstMatch(/iep:modalStatus\s+iep:(\w+)/, descriptorTurtle) ?? fallback;
+  const stated = new Set(doc.subjects.flatMap((s) => s.properties.get(IEP_MODAL_STATUS) ?? [])
+    .map((t) => (t.kind === 'iri' && t.iri.startsWith(IEP_NS) ? t.iri.slice(IEP_NS.length) : '')));
+  if (stated.size === 0) return fallback;
+  const [only] = stated;
+  return stated.size === 1 && only !== '' ? only : undefined;
+}
+
+/** What a descriptor and its graph document say on their own, and which proof places them. */
+interface BytesRead extends Placement {
+  readonly graphIri: string;
+  readonly graphTurtle: string;
+  readonly graphDigest: string;
+  readonly record: WrdRecord | null;
+  readonly modalStatus: string | undefined;
+  readonly modalMatches: boolean;
+  /** Why the descriptor's RDF does not say what the placing proof signs (rdfDisagrees); null when it does, or there is no proof. */
+  readonly rdfWhy: string | null;
+}
+
+/**
+ * Verify a descriptor and its graph document from their bytes: the region of the graph document
+ * the proof covers is digested, and the proof that places the record (placeBy, among every proof
+ * the descriptor holds, accepting `signers` and, where there is one, the URL `places` checks) is
+ * verified against that digest; then the descriptor, read as RDF, is checked to state that proof
+ * (rdfDisagrees), which can make the record altered and never sets it aside. readRecord passes the
+ * platform keys it trusts and the URL the descriptor was read at; verifyHolderBundle passes the
+ * platform addresses the holder expects and no URL.
+ */
+async function readBytes(descriptorTurtle: string, graphContent: string, fallbackModal: string | undefined, signers: ReadonlySet<string>,
+  places: ((p: AuthorshipProof) => boolean) | null, cache?: VerifyCache):
   Promise<{ readonly ok: true; readonly read: BytesRead } | { readonly ok: false; readonly why: string }> {
   const region = digestedGraphRegion({ descriptorTurtle, graphContent });
   if (!region.ok) return { ok: false, why: `the signed region of the graph could not be identified (${region.why})` };
   const graphDigest = canonicalGraphDigest(region.turtle) ?? '';
-  const proof = parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle);
-  const subjectId = firstMatch(/^<([^>]+)>\s*\n\s*a iep:ContextDescriptor/m, descriptorTurtle);
-
-  let verified: Verified = { signatureValid: false, contentBinding: 'unbound' };
-  if (proof) {
-    const key = sha256Hex(`${descriptorTurtle}\u0000${graphContent}`);
-    const hit = cache?.get(key);
-    if (hit) {
-      verified = hit;
-    } else {
-      const verifier = makeWalletDelegationVerifier();
-      const first = await verifySignedAuthorship(proof, verifier, graphDigest ? { contentHash: graphDigest } : undefined);
-      let signatureValid = first.valid;
-      if (first.contentBinding === 'mismatched') signatureValid = (await verifySignedAuthorship(proof, verifier)).valid;
-      verified = { signatureValid, contentBinding: first.contentBinding };
-      if (cache) {
-        if (cache.size >= VERIFY_CACHE_LIMIT) cache.clear();
-        cache.set(key, verified);
-      }
-    }
-  }
+  const doc = parseDescriptor(descriptorTurtle);
+  const placement = await placeBy(descriptorTurtle, doc, graphDigest === '' ? null : graphDigest, signers, places, cache);
   const record = parseRecordGraph(region.turtle);
-  const modalStatus = firstMatch(/iep:modalStatus\s+iep:(\w+)/, descriptorTurtle) ?? fallbackModal;
+  const modalStatus = modalStatusOf(descriptorTurtle, doc, fallbackModal);
   let modalMatches = false;
   if (record) {
     try { modalMatches = modalFor(record.recordKind, record.status) === modalStatus; } catch { modalMatches = false; }
   }
-  return { ok: true, read: { graphIri: region.graphIri, graphTurtle: region.turtle, graphDigest, proof, subjectId, verified, record, modalStatus, modalMatches } };
+  const rdfWhy = placement.proof ? rdfDisagrees(doc, placement.proof) : null;
+  return { ok: true, read: { ...placement, graphIri: region.graphIri, graphTurtle: region.turtle, graphDigest, record, modalStatus, modalMatches, rdfWhy } };
 }
 
 /** Why bytes that verified as far as they go are still not trusted, in the order the checks apply; null when they are. */
-function distrust(r: BytesRead, signedByTrustedKey: boolean, atPredictedUrl: boolean | null, untrustedKey: string): string | null {
+function distrust(r: BytesRead, untrustedKey: string): string | null {
   return !r.proof ? 'it carries no authorship proof'
     : !r.verified.signatureValid ? 'its authorship signature does not verify'
-      : !signedByTrustedKey ? untrustedKey
-        : atPredictedUrl === false ? 'it is not at the URL its own proof names'
+      : !r.bySigner ? untrustedKey
+        : r.placed === false ? 'it is not at the URL its own proof names'
           : r.verified.contentBinding !== 'bound' ? 'its graph was altered after signing: the bytes no longer match the signed digest'
             : r.record === null ? 'its graph is not a well-formed wrd record'
               : !r.modalMatches ? 'its descriptor was altered after signing: the modal status no longer matches the signed status'
-                : null;
+                : r.rdfWhy;
 }
 
 /** Why a sealed graph that did not open is not read; the record stays untrusted. */
@@ -385,56 +629,28 @@ export function openSealedGraph(body: string, key: EncryptionKeyPair): string | 
 }
 
 /**
- * Where a record sits and who signed it, from its descriptor alone: what readRecord decides for
- * every record, and all it can decide for one whose sealed graph did not open.
- */
-function placement(entry: ManifestEntry, podUrl: string, container: string, proof: AuthorshipProof | null, subjectId: string | null,
-  signatureValid: boolean, trusted: ReadonlySet<string>): { readonly signerAddress: string | null; readonly signedByTrustedKey: boolean; readonly atPredictedUrl: boolean } {
-  const signerAddress = proof ? proof.signerAddress.toLowerCase() : null;
-  const signedByTrustedKey = signatureValid && signerAddress !== null && trusted.has(signerAddress);
-  const atPredictedUrl = proof !== null && subjectId === proof.descriptorId
-    && entry.descriptorUrl === predictDescriptorUrl(podUrl, proof.descriptorId, { containerPath: container, descriptorSlug: slugOf(proof.descriptorId) });
-  return { signerAddress, signedByTrustedKey, atPredictedUrl };
-}
-
-/**
  * A record whose graph could not be read as signed: sealed and did not open, missing, linked
  * outside the pod or not at all, or its signed region not found in the document. Its descriptor's
- * proof is still checked (the signature, with no content to bind), so a version a trusted platform
- * key signed at its predicted URL stays ELIGIBLE but is never trusted: its graph answers "altered"
- * (409) instead of the previous version becoming current again, which a party able to write the
- * pod could otherwise cause by corrupting one ciphertext, deleting one graph, or editing one
- * descriptor's link or iep:describes. Anything less than that is set aside, as ever, with why.
+ * proof is still found and checked (placeBy: the signature, with no content to bind), so a version
+ * a trusted platform key signed at its predicted URL stays ELIGIBLE but is never trusted: its graph
+ * answers "altered" (409) instead of the previous version becoming current again, which a party
+ * able to write the pod could otherwise cause by corrupting one ciphertext, deleting one graph, or
+ * editing one descriptor's link or iep:describes. Anything less than that is set aside, as ever,
+ * with why.
  */
 async function placedByDescriptor(entry: ManifestEntry, podUrl: string, descriptorTurtle: string, trusted: ReadonlySet<string>,
   container: string, why: string, cache?: VerifyCache): Promise<LoadedRecord> {
-  const proof = parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle);
-  const subjectId = firstMatch(/^<([^>]+)>\s*\n\s*a iep:ContextDescriptor/m, descriptorTurtle);
-  let verified: Verified = { signatureValid: false, contentBinding: 'unbound' };
-  if (proof) {
-    const key = sha256Hex(`descriptor-only\u0000${descriptorTurtle}`);
-    const hit = cache?.get(key);
-    if (hit) {
-      verified = hit;
-    } else {
-      const v = await verifySignedAuthorship(proof, makeWalletDelegationVerifier());
-      verified = { signatureValid: v.valid, contentBinding: v.contentBinding };
-      if (cache) {
-        if (cache.size >= VERIFY_CACHE_LIMIT) cache.clear();
-        cache.set(key, verified);
-      }
-    }
-  }
-  const { signerAddress, signedByTrustedKey, atPredictedUrl } = placement(entry, podUrl, container, proof, subjectId, verified.signatureValid, trusted);
-  const eligible = signedByTrustedKey && atPredictedUrl;
+  const { proof, verified, bySigner, placed } = await placeBy(descriptorTurtle, parseDescriptor(descriptorTurtle), null, trusted, placesAt(entry, podUrl, container), cache);
+  const atPredictedUrl = placed === true;
+  const eligible = bySigner && atPredictedUrl;
   const reason = !proof ? 'it carries no authorship proof'
     : !verified.signatureValid ? 'its authorship signature does not verify'
-      : !signedByTrustedKey ? 'it was signed by a key this bridge does not trust'
+      : !bySigner ? 'it was signed by a key this bridge does not trust'
         : !atPredictedUrl ? 'it is not at the URL its own proof names'
           : why;
   return {
     ...unreadable(entry, reason),
-    recordId: proof?.descriptorId ?? subjectId ?? '',
+    recordId: proof?.descriptorId ?? '',
     // The graph this descriptor itself names, for display: which graph it counts toward is decided by ofGraph, never by this.
     graphIri: firstMatch(/iep:describes\s+<([^>]+)>/, descriptorTurtle) ?? '',
     modalStatus: firstMatch(/iep:modalStatus\s+iep:(\w+)/, descriptorTurtle) ?? entry.modalStatus,
@@ -443,8 +659,8 @@ async function placedByDescriptor(entry: ManifestEntry, podUrl: string, descript
     generatedAt: firstMatch(/prov:generatedAtTime\s+"([^"]+)"/, descriptorTurtle),
     descriptorTurtle,
     authorship: {
-      signatureValid: verified.signatureValid, signerAddress, signedByTrustedKey, atPredictedUrl, contentBinding: verified.contentBinding,
-      modalMatches: false, eligible, trusted: false, proof,
+      signatureValid: verified.signatureValid, signerAddress: proof ? proof.signerAddress.toLowerCase() : null, signedByTrustedKey: bySigner, atPredictedUrl,
+      contentBinding: verified.contentBinding, modalMatches: false, eligible, trusted: false, proof,
     },
   };
 }
@@ -466,7 +682,8 @@ const BLOCKS_TRIED = 4;
  * content names, and an edit to its iep:describes alone makes that version altered (409), never
  * a stranger to its own graph. Null when no block binds.
  */
-async function signedRegionHeld(entry: ManifestEntry, descriptorTurtle: string, graphContent: string, cache?: VerifyCache): Promise<BytesRead | null> {
+async function signedRegionHeld(entry: ManifestEntry, descriptorTurtle: string, graphContent: string, trusted: ReadonlySet<string>,
+  places: (p: AuthorshipProof) => boolean, cache?: VerifyCache): Promise<BytesRead | null> {
   if (!DESCRIBES.test(descriptorTurtle)) return null;
   const held = [...graphContent.matchAll(BLOCK_OPENER)].map((m) => m[1] ?? '').filter((g) => g !== '').slice(0, BLOCKS_TRIED);
   for (const graphIri of held) {
@@ -475,7 +692,7 @@ async function signedRegionHeld(entry: ManifestEntry, descriptorTurtle: string, 
     if (ref === null) continue;
     const as = descriptorTurtle.replace(DESCRIBES, () => `iep:describes ${ref}`);
     if (as === descriptorTurtle) continue;
-    const bytes = await readBytes(as, graphContent, entry.modalStatus, cache);
+    const bytes = await readBytes(as, graphContent, entry.modalStatus, trusted, places, cache);
     if (bytes.ok && bytes.read.verified.contentBinding === 'bound' && bytes.read.record !== null && graphIriOf(bytes.read.record.entityIri) === graphIri) return bytes.read;
   }
   return null;
@@ -483,9 +700,10 @@ async function signedRegionHeld(entry: ManifestEntry, descriptorTurtle: string, 
 
 /**
  * Read one record from a pod and verify it: the descriptor and the graph are fetched (a sealed
- * graph opened with `recordKey`), their bytes verified (readBytes), and the record is placed: it
- * must sit at exactly the URL its own proof's descriptorId predicts, and be signed by a platform
- * key this bridge trusts. Once the descriptor is read, every way the graph can fail to be read as
+ * graph opened with `recordKey`), their bytes verified (readBytes), and the record is placed by
+ * the proof among its descriptor's blocks (placeBy) that a platform key this bridge trusts signed
+ * and whose descriptorId predicts exactly the URL it sits at. Once the descriptor is read, every
+ * way the graph can fail to be read as
  * signed is decided by placedByDescriptor, so a version eligible by its descriptor stays eligible
  * (and untrusted). A descriptor whose iep:describes no longer names its graph's signed region is
  * read through signedRegionHeld, and is altered (DESCRIBES_ALTERED).
@@ -496,6 +714,7 @@ export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: 
   if (desc.body === null) return unreadable(entry, `the descriptor is not at its manifest URL (${desc.status})`);
   const descriptorTurtle = desc.body;
   const shut = (why: string): Promise<LoadedRecord> => placedByDescriptor(entry, podUrl, descriptorTurtle, trusted, container, why, cache);
+  const places = placesAt(entry, podUrl, container);
   const dist = parseDistributionFromDescriptorTurtle(descriptorTurtle);
   if (!dist) return shut('its descriptor links no graph');
   if (!dist.accessURL.startsWith(podUrl)) return shut('its descriptor links a graph outside this pod');
@@ -511,25 +730,26 @@ export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: 
     if (graph.body === null) return shut(`its graph is not at the URL its descriptor names (${graph.status})`);
     graphContent = graph.body;
   }
-  let bytes = await readBytes(descriptorTurtle, graphContent, entry.modalStatus, cache);
+  let bytes = await readBytes(descriptorTurtle, graphContent, entry.modalStatus, trusted, places, cache);
   let describesAltered = false;
   if (!bytes.ok) {
-    const held = await signedRegionHeld(entry, descriptorTurtle, graphContent, cache);
+    const held = await signedRegionHeld(entry, descriptorTurtle, graphContent, trusted, places, cache);
     if (held === null) return shut(bytes.why);
     bytes = { ok: true, read: held };
     describesAltered = true;
   }
   const r = bytes.read;
   const { proof, verified } = r;
-  const { signerAddress, signedByTrustedKey, atPredictedUrl } = placement(entry, podUrl, container, proof, r.subjectId, verified.signatureValid, trusted);
+  const signedByTrustedKey = r.bySigner;
+  const atPredictedUrl = r.placed === true;
   const eligible = signedByTrustedKey && atPredictedUrl;
-  const why = distrust(r, signedByTrustedKey, atPredictedUrl, 'it was signed by a key this bridge does not trust') ?? (describesAltered ? DESCRIBES_ALTERED : null);
+  const why = distrust(r, 'it was signed by a key this bridge does not trust') ?? (describesAltered ? DESCRIBES_ALTERED : null);
   const isTrusted = eligible && why === null;
   const confidenceText = firstMatch(/iep:epistemicConfidence\s+"([^"]+)"/, descriptorTurtle);
   const confidence = confidenceText === null ? null : Number(confidenceText);
   return {
     descriptorUrl: entry.descriptorUrl,
-    recordId: proof?.descriptorId ?? r.subjectId ?? '',
+    recordId: proof?.descriptorId ?? '',
     graphIri: r.graphIri,
     modalStatus: r.modalStatus,
     validFrom: firstMatch(/iep:validFrom\s+"([^"]+)"/, descriptorTurtle),
@@ -539,7 +759,7 @@ export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: 
     supersedes: entry.supersedes ?? [],
     descriptorTurtle, graphContent, graphTurtle: r.graphTurtle, graphDigest: r.graphDigest, record: r.record,
     authorship: {
-      signatureValid: verified.signatureValid, signerAddress, signedByTrustedKey, atPredictedUrl,
+      signatureValid: verified.signatureValid, signerAddress: proof ? proof.signerAddress.toLowerCase() : null, signedByTrustedKey, atPredictedUrl,
       contentBinding: verified.contentBinding, modalMatches: r.modalMatches, eligible, trusted: isTrusted, proof,
     },
     why,
@@ -565,9 +785,10 @@ export interface BundleVerdict {
  * `bundle` array — with no pod and no bridge: each record's platform proof must verify, bind
  * the graph bytes in the bundle, and come from one of `expectedPlatform`, the platform addresses
  * the holder expects (wrd.list_records reports the bridge's as bridge.platform.address, and the
- * bridge prints it at startup). Where a record
- * sat is not checked: a download has no URL to check against. Nothing here trusts the bundle's
- * own claims about who signed it.
+ * bridge prints it at startup); the proof is found among every block the descriptor holds, as on
+ * the pod, and the descriptor read as RDF must state it. Where a record sat is not checked: a
+ * download has no URL to check against. Nothing here trusts the bundle's own claims about who
+ * signed it.
  */
 export async function verifyHolderBundle(bundle: unknown, expectedPlatform: readonly string[]):
   Promise<{ readonly ok: boolean; readonly records: readonly BundleVerdict[]; readonly why: string | null }> {
@@ -587,15 +808,14 @@ export async function verifyHolderBundle(bundle: unknown, expectedPlatform: read
       records.push({ descriptorUrl, recordKind: null, entityIri: null, status: null, signerAddress: null, verified: false, why: 'the entry lacks descriptorTurtle or graphTrig' });
       continue;
     }
-    const bytes = await readBytes(descriptorTurtle, graphTrig, undefined);
+    const bytes = await readBytes(descriptorTurtle, graphTrig, undefined, expected, null);
     if (!bytes.ok) {
       records.push({ descriptorUrl, recordKind: null, entityIri: null, status: null, signerAddress: null, verified: false, why: bytes.why });
       continue;
     }
     const r = bytes.read;
     const signerAddress = r.proof ? r.proof.signerAddress.toLowerCase() : null;
-    const byExpected = r.verified.signatureValid && signerAddress !== null && expected.has(signerAddress);
-    const why = distrust(r, byExpected, null, `it was signed by ${signerAddress ?? 'no key'}, not by an expected platform address`);
+    const why = distrust(r, `it was signed by ${signerAddress ?? 'no key'}, not by an expected platform address`);
     records.push({
       descriptorUrl, recordKind: r.record?.recordKind ?? null, entityIri: r.record?.entityIri ?? null, status: r.record?.status ?? null,
       signerAddress, verified: why === null, why,

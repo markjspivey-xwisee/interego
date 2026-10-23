@@ -31,7 +31,7 @@
  * one.
  */
 import { describe, it, expect, afterAll } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { request } from 'node:http';
 import { join, relative } from 'node:path';
@@ -46,6 +46,7 @@ import { createWrdHandlers } from '../bridge/handlers.js';
 import { attachUi, hostAllowlistGuard, isLoopbackBind, parseEveryQueryPair, servedHostNames, UI_CSP } from '../bridge/ui.js';
 import { runDemo, memoryPod, demoClock, DEMO_REFUSALS, DEMO_POD, DEMO_HOLDER_POD, DEMO_RECORD_KEY, type MemoryPod, type DemoReport } from '../demo/run.js';
 import { h16, entityIriKey, iriKeyFingerprint } from '../src/records.js';
+import { walkManifest } from '../bridge/pod-helpers.js';
 
 const read = (rel: string): string => readFileSync(new URL(rel, import.meta.url), 'utf8').split('\r\n').join('\n');
 const APP_JS = readFileSync(new URL('../bridge/ui/app.js', import.meta.url), 'utf8');
@@ -103,6 +104,7 @@ interface UiPage {
   readonly errors: string[];
   text(): string;
   q(sel: string): Element | null;
+  all(sel: string): Element[];
   click(buttonText: string): void;
   select(sel: string, value: string): void;
   until<T>(fn: () => T | null | undefined | false, what: string, ms?: number): Promise<T>;
@@ -128,12 +130,15 @@ async function openUi(base: string): Promise<UiPage> {
   };
   // jsdom does not scroll: opening a panel scrolls to the top, which is a no-op here, not an error.
   (w as unknown as { scrollTo: () => void }).scrollTo = () => undefined;
+  // Nor print: the summary is rendered into #print, and window.print() only opens the dialog.
+  (w as unknown as { print: () => void }).print = () => undefined;
   w.eval(APP_JS);
   const d = w.document;
   return {
     log, errors,
     text: () => d.getElementById('app')?.textContent ?? '',
     q: (sel) => d.querySelector(sel),
+    all: (sel) => [...d.querySelectorAll(sel)],
     click: (buttonText) => {
       const b = [...d.querySelectorAll('button')].find((x) => x.textContent === buttonText);
       if (!b) throw new Error(`no button "${buttonText}"`);
@@ -485,7 +490,11 @@ describe('work-redesign offline demo and web UI', () => {
     expect(server).toContain("pod credential: ${writeSecret ? 'configured");
     expect(server).not.toMatch(/\$\{writeSecret\}|\$\{recordKeyHex\}|\$\{recordKey\.secretKey\}/);
     expect(server).toMatch(/WARNING: no WRD_RECORD_KEY — records are written in PLAINTEXT/);
-    expect(server).toMatch(/^const requireRecordKey = env\('WRD_REQUIRE_RECORD_KEY'\) === '1';$/m);
+    // WRD_REQUIRE_RECORD_KEY is read as it is, never through env(): a blank value must not read as unset, which turns the guard off.
+    expect(server).toMatch(/^const requireRecordKeyValue = process\.env\['WRD_REQUIRE_RECORD_KEY'\];$/m);
+    expect(server).not.toMatch(/env\('WRD_REQUIRE_RECORD_KEY'\)/);
+    expect(server).toMatch(/if \(requireRecordKeyValue !== undefined && requireRecordKeyValue !== '0' && requireRecordKeyValue !== '1'\) \{\n[^\n]*did not start: WRD_REQUIRE_RECORD_KEY is [^\n]*\n\s*process\.exit\(1\);/);
+    expect(server).toMatch(/^const requireRecordKey = requireRecordKeyValue === '1';$/m);
     expect(server).toMatch(/if \(requireRecordKey && recordKeyHex === undefined\) \{\n[^\n]*WRD_REQUIRE_RECORD_KEY=1 and WRD_RECORD_KEY is not set[^\n]*\n\s*process\.exit\(1\);/);
     // The image requires a record key, declares it unset, and says to back it up.
     const dockerfile = readFileSync(new URL('../../../deploy/Dockerfile.wrd-bridge', import.meta.url), 'utf8');
@@ -500,26 +509,68 @@ describe('work-redesign offline demo and web UI', () => {
     expect(others.filter((f) => reads.test(readFileSync(f, 'utf8'))).map((f) => relative(vertical, f))).toEqual([]);
   });
 
-  it('the production server does not start without a valid record key when WRD_REQUIRE_RECORD_KEY=1 (unset or blank counts as missing): exit 1, saying why', () => {
+  it('the production server reads WRD_REQUIRE_RECORD_KEY as it is: unset or 0 starts with or without a record key, 1 starts only with a valid one (a blank key counts as missing), and any other value, blank or whitespace included, never starts: exit 1, saying why', async () => {
     const root = fileURLToPath(new URL('../../../', import.meta.url));
     const server = fileURLToPath(new URL('../bridge/server.ts', import.meta.url));
     const base: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('WRD_')));
-    const start = (extra: NodeJS.ProcessEnv): { status: number | null; stderr: string; stdout: string } => {
-      const r = spawnSync(process.execPath, ['--import', 'tsx', server], {
-        cwd: root, env: { ...base, PORT: '0', HOST: '127.0.0.1', WRD_DEFAULT_POD_URL: DEMO_POD, ...extra }, encoding: 'utf8', timeout: 60_000,
+    const KEY = 'ab'.repeat(32);
+    /** Start the server; once it says it is listening it is stopped. `started` says whether it got that far. */
+    const start = (extra: NodeJS.ProcessEnv): Promise<{ status: number | null; started: boolean; stderr: string; stdout: string }> => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', server], {
+        cwd: root, env: { ...base, PORT: '0', HOST: '127.0.0.1', WRD_DEFAULT_POD_URL: DEMO_POD, ...extra }, stdio: ['ignore', 'pipe', 'pipe'],
       });
-      return { status: r.status, stderr: r.stderr, stdout: r.stdout };
-    };
-    for (const recordKey of [undefined, '', '   ']) {
-      const r = start({ WRD_REQUIRE_RECORD_KEY: '1', ...(recordKey === undefined ? {} : { WRD_RECORD_KEY: recordKey }) });
-      expect([JSON.stringify(recordKey), r.status]).toEqual([JSON.stringify(recordKey), 1]);
-      expect(r.stderr).toMatch(/did not start: WRD_REQUIRE_RECORD_KEY=1 and WRD_RECORD_KEY is not set/);
-      expect(r.stdout).not.toMatch(/listening on/);
+      let stdout = '';
+      let stderr = '';
+      let started = false;
+      const timer = setTimeout(() => child.kill('SIGKILL'), 120_000);
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        stdout += chunk;
+        if (!started && /listening on 127\.0\.0\.1:0\)/.test(stdout)) { started = true; child.kill('SIGTERM'); }
+      });
+      child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+      child.on('error', reject);
+      child.on('close', (code) => { clearTimeout(timer); resolve({ status: code, started, stderr, stdout }); });
+    });
+    const cases: Array<readonly [string | undefined, string | undefined]> = [];
+    for (const guard of [undefined, '0', '1', '', '  ', 'yes', ' 1']) for (const key of [undefined, KEY]) cases.push([guard, key]);
+    // A blank or whitespace record key counts as missing where one is required; a malformed one stops the bridge whether or not one is.
+    cases.push(['1', ''], ['1', '   '], ['1', 'abc'], [undefined, 'abc']);
+    // Three at a time: each start compiles and loads the whole bridge.
+    const runs: Array<Awaited<ReturnType<typeof start>>> = [];
+    const queue = [...cases.entries()];
+    await Promise.all([0, 1, 2].map(async () => {
+      for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+        const [i, [guard, key]] = next;
+        runs[i] = await start({ ...(guard === undefined ? {} : { WRD_REQUIRE_RECORD_KEY: guard }), ...(key === undefined ? {} : { WRD_RECORD_KEY: key }) });
+      }
+    }));
+    for (const [i, [guard, key]] of cases.entries()) {
+      const r = must(runs[i], 'run');
+      const label = `WRD_REQUIRE_RECORD_KEY=${JSON.stringify(guard)} WRD_RECORD_KEY=${JSON.stringify(key)}`;
+      if (key === 'abc') {
+        expect([label, r.started, r.status, /WRD_RECORD_KEY must be 64 hex characters/.test(r.stderr)]).toEqual([label, false, 1, true]);
+      } else if (guard === undefined || guard === '0') {
+        // No guard: it starts, sealed with a key and warning that records are plaintext without one.
+        expect([label, r.started, /did not start/.test(r.stderr)]).toEqual([label, true, false]);
+        expect([label, key === undefined ? /WARNING: no WRD_RECORD_KEY — records are written in PLAINTEXT/.test(r.stdout) : /records written from now on are sealed to the record key/.test(r.stdout)]).toEqual([label, true]);
+      } else if (guard === '1') {
+        if (key === KEY) {
+          expect([label, r.started, /did not start/.test(r.stderr)]).toEqual([label, true, false]);
+          expect([label, /records written from now on are sealed to the record key/.test(r.stdout)]).toEqual([label, true]);
+        } else {
+          expect([label, r.started, r.status, /did not start: WRD_REQUIRE_RECORD_KEY=1 and WRD_RECORD_KEY is not set/.test(r.stderr)]).toEqual([label, false, 1, true]);
+        }
+      } else {
+        // Blank, whitespace or any other value: never read as unset, never as on; the bridge stops and says which.
+        const said = guard.trim() === '' ? /did not start: WRD_REQUIRE_RECORD_KEY is blank; set it to 1 to require a record key, or to 0 \(or unset it\) to allow plaintext records/
+          : /did not start: WRD_REQUIRE_RECORD_KEY is neither 1 nor 0; set it to 1 to require a record key, or to 0 \(or unset it\) to allow plaintext records/;
+        expect([label, r.started, r.status, said.test(r.stderr)]).toEqual([label, false, 1, true]);
+        expect([label, /listening on/.test(r.stdout)]).toEqual([label, false]);
+      }
     }
-    // A malformed key stops it whether or not a key is required.
-    const bad = start({ WRD_REQUIRE_RECORD_KEY: '1', WRD_RECORD_KEY: 'abc' });
-    expect([bad.status, /WRD_RECORD_KEY must be 64 hex characters/.test(bad.stderr)]).toEqual([1, true]);
-  }, 120_000);
+  }, 300_000);
 
   it('the web UI, run in a DOM against a demo-composed bridge, signs one read per signer and reuses it, sending it only in a POST body, never in a URL; a signer with no role is refused and can switch back; with nothing to sign it meets the 401', async () => {
     const pod = memoryPod();
@@ -616,6 +667,98 @@ describe('work-redesign offline demo and web UI', () => {
     expect(bare.text()).toContain('No wallet: this browser has no EIP-191 wallet');
     expect(bare.errors).toEqual([]);
   }, 60_000);
+
+  it('the web UI never shows a chain cut short as whole: with a decision\'s and a grant\'s first versions gone, the decision card and its printed summary head the chain as incomplete with why in a badbox beside the heading, the grant\'s row says why, and the header counts both cuts; a whole chain is headed as every version', async () => {
+    // The walked pod, copied, so the versions removed here are removed from this test's pod alone.
+    const pod = memoryPod();
+    for (const [url, body] of (await walked()).pod.bodies) await pod.fetchFn(url, { method: 'PUT', body });
+    const NOW = new Date('2027-06-01T00:00:00.000Z');
+    const ana = demoWallet('ana');
+    const handlers = createWrdHandlers({
+      fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => NOW, platform: { wallet: demoWallet('platform', 'agent'), keyKind: 'demo' },
+      adminAddresses: [demoWallet('admin').address], recordKey: DEMO_RECORD_KEY, demoPersonas: new Map([['ana', { id: 'ana', label: 'Ana (demo)', wallet: ana }]]),
+    });
+    let n = 0;
+    const readModel = async (): Promise<Obj> => {
+      n += 1;
+      const payload = { intent: 'wrd:read-records', podUrl: DEMO_POD, issuedAt: NOW.toISOString(), nonce: `chain-cut-read-${String(n).padStart(6, '0')}` };
+      const all = objOf(await handlers['wrd.read_records']!({ envelope: { payload, signature: await signMessageRaw(ana, canonicalJson(payload)) } }));
+      expect(all['status']).toBe('listed');
+      return all;
+    };
+    const before = await readModel();
+    expect([...rows(before['decisions']), ...rows(before['grants'])].filter((x) => x['chainUnreadable'] !== undefined)).toEqual([]);
+    const decisions = rows(before['decisions']);
+    const cutAt = decisions.findIndex((d) => rows(d['chain']).length >= 2);
+    const wholeAt = decisions.findIndex((d, i) => i !== cutAt);
+    expect([cutAt >= 0, wholeAt >= 0]).toEqual([true, true]);
+    const cutDecision = must(decisions[cutAt], 'a decision with an earlier version');
+    const firstOf = (chain: Obj[]): string => String(must([...chain].sort((a, b) => Number(a['version']) - Number(b['version']))[0], 'its first version')['descriptorUrl']);
+    const revoked = must(rows(before['grants']).find((g) => g['status'] === 'revoked'), 'the revoked grant');
+    const grantHead = String(objOf(revoked['head'])['descriptorUrl']);
+    const grantFirst = must(must((await walkManifest(DEMO_POD, pod.fetchFn)).entries.find((e) => e.descriptorUrl === grantHead), 'the grant head\'s entry').supersedes?.[0], 'the grant\'s first version');
+    // A party with write access to the pod deletes the first version of each: the walk back from the current version stops short.
+    for (const url of [firstOf(rows(cutDecision['chain'])), grantFirst]) {
+      expect((await pod.fetchFn(url, { method: 'DELETE' })).status).toBe(204);
+    }
+    const after = await readModel();
+    const cutRow = must(rows(after['decisions']).find((d) => d['decisionIri'] === cutDecision['decisionIri']), 'the cut decision');
+    const grantRow = must(rows(after['grants']).find((g) => g['grantIri'] === revoked['grantIri']), 'the cut grant');
+    const decisionWhy = String(cutRow['chainUnreadable']);
+    const grantWhy = String(grantRow['chainUnreadable']);
+    expect([decisionWhy, grantWhy]).toEqual([expect.stringMatching(/^the chain below is incomplete: /), expect.stringMatching(/^grantedAt may be missing: /)]);
+    const cuts = [...rows(after['decisions']), ...rows(after['grants'])].filter((x) => x['chainUnreadable'] !== undefined);
+    expect(cuts.length).toBe(2);
+    expect(rows(after['decisions'])[wholeAt]?.['chainUnreadable']).toBeUndefined();
+
+    const l = await listenLoopback(createVerticalBridge({
+      verticalName: 'work-redesign', affordances: [...wrdAffordances, ...wrdDemoAffordances], handlers, deploymentUrl: 'http://127.0.0.1', middleware: (a) => { attachUi(a, { base: 'http://127.0.0.1' }); parseEveryQueryPair(a); },
+    }));
+    listeners.push(l);
+    const page = await openUi(l.base);
+    await page.until(() => page.text().includes('Platform signer'), 'the records');
+    // The header counts every chain cut short, in a badbox.
+    const CUTS = '2 record chain(s) do not read back to their first version: an earlier version is missing, or is not trusted. Their history is shown as incomplete, never as whole.';
+    expect(page.all('header.strip p.badbox').map((p) => p.textContent)).toContain(CUTS);
+
+    // The cut decision's card: the heading says the chain is incomplete, and why sits beside it in a badbox.
+    const CUT_HEADING = 'Versions of this decision read so far: not every version (the chain is incomplete)';
+    const WHOLE_HEADING = 'Every version of this decision';
+    page.click('Decisions');
+    await page.until(() => page.all('main table button').filter((b) => b.textContent === 'Open').length === decisions.length, 'the decisions');
+    // The versions' table, as the UI's table() wraps it.
+    const versionsTable = (el: Element | null | undefined): boolean => el?.className === 'scroll' && el.firstElementChild?.tagName === 'TABLE';
+    const openAt = (i: number): void => { (must(page.all('main table button').filter((b) => b.textContent === 'Open' || b.textContent === 'Hide')[i], `decision ${i}`) as HTMLButtonElement).click(); };
+    openAt(cutAt);
+    const heading = await page.until(() => page.all('main .card h3').find((x) => x.textContent === CUT_HEADING), 'the cut chain\'s heading');
+    expect(page.all('main .card h3').map((x) => x.textContent)).not.toContain(WHOLE_HEADING);
+    const beside = must(heading.nextElementSibling, 'the element after the heading');
+    expect([beside.tagName, beside.className, beside.textContent]).toEqual(['P', 'badbox small', decisionWhy]);
+    expect(versionsTable(beside.nextElementSibling)).toBe(true);
+    // Its printed summary says the same, before the versions it lists.
+    page.click('Print summary');
+    const printed = await page.until(() => page.all('#print h2').find((x) => x.textContent === CUT_HEADING), 'the printed heading');
+    expect(page.all('#print h2').map((x) => x.textContent)).not.toContain(WHOLE_HEADING);
+    const printedWhy = must(printed.nextElementSibling, 'the element after the printed heading');
+    expect([printedWhy.tagName, printedWhy.className, printedWhy.textContent]).toEqual(['P', 'badbox', `Not every version: the chain is incomplete. ${decisionWhy}`]);
+    expect(versionsTable(printedWhy.nextElementSibling)).toBe(true);
+
+    // A whole chain keeps its heading, with no badbox, on the card and in print.
+    openAt(cutAt);
+    openAt(wholeAt);
+    const whole = await page.until(() => page.all('main .card h3').find((x) => x.textContent === WHOLE_HEADING), 'the whole chain\'s heading');
+    expect(page.all('main .card h3').map((x) => x.textContent)).not.toContain(CUT_HEADING);
+    expect(versionsTable(whole.nextElementSibling)).toBe(true);
+    page.click('Print summary');
+    await page.until(() => page.all('#print h2').some((x) => x.textContent === WHOLE_HEADING), 'the whole chain printed');
+    expect(page.all('#print .badbox')).toEqual([]);
+
+    // The grant's row says why its grantedAt may be missing.
+    page.click('Agents & grants');
+    await page.until(() => page.text().includes('Evaluate and grant'), 'the grants');
+    expect(page.all('main table td .badbox').map((x) => x.textContent)).toEqual([grantWhy]);
+    expect(page.errors).toEqual([]);
+  }, 180_000);
 
   it('a loopback bridge refuses (421, typed) a Host naming another site before any route, and answers its loopback names and its public host', async () => {
     const PUBLIC = 'https://bridge.example.org';

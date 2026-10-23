@@ -36,6 +36,11 @@ const WALLET_STEPS = [
 const PACKET_SENTENCE = 'Give this to your own AI agent; this server drafts nothing.';
 const PREVIEW_LABEL = 'preview — the platform re-checks when you sign';
 const NO_TOTALS = 'No totals across decisions: percentiles do not add.';
+// A decision whose walk back from its current version stops short (chainUnreadable) is never shown as its whole chain.
+const CHAIN_WHOLE = 'Every version of this decision';
+const CHAIN_CUT = 'Versions of this decision read so far: not every version (the chain is incomplete)';
+const CHAIN_CUT_PRINT = 'Not every version: the chain is incomplete.';
+const chainCuts = (n) => `${n} record chain(s) do not read back to their first version: an earlier version is missing, or is not trusted. Their history is shown as incomplete, never as whole.`;
 const LEVEL_NAMES = {
   person: 'A person does it',
   'person-with-agent-assist': 'A person does it, with an agent assisting',
@@ -412,6 +417,7 @@ function strip() {
   const altered = (d.altered ?? []).length;
   const forked = (d.forked ?? []).length;
   const untrusted = (d.untrusted ?? []).length;
+  const cuts = [...(d.decisions ?? []), ...(d.grants ?? [])].filter((x) => x.chainUnreadable).length;
   return h('header', { class: 'strip' },
     h('div', { class: 'stack' },
       h('div', { class: 'row' }, h('h1', { text: 'Work redesign' }), h('span', { class: 'muted small' }, 'pod ', h('code', { text: d.podUrl })),
@@ -422,6 +428,7 @@ function strip() {
       d.demoRecords > 0 ? h('p', { class: 'small' }, chip('demo', 'demo'), ` ${d.demoRecords} of ${d.records} records here are ${d.demoLabel}.`) : null,
       altered + forked + untrusted > 0 ? h('p', { class: 'warnbox small' },
         `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`) : null,
+      cuts > 0 ? h('p', { class: 'badbox small', text: chainCuts(cuts) }) : null,
       (d.sealed ?? []).length > 0 ? h('p', { class: 'badbox small', text: `${d.sealed.length} record(s) are sealed and this bridge cannot open them. ${d.sealedNote ?? ''}` }) : null,
       d.recordKeyMismatch ? h('p', { class: 'badbox small', text: `Another record key: ${d.recordKeyMismatch.why}` }) : null,
       d.plaintext ? h('p', { class: 'warnbox small', text: `${d.plaintext.versions} record version(s) written before the record key are plaintext on the pod. ${d.plaintext.why}` }) : null,
@@ -1378,7 +1385,8 @@ function decisionCard(d, v) {
     d.countersign ? h('p', { class: 'small', text: `${d.countersign.verdict === 'approve' ? 'Countersigned' : 'Declined'} by ${d.countersign.personRef} at ${when(d.countersign.at)}${d.countersign.objectionsConsidered.length ? `, over the named objection(s) on ${d.countersign.objectionsConsidered.map(taskName).join(', ')}` : ''}${(d.countersign.unacknowledgedConsidered ?? []).length ? `, over the silence of the person named on ${d.countersign.unacknowledgedConsidered.map(taskName).join(', ')}` : ''}.` }) : null,
     d.outcome ? outcomeNode(d) : null,
     d.next ? h('p', { class: 'warnbox', text: d.next }) : null,
-    h('h3', { text: 'Every version of this decision' }),
+    h('h3', { text: d.chainUnreadable ? CHAIN_CUT : CHAIN_WHOLE }),
+    d.chainUnreadable ? h('p', { class: 'badbox small', text: d.chainUnreadable }) : null,
     table(['#', 'Status', 'Modal status', 'Signed by', 'At', 'Descriptor'], d.chain.map((c) => h('tr', null, h('td', { text: String(c.version) }), h('td', { text: c.status }), h('td', { text: c.modalStatus }),
       h('td', { text: c.signedBy.map((x) => labelOf(addrOfDid(x))).join(', ') }), h('td', { text: when(c.at) }), h('td', null, h('code', { text: c.descriptorUrl }))))),
     d.status === 'submitted' ? h('div', { class: 'card' }, h('strong', { text: 'Countersign or decline' }),
@@ -1461,6 +1469,8 @@ function printDecision(d, v) {
     r ? h('p', { text: `Cash weekly change ${band(r.scenarios.cash.weeklyDelta, (n) => money(n, r.currency))}; if redeployed ${band(r.scenarios.redeployed.weeklyDelta, (n) => money(n, r.currency))}. NPV (cash) ${band(r.scenarios.cash.npv, (n) => money(n, r.currency))}. Seed ${r.seed}, ${r.draws} draws.` }) : null,
     d.measurementPlan ? h('p', { text: `Measurement: ${d.measurementPlan.windowWeeks} weeks after countersign; ${d.basisLabel}.` }) : null,
     d.outcome ? outcomeNode(d) : null,
+    h('h2', { text: d.chainUnreadable ? CHAIN_CUT : CHAIN_WHOLE }),
+    d.chainUnreadable ? h('p', { class: 'badbox', text: `${CHAIN_CUT_PRINT} ${d.chainUnreadable}` }) : null,
     table(['#', 'Status', 'Modal status', 'Signed by', 'At'], d.chain.map((c) => h('tr', null, h('td', { text: String(c.version) }), h('td', { text: c.status }), h('td', { text: c.modalStatus }),
       h('td', { text: c.signedBy.join(', ') }), h('td', { text: when(c.at) })))),
     h('p', { text: NO_TOTALS }));
@@ -1571,7 +1581,8 @@ function agentsView() {
     h('h3', { text: 'Grants' }),
     table(['Agent', 'Kind of task', 'Principal', 'Model', 'Status', 'Evidence', ''], (d.grants ?? []).map((g) => h('tr', null,
       h('td', { text: labelOf(g.agentAddress) }), h('td', { text: g.taskKind }), h('td', { text: labelOf(g.principal) }), h('td', { text: g.model }),
-      h('td', null, chip(g.status, g.active ? 'good' : 'bad'), g.active ? null : h('div', { class: 'small', text: g.why }), demoChip(g)),
+      h('td', null, chip(g.status, g.active ? 'good' : 'bad'), g.active ? null : h('div', { class: 'small', text: g.why }), demoChip(g),
+        g.chainUnreadable ? h('div', { class: 'badbox small', text: g.chainUnreadable }) : null),
       h('td', { class: 'small', text: `${g.evaluation.samples} reviewed runs, ${pct(g.evaluation.acceptedShare)} accepted by a person, ${g.evaluation.distinctConfirmers} ${g.evaluation.distinctConfirmersNote}; ${g.evaluation.readyClaims ?? '—'} ready claims, precision ${pct(g.evaluation.readyClaimPrecision)}; from ${g.evidenceTaskIris.map(taskName).join(', ')}` }),
       h('td', null, g.status === 'granted' ? h('button', { text: 'Revoke…', on: { click: () => revokePanel(g) } }) : g.revokedAt ? h('span', { class: 'small', text: `revoked ${when(g.revokedAt)}: ${g.revocationWhy}` }) : null)))),
     h('div', { class: 'card' }, h('strong', { text: 'Evaluate and grant' }),

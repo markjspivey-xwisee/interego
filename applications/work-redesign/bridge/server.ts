@@ -40,8 +40,12 @@
  *                                   sealed write on
  *   WRD_REQUIRE_RECORD_KEY          1 → the bridge does not start (exit 1) without a valid
  *                                   WRD_RECORD_KEY (blank counts as missing), so a deployment
- *                                   cannot fall back to plaintext records. The image sets it;
- *                                   unset by default for a local run
+ *                                   cannot fall back to plaintext records; 0 or unset → no such
+ *                                   guard (a local run's default). The image sets it to 1. Read
+ *                                   as it is, not through env(): any other value, a blank or
+ *                                   whitespace one included (an unresolved reference on the
+ *                                   service overriding the image's 1, say), stops the bridge
+ *                                   (exit 1, saying why) rather than turn the guard off
  *   WRD_PUBLIC_READS                1 → wrd.list_records and wrd.calibration answer unsigned
  *                                   GETs from anyone who can reach the bridge; otherwise they
  *                                   answer 401, reads need a signed read (wrd.read_records,
@@ -65,7 +69,8 @@ import { operatorPodFetch } from './pod-helpers.js';
 import { attachUi, hostAllowlistGuard, isLoopbackBind, parseEveryQueryPair, servedHostNames } from './ui.js';
 
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((s) => s.trim()).filter((s) => s !== '');
-// An image declares every variable it reads (`ENV NAME=`), so an empty value means unset.
+// An image declares every variable it reads (`ENV NAME=`), so an empty value means unset; the one
+// exception is WRD_REQUIRE_RECORD_KEY, read as it is below.
 const env = (name: string): string | undefined => {
   const v = process.env[name];
   return v !== undefined && v.trim() !== '' ? v.trim() : undefined;
@@ -79,12 +84,20 @@ const defaultPodUrl = env('WRD_DEFAULT_POD_URL');
 const servedPods = list(env('WRD_SERVED_PODS') ?? defaultPodUrl);
 const writeSecret = env('WRD_POD_WRITE_SECRET');
 const recordKeyHex = env('WRD_RECORD_KEY');
-const requireRecordKey = env('WRD_REQUIRE_RECORD_KEY') === '1';
+// Not through env(): a blank value must not read as unset here, where unset turns the guard off.
+const requireRecordKeyValue = process.env['WRD_REQUIRE_RECORD_KEY'];
 const publicReads = env('WRD_PUBLIC_READS') === '1';
 const key = env('WRD_PLATFORM_KEY');
 
+// The guard is on only for exactly 1 and off only for 0 or unset: any other value, blank or
+// whitespace included, is a misconfiguration that would otherwise switch it off without a word.
+if (requireRecordKeyValue !== undefined && requireRecordKeyValue !== '0' && requireRecordKeyValue !== '1') {
+  process.stderr.write(`work-redesign bridge did not start: WRD_REQUIRE_RECORD_KEY is ${requireRecordKeyValue.trim() === '' ? 'blank' : 'neither 1 nor 0'}; set it to 1 to require a record key, or to 0 (or unset it) to allow plaintext records\n`);
+  process.exit(1);
+}
+const requireRecordKey = requireRecordKeyValue === '1';
 // A deployment that requires a record key does not start without one: on a pod that serves
-// anonymous reads, plaintext records would be readable by anyone. env() reads blank as unset.
+// anonymous reads, plaintext records would be readable by anyone. env() reads a blank key as unset.
 if (requireRecordKey && recordKeyHex === undefined) {
   process.stderr.write('work-redesign bridge did not start: WRD_REQUIRE_RECORD_KEY=1 and WRD_RECORD_KEY is not set (64 hex characters); records would be written in plaintext\n');
   process.exit(1);

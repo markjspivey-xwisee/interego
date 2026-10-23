@@ -29,7 +29,7 @@ import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type WrdDeps } from '../bridge/handlers.js';
 import {
   readRecord, publishRecord, verifyHolderBundle, operatorPodFetch, openPod, KeyedMutex, StaleHeadError, RecordNotSealableError, WRD_CONTAINER, SEALED_NO_KEY, SEALED_OTHER_KEY,
-  DESCRIBES_ALTERED,
+  DESCRIBES_ALTERED, SUBJECT_ALTERED, PROOF_ALTERED, DESCRIPTOR_UNPARSEABLE,
 } from '../bridge/pod-helpers.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
 import { envelopeSha256, entityIri, entityIriKey, iriKeyFingerprint, recordKeyFingerprint, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, type WrdRecord } from '../src/records.js';
@@ -2410,6 +2410,114 @@ describe('work-redesign bridge', () => {
     expect([arr(restored['forked']), arr(restored['altered'])]).toEqual([[], []]);
     ok(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: 'after-restore-kind', label: 'Another', definition: 'Another kind.' }] }));
   }, 120_000);
+
+  it('places a version by the signed proof alone: an edit to its descriptor\'s layout, comments or subject, or a decoy proof block, never sets aside a version a trusted key signed where its proof says; it reads trusted or answers 409 (altered), nothing proceeds from the version before it, and once restored it reads with no fork; a task head and a registry head alike', async () => {
+    const w = await world({ recordKey: K1 });
+    await register(w);
+    const ap = await captureAp(w);
+    const t1First = headOfRow(await taskRow(w, ap.t1));
+    ok(await ratify(w, CY, ap.t1));
+    const t1Head = headOfRow(await taskRow(w, ap.t1));
+    const t1Graph = graphIriOf(ap.t1);
+    const trusted = new Set([addr(PLATFORM)]);
+    const SUBJECT = /^<urn:wrd:record:[^>]+>\n {4}a iep:ContextDescriptor ;/m;
+    const PROOF = /<> iep:authorshipProof \[[^\]]*\] \./;
+    const IEP_IRI = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
+    const PROOF_TERMS = /\biep:(authorshipProof|scheme|issuer|verificationMethod|signerAddress|created|ownerWebId|descriptorId|agentDid|contentHash|proofValue)\b/g;
+    const take = (re: RegExp, text: string): string => must(re.exec(text), String(re))[0];
+    const commented = (block: string): string => block.split('\n').map((l) => `# ${l}`).join('\n');
+    const atSubject = (d: string, f: (subject: string) => string): string => d.replace(take(SUBJECT, d), f(take(SUBJECT, d)));
+    const atProof = (d: string, f: (proof: string) => string): string => d.replace(take(PROOF, d), f(take(PROOF, d)));
+    // [what was edited, the edit (given the version before's descriptor too), null when it reads trusted, else why it is altered]
+    const edits: Array<readonly [string, (d: string, prev: string) => string, string | null]> = [
+      ['a leading space before the subject line', (d) => atSubject(d, (x) => ` ${x}`), null],
+      ['the subject joined to its type line', (d) => atSubject(d, (x) => x.replace('>\n    a ', '> a ')), null],
+      ['a comment between the subject and its type', (d) => atSubject(d, (x) => x.replace('>\n    a ', '>\n    # typed below ]\n    a ')), null],
+      ['rdf:type for a', (d) => atSubject(d, (x) => x.replace('    a iep:', '    rdf:type iep:')), null],
+      ['CRLF line ends', (d) => d.split('\n').join('\r\n'), null],
+      ['the proof moved above the subject', (d) => { const p = take(PROOF, d); return atSubject(d.replace(p, ''), (x) => `${p}\n\n${x}`); }, null],
+      ['another descriptor subject above it', (d) => atSubject(d, (x) => `<urn:wrd:note:above>\n    a iep:ContextDescriptor .\n\n${x}`), null],
+      ['a comment naming iep:authorshipProof [ above it', (d) => atSubject(d, (x) => `# see iep:authorshipProof [ below ]\n${x}`), null],
+      ['a comment opening iep:authorshipProof [ with a forged proofValue, never closed, right above the real proof', (d) => atProof(d, (p) => `# iep:authorshipProof [ iep:proofValue "0x${'ab'.repeat(65)}" ;\n${p}`), null],
+      ['a ] comment inside the real proof', (d) => atProof(d, (p) => p.replace('a iep:SignedAuthorship ;\n', 'a iep:SignedAuthorship ;\n    # the block ] ends below\n')), null],
+      // No `iep:authorshipProof [` left in the text, or none a text scan can read to its end: the proof is found as the RDF states it.
+      ['the real proof spelled with full IRIs', (d) => atProof(d, (p) => p.replace(PROOF_TERMS, (_, n: string) => `<${IEP_IRI}${n}>`)), null],
+      ['a literal holding ] inside the real proof', (d) => atProof(d, (p) => p.replace('a iep:SignedAuthorship ;\n', 'a iep:SignedAuthorship ;\n    <http://www.w3.org/2000/01/rdf-schema#comment> "the block ] ends below" ;\n')), null],
+      ['the version before\'s genuine proof in a comment above the real one', (d, prev) => atProof(d, (p) => `${commented(take(PROOF, prev))}\n${p}`), null],
+      ['the version before\'s genuine proof as RDF above the real one', (d, prev) => atProof(d, (p) => `${take(PROOF, prev)}\n${p}`), PROOF_ALTERED],
+      ['the real proof only in a comment', (d) => atProof(d, (p) => commented(p)), PROOF_ALTERED],
+      ['the subject changed', (d) => atSubject(d, (x) => x.replace('<urn:wrd:record:', '<urn:wrd:record:changed-')), SUBJECT_ALTERED],
+      ['a stray } above the subject, so it no longer parses', (d) => atSubject(d, (x) => `}\n${x}`), DESCRIPTOR_UNPARSEABLE],
+    ];
+    const escape = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    // A task head: placed (eligible) every time, trusted or altered as the table says, never set aside for the version before it.
+    const entry = must((await manifest(w)).find((e) => e.descriptorUrl === t1Head.descriptorUrl)) as Parameters<typeof readRecord>[0];
+    const headBytes = must(w.pod.bodies.get(t1Head.descriptorUrl));
+    const firstBytes = must(w.pod.bodies.get(t1First.descriptorUrl));
+    for (const [edit, apply, why] of edits) {
+      const edited = apply(headBytes, firstBytes);
+      expect([edit, edited === headBytes]).toEqual([edit, false]);
+      w.pod.tamper(t1Head.descriptorUrl, headBytes, edited);
+      const loaded = await readRecord(entry, POD, w.pod.fetchFn, trusted, undefined, WRD_CONTAINER, K1);
+      expect([edit, loaded.authorship.eligible, loaded.authorship.atPredictedUrl, loaded.recordId, loaded.authorship.trusted, loaded.why])
+        .toEqual([edit, true, true, t1Head.recordId, why === null, why]);
+      const listed = await list(w);
+      expect([edit, arr(listed['untrusted']).map((u) => u['descriptorUrl']), arr(listed['forked'])]).toEqual([edit, [], []]);
+      if (why === null) {
+        expect([edit, arr(listed['altered'])]).toEqual([edit, []]);
+        expect([edit, obj(must(arr(listed['tasks']).find((t) => t['taskIri'] === ap.t1))['head'])]).toEqual([edit, expect.objectContaining({ descriptorUrl: t1Head.descriptorUrl, trusted: true })]);
+        refused(await act(w, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1First), verdict: 'dispute', note: 'from the version before' }), 409, /changed since you read it/);
+      } else {
+        expect([edit, arr(listed['altered'])]).toEqual([edit, [t1Graph]]);
+        expect(arr(listed['tasks']).map((t) => t['taskIri'])).not.toContain(ap.t1);
+        for (const binding of [t1Head, t1First]) {
+          refused(await act(w, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(binding), verdict: 'dispute', note: 'after the edit' }), 409, /altered after signing/, new RegExp(escape(why)));
+        }
+      }
+      // Restored: the same head, trusted, with no fork and nothing written in between.
+      w.pod.tamper(t1Head.descriptorUrl, edited, headBytes);
+      const back = await list(w);
+      expect([edit, arr(back['forked']), arr(back['altered'])]).toEqual([edit, [], []]);
+      expect(obj(must(arr(back['tasks']).find((t) => t['taskIri'] === ap.t1))['head'])).toMatchObject({ descriptorUrl: t1Head.descriptorUrl, trusted: true });
+    }
+    expect((await manifest(w)).filter((e) => e.describes.includes(t1Graph)).length).toBe(2);
+    ok(await ratify(w, CY, ap.t1, 'dispute', 'one more look after the edits'));
+    expect(arr((await list(w))['forked'])).toEqual([]);
+
+    // The registry head alike: Cy is removed by it, and no edit to its descriptor gives her a read back.
+    ok(await act(w, ADMIN, 'update_registry', { entries: [{ address: CY.address, roles: [] }] }));
+    const regHead = obj(obj((await list(w))['registry'])['head']);
+    const regUrl = String(regHead['descriptorUrl']);
+    const regBytes = must(w.pod.bodies.get(regUrl));
+    const regPrevUrl = must(must((await manifest(w)).find((e) => e.descriptorUrl === regUrl)).supersedes?.[0], 'the registry version before');
+    const regPrevBytes = must(w.pod.bodies.get(regPrevUrl));
+    const registryGraph = graphIriOf(entityIri('registry', POD, 'registry'));
+    const versions = (await manifest(w)).length;
+    for (const [edit, apply, why] of edits) {
+      const edited = apply(regBytes, regPrevBytes);
+      w.pod.tamper(regUrl, regBytes, edited);
+      const cyRead = await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, CY) });
+      if (why === null) {
+        refused(cyRead, 403, /Only an admin or a key in this pod's registry/);
+        const listed = await list(w);
+        expect([edit, obj(obj(listed['registry'])['head'])]).toEqual([edit, expect.objectContaining({ descriptorUrl: regUrl, trusted: true })]);
+        expect([edit, arr(listed['untrusted']), arr(listed['altered']), arr(listed['forked'])]).toEqual([edit, [], [], []]);
+      } else {
+        const whyRe = new RegExp(`${escape(registryGraph)}: its current version \\(${escape(regUrl)}\\) is not trusted: ${escape(why)}`);
+        for (const who of [CY, ADMIN]) refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, who) }), 409, /altered after signing/, whyRe);
+        refused(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: 'registry-layout-kind', label: 'Another', definition: 'Another kind.' }] }), 409, /altered after signing/, whyRe);
+      }
+      w.pod.tamper(regUrl, edited, regBytes);
+      refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, CY) }), 403, /Only an admin or a key in this pod's registry/);
+      const restored = await list(w);
+      expect([edit, obj(obj(restored['registry'])['head'])]).toEqual([edit, expect.objectContaining({ descriptorUrl: regUrl, trusted: true })]);
+      expect([edit, arr(restored['forked']), arr(restored['altered'])]).toEqual([edit, [], []]);
+    }
+    expect((await manifest(w)).length).toBe(versions);
+    ok(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: 'after-layout-kind', label: 'Another', definition: 'Another kind.' }] }));
+    expect(arr((await list(w))['forked'])).toEqual([]);
+  }, 180_000);
 
   it('never reads a line short for an edit to an earlier version of its own key: with only its iep:describes or its link edited, its proof broken, or its manifest entry removed, a write that checks the whole line refuses (409), a replayed registry change among them, the holder\'s copy refuses, and a decision\'s chain says it is incomplete; restored, the replay is refused as a replay and every line reads whole', async () => {
     const w = await world({ recordKey: K1 });

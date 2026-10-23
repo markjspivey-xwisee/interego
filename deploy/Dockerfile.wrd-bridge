@@ -123,8 +123,12 @@ ENV WRD_SERVED_PODS=
 ENV WRD_PUBLIC_READS=
 
 # ★ NO PLAINTEXT RECORDS FROM THIS IMAGE. With this set the bridge refuses to start (exit 1, and
-# a line saying why) unless WRD_RECORD_KEY holds a valid 64-hex key; a blank value counts as
-# missing. Not a secret, so it is baked in. A local run without it keeps the plaintext default.
+# a line saying why) unless WRD_RECORD_KEY holds a valid 64-hex key; a blank key counts as
+# missing. Not a secret, so it is baked in. Unlike the bridge variables above, where an empty value
+# means unset, this one is read as it is: 1 turns the guard on, 0 turns it off, and any other
+# value set on the service, a blank or whitespace one included (an unresolved reference
+# overriding this 1, say), stops the bridge at startup (exit 1, saying why) rather than let it
+# write plaintext records. A local run without it (unset) keeps the plaintext default.
 ENV WRD_REQUIRE_RECORD_KEY=1
 
 # The commit this image was built from, surfaced at /health by the shared createVerticalBridge
