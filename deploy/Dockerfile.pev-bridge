@@ -101,6 +101,22 @@ ENV PEV_DEFAULT_POD_URL=https://gate.interego.xwisee.com/practice-evidence/
 ENV PEV_MODEL_CALLS_PER_HOUR=60,300
 ENV PEV_ATTEMPTS_PER_HOUR=5,50
 
+# ★ INTEREGO SIGN-IN (relay-delegated identity), RELAY-ATTESTED, NOT USER-HELD. A person who signs
+# in with their Interego account holds no key: the relay signs each act for the agent of their
+# session, and the identity host says whose agent it is. So whoever holds the relay's delegation
+# key, or controls the identity host, can act as any person on this bridge; records made this way
+# carry authority relay-delegated. Not secrets: the live relay's delegation address (its
+# signing.relayAnchor), the identity host, and the relay a person signs in through. Override
+# PEV_TRUSTED_RELAY_ADDRESSES with an empty value to turn the route off; a malformed value of any of
+# these stops the bridge at start-up. PEV_ADMIN_DIDS (the people, as
+# did:web:identity.interego.xwisee.com:users:<id>, who may change roles and withdraw reviews) is NOT
+# baked in: the operator sets it on the service, like PEV_ADMIN_ADDRESSES. PEV_CHAT_AGENTS_DECIDE=1
+# (left unset: off) would let a chat agent signed in through the relay, not only this bridge's own
+# web UI, change roles and withdraw or override reviews.
+ENV PEV_TRUSTED_RELAY_ADDRESSES=0x276e11d2229d3a96dc96356c15c03c7f83201ebc
+ENV PEV_IDENTITY_HOST=identity.interego.xwisee.com
+ENV PEV_RELAY_URL=https://relay.interego.xwisee.com
+
 # ★ SECRETS AND PER-DEPLOYMENT VALUES: unset here on purpose, because anything baked into an image
 # is published to everyone who can pull it. Set them on the service.
 #   PEV_PLATFORM_KEY                the key records are signed with; unset → an ephemeral key
@@ -112,6 +128,8 @@ ENV PEV_ATTEMPTS_PER_HOUR=5,50
 #                                   it, and nothing can recover them. Generate it once, e.g.
 #                                   `openssl rand -hex 32`, and never rotate it in place.
 #   PEV_ADMIN_ADDRESSES             who may change roles and withdraw reviews
+#   PEV_ADMIN_DIDS                  the same, for people who sign in with their Interego account:
+#                                   did:web:identity.interego.xwisee.com:users:<id>, comma-separated
 #   PEV_TRUSTED_PLATFORM_ADDRESSES  earlier platform keys whose records stay trusted
 #   PEV_POD_WRITE_SECRET            the operator pod's bearer, sent under that pod's path only
 #   PEV_LLM_API_KEY, PEV_LLM_MODEL  the bridge's own model route; a key without a model is no

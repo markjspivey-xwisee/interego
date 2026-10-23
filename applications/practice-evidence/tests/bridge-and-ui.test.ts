@@ -20,7 +20,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { Parser } from 'n3';
-import { canonicalJson, signMessageRaw, type Wallet } from '@interego/core';
+import { canonicalJson, importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import type { Express, NextFunction, Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
@@ -50,9 +50,12 @@ const read = (p: string): string => readFileSync(join(VERTICAL, p), 'utf8');
 
 const pod = inMemoryPod();
 const W = Object.fromEntries(DEMO_ROLE_NAMES.map((r) => [r, demoWallet(r)])) as Record<DemoRoleName, Wallet>;
+/** The identity host Interego sign-in names people on; the route itself is off on these three bridges. */
+const IDH = 'identity.demo.test';
 const base: PevDeps = {
   platformWallet: demoWallet('platform'), platformKeyKind: 'demo-fixture', adminAddresses: [W.admin.address],
   fetchFn: pod.fetchFn, holderFetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, servedPods: [DEMO_POD], deploymentUrl: 'http://127.0.0.1:6110',
+  relayDelegation: { relayAddresses: [], identityHost: IDH, fetchDidDocument: async () => { throw new Error('no identity host in this test'); } },
 };
 /** Scripted model + demo role keys: the UI's demo mode. */
 const demoHandlers = createPevHandlers({ ...base, model: scriptedPracticeModel(), demoSigner: demoSignerOf(W) }) as Handlers;
@@ -167,6 +170,42 @@ describe('the bridge over HTTP: one route and one tool per declared affordance, 
     expect(tools.map((t) => t.name).sort()).toEqual(pevAffordances.map((a) => a.toolName).sort());
     const call = await post(demo, '/mcp', { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'pev.register_role', arguments: {} } });
     expect((call.json['result'] as Out)['isError']).toBe(true);
+  });
+
+  it('every signed affordance declares the relay\'s {_signed_payload, _signature} beside envelope, so act … sign_payload:true reaches it', () => {
+    const unsigned = new Set(['pev.list_scenarios', 'pev.calibration', 'pev.draft_scenario_packet', 'pev.sign_as_demo_role']);
+    const signed = pevAffordances.filter((a) => !unsigned.has(a.toolName));
+    expect(signed).toHaveLength(pevAffordances.length - unsigned.size);
+    for (const a of signed) {
+      const names = (a.inputs ?? []).map((i) => i.name);
+      expect(['envelope', '_signed_payload', '_signature'].filter((n) => !names.includes(n)), a.toolName).toEqual([]);
+      expect((a.inputs ?? []).filter((i) => i.name.startsWith('_') || i.name === 'envelope').every((i) => i.required === false), a.toolName).toBe(true);
+    }
+  });
+
+  it('a body the Interego relay signed reaches the handler at the top level over HTTP, and as MCP arguments', async () => {
+    const relayW = importWallet(`0x${sha256('pev-ui-test:relay')}`, 'agent', 'relay');
+    const person = `did:web:${IDH}:users:u-pk-00000000ff01`;
+    const agent = `did:web:${IDH}:agents:claude-u-pk-00000000ff01`;
+    const reads: string[] = [];
+    const h = createPevHandlers({
+      ...base, model: scriptedPracticeModel(),
+      relayDelegation: { relayAddresses: [relayW.address], identityHost: IDH, fetchDidDocument: async (url) => { reads.push(url); return { id: agent, controller: person }; } },
+    }) as Handlers;
+    const l = await serve(h);
+    const signedBody = async (): Promise<Out> => {
+      const sp = JSON.stringify({ v: 1, action: PEV_ACTION.getAttempt, nonce: nonce(), pod_url: DEMO_POD, agent_id: agent, subject_pod_url: 'https://pods.demo.test/self/', timestamp: new Date().toISOString() });
+      return { _signed_payload: sp, _signature: await signMessageRaw(relayW, `sha256:${sha256Hex(sp)}`) };
+    };
+    const r = await post(l, '/pev/get_attempt', await signedBody());
+    expect([r.status, r.json['attempts']]).toEqual([200, []]);
+    expect(reads).toEqual([`https://${IDH}/agents/claude-u-pk-00000000ff01/did.json`]);
+    const mcp = await post(l, '/mcp', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'pev.get_attempt', arguments: await signedBody() } });
+    expect((mcp.json['result'] as Out)['isError']).not.toBe(true);
+    // Signed by any other key, the same body is a key-held envelope that names someone else.
+    const sp = JSON.stringify({ v: 1, action: PEV_ACTION.getAttempt, nonce: nonce(), pod_url: DEMO_POD, agent_id: agent, timestamp: new Date().toISOString() });
+    const forged = await post(l, '/pev/get_attempt', { _signed_payload: sp, _signature: await signMessageRaw(W.learner, `sha256:${sha256Hex(sp)}`) });
+    expect([forged.status, forged.json['iep:refusalReason']]).toEqual([401, 'signer-is-not-the-named-agent']);
   });
 
   it('signs as a demo role only when the operator gave it demo keys, and only pev actions', async () => {
@@ -492,6 +531,14 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     p.click(button(PEV_ACTION.registerRole));
     await p.until(() => p.q('#view .outcome table') ?? p.q('#view .refusal'), 'the registry');
     expect(p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(W['judge-agent'].address) && (tr.textContent ?? '').includes('agent'))).toBe(true);
+    // A member can be a person's Interego DID, for someone who signs in with their Interego account.
+    const person = `did:web:${IDH}:users:u-pk-00000000aa01`;
+    p.set(p.q('input[aria-label="Address"]'), person);
+    p.set(p.q('select[aria-label="Role"]'), 'reviewer');
+    p.click(button(PEV_ACTION.registerRole));
+    await p.until(() => p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(person)) || p.q('#view .refusal'), 'the registry with the DID');
+    expect(p.all('#view .outcome tr').some((tr) => (tr.textContent ?? '').includes(person) && (tr.textContent ?? '').includes('reviewer'))).toBe(true);
+    expect((p.q('input[aria-label="Address"]') as HTMLInputElement).placeholder).toContain('did:web:');
 
     await asRole(p, 'second-learner');
     p.w.location.hash = '#/practice';
@@ -678,6 +725,53 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     // A valid key passes the guard: this run goes on to the next check (demo keys on a public host) and stops there.
     const passes = run({ PEV_REQUIRE_RECORD_KEY: '1', PEV_RECORD_KEY: `0x${KEY}`, PEV_DEMO_ROLES: '1', HOST: '0.0.0.0' });
     expect([passes.status, passes.err.includes('PEV_RECORD_KEY'), passes.err]).toEqual([1, false, expect.stringContaining('PEV_DEMO_ROLES=1 needs a loopback HOST')]);
+  }, 300_000);
+
+  it('reads the Interego sign-in settings only in server.ts and stops on a malformed one; the image trusts the live relay and bakes no admin DID', () => {
+    expect(server).toContain("const relayAddresses = list(env('PEV_TRUSTED_RELAY_ADDRESSES'));");
+    expect(server).toContain("const identityHost = env('PEV_IDENTITY_HOST');");
+    expect(server).toContain("const adminDids = list(env('PEV_ADMIN_DIDS'));");
+    expect(server).toContain("const relayUrl = env('PEV_RELAY_URL');");
+    expect(server).toContain("const decideRaw = env('PEV_CHAT_AGENTS_DECIDE');");
+    // The DID document is read through the guarded, capped fetch, behind the cache.
+    expect(server).toContain('fetchDidDocument: cachedDidDocuments(didDocumentFetch(globalThis.fetch.bind(globalThis))),');
+    const reads = /env\(\s*'PEV_(TRUSTED_RELAY_ADDRESSES|IDENTITY_HOST|ADMIN_DIDS|RELAY_URL|CHAT_AGENTS_DECIDE)'/;
+    expect(others.filter((f) => reads.test(readFileSync(f, 'utf8'))).map((f) => relative(VERTICAL, f))).toEqual([]);
+    const image = readFileSync(join(REPO, 'deploy/Dockerfile.pev-bridge'), 'utf8');
+    expect(image).toMatch(/^ENV PEV_TRUSTED_RELAY_ADDRESSES=0x276e11d2229d3a96dc96356c15c03c7f83201ebc$/m);
+    expect(image).toMatch(/^ENV PEV_IDENTITY_HOST=identity\.interego\.xwisee\.com$/m);
+    expect(image).toMatch(/^ENV PEV_RELAY_URL=https:\/\/relay\.interego\.xwisee\.com$/m);
+    expect(image).not.toMatch(/^ENV PEV_ADMIN_DIDS=/m);
+    expect(image).not.toMatch(/^ENV PEV_CHAT_AGENTS_DECIDE=/m);
+    expect(image).toContain('RELAY-ATTESTED, NOT USER-HELD');
+    const run = (extra: Record<string, string>): { status: number | null; out: string; err: string } => {
+      const r = spawnSync(process.execPath, ['--import', 'tsx', join(VERTICAL, 'bridge/server.ts')], {
+        cwd: REPO, encoding: 'utf8', timeout: 120_000, env: { NODE_NO_WARNINGS: '1', PORT: '0', ...extra },
+      });
+      return { status: r.status, out: r.stdout, err: r.stderr };
+    };
+    const LIVE = '0x276e11d2229d3a96dc96356c15c03c7f83201ebc';
+    const HOSTNAME = 'identity.interego.xwisee.com';
+    const malformed: readonly (readonly [Record<string, string>, string])[] = [
+      [{ PEV_TRUSTED_RELAY_ADDRESSES: `${LIVE},0x123`, PEV_IDENTITY_HOST: HOSTNAME }, 'PEV_TRUSTED_RELAY_ADDRESSES: 1 value(s) are not 0x addresses'],
+      [{ PEV_TRUSTED_RELAY_ADDRESSES: LIVE }, 'PEV_TRUSTED_RELAY_ADDRESSES is set and PEV_IDENTITY_HOST is not'],
+      [{ PEV_IDENTITY_HOST: `https://${HOSTNAME}/` }, 'PEV_IDENTITY_HOST is "https://identity.interego.xwisee.com/"'],
+      [{ PEV_ADMIN_DIDS: `did:web:${HOSTNAME}:users:u-pk-f2a9c751075a` }, 'PEV_ADMIN_DIDS is set and PEV_IDENTITY_HOST is not'],
+      [{ PEV_IDENTITY_HOST: HOSTNAME, PEV_ADMIN_DIDS: `did:web:${HOSTNAME}:agents:claude-u-pk-f2a9c751075a` }, 'PEV_ADMIN_DIDS: 1 value(s) are not'],
+      [{ PEV_RELAY_URL: 'ftp://relay.interego.xwisee.com' }, 'PEV_RELAY_URL is "ftp://relay.interego.xwisee.com"'],
+      [{ PEV_CHAT_AGENTS_DECIDE: 'yes' }, 'PEV_CHAT_AGENTS_DECIDE is "yes"; it takes 1'],
+    ];
+    for (const [extra, says] of malformed) {
+      const r = run(extra);
+      expect([r.status, r.out.includes('listening on'), r.err], JSON.stringify(extra)).toEqual([1, false, expect.stringContaining(says)]);
+    }
+    // The image's values, with an admin DID, pass these guards: the run goes on to the next check
+    // (demo keys on a public host) and stops there.
+    const passes = run({
+      PEV_TRUSTED_RELAY_ADDRESSES: LIVE, PEV_IDENTITY_HOST: HOSTNAME, PEV_RELAY_URL: 'https://relay.interego.xwisee.com',
+      PEV_ADMIN_DIDS: `did:web:${HOSTNAME}:users:u-pk-f2a9c751075a`, PEV_CHAT_AGENTS_DECIDE: '0', PEV_DEMO_ROLES: '1', HOST: '0.0.0.0',
+    });
+    expect([passes.status, passes.err]).toEqual([1, expect.stringContaining('PEV_DEMO_ROLES=1 needs a loopback HOST')]);
   }, 300_000);
 
   it('no instruction or label the platform shows says no', () => {

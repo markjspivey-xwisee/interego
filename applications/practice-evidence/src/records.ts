@@ -6,14 +6,27 @@
  * in this process; verification needs nothing but the bytes.
  *
  * ── IDENTITY (DECISIONS #1–#3) ────────────────────────────────────────────────────────────────
- * A person is identified ONLY by the address recovered from their signature over the exact bytes
- * they sent. No caller field names an identity. Two envelope forms are read:
- *   · form A `pev-canonical`: `{payload, signature}`, the message is canonicalJson(payload);
- *   · form B `signed-request`: `{_signed_payload, _signature}`, the repo's existing wire shape, the
- *     message is `sha256:` + sha256Hex(_signed_payload), and its `agent_id` must name the recovered
- *     signer — a relay-mediated signature is the relay's key, not the person's.
+ * A person is identified ONLY by a signature over the exact bytes they sent. No caller field names
+ * an identity. Two authorities are read:
+ *   · key-held: the address recovered from a signature the person made with a key they hold, in
+ *     either envelope form:
+ *       form A `pev-canonical`: `{payload, signature}`, the message is canonicalJson(payload);
+ *       form B `signed-request`: `{_signed_payload, _signature}`, the repo's existing wire shape,
+ *       the message is `sha256:` + sha256Hex(_signed_payload), and its `agent_id` must name the
+ *       recovered signer;
+ *   · relay-delegated (Interego sign-in): form B signed by a relay delegation key this bridge
+ *     trusts, for the agent of the person's authenticated session (`agent_id`, which the caller
+ *     cannot choose). The person is that agent's controller on the identity host, a
+ *     `did:web:<host>:users:<id>` principal (src/relay-delegated.ts). Freshness is the relay's
+ *     `timestamp` and the pod is `pod_url`; `subject_pod_url` (the caller's own pod) is never read.
+ *     This is relay-attested, not user-held: whoever holds the relay key or controls the identity
+ *     host can act as any person, so every envelope accepted this way is stored with authority
+ *     `relay-delegated`, the principal, the agent and the relay address.
+ * A principal is an address (compared case-insensitively) or a user DID (compared exactly): the
+ * two never collide, and a DID is never lower-cased (`principalKey`).
  * A tampered payload does not throw: it recovers a DIFFERENT address, which then fails the act's
- * identity or role check. That is the documented behaviour.
+ * identity or role check (or, in the relay shape, is no trusted relay). That is the documented
+ * behaviour.
  *
  * ── BODIES ────────────────────────────────────────────────────────────────────────────────────
  * Every record graph carries typed pev: triples AND `pev:recordJson` (canonical JSON of the whole
@@ -28,6 +41,7 @@ import {
 } from '@interego/core';
 import type { InferenceDisclosure, InferenceRoute, LlmKeySource } from './model.js';
 import { PEV_ACTION, PEV_NS, PEV_SHAPES_NS, pevTerm, toolNameOf, type PevActionKey } from './ontology.js';
+import { agentSlugOf, isUserDid } from './relay-delegated.js';
 import {
   criterionContentHash, learnerTurnCount, MAX_CONTESTS, MAX_JUDGMENTS,
   type Assessment, type JudgmentResult, type ScenarioSpec, type Turn,
@@ -48,7 +62,25 @@ export type EnvelopeForm = 'pev-canonical' | 'signed-request';
 export type Role = 'reviewer' | 'author' | 'judge' | 'agent' | 'learner';
 export const ROLES: readonly Role[] = ['reviewer', 'author', 'judge', 'agent', 'learner'];
 
-export interface StoredEnvelope {
+/** Who stands behind a signature: a key the person holds, or the Interego relay signing for their session. */
+export type Authority = 'key-held' | 'relay-delegated';
+
+/**
+ * What an act accepted from the relay records beside its envelope, so a later reader can tell a
+ * relay-attested act from a key-held one: the relay key signed for `agentId`, and the identity
+ * host said, when the bridge accepted it, that `principal` controls that agent.
+ */
+export interface RelayAttestation {
+  readonly authority: 'relay-delegated';
+  /** The person: `did:web:<identity host>:users:<id>`. */
+  readonly principal: string;
+  /** The agent the relay signed for: `did:web:<identity host>:agents:<slug>`. */
+  readonly agentId: string;
+  /** The relay address the signature recovered to, lower case. */
+  readonly relaySigner: string;
+}
+
+export interface StoredEnvelope extends Partial<RelayAttestation> {
   readonly form: EnvelopeForm;
   readonly signature: string;
   /** sha256 of exactly the signed text. */
@@ -61,6 +93,10 @@ export interface StoredEnvelope {
   readonly redacted?: true;
 }
 
+/**
+ * Who acted. `address` is the principal: the signer's 0x address for a key-held act, or the
+ * person's `did:web:<host>:users:<id>` for a relay-delegated one (then `did` is the same DID).
+ */
 export interface Actor { readonly address: string; readonly did: string; readonly serverHeldDemoKey: boolean }
 /** The version a record supersedes, as the platform signed it into the record itself. */
 export interface RecordLink { readonly recordId: string; readonly graphDigest: string }
@@ -143,10 +179,13 @@ export interface Redaction {
 }
 
 export interface AttemptAct {
+  /** `signer` is the principal (an address, or a user DID for a relay-delegated act). */
   readonly action: string; readonly signer: string; readonly form: EnvelopeForm; readonly payloadSha256: string;
   readonly at: string; readonly serverHeldDemoKey?: boolean;
   /** The act's signature over the payload whose sha256 is `payloadSha256`, so the act can be re-verified. */
   readonly signature?: string;
+  /** Set on a relay-delegated act: the relay signed it for `agentId`, recovering to `relaySigner`. */
+  readonly authority?: 'relay-delegated'; readonly agentId?: string; readonly relaySigner?: string;
 }
 
 export interface AttemptBody extends RecordCommon {
@@ -175,6 +214,7 @@ export interface AttemptBody extends RecordCommon {
   readonly acts: readonly AttemptAct[];
 }
 
+/** One member's roles: `address` is the principal, a 0x address or a `did:web:<host>:users:<id>`. */
 export interface RoleEntry { readonly address: string; readonly roles: readonly Role[] }
 
 /** An envelope that changed this chain, kept while it could still pass the freshness check. */
@@ -265,13 +305,33 @@ const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const DID_ETHR = /^did:ethr:(?:[A-Za-z0-9]+:)?(0x[0-9a-fA-F]{40})$/;
 
 export const didOf = (address: string): string => `did:ethr:${address}`;
-export function sameAddress(a: string, b: string): boolean { return a.toLowerCase() === b.toLowerCase(); }
 export function isAddress(s: unknown): s is string { return typeof s === 'string' && ADDRESS.test(s); }
+/**
+ * The key a principal is compared and indexed by: an address lower-cased (addresses are
+ * case-insensitive), anything else (a user DID) exactly as it is. An address starts `0x` and a DID
+ * `did:`, so the two never collide, and a DID is never lower-cased into another principal.
+ */
+export function principalKey(p: string): string { return ADDRESS.test(p) ? p.toLowerCase() : p; }
+/** True when two principals are the same person: addresses case-insensitively, DIDs exactly. */
+export function samePrincipal(a: string, b: string): boolean { return principalKey(a) === principalKey(b); }
+/** Two principals compared (`samePrincipal`): an address case-insensitively, never a DID lower-cased. */
+export function sameAddress(a: string, b: string): boolean { return samePrincipal(a, b); }
+/** A principal's DID: `did:ethr:<address>` for an address, the DID itself for a user DID. */
+export function principalDid(p: string): string { return ADDRESS.test(p) ? didOf(p) : p; }
 /** The address inside `did:ethr:[network:]0x…`, or a bare address; null otherwise. */
 export function addressOfDid(did: string): string | null {
   if (ADDRESS.test(did)) return did;
   const m = DID_ETHR.exec(did);
   return m ? (m[1] ?? null) : null;
+}
+/** The principal a DID names: the address inside a `did:ethr`, or the DID itself (a user DID). */
+export function principalOfDid(did: string): string { return addressOfDid(did) ?? did; }
+/**
+ * True for a principal a role may be given to: an address, or, with an identity host, a person's
+ * `did:web:<host>:users:<id>` on it (never an agent DID: an agent acts for its controller).
+ */
+export function isPrincipal(s: unknown, identityHost: string | null): s is string {
+  return isAddress(s) || (typeof s === 'string' && identityHost !== null && isUserDid(s, identityHost));
 }
 export function freshNonce(): string { return randomBytes(18).toString('base64url'); }
 /**
@@ -279,15 +339,20 @@ export function freshNonce(): string { return randomBytes(18).toString('base64ur
  * base64url. Never from an injected nonce source, which tests make predictable.
  */
 export function recordSalt(): string { return randomBytes(18).toString('base64url'); }
-export function actorOf(address: string, serverHeldDemoKey: boolean): Actor {
-  return { address, did: didOf(address), serverHeldDemoKey };
+export function actorOf(principal: string, serverHeldDemoKey: boolean): Actor {
+  return { address: principal, did: principalDid(principal), serverHeldDemoKey };
 }
 
 export interface EnvelopeOk {
-  readonly ok: true; readonly form: EnvelopeForm; readonly signer: string; readonly signerDid: string;
+  readonly ok: true; readonly form: EnvelopeForm;
+  /** The principal: the recovered address (key-held), or the person's user DID (relay-delegated). */
+  readonly signer: string; readonly signerDid: string;
   /** The payload with `issuedAt` and `podUrl` normalised (form B's `timestamp`/`pod_url` read too). */
   readonly payload: Readonly<Record<string, unknown>>;
   readonly payloadSha256: string; readonly stored: StoredEnvelope;
+  readonly authority: Authority;
+  /** Set when the relay signed this request for the person (`authority: 'relay-delegated'`). */
+  readonly relay?: RelayAttestation;
 }
 export interface EnvelopeNo { readonly ok: false; readonly status: 400 | 401; readonly code: string; readonly message: string }
 
@@ -363,56 +428,182 @@ export function checkEnvelope(
   if (found.form === 'signed-request') {
     const agentId = typeof payload['agent_id'] === 'string' ? payload['agent_id'] : '';
     const named = addressOfDid(agentId);
-    if (!named || !sameAddress(named, signer)) {
+    if (!named || !samePrincipal(named, signer)) {
       return no(401, 'signer-is-not-the-named-agent',
-        `This envelope was signed by ${signer} on behalf of ${agentId || '(no agent_id)'}. pev identifies a person only by a key they hold. A relay-mediated signature cannot act here; sign with your own wallet.`);
+        `This envelope was signed by ${signer} on behalf of ${agentId || '(no agent_id)'}. A key-held envelope's agent_id names the signer's own key (did:ethr:<address>), and a request the Interego relay signs is read only when it recovers to a relay address this bridge trusts (PEV_TRUSTED_RELAY_ADDRESSES); this one is neither. Sign with your own wallet, or sign in with your Interego account.`);
     }
     stored = { form: 'signed-request', signature: found.signature, payloadSha256, signedPayload: signedText };
   } else {
     stored = { form: 'pev-canonical', signature: found.signature, payloadSha256, payload };
   }
 
-  if (payload['v'] !== 1) return no(400, 'envelope-version', 'This bridge reads envelope payloads with v: 1.');
-  if (payload['action'] !== expectedAction) {
-    return no(400, 'envelope-for-another-action', `This envelope was signed for ${String(payload['action'])}, not for ${expectedAction}.`);
-  }
   const issuedRaw = found.form === 'signed-request' ? (payload['issuedAt'] ?? payload['timestamp']) : payload['issuedAt'];
-  const issued = typeof issuedRaw === 'string' ? Date.parse(issuedRaw) : Number.NaN;
-  if (!Number.isFinite(issued)) return no(401, 'envelope-expired', 'The envelope carries no readable issuedAt.');
-  const age = now.getTime() - issued;
-  if (age > maxAgeMs) return no(401, 'envelope-expired', `The envelope was issued ${Math.round(age / 1000)} s ago; sign a new one (limit ${Math.round(maxAgeMs / 1000)} s).`);
-  if (-age > maxSkewMs) return no(401, 'envelope-expired', 'The envelope is dated in the future beyond the allowed clock skew.');
-  const nonce = payload['nonce'];
-  if (typeof nonce !== 'string' || !NONCE.test(nonce)) return no(400, 'nonce-format', 'nonce must be 16 to 128 letters, digits, - or _.');
   const podRaw = found.form === 'signed-request' ? (payload['podUrl'] ?? payload['pod_url']) : payload['podUrl'];
-  let podUrl = '';
-  if (typeof podRaw === 'string') {
-    try {
-      const u = new URL(podRaw);
-      if (u.protocol === 'https:' || u.protocol === 'http:') podUrl = podRaw;
-    } catch { /* not a URL */ }
-  }
-  if (!podUrl) return no(400, 'envelope-pod-missing', 'The payload must name podUrl, the absolute http(s) URL of the pod you act on.');
+  const checked = payloadChecks(payload, expectedAction, now, { maxAgeMs, maxSkewMs }, {
+    issuedRaw, podRaw,
+    noIssued: 'The envelope carries no readable issuedAt.',
+    noPod: 'The payload must name podUrl, the absolute http(s) URL of the pod you act on.',
+  });
+  if (!checked.ok) return checked;
 
   return {
     ok: true, form: found.form, signer, signerDid: didOf(signer),
-    payload: { ...payload, issuedAt: issuedRaw, podUrl },
-    payloadSha256, stored,
+    payload: { ...payload, issuedAt: issuedRaw, podUrl: checked.podUrl },
+    payloadSha256, stored, authority: 'key-held',
   };
 }
 
 /**
- * Nonces seen per signer, in this process. An entry lives for `ttlMs` (twice the envelope age
- * limit), after which the envelope is too old to pass `checkEnvelope` anyway.
+ * The checks every signed payload passes, key-held or relay-delegated, in the documented order:
+ * v, the action it was signed for, freshness, the nonce's format, the pod it names.
+ */
+function payloadChecks(
+  payload: Readonly<Record<string, unknown>>, expectedAction: string, now: Date, o: { maxAgeMs: number; maxSkewMs: number },
+  read: { issuedRaw: unknown; podRaw: unknown; noIssued: string; noPod: string },
+): { readonly ok: true; readonly podUrl: string } | EnvelopeNo {
+  if (payload['v'] !== 1) return no(400, 'envelope-version', 'This bridge reads envelope payloads with v: 1.');
+  if (payload['action'] !== expectedAction) {
+    return no(400, 'envelope-for-another-action', `This envelope was signed for ${String(payload['action'])}, not for ${expectedAction}.`);
+  }
+  const issued = typeof read.issuedRaw === 'string' ? Date.parse(read.issuedRaw) : Number.NaN;
+  if (!Number.isFinite(issued)) return no(401, 'envelope-expired', read.noIssued);
+  const age = now.getTime() - issued;
+  if (age > o.maxAgeMs) return no(401, 'envelope-expired', `The envelope was issued ${Math.round(age / 1000)} s ago; sign a new one (limit ${Math.round(o.maxAgeMs / 1000)} s).`);
+  if (-age > o.maxSkewMs) return no(401, 'envelope-expired', 'The envelope is dated in the future beyond the allowed clock skew.');
+  const nonce = payload['nonce'];
+  if (typeof nonce !== 'string' || !NONCE.test(nonce)) return no(400, 'nonce-format', 'nonce must be 16 to 128 letters, digits, - or _.');
+  let podUrl = '';
+  if (typeof read.podRaw === 'string') {
+    try {
+      const u = new URL(read.podRaw);
+      if (u.protocol === 'https:' || u.protocol === 'http:') podUrl = read.podRaw;
+    } catch { /* not a URL */ }
+  }
+  if (!podUrl) return no(400, 'envelope-pod-missing', read.noPod);
+  return { ok: true, podUrl };
+}
+
+// ── Relay-delegated requests (Interego sign-in) ──────────────────────────────────────────────
+
+/**
+ * The `{_signed_payload, _signature}` form of a request, found where `checkEnvelope` finds it
+ * (under `envelope` first, then at the top level, where the relay posts it), with a signature in
+ * the 65-byte shape; null for anything else.
+ */
+export function signedRequestOf(args: Record<string, unknown>): { readonly signedPayload: string; readonly signature: string } | null {
+  const found = locate(args);
+  if (!found || found.form !== 'signed-request' || typeof found.signedPayload !== 'string' || found.signedPayload.length === 0
+    || typeof found.signature !== 'string' || !SIGNATURE.test(found.signature)) return null;
+  return { signedPayload: found.signedPayload, signature: found.signature };
+}
+
+/** The lower-cased address a signed request's signature over `sha256:<hex>` recovers to, or null. */
+export function signedRequestSigner(r: { readonly signedPayload: string; readonly signature: string }): string | null {
+  try { return recoverMessageSigner(`sha256:${sha256Hex(r.signedPayload)}`, r.signature).toLowerCase(); } catch { return null; }
+}
+
+/**
+ * The checks of a request the relay signed that need no network, the same as a key-held
+ * envelope's (v, action, freshness, nonce format, pod) with two differences the relay's signing
+ * fixes: freshness is the relay's own `timestamp` (a caller's `issuedAt` is not read), and the pod
+ * is `pod_url` (the relay renames a caller's `podUrl` to it). `subject_pod_url`, the caller's OWN
+ * pod, is never read as the pod an act targets. Run before the agent's DID document is fetched, so
+ * a stale or misdirected request costs no fetch.
+ */
+export function checkRelayPayload(
+  signedPayload: string, expectedAction: string, now: Date, o: { maxAgeMs?: number; maxSkewMs?: number } = {},
+): { readonly ok: true; readonly payload: Readonly<Record<string, unknown>>; readonly issuedAt: string; readonly podUrl: string } | EnvelopeNo {
+  if (!isWellFormedText(signedPayload)) {
+    return no(400, 'payload-shape', '_signed_payload must be well-formed text (it holds half of a UTF-16 surrogate pair, which cannot be stored as sent).');
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(signedPayload); } catch { parsed = undefined; }
+  if (!isRecord(parsed)) return no(400, 'envelope-payload-format', 'The signed payload must be a JSON object.');
+  const checked = payloadChecks(parsed, expectedAction, now, { maxAgeMs: o.maxAgeMs ?? 600_000, maxSkewMs: o.maxSkewMs ?? 120_000 }, {
+    issuedRaw: parsed['timestamp'], podRaw: parsed['pod_url'],
+    noIssued: 'The relay-signed payload carries no readable timestamp (the relay sets it when it signs).',
+    noPod: 'The relay-signed payload names no pod_url: put pod_url (or podUrl, which the relay keeps as pod_url), the absolute http(s) URL of the pod you act on, in the payload you ask the relay to sign. subject_pod_url, your own pod, is never read as the pod an act targets.',
+  });
+  if (!checked.ok) return checked;
+  return { ok: true, payload: parsed, issuedAt: String(parsed['timestamp']), podUrl: checked.podUrl };
+}
+
+/** The accepted envelope of a relay-delegated request: the verifier's principal is the signer. */
+export function relayDelegatedEnvelope(
+  d: { readonly principal: string; readonly agentId: string; readonly relaySigner: string; readonly signedPayload: string; readonly signature: string },
+  checked: { readonly payload: Readonly<Record<string, unknown>>; readonly issuedAt: string; readonly podUrl: string },
+): EnvelopeOk {
+  const relay: RelayAttestation = { authority: 'relay-delegated', principal: d.principal, agentId: d.agentId, relaySigner: d.relaySigner.toLowerCase() };
+  const payloadSha256 = sha256(d.signedPayload);
+  return {
+    ok: true, form: 'signed-request', signer: d.principal, signerDid: d.principal,
+    payload: { ...checked.payload, issuedAt: checked.issuedAt, podUrl: checked.podUrl },
+    payloadSha256,
+    stored: { form: 'signed-request', signature: d.signature, payloadSha256, signedPayload: d.signedPayload, ...relay },
+    authority: 'relay-delegated', relay,
+  };
+}
+
+/** What re-verifying a stored envelope trusts beyond the bytes: the relay addresses and the identity host. */
+export interface StoredEnvelopeTrust { readonly relayAddresses: readonly string[]; readonly identityHost: string | null }
+
+/**
+ * Re-verify an envelope kept in a record from its exact signed bytes, with no network: the
+ * principal it names and its payload, or null.
+ *   · key-held: the address recovered from the signature (form B: `agent_id` names it);
+ *   · relay-delegated: the signature recovers to a relay address `trust` still lists and to the
+ *     `relaySigner` stored beside it, the signed `agent_id` is the stored `agentId`, an agent on
+ *     the identity host, and the stored `principal` is a user on that host. The principal is then
+ *     the stored one: whether the identity host still names that person as the agent's controller
+ *     is NOT asked again, so a reader trusts the relay key for the signature and this bridge's
+ *     platform signature over the record for what the identity host said when the act was taken.
+ */
+export function reverifyStoredEnvelope(e: StoredEnvelope, trust: StoredEnvelopeTrust):
+  { readonly signer: string; readonly payload: Record<string, unknown>; readonly authority: Authority } | null {
+  try {
+    if (e.form === 'pev-canonical' && e.payload) {
+      if (e.authority !== undefined) return null;
+      const text = canonicalJson(e.payload);
+      if (sha256(text) !== e.payloadSha256) return null;
+      return { signer: recoverMessageSigner(text, e.signature), payload: { ...e.payload }, authority: 'key-held' };
+    }
+    if (e.form === 'signed-request' && e.signedPayload !== undefined) {
+      if (sha256(e.signedPayload) !== e.payloadSha256) return null;
+      const parsed: unknown = JSON.parse(e.signedPayload);
+      if (!isRecord(parsed)) return null;
+      const signer = recoverMessageSigner(`sha256:${sha256Hex(e.signedPayload)}`, e.signature);
+      if (e.authority === 'relay-delegated') {
+        const host = trust.identityHost;
+        const relay = signer.toLowerCase();
+        if (host === null || !trust.relayAddresses.map((x) => x.toLowerCase()).includes(relay) || e.relaySigner?.toLowerCase() !== relay) return null;
+        if (typeof e.agentId !== 'string' || parsed['agent_id'] !== e.agentId || agentSlugOf(e.agentId, host) === null) return null;
+        if (typeof e.principal !== 'string' || !isUserDid(e.principal, host)) return null;
+        return { signer: e.principal, payload: parsed, authority: 'relay-delegated' };
+      }
+      if (e.authority !== undefined) return null;
+      const named = typeof parsed['agent_id'] === 'string' ? addressOfDid(parsed['agent_id']) : null;
+      if (named === null || !samePrincipal(named, signer)) return null;
+      return { signer, payload: parsed, authority: 'key-held' };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Nonces seen per principal, in this process: per person, never per relay address (the relay
+ * signs for everyone). An entry lives for `ttlMs` (twice the envelope age limit), after which the
+ * envelope is too old to pass `checkEnvelope` anyway.
  */
 export class NonceLedger {
   private readonly seen = new Map<string, number>();
   constructor(private readonly ttlMs: number) {}
-  /** True the first time a (signer, nonce) pair is seen within the window; false on reuse. */
+  /** True the first time a (principal, nonce) pair is seen within the window; false on reuse. */
   consume(signer: string, nonce: string, now: Date): boolean {
     const t = now.getTime();
     for (const [k, expires] of this.seen) if (expires <= t) this.seen.delete(k);
-    const key = `${signer.toLowerCase()}|${nonce}`;
+    const key = `${principalKey(signer)}|${nonce}`;
     if (this.seen.has(key)) return false;
     this.seen.set(key, t + this.ttlMs);
     return true;
@@ -467,7 +658,7 @@ export function verifyDraftReceipt(
   try { signer = recoverMessageSigner(text, r['signature']); } catch { return { ok: false, why: 'no signer can be recovered from the receipt' }; }
   if (!trusted.has(signer.toLowerCase())) return { ok: false, why: `the receipt was signed by ${signer}, which is not a trusted platform address` };
   if (payload['v'] !== 1 || payload['kind'] !== DRAFT_RECEIPT_KIND) return { ok: false, why: 'this is not a draft receipt' };
-  if (typeof payload['requestedBy'] !== 'string' || payload['requestedBy'].toLowerCase() !== signerDid.toLowerCase()) {
+  if (typeof payload['requestedBy'] !== 'string' || !samePrincipal(principalOfDid(payload['requestedBy']), principalOfDid(signerDid))) {
     return { ok: false, why: 'the receipt was issued to someone else' };
   }
   const issued = typeof payload['issuedAt'] === 'string' ? Date.parse(payload['issuedAt']) : Number.NaN;
@@ -489,13 +680,16 @@ export function verifyDraftReceipt(
 //  Roles
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-/** Apply one role change; `changed: false` when the address already held (or lacked) the role. */
+/**
+ * Apply one role change; `changed: false` when the principal already held (or lacked) the role.
+ * Members are keyed by `principalKey`: an address in any case is one member, a DID only exactly.
+ */
 export function applyRoleChange(
   entries: readonly RoleEntry[], address: string, role: Role, change: 'add' | 'remove',
 ): { readonly entries: readonly RoleEntry[]; readonly changed: boolean } {
   const map = new Map<string, { address: string; roles: Set<Role> }>();
-  for (const e of entries) map.set(e.address.toLowerCase(), { address: e.address, roles: new Set(e.roles) });
-  const key = address.toLowerCase();
+  for (const e of entries) map.set(principalKey(e.address), { address: e.address, roles: new Set(e.roles) });
+  const key = principalKey(address);
   const cur = map.get(key);
   const had = cur?.roles.has(role) ?? false;
   if ((change === 'add' && had) || (change === 'remove' && !had)) return { entries, changed: false };
@@ -506,14 +700,14 @@ export function applyRoleChange(
     if (cur.roles.size === 0) map.delete(key);
   }
   const out = [...map.values()]
-    .sort((a, b) => a.address.toLowerCase().localeCompare(b.address.toLowerCase()))
+    .sort((a, b) => principalKey(a.address).localeCompare(principalKey(b.address)))
     .map((e) => ({ address: e.address, roles: ROLES.filter((r) => e.roles.has(r)) }));
   return { entries: out, changed: true };
 }
 
-/** The roles an address holds in a registry body (case-insensitive). */
+/** The roles a principal holds in a registry body (an address case-insensitively, a DID exactly). */
 export function rolesOf(entries: readonly RoleEntry[], address: string): ReadonlySet<Role> {
-  const e = entries.find((x) => sameAddress(x.address, address));
+  const e = entries.find((x) => samePrincipal(x.address, address));
   return new Set(e?.roles ?? []);
 }
 
@@ -522,7 +716,12 @@ export function rolesOf(entries: readonly RoleEntry[], address: string): Readonl
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 function redactEnvelope(e: StoredEnvelope): StoredEnvelope {
-  return { form: e.form, signature: e.signature, payloadSha256: e.payloadSha256, redacted: true };
+  // Who stood behind the signature stays: it is not the text, and a reader still tells a
+  // relay-attested act from a key-held one.
+  const relay = e.authority === 'relay-delegated'
+    ? { authority: e.authority, ...(e.principal !== undefined ? { principal: e.principal } : {}), ...(e.agentId !== undefined ? { agentId: e.agentId } : {}), ...(e.relaySigner !== undefined ? { relaySigner: e.relaySigner } : {}) }
+    : {};
+  return { form: e.form, signature: e.signature, payloadSha256: e.payloadSha256, ...relay, redacted: true };
 }
 
 export function redactBody(a: AttemptBody, redaction: Redaction, at: string): AttemptBody {
@@ -576,6 +775,7 @@ export const EXPORT_VERIFY_STEPS: readonly string[] = [
   'canonicalGraphDigest(region.turtle), from @interego/core, gives the content hash the proof must bind.',
   'verifySignedAuthorship(proof, makeWalletDelegationVerifier(), { contentHash }), from @interego/core, must answer valid with contentBinding bound.',
   'proof.signerAddress must be one of platformAddresses.',
+  'An envelope kept in a record with authority relay-delegated was signed by the Interego relay for agentId, not by the person: recoverMessageSigner(\'sha256:\' + sha256Hex(signedPayload), signature), from @interego/core, must be its relaySigner and one of relayAddresses, and the signed payload\'s agent_id must be agentId (did:web:<identityHost>:agents:…). principal (did:web:<identityHost>:users:…) is who the identity host said controlled that agent when the act was taken, as this platform signed it into the record; a reader who wants it asked again fetches https://<identityHost>/agents/<slug>/did.json, whose controller may have changed since.',
 ];
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -661,40 +861,37 @@ export function nextActionsFor(
   return [...out.values()];
 }
 
-/** Lowercase addresses of every judge that signed a judgment of this attempt (the packet route). */
+/** The principal keys (`principalKey`) of every judge that signed a judgment of this attempt (the packet route). */
 export function judgeSignersOf(a: AttemptBody): string[] {
-  return a.judgments.flatMap((j) => {
-    const addr = j.judge.signer !== undefined ? addressOfDid(j.judge.signer) : null;
-    return addr ? [addr.toLowerCase()] : [];
-  });
+  return a.judgments.flatMap((j) => (j.judge.signer !== undefined ? [principalKey(principalOfDid(j.judge.signer))] : []));
 }
 
 /**
- * Lowercase addresses of reviewers who signed the act that produced the primary judgment (the one
+ * The principal keys of reviewers who signed the act that produced the primary judgment (the one
  * a countersign confirms), or had any judgment made by a model they chose with their own key.
  */
 export function judgeRequestersOf(a: AttemptBody): string[] {
   return a.judgments.flatMap((j, i) => {
     const requestedPrimary = i === 0 && j.requestedBy.role === 'reviewer';
     if (!requestedPrimary && j.chosenBy !== 'reviewer') return [];
-    const addr = addressOfDid(j.requestedBy.did);
-    return addr ? [addr.toLowerCase()] : [];
+    return [principalKey(principalOfDid(j.requestedBy.did))];
   });
 }
 
 /**
- * Everyone who may not review this attempt, as lowercase addresses: the learner, every judge that
- * signed a judgment, a reviewer who asked for the primary judgment or chose a judge's model with
- * their own key, and every earlier reviewer (DECISIONS #2: the countersigner differs from the
- * original signer, the subject and the judge).
+ * Everyone who may not review this attempt, as principal keys (`principalKey`: addresses lower
+ * case, user DIDs as they are): the learner, every judge that signed a judgment, a reviewer who
+ * asked for the primary judgment or chose a judge's model with their own key, and every earlier
+ * reviewer (DECISIONS #2: the countersigner differs from the original signer, the subject and the
+ * judge).
  */
 export function conflictedReviewersOf(a: AttemptBody): string[] {
   return [...new Set([
-    a.learner.address.toLowerCase(), ...judgeSignersOf(a), ...judgeRequestersOf(a), ...a.reviews.map((r) => r.reviewer.address.toLowerCase()),
+    principalKey(a.learner.address), ...judgeSignersOf(a), ...judgeRequestersOf(a), ...a.reviews.map((r) => principalKey(r.reviewer.address)),
   ])];
 }
 
-/** The figures nextActionsFor reads, from an attempt body and a caller address. */
+/** The figures nextActionsFor reads, from an attempt body and a caller (a principal). */
 export function nextActionView(a: AttemptBody, caller: string): NextActionView {
   const primary = a.judgments[0];
   return {
@@ -702,7 +899,7 @@ export function nextActionView(a: AttemptBody, caller: string): NextActionView {
     contestCount: a.reopenings.filter((r) => r.kind === 'contest').length,
     learnerTurns: learnerTurnCount(a.turns),
     mayCountersignAsIs: primary !== undefined && primary.unverifiedCriteria.length === 0,
-    callerConflicted: conflictedReviewersOf(a).includes(caller.toLowerCase()),
+    callerConflicted: conflictedReviewersOf(a).includes(principalKey(caller)),
   };
 }
 
@@ -727,8 +924,9 @@ export function scenarioIri(podUrl: string, scenarioKey: string): string {
  * names the key it was derived under. Attempts started before the key was set keep their plain
  * key, so a lookup tries the keyed form first and then the plain one.
  */
-export function attemptKey(podUrl: string, scenarioIriValue: string, learnerAddress: string, secret?: string): string {
-  const message = `${podBase(podUrl)}|${scenarioIriValue}|${learnerAddress.toLowerCase()}`;
+export function attemptKey(podUrl: string, scenarioIriValue: string, learner: string, secret?: string): string {
+  // The learner is a principal: an address lower-cased (as before), a user DID exactly as it is.
+  const message = `${podBase(podUrl)}|${scenarioIriValue}|${principalKey(learner)}`;
   return secret === undefined
     ? sha256(message).slice(0, 16)
     : `k${iriKeyFingerprint(secret)}:${createHmac('sha256', Buffer.from(secret, 'hex')).update(message, 'utf8').digest('hex').slice(0, 16)}`;
@@ -952,7 +1150,7 @@ function scenarioGraph(b: ScenarioBody, json: string): string[] {
     ['pev:rubricHash', lit(b.rubricHash)],
     ['pev:hasCounterpart', ref(counterpart)],
     ['pev:hasRubric', ref(b.rubricIri)],
-    ['pev:author', b.versionAuthors.map((a) => ref(didOf(a)))],
+    ['pev:author', b.versionAuthors.map((a) => ref(principalDid(a)))],
     ['pev:draftAssistance', lit(canonicalJson(da))],
     ['pev:draftMeasured', bool(da.used && da.measured)],
     ['pev:editedAfterDraft', da.used && da.measured ? bool(da.editedAfterDraft) : undefined],
@@ -1132,13 +1330,13 @@ function attemptGraph(a: AttemptBody, json: string): string[] {
 function registryGraph(b: RoleRegistryBody, json: string): string[] {
   const G = b.registryIri;
   const blocks = [block(G, 'pev:RoleRegistry', [
-    ['pev:hasAssignment', b.entries.map((e) => ref(`${G}#${e.address.toLowerCase()}`))],
+    ['pev:hasAssignment', b.entries.map((e) => ref(`${G}#${principalKey(e.address)}`))],
     ['pev:serverHeldDemoKey', b.actor.serverHeldDemoKey ? bool(true) : undefined],
     ...envelopePairs(b.envelope),
     ...commonPairs(b, json),
   ])];
   for (const e of b.entries) {
-    blocks.push(block(`${G}#${e.address.toLowerCase()}`, 'pev:RoleAssignment', [
+    blocks.push(block(`${G}#${principalKey(e.address)}`, 'pev:RoleAssignment', [
       ['pev:address', lit(e.address)],
       ['pev:role', e.roles.map((r) => lit(r))],
     ]));

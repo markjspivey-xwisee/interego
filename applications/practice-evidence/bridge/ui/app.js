@@ -1412,8 +1412,8 @@ function authorForm(A, paint) {
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 function viewRoles(root) {
-  root.append(h('h2', { text: 'Roles on this pod' }), muted('Only an admin address configured on this bridge can change roles. Each change is a signed record that supersedes the registry\'s previous version.'));
-  const address = h('input', { type: 'text', placeholder: '0x… (40 hex digits)', 'aria-label': 'Address', size: 44 });
+  root.append(h('h2', { text: 'Roles on this pod' }), muted('Only an admin configured on this bridge can change roles. Each change is a signed record that supersedes the registry\'s previous version. A member is an address, or a person\'s Interego DID (did:web:…:users:…) for someone who signs in with their Interego account.'));
+  const address = h('input', { type: 'text', placeholder: '0x… (40 hex digits) or did:web:…:users:…', 'aria-label': 'Address', size: 56 });
   const role = h('select', { 'aria-label': 'Role' }, ['reviewer', 'author', 'judge', 'agent', 'learner'].map((r) => h('option', { value: r, text: r })));
   const change = h('select', { 'aria-label': 'Change' }, h('option', { value: 'add', text: 'add' }), h('option', { value: 'remove', text: 'remove' }));
   const out = h('div', { class: 'outcome' });

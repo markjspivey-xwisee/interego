@@ -40,7 +40,7 @@ pev:Attempt a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:comment "One learner's practice of one scenario version: the transcript, the judgments, the reviews and every reopening, as one supersede chain on one graph. Practice evidence is rehearsal, not capability evidence." .
 pev:RoleRegistry a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Role registry" ;
-    rdfs:comment "The per-pod list of addresses and the roles they hold (reviewer, author, judge, agent, learner). Each change is signed by an admin and supersedes the previous registry record." .
+    rdfs:comment "The per-pod list of members (addresses, or people's Interego DIDs) and the roles they hold (reviewer, author, judge, agent, learner). Each change is signed by an admin and supersedes the previous registry record." .
 pev:ProjectionAudit a owl:Class ; rdfs:subClassOf iep:ContextDescriptor ;
     rdfs:label "Projection audit row" ;
     rdfs:comment "A record that a statement was built for an attempt, or that building one was declined and why. Nothing is projected silently." .
@@ -94,7 +94,7 @@ pev:Redaction a owl:Class ; rdfs:subClassOf prov:Entity ;
 # The role registry.
 pev:RoleAssignment a owl:Class ; rdfs:subClassOf prov:Entity ;
     rdfs:label "Role assignment" ;
-    rdfs:comment "The roles one address holds on one pod." .
+    rdfs:comment "The roles one member (an address, or a person's Interego DID) holds on one pod." .
 
 # Vocabularies the records use as data.
 pev:WorkRead a owl:Class ; rdfs:subClassOf skos:Concept ;
@@ -274,7 +274,7 @@ pev:redactedBy a owl:ObjectProperty ;
     rdfs:domain pev:Redaction .
 pev:hasAssignment a owl:ObjectProperty ;
     rdfs:label "has assignment" ;
-    rdfs:comment "One address's roles in the registry." ;
+    rdfs:comment "One member's roles in the registry." ;
     rdfs:domain pev:RoleRegistry ;
     rdfs:range pev:RoleAssignment .
 pev:projectedAttempt a owl:ObjectProperty ;
@@ -705,7 +705,7 @@ pev:redactionRole a owl:DatatypeProperty ;
 # Role registry.
 pev:address a owl:DatatypeProperty ;
     rdfs:label "address" ;
-    rdfs:comment "An address (0x and 40 hex digits)." ;
+    rdfs:comment "A member: an address (0x and 40 hex digits), or a person's Interego DID (did:web:<identity host>:users:<id>), who signs in through the relay." ;
     rdfs:range xsd:string .
 pev:role a owl:DatatypeProperty ;
     rdfs:label "role" ;

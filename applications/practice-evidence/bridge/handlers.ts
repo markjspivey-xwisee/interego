@@ -25,16 +25,22 @@
  * Every read an act can be refused on (the head, the role registry, the scenario chain an answer
  * rests on) comes before step 12, and nothing after it can refuse: a refused act wrote nothing.
  *
- * Identity is ONLY the address recovered from the signature (DECISIONS #1). No input names a
- * person, a provenance, a modal status or a key — except a per-request model key (BYOK), which
- * is used for one call and never stored or echoed.
+ * Identity is ONLY what a signature proves (DECISIONS #1): the address recovered from a key the
+ * person holds, or, for a request the Interego relay signed with a delegation key this bridge
+ * trusts (`deps.relayDelegation`), the principal the verifier names (the agent's controller on the
+ * identity host, a user DID). That second route is relay-attested, not user-held, and every
+ * record made through it says so. Everywhere identity matters (admins, roles, separation of
+ * duties, the replay ledger, budgets, attempt keys, the actor stored on records) the principal is
+ * the identity, compared by `principalKey`: an address never matches a DID. No input names a
+ * person, a provenance, a modal status or a key — except a per-request model key (BYOK), which is
+ * used for one call and never stored or echoed.
  *
  * A caller's mistake is never thrown at the dispatcher: every decline is a `refuse(…)` with its
  * status. Internally a decline travels as a thrown `Declined` and is turned back into the
  * returned refusal at the handler boundary; a thrown plain Error is a defect in this code.
  */
 import {
-  assertSafeFetchTarget, canonicalGraphDigestResult, canonicalJson, recoverMessageSigner, sha256, sha256Hex, validate,
+  assertSafeFetchTarget, canonicalGraphDigestResult, sha256, validate,
   type EncryptionKeyPair, type ManifestEntry, type Wallet,
 } from '@interego/core';
 import { predictManifestUrl, PublishPreconditionFailedError, PublishShapeViolationError } from '@interego/solid';
@@ -46,6 +52,7 @@ import {
   type InferenceDisclosure, type TextModel, type TextModelRequest, type TextModelResult,
 } from '../src/model.js';
 import { isPevAction, PEV_ACTION, type PevActionKey } from '../src/ontology.js';
+import { agentSlugOf, isUserDid, openRelayDelegated, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import {
   agreementOf, assembleJudgment, assess, coerceJudgment, coerceScenario, counterpartControl, counterpartPacket,
   counterpartRequest, creditedLevels, criterionContentHash, draftComparableHash, draftPacket, draftRequest,
@@ -56,14 +63,15 @@ import {
   type JudgeChosenBy, type JudgmentResult, type NextLevelGuidance, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
 import {
-  actorOf, applyRoleChange, attemptIri as attemptIriOf, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, conflictedReviewersOf,
-  didOf, freshNonce, graphIriOf, iriKeyFingerprint, isAddress, isWellFormedText, judgeSignersOf, modalFor, modelAgentIri, nextActionsFor, nextActionView,
-  NonceLedger, podBase, projectionIri, recordGraphTurtle, recordIdFor, recordLocal, recordSalt, redactBody, registryIri, rubricIriOf, sameAddress,
-  scenarioIri as scenarioIriOf, signDraftReceipt, signEnvelope, slugFor, standingReview, toWellFormedText, verifyDraftReceipt,
+  actorOf, applyRoleChange, attemptIri as attemptIriOf, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, checkRelayPayload, conflictedReviewersOf,
+  didOf, freshNonce, graphIriOf, iriKeyFingerprint, isAddress, isPrincipal, isWellFormedText, judgeSignersOf, modalFor, modelAgentIri, nextActionsFor, nextActionView,
+  NonceLedger, podBase, principalDid, principalKey, projectionIri, recordGraphTurtle, recordIdFor, recordLocal, recordSalt, redactBody, registryIri,
+  relayDelegatedEnvelope, reverifyStoredEnvelope, rubricIriOf, samePrincipal, scenarioIri as scenarioIriOf, signDraftReceipt, signEnvelope,
+  signedRequestOf, signedRequestSigner, slugFor, standingReview, toWellFormedText, verifyDraftReceipt,
   EXPORT_VERIFY_STEPS, REDACTION_NOTE, ROLES,
-  type Actor, type AttemptAct, type AttemptBody, type DescriptorPlan, type DraftAssistance, type EnvelopeForm,
+  type Actor, type AttemptAct, type AttemptBody, type DescriptorPlan, type DraftAssistance, type EnvelopeForm, type EnvelopeOk,
   type FinalLevel, type KeyKind, type NextAction, type PevRecordBody, type ProjectionAuditBody, type RecordTarget,
-  type RecentEnvelope, type Redaction, type Reopening, type ReviewResult, type Role, type RoleRegistryBody, type ScenarioBody,
+  type RecentEnvelope, type Redaction, type RelayAttestation, type Reopening, type ReviewResult, type Role, type RoleRegistryBody, type ScenarioBody,
   type ScenarioStatus, type StoredEnvelope,
 } from '../src/records.js';
 import {
@@ -108,6 +116,32 @@ export interface PevDeps {
   readonly recordKey?: EncryptionKeyPair;
   /** Addresses that may change roles and retract a review. */
   readonly adminAddresses?: readonly string[];
+  /**
+   * People who may change roles and retract a review when they sign in with their Interego
+   * account: `did:web:<identity host>:users:<id>` principals (server.ts reads PEV_ADMIN_DIDS).
+   * Anything else is ignored; they count only with `relayDelegation`.
+   */
+  readonly adminDids?: readonly string[];
+  /**
+   * Interego sign-in: requests the relay signed (its `sign_request`, as `act … sign_payload:true`
+   * posts them) are read as the person whose agent the relay signed for, when the signature
+   * recovers to one of `relayAddresses` (server.ts reads PEV_TRUSTED_RELAY_ADDRESSES and
+   * PEV_IDENTITY_HOST, and passes an SSRF-guarded, size-capped, cached DID-document fetch). An
+   * empty `relayAddresses` disables the route; the identity host still says which user DIDs a role
+   * may be given to. Absent: no request is read as relay-delegated and no DID can hold a role.
+   * Relay-attested, not user-held: whoever holds a listed relay key, or controls the identity
+   * host, can act as any person here.
+   */
+  readonly relayDelegation?: RelayDelegationPolicy;
+  /**
+   * Whether a chat agent signed in through the relay (any agent whose slug does not start with
+   * `practice-evidence-`, this bridge's own web UI) may take the acts that change who may do what
+   * or undo a reviewer: register_role, retract_review, override_attempt. Default false
+   * (PEV_CHAT_AGENTS_DECIDE=1 sets it).
+   */
+  readonly chatAgentsDecide?: boolean;
+  /** The relay a person signs in through (PEV_RELAY_URL), reported to the web UI with the sign-in route. */
+  readonly relayUrl?: string;
   /** Operator pod transport. server.ts passes operatorWriteFetch(…); tests pass an in-memory pod. */
   readonly fetchFn?: typeof fetch;
   /** Holder-copy writes. Never carries the operator's credential. Defaults to `fetchFn`. */
@@ -167,8 +201,10 @@ export const DEFAULT_BUDGETS: { readonly modelCallsPerHour: HourlyLimit; readonl
 const HOUR_MS = 3_600_000;
 
 /**
- * A sliding one-hour window of uses, per signer and in total. It lives in this process: a
- * restart or a second replica starts its own count, which the README says.
+ * A sliding one-hour window of uses, per principal and in total. Per principal means per person:
+ * a relay-delegated act counts against the person it is for, never against the relay address,
+ * which signs for everyone. It lives in this process: a restart or a second replica starts its
+ * own count, which the README says.
  */
 class HourlyBudget {
   private readonly bySigner = new Map<string, number[]>();
@@ -183,7 +219,7 @@ class HourlyBudget {
       const kept = ts.filter((t) => t > since);
       if (kept.length === 0) this.bySigner.delete(k); else this.bySigner.set(k, kept);
     }
-    const key = signer.toLowerCase();
+    const key = principalKey(signer);
     const mine = this.bySigner.get(key) ?? [];
     const wait = (oldest: number | undefined): number => Math.max(1, Math.ceil(((oldest ?? now) + HOUR_MS - now) / 1000));
     if (this.all.length >= this.limit.total) return { ok: false, scope: 'total', retryAfterSeconds: wait(this.all[0]) };
@@ -286,6 +322,16 @@ interface Ctx {
   /** The public fingerprint every attempt IRI this bridge keys carries (iriKeyFingerprint); null without a record key. */
   readonly ownFingerprint: string | null;
   readonly admins: ReadonlySet<string>;
+  /** Admin principals by user DID, exactly as configured (never lower-cased). */
+  readonly adminDids: ReadonlySet<string>;
+  /**
+   * The relay-delegation policy with lower-cased relay addresses, or null without one. The route is
+   * on when it lists any relay address (`relayOn`); its identity host also decides which user DIDs
+   * a role may be given to.
+   */
+  readonly relay: RelayDelegationPolicy | null;
+  readonly relayOn: boolean;
+  readonly identityHost: string | null;
   readonly fetchFn: typeof fetch;
   readonly holderFetchFn: typeof fetch;
   /** Pod bases this bridge reads and writes records on; null = any public pod (explicit '*'). */
@@ -345,6 +391,9 @@ function makeContext(deps: PevDeps): Ctx {
   const demo = new Map<string, { role: DemoRoleName; label: string; wallet: Wallet }>();
   for (const r of deps.demoSigner?.roles ?? []) demo.set(r.wallet.address.toLowerCase(), r);
   const attemptSecret = deps.recordKey ? attemptIriSecret(deps.recordKey) : null;
+  const rd = deps.relayDelegation;
+  const relay: RelayDelegationPolicy | null = rd
+    ? { relayAddresses: lower(rd.relayAddresses), identityHost: rd.identityHost, fetchDidDocument: rd.fetchDidDocument } : null;
   return {
     deps,
     platform: deps.platformWallet,
@@ -356,6 +405,8 @@ function makeContext(deps: PevDeps): Ctx {
     attemptSecret,
     ownFingerprint: attemptSecret === null ? null : iriKeyFingerprint(attemptSecret),
     admins: new Set(lower(deps.adminAddresses)),
+    adminDids: new Set(relay ? (deps.adminDids ?? []).filter((d) => isUserDid(d, relay.identityHost)) : []),
+    relay, relayOn: relay !== null && relay.relayAddresses.length > 0, identityHost: relay?.identityHost ?? null,
     fetchFn,
     holderFetchFn: deps.holderFetchFn ?? fetchFn,
     served,
@@ -382,8 +433,9 @@ function makeContext(deps: PevDeps): Ctx {
 }
 
 const iso = (ctx: Ctx): string => ctx.now().toISOString();
-const isDemo = (ctx: Ctx, address: string): boolean => ctx.demo.has(address.toLowerCase());
-const isAdmin = (ctx: Ctx, address: string): boolean => ctx.admins.has(address.toLowerCase());
+const isDemo = (ctx: Ctx, principal: string): boolean => ctx.demo.has(principalKey(principal));
+/** An admin: an address in PEV_ADMIN_ADDRESSES, or a user DID in PEV_ADMIN_DIDS (exactly). */
+const isAdmin = (ctx: Ctx, principal: string): boolean => (isAddress(principal) ? ctx.admins.has(principal.toLowerCase()) : ctx.adminDids.has(principal));
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 //  Payload fields
@@ -486,9 +538,58 @@ function needWhy(p: P, required: boolean): string | undefined {
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 interface Signed {
+  /** The principal: the recovered address, or the person's user DID when the relay signed for them. */
   readonly signer: string; readonly signerDid: string; readonly payload: P; readonly stored: StoredEnvelope;
   readonly form: EnvelopeForm; readonly payloadSha256: string; readonly pod: string; readonly nonce: string;
   readonly actor: Actor; readonly at: string;
+  /** Set when the Interego relay signed this act for the person (authority relay-delegated). */
+  readonly relay?: RelayAttestation;
+}
+
+/**
+ * The acts that change who may do what or undo a reviewer's call. A relay-delegated request for
+ * one of them is read only from this bridge's own web UI (an agent whose slug starts with
+ * `WEB_UI_AGENT_PREFIX`) unless the operator lets chat agents decide (PEV_CHAT_AGENTS_DECIDE=1).
+ */
+export const DECISIVE_ACTS: ReadonlySet<PevActionKey> = new Set<PevActionKey>(['registerRole', 'retractReview', 'overrideAttempt']);
+/**
+ * The agent slug prefix of this bridge's own web UI: the relay names an OAuth client's agent
+ * `<client name>-<userId>`, and the UI registers as `practice-evidence`. Any client can call
+ * itself that, so this keeps a chat agent a person connected for other work from deciding here
+ * unasked; it does not prove the page made the request.
+ */
+export const WEB_UI_AGENT_PREFIX = 'practice-evidence-';
+
+/**
+ * The signed request, opened: relay-delegated when it is in the `{_signed_payload, _signature}`
+ * shape and its signature recovers to a relay address this bridge trusts, key-held otherwise
+ * (`checkEnvelope`, unchanged: another key signing the same shape is refused there as before).
+ * A relay-delegated request passes every check a key-held one does (v, action, freshness from the
+ * relay's timestamp, nonce format, the pod from pod_url) before the agent's DID document is
+ * fetched, and a decisive act from a chat agent is refused before anything is read from a pod.
+ */
+async function openEnvelope(ctx: Ctx, args: Record<string, unknown>, key: PevActionKey, now: Date): Promise<EnvelopeOk> {
+  const relay = ctx.relay;
+  if (relay !== null && ctx.relayOn) {
+    const found = signedRequestOf(args);
+    const relaySigner = found ? signedRequestSigner(found) : null;
+    if (found && relaySigner !== null && relay.relayAddresses.includes(relaySigner)) {
+      const checked = checkRelayPayload(found.signedPayload, A[key], now, { maxAgeMs: ctx.maxAgeMs });
+      if (!checked.ok) throw decline(checked.status, checked.message, checked.code);
+      const opened = await openRelayDelegated(found.signedPayload, found.signature, relay);
+      if (!opened.ok) throw decline(opened.status, opened.message, opened.code);
+      const slug = agentSlugOf(opened.agentId, relay.identityHost) ?? '';
+      if (DECISIVE_ACTS.has(key) && ctx.deps.chatAgentsDecide !== true && !slug.startsWith(WEB_UI_AGENT_PREFIX)) {
+        throw decline(403,
+          `This act changes who may do what here, or undoes a reviewer's call, and the Interego relay signed it for ${opened.agentId}, a chat agent. Such acts are taken from this bridge's own web UI (an agent named ${WEB_UI_AGENT_PREFIX}…) unless the operator sets PEV_CHAT_AGENTS_DECIDE=1. Sign in on this bridge's web UI and take it there.`,
+          'chat-agent-may-not-decide', { env: 'PEV_CHAT_AGENTS_DECIDE' }, { agentId: opened.agentId });
+      }
+      return relayDelegatedEnvelope(opened, checked);
+    }
+  }
+  const env = checkEnvelope(args, A[key], now, { maxAgeMs: ctx.maxAgeMs });
+  if (!env.ok) throw decline(env.status, env.message, env.code);
+  return env;
 }
 
 function notPublic(raw: string): Declined {
@@ -546,8 +647,7 @@ async function signedAct(
 ): Promise<Signed> {
   const { ctx } = call;
   const now = ctx.now();
-  const env = checkEnvelope(args, A[key], now, { maxAgeMs: ctx.maxAgeMs });
-  if (!env.ok) throw decline(env.status, env.message, env.code);
+  const env = await openEnvelope(ctx, args, key, now);
   o.checks?.(env.payload);
   const bad = illFormedAt(env.payload, 'payload');
   if (bad !== null) throw notWellFormed(bad);
@@ -559,12 +659,14 @@ async function signedAct(
   const pod = await servedPublicPod(ctx, podUrl);
   await refuseOnKeyMismatch(call, pod);
   const nonce = String(env.payload['nonce']);
+  // Spent per principal: a relay-delegated nonce is the person's, not the relay's (it signs for everyone).
   if ((o.nonce ?? o.write ?? false) && !ctx.ledger.consume(env.signer, nonce, now)) {
     throw decline(409, 'This signed envelope was already used; sign a new one.', 'envelope-already-used');
   }
   return {
     signer: env.signer, signerDid: env.signerDid, payload: env.payload, stored: env.stored, form: env.form,
-    payloadSha256: env.payloadSha256, pod, nonce, actor: actorOf(env.signer, isDemo(ctx, env.signer)), at: now.toISOString(),
+    payloadSha256: env.payloadSha256, pod, nonce, actor: actorOf(env.signer, env.relay === undefined && isDemo(ctx, env.signer)), at: now.toISOString(),
+    ...(env.relay ? { relay: env.relay } : {}),
   };
 }
 
@@ -682,6 +784,7 @@ function actOf(s: Signed, key: PevActionKey): AttemptAct {
   return {
     action: A[key], signer: s.signer, form: s.form, payloadSha256: s.payloadSha256, at: s.at, signature: s.stored.signature,
     ...(s.actor.serverHeldDemoKey ? { serverHeldDemoKey: true } : {}),
+    ...(s.relay ? { authority: s.relay.authority, agentId: s.relay.agentId, relaySigner: s.relay.relaySigner } : {}),
   };
 }
 
@@ -728,7 +831,7 @@ interface Roles { readonly view: RoleRegistryView; of(address: string): Readonly
 async function rolesOn(call: Call, pod: string): Promise<Roles> {
   const view = await readRoleRegistry(pod, call.ctx.trusted, call.read, call.cache);
   if (!view.trusted && view.head) throw untrusted(view.head);
-  return { view, of: (address: string) => view.roles.get(address.toLowerCase()) ?? new Set<Role>() };
+  return { view, of: (principal: string) => view.roles.get(principalKey(principal)) ?? new Set<Role>() };
 }
 
 /**
@@ -780,7 +883,7 @@ function planOf(body: PevRecordBody, o: {
   switch (body.kind) {
     case 'scenario': {
       const da = body.draftAssistance;
-      const actors: { did: string; role: 'Curator' | 'Validator' }[] = body.versionAuthors.map((a) => ({ did: didOf(a), role: 'Curator' }));
+      const actors: { did: string; role: 'Curator' | 'Validator' }[] = body.versionAuthors.map((a) => ({ did: principalDid(a), role: 'Curator' }));
       if (body.ratification) actors.push({ did: body.ratification.reviewer.did, role: 'Validator' });
       return {
         ...common, validFrom: body.at, actors,
@@ -964,24 +1067,16 @@ async function callModel(model: TextModel, req: TextModelRequest, t: Timeouts): 
 //  Eligibility to leave as evidence (§10): decided only by reading the pod
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-/** Recover a stored envelope's signer and payload from its exact signed bytes, or null. */
-function reverify(e: StoredEnvelope): { readonly signer: string; readonly payload: Record<string, unknown> } | null {
-  try {
-    if (e.form === 'pev-canonical' && e.payload) {
-      const text = canonicalJson(e.payload);
-      if (sha256(text) !== e.payloadSha256) return null;
-      return { signer: recoverMessageSigner(text, e.signature), payload: { ...e.payload } };
-    }
-    if (e.form === 'signed-request' && e.signedPayload !== undefined) {
-      if (sha256(e.signedPayload) !== e.payloadSha256) return null;
-      const parsed: unknown = JSON.parse(e.signedPayload);
-      if (!isObj(parsed)) return null;
-      return { signer: recoverMessageSigner(`sha256:${sha256Hex(e.signedPayload)}`, e.signature), payload: parsed };
-    }
-  } catch {
-    return null;
-  }
-  return null;
+/**
+ * Recover a stored envelope's principal and payload from its exact signed bytes, or null, with no
+ * network (`reverifyStoredEnvelope`): a key-held envelope's recovered address, or a relay-delegated
+ * one's stored principal once the signature recovers to a relay address this bridge still trusts
+ * and the signed agent_id is the stored agent. Whether the identity host still names that person as
+ * the agent's controller is not asked again: the platform signature over the record carries what
+ * it said when the act was taken.
+ */
+function reverify(ctx: Ctx, e: StoredEnvelope): { readonly signer: string; readonly payload: Record<string, unknown> } | null {
+  return reverifyStoredEnvelope(e, { relayAddresses: ctx.relay?.relayAddresses ?? [], identityHost: ctx.identityHost });
 }
 
 interface Ratification { readonly ratified: boolean; readonly ratifiedBy: string | null }
@@ -1039,8 +1134,8 @@ async function eligibility(call: Call, pod: string, h: AttemptHead): Promise<Eli
     return { eligible: false, code: 'attempt-not-countersigned', why: EVIDENCE_WHY.notReviewed, resolvedBy: { action: A.countersignAttempt } };
   }
   const notVerifiable: Eligibility = { eligible: false, code: 'countersign-not-verifiable', why: EVIDENCE_WHY.notVerifiable };
-  const signed = reverify(review.envelope);
-  if (!signed || !sameAddress(signed.signer, review.reviewer.address)) return notVerifiable;
+  const signed = reverify(call.ctx, review.envelope);
+  if (!signed || !samePrincipal(signed.signer, review.reviewer.address)) return notVerifiable;
   const act = signed.payload['action'];
   if ((act !== A.countersignAttempt && act !== A.overrideAttempt) || signed.payload['attemptIri'] !== a.attemptIri) return notVerifiable;
   const t = signed.payload['target'];
@@ -1055,7 +1150,7 @@ async function eligibility(call: Call, pod: string, h: AttemptHead): Promise<Eli
   if (!isTrusted(before) || placementProblem(before.body, pod, a.attemptIri) !== undefined
     || before.recordId !== review.target.recordId || before.graphDigest !== review.target.graphDigest) return notVerifiable;
   const asOf = await readRoleRegistryAt(pod, review.reviewedAt, call.ctx.trusted, call.read, call.cache);
-  const held = asOf.roles.get(review.reviewer.address.toLowerCase()) ?? new Set<Role>();
+  const held = asOf.roles.get(principalKey(review.reviewer.address)) ?? new Set<Role>();
   if (!held.has('reviewer') || held.has('agent')) return notVerifiable;
   const rat = await ratificationOf(call, pod, a);
   if (!rat.ratified || rat.ratifiedBy === null) {
@@ -1093,7 +1188,7 @@ function nextStepsOf(a: AttemptBody): NextLevelGuidance[] {
 
 function nextFor(ctx: Ctx, a: AttemptBody, caller: string, roles: ReadonlySet<Role>, eligible: boolean): NextAction[] {
   return nextActionsFor(nextActionView(a, caller), roles, {
-    bridgeHasModel: ctx.deps.model !== undefined, isLearner: sameAddress(a.learner.address, caller), isAdmin: isAdmin(ctx, caller), eligible,
+    bridgeHasModel: ctx.deps.model !== undefined, isLearner: samePrincipal(a.learner.address, caller), isAdmin: isAdmin(ctx, caller), eligible,
   });
 }
 
@@ -1107,6 +1202,23 @@ function bridgeRoute(ctx: Ctx): Out {
     servedPods: ctx.served ?? 'any public pod',
     ...(m ? { bridgeModelFor: ctx.deps.bridgeModelFor ?? 'anyone', modelCallsPerHour: ctx.modelBudget.limit } : {}),
     attemptsPerHour: ctx.attemptBudget.limit,
+    interegoSignIn: interegoSignInOf(ctx),
+  };
+}
+
+/**
+ * What a client needs to sign a person in with their Interego account, or null when the route is
+ * off: the relay, the identity host principals live on, the relay addresses this bridge trusts,
+ * the agent prefix of its own web UI and whether chat agents may take decisive acts. It says what
+ * the route trusts, because the answer is relay-attested, not user-held.
+ */
+function interegoSignInOf(ctx: Ctx): Out | null {
+  if (!ctx.relayOn || ctx.relay === null) return null;
+  return {
+    authority: 'relay-delegated', relayUrl: ctx.deps.relayUrl ?? null, identityHost: ctx.relay.identityHost,
+    relayAddresses: ctx.relay.relayAddresses, webUiAgentPrefix: WEB_UI_AGENT_PREFIX, chatAgentsDecide: ctx.deps.chatAgentsDecide === true,
+    decisiveActs: [...DECISIVE_ACTS].map((k) => A[k]),
+    trust: 'Relay-attested, not user-held: the Interego relay signs for the agent of your signed-in session and the identity host says whose agent it is, so whoever holds the relay delegation key or controls the identity host can act as any person here. Records made this way carry authority relay-delegated.',
   };
 }
 
@@ -1114,9 +1226,11 @@ function bridgeRoute(ctx: Ctx): Out {
 //  Roles: pev.register_role
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+/** Refused when no admin can act: no admin address, and no admin DID that can sign in (the relay route on). */
 function noAdmins(ctx: Ctx): void {
-  if (ctx.admins.size === 0) {
-    throw decline(503, 'No admin address is configured on this bridge, so roles cannot change.', 'no-admin-configured', { env: 'PEV_ADMIN_ADDRESSES' });
+  if (ctx.admins.size === 0 && !(ctx.relayOn && ctx.adminDids.size > 0)) {
+    throw decline(503, 'No admin is configured on this bridge (an address in PEV_ADMIN_ADDRESSES, or a person\'s Interego DID in PEV_ADMIN_DIDS with Interego sign-in on), so roles cannot change.',
+      'no-admin-configured', { env: 'PEV_ADMIN_ADDRESSES' });
   }
 }
 
@@ -1129,7 +1243,12 @@ async function registerRole(call: Call, args: Record<string, unknown>): Promise<
   const s = await signedAct(call, args, 'registerRole', {
     write: true,
     checks: (p) => {
-      if (!isAddress(p['address'])) throw decline(400, 'address must be an address 0x followed by 40 hex digits.', 'address-format');
+      // A member is a principal: an address, or a person's Interego DID on the identity host.
+      if (!isPrincipal(p['address'], ctx.identityHost)) {
+        throw decline(400, ctx.identityHost !== null
+          ? `address must be an address 0x followed by 40 hex digits, or a person's Interego DID did:web:${ctx.identityHost}:users:<id>.`
+          : 'address must be an address 0x followed by 40 hex digits (a person\'s Interego DID needs PEV_IDENTITY_HOST on this bridge).', 'address-format');
+      }
       address = p['address'];
       if (typeof p['role'] !== 'string' || !(ROLES as readonly string[]).includes(p['role'])) {
         throw decline(400, `role must be one of ${ROLES.join(', ')}.`, 'role-unknown');
@@ -1143,7 +1262,7 @@ async function registerRole(call: Call, args: Record<string, unknown>): Promise<
   return locked(call, `${s.pod}|${reg}`, async () => {
     const h = await readHead(s.pod, reg, ctx.trusted, call.read, call.cache);
     if (h.head && (!isTrusted(h.head) || h.head.body.kind !== 'role-registry')) throw untrusted(h.head);
-    if (!isAdmin(ctx, s.signer)) throw decline(403, 'Only an admin address configured on this bridge may change roles.', 'not-an-admin');
+    if (!isAdmin(ctx, s.signer)) throw decline(403, 'Only an admin configured on this bridge (PEV_ADMIN_ADDRESSES, or PEV_ADMIN_DIDS for Interego sign-in) may change roles.', 'not-an-admin');
     const current = h.head && h.head.body.kind === 'role-registry' ? h.head.body : null;
     const nowMs = ctx.now().getTime();
     const window = 2 * ctx.maxAgeMs + 120_000;
@@ -1257,7 +1376,7 @@ async function authorScenario(call: Call, args: Record<string, unknown>): Promis
     const rh = rubricHash(spec.rubric);
     const keep = head && sameContent && head.draftAssistance.used && head.draftAssistance.measured;
     const versionAuthors = head && sameContent
-      ? (head.versionAuthors.some((x) => sameAddress(x, s.signer)) ? head.versionAuthors : [...head.versionAuthors, s.signer])
+      ? (head.versionAuthors.some((x) => samePrincipal(x, s.signer)) ? head.versionAuthors : [...head.versionAuthors, s.signer])
       : [s.signer];
     const at = iso(ctx);
     const body: ScenarioBody = {
@@ -1335,10 +1454,10 @@ async function ratifyScenario(call: Call, args: Record<string, unknown>): Promis
     if (!h) throw decline(404, 'No scenario with this IRI is on this pod.', 'scenario-not-found');
     const b = h.body;
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
-    if (b.versionAuthors.some((x) => sameAddress(x, s.signer))) {
+    if (b.versionAuthors.some((x) => samePrincipal(x, s.signer))) {
       throw decline(403, 'An author of this version cannot ratify it; another reviewer must.', 'ratifier-is-the-author');
     }
-    if (ctx.trusted.addresses.has(s.signer.toLowerCase())) throw decline(403, 'The platform key cannot ratify a rubric.', 'ratifier-is-the-platform');
+    if (ctx.trusted.addresses.has(principalKey(s.signer))) throw decline(403, 'The platform key cannot ratify a rubric.', 'ratifier-is-the-platform');
     if (!roles.has('reviewer')) throw decline(403, 'Only an address registered as a reviewer may ratify a rubric.', 'not-a-reviewer');
     if (roles.has('agent')) throw decline(403, 'A person must ratify a rubric; this address is registered as an agent.', 'agent-cannot-ratify');
     if (s.payload['version'] !== b.version || s.payload['scenarioHash'] !== b.scenarioHash) {
@@ -1433,7 +1552,7 @@ async function startAttempt(call: Call, args: Record<string, unknown>): Promise<
   if (s.payload['scenarioVersion'] !== sb.version) {
     throw decline(409, `The scenario is now at version ${sb.version}; read the scenario again.`, 'scenario-revised', undefined, { currentVersion: sb.version });
   }
-  const isAuthor = sb.versionAuthors.some((x) => sameAddress(x, s.signer));
+  const isAuthor = sb.versionAuthors.some((x) => samePrincipal(x, s.signer));
   if (sb.status === 'draft' && !isAuthor) throw decline(409, 'This scenario is a draft; learners start published versions only.', 'scenario-not-published');
   // With a record key the new attempt's IRI is keyed (only a key holder can link it to the
   // learner); attempts started before the key keep their plain key and are still this learner's.
@@ -1517,7 +1636,7 @@ async function notAStartedEnvelope(call: Call, s: Signed, all: readonly Manifest
 /** Steps 5–7 shared by every learner act during the conversation. */
 async function conversationHead(call: Call, s: Signed, iri: string, turnIndex: number): Promise<AttemptHead> {
   const h = await attemptHead(call, s.pod, iri);
-  if (!sameAddress(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may do this.', 'not-the-learner');
+  if (!samePrincipal(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may do this.', 'not-the-learner');
   notReplayed(h.body, s);
   if (h.body.state !== 'in-conversation') {
     throw decline(409, `This attempt is ${h.body.state}; the conversation is over.`, 'attempt-not-in-conversation', undefined, { state: h.body.state });
@@ -1730,7 +1849,7 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
   const iri = needAttemptIri(s.payload);
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
-    const isLearner = sameAddress(h.body.learner.address, s.signer);
+    const isLearner = samePrincipal(h.body.learner.address, s.signer);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
     if (!isLearner && !roles.has('reviewer')) throw decline(403, 'Only the learner or a reviewer may ask this bridge to judge an attempt.', 'not-learner-or-reviewer');
     notReplayed(h.body, s);
@@ -1765,7 +1884,7 @@ async function judgePacketAct(call: Call, args: Record<string, unknown>): Promis
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
   const roles = (await rolesOn(call, s.pod)).of(s.signer);
-  if (!sameAddress(h.body.learner.address, s.signer) && !roles.has('reviewer') && !roles.has('judge')) {
+  if (!samePrincipal(h.body.learner.address, s.signer) && !roles.has('reviewer') && !roles.has('judge')) {
     throw decline(403, 'Only the learner, a reviewer or a registered judge may fetch the judge packet.', 'not-entitled');
   }
   judgeable(h.body);
@@ -1796,7 +1915,7 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const roles = (await rolesOn(call, s.pod)).of(s.signer);
-    if (sameAddress(h.body.learner.address, s.signer)) throw decline(403, 'The learner cannot judge their own attempt.', 'judge-is-the-learner');
+    if (samePrincipal(h.body.learner.address, s.signer)) throw decline(403, 'The learner cannot judge their own attempt.', 'judge-is-the-learner');
     if (!roles.has('judge')) throw decline(403, 'Only an address registered as a judge may record a judgment.', 'not-a-judge');
     notReplayed(h.body, s);
     judgeable(h.body);
@@ -1939,15 +2058,15 @@ async function reviewable(call: Call, s: Signed, iri: string, picks: readonly Le
   const { ctx } = call;
   const h = await attemptHead(call, s.pod, iri);
   const a = h.body;
-  const me = s.signer.toLowerCase();
+  const me = principalKey(s.signer);
   const roles = (await rolesOn(call, s.pod)).of(s.signer);
-  if (a.learner.address.toLowerCase() === me) throw decline(403, 'The learner cannot review their own attempt.', 'reviewer-is-the-learner');
+  if (principalKey(a.learner.address) === me) throw decline(403, 'The learner cannot review their own attempt.', 'reviewer-is-the-learner');
   if (judgeSignersOf(a).includes(me)) throw decline(403, 'A judge of this attempt cannot review it.', 'reviewer-is-the-judge');
-  if (conflictedReviewersOf(a).includes(me) && !a.reviews.some((r) => r.reviewer.address.toLowerCase() === me)) {
+  if (conflictedReviewersOf(a).includes(me) && !a.reviews.some((r) => principalKey(r.reviewer.address) === me)) {
     throw decline(403, 'You asked for the judgment a countersign would confirm, or had this attempt judged by a model you chose with your own key; another reviewer must review it.', 'reviewer-requested-the-judgment');
   }
   if (ctx.trusted.addresses.has(me)) throw decline(403, 'The platform key cannot review an attempt.', 'reviewer-is-the-platform');
-  if (a.reviews.some((r) => r.reviewer.address.toLowerCase() === me)) {
+  if (a.reviews.some((r) => principalKey(r.reviewer.address) === me)) {
     throw decline(403, 'You reviewed this attempt before; another reviewer must look at it again.', 'reviewer-already-reviewed');
   }
   if (!roles.has('reviewer')) throw decline(403, 'Only an address registered as a reviewer may review an attempt.', 'not-a-reviewer');
@@ -2076,7 +2195,7 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const a = h.body;
-    if (!sameAddress(a.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may contest its review.', 'not-the-learner');
+    if (!samePrincipal(a.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may contest its review.', 'not-the-learner');
     const review = standingReview(a);
     if ((a.state !== 'countersigned' && a.state !== 'overridden') || !review) {
       throw decline(409, `This attempt is ${a.state}; only a reviewed attempt can be contested.`, 'attempt-not-reviewed', undefined, { state: a.state });
@@ -2223,7 +2342,7 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
   const roles = (await rolesOn(call, s.pod)).of(s.signer);
-  if (!sameAddress(h.body.learner.address, s.signer) && !roles.has('reviewer') && !isAdmin(ctx, s.signer)) {
+  if (!samePrincipal(h.body.learner.address, s.signer) && !roles.has('reviewer') && !isAdmin(ctx, s.signer)) {
     throw decline(403, 'Only the learner, a reviewer or an admin may project this attempt.', 'not-entitled');
   }
   if (format === 'scorm') {
@@ -2283,7 +2402,7 @@ async function holderCopy(call: Call, args: Record<string, unknown>): Promise<Ou
   });
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
-  if (!sameAddress(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may copy it.', 'not-the-learner');
+  if (!samePrincipal(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may copy it.', 'not-the-learner');
   const notPublicTarget = (): Declined => decline(400, 'targetPodUrl must be a public http(s) pod address.', 'target-pod-not-public');
   const target = normalPod(String(s.payload['targetPodUrl']));
   if (target === null) throw notPublicTarget();
@@ -2351,11 +2470,13 @@ async function exportRecord(call: Call, args: Record<string, unknown>): Promise<
   const s = await signedAct(call, args, 'exportRecord', { checks: (p) => { needAttemptIri(p); } });
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
-  if (!sameAddress(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may export it.', 'not-the-learner');
+  if (!samePrincipal(h.body.learner.address, s.signer)) throw decline(403, 'Only the learner of this attempt may export it.', 'not-the-learner');
   // Every version's opened bytes go to the caller, so every version must be this attempt's own.
   const chain = await trustedChain(call, s.pod, iri);
   return {
-    attemptIri: iri, exportedAt: iso(ctx), platformAddresses: [...ctx.trusted.addresses], verify: EXPORT_VERIFY_STEPS,
+    attemptIri: iri, exportedAt: iso(ctx), platformAddresses: [...ctx.trusted.addresses],
+    // What an envelope with authority relay-delegated is re-verified against (see verify).
+    relayAddresses: ctx.relay?.relayAddresses ?? [], identityHost: ctx.identityHost, verify: EXPORT_VERIFY_STEPS,
     versions: chain.map((v, i) => (isDeleted(v)
       ? { seq: i + 1, recordId: v.recordId, state: null, modalStatus: null, sourceDescriptorUrl: v.descriptorUrl, descriptorTurtle: v.descriptorTurtle, graphTrig: null, contentDeleted: true }
       : {
@@ -2391,7 +2512,7 @@ async function redactAttempt(call: Call, args: Record<string, unknown>): Promise
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
     const a = h.body;
-    const isLearner = sameAddress(a.learner.address, s.signer);
+    const isLearner = samePrincipal(a.learner.address, s.signer);
     if (!isLearner && !isAdmin(ctx, s.signer)) throw decline(403, 'Only the learner or an admin may remove the transcript.', 'not-learner-or-admin');
     if (!isLearner && why === undefined) throw decline(400, 'An admin removing a learner\'s transcript says why (10 to 1000 characters).', 'why-required-for-admin');
     const kept = { transcriptHash: a.transcriptHash ?? null, turns: a.turns.length, quotes: a.judgments.reduce((n, j) => n + j.criteria.reduce((m, c) => m + c.quotes.length, 0), 0) };
@@ -2440,7 +2561,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
     const wide = roles.has('reviewer') || admin;
     const read = await attemptBodies(call, s.pod, 'the list of attempts');
     const list = read.bodies
-      .filter((a) => sameAddress(a.learner.address, s.signer) || (wide && !a.authorTest))
+      .filter((a) => samePrincipal(a.learner.address, s.signer) || (wide && !a.authorTest))
       .sort((x, y) => y.startedAt.localeCompare(x.startedAt))
       .slice(0, 100)
       .map((a) => {
@@ -2462,8 +2583,8 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
   const iri = needAttemptIri(s.payload);
   const h = await attemptHead(call, s.pod, iri);
   const a = h.body;
-  const isLearner = sameAddress(a.learner.address, s.signer);
-  if (!isLearner && !roles.has('reviewer') && !admin && !judgeSignersOf(a).includes(s.signer.toLowerCase())) {
+  const isLearner = samePrincipal(a.learner.address, s.signer);
+  if (!isLearner && !roles.has('reviewer') && !admin && !judgeSignersOf(a).includes(principalKey(s.signer))) {
     throw decline(403, 'Only the learner, a reviewer, a judge of this attempt or an admin may read it.', 'not-entitled');
   }
   const [e, rat, chain] = await Promise.all([
@@ -2628,7 +2749,7 @@ async function registryStartup(ctx: Ctx, pod: string): Promise<{ readonly lines:
         registryTrusted: false, untrustedSigner: signer,
       };
     }
-    return { lines: [`The role registry on ${pod} is trusted; ${view.roles.size} address(es) hold roles.`], registryTrusted: true };
+    return { lines: [`The role registry on ${pod} is trusted; ${view.roles.size} member(s) (addresses or Interego DIDs) hold roles.`], registryTrusted: true };
   } catch (e) {
     if (e instanceof RecordSealed) {
       return {
