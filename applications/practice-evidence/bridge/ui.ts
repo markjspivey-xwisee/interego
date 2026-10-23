@@ -114,7 +114,8 @@ export const PEV_UI_CLIENT_NAME = 'Practice Evidence';
 export const INTEREGO_SCOPE = 'mcp';
 /**
  * The longest the page keeps a sign-in: the relay's access tokens last an hour (its tokenTtlSec),
- * and a longer `expires_in`, or none, is taken as this.
+ * and a longer `expires_in`, or one that is missing or not a number, is taken as this. A number
+ * under one second says the token is already dead, and the exchange refuses it.
  */
 export const SIGN_IN_MAX_SECONDS = 3600;
 /** One relay call, from the first byte sent to the last read, DNS look-up included. */
@@ -574,10 +575,13 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       if (granted !== null && !granted.includes('mcp') && !granted.includes('mcp:write')) {
         throw new Declined(502, `The Interego relay gave this sign-in no write scope, so it cannot sign acts (it asked for "${INTEREGO_SCOPE}").`, 'relay-token-unusable');
       }
-      // How long the page keeps it: what the relay says, never more than an hour. The refresh token
-      // the relay may send as well is not read, kept or passed on.
+      // How long the page keeps it: what the relay says, never more than an hour, and never longer
+      // than the relay said. The refresh token the relay may send as well is not read, kept or passed on.
       const said = tj['expires_in'];
-      const expiresIn = typeof said === 'number' && Number.isFinite(said) && said >= 1 ? Math.min(Math.floor(said), SIGN_IN_MAX_SECONDS) : SIGN_IN_MAX_SECONDS;
+      if (typeof said === 'number' && !(said >= 1)) {
+        throw new Declined(502, 'The Interego relay said this sign-in\'s access token expires in under a second, so it is already spent. Sign in again.', 'relay-token-unusable');
+      }
+      const expiresIn = typeof said === 'number' ? Math.min(Math.floor(said), SIGN_IN_MAX_SECONDS) : SIGN_IN_MAX_SECONDS;
       // The relay issued it: signs with it count against its own sign-in from now on, until it expires.
       const h = tokenHash(access);
       refused.delete(h);

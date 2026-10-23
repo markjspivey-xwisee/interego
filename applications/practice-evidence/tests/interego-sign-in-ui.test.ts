@@ -551,11 +551,21 @@ describe('the sign-in routes: the client document, the start, and their refusals
     expect(relay.calls.slice(before).filter((c) => /^\/(identity-token|tool\/)/.test(new URL(c.url).pathname))).toEqual([]);
   });
 
-  it('keeps a sign-in no longer than an hour, and refuses one with no write scope', async () => {
+  it('keeps a sign-in no longer than an hour or than the relay said, and refuses one already spent or with no write scope', async () => {
     const long = stubRelay({ cimd: true, expiresIn: 86_400 });
     const l = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: long.fetchFn });
     const ex = await exchangeDirect(l, long);
     expect([ex.status, ex.json['expiresIn']]).toEqual([200, 3600]);
+    // A shorter expiry is kept as given; one under a second (the token already spent) is refused,
+    // not stretched to the hour.
+    const short = stubRelay({ cimd: true, expiresIn: 600 });
+    expect((await exchangeDirect(await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: short.fetchFn }), short)).json['expiresIn']).toBe(600);
+    for (const dead of [0, -5, 0.5]) {
+      const d = stubRelay({ cimd: true, expiresIn: dead });
+      const out = await exchangeDirect(await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: d.fetchFn }), d);
+      expect([dead, out.status, out.json['iep:refusalReason'], 'accessToken' in out.json, 'expiresIn' in out.json]).toEqual([dead, 502, 'relay-token-unusable', false, false]);
+      expect(JSON.stringify(out.json)).not.toContain(d.issued.at(-1) ?? 'none');
+    }
     const readOnly = stubRelay({ cimd: true, grantScope: 'mcp:read' });
     const r = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: readOnly.fetchFn });
     const refused = await exchangeDirect(r, readOnly);
