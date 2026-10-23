@@ -48,6 +48,10 @@ import {
 import { resolveTargetUserId } from './resolve-target-userid.js';
 import { authenticatePasskey, PasskeyPersistenceError } from './passkey-authentication.js';
 import { listPods, loadAccounts, readPodJson, type AccountLoadReport, type FetchLike } from './account-index.js';
+import { createProvisionalPlayProvider } from './provisional-play-provider.js';
+import { parsePlayClients } from './provisional-play.js';
+import { mountProvisionalPlay } from './provisional-play-routes.js';
+import { purgeProvisionalPlayPod } from './provisional-play-cleanup.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -472,6 +476,9 @@ interface AuthMethods {
    * field existed). The pod is the source of truth.
    */
   sessionEpoch?: number;
+  /** Provider-signed immutable Play owner anchor; not an enrolled human credential. */
+  provisionalPlayAnchor?: string;
+  provisionalPlayReceipts?: Array<{ hash: string; expiresAt: number }>;
 }
 
 function emptyAuthMethods(userId: string, name = userId, agentId?: string): AuthMethods {
@@ -500,6 +507,13 @@ interface TokenRecord {
   scope: string;
   issuedAt: string;
   expiresAt: string;
+  provisionalPlay?: ProvisionalTokenGrant;
+}
+
+interface ProvisionalTokenGrant {
+  audience: string;
+  proofKeyThumbprint: string;
+  expiresAt: number;
 }
 
 // In-memory stores. `identities` and `keys` are cheap-to-rebuild bookkeeping
@@ -953,6 +967,9 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
       : [],
     webAuthnCredentials: Array.isArray(src.webAuthnCredentials) ? src.webAuthnCredentials : [],
     didKeys: Array.isArray(src.didKeys) ? src.didKeys : [],
+    ...(Number.isInteger(src.sessionEpoch) ? { sessionEpoch: src.sessionEpoch } : {}),
+    ...(typeof src.provisionalPlayAnchor === 'string' ? { provisionalPlayAnchor: src.provisionalPlayAnchor } : {}),
+    ...(Array.isArray(src.provisionalPlayReceipts) ? { provisionalPlayReceipts: src.provisionalPlayReceipts } : {}),
   };
 }
 
@@ -1080,7 +1097,12 @@ async function loadAccountFromPod(userId: string): Promise<boolean> {
   const body = await readPodJson(podFetch, podAuthMethodsUrl(userId));
   if (body === null) return false;
   const m = normaliseAuthMethods(body, userId);
-  if (!m.walletAddresses.length && !m.webAuthnCredentials.length && !m.didKeys.length) return false;
+  if (!m.walletAddresses.length && !m.webAuthnCredentials.length && !m.didKeys.length) {
+    if (!m.provisionalPlayAnchor) return false;
+    try {
+      if (provisionalPlay.open(m.provisionalPlayAnchor, true).userId !== userId) return false;
+    } catch { return false; }
+  }
   hydrateFromAuthMethods(m);
   authMethodsCache.set(userId, { value: m, fetchedAt: Date.now() });
   rebuildIndexesForUser(userId, m);
@@ -1382,6 +1404,7 @@ interface SignedTokenPayload {
   expiresAt: string;
   /** Pod-stored sessionEpoch at issuance time. Below pod's current value → revoked. */
   epoch: number;
+  provisionalPlay?: ProvisionalTokenGrant;
 }
 
 function signPayload(payload: SignedTokenPayload): string {
@@ -1413,7 +1436,7 @@ function parseAndVerifySignature(token: string): { valid: true; payload: SignedT
   return { valid: true, payload };
 }
 
-async function issueToken(userId: string, agentId: string, scope: string): Promise<TokenRecord> {
+async function issueToken(userId: string, agentId: string, scope: string, provisional?: ProvisionalTokenGrant): Promise<TokenRecord> {
   const now = new Date();
   // Pod is the source of truth for the user's current sessionEpoch.
   // Stale-while-revalidate cache is fine here — issuing under a
@@ -1432,8 +1455,9 @@ async function issueToken(userId: string, agentId: string, scope: string): Promi
     agentId,
     scope,
     issuedAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + TOKEN_TTL_SECONDS * 1000).toISOString(),
+    expiresAt: new Date(Math.min(now.getTime() + TOKEN_TTL_SECONDS * 1000, provisional ? provisional.expiresAt * 1000 : Infinity)).toISOString(),
     epoch,
+    ...(provisional ? { provisionalPlay: provisional } : {}),
   };
   const token = signPayload(payload);
   const record: TokenRecord = {
@@ -1443,6 +1467,7 @@ async function issueToken(userId: string, agentId: string, scope: string): Promi
     scope,
     issuedAt: payload.issuedAt,
     expiresAt: payload.expiresAt,
+    ...(payload.provisionalPlay ? { provisionalPlay: payload.provisionalPlay } : {}),
   };
   log(`Issued token for ${agentId} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
   return record;
@@ -1454,6 +1479,20 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     return { valid: false, reason: (parsed as { valid: false; reason: string }).reason };
   }
   const payload = parsed.payload;
+  if (payload.provisionalPlay && (!Number.isInteger(payload.provisionalPlay.expiresAt)
+    || payload.provisionalPlay.expiresAt * 1000 <= Date.now())) {
+    return { valid: false, reason: 'Provisional owner expired' };
+  }
+  if (payload.provisionalPlay) {
+    try {
+      const body = await readPodJson(podFetch, podAuthMethodsUrl(payload.userId));
+      const methods = normaliseAuthMethods(body, payload.userId);
+      const owner = provisionalPlay.open(methods.provisionalPlayAnchor);
+      if (owner.userId !== payload.userId || owner.authenticatedAgentId !== payload.agentId
+        || owner.audience !== payload.provisionalPlay.audience || owner.proofKeyThumbprint !== payload.provisionalPlay.proofKeyThumbprint
+        || owner.expiresAt !== payload.provisionalPlay.expiresAt) return { valid: false, reason: 'Provisional owner binding mismatch' };
+    } catch { return { valid: false, reason: 'Provisional owner unavailable' }; }
+  }
   if (new Date(payload.expiresAt) < new Date()) {
     return { valid: false, reason: 'Token expired' };
   }
@@ -1493,6 +1532,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     scope: payload.scope,
     issuedAt: payload.issuedAt,
     expiresAt: payload.expiresAt,
+    ...(payload.provisionalPlay ? { provisionalPlay: payload.provisionalPlay } : {}),
   };
   return { valid: true, record };
 }
@@ -1698,6 +1738,7 @@ app.use(express.json());
 // Access-Control-Allow-Credentials: true.
 app.use(corsMiddleware({
   ownOrigin: BASE_URL,
+  extra: [...parsePlayClients(process.env['PROVISIONAL_PLAY_CLIENTS']).keys()],
   allowMethods: 'GET, POST, OPTIONS',
   allowHeaders: 'Accept, Content-Type, Authorization',
 }));
@@ -2949,6 +2990,38 @@ app.post('/try', tryProvisionLimiter, async (_req, res) => {
 // the env-var read.
 const TRY_USER_TTL_MS = parseInt(process.env['TRY_USER_TTL_MS'] ?? String(7 * 24 * 60 * 60 * 1000));
 
+// Provisional Play composes the existing native owner/pod and service-agent
+// delegation flow. It remains disabled without an explicit audience/principal
+// allowlist; browser private keys and native tokens never enter a game backend.
+const provisionalPlay = createProvisionalPlayProvider({
+  issuer: BASE_URL.replace(/\/$/, ''), cssUrl: CSS_URL,
+  publicPodBase: process.env['CSS_PUBLIC_URL'] ?? CSS_URL, relayUrl: RELAY_URL,
+  signingKey: TOKEN_SIGNING_KEY,
+  stableSigningKey: Buffer.from(process.env['TOKEN_SIGNING_KEY'] ?? '', 'base64').length >= 32,
+  clientsJson: process.env['PROVISIONAL_PLAY_CLIENTS'],
+  ttlSeconds: Number(process.env['PROVISIONAL_PLAY_TTL_SECONDS'] ?? 86400),
+  maxPods: Number(process.env['PROVISIONAL_PLAY_MAX_PODS'] ?? 100),
+  listPods: () => listPods(podFetch, CSS_URL),
+  empty: claims => emptyAuthMethods(claims.userId, 'Play guest', claims.authenticatedAgentId) as unknown as import('./provisional-play-store.js').PlayAnchorDocument,
+  committed: document => {
+    const methods = normaliseAuthMethods(document, document.userId);
+    hydrateFromAuthMethods(methods);
+    inlineApplyAuthMethods(document.userId, methods);
+    bootstrapUserIds.add(document.userId);
+  },
+  issueCredential: async claims => {
+    const user = identities.get(claims.userId);
+    if (!user || user.type !== 'user') throw new Error('Provisional owner unavailable');
+    return { ...await issueTokenResponse(user, undefined, {
+      audience: claims.audience, proofKeyThumbprint: claims.proofKeyThumbprint, expiresAt: claims.expiresAt,
+    }), podUrl: claims.podUrl };
+  },
+  recoverSigner: async (message, signature) => (await loadEthers()).verifyMessage(message, signature),
+});
+mountProvisionalPlay(app, provisionalPlay,
+  rateLimit('provisional-play', { windowMs: 60 * 60 * 1000, max: 5 }),
+  rateLimit('provisional-play-verify', { windowMs: 60 * 1000, max: 120 }), log);
+
 // ── Token response helper (shared across auth methods) ──────
 /**
  * Ensure a per-surface agent exists for this user.
@@ -2993,9 +3066,9 @@ function ensureSurfaceAgent(user: Identity, surfaceAgent: string | undefined): I
   return firstAgent;
 }
 
-async function issueTokenResponse(user: Identity, surfaceAgent?: string): Promise<Record<string, unknown>> {
+async function issueTokenResponse(user: Identity, surfaceAgent?: string, provisional?: ProvisionalTokenGrant): Promise<Record<string, unknown>> {
   const agent = ensureSurfaceAgent(user, surfaceAgent);
-  const tokenRecord = await issueToken(user.id, agent.id, agent.scope ?? 'ReadWrite');
+  const tokenRecord = await issueToken(user.id, agent.id, agent.scope ?? 'ReadWrite', provisional);
   const host = BASE_URL_HOST;
   // Summarise registered auth methods from cache (stale ok — this is just
   // a UI hint, not security-critical).
@@ -3044,6 +3117,11 @@ app.post('/register-agent', tokenLimiter, async (req, res) => {
   const tokenResult = await verifyToken(authHeader.slice(7));
   if (!tokenResult.valid) {
     res.status(401).json({ error: tokenResult.reason });
+    return;
+  }
+
+  if (tokenResult.record!.provisionalPlay) {
+    res.status(403).json({ error: 'provisional_owner_cannot_register_agents' });
     return;
   }
 
@@ -3113,6 +3191,10 @@ app.post('/tokens', tokenLimiter, async (req, res) => {
     res.status(403).json({ error: 'token does not belong to this user' });
     return;
   }
+  if (authResult.record!.provisionalPlay && authResult.record!.agentId !== agentId) {
+    res.status(403).json({ error: 'provisional_owner_cannot_change_agent' });
+    return;
+  }
 
   const user = identities.get(userId);
   if (!user || user.type !== 'user') {
@@ -3126,7 +3208,7 @@ app.post('/tokens', tokenLimiter, async (req, res) => {
     return;
   }
 
-  const record = await issueToken(userId, agentId, agent.scope ?? 'ReadWrite');
+  const record = await issueToken(userId, agentId, agent.scope ?? 'ReadWrite', authResult.record!.provisionalPlay);
   res.json({ token: record.token, expiresAt: record.expiresAt, scope: record.scope });
 });
 
@@ -3173,6 +3255,10 @@ app.post('/tokens/verify', tokenLimiter, async (req, res) => {
       agentId: result.record!.agentId,
       scope: result.record!.scope,
       expiresAt: result.record!.expiresAt,
+      ownerDid: `did:web:${BASE_URL_HOST}:users:${result.record!.userId}`,
+      webId: `${BASE_URL.replace(/\/$/, '')}/users/${result.record!.userId}/profile#me`,
+      podUrl: `${process.env['CSS_PUBLIC_URL'] ?? CSS_URL}${result.record!.userId}/`,
+      ...(result.record!.provisionalPlay ? { provisionalPlay: result.record!.provisionalPlay } : {}),
     });
   } else {
     res.json({ valid: false, reason: result.reason });
@@ -3652,6 +3738,12 @@ app.get('/me', authEnrollLimiter, async (req, res) => {
     did,
     webId,
     displayName: user.name,
+    ownerDid: `did:web:${BASE_URL_HOST}:users:${userId}`,
+    authenticatedAgentId: tr.record!.agentId,
+    authenticatedAgentDid: `did:web:${BASE_URL_HOST}:agents:${tr.record!.agentId}`,
+    tokenExpiresAt: tr.record!.expiresAt,
+    podUrl: `${process.env['CSS_PUBLIC_URL'] ?? CSS_URL}${userId}/`,
+    ...(tr.record!.provisionalPlay ? { provisionalPlay: tr.record!.provisionalPlay } : {}),
     primaryAgentId: primaryAgent?.id ?? null,
     primaryAgentDid: primaryAgent
       ? `did:web:${BASE_URL_HOST_NO_PORT}:agents:${primaryAgent.id}`
@@ -4797,6 +4889,16 @@ app.listen(PORT, () => {
       // save it — the exact opposite of what the promise says.
       for (const u of identities.values()) {
         if (u.type !== 'user' || !u.id.startsWith('u-try-')) continue;
+        if (u.id.startsWith('u-try-play-')) {
+          try {
+            // Read through to the pod before deletion; never infer "unclaimed"
+            // from a transient dependency failure or a process-local timestamp.
+            const methods = await fetchPodAuthMethods(u.id, { createIfMissing: false });
+            const owner = provisionalPlay.open(methods.provisionalPlayAnchor, true);
+            if (owner.expiresAt * 1000 <= now && !hasAnyCredential(methods)) toPurge.add(u.id);
+          } catch (error) { log(`Janitor: kept unreadable provisional owner ${u.id}: ${(error as Error).name}`); }
+          continue;
+        }
         if (new Date(u.createdAt).getTime() >= tryCutoff) continue;
         try {
           const methods = await readAuthMethods(u.id, /* allowStale */ true);
@@ -4813,9 +4915,26 @@ app.listen(PORT, () => {
       if (toPurge.size === 0) return;
       log(`Janitor: purging ${toPurge.size} stale user(s) (test + try-it)`);
       for (const uid of toPurge) {
+        if (uid.startsWith('u-try-play-')) {
+          void withIdentityPodMutex(uid, async () => {
+            await purgeProvisionalPlayPod({ userId: uid, cssUrl: CSS_URL,
+              stillUnclaimed: async () => {
+                const methods = await fetchPodAuthMethods(uid, { createIfMissing: false });
+                const owner = provisionalPlay.open(methods.provisionalPlayAnchor, true);
+                return owner.expiresAt * 1000 <= Date.now() && !hasAnyCredential(methods);
+              },
+            });
+            // A concurrent canonical enrollment wins: keep that account.
+            const remaining = await readPodJson(podFetch, podAuthMethodsUrl(uid));
+            if (remaining !== null) return;
+            await deleteUserCompletely(uid);
+          }).catch(err => log(`Janitor: provisional cleanup kept ${uid}: ${(err as Error).message}`));
+          continue;
+        }
         deleteUserCompletely(uid).catch(err => log(`Janitor: failed to delete ${uid}: ${(err as Error).message}`));
       }
     }, JANITOR_INTERVAL_MS).unref();
     log(`Janitor: scanning every ${JANITOR_INTERVAL_MS}ms; test grace ${TEST_USER_GRACE_MS}ms (pattern ${TEST_AGENT_PATTERN}); try-it TTL ${TRY_USER_TTL_MS}ms`);
   }
 });
+

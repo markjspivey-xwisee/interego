@@ -1,0 +1,41 @@
+name: Provisional native play
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'deploy/identity/**'
+      - 'deploy/css-gate/**'
+      - 'deploy/Dockerfile.identity'
+      - 'deploy/Dockerfile.css-gate'
+      - '.github/workflows/provisional-play.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'deploy/identity/**'
+      - 'deploy/css-gate/**'
+      - '.github/workflows/provisional-play.yml'
+permissions:
+  contents: read
+jobs:
+  identity-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npx tsc --noEmit -p deploy/identity/tsconfig.json
+      - run: npm test --workspace @interego/identity
+  guest-storage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: npm ci --prefix deploy/css-gate --no-audit --no-fund
+      - run: node --test deploy/css-gate/tests/*.test.mjs
+
