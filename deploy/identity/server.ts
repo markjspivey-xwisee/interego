@@ -695,7 +695,7 @@ async function fetchPodAuthMethods(
     // Passive callers (the index rebuild) must not materialize a file just because the
     // container exists: that would turn every service pod and inert pim:Storage shell into
     // a phantom user on every restart.
-    if (!createIfMissing) return emptyAuthMethods(userId);
+    if (!createIfMissing || userId.startsWith('u-try-play-')) return emptyAuthMethods(userId);
     // First touch from an active auth flow — write an empty file so the caller
     // can append to it without racing other writers.
     const empty = emptyAuthMethods(userId);
@@ -3063,6 +3063,7 @@ const provisionalPlay = createProvisionalPlayProvider({
   clientsJson: process.env['PROVISIONAL_PLAY_CLIENTS'],
   ttlSeconds: Number(process.env['PROVISIONAL_PLAY_TTL_SECONDS'] ?? 86400),
   maxPods: Number(process.env['PROVISIONAL_PLAY_MAX_PODS'] ?? 100),
+  withOwnerLock: withIdentityPodMutex,
   empty: claims => emptyAuthMethods(claims.userId, 'Play guest', claims.authenticatedAgentId) as unknown as import('./provisional-play-store.js').PlayAnchorDocument,
   committed: document => {
     const methods = normaliseAuthMethods(document, document.userId);
@@ -3848,21 +3849,26 @@ app.delete('/auth-methods/me/webauthn/:credentialId', authEnrollLimiter, async (
   if (!user) return;
   const credentialId = decodeURIComponent((req.params['credentialId'] as string | undefined) ?? '');
   if (!credentialId) { res.status(400).json({ error: 'credentialId required' }); return; }
-  const methods = await readAuthMethods(user.id);
-  const before = methods.webAuthnCredentials.length;
-  const next = methods.webAuthnCredentials.filter(c => c.id !== credentialId);
-  if (next.length === before) { res.status(404).json({ error: 'Credential not found' }); return; }
-  // Lockout guard: refuse to remove the user's last auth method of any kind.
-  const remainingTotal = next.length + methods.walletAddresses.length + methods.didKeys.length;
-  if (remainingTotal === 0) {
-    res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
-    return;
+  let remaining = 0;
+  try {
+    await commitCredentialEnrollment(user.id, 'webauthn-remove', methods => {
+      const before = methods.webAuthnCredentials.length;
+      const next = methods.webAuthnCredentials.filter(c => c.id !== credentialId);
+      if (next.length === before) { res.status(404).json({ error: 'Credential not found' }); return false; }
+      // Evaluate lockout against the latest document while holding the owner lock.
+      const remainingTotal = next.length + methods.walletAddresses.length + methods.didKeys.length;
+      if (remainingTotal === 0) {
+        res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
+        return false;
+      }
+      methods.webAuthnCredentials = next;
+      remaining = next.length;
+    }, true);
   }
-  methods.webAuthnCredentials = next;
-  try { await putPodAuthMethods(user.id, methods); }
   catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
+  if (res.headersSent) return;
   log(`Removed WebAuthn credential ${credentialId} for ${user.id}`);
-  res.json({ removed: true, credentialId, remaining: next.length });
+  res.json({ removed: true, credentialId, remaining });
 });
 
 /**
@@ -3875,20 +3881,25 @@ app.delete('/auth-methods/me/wallet/:address', authEnrollLimiter, async (req, re
   if (!user) return;
   const address = ((req.params['address'] as string | undefined) ?? '').toLowerCase();
   if (!address) { res.status(400).json({ error: 'address required' }); return; }
-  const methods = await readAuthMethods(user.id);
-  const before = methods.walletAddresses.length;
-  const next = methods.walletAddresses.filter(a => a.toLowerCase() !== address);
-  if (next.length === before) { res.status(404).json({ error: 'Wallet not found' }); return; }
-  const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.didKeys.length;
-  if (remainingTotal === 0) {
-    res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
-    return;
+  let remaining = 0;
+  try {
+    await commitCredentialEnrollment(user.id, 'wallet-remove', methods => {
+      const before = methods.walletAddresses.length;
+      const next = methods.walletAddresses.filter(a => a.toLowerCase() !== address);
+      if (next.length === before) { res.status(404).json({ error: 'Wallet not found' }); return false; }
+      const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.didKeys.length;
+      if (remainingTotal === 0) {
+        res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
+        return false;
+      }
+      methods.walletAddresses = next;
+      remaining = next.length;
+    }, true);
   }
-  methods.walletAddresses = next;
-  try { await putPodAuthMethods(user.id, methods); }
   catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
+  if (res.headersSent) return;
   log(`Removed wallet ${address} for ${user.id}`);
-  res.json({ removed: true, walletAddress: address, remaining: next.length });
+  res.json({ removed: true, walletAddress: address, remaining });
 });
 
 /**
@@ -3902,20 +3913,25 @@ app.delete('/auth-methods/me/did', authEnrollLimiter, async (req, res) => {
   if (!user) return;
   const did: string | undefined = req.body?.did;
   if (!did) { res.status(400).json({ error: 'did required in body' }); return; }
-  const methods = await readAuthMethods(user.id);
-  const before = methods.didKeys.length;
-  const next = methods.didKeys.filter(k => k.did !== did);
-  if (next.length === before) { res.status(404).json({ error: 'DID not found' }); return; }
-  const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.walletAddresses.length;
-  if (remainingTotal === 0) {
-    res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
-    return;
+  let remaining = 0;
+  try {
+    await commitCredentialEnrollment(user.id, 'did-remove', methods => {
+      const before = methods.didKeys.length;
+      const next = methods.didKeys.filter(k => k.did !== did);
+      if (next.length === before) { res.status(404).json({ error: 'DID not found' }); return false; }
+      const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.walletAddresses.length;
+      if (remainingTotal === 0) {
+        res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
+        return false;
+      }
+      methods.didKeys = next;
+      remaining = next.length;
+    }, true);
   }
-  methods.didKeys = next;
-  try { await putPodAuthMethods(user.id, methods); }
   catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
+  if (res.headersSent) return;
   log(`Removed DID ${did} for ${user.id}`);
-  res.json({ removed: true, did, remaining: next.length });
+  res.json({ removed: true, did, remaining });
 });
 
 /**
@@ -3941,22 +3957,26 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
   // refuses anything below the pod's current value. The cache is
   // invalidated via putPodAuthMethods so the next verify sees the
   // bumped epoch immediately.
-  let methods: AuthMethods;
+  let previousEpoch = 0;
+  let newEpoch = 0;
   try {
-    methods = await readAuthMethods(user.id, /* allowStale */ false);
-  } catch (err) {
-    res.status(500).json({ error: `Failed to read auth-methods: ${(err as Error).message}` });
-    return;
-  }
-  const newEpoch = (methods.sessionEpoch ?? 0) + 1;
-  const updated: AuthMethods = { ...methods, sessionEpoch: newEpoch };
-  try {
-    await putPodAuthMethods(user.id, updated);
+    if (user.id.startsWith('u-try-play-')) {
+      await commitCredentialEnrollment(user.id, 'sign-out-everywhere', methods => {
+        previousEpoch = methods.sessionEpoch ?? 0;
+        newEpoch = previousEpoch + 1;
+        methods.sessionEpoch = newEpoch;
+      }, true);
+    } else {
+      const methods = await readAuthMethods(user.id, false);
+      previousEpoch = methods.sessionEpoch ?? 0;
+      newEpoch = previousEpoch + 1;
+      await putPodAuthMethods(user.id, { ...methods, sessionEpoch: newEpoch });
+    }
   } catch (err) {
     res.status(500).json({ error: `Failed to persist sessionEpoch bump: ${(err as Error).message}` });
     return;
   }
-  log(`Signed out everywhere for ${user.id} — sessionEpoch ${methods.sessionEpoch ?? 0} → ${newEpoch}`);
+  log(`Signed out everywhere for ${user.id} — sessionEpoch ${previousEpoch} → ${newEpoch}`);
   res.json({ revoked: true, userId: user.id, sessionEpoch: newEpoch });
 });
 
@@ -4017,7 +4037,9 @@ async function deleteUserCompletely(userId: string): Promise<{ agents: string[];
 app.post('/users/me/delete', tokenLimiter, async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
-  const result = await deleteUserCompletely(user.id);
+  const result = user.id.startsWith('u-try-play-')
+    ? await withIdentityPodMutex(user.id, () => deleteUserCompletely(user.id))
+    : await deleteUserCompletely(user.id);
   log(`Deleted user ${user.id} (agents removed: ${result.agents.join(', ') || 'none'})`);
   res.json({ deleted: true, userId: user.id, ...result });
 });

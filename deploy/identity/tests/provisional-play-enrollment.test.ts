@@ -28,6 +28,7 @@ type Methods = {
   userId: string; provisionalPlayAnchor?: string;
   webAuthnCredentials: Array<{ id: string; counter?: number }>;
   walletAddresses: string[]; didKeys: Array<{ did: string }>;
+  sessionEpoch?: number;
 };
 const hasAnyCredential = (m: Methods) => m.webAuthnCredentials.length + m.walletAddresses.length + m.didKeys.length > 0;
 const empty = (): Methods => ({ userId, webAuthnCredentials: [], walletAddresses: [], didKeys: [] });
@@ -48,6 +49,7 @@ function fixture() {
   let beforePersist: () => Promise<void> = async () => {};
   let beforeDelete: () => Promise<void> = async () => {};
   let duringVerification: () => Promise<void> = async () => {};
+  let duringAccountDelete: () => Promise<void> = async () => {};
   const read = async () => document ? structuredClone(document) : empty();
   const persist = async (_owner: string, candidate: Methods) => {
     puts++;
@@ -77,6 +79,24 @@ function fixture() {
       await persist();
     }, persist,
   ) as (owner: string, response: { id: string }, challenge: string, rpId: string, origin: string) => Promise<void>;
+  const control = (method: string, path: string) => {
+    const start = executable.indexOf(`app.${method}('${path}',`);
+    assert.ok(start >= 0, path);
+    const handler = executable.indexOf('async (req, res) => {', start);
+    const end = executable.indexOf('\n});', handler);
+    const run = new Function('requireUserFromBearer', 'commitCredentialEnrollment', 'withIdentityPodMutex',
+      'deleteUserCompletely', 'log',
+      `return (${executable.slice(handler, end)}\n});`)(
+      async () => ({ id: userId }), commit, withIdentityPodMutex,
+      async () => { await duringAccountDelete(); document = null; cached = null; return { agents: [] }; },
+      () => {},
+    );
+    const response = { statusCode: 200, headersSent: false, body: null as unknown,
+      status(code: number) { this.statusCode = code; return this; },
+      json(body: unknown) { this.body = body; this.headersSent = true; return this; },
+    };
+    return { response, run: (params = {}, body = {}) => run({ params, body }, response) as Promise<void> };
+  };
   const root = `https://css.test/${userId}/`;
   const cleanup = () => withIdentityPodMutex(userId, () => purgeProvisionalPlayPod({
     userId, cssUrl: 'https://css.test/',
@@ -94,7 +114,7 @@ function fixture() {
     }) as typeof fetch,
   }));
   return {
-    commit, authenticate, cleanup, deletions,
+    commit, authenticate, cleanup, control, deletions,
     get document() { return document; }, get cached() { return cached; },
     get checkpoint() { return checkpoint; }, get puts() { return puts; },
     get inline() { return inline; }, get scheduled() { return scheduled; }, get openCalls() { return openCalls; },
@@ -102,6 +122,7 @@ function fixture() {
     set beforePersist(value: () => Promise<void>) { beforePersist = value; },
     set beforeDelete(value: () => Promise<void>) { beforeDelete = value; },
     set duringVerification(value: () => Promise<void>) { duringVerification = value; },
+    set duringAccountDelete(value: () => Promise<void>) { duringAccountDelete = value; },
   };
 }
 const enroll = (m: Methods) => { m.webAuthnCredentials.push({ id: 'verified-passkey' }); };
@@ -208,6 +229,76 @@ test('passkey authentication cannot overwrite a concurrently acknowledged enroll
   await f.authenticate(userId, { id: 'verified-passkey' }, 'next-challenge', 'identity.test', 'https://identity.test');
   assert.equal(f.document!.webAuthnCredentials[0].counter, 2);
   assert.deepEqual(f.document!.walletAddresses, ['0xverified']);
+});
+
+test('credential removal and session revocation retain concurrent enrollment and passkey counters', async () => {
+  const f = fixture();
+  await f.commit(userId, 'webauthn-register', enroll);
+  await f.commit(userId, 'wallet-link', m => { m.walletAddresses.push('0xold'); });
+  const started = deferred(), release = deferred();
+  f.duringVerification = async () => { started.resolve(); await release.promise; };
+  const authentication = f.authenticate(userId, { id: 'verified-passkey' }, 'challenge', 'identity.test', 'https://identity.test');
+  await started.promise;
+  const signOut = f.control('post', '/tokens/me/sign-out-everywhere');
+  const remove = f.control('delete', '/auth-methods/me/wallet/:address');
+  const revocation = signOut.run();
+  const removal = remove.run({ address: '0xold' });
+  const enrollment = f.commit(userId, 'did-add-did', m => { m.didKeys.push({ did: 'did:key:new' }); });
+  release.resolve();
+  await Promise.all([authentication, revocation, removal, enrollment]);
+  assert.equal(signOut.response.statusCode, 200);
+  assert.equal(remove.response.statusCode, 200);
+  assert.equal(f.document!.sessionEpoch, 1);
+  assert.equal(f.document!.webAuthnCredentials[0].counter, 1);
+  assert.deepEqual(f.document!.walletAddresses, []);
+  assert.deepEqual(f.document!.didKeys, [{ did: 'did:key:new' }]);
+});
+
+test('concurrent credential removals re-evaluate the last-method guard inside the lock', async () => {
+  const f = fixture();
+  await f.commit(userId, 'webauthn-register', enroll);
+  await f.commit(userId, 'wallet-link', m => { m.walletAddresses.push('0xold'); });
+  const passkey = f.control('delete', '/auth-methods/me/webauthn/:credentialId');
+  const wallet = f.control('delete', '/auth-methods/me/wallet/:address');
+  await Promise.all([passkey.run({ credentialId: 'verified-passkey' }), wallet.run({ address: '0xold' })]);
+  assert.deepEqual([passkey.response.statusCode, wallet.response.statusCode].sort(), [200, 409]);
+  assert.equal(hasAnyCredential(f.document!), true);
+});
+
+test('self-deletion waits for an in-flight enrollment and later mutations cannot recreate it', async () => {
+  const f = fixture();
+  const started = deferred(), release = deferred();
+  f.beforePersist = async () => { started.resolve(); await release.promise; };
+  const enrollment = f.commit(userId, 'webauthn-register', enroll);
+  await started.promise;
+  const deletion = f.control('post', '/users/me/delete');
+  const deleted = deletion.run();
+  await Promise.resolve();
+  assert.equal(deletion.response.headersSent, false);
+  release.resolve();
+  await enrollment;
+  await deleted;
+  assert.equal(deletion.response.statusCode, 200);
+  assert.equal(f.document, null);
+  const puts = f.puts;
+  await assert.rejects(f.commit(userId, 'did-add-did', m => { m.didKeys.push({ did: 'did:key:late' }); }),
+    /Provisional owner unavailable/);
+  assert.equal(f.document, null);
+  assert.equal(f.puts, puts);
+});
+
+test('a passive read cannot recreate a deleted provisional owner', async () => {
+  let puts = 0;
+  const read = new Function('podAuthMethodsUrl', 'readPodJson', 'podFetch', 'emptyAuthMethods',
+    'putPodAuthMethods', 'normaliseAuthMethods',
+    `${productionFunction('fetchPodAuthMethods')}; return fetchPodAuthMethods;`)(
+    (owner: string) => `https://css.test/${owner}/auth-methods.jsonld`, async () => null, () => {},
+    (owner: string) => ({ ...empty(), userId: owner }), async () => { puts++; }, (value: unknown) => value,
+  );
+  await read(userId);
+  assert.equal(puts, 0);
+  await read('u-pk-canonical');
+  assert.equal(puts, 1);
 });
 
 test('all four credential routes await the shared commit before acknowledging enrollment', () => {
