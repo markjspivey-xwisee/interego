@@ -1,0 +1,45 @@
+name: Railway singleton settings
+# Writes the replica and overlap settings every declared singleton in tools/railway-services.mjs
+# needs (tools/railway-singleton-settings.ts), so its one-container invariant rests on a setting
+# rather than a platform default. tools/railway-redeploy.mjs refuses to deploy a singleton until
+# these hold, and names this tool as the fix; until now nothing could run it without a person
+# holding the project token. Dispatch only, from master. Unticked, it only reports what it would
+# write; ticked, it writes numReplicas and overlapSeconds and reads them back. It never writes a
+# draining period and never deploys.
+#
+# REQUIRES ONE SECRET: RAILWAY_PROJECT_TOKEN — a Railway PROJECT token, not an account token.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Write the settings (unticked = report what would be written)'
+        type: boolean
+        default: false
+permissions: {}
+concurrency:
+  group: railway-singleton-settings
+  cancel-in-progress: false
+jobs:
+  settings:
+    if: github.repository == 'markjspivey-xwisee/interego' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      # Planning exits 1 when it finds drift; that is the report, not a failure of this run.
+      - name: Report or write the singleton settings
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          if [ "$APPLY" = "true" ]; then
+            npx --yes tsx tools/railway-singleton-settings.ts --apply
+          else
+            set +e
+            npx --yes tsx tools/railway-singleton-settings.ts
+            rc=$?
+            [ "$rc" -le 1 ] || exit "$rc"
+          fi
