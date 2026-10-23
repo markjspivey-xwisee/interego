@@ -64,8 +64,10 @@ const RECORDED: AffordanceOutput['properties'] = {
   recorded: { type: 'boolean' },
 };
 
+// The store is named by an IRI, as the serializer writes it straight into <…>: a placeholder such as
+// '<pod>/…' there is not Turtle, and made the whole manifest unparseable to the relay's act.
 const READS = [{
-  store: '<pod>/.well-known/context-graphs',
+  store: 'https://relay.interego.xwisee.com/ns/iep/store/wrd/records-manifest',
   label: 'The manifest of wrd records on the pod (only versions signed by a platform key this bridge trusts count)',
   populatedBy: 'urn:iep:action:wrd:capture-workflow',
 }] as const;

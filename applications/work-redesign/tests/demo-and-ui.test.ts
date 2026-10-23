@@ -39,7 +39,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { NextFunction, Request, Response } from 'express';
 import { JSDOM, VirtualConsole } from 'jsdom';
-import { importWallet, sha256Hex, signMessageRaw, canonicalJson } from '@interego/core';
+import { importWallet, sha256Hex, signMessageRaw, canonicalJson, parseTrig, followAffordance } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
@@ -475,6 +475,33 @@ describe('work-redesign offline demo and web UI', () => {
     const crossKind = [...new Set([...kindsAt.values()].filter((k) => k.size > 1).map((k) => [...k].sort().join('+')))];
     expect(crossKind).toEqual(['task+workflow']);
   }, 120_000);
+
+  // The relay's act resolves an affordance by parsing this manifest (core parseTrig), falling back to
+  // a slice anchored on the action. A manifest that does not parse left every action unreachable from
+  // Claude and ChatGPT while every route still answered: a placeholder '<pod>/…' written into an IRI.
+  it('serves an affordance manifest the relay can parse whole, and resolves every action from it as act does', async () => {
+    const app = createVerticalBridge({
+      verticalName: 'work-redesign', affordances: wrdAffordances, deploymentUrl: 'http://127.0.0.1',
+      handlers: createWrdHandlers({ defaultPodUrl: DEMO_POD }),
+    });
+    const l = await listenLoopback(app);
+    listeners.push(l);
+    const manifest = await (await fetch(`${l.base}/affordances`, { headers: { Accept: 'text/turtle' } })).text();
+    expect(() => parseTrig(manifest)).not.toThrow();
+    const descriptorUrl = 'https://bridge.example/affordances';
+    for (const a of wrdAffordances) {
+      const invoked: string[] = [];
+      // globalThis.Response: this module's Response is express's.
+      const fetchFn = async (input: string | URL | globalThis.Request): Promise<globalThis.Response> => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url === descriptorUrl) return new globalThis.Response(manifest, { status: 200, headers: { 'Content-Type': 'text/turtle' } });
+        invoked.push(url);
+        return new globalThis.Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      await followAffordance(descriptorUrl, a.action, {}, { fetch: fetchFn as never });
+      expect(invoked, a.action).toEqual([a.targetTemplate.replace('{base}', 'http://127.0.0.1')]);
+    }
+  });
 
   it('serves /ui, /ui/app.js and /ui/app.css with the CSP, nosniff, no-referrer and no-store headers; the shell has no style attribute and app.js no setAttribute(\'style\' and no innerHTML', async () => {
     const app = createVerticalBridge({
