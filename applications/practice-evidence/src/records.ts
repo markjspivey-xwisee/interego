@@ -20,7 +20,7 @@
  * body) with `pev:recordJsonSha256`. One function writes both from the same object, so they cannot
  * disagree; read-back takes the body from the literal and refuses one whose hash does not match.
  */
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import {
   canonicalJson, sha256, sha256Hex, escapeTurtleLiteral, turtleIriRef, recoverMessageSigner, signMessageRaw,
   parseTrig, readStringValue, ContextDescriptor,
@@ -77,6 +77,15 @@ export interface RecordCommon {
    */
   readonly seq?: number;
   readonly prev?: RecordLink;
+  /**
+   * Fresh server randomness (`recordSalt()`, 144 bits), drawn for every version the bridge writes
+   * and kept only in the body (the `pev:recordJson` literal: no triple of its own). The record's
+   * content hash is on its public descriptor, and with a record key the body is sealed; a body
+   * whose every field is public or one of a few values (a projection audit's are, but for who
+   * asked) could otherwise be confirmed from that hash by guessing, for each candidate address,
+   * the one field left. With the salt nothing short of the key opens a body or confirms a guess.
+   */
+  readonly salt?: string;
 }
 
 export type DraftAssistance =
@@ -265,6 +274,11 @@ export function addressOfDid(did: string): string | null {
   return m ? (m[1] ?? null) : null;
 }
 export function freshNonce(): string { return randomBytes(18).toString('base64url'); }
+/**
+ * A record body's salt: 18 bytes (144 bits) from the operating system's random source, as
+ * base64url. Never from an injected nonce source, which tests make predictable.
+ */
+export function recordSalt(): string { return randomBytes(18).toString('base64url'); }
 export function actorOf(address: string, serverHeldDemoKey: boolean): Actor {
   return { address, did: didOf(address), serverHeldDemoKey };
 }
@@ -326,6 +340,12 @@ export function checkEnvelope(
     message = signedText;
   } else {
     if (typeof found.signedPayload !== 'string' || found.signedPayload.length === 0) return no(401, 'envelope-missing', missing);
+    // The signature is over this text's UTF-8 bytes, and one with a lone surrogate has none: refused
+    // before it is hashed, as any other text that is not well-formed is (the pev-canonical form's
+    // JSON escapes such a code unit, so its payload is checked field by field after this).
+    if (!isWellFormedText(found.signedPayload)) {
+      return no(400, 'payload-shape', '_signed_payload must be well-formed text (it holds half of a UTF-16 surrogate pair, which cannot be stored as sent).');
+    }
     let parsed: unknown;
     try { parsed = JSON.parse(found.signedPayload); } catch { parsed = undefined; }
     if (!isRecord(parsed)) return no(400, 'envelope-payload-format', 'The signed payload must be a JSON object.');
@@ -695,9 +715,59 @@ export function podBase(url: string): string { return `${url.replace(/\/+$/, '')
 export function scenarioIri(podUrl: string, scenarioKey: string): string {
   return `urn:pev:scenario:${sha256(`${podBase(podUrl)}|${scenarioKey}`).slice(0, 16)}`;
 }
-/** k16: the key shared by every attempt of one learner on one scenario on one pod. */
-export function attemptKey(podUrl: string, scenarioIriValue: string, learnerAddress: string): string {
-  return sha256(`${podBase(podUrl)}|${scenarioIriValue}|${learnerAddress.toLowerCase()}`).slice(0, 16);
+/**
+ * The key shared by every attempt of one learner on one scenario on one pod: the part of the
+ * attempt IRI before `-<n>`.
+ *
+ * Without `secret` it is k16, a plain sha256 of the pod, the scenario and the learner's address,
+ * so anyone who can read the pod's manifest and holds a candidate address can tell which attempts
+ * are that learner's. With `secret` (`attemptIriSecret` of the bridge's record key) it is
+ * `k<fingerprint>:<k16>`, where k16 is an HMAC-SHA256 under that secret, so only a holder of the
+ * record key can link an attempt IRI to an address, and the fingerprint (`iriKeyFingerprint`)
+ * names the key it was derived under. Attempts started before the key was set keep their plain
+ * key, so a lookup tries the keyed form first and then the plain one.
+ */
+export function attemptKey(podUrl: string, scenarioIriValue: string, learnerAddress: string, secret?: string): string {
+  const message = `${podBase(podUrl)}|${scenarioIriValue}|${learnerAddress.toLowerCase()}`;
+  return secret === undefined
+    ? sha256(message).slice(0, 16)
+    : `k${iriKeyFingerprint(secret)}:${createHmac('sha256', Buffer.from(secret, 'hex')).update(message, 'utf8').digest('hex').slice(0, 16)}`;
+}
+/**
+ * The attempt-IRI secret derived from the record key pair (an HMAC of its secret key under the
+ * label `pev-attempt-iri`), hex. Every bridge holding the same PEV_RECORD_KEY derives the same one.
+ */
+export function attemptIriSecret(recordKey: { readonly secretKey: string }): string {
+  return createHmac('sha256', Buffer.from(recordKey.secretKey, 'base64')).update('pev-attempt-iri', 'utf8').digest('hex');
+}
+/**
+ * The public identifier of an attempt-IRI secret: the first 8 hex of
+ * HMAC-SHA256(secret, 'pev-iri-key-fingerprint'). Every keyed attempt IRI carries it, so a bridge
+ * can tell that a pod holds attempts keyed under a record key it does not hold before it answers a
+ * lookup from their absence. It is a key identifier: an HMAC output under a secret key says
+ * nothing about the key, and the label is not the one any IRI segment is keyed with, so it says
+ * nothing about any learner either.
+ */
+export function iriKeyFingerprint(secret: string): string {
+  return createHmac('sha256', Buffer.from(secret, 'hex')).update('pev-iri-key-fingerprint', 'utf8').digest('hex').slice(0, 8);
+}
+/** A keyed attempt IRI: `urn:pev:attempt:k<fingerprint>:<k16>-<n>`. */
+const KEYED_ATTEMPT_IRI = /^urn:pev:attempt:k([0-9a-f]{8}):[0-9a-f]{16}-[1-9][0-9]*$/;
+/** The key fingerprint a keyed attempt IRI carries, or null for a plain (or any other) IRI. */
+export function fingerprintOfAttemptIri(iri: string): string | null {
+  return KEYED_ATTEMPT_IRI.exec(iri)?.[1] ?? null;
+}
+
+/** A UTF-16 code unit that is half of a surrogate pair with no other half. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+/**
+ * True when `s` is well-formed UTF-16: no lone surrogate. Text that is not cannot be encoded as
+ * UTF-8 without loss, so it cannot be sealed or hashed as what was sent.
+ */
+export function isWellFormedText(s: string): boolean { return !LONE_SURROGATE.test(s); }
+/** `s` with every lone surrogate replaced by U+FFFD, which is what a UTF-8 encoder writes for it. */
+export function toWellFormedText(s: string): string {
+  return isWellFormedText(s) ? s : s.replace(new RegExp(LONE_SURROGATE.source, 'g'), '�');
 }
 export function attemptIri(key: string, n: number): string { return `urn:pev:attempt:${key}-${n}`; }
 export function registryIri(podUrl: string): string { return `urn:pev:role-registry:${sha256(podBase(podUrl)).slice(0, 16)}`; }
@@ -720,16 +790,32 @@ export function recordLocal(recordId: string): string {
   return recordId.startsWith('urn:pev:record:') ? recordId.slice('urn:pev:record:'.length) : sha256(recordId).slice(0, 16);
 }
 
-/** Descriptor slug, unique per record (§3): a race from one head writes two resources, never one twice. */
-export function slugFor(kind: PevRecordBody['kind'], graphIri: string, seq: number, recordId: string): string {
+/**
+ * Descriptor slug, unique per record (§3): a race from one head writes two resources, never one
+ * twice. A record sealed to a record key ends in `-k<fingerprint>` (`keyFingerprint`, the key's
+ * `iriKeyFingerprint`), so the pod's manifest names, for every sealed record, which key sealed it:
+ * see `fingerprintOfRecordUrl`.
+ */
+export function slugFor(kind: PevRecordBody['kind'], graphIri: string, seq: number, recordId: string, keyFingerprint?: string): string {
   const rec8 = recordLocal(recordId).slice(0, 8);
   const tail = graphIri.slice(graphIri.lastIndexOf(':') + 1);
+  const mark = keyFingerprint === undefined ? '' : `-k${keyFingerprint}`;
   switch (kind) {
-    case 'scenario': return `scenario-${tail}-s${seq}-${rec8}`;
-    case 'attempt': return `attempt-${tail}-s${seq}-${rec8}`;
-    case 'role-registry': return `roles-${tail}-s${seq}-${rec8}`;
-    case 'projection-audit': return `projection-${tail}`;
+    case 'scenario': return `scenario-${tail}-s${seq}-${rec8}${mark}`;
+    case 'attempt': return `attempt-${tail}-s${seq}-${rec8}${mark}`;
+    case 'role-registry': return `roles-${tail}-s${seq}-${rec8}${mark}`;
+    case 'projection-audit': return `projection-${tail}${mark}`;
   }
+}
+
+/** A sealed record's descriptor URL: `…-k<fingerprint>.ttl` (no unsealed slug ends in `-k` and 8 hex). */
+const SEALED_RECORD_URL = /-k([0-9a-f]{8})\.ttl$/;
+/**
+ * The key fingerprint a sealed record's descriptor URL carries (see `slugFor`), or null for a
+ * plaintext record's. Like a keyed attempt IRI's, it is a key identifier and says nothing else.
+ */
+export function fingerprintOfRecordUrl(descriptorUrl: string): string | null {
+  return SEALED_RECORD_URL.exec(descriptorUrl)?.[1] ?? null;
 }
 
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]{1,120}$/;

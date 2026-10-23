@@ -22,6 +22,40 @@
  *   PEV_PLATFORM_KEY                the platform signing key; absent → an ephemeral key, and the
  *                                   startup lines say what that means
  *   PEV_TRUSTED_PLATFORM_ADDRESSES  earlier platform addresses whose records stay trusted
+ *   PEV_RECORD_KEY                  64 hex (an optional 0x): the key every record written to the
+ *                                   operator pod is encrypted to, as an envelope only this bridge
+ *                                   can open, and the key new attempt IRIs are keyed with (an
+ *                                   HMAC), so no one without it can tell whose an attempt is.
+ *                                   Descriptors and the manifest stay readable: signer, record
+ *                                   kind, modal status, times, trust level, the authors, ratifiers,
+ *                                   reviewers and admins they name (never a learner), the chain of
+ *                                   versions, and per attempt how many versions, when, whether
+ *                                   reviewed and whether redacted. Absent → records are plaintext
+ *                                   and attempt IRIs are a plain hash of the learner's address
+ *                                   (anyone holding a candidate address can find that learner's
+ *                                   attempts), and the startup lines say so. Malformed → the bridge
+ *                                   does not start. Plaintext records and plain attempt IRIs
+ *                                   written earlier stay as they are, and readable. Losing it makes
+ *                                   every encrypted record unreadable: back it up. A keyed attempt
+ *                                   IRI and a sealed record's descriptor URL name the key's public
+ *                                   fingerprint (printed at startup), and a bridge with another
+ *                                   key, or none, writes nothing on a pod whose own records carry
+ *                                   either mark, and answers nothing from it but the scenario list
+ *                                   (409 record-key-mismatch). Where a pod writer removed the
+ *                                   marks, only the acts that read a sealed record are refused
+ *                                   (record-not-trusted, records-sealed), and a bridge with
+ *                                   another key marks the pod with its own at its first sealed
+ *                                   write. Holder copies are never encrypted. Never logged.
+ *   PEV_REQUIRE_RECORD_KEY=1        a deployment guard: the bridge does not start (exit 1) unless
+ *                                   PEV_RECORD_KEY is set and well-formed, so a deployment whose
+ *                                   key is blank or missing (an unresolved reference, a forgotten
+ *                                   setting) never writes plaintext to a pod that serves reads to
+ *                                   anyone. The pev image sets it; unset or 0 (local runs, the
+ *                                   demo) → no guard. Any other value → the bridge does not start,
+ *                                   a blank one included (empty or only whitespace, as an
+ *                                   unresolved reference or an empty override of the image's 1
+ *                                   leaves it): unlike every other variable, a blank value here is
+ *                                   not read as unset. Surrounding whitespace is ignored.
  *   PEV_ADMIN_ADDRESSES             addresses that may change roles and withdraw reviews
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
@@ -33,13 +67,13 @@
  *   PEV_DEFAULT_POD_URL=https://your-pod.example/practice/ PEV_ADMIN_ADDRESSES=0x… \
  *     npx tsx applications/practice-evidence/bridge/server.ts
  */
-import { createWallet, importWallet, type Wallet } from '@interego/core';
+import { createWallet, deriveEncryptionKeyPair, importWallet, type EncryptionKeyPair, type Wallet } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
-import { freshNonce, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
+import { attemptIriSecret, freshNonce, iriKeyFingerprint, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
 import {
   createPevHandlers, describeStartup, DEFAULT_BUDGETS, DEMO_ROLE_NAMES,
   type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
@@ -54,6 +88,8 @@ const env = (name: string): string | undefined => {
   return v !== undefined && v.trim() !== '' ? v.trim() : undefined;
 };
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((x) => x.trim()).filter((x) => x !== '');
+/** PEV_RECORD_KEY: 32 bytes as hex, an optional 0x prefix. */
+const RECORD_KEY_HEX = /^(0x)?[0-9a-fA-F]{64}$/;
 
 const PORT = parseInt(env('PORT') ?? '6110', 10);
 const HOST = env('HOST') ?? '127.0.0.1';
@@ -111,6 +147,34 @@ async function main(): Promise<void> {
     platformKeyKind = 'ephemeral';
   }
 
+  // Read as set, not through env(): a blank value (an unresolved service reference, or an empty
+  // override of the image's 1) is not "no guard", or a deployment would start writing plaintext.
+  const requireSet = process.env['PEV_REQUIRE_RECORD_KEY'];
+  if (requireSet !== undefined && requireSet.trim() === '') {
+    warn(`PEV_REQUIRE_RECORD_KEY is set but blank (${JSON.stringify(requireSet)}), as an unresolved reference or an empty override of the image's 1 leaves it; it takes 1 (refuse to start without PEV_RECORD_KEY) or 0, and a blank value is not read as either. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const requireRaw = requireSet?.trim();
+  if (requireRaw !== undefined && requireRaw !== '1' && requireRaw !== '0') {
+    warn(`PEV_REQUIRE_RECORD_KEY is ${JSON.stringify(requireRaw)}; it takes 1 (refuse to start without PEV_RECORD_KEY) or 0. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const requireRecordKey = requireRaw === '1';
+  const recordKeyHex = env('PEV_RECORD_KEY');
+  if (recordKeyHex !== undefined && !RECORD_KEY_HEX.test(recordKeyHex)) {
+    warn('PEV_RECORD_KEY is not 64 hex characters (32 bytes, an optional 0x prefix): records encrypted to a mistyped or truncated key could not be opened with the right one. Not listening.');
+    process.exitCode = 1;
+    return;
+  }
+  if (recordKeyHex === undefined && requireRecordKey) {
+    warn('PEV_REQUIRE_RECORD_KEY=1 and PEV_RECORD_KEY is not set (or is blank, as an unresolved reference is): this deployment would write every transcript, judgment and reviewer reason in plaintext to its pod. Set PEV_RECORD_KEY to 64 hex characters (32 bytes) and back it up, or, for a local run only, unset PEV_REQUIRE_RECORD_KEY. Not listening.');
+    process.exitCode = 1;
+    return;
+  }
+  const recordKey: EncryptionKeyPair | undefined = recordKeyHex !== undefined ? deriveEncryptionKeyPair(recordKeyHex, 'pev-records') : undefined;
+
   const trusted = list(env('PEV_TRUSTED_PLATFORM_ADDRESSES'));
   const admins = list(env('PEV_ADMIN_ADDRESSES'));
   for (const [name, values] of [['PEV_TRUSTED_PLATFORM_ADDRESSES', trusted], ['PEV_ADMIN_ADDRESSES', admins]] as const) {
@@ -153,6 +217,7 @@ async function main(): Promise<void> {
   const deps: PevDeps = {
     platformWallet, platformKeyKind,
     trustedPlatformAddresses: trusted.filter((x) => isAddress(x)),
+    ...(recordKey ? { recordKey } : {}),
     adminAddresses: [...admins.filter((x) => isAddress(x)), ...(demoAdmin ? [demoAdmin.address] : [])],
     fetchFn: operatorPodFetch(defaultPodUrl, writeSecret, baseFetch),
     holderFetchFn: baseFetch,
@@ -193,7 +258,9 @@ async function main(): Promise<void> {
   say(`  web UI ${base}/ui  |  MCP ${base}/mcp  |  manifest ${base}/affordances  |  ontology ${base}/ns/pev`);
   say(`  pod: ${defaultPodUrl ?? 'none (each act names its pod)'}; records read and written on: ${anyPod ? 'any public pod (PEV_SERVED_PODS=*)' : servedPods.length > 0 ? servedPods.join(', ') : 'NO pod: set PEV_DEFAULT_POD_URL or PEV_SERVED_PODS, or every act is refused'}`);
   say(`  pod credential: ${writeSecret ? 'configured, sent on reads and writes under the operator pod' : 'not configured'}`);
-  say('  records are plaintext: anyone the pod lets read pev/records/ reads every transcript (a pod that serves reads anonymously serves them to everyone)');
+  say(recordKey
+    ? `  records are encrypted to this bridge's record key (PEV_RECORD_KEY, public key ${recordKey.publicKey}, fingerprint k${iriKeyFingerprint(attemptIriSecret(recordKey))}, which every record it seals and every attempt IRI it keys names on the pod): the pod holds the graph of every record written from now on only as ciphertext, and new attempt IRIs are keyed with it, so no one without the key can tell whose an attempt is. Still readable by anyone the pod lets read: descriptors and the manifest (signer, record kind, modal status, times, trust level, the authors, ratifiers, reviewers and admins they name, never a learner) and, per attempt, how many versions, when, whether reviewed and whether redacted. Records and attempt IRIs written before the key was set stay as they were: plaintext, and a plain hash of the learner's address. Back the key up: without it no encrypted record can be read again`
+    : '  records are plaintext: anyone the pod lets read pev/records/ reads every transcript (a pod that serves reads anonymously serves them to everyone), and attempt IRIs are a plain hash of the learner\'s address, so anyone holding a candidate address finds that learner\'s attempts. Set PEV_RECORD_KEY (64 hex) to encrypt them');
   say(`  platform key: ${platformKeyKind}, address ${platformWallet.address}`);
   if (platformKeyKind === 'ephemeral') {
     say('  records written now become untrusted after a restart unless you add this address to PEV_TRUSTED_PLATFORM_ADDRESSES');

@@ -4,6 +4,22 @@
 
 The gUFO publisher changed `docs/gufo.ttl` on 2026-10-22 (the nemo-ufes/gufo commit "Closing issue #58"). The only change removes one erroneous triple, `gufo:concernsReifiedQualityValue rdfs:comment gufo:concernsQualityValue`, so the file now has 764 triples instead of 765. The pinned SHA-256 no longer matched what `https://purl.org/nemo/gufo` serves, so `prepare-build-inputs.ts` refused to refresh. That failed every foxxi-bridge image build, and each failed build skipped the deploy job for every service in that run. The manifest now pins `ef6c1ab2…` with 764 triples kept. A full `refreshUpper` run against the live publishers verified every upper ontology against its pin.
 
+## 2026-10-22 — Practice-evidence records encrypted at rest
+
+With `PEV_RECORD_KEY` set to 64 hex characters, the practice-evidence bridge writes every record to the operator pod with its graph encrypted to a key derived from that value, stored as `<slug>-graph.envelope.jose.json`, and opens it with the same key on read. The platform signature is checked over the opened graph, so every record still verifies as bound. A new attempt's IRI is keyed with the same key (`urn:pev:attempt:k<fingerprint>:<16 hex>-<n>`: an HMAC-SHA256 of the pod, the scenario and the learner's address under a secret derived from it, after the first 8 hex of HMAC-SHA256 of `pev-iri-key-fingerprint` under that secret, a key identifier that reveals nothing about the key or any learner), so only a holder of the key can tell whose an attempt is, and a projection audit's descriptor no longer names who asked for the statement; its encrypted body still does. Every record body now carries 144 bits of fresh randomness (`salt`, inside the encrypted body), so its public content hash confirms no guess of the body: before this, a projection audit's other fields were all public or one of a few values, and hashing a candidate body for each address one holds told who asked for which attempt's statement.
+
+Only the graphs are encrypted. Descriptors and the manifest stay public, and anyone who can read the pod (the repository's gate serves reads to everyone) still sees, per record, the signing platform, its kind, modal status, times, trust level, content hash and chain of versions, and the people it names in roles that are public by design: a scenario's authors and ratifier, an attempt's reviewer, the admin who changed a role entry. No descriptor names a learner. Per attempt a reader still sees how many versions it has and when (every exchange is a version), and whether it was reviewed, contested, withdrawn or redacted; one learner's attempts on one scenario share the keyed part of their IRI, so a reader can tell they are one person's without knowing whose, and every keyed IRI, like every sealed record's descriptor URL, names the key's fingerprint. Attempts started before the key was set keep IRIs that are a plain hash of the learner's address, which anyone holding a candidate address can recompute; a bridge with the key still finds them as that learner's and counts them in a new attempt's sealed attempt number, while the new attempt's IRI is numbered within its keyed series from `-1`, so how many plain attempts a candidate address has does not single out her keyed ones.
+
+A record encrypted to a key the bridge does not hold, or read by a bridge with no key, is never read as empty or negative. Every record a bridge seals carries its key's mark (below), so on a pod whose own records carry the mark of a key that is not the bridge's (of any key, for a bridge with none) every act that reads the pod but `list_scenarios` is refused with 409 `record-key-mismatch` before it reads any record (below). Only where none of the pod's own records carries such a mark, as when someone who can write the pod rewrote the manifest without them, does the sealed record itself refuse. Read on its own it is refused as unreadable (409 `record-not-trusted`) with a pointer to `PEV_RECORD_KEY`: a scenario sealed to another key no longer reads as "not ratified" (which wrote a skip audit), and a projection then is refused with nothing written. `review_queue`, the `get_attempt` list, `scenario_results` and `calibration`, which before answered with a sealed attempt silently left out (one awaiting review read as `awaitingReview: 0`), answer 409 `records-sealed`, naming `PEV_RECORD_KEY`, with `sealedRecordsSkipped`, when any attempt head is sealed; the three signed ones read the role registry first, so where it is sealed too they answer 409 `record-not-trusted` about the registry instead, and `scenario_results` reads the scenario's own head before the attempts, so where that head is sealed (and the registry is not) it answers 409 `record-not-trusted` about the scenario. `list_scenarios`, with the marks or without them, leaves a sealed scenario out, counts it in `sealedRecordsSkipped` apart from the untrusted records, answers `complete: false` and carries `sealedRecords` naming `PEV_RECORD_KEY`. An envelope that names the bridge's key but does not open (bytes that are not UTF-8, a field that is not base64, a changed ciphertext: anyone can encrypt to a public key) is a record that is not trusted (409 `record-not-trusted`, saying why), no longer reported as an unreachable pod (502). So is a record whose descriptor or graph the pod serves over the bridge's 8 MiB read limit, by its declared length or by the bytes it sends: refused on its own (409 `record-not-trusted`, saying it is over the read limit) and counted with the untrusted records by `list_scenarios`, `review_queue`, the `get_attempt` list, `scenario_results` and `calibration`, which still answer. Before, one such file at an attempt head, which anyone who can write the pod can plant, made `review_queue`, the `get_attempt` list, `scenario_results` and the unsigned `calibration` answer 502 `pod-unreachable`, and one at a scenario head `list_scenarios`. The same holds for a record whose descriptor or graph the pod answers with an error status, 401, 403 or 5xx (for a graph, after the substrate's retries): it is refused on its own naming the status, and the listings count it with the untrusted records and answer `complete: false`, since what it holds is unknown. Before, one planted descriptor whose graph linked to a resource the bridge may not read, such as another pod's private resource on the same host, made all of them answer 502. A descriptor's graph is now followed only within the descriptor's own container on the pod, not anywhere on its host. Only a request that gets no answer, and a manifest that cannot be read, are still 502. One act now reads at most 32 MiB from pods in all, four times the per-response limit: a listing that reaches it stops reading, says so (`readLimitReached`) and answers `complete: false`, and any other act is refused (409 `read-limit-reached`), writing nothing. A record a listing reads and skips is no longer held for the rest of the act. Before, one near-limit graph planted with many small descriptors linking to it, each the head of an attempt of its own, made one anonymous `calibration` hold every copy, and the process ran out of memory. Nor is a record a projection, a review or `get_attempt` rests on read as a negative answer when the bridge cannot read it: a scenario chain or review target it cannot open or find is refused (409 `record-not-trusted` saying why, or 409 `chain-forked` for a scenario with two heads), no longer answered "not ratified" or "not verifiable" with a skip audit written.
+
+A bridge holding another record key, or none, no longer starts a second chain beside keyed attempts, or writes on a pod whose own records carry the key's mark. It derives other attempt IRIs for the same learners, so it found a learner's keyed attempts absent and started a new attempt numbered after her plain ones only, sealed to its own key or in plaintext. Now every record a bridge seals names its key's fingerprint at the end of its descriptor URL, as every attempt IRI it keys does, so a pod's manifest says which key its records are under from the first record sealed, a role entry or a scenario draft included, before any attempt is keyed. Only the pod's own records count: the manifest entries whose descriptor sits directly in its `pev/records/` container, where every record a bridge writes for its pod goes and no holder copy does. A holder copy of a keyed attempt, which a learner may have another operator's bridge write into a pod this bridge serves (plaintext, under `pev/holder-copies/`), marks nothing; before, it stopped that pod's own bridge, keyless or holding its own key, from writing anything or answering the review queue, the attempt list, results or calibration, and pointed it at the other operator's key. When the pod's own records name a key that is not the bridge's own (or any key, when it holds none), every signed act, read or write, and the unsigned `calibration` are refused (409 `record-key-mismatch`, naming `PEV_RECORD_KEY`, with where the manifest names the key and every fingerprint involved: `markedAt`, `markedBy`, `podKey`, `podKeys`, `bridgeKey`, `bridgeKeyOnPod`). The check is the first read of the pod, before any record, the role registry included: before, on a pod whose role registry was sealed (as on a deployment, where the key writes every record), `review_queue`, `get_attempt` (the list and one attempt) and `scenario_results` answered 409 `record-not-trusted` about the registry, without the key fields. The reads that still answer on such a bridge are `list_scenarios`, marked `recordKeyMismatch` (one scenario asked for by its IRI with a version sealed is refused with 409 `record-key-mismatch` too), and the two that read no record, `draft_scenario_packet` and, in demo mode only, `sign_as_demo_role`. The startup lines say so, and a bridge with a key also prints its own fingerprint when it starts. The pod says which key wrote to it, not which key is the operator's (a bridge with the wrong key that writes first on a pod with no sealed record marks it), so the refusal tells a bridge with a key to check which fingerprint is the operator's, never simply to switch to the pod's. Every act now reads what it can be refused on (the role registry, the scenario chain) before it writes: before, a contest, a recorded exchange, an end, a countersign or an override by such a bridge could write its version and only then answer 409. The marks are what stop such a bridge. Where someone who can write the pod removed them, only the acts that read a sealed record are refused (409 `record-not-trusted`, or `records-sealed` from `review_queue`, the `get_attempt` list, `scenario_results` and `calibration`): while the role registry is plaintext, such a bridge can still register roles, author scenarios and start a newcomer's attempt on a plaintext scenario, and a bridge holding another key marks the pod with its own key at its first sealed write, after which the bridge holding the pod's key is refused there. Plain IRIs and plaintext records never count, so a pod that never had a key works as before, and the bridge with the key goes on. Plaintext records written before the key was set stay readable, and a bridge with the key reads both. Holder copies on a learner's pod are never encrypted, because the learner does not hold the bridge's key.
+
+Someone who can write the pod but lacks the key can no longer use `export_record` to have the bridge decrypt another learner's record: a chain is followed only through versions the manifest files under the same graph, so a forged `supersedes` is refused before the other record is fetched, and the export, like the holder copy and the redaction, hands over a version only when every version is trusted where it sits. `pev.calibration`, which needs no signature, now hides each figure resting on 1 to 4 reviewed outcomes and keeps its count, and, as results already did, any figure from which a hidden one could be worked out by subtraction: a blind or audit-sample agreement whose cell holds 1 to 4 rows outside the subset, and a pooled (`criterion-content`) figure while any rubric-version cell it pools hides that figure. Text with a lone UTF-16 surrogate, which cannot be encrypted as sent, is refused at input (400 `payload-shape`) before any model call, a raw `_signed_payload` holding one included; a model's is recorded as U+FFFD, and a record the bridge cannot encrypt is a 500 `record-shape`, no longer reported as an unreachable pod.
+
+The bridge reads less of the pod per act. Records are written once, so a record it read, checked and found trusted where it sits is now kept for up to 5 minutes (64 MiB in all, least recently used dropped first), and an act reads the pod's manifest and only the records it has not seen; where a kept record sits is still checked against the manifest on every read. A record someone changes in place after the bridge verified it is therefore read again when its entry expires, and the versions under a redacted head are always read again, so a transcript another process removed is never served from what was kept. An act reads the manifest once, and again under its lock only when the same bridge wrote meanwhile. The web UI shows a recorded exchange from the act's own answer rather than reading the attempt again. On the offline demo flow, GETs to the pod fell from 859 to 323 (12.8 to 4.8 per act). The web UI also says when an answer is not the whole pod (`complete: false`) before showing it, and no longer says the pod holds nothing ("No attempts yet", "Nothing waits for you", "No reviewed outcomes yet", "No published scenarios") while it is not. A pod an act names that the bridge does not serve is now refused (403 `pod-not-served`) from its URL alone, before its name is resolved, and a holder copy's target is checked against the served pods before it is resolved: before, the bridge resolved the name first and refused one resolving to a private address with 400 `pod-not-public`, which told anyone which names, an internal service's for instance, resolve privately.
+
+Without the key the bridge writes plaintext as before, and its startup lines now say so, including that attempt IRIs are then linkable to a learner's address; a malformed key stops the bridge at startup. `PEV_REQUIRE_RECORD_KEY=1` stops it as well when the key is missing or blank, as an unset or unresolved service variable leaves it, and any value of `PEV_REQUIRE_RECORD_KEY` but `1` or `0` stops it, a blank one included (empty or only whitespace, as an unresolved reference or an empty override of the image's `1` leaves it; before, a blank guard was read as unset, so a bridge whose key was missing too started in plaintext): `deploy/Dockerfile.pev-bridge` sets it, lists `PEV_RECORD_KEY` among the values to set on the service and carries an empty `PEV_RECORD_KEY` line, so a deployment configured from the image cannot start in plaintext. Losing the key makes every encrypted record unreadable, so the operator must back it up. The offline demo runs with a public fixture record key, and its redaction check now searches what that key opens and checks each earlier graph is gone. Two things stay as they are, and are documented: attempts started before the key keep plain IRIs linkable to their learner, and two reads of the unsigned calibration at different times differ by the reviews recorded in between, so polling it shows how the newest review in a shown cell went.
+
 ## 2026-10-22 — Container images for the work-redesign and practice-evidence bridges
 
 `deploy/Dockerfile.wrd-bridge` and `deploy/Dockerfile.pev-bridge` build the two bridges as single-stage images, and `deploy/images.json` adds `interego-wrd-bridge` and `interego-pev-bridge` to the build matrix with the prebuilt-packages recipe. Each image copies the packages, the shared vertical code and its own vertical, listens on every interface (`HOST=::`), and bakes in only non-secret defaults: the operator pod path on the gate and, for practice-evidence, lower pilot hourly budgets. Keys, admins, the pod credential and the model route stay unset until they are set on the service. No Railway service is added, so neither bridge deploys yet. The merge itself still redeploys jev-harness-bridge, whose image bundles the whole tree, as any change to `CHANGELOG.md` does.
@@ -1097,7 +1113,6 @@ Tests: `tests/a-scorm-package-folds-into-composable-content.test.ts` (new) cover
 
 Forty-eight mutants each turn a named test red.
 
-
 ## 2026-09-28 — Foxxi: the census reads the SCORM upload's declines again, and a package a launch described is not read twice
 
 **The census reads the upload's declines again.** CI's mutation gate ("Every refusal gate fails on its own defect") has failed on every pull request since #548:
@@ -1118,7 +1133,6 @@ Tests cover:
 - a package is queued once however often it is asked for.
 
 Six mutants each turn a named test red, and the gate's defect is caught again (`node tools/mutation-gate.mjs --only=untyped-decline-behind-a-multi-statement-handler`).
-
 
 ## 2026-09-28 — Foxxi: listing hosted packages opens none of them, and hosting is offered to admins alone
 
@@ -1204,7 +1218,6 @@ Under memory pressure each could contradict its own `keptStatementIds`. Now the 
 
 Tests: the doors' by-id answers, a sign-out while the wallet is asking, an IPv6 dashboard, and domains carrying a line break, a path, user info, a query or a space. Seven mutants each turn a named test red.
 
-
 ## 2026-09-27 — Foxxi: a set of statements is kept whole only while the store still holds all of it
 
 `keepStatementsWhole` called a set whole once every write had settled. An in-memory store over the process-wide resident budget makes room as it writes, evicting its oldest statement. So storing a SCORM attempt's `passed` could evict its `completed`: the attempt was reported recorded, its session was let go, and one of its statements was already gone (Codex, on #544). The helper now reads every id back before it says whole. What is still held is what it reports kept, and anything less is `partial`, which every door that uses it answers as not recorded.
@@ -1229,7 +1242,6 @@ Now a wallet can grant a session key (`src/session-key.ts`):
 
 `tests/a-session-key-signs-only-as-the-wallet-that-granted-it.test.ts` drives the bridge's verifier with real signatures, including every refusal, and drives the dashboard's signer against it through a stand-in wallet extension that counts what it signs. Twenty mutants each turn a named test red.
 
-
 ## 2026-09-27 — Foxxi: what the bridge records on its own behalf, it reports only once the store holds it
 
 The doors that take a caller's statements now wait for the store. The bridge's own emitters did not: each wrote with the unawaited `storeStatementInternal` and reported at once. A store that did not keep the write left each of these claims false:
@@ -1246,7 +1258,6 @@ Now:
 - an LTI attempt is forgotten only once the platform has the grade and the record holds the outcome. A POST to it does what is left, and a grade the platform took is not sent again. The outcome page says whether the record holds the attempt, and its button names what it will do.
 
 Two unawaited writes remain, and both report nothing: the mesh's re-projected lens view, and the cmi5 LMS's own statements, which it also keeps on the learner's pod. `tests/an-emitter-reports-only-what-the-store-kept.test.ts` pins that list. It also drives content delivery and the Context Companion with a store that keeps and one that does not. Fourteen mutants each turn a named test red.
-
 
 ## 2026-09-27 — Foxxi: a learner record read only in part is not classified, or served, for anyone but its subject
 
@@ -1272,7 +1283,6 @@ The rule is in `src/whole-record-gate.ts` (new): `servedInPart`, and the refusal
 
 `subject-kind-not-caller-controlled.test.ts` still holds. Fifteen mutants each fail a named test.
 
-
 ## 2026-09-27 — Foxxi: a learner reads their own profile, with their assignments
 
 A learner's home page reads their assigned courses from their own profile, `GET /api/foxxi/v1/profiles/:id`. That route was operator-only, because a profile carries directory PII (email, employee id, hire date, manager). So every learner who was not an operator got a 401 where their assigned courses belong.
@@ -1285,7 +1295,6 @@ Now:
 - the bridge passes the check to the hypermedia routes as `callerUserId`, next to `isOperator`. The dashboard's probe for whether the bridge takes a session's token stays at the LRS gate, since the profile's answer also depends on whose profile it is.
 
 `tests/a-learner-reads-their-own-profile.test.ts` runs the real routes over the tenant's real directory, with wallets from a test seed. It covers a learner, another user, anonymous, a public-seed token (with a control showing the directory does bind the wallet that signed it), both kinds of operator, an unknown id, and the collection. Seven mutants each turn it red.
-
 
 ## 2026-09-27 — Foxxi: a door that records statements reports only what the store kept, and refuses before it keeps
 
@@ -1314,8 +1323,6 @@ The mechanism is `keepStatementsWhole` (new, `src/xapi-lrs.ts`). It checks the s
 Twenty mutants each fail a named test.
 
 Not in this change: the agent-activity and SCORM play emitters (`emitAgentActivity` and the play helpers) still store with `storeStatementInternal`. They check its null, but not a write that fails later.
-
-
 
 ## 2026-09-27 — Foxxi: part of a record is not read as the whole of it
 
@@ -1346,7 +1353,6 @@ Ten mutants each fail a named test, one of them keeping a recovered lattice unme
 
 The review gates read the same union to decide whether a record is private, and partial reads can mislead them the same way. That changes who may read what, so it is left for its own change.
 
-
 ## 2026-09-27 — Foxxi dashboard: a roster identity the bridge will not take lands on Learn, and is told why
 
 A roster identity signed in to the deployed bridge landed on a page of refusals:
@@ -1375,7 +1381,6 @@ In a browser against the deployed bridge, as the demo learner Joshua Liu:
 
 The dashboard README's identity section says what happens.
 
-
 ## 2026-09-27 — Foxxi dashboard: a composition's exports are saved from its page, and offered while its tally cannot be read
 
 Codex found two things in the composition page (#534) after it merged.
@@ -1395,7 +1400,6 @@ Eleven mutants each fail a named test.
 In a browser against the deployed bridge, as the demo learner Joshua Liu:
 - both exports were saved from the page with the tab kept, as `composition-da9ddee6ae0e-cmi5.xml` (its `courseStructure`) and `composition-da9ddee6ae0e-scorm.zip` (2927 bytes); they were caught before the browser saved them;
 - with the efficacy read made to answer 503, the page said so and still offered resolving and both exports.
-
 
 ## 2026-09-27 — Foxxi: every door that takes a duration refuses a bad one, and a course completion is kept whole or not at all
 
@@ -1419,8 +1423,6 @@ Eleven mutants each fail a named test.
 
 Not in this change: `foxxi.record_external_agent_run` stores a run's statements and trajectory before its evaluation-candidate refusals, and does not range-check `quality`, so a score outside [-1, 1] still costs the run its `performed` statement.
 
-
-
 ## 2026-09-27 — Foxxi: an agent's write is answered with what the record now is, read from the record
 
 Codex found this in #535, which merged before it could be fixed there.
@@ -1443,7 +1445,6 @@ A read failure does not fail the recording. The page shows the note as a warning
 - the page's warning color.
 
 The census in `subject-kind-not-caller-controlled.test.ts` still holds: the raw evidence reader has one caller, the shared classifier. Ten mutants each fail a named test.
-
 
 ## 2026-09-27 — Foxxi Work page: recording as an agent is an informed choice, and the page refuses what the bridge would
 
@@ -1478,7 +1479,6 @@ The page was run in a browser against the deployed bridge, as the demo learner J
 
 The other doors that take a caller's duration (an external agent run, a cmi5 session, a course completion) are left for a follow-up.
 
-
 ## 2026-09-27 — Foxxi dashboard: a composition's page resolves it for its author, and takes it elsewhere
 
 A composition's page (`/author/<hash>`) showed only what the composition has learned. It now shows its author two more things.
@@ -1504,7 +1504,6 @@ In a browser against the deployed bridge, as the demo learner Joshua Liu:
 - both exports answered 200.
 
 The dashboard README's Author row describes the page.
-
 
 ## 2026-09-27 — Foxxi dashboard: recording your own work, and keeping what it implies
 
@@ -1604,7 +1603,6 @@ Two defects the automated review found in #529 after it merged.
 
 `tests/the-learner-portal-speaks-the-bridges-language.test.ts` covers both. Two mutants each fail a named test.
 
-
 ## 2026-09-27 — Foxxi dashboard: a wallet or a pasted key lands on Learn, and forwarding reads one signature at a time
 
 Two defects the automated review found in #527 after it merged.
@@ -1619,7 +1617,6 @@ Two defects the automated review found in #527 after it merged.
 - how *My forwarding* reads.
 
 Eight mutants each fail a named test.
-
 
 ## 2026-09-27 — Foxxi dashboard: a learner portal, and signing in with a wallet extension
 
@@ -1678,7 +1675,6 @@ Now only the store's mark is kept (`mergeStatementsById`, `src/durable-records.t
 
 Four mutants each fail a named test, among them #526's replay itself.
 
-
 ## 2026-09-27 — Foxxi: a failed read of the content index is tried again, and a voided statement stays voided
 
 Two defects the automated review found in #525 after it merged.
@@ -1704,7 +1700,6 @@ Nineteen mutants were checked, and each fails a named test:
 - the index read: an absent index as a failed read; a pod that cannot answer read as empty; a body that is not JSON failing the read; no index to read taken as a failure;
 - the merge: the store's mark lost behind another copy; a voiding statement voiding nothing, or voided itself; the registration rule ignored, or voiding nothing; only the first or only the last voider counting; a record passed in changed;
 - the bridge: the listing answering without the index; the content store not reading the index again.
-
 
 ## 2026-09-27 — Foxxi: what a learner has at hand, for a portal and for an agent
 
@@ -2831,7 +2826,6 @@ The tenant could issue an Open Badges 3.0 credential into a learner's pod wallet
 
 Each vertical declares its capabilities once in `affordances.ts`, and the bridges derive the manifest, the MCP tool schemas, the SHACL input shapes and the OpenAPI document from it; the one form agent runtimes actually load, an agentskills.io `SKILL.md`, was written by hand for a single vertical. `tools/build-skills.ts` now derives one skill per vertical from the same declarations, with `@interego/skills` emitting the frontmatter: `docs/skills/<vertical>/SKILL.md` says what the vertical is for, the three ways to invoke any of its affordances (an Interego MCP connector's `invoke_affordance` against the bridge's manifest, the bridge's own `POST /mcp`, or HTTP), and a table of them; `reference.md` beside it carries every description and input; `docs/skills/README.md` indexes the eleven (Foxxi's learner and administration surfaces apart, LLM telemetry as its own since it is served by the Foxxi bridge). Each affordance lands in the skill whose vertical its action IRI names, so nothing appears twice. `tests/skills-from-affordances.test.ts` fails when a committed file differs from a fresh build or a stale file sits beside them, and checks every `SKILL.md` parses under the package's agentskills.io rules; `--check` does the same from the shell. The harness README now links the hand-written skill where it lives in the tree, since `.claude/` is ignored there.
 
-
 ## 2026-09-23 — the Foxxi bridge reads the pod a few entities at a time
 
 Every content-judgment call that needs the pod's judgments, outcomes, attestations or autonomy policies read them one entity at a time. On the fifth live run of the loop on one pod (over a hundred judgments and as many outcomes) `foxxi.cross_confirm` took longer than the runner's 120-second budget, the runner gave up on a call the bridge then finished on its own, and the steps after it never ran. `src/bounded.ts` (`readEach`) reads with at most eight in flight, results in the listing's order, an unreadable entity left out as before; the five pod walks in the bridge use it. With tests: order, failures left out, never more than the limit in flight.
@@ -2896,7 +2890,6 @@ The post-deploy synthetic approval test was a `uses:` of `client-signature-live.
 
 Six recipes ran `npm install --no-save tsx@4.22.0` after `npm ci`: a 24-second layer on every image build that also downgraded the tsx the lockfile already held (4.22.4) and made the node_modules layer differ each time, so the registry cache export and the runtime layer both re-uploaded it, the fifty-five seconds left in the harness image build. `tsx@4.22.4` is now a root devDependency, installed by the cached `npm ci`, and the six lines are gone.
 
-
 ## 2026-09-22 — the fast path: one machine for the pull request, images that reuse the build and push only what changed, deploy events without a rebuild
 
 The harness workflow is one job: one bridge answers the selection and the gate in turn and the decision reads the gate's verdict from the same workspace, ending two runner starts and two installs per pull request; a new push cancels the run in flight. The four bridge images take the pull request's built packages (`prebuild: dist` in `deploy/images.json`, restored from the cache the pull request saved and passed as `PREBUILT=1`, which the recipes honour), keep `node_modules` as its own runtime layer so a push moves the sources rather than 700 MB, and cache layers in the registry beside each image, where the Actions cache's ten-gigabyte limit had been missing the `npm ci` layer on every build. The deploy-event step restores the same packages instead of building three.
@@ -2916,7 +2909,6 @@ Measured on the day's merges: the mutation gate took 19-21 minutes on every mast
 ## 2026-09-21 — private performance accepts the configured internal spelling of its own pod
 
 Private feedback rejected a valid signed ReadWrite delegation when its credential named the internal CSS origin and Foxxi derived the public gate URL. The private verifier now uses the bridge's existing allow-listed public spelling before comparing account pods, including the signed corroborating stamp. Foreign origins, other account paths, missing read/write capabilities and unverified signatures remain refused. The regression reproduces the live 403 and covers the internal/public match, lookalike origins, cross-account denial and read-only scope.
-
 
 ## 2026-09-21 — the changelog backlog counts merges without an entry; the weekly rebuild fires on bloat and keeps its tuning; deprecated action versions bumped
 
@@ -2954,11 +2946,9 @@ The first armed decision (#436) held on all four conditions, put `jev-harness:au
 
 GitHub's workflow-runs listing is eventually consistent: on 2026-09-21 the CI gate watched the five runs for `0f40814b` narrow to two still running, then one poll answered 200 with an empty list, and `tools/ci-green-for-sha.mjs` refused a deploy whose CI concluded green four minutes later. Below the floor is now a wait while time remains and a refusal only when the listing is still short at the deadline, so an empty answer is still never read as green; a 5xx from GitHub is retried the same way and a 4xx is refused at once. `nextStep` and `retryable` are the pure decisions, tested beside `verdict`.
 
-
 ## 2026-09-21 — Foxxi: content judgments calibrate; the kit scores one answer among options
 
 `foxxi.confirm_content_judgment` lets a learning engineer or admin say what is true about a judged claim: an Asserted `foxxi:ContentJudgmentOutcome` supersedes the judgment descriptor on the tenant pod (the entity publisher can now supersede) and records whether the model had the answer and the multiclass Brier score of its probabilities. `foxxi.content_judgment_calibration` reads those outcomes back and reports, per question kind, hit rate and mean Brier with the same five-sample floor the harness uses. The judgment kit gains `choiceBrier` and `calibrationCell`, the scoring both verticals share.
-
 
 ## 2026-09-21 — jev-harness: reputation from attestations, consumed by the auto-merge; CI controls point at the deployed bridge
 
@@ -3104,7 +3094,6 @@ you rely on it. Both are now checked by `node tools/changelog-lint.mjs`, which r
 - The optional client procedure runner loads signed RDF plans and invocation requests, follows directed steps and discovered Hydra GET controls through the existing Interego MCP surface, and returns explicit decision boundaries.
 - The performance and learning example follows AGP and FOXXI evidence, SCORM HyperMarkdown links, and historical xAPI references. Its separate execution performance event and live timings are documented with their evidence limits.
 - Native RDF, a HyperMarkdown navigation projection, the L3 procedure vocabulary, focused execution tests, and an unmeasured prose reference are available under `integrations/procedure-runner` and `examples/procedures`.
-
 
 ### 2026-09-12 — Controller and resource interface comparison
 
