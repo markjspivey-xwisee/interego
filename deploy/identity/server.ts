@@ -52,6 +52,7 @@ import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
 import { purgeProvisionalPlayPod } from './provisional-play-cleanup.js';
+import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -731,6 +732,39 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
   // Record that auth-methods.jsonld now exists on the pod so future
   // restarts can short-circuit re-writes (relay's bootstrappedPods pattern).
   bootstrapUserIds.add(userId);
+}
+
+async function commitCredentialEnrollment(
+  userId: string,
+  context: string,
+  update: (methods: AuthMethods) => boolean | void,
+  synchronous = false,
+): Promise<void> {
+  if (userId.startsWith('u-try-play-')) {
+    await enrollProvisionalCredential({
+      userId,
+      withOwnerLock: work => withIdentityPodMutex(userId, work),
+      read: () => fetchPodAuthMethods(userId, { createIfMissing: false }),
+      validate: methods => {
+        // A permanently claimed owner keeps this namespace. Its durable
+        // credential, rather than an expired guest anchor, is authoritative.
+        if (hasAnyCredential(methods)) return;
+        const owner = provisionalPlay.open(methods.provisionalPlayAnchor);
+        if (owner.userId !== userId) throw new Error('Provisional owner binding mismatch');
+      },
+      update,
+      persist: methods => putPodAuthMethods(userId, methods),
+    });
+    return;
+  }
+  const methods = await readAuthMethods(userId);
+  if (update(methods) === false) return;
+  if (synchronous) {
+    await putPodAuthMethods(userId, methods);
+  } else {
+    inlineApplyAuthMethods(userId, methods);
+    scheduleDeferredAuthMethodsWrite(userId, methods, context);
+  }
 }
 
 // ── Pod-side WebID profile/card mirror (DEPRECATED — see FIX A) ──
@@ -2290,14 +2324,18 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-wallet (authenticated) path — append if not already bound.
-    const methods = await readAuthMethods(user.id);
-    if (!methods.walletAddresses.includes(recoveredAddress)) {
-      methods.walletAddresses.push(recoveredAddress);
-      inlineApplyAuthMethods(user.id, methods);
-      scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-add-wallet');
-      if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'add-wallet' });
-      log(`Wallet ${recoveredAddress} linked to existing user ${user.id}`);
+    try {
+      await commitCredentialEnrollment(user.id, 'siwe-add-wallet', methods => {
+        if (methods.walletAddresses.includes(recoveredAddress)) return false;
+        methods.walletAddresses.push(recoveredAddress);
+      });
+    } catch (err) {
+      log(`SIWE credential enrollment not confirmed for ${user.id}: ${(err as Error).message}`);
+      res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
+      return;
     }
+    if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'add-wallet' });
+    log(`Wallet ${recoveredAddress} linked to existing user ${user.id}`);
   }
 
   res.json(await issueTokenResponse(user, surfaceAgent));
@@ -2554,31 +2592,28 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     log(`First-time WebAuthn registration: ${targetUserId} defaultAgent=${def.agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   }
 
-  const methods = await readAuthMethods(targetUserId);
-  if (!methods.name || methods.name === targetUserId) {
-    methods.name = user.name;
+  try {
+    await commitCredentialEnrollment(targetUserId, 'webauthn-register', methods => {
+      if (!methods.name || methods.name === targetUserId) methods.name = user.name;
+      if (!methods.agentId) {
+        const a = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId);
+        if (a) methods.agentId = a.id;
+      }
+      methods.webAuthnCredentials.push({
+        id: credentialId,
+        publicKey: Buffer.from(credential.publicKey).toString('base64url'),
+        counter: credential.counter,
+        transports: (response.response?.transports as string[] | undefined) ?? [],
+        createdAt: new Date().toISOString(),
+        rpId: ch.rpId ?? RP_ID,
+        rpOrigin: ch.rpOrigin ?? RP_ORIGIN,
+      });
+    });
+  } catch (err) {
+    log(`WebAuthn credential enrollment not confirmed for ${targetUserId}: ${(err as Error).message}`);
+    res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
+    return;
   }
-  if (!methods.agentId) {
-    const a = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId);
-    if (a) methods.agentId = a.id;
-  }
-  methods.webAuthnCredentials.push({
-    id: credentialId,
-    publicKey: Buffer.from(credential.publicKey).toString('base64url'),
-    counter: credential.counter,
-    transports: (response.response?.transports as string[] | undefined) ?? [],
-    createdAt: new Date().toISOString(),
-    rpId: ch.rpId ?? RP_ID,
-    rpOrigin: ch.rpOrigin ?? RP_ORIGIN,
-  });
-  // Defer the ~2.5s CSS PUT off the hot response path — same shape as
-  // /auth/did and /auth/siwe. The credential is added to the in-memory
-  // index synchronously via inlineApplyAuthMethods so any concurrent
-  // verifyToken sees it; the pod write is just durability. Note: this
-  // does NOT apply to /auth/webauthn/authenticate, whose synchronous
-  // persist is load-bearing for WebAuthn §6.1.1 clone detection.
-  inlineApplyAuthMethods(targetUserId, methods);
-  scheduleDeferredAuthMethodsWrite(targetUserId, methods, 'webauthn-register');
   // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
   // Single authoritative pod-side writer is the relay's /oauth/verify
   // handler — see deploy/mcp-relay/server.ts. See SIWE first-touch comment
@@ -2887,20 +2922,23 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
-    const methods = await readAuthMethods(user.id);
-    if (!methods.didKeys.some(k => k.did === did)) {
-      methods.didKeys.push({
-        did,
-        publicKeyMultibase: canonicalPublicKeyMultibase,
-        keyType: 'Ed25519VerificationKey2020',
-        createdAt: new Date().toISOString(),
+    try {
+      await commitCredentialEnrollment(user.id, 'did-add-did', methods => {
+        if (methods.didKeys.some(k => k.did === did)) return false;
+        methods.didKeys.push({
+          did,
+          publicKeyMultibase: canonicalPublicKeyMultibase,
+          keyType: 'Ed25519VerificationKey2020',
+          createdAt: new Date().toISOString(),
+        });
       });
-      // FIX A: defer the pod-side PUT — same shape as first-time branch.
-      inlineApplyAuthMethods(user.id, methods);
-      scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-add-did');
-      if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'add-did' });
-      log(`DID ${did} linked to existing user ${user.id}`);
+    } catch (err) {
+      log(`DID credential enrollment not confirmed for ${user.id}: ${(err as Error).message}`);
+      res.status(503).json({ error: 'Credential enrollment could not be confirmed. No permanent session was issued.' });
+      return;
     }
+    if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'add-did' });
+    log(`DID ${did} linked to existing user ${user.id}`);
   }
 
   const tokenStart = timingEnabled() ? startTiming() : 0;
@@ -3606,15 +3644,14 @@ app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
   }
 
   const addr = (walletAddress as string).toLowerCase();
-  const methods = await readAuthMethods(userId);
-  if (!methods.walletAddresses.includes(addr)) {
-    methods.walletAddresses.push(addr);
-    try {
-      await putPodAuthMethods(userId, methods);
-    } catch (err) {
-      res.status(500).json({ error: `Failed to persist wallet to pod: ${(err as Error).message}` });
-      return;
-    }
+  try {
+    await commitCredentialEnrollment(userId, 'wallet-link', methods => {
+      if (methods.walletAddresses.includes(addr)) return false;
+      methods.walletAddresses.push(addr);
+    }, true);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to persist wallet to pod: ${(err as Error).message}` });
+    return;
   }
   log(`Linked wallet ${addr} to user ${userId}`);
 
