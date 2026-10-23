@@ -7,8 +7,9 @@
  *
  * ── ONE ORDER FOR EVERY ACT (§6.2) ──────────────────────────────────────────────────────────
  *   1. the signed envelope and every payload check that needs no record   → 401 / 400
- *   2. the pod: named in the signed payload, public, and (for writes) served → 400 / 403;
- *      for writes, holding nothing under another record key (key marks)     → 409
+ *   2. the pod: named in the signed payload, public, and served          → 400 / 403;
+ *      its records under no record key but this bridge's (key marks), read
+ *      from the manifest before any record, the role registry included     → 409
  *   3. the nonce (writes): a signed envelope acts once                   → 409
  *   4. a lock on the one graph the act changes
  *   5. the head record, read back from the pod and checked (trust rule)  → 404 / 409
@@ -452,14 +453,17 @@ function notServed(ctx: Ctx): Declined {
 }
 
 /**
- * A signed act. `write` acts write to the operator pod (and consume their nonce); they and any act
- * with `keyChecked` (a holder copy) are refused (409 record-key-mismatch) on a pod whose manifest
- * names another record key than this bridge's (a keyed attempt IRI or a sealed record's mark), or
- * any, when this bridge holds none, before the nonce is spent.
+ * A signed act. `write` acts write to the operator pod (and consume their nonce). Every signed
+ * act, a read as well as a write, is refused (409 record-key-mismatch) on a pod whose own records
+ * name another record key than this bridge's (a keyed attempt IRI or a sealed record's mark), or
+ * any, when this bridge holds none: before the nonce is spent and before any record, the role
+ * registry included, is read, so the refusal always names both keys rather than whichever sealed
+ * record the act would have reached first (on a deployment, where the key seals every record, the
+ * role registry).
  */
 async function signedAct(
   call: Call, args: Record<string, unknown>, key: PevActionKey,
-  o: { readonly write?: boolean; readonly nonce?: boolean; readonly keyChecked?: boolean; readonly checks?: (p: P) => void } = {},
+  o: { readonly write?: boolean; readonly nonce?: boolean; readonly checks?: (p: P) => void } = {},
 ): Promise<Signed> {
   const { ctx } = call;
   const now = ctx.now();
@@ -475,10 +479,7 @@ async function signedAct(
   }
   const pod = await publicPod(podUrl);
   if (!servesPod(ctx, pod)) throw notServed(ctx);
-  if (o.keyChecked ?? o.write ?? false) {
-    const mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn)));
-    if (mismatch) throw keyMismatchDecline(ctx, mismatch);
-  }
+  await refuseOnKeyMismatch(ctx, pod);
   const nonce = String(env.payload['nonce']);
   if ((o.nonce ?? o.write ?? false) && !ctx.ledger.consume(env.signer, nonce, now)) {
     throw decline(409, 'This signed envelope was already used; sign a new one.', 'envelope-already-used');
@@ -506,14 +507,16 @@ interface KeyMismatch {
 /**
  * The record keys the pod holds records under that are not this bridge's, or null. Every record a
  * bridge seals carries its key's fingerprint in its descriptor URL, and every attempt IRI it keys
- * carries it too (`keyMarksOf`), so the manifest alone says which key the pod's records are under,
- * from the first record a key sealed, whether an attempt was started under it or not. A bridge
- * holding another key, or none, would derive other attempt IRIs for the same learners (finding
- * their attempts absent and starting a second chain beside them) and write what the pod's key
- * cannot open (or plaintext), so it writes nothing. Plain IRIs and plaintext records carry no
- * mark: a pod that never had a key works as before. The check reads the manifest only, so an
- * entry a pod writer adds can stop this bridge's writes, which a pod writer can do in other ways
- * too (forking a chain); it can never make the bridge write.
+ * carries it too (`keyMarksOf`, over the pod's own records container: a holder copy another bridge
+ * wrote to this pod for a learner marks nothing), so the manifest alone says which key the pod's
+ * records are under, from the first record a key sealed, whether an attempt was started under it
+ * or not. A bridge holding another key, or none, would derive other attempt IRIs for the same
+ * learners (finding their attempts absent and starting a second chain beside them), write what the
+ * pod's key cannot open (or plaintext), and read the records it can open as if they were all, so
+ * it writes nothing and answers nothing from the pod but the scenario list. Plain IRIs and
+ * plaintext records carry no mark: a pod that never had a key works as before. The check reads the
+ * manifest only, so an entry a pod writer adds can stop this bridge, which a pod writer can do in
+ * other ways too (forking a chain); it can never make the bridge write.
  */
 function keyMismatchIn(ctx: Ctx, marks: readonly KeyMark[]): KeyMismatch | null {
   const foreign = marks.filter((m) => m.fingerprint !== ctx.ownFingerprint);
@@ -556,17 +559,26 @@ function keyMismatchFields(ctx: Ctx, m: KeyMismatch): Out {
   };
 }
 
-/** The refusal of a write, or of a read that would rest on records this bridge cannot derive or open. */
+/** The refusal of every act but the scenario list on a pod whose records are under another record key. */
 function keyMismatchDecline(ctx: Ctx, m: KeyMismatch): Declined {
-  return decline(409, `${keyMismatchWhy(ctx, m)}. It writes nothing on this pod, and answers nothing that rests on its attempts, until every bridge on it holds one record key. ${keyMismatchAdvice(ctx, m)}`,
+  return decline(409, `${keyMismatchWhy(ctx, m)}. It writes nothing on this pod, and answers nothing from it but the scenario list, until every bridge on it holds one record key. ${keyMismatchAdvice(ctx, m)}`,
     'record-key-mismatch', { env: 'PEV_RECORD_KEY' }, keyMismatchFields(ctx, m));
 }
 
-/** What a read that is still answered (a scenario list, one attempt) carries when the pod's records are under another key. */
+/**
+ * Every act but the scenario list, first thing on the pod: refused (keyMismatchDecline) when the
+ * pod's own records name a record key that is not this bridge's (any, when it holds none).
+ */
+async function refuseOnKeyMismatch(ctx: Ctx, pod: string): Promise<void> {
+  const mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn), pod));
+  if (mismatch) throw keyMismatchDecline(ctx, mismatch);
+}
+
+/** What the scenario list, the one read still answered, carries when the pod's records are under another key. */
 function keyMismatchMark(ctx: Ctx, m: KeyMismatch): Out {
   return {
     ...keyMismatchFields(ctx, m), resolvedBy: { env: 'PEV_RECORD_KEY' },
-    note: 'This pod holds records under a record key this bridge does not hold (keyed attempt IRIs, or records sealed to it). This bridge writes nothing on this pod, and answers nothing that rests on its attempts, until every bridge on it holds one record key; what is shown here is only what it can read.',
+    note: 'This pod holds records under a record key this bridge does not hold (keyed attempt IRIs, or records sealed to it). This bridge writes nothing on this pod, and answers nothing from it but this list, until every bridge on it holds one record key; what is shown here is only what it can read.',
   };
 }
 
@@ -1286,12 +1298,20 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
   const pod = await readPod(ctx, args);
   const one = typeof args['scenario_iri'] === 'string' && args['scenario_iri'].trim() !== '' ? args['scenario_iri'].trim() : null;
   if (one) {
-    const h = await scenarioHead(call, pod, one);
+    const mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn), pod));
+    let h: ScenarioHead | null;
+    let chain: readonly (ReadRecord | DeletedVersion)[];
+    try {
+      h = await scenarioHead(call, pod, one);
+      chain = h ? await readChain(pod, one, ctx.trusted, ctx.fetchFn, call.cache) : [];
+    } catch (e) {
+      // A scenario sealed on a pod whose records are under another key: the refusal names both keys.
+      if (mismatch && e instanceof RecordSealed) throw keyMismatchDecline(ctx, mismatch);
+      throw e;
+    }
     if (!h) throw decline(404, 'No scenario with this IRI is on this pod.', 'scenario-not-found');
-    const chain = await readChain(pod, one, ctx.trusted, ctx.fetchFn, call.cache);
     const versions = chain.flatMap((v) => (!isDeleted(v) && isTrusted(v) && v.body.kind === 'scenario'
       ? [{ version: v.body.version, status: v.body.status, descriptorUrl: v.descriptorUrl, rubricHash: v.body.rubricHash, at: v.body.at }] : []));
-    const mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn)));
     return {
       podUrl: pod,
       scenario: { ...scenarioView(h.rec, h.body), counterpart: h.body.scenario.counterpart, endsWhen: h.body.scenario.endsWhen },
@@ -1345,7 +1365,7 @@ async function startAttempt(call: Call, args: Record<string, unknown>): Promise<
     const all = await listEntries(s.pod, ctx.fetchFn);
     // This lookup is by learner: on the manifest it is made from, every record must be under this
     // bridge's key (or plaintext), or her attempts under another key would read as none.
-    const mismatch = keyMismatchIn(ctx, keyMarksOf(all));
+    const mismatch = keyMismatchIn(ctx, keyMarksOf(all, s.pod));
     if (mismatch) throw keyMismatchDecline(ctx, mismatch);
     const prefixes = keys.map((k) => `urn:pev:attempt:${k}-`);
     const mine = [...new Set(all.flatMap((e) => e.describes.filter((d) => prefixes.some((p) => d.startsWith(p)))))];
@@ -1733,14 +1753,20 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
  * the review queue, a list of attempts, results, calibration). Every such answer is a count or a
  * list that would read an attempt this bridge cannot see as absent (nothing awaiting review, no
  * attempt of the signer's, a figure without it), so it is refused (409) rather than computed when
- * any attempt head is sealed to a record key this bridge does not hold (`records-sealed`), or the
- * pod's manifest names another record key (`record-key-mismatch`: keyed attempt IRIs or sealed
- * records' marks); both name PEV_RECORD_KEY. Untrusted and forked heads are skipped and counted.
+ * the pod's own records name another record key (`record-key-mismatch`: keyed attempt IRIs or
+ * sealed records' marks, read from the manifest before any head), or, where a sealed head carries
+ * no mark, when any attempt head is sealed to a record key this bridge does not hold
+ * (`records-sealed`); both name PEV_RECORD_KEY. Untrusted and forked heads, and heads over the
+ * read limit, are skipped and counted.
  */
 async function attemptBodies(call: Call, pod: string, what: string): Promise<{ readonly heads: readonly ReadRecord[]; readonly bodies: readonly AttemptBody[]; readonly untrusted: number; readonly complete: boolean }> {
-  const read = await readHeadsOfKind(pod, 'attempt', call.ctx.trusted, { max: 2000, fetchFn: call.ctx.fetchFn, cache: call.cache });
-  const mismatch = keyMismatchIn(call.ctx, read.keyMarks);
-  if (mismatch) throw keyMismatchDecline(call.ctx, mismatch);
+  const read = await readHeadsOfKind(pod, 'attempt', call.ctx.trusted, {
+    max: 2000, fetchFn: call.ctx.fetchFn, cache: call.cache,
+    beforeReading: (marks) => {
+      const mismatch = keyMismatchIn(call.ctx, marks);
+      if (mismatch) throw keyMismatchDecline(call.ctx, mismatch);
+    },
+  });
   if (read.sealed > 0) throw sealedDecline(read.sealed, what);
   const heads = read.records.filter((r) => r.body.kind === 'attempt');
   return { heads, bodies: heads.map((r) => r.body as AttemptBody), untrusted: read.untrusted + read.forked, complete: read.complete };
@@ -2152,7 +2178,7 @@ async function trustedChain(call: Call, pod: string, iri: string): Promise<reado
 async function holderCopy(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
   const s = await signedAct(call, args, 'holderCopy', {
-    nonce: true, keyChecked: true,
+    nonce: true,
     checks: (p) => { needAttemptIri(p); needText(p, 'targetPodUrl', 2000); },
   });
   const iri = needAttemptIri(s.payload);
@@ -2332,12 +2358,9 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
   if (!isLearner && !roles.has('reviewer') && !admin && !judgeSignersOf(a).includes(s.signer.toLowerCase())) {
     throw decline(403, 'Only the learner, a reviewer, a judge of this attempt or an admin may read it.', 'not-entitled');
   }
-  const [e, rat, chain, entries] = await Promise.all([
-    eligibility(call, s.pod, h), ratificationOf(call, s.pod, a), readChain(s.pod, iri, ctx.trusted, ctx.fetchFn, call.cache), listEntries(s.pod, ctx.fetchFn),
+  const [e, rat, chain] = await Promise.all([
+    eligibility(call, s.pod, h), ratificationOf(call, s.pod, a), readChain(s.pod, iri, ctx.trusted, ctx.fetchFn, call.cache),
   ]);
-  // Read by its IRI, this attempt is what it is; but the acts nextActions offers are writes, which
-  // a pod holding records under another record key refuses, so the answer says so.
-  const mismatch = keyMismatchIn(ctx, keyMarksOf(entries));
   const review = standingReview(a);
   const judged = a.judgments.length > 0;
   return {
@@ -2373,7 +2396,6 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
         : { descriptorUrl: v.descriptorUrl, recordId: v.recordId, state: v.body.kind === 'attempt' ? v.body.state : null, modalStatus: v.modalStatus, contentDeleted: false })),
     authorship: h.rec.authorship, keyKind: a.keyKind, evidenceKind: a.evidenceKind, label: PRACTICE_LABEL, provisionalLabel: PROVISIONAL_LABEL,
     nextActions: nextFor(ctx, a, s.signer, roles, e.eligible),
-    ...(mismatch ? { recordKeyMismatch: keyMismatchMark(ctx, mismatch) } : {}),
   };
 }
 
@@ -2466,13 +2488,13 @@ export async function describeStartup(deps: PevDeps): Promise<{ readonly lines: 
   const ctx = makeContext(deps);
   const pod = podBase(deps.defaultPodUrl);
   const registry = await registryStartup(ctx, pod);
-  // Records under another record key: every write on this pod will be refused.
+  // Records under another record key: every act on this pod but the scenario list will be refused.
   let mismatch: KeyMismatch | null = null;
-  try { mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn))); } catch { mismatch = null; }
+  try { mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn), pod)); } catch { mismatch = null; }
   if (!mismatch) return registry;
   return {
     ...registry,
-    lines: [...registry.lines, `${keyMismatchWhy(ctx, mismatch)}. This bridge writes nothing on ${pod} until every bridge on it holds one record key. ${keyMismatchAdvice(ctx, mismatch)} Or set PEV_DEFAULT_POD_URL to a fresh pod path.`],
+    lines: [...registry.lines, `${keyMismatchWhy(ctx, mismatch)}. This bridge writes nothing on ${pod}, and answers nothing from it but the scenario list, until every bridge on it holds one record key. ${keyMismatchAdvice(ctx, mismatch)} Or set PEV_DEFAULT_POD_URL to a fresh pod path.`],
   };
 }
 

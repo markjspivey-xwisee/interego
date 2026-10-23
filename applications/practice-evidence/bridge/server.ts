@@ -39,15 +39,20 @@
  *                                   every encrypted record unreadable: back it up. A keyed attempt
  *                                   IRI and a sealed record's descriptor URL name the key's public
  *                                   fingerprint (printed at startup), and a bridge with another
- *                                   key, or none, writes nothing on a pod holding either (409
- *                                   record-key-mismatch). Holder copies are never encrypted.
+ *                                   key, or none, writes nothing on a pod whose own records hold
+ *                                   either, and answers nothing from it but the scenario list
+ *                                   (409 record-key-mismatch). Holder copies are never encrypted.
  *                                   Never logged.
  *   PEV_REQUIRE_RECORD_KEY=1        a deployment guard: the bridge does not start (exit 1) unless
  *                                   PEV_RECORD_KEY is set and well-formed, so a deployment whose
  *                                   key is blank or missing (an unresolved reference, a forgotten
  *                                   setting) never writes plaintext to a pod that serves reads to
- *                                   anyone. The pev image sets it; absent or 0 (local runs, the
- *                                   demo) → no guard. Any other value → the bridge does not start.
+ *                                   anyone. The pev image sets it; unset or 0 (local runs, the
+ *                                   demo) → no guard. Any other value → the bridge does not start,
+ *                                   a blank one included (empty or only whitespace, as an
+ *                                   unresolved reference or an empty override of the image's 1
+ *                                   leaves it): unlike every other variable, a blank value here is
+ *                                   not read as unset. Surrounding whitespace is ignored.
  *   PEV_ADMIN_ADDRESSES             addresses that may change roles and withdraw reviews
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
@@ -139,7 +144,15 @@ async function main(): Promise<void> {
     platformKeyKind = 'ephemeral';
   }
 
-  const requireRaw = env('PEV_REQUIRE_RECORD_KEY');
+  // Read as set, not through env(): a blank value (an unresolved service reference, or an empty
+  // override of the image's 1) is not "no guard", or a deployment would start writing plaintext.
+  const requireSet = process.env['PEV_REQUIRE_RECORD_KEY'];
+  if (requireSet !== undefined && requireSet.trim() === '') {
+    warn(`PEV_REQUIRE_RECORD_KEY is set but blank (${JSON.stringify(requireSet)}), as an unresolved reference or an empty override of the image's 1 leaves it; it takes 1 (refuse to start without PEV_RECORD_KEY) or 0, and a blank value is not read as either. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const requireRaw = requireSet?.trim();
   if (requireRaw !== undefined && requireRaw !== '1' && requireRaw !== '0') {
     warn(`PEV_REQUIRE_RECORD_KEY is ${JSON.stringify(requireRaw)}; it takes 1 (refuse to start without PEV_RECORD_KEY) or 0. Not listening.`);
     process.exitCode = 1;

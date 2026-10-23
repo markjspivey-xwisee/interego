@@ -17,7 +17,9 @@
  * then ends at an older, correctly placed version. That needs an anchor outside the pod.
  *
  * Every response body is read with a size limit, and a descriptor's graph is fetched only from
- * the descriptor's own host, so one read cannot make the bridge fetch from anywhere else.
+ * the descriptor's own host, so one read cannot make the bridge fetch from anywhere else. A record
+ * whose descriptor or graph is over the limit is a `RecordUnreadable` (the pod answered; anyone who
+ * can write it can plant such a file), so a listing counts it with the untrusted records.
  *
  * Encryption at rest: with a record key (`TrustedPlatform.recordKey`), operator-pod records are
  * written with their graph sealed to that key alone, as `<slug>-graph.envelope.jose.json`; the
@@ -29,7 +31,8 @@
  * why: opening happens in this process, so only a failed request is a `PodTransportFailed`.
  * Plaintext records (written before a key was set, and every holder copy) are read as before.
  * A sealed record's descriptor URL ends in its key's fingerprint (the handlers choose the slug), so
- * the manifest alone says which record keys a pod's records are under: `keyMarksOf`.
+ * the manifest alone says which record keys a pod's own records are under: `keyMarksOf`, which
+ * reads only the entries of the pod's records container (never a holder copy written to it).
  *
  * Transport: every request goes through the substrate's SSRF guard (`guardedFetchFn`), which
  * re-checks every redirect hop and refuses a redirect on a write. Nothing here retries: the
@@ -182,8 +185,23 @@ export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const NULL_BODY = new Set([101, 103, 204, 205, 304]);
 
 /**
+ * A response over this bridge's read limit, by its declared Content-Length or by the bytes it
+ * streamed. The pod answered: anyone who can write it can plant a resource that size, so a record
+ * read from one is a `RecordUnreadable` (counted with the untrusted records), never a transport
+ * failure that would make every listing over that pod answer 502.
+ */
+export class ResponseOverLimit extends Error {
+  constructor(readonly limit: number, readonly declared: number | null) {
+    super(declared !== null
+      ? `the response declares ${declared} bytes, over this bridge's limit of ${limit}`
+      : `the response is over this bridge's limit of ${limit} bytes`);
+    this.name = 'ResponseOverLimit';
+  }
+}
+
+/**
  * Read every response body with a byte limit, so a hostile pod cannot make the bridge buffer an
- * unbounded body. A response over the limit is an error, never a truncated record.
+ * unbounded body. A response over the limit is a `ResponseOverLimit`, never a truncated record.
  */
 export function cappedFetch(f: typeof fetch, maxBytes = MAX_RESPONSE_BYTES): typeof fetch {
   const capped = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -191,7 +209,7 @@ export function cappedFetch(f: typeof fetch, maxBytes = MAX_RESPONSE_BYTES): typ
     const declared = Number(res.headers.get('content-length') ?? Number.NaN);
     if (Number.isFinite(declared) && declared > maxBytes) {
       await res.body?.cancel().catch(() => undefined);
-      throw new Error(`the response declares ${declared} bytes, over this bridge's limit of ${maxBytes}`);
+      throw new ResponseOverLimit(maxBytes, declared);
     }
     if (!res.body || NULL_BODY.has(res.status) || res.status < 200 || res.status > 599) return res;
     const reader = res.body.getReader();
@@ -203,7 +221,7 @@ export function cappedFetch(f: typeof fetch, maxBytes = MAX_RESPONSE_BYTES): typ
       total += value.byteLength;
       if (total > maxBytes) {
         await reader.cancel().catch(() => undefined);
-        throw new Error(`the response is over this bridge's limit of ${maxBytes} bytes`);
+        throw new ResponseOverLimit(maxBytes, null);
       }
       chunks.push(value);
     }
@@ -438,6 +456,11 @@ function openSealed(descriptorUrl: string, env: EncryptedEnvelope, key: Encrypti
   return text;
 }
 
+/** A record whose descriptor or graph the pod served over this bridge's read limit (`ResponseOverLimit`). */
+function overLimit(descriptorUrl: string, what: 'descriptor' | 'graph', e: ResponseOverLimit): RecordUnreadable {
+  return new RecordUnreadable(descriptorUrl, `its ${what} is over this bridge's read limit of ${e.limit} bytes${e.declared !== null ? ` (the pod declares ${e.declared})` : ''}, so it is not read`);
+}
+
 async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatform, fetchFn?: typeof fetch): Promise<ReadRecord> {
   const f = guarded(fetchFn);
   const origin = originOf(descriptorUrl);
@@ -445,6 +468,8 @@ async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatfor
   try {
     res = await f(descriptorUrl, { method: 'GET', headers: { accept: 'text/turtle' } });
   } catch (e) {
+    // The pod answered, with more than this bridge reads: an unreadable record, not a failed request.
+    if (e instanceof ResponseOverLimit) throw overLimit(descriptorUrl, 'descriptor', e);
     throw new PodTransportFailed(`reading ${descriptorUrl} did not complete: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`, 'read', null, origin);
   }
   if (!res.ok) {
@@ -463,10 +488,13 @@ async function readRecordUncached(descriptorUrl: string, trusted: TrustedPlatfor
   try {
     // fetchGraphContent asks for `application/jose+json` first, passes plaintext through, and hands
     // an envelope to openSealed, which opens it here, in this process: whatever goes wrong there
-    // is a RecordUnreadable it throws itself, so only the request can reach the catch below.
+    // is a RecordUnreadable it throws itself, so only the request can reach the catch below. A
+    // graph over the read limit (cappedFetch, which the substrate does not retry) is the pod's
+    // answer, not a failed request.
     opened = await fetchGraphContent(dist.accessURL, { fetch: f, openEnvelope: (env) => openSealed(descriptorUrl, env, trusted.recordKey) });
   } catch (e) {
     if (e instanceof RecordUnreadable) throw e;
+    if (e instanceof ResponseOverLimit) throw overLimit(descriptorUrl, 'graph', e);
     const msg = e instanceof Error ? e.message : String(e);
     if (/:\s*(404|410)\b/.test(msg)) throw new GraphMissing(descriptorUrl, dist.accessURL, proof?.descriptorId ?? null, descriptorTurtle);
     const refused = podRefusal(e);
@@ -607,12 +635,44 @@ export interface KeyMark { readonly fingerprint: string; readonly at: string; re
 const PEV_RECORD_CLASSES = new Set(Object.values(RECORD_CLASS));
 
 /**
- * Every key mark in the manifest entries, each place once, in manifest order. A sealed-record mark
- * counts only on an entry filed as a pev record (`dct:conformsTo` a pev record class). The manifest
- * is writable by anyone who can write the pod, so a mark can be added; it can only make a bridge
- * refuse, never write.
+ * True when `url` is a descriptor directly in the pod's own records container
+ * (`<pod>pev/records/<slug>.ttl`, no deeper path): where every record a bridge writes for the pod it
+ * serves goes (`publishPevRecord`'s default container, with a slug that holds no `/`), and where no
+ * holder copy goes (they go to `pev/holder-copies/` under the pod the learner names).
  */
-export function keyMarksOf(entries: readonly ManifestEntry[]): KeyMark[] {
+export function inRecordsContainer(url: string, podUrl: string): boolean {
+  const pod = normalPod(podUrl);
+  if (pod === null) return false;
+  const container = `${pod}${PEV_RECORDS_CONTAINER}`;
+  try {
+    const href = new URL(url).href;
+    return href.startsWith(container) && !href.slice(container.length).includes('/');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every key mark in the pod's own records, each place once, in manifest order: only entries whose
+ * descriptor is directly in the pod's records container (`inRecordsContainer`) count, and of those
+ * a sealed-record mark counts only on an entry filed as a pev record (`dct:conformsTo` a pev record
+ * class).
+ *
+ * Why where the descriptor sits, and not anything else: a holder copy of a keyed attempt (its
+ * plaintext versions, describing the keyed IRI) may be written into a pod that another pev bridge
+ * serves, when that is the pod a learner names; counted, it would mark that pod with a key its own
+ * bridge never held, and stop it, telling it to take another operator's key. The descriptor URL is
+ * the one thing the manifest entry itself fixes that tells a pod's own records from such a copy,
+ * and it is positive: every record a bridge writes for its pod is directly in the container, and a
+ * holder copy never is. The alternatives are weaker. "Not under pev/holder-copies/" is negative: an
+ * entry anywhere else, on another pod or off any pod, would still count. "Not derived from another
+ * pod" is not in the entry at all: `prov:wasDerivedFrom` is in the copy's descriptor, so it would
+ * mean fetching every descriptor before any act, and a pod writer controls those bytes anyway.
+ *
+ * The manifest is writable by anyone who can write the pod, so a mark can be added (in the
+ * container); it can only make a bridge refuse, never write.
+ */
+export function keyMarksOf(entries: readonly ManifestEntry[], podUrl: string): KeyMark[] {
   const seen = new Set<string>();
   const out: KeyMark[] = [];
   const add = (fingerprint: string | null, at: string, by: KeyMark['by']): void => {
@@ -621,6 +681,7 @@ export function keyMarksOf(entries: readonly ManifestEntry[]): KeyMark[] {
     out.push({ fingerprint, at, by });
   };
   for (const e of entries) {
+    if (!inRecordsContainer(e.descriptorUrl, podUrl)) continue;
     for (const g of e.describes) add(fingerprintOfAttemptIri(g), g, 'attempt-iri');
     if ((e.conformsTo ?? []).some((c) => PEV_RECORD_CLASSES.has(c))) add(fingerprintOfRecordUrl(e.descriptorUrl), e.descriptorUrl, 'sealed-record');
   }
@@ -640,21 +701,24 @@ export interface HeadsOfKind {
   readonly sealed: number;
   /** False when the cap left graphs unread or any head was sealed: the records are not all there are. */
   readonly complete: boolean;
-  /** The key marks anywhere in the manifest this read walked (every kind): see `KeyMark`. */
+  /** The key marks of the pod's own records in the manifest this read walked (every kind): see `keyMarksOf`. */
   readonly keyMarks: readonly KeyMark[];
 }
 
 /**
  * The trusted heads of every chain of one record kind on a pod, found through the manifest's
  * `dct:conformsTo`. Untrusted, unreadable and forked chains are skipped and counted; sealed heads
- * are skipped and counted apart, and make the read incomplete.
+ * are skipped and counted apart, and make the read incomplete. `beforeReading` sees the key marks
+ * of the manifest before any record is read, and may refuse by throwing.
  */
 export async function readHeadsOfKind(
   podUrl: string, kind: PevRecordBody['kind'], trusted: TrustedPlatform,
-  o: { readonly max: number; readonly fetchFn?: typeof fetch; readonly cache?: ReadCache },
+  o: { readonly max: number; readonly fetchFn?: typeof fetch; readonly cache?: ReadCache; readonly beforeReading?: (marks: readonly KeyMark[]) => void },
 ): Promise<HeadsOfKind> {
   const cls = RECORD_CLASS[kind];
   const all = await listEntries(podUrl, o.fetchFn);
+  const keyMarks = keyMarksOf(all, podUrl);
+  o.beforeReading?.(keyMarks);
   const groups = new Map<string, ManifestEntry[]>();
   for (const e of all) {
     if (!(e.conformsTo ?? []).includes(cls)) continue;
@@ -683,7 +747,7 @@ export async function readHeadsOfKind(
       throw e;
     }
   }
-  return { records, untrusted, forked, sealed, complete: graphs.length <= o.max && sealed === 0, keyMarks: keyMarksOf(all) };
+  return { records, untrusted, forked, sealed, complete: graphs.length <= o.max && sealed === 0, keyMarks };
 }
 
 export interface RoleRegistryView {

@@ -577,8 +577,11 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     expect(handlers).toContain('...(ctx.trusted.recordKey ? { sealTo: ctx.trusted.recordKey } : {}),');
   });
 
-  it('PEV_REQUIRE_RECORD_KEY=1 stops a bridge whose record key is missing or blank before it listens, and the image sets it', () => {
+  it('PEV_REQUIRE_RECORD_KEY=1 stops a bridge whose record key is missing or blank before it listens, the image sets it, and a blank guard stops it too', () => {
     expect(server).toMatch(/const requireRecordKey = requireRaw === '1';/);
+    // The guard is read as set, never through env(), which reads a blank value as unset.
+    expect(server).toContain("const requireSet = process.env['PEV_REQUIRE_RECORD_KEY'];");
+    expect(server).not.toMatch(/env\('PEV_REQUIRE_RECORD_KEY'\)/);
     expect(server).toMatch(/if \(recordKeyHex === undefined && requireRecordKey\) \{\n[^}]*Not listening\.'\);\n\s*process\.exitCode = 1;\n\s*return;/);
     const image = readFileSync(join(REPO, 'deploy/Dockerfile.pev-bridge'), 'utf8');
     expect(image).toMatch(/^ENV PEV_REQUIRE_RECORD_KEY=1$/m);
@@ -600,6 +603,15 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     }
     const typo = run({ PEV_REQUIRE_RECORD_KEY: 'yes', PEV_RECORD_KEY: KEY });
     expect([typo.status, typo.err]).toEqual([1, expect.stringContaining('PEV_REQUIRE_RECORD_KEY is "yes"; it takes 1')]);
+    // Set but blank (an unresolved service reference, or an empty override of the image's 1) is not
+    // "no guard": it stops the bridge, with the key blank too (where it would write plaintext) and
+    // with a valid key. Each run would otherwise reach the next check (demo keys on a public host)
+    // and stop there, saying so, rather than listen.
+    for (const extra of [{ PEV_REQUIRE_RECORD_KEY: '', PEV_RECORD_KEY: '' }, { PEV_REQUIRE_RECORD_KEY: '  ', PEV_RECORD_KEY: KEY }]) {
+      const r = run({ ...extra, PEV_DEMO_ROLES: '1', HOST: '0.0.0.0' });
+      expect([r.status, r.out.includes('listening on'), r.err.includes('PEV_DEMO_ROLES'), r.err], JSON.stringify(extra))
+        .toEqual([1, false, false, expect.stringContaining('PEV_REQUIRE_RECORD_KEY is set but blank')]);
+    }
     // A valid key passes the guard: this run goes on to the next check (demo keys on a public host) and stops there.
     const passes = run({ PEV_REQUIRE_RECORD_KEY: '1', PEV_RECORD_KEY: `0x${KEY}`, PEV_DEMO_ROLES: '1', HOST: '0.0.0.0' });
     expect([passes.status, passes.err.includes('PEV_RECORD_KEY'), passes.err]).toEqual([1, false, expect.stringContaining('PEV_DEMO_ROLES=1 needs a loopback HOST')]);

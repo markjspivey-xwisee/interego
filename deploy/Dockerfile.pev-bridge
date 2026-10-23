@@ -130,7 +130,8 @@ ENV PEV_LLM_MODEL=
 # ★ NO PLAINTEXT ON A DEPLOYMENT. With this set the bridge refuses to start (exit 1, saying why)
 # while PEV_RECORD_KEY is missing or blank, which is what an unset or unresolved service variable
 # leaves behind, so the service crash-loops visibly instead of writing transcripts in plaintext to
-# a pod anyone can read. Not a secret. Override it with 0 only for a throwaway pod path.
+# a pod anyone can read. Not a secret. Override it with 0 only for a throwaway pod path; any other
+# value stops the bridge too, a blank override (an unresolved reference) included.
 ENV PEV_REQUIRE_RECORD_KEY=1
 
 # The commit this image was built from, surfaced at /health by the shared createVerticalBridge
