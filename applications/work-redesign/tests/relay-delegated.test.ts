@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { importWallet, signMessageRaw, sha256Hex, type Wallet } from '@interego/core';
 import {
-  openRelayDelegated, relayEnvelopeOf, agentSlugOf, isUserDid, agentDidDocumentUrl, cachedDidDocuments, type RelayDelegationPolicy,
+  openRelayDelegated, relayEnvelopeOf, agentSlugOf, isUserDid, agentDidDocumentUrl, userIdOfAgentSlug, userDidDocumentUrl, cachedDidDocuments, type RelayDelegationPolicy,
 } from '../src/relay-delegated.js';
 
 const HOST = 'identity.interego.xwisee.com';
@@ -99,6 +99,29 @@ describe('relay-delegated identity: the verifier', () => {
       expect(await at({ agent_id: `did:web:${HOST}:agents:${slug}` }), slug).toMatchObject({ ok: false, status: 401, code: 'agent-has-no-user' });
     }
     expect(await at({ agent_id: `did:web:${HOST}:agents:claude-not-an-object` })).toMatchObject({ ok: false, code: 'agent-document-mismatch' });
+  });
+
+  // The identity host forgets the agents the relay mints at sign-in when it restarts (measured live):
+  // the person is then the user the agent's id names, whose own document must exist and name them.
+  it('reads the person from the user an agent\'s id names when the agent\'s document is gone, and only then', async () => {
+    const USER_URL = userDidDocumentUrl(HOST, 'u-pk-f2a9c751075a');
+    const f = await relayForm({ intent: 'wrd:read-records', pod_url: 'https://pod.example/team/', nonce: 'nonce-000000000002' });
+    const gone = documents([[USER_URL, { id: USER }]]);
+    expect(await openRelayDelegated(f._signed_payload, f._signature, policyOf(gone.get))).toMatchObject({ ok: true, principal: USER, agentId: AGENT });
+    expect(gone.fetched).toEqual([AGENT_URL, USER_URL]);
+    expect(await openRelayDelegated(f._signed_payload, f._signature, policyOf(documents([[USER_URL, { id: `did:web:${HOST}:users:u-pk-ffffffffffff` }]]).get)))
+      .toMatchObject({ ok: false, status: 401, code: 'agent-document-mismatch' });
+    expect(await openRelayDelegated(f._signed_payload, f._signature, policyOf(documents([]).get)))
+      .toMatchObject({ ok: false, status: 502, code: 'agent-document-unreadable', message: expect.stringMatching(/user its id names/) });
+    // An agent whose id ends in no canonical user id still needs its own document.
+    const odd = await relayForm({ intent: 'wrd:read-records', agent_id: `did:web:${HOST}:agents:claude-markj` });
+    expect(await openRelayDelegated(odd._signed_payload, odd._signature, policyOf(documents([[userDidDocumentUrl(HOST, 'markj'), { id: `did:web:${HOST}:users:markj` }]]).get)))
+      .toMatchObject({ ok: false, status: 502, code: 'agent-document-unreadable' });
+    // When the agent's document is there, its controller must be the user its id names.
+    expect(await openRelayDelegated(f._signed_payload, f._signature, policyOf(documents([[AGENT_URL, { id: AGENT, controller: `did:web:${HOST}:users:u-pk-ffffffffffff` }], [USER_URL, { id: USER }]]).get)))
+      .toMatchObject({ ok: false, status: 401, code: 'agent-has-no-user' });
+    expect([userIdOfAgentSlug('claude-u-pk-f2a9c751075a'), userIdOfAgentSlug('work-redesign-u-did-0123456789ab'), userIdOfAgentSlug('claude-markj')])
+      .toEqual(['u-pk-f2a9c751075a', 'u-did-0123456789ab', null]);
   });
 
   it('reads the slug and the user only on the configured host, and finds the relay form at the top level of a body or under envelope (an object or its JSON text)', () => {

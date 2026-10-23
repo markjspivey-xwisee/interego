@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import {
-  agentDidDocumentUrl, agentSlugOf, cachedDidDocuments, isUserDid, openRelayDelegated, relayEnvelopeOf,
+  agentDidDocumentUrl, userIdOfAgentSlug, userDidDocumentUrl, agentSlugOf, cachedDidDocuments, isUserDid, openRelayDelegated, relayEnvelopeOf,
   type RelayDelegationPolicy,
 } from '../src/relay-delegated.js';
 
@@ -149,6 +149,32 @@ describe('openRelayDelegated', () => {
     for (const controller of [AGENT, `did:web:other.example.test:users:u-1`, [USER], undefined, `did:ethr:${RELAY.address}`]) {
       expect(refusal(await openRelayDelegated(sp, sig, policy({ [urlFor(AGENT)]: docFor(AGENT, controller) }))), JSON.stringify(controller)).toBe('401 agent-has-no-user');
     }
+  });
+
+  // The identity host forgets the agents the relay mints at sign-in when it restarts (measured live):
+  // the person is then the user the agent's id names, whose own document must exist and name them.
+  it('reads the person from the user an agent\'s id names when the agent\'s document is gone, and only then', async () => {
+    const userUrl = `https://${HOST}/users/u-pk-0123456789ab/did.json`;
+    const { sp, sig } = await relaySigned(BODY);
+    const gone = policy({ [userUrl]: { id: USER } });
+    const r = await openRelayDelegated(sp, sig, gone);
+    expect(r).toMatchObject({ ok: true, principal: USER, agentId: AGENT });
+    expect(gone.reads).toEqual([urlFor(AGENT), userUrl]);
+    // The user's document must name that user; with neither document, nothing is taken.
+    expect(refusal(await openRelayDelegated(sp, sig, policy({ [userUrl]: { id: `did:web:${HOST}:users:u-pk-ffffffffffff` } })))).toBe('401 agent-document-mismatch');
+    expect(refusal(await openRelayDelegated(sp, sig, policy({})))).toBe('502 agent-document-unreadable');
+    // An agent whose id ends in no canonical user id still needs its own document.
+    const odd = `did:web:${HOST}:agents:claude-markj`;
+    const o = await relaySigned({ ...BODY, agent_id: odd });
+    expect(refusal(await openRelayDelegated(o.sp, o.sig, policy({ [`https://${HOST}/users/markj/did.json`]: { id: `did:web:${HOST}:users:markj` } })))).toBe('502 agent-document-unreadable');
+    // When the agent's document is there, its controller must be the user its id names.
+    const other = `did:web:${HOST}:users:u-pk-ffffffffffff`;
+    expect(refusal(await openRelayDelegated(sp, sig, policy({ [urlFor(AGENT)]: docFor(AGENT, other), [userUrl]: { id: USER } })))).toBe('401 agent-has-no-user');
+    expect(userIdOfAgentSlug('claude-u-pk-0123456789ab')).toBe('u-pk-0123456789ab');
+    expect(userIdOfAgentSlug('practice-evidence-u-eth-0123456789ab')).toBe('u-eth-0123456789ab');
+    expect(userIdOfAgentSlug('claude-markj')).toBeNull();
+    expect(userIdOfAgentSlug('claude-u-pk-0123456789abc')).toBeNull();
+    expect(userDidDocumentUrl(HOST, 'u-pk-0123456789ab')).toBe(userUrl);
   });
 
   it('a payload edited after the relay signed it recovers another address, which is no trusted relay', async () => {
