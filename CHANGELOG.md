@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-23 — Identity: every account loads at startup again
+
+Since 20:49 UTC every identity-server start logged `Account index: 0 loaded, 360 without credentials … over 360 pod(s)`, where the start before it had loaded 509 accounts from 942 pods. The pod store's root now holds a file, `provisional-play-admission.json`, and `listPods` read the root's `ldp:contains` list only up to the first `.` or `;`. That file sorts after `markj/` and before every `svc-` and `u-` pod, so the listing stopped there. No account pod was loaded, the sign-in indexes were empty, and every account's DID document answered 404 after each restart. Passkey sign-in found no credential, and a returning wallet or DID was registered as a first-time user. The pods themselves were untouched: through the gate the same root lists 958 children, and the accounts' `auth-methods.jsonld` are there. `listPods` now reads the object list as IRIs up to the end of the statement, as `provisional-play-cleanup.ts` already did. On the live root listing it returns 957 children, not 360. A test in `deploy/identity/tests/account-index.test.ts` puts a dotted file and a `;` in the middle of the list.
+
 ## 2026-10-23 — Identity: the image carries surface-agent-restore.ts
 
 `deploy/Dockerfile.identity` copies the identity server's sources one file at a time, and did not copy `surface-agent-restore.ts`, which `server.ts` imports since the surface-agent restore. tsc, the identity tests and CI all passed from the repository, but the image build failed with `Cannot find module './surface-agent-restore.js'`, and that failure stopped the auto-deploy of every service on master. The Dockerfile now copies it. `deploy/identity/tests/image-copies-every-source.test.ts` walks the relative imports from `server.ts` and fails when a module it reaches is not copied, as the relay's own test does for `Dockerfile.relay`. It runs with the identity tests.
