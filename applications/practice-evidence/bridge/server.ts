@@ -8,7 +8,19 @@
  * Environment:
  *   PORT                            default 6110
  *   HOST                            default 127.0.0.1 (a key-holding bridge does not listen on
- *                                   every interface unless told to)
+ *                                   every interface unless told to). Bound to loopback it answers
+ *                                   only its own Host names (127.0.0.1, localhost, [::1] on PORT,
+ *                                   and the host of BRIDGE_DEPLOYMENT_URL) and trusts no proxy hop
+ *                                   for the client address; bound to any other address (the image,
+ *                                   behind Railway's edge) it trusts one
+ *   PEV_TRUST_PROXY_HOPS            0 to 4: how many proxies in front of the bridge set
+ *                                   X-Forwarded-For, for the client address (req.ip) the web UI's
+ *                                   sign-in routes count relay calls by, whatever HOST is. Unset: 1
+ *                                   off loopback, 0 on it. A loopback bridge behind a reverse proxy
+ *                                   on the same machine sets 1, or every caller is the proxy's
+ *                                   address and the per-address limits act as the bridge's own; a
+ *                                   bridge reached with no proxy in front sets 0, or a caller names
+ *                                   its own address. Any other value stops the bridge
  *   BRIDGE_DEPLOYMENT_URL           the public base URL
  *   PEV_DEFAULT_POD_URL             the operator pod
  *   PEV_SERVED_PODS                 comma-separated pods records are read from and written to;
@@ -105,7 +117,7 @@ import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { attemptIriSecret, freshNonce, iriKeyFingerprint, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
-import { cachedDidDocuments, isUserDid } from '../src/relay-delegated.js';
+import { cachedDidDocuments, isUserDid, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import {
   createPevHandlers, describeStartup, DECISIVE_ACTS, DECISIVE_ON_ANOTHERS_ATTEMPT, DEFAULT_BUDGETS, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX,
   type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
@@ -269,6 +281,16 @@ async function main(): Promise<void> {
     return;
   }
   const chatAgentsDecide = decideRaw === '1';
+  // The client address the web UI's sign-in routes limit relay calls by (req.ip) is the one this
+  // many proxy hops in front saw. A malformed value stops the bridge rather than count every caller
+  // as one, or let a caller name its own address.
+  const proxyHopsValue = env('PEV_TRUST_PROXY_HOPS');
+  if (proxyHopsValue !== undefined && !/^[0-4]$/.test(proxyHopsValue)) {
+    warn(`PEV_TRUST_PROXY_HOPS is ${JSON.stringify(proxyHopsValue.slice(0, 40))}; it takes how many proxies in front of the bridge set X-Forwarded-For (0 to 4), or unset for 1 off loopback and 0 on loopback. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const proxyHops = proxyHopsValue !== undefined ? Number(proxyHopsValue) : loopback ? 0 : 1;
   // The web UI's "Sign in with your Interego account": on when there is a relay to sign in through
   // and the route trusts it. Its relay calls follow no redirect, are capped and timed, and go through
   // the SSRF guard unless the operator's relay is on loopback (a local relay, which the guard refuses).
@@ -307,19 +329,19 @@ async function main(): Promise<void> {
   }
 
   const baseFetch = globalThis.fetch.bind(globalThis);
+  // The agent's DID document is read SSRF-guarded, in 8 s, at most 64 KiB, and kept 10 minutes. The
+  // handlers check acts with this policy, and the web UI's sign-in names the person a token signs
+  // for with it, through the same cache.
+  const relayDelegation: RelayDelegationPolicy | undefined = identityHost !== undefined ? {
+    relayAddresses: relayAddresses.map((x) => x.toLowerCase()), identityHost,
+    fetchDidDocument: cachedDidDocuments(didDocumentFetch(globalThis.fetch.bind(globalThis))),
+  } : undefined;
   const deps: PevDeps = {
     platformWallet, platformKeyKind,
     trustedPlatformAddresses: trusted.filter((x) => isAddress(x)),
     ...(recordKey ? { recordKey } : {}),
     adminAddresses: [...admins.filter((x) => isAddress(x)), ...(demoAdmin ? [demoAdmin.address] : [])],
-    // The agent's DID document is read SSRF-guarded, in 8 s, at most 64 KiB, and kept 10 minutes.
-    ...(identityHost !== undefined ? {
-      relayDelegation: {
-        relayAddresses: relayAddresses.map((x) => x.toLowerCase()), identityHost,
-        fetchDidDocument: cachedDidDocuments(didDocumentFetch(globalThis.fetch.bind(globalThis))),
-      },
-      adminDids,
-    } : {}),
+    ...(relayDelegation !== undefined ? { relayDelegation, adminDids } : {}),
     chatAgentsDecide,
     ...(relayUrl !== undefined ? { relayUrl } : {}),
     fetchFn: operatorPodFetch(defaultPodUrl, writeSecret, baseFetch),
@@ -348,17 +370,19 @@ async function main(): Promise<void> {
       { label: 'pev ontology', href: `${base}/ns/pev`, rel: 'describedby', type: 'text/turtle' },
     ],
     middleware: (a) => {
+      // First, so the guard stands in front of the ontology, the UI and every route mounted after this hook.
+      if (loopback) a.use(hostAllowlistGuard(allowedHosts));
       // The web UI's sign-in routes limit each client address (req.ip) on its relay calls. In the
       // image the bridge listens behind Railway's edge, one proxy hop, so req.ip is the client only
-      // when that hop is trusted; a loopback bridge trusts none, so no caller picks its own address.
-      if (!loopback) a.set('trust proxy', 1);
-      if (loopback) a.use(hostAllowlistGuard(allowedHosts));
+      // when that hop is trusted; a loopback bridge trusts none unless PEV_TRUST_PROXY_HOPS says a
+      // proxy on the same machine stands in front, so no caller picks its own address.
+      if (proxyHops > 0) a.set('trust proxy', proxyHops);
       attachOntologyServing(a, {
         mountPath: '/ns/pev', ontologyIri: PEV_ONTOLOGY_IRI, namespace: PEV_NS,
         ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
       });
       attachUi(a, uiSignIn && relayUrl !== undefined
-        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }) } }
+        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}) } }
         : {});
     },
   });
@@ -389,6 +413,11 @@ async function main(): Promise<void> {
     say(uiSignIn
       ? `  web UI sign-in: ON, through ${relayUrl ?? ''}, as the OAuth client "Practice Evidence" (${base.startsWith('https://') ? `its Client ID Metadata Document is ${base}/ui/oauth/client.json, if the relay takes one; otherwise it registers dynamically` : 'registered dynamically: the deployment URL is not https, so the relay cannot read a Client ID Metadata Document'}). The relay's access token a person signs in with (it lasts an hour) passes through this bridge on every act it signs and is never logged or kept`
       : '  web UI sign-in: off (PEV_RELAY_URL is not set): people sign in through Claude, ChatGPT or another relay client only');
+  }
+  if (uiSignIn) {
+    say(proxyHops > 0
+      ? `  web UI sign-in limits count each caller by the address ${proxyHops} proxy hop(s) in front saw (X-Forwarded-For; ${proxyHopsValue !== undefined ? `PEV_TRUST_PROXY_HOPS=${proxyHops}` : 'off loopback'})`
+      : `  web UI sign-in limits count each caller by the address that connects to the bridge (no proxy hop trusted${proxyHopsValue !== undefined ? ', PEV_TRUST_PROXY_HOPS=0' : ' on loopback'}); behind a reverse proxy every caller is the proxy's address, so set PEV_TRUST_PROXY_HOPS to the hops in front`);
   }
   for (const line of (await describeStartup(deps)).lines) say(`  ${line}`);
 

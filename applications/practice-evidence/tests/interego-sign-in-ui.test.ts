@@ -22,7 +22,10 @@
  * TextEncoder, so the test windows get Node's, the same APIs a browser has. No network.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
@@ -78,23 +81,28 @@ const fetchDidDocument = async (url: string): Promise<unknown> => {
   return agentDocs.get(url);
 };
 
-function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; readonly grantScope?: string }) {
+function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; readonly grantScope?: string; readonly tokenLimit?: number }) {
   const calls: RelayCall[] = [];
   const registered = new Map<string, Out>();
-  const codes = new Map<string, { clientId: string; redirectUri: string; challenge: string; resource: string; scope: string; slug: string }>();
-  /** Access tokens the token endpoint issued, each with its agent, its identity-server token and when it expires. */
-  const access = new Map<string, { slug: string; idToken: string; expiresAt: number }>();
+  const codes = new Map<string, { clientId: string; redirectUri: string; challenge: string; resource: string; scope: string; slug: string; user: string }>();
+  /** Access tokens the token endpoint issued, each with its agent, its person, its identity-server token and when it expires. */
+  const access = new Map<string, { slug: string; user: string; idToken: string; expiresAt: number }>();
   const identity = new Map<string, { slug: string }>();
   const issued: string[] = [];
   const refreshIssued: string[] = [];
   /** The JSON-RPC requests /mcp was sent, in order. */
   const rpcs: Out[] = [];
   const state = { answerAs: 'sse' as 'sse' | 'json', faults: [] as McpFault[] };
+  /** While set, every POST /mcp waits on it before its bearer is checked, as a relay slow to answer does. */
+  let gate: Promise<void> | null = null;
+  let waiting = 0;
+  /** POST /token calls, those refused past `tokenLimit` (the relay's 50 every 15 minutes for one address), and requests /mcp signed. */
+  const counts = { token: 0, tokenRefused: 0, signed: 0 };
   const json = (status: number, body: unknown, headers: Record<string, string> = {}): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 
   /** sign_request as handleSignRequest runs it, for the session's agent, answered as the relay's tool text. */
-  async function signRequest(slug: string, args: Out): Promise<string> {
+  async function signRequest(slug: string, args: Out, user = USER): Promise<string> {
     const reserved = new Set(['agent_id', 'timestamp', '_signature', '_signed_payload', 'subject_pod_url', 'payload', 'pod_name', 'owner_webid', 'owner_name']);
     const p = (args['payload'] ?? {}) as Out;
     const safe: Out = Object.fromEntries(Object.entries(p).filter(([k]) => !k.startsWith('_') && !reserved.has(k)));
@@ -103,7 +111,7 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
     delete safe['podUrl'];
     if (typeof asked === 'string') safe['pod_url'] = asked;
     const agentId = `did:web:${IDH}:agents:${slug}`;
-    const sp = JSON.stringify({ ...safe, agent_id: agentId, subject_pod_url: `https://pods.ui.test/${USER}/`, timestamp: new Date().toISOString() });
+    const sp = JSON.stringify({ ...safe, agent_id: agentId, subject_pod_url: `https://pods.ui.test/${user}/`, timestamp: new Date().toISOString() });
     return JSON.stringify({
       _signature: await signMessageRaw(RELAY_KEY, `sha256:${sha256Hex(sp)}`), _signed_payload: sp, signed_as: agentId,
       signatureAuthority: 'relay', signingNote: 'This is a relay-mediated signature.', anchor: `did:ethr:${RELAY_KEY.address}`,
@@ -113,6 +121,7 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
 
   /** POST /mcp as the relay serves it: a plain Bearer access token, then a stateless tools/call. */
   async function mcp(bearer: string, headers: Headers, body: string): Promise<Response> {
+    if (gate !== null) { waiting += 1; await gate; waiting -= 1; }
     const who = access.get(bearer);
     if (!who || who.expiresAt <= Date.now()) {
       return json(401, { error: 'invalid_token', error_description: 'Invalid or expired token' }, { 'www-authenticate': 'Bearer error="invalid_token"' });
@@ -143,7 +152,8 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
         const text = JSON.stringify({ error: 'sign_request: signing failed: the delegation key is not loaded' });
         message = { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }], structuredContent: JSON.parse(text) as Out } };
       } else {
-        const text = await signRequest(who.slug, args);
+        const text = await signRequest(who.slug, args, who.user);
+        counts.signed += 1;
         message = { jsonrpc: '2.0', id: fault === 'other-id' ? `${String(id)}-not-this-one` : id, result: { content: [{ type: 'text', text }], structuredContent: JSON.parse(text) as Out } };
       }
     }
@@ -179,6 +189,11 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
         return json(201, { ...meta, client_id: id, client_id_issued_at: 1 });
       }
       case 'POST /token': {
+        counts.token += 1;
+        if (o.tokenLimit !== undefined && counts.token > o.tokenLimit) {
+          counts.tokenRefused += 1;
+          return json(429, { error: 'too_many_requests', error_description: 'Too many token requests' }, { 'retry-after': '900' });
+        }
         const f = new URLSearchParams(body);
         const c = codes.get(f.get('code') ?? '');
         if (f.get('grant_type') !== 'authorization_code' || !c) return json(400, { error: 'invalid_grant', error_description: 'Invalid or expired authorization code' });
@@ -191,8 +206,8 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
         }
         const token = randomBytes(32).toString('hex');
         const expiresIn = o.expiresIn ?? 3600;
-        const idToken = `cg2_${b64url(Buffer.from(JSON.stringify({ userId: USER, agentId: c.slug })))}.${b64url(randomBytes(32))}`;
-        access.set(token, { slug: c.slug, idToken, expiresAt: Date.now() + expiresIn * 1000 });
+        const idToken = `cg2_${b64url(Buffer.from(JSON.stringify({ userId: c.user, agentId: c.slug })))}.${b64url(randomBytes(32))}`;
+        access.set(token, { slug: c.slug, user: c.user, idToken, expiresAt: Date.now() + expiresIn * 1000 });
         identity.set(idToken, { slug: c.slug });
         issued.push(token);
         const refresh = randomBytes(32).toString('hex');
@@ -222,13 +237,38 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
     if (a) a.expiresAt = 0;
   }
 
+  /** The identity host's document for `slug`, controlled by `user`, as the relay mints it at sign-in. */
+  function mintAgent(slug: string, user: string): void {
+    agentDocs.set(`https://${IDH}/agents/${slug}/did.json`, { '@context': ['https://www.w3.org/ns/did/v1'], id: `did:web:${IDH}:agents:${slug}`, controller: `did:web:${IDH}:users:${user}` });
+  }
+
+  /**
+   * An access token the relay issued to `user` for the client named `client` (this bridge's, unless
+   * another is given) without this bridge: from the relay's own sign-in page for another client, as
+   * any account holder can get one, an hour long, scope `mcp`.
+   */
+  function mint(user: string, client = PEV_UI_CLIENT_NAME): string {
+    const slug = `${client.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}-${user}`;
+    mintAgent(slug, user);
+    const token = randomBytes(32).toString('hex');
+    access.set(token, { slug, user, idToken: `cg2_${b64url(randomBytes(32))}`, expiresAt: Date.now() + 3_600_000 });
+    return token;
+  }
+
+  /** Hold every POST /mcp from now until the function returned is called. */
+  function hold(): () => void {
+    let release: () => void = () => undefined;
+    gate = new Promise<void>((r) => { release = r; });
+    return () => { gate = null; release(); };
+  }
+
   /**
    * The person signs in on the relay's own page (their passkey): the relay reads the client (its
    * CIMD from the client's own URL, which `deployed` maps to this test's listener, or a DCR
    * registration), mints the agent `<client name slug>-<userId>` on the identity host, and sends the
    * browser back to the redirect URI with a code and the state it was given.
    */
-  async function signIn(authorizeUrl: string, deployed: (url: string) => string): Promise<string> {
+  async function signIn(authorizeUrl: string, deployed: (url: string) => string, user = USER): Promise<string> {
     const a = new URL(authorizeUrl);
     const q = (k: string): string => a.searchParams.get(k) ?? '';
     expect([a.origin + a.pathname, q('response_type'), q('code_challenge_method')]).toEqual([`${RELAY}/authorize`, 'code', 'S256']);
@@ -247,17 +287,20 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
     }
     expect(redirectUris).toContain(q('redirect_uri'));
     const surface = clientName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    const slug = `${surface}-${USER}`;
-    agentDocs.set(`https://${IDH}/agents/${slug}/did.json`, { '@context': ['https://www.w3.org/ns/did/v1'], id: `did:web:${IDH}:agents:${slug}`, controller: PRINCIPAL });
+    const slug = `${surface}-${user}`;
+    mintAgent(slug, user);
     const code = randomBytes(24).toString('hex');
-    codes.set(code, { clientId: q('client_id'), redirectUri: q('redirect_uri'), challenge: q('code_challenge'), resource: q('resource'), scope: q('scope'), slug });
+    codes.set(code, { clientId: q('client_id'), redirectUri: q('redirect_uri'), challenge: q('code_challenge'), resource: q('resource'), scope: q('scope'), slug, user });
     const back = new URL(q('redirect_uri'));
     back.searchParams.set('code', code);
     back.searchParams.set('state', q('state'));
     return back.href;
   }
 
-  const stub = { fetchFn, calls, registered, issued, refreshIssued, rpcs, signIn, expire, state };
+  const stub = {
+    fetchFn, calls, registered, issued, refreshIssued, rpcs, signIn, expire, mint, hold, state,
+    held: (): number => waiting, signed: (): number => counts.signed, tokenRefusals: (): number => counts.tokenRefused,
+  };
   allRelays.push(stub);
   return stub;
 }
@@ -266,14 +309,17 @@ function stubRelay(o: { readonly cimd: boolean; readonly expiresIn?: number; rea
 //  The bridge and the page
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+/** The relay-delegation policy, as server.ts gives it to the handlers and to the web UI's sign-in alike. */
+const POLICY = { relayAddresses: [RELAY_KEY.address.toLowerCase()], identityHost: IDH, fetchDidDocument };
 const handlers = createPevHandlers({
   platformWallet: PLATFORM, platformKeyKind: 'demo-fixture', adminAddresses: [W.admin.address], adminDids: [PRINCIPAL],
   fetchFn: pod.fetchFn, holderFetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, servedPods: [DEMO_POD], deploymentUrl: 'http://127.0.0.1:6110',
-  relayDelegation: { relayAddresses: [RELAY_KEY.address.toLowerCase()], identityHost: IDH, fetchDidDocument },
+  relayDelegation: POLICY,
   relayUrl: RELAY, model: scriptedPracticeModel(),
 } satisfies PevDeps) as Handlers;
 
 const listeners: TestListener[] = [];
+/** A bridge on a loopback port; its sign-in has the handlers' relay-delegation policy unless `interego` names another. */
 async function serve(interego: InteregoUiOptions | undefined, o: { readonly trustProxy?: boolean } = {}): Promise<TestListener> {
   const allowed: string[] = [];
   const app: Express = createVerticalBridge({
@@ -282,7 +328,7 @@ async function serve(interego: InteregoUiOptions | undefined, o: { readonly trus
       // As server.ts does on a deployment behind one proxy hop: req.ip is then the X-Forwarded-For address.
       if (o.trustProxy === true) a.set('trust proxy', 1);
       a.use((req: ExpressRequest, res: ExpressResponse, next: NextFunction) => hostAllowlistGuard(allowed)(req, res, next));
-      attachUi(a, interego ? { interego } : {});
+      attachUi(a, interego ? { interego: { relayDelegation: POLICY, ...interego } } : {});
     },
   });
   const l = await listenLoopback(app);
@@ -384,7 +430,7 @@ async function direct(tool: string, w: Wallet, action: string, fields: Out = {})
  * A sign-in finished without a page: the person signs in at the relay (the CIMD client of an https
  * deployment), and the code goes to the bridge's exchange. The exchange's answer.
  */
-async function exchangeDirect(l: TestListener, stub: ReturnType<typeof stubRelay>, headers: Record<string, string> = {}): Promise<{ status: number; json: Out }> {
+async function exchangeDirect(l: TestListener, stub: ReturnType<typeof stubRelay>, headers: Record<string, string> = {}, user = USER): Promise<{ status: number; json: Out }> {
   const verifier = b64url(randomBytes(32));
   const state = b64url(randomBytes(24));
   const authorize = new URL(`${RELAY}/authorize`);
@@ -392,7 +438,7 @@ async function exchangeDirect(l: TestListener, stub: ReturnType<typeof stubRelay
     response_type: 'code', client_id: `${DEPLOY}/ui/oauth/client.json`, redirect_uri: `${DEPLOY}/ui/oauth/callback`,
     code_challenge: b64url(createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256', state, scope: 'mcp', resource: `${RELAY}/`,
   })) authorize.searchParams.set(k, v);
-  const code = new URL(await stub.signIn(authorize.href, (u) => u.replace(DEPLOY, l.base))).searchParams.get('code') ?? '';
+  const code = new URL(await stub.signIn(authorize.href, (u) => u.replace(DEPLOY, l.base), user)).searchParams.get('code') ?? '';
   const r = await fetch(`${l.base}/ui/oauth/exchange`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ code, code_verifier: verifier, state }),
   });
@@ -410,6 +456,39 @@ async function signThrough(l: TestListener, token: string, headers: Record<strin
 
 /** The relay calls that reached a path. */
 const callsTo = (stub: { readonly calls: readonly RelayCall[] }, path: string): RelayCall[] => stub.calls.filter((c) => c.url === `${RELAY}${path}`);
+
+/** A request from `ip`, as the proxy in front of a deployment names it (the test bridge trusts one hop). */
+const from = (ip: string): Record<string, string> => ({ 'x-forwarded-for': ip });
+interface Signed { readonly status: number; readonly code: unknown; readonly retry: unknown; readonly header: string | null; readonly error: string }
+/** What the relay limits are tested with: a sign from an address, a made-up code's exchange from one, and how many calls reached a relay path. */
+function limitMoves(l: TestListener, stub: ReturnType<typeof stubRelay>): {
+  relayed(path: string): number;
+  sign(token: string, ip: string): Promise<Signed>;
+  exchange(code: string, ip: string): Promise<readonly [number, unknown]>;
+  madeUp(i: number): string;
+} {
+  return {
+    relayed: (path) => callsTo(stub, path).length,
+    async sign(token, ip) {
+      const r = await fetch(`${l.base}/ui/relay/sign`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...from(ip) },
+        body: JSON.stringify({ payload: { v: 1, action: PEV_ACTION.getAttempt, nonce: nonce(), podUrl: DEMO_POD } }),
+      });
+      const text = await r.text();
+      expect(text).not.toContain(token);
+      const j = JSON.parse(text) as Out;
+      return { status: r.status, code: j['iep:refusalReason'] ?? null, retry: j['retryAfterSeconds'] ?? null, header: r.headers.get('retry-after'), error: String(j['error'] ?? '') };
+    },
+    async exchange(code, ip) {
+      const r = await fetch(`${l.base}/ui/oauth/exchange`, {
+        method: 'POST', headers: { 'content-type': 'application/json', ...from(ip) },
+        body: JSON.stringify({ code, code_verifier: 'a'.repeat(43), state: 'b'.repeat(16) }),
+      });
+      return [r.status, ((await r.json()) as Out)['iep:refusalReason']] as const;
+    },
+    madeUp: (i) => `madeupcode${String(i).padStart(4, '0')}xxxxxxxx`,
+  };
+}
 
 const relay = stubRelay({ cimd: true });
 let bridge: TestListener;
@@ -616,63 +695,200 @@ describe('the sign-in routes: the client document, the start, and their refusals
     expect(reached).toEqual([]);
   });
 
-  it('a caller who is not signed in cannot spend the relay budget that everyone signed in here shares', async () => {
+  it('a caller who is not signed in cannot spend the relay calls people signed in here need, a refused token is not sent again, and code exchanges stay inside a 15-minute budget', async () => {
     let clock = Date.now();
     const lim = stubRelay({ cimd: true });
     const l = await serve({
       relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: lim.fetchFn, now: () => clock,
-      limits: { total: 14, unproven: 8, unprovenPerClient: 4, perSignIn: 5 },
+      limits: { unproven: 8, unprovenPerClient: 4, perSignIn: 5, exchanges: 7, exchangesPerClient: 5 },
     }, { trustProxy: true });
-    const from = (ip: string): Record<string, string> => ({ 'x-forwarded-for': ip });
-    const relayed = (path: string): number => callsTo(lim, path).length;
+    const { relayed, sign, exchange, madeUp } = limitMoves(l, lim);
     // A person signs in from 203.0.113.1: the relay's metadata and the code, two relay calls.
     const ex = await exchangeDirect(l, lim, from('203.0.113.1'));
     expect([ex.status, relayed('/.well-known/oauth-authorization-server') + relayed('/token')]).toEqual([200, 2]);
     const bearer = String(ex.json['accessToken']);
-    const sign = async (token: string, ip: string): Promise<Out> => {
-      const r = await signThrough(l, token, from(ip));
-      return { status: r.status, code: r.json['iep:refusalReason'] ?? null, retryAfterSeconds: r.json['retryAfterSeconds'] ?? null };
-    };
-    expect((await sign(bearer, '203.0.113.1'))['status']).toBe(200);
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
 
-    // A stranger with made-up tokens, from one address: four reach the relay (each refused), then the bridge refuses on its own.
+    // A stranger with made-up tokens, from one address: four reach the relay (each refused), then the bridge refuses on its own, saying when to try again.
     const signs = relayed('/mcp');
     const made = Array.from({ length: 10 }, (_, i) => `madeup${i}${'A'.repeat(16)}`);
-    const one: Out[] = [];
+    const one: Signed[] = [];
     for (const t of made) one.push(await sign(t, '198.51.100.7'));
-    expect(one.map((r) => r['code'])).toEqual([...Array<string>(4).fill('interego-sign-in-expired'), ...Array<string>(6).fill('relay-calls-limited')]);
-    expect([one[4]?.['status'], Number(one[4]?.['retryAfterSeconds']) > 0]).toEqual([429, true]);
+    expect(one.map((r) => r.code)).toEqual([...Array<string>(4).fill('interego-sign-in-expired'), ...Array<string>(6).fill('relay-calls-limited')]);
+    expect([one[4]?.status, Number(one[4]?.retry) > 0, one[4]?.header]).toEqual([429, true, String(one[4]?.retry)]);
+    expect(one[4]?.error).toContain('limit of 4 relay calls a minute for one address that is not signed in is reached, so it did not ask the Interego relay');
     expect(relayed('/mcp') - signs).toBe(4);
-    // A token the relay refused is refused again from memory, from any address, at no relay call.
-    expect((await sign(made[0] ?? '', '198.51.100.8'))['code']).toBe('interego-sign-in-expired');
-    expect(relayed('/mcp') - signs).toBe(4);
+    // A token the relay refused is refused again from memory, from any address, and never sent to the relay again.
+    expect([(await sign(made[0] ?? '', '198.51.100.8')).code, relayed('/mcp') - signs]).toEqual(['interego-sign-in-expired', 4]);
+    expect(lim.calls.filter((c) => c.authorization === `Bearer ${made[0] ?? ''}`)).toHaveLength(1);
     // Strangers from many addresses together spend only what is left for callers not signed in (8 - 2 - 4 = 2).
-    const many: Out[] = [];
+    const many: Signed[] = [];
     for (let i = 0; i < 6; i++) many.push(await sign(`other${i}${'B'.repeat(16)}`, `198.51.100.${20 + i}`));
-    expect(many.map((r) => r['code'])).toEqual(['interego-sign-in-expired', 'interego-sign-in-expired', ...Array<string>(4).fill('relay-busy')]);
+    expect(many.map((r) => r.code)).toEqual(['interego-sign-in-expired', 'interego-sign-in-expired', ...Array<string>(4).fill('relay-busy')]);
+    expect([many[2]?.status, Number(many[2]?.retry) > 0]).toEqual([429, true]);
     expect(relayed('/mcp') - signs).toBe(6);
     // The person signed in still signs, up to her own limit (5 a minute): the strangers spent none of it.
-    const hers: Out[] = [];
+    const hers: Signed[] = [];
     for (let i = 0; i < 5; i++) hers.push(await sign(bearer, '203.0.113.1'));
-    expect(hers.map((r) => r['status'])).toEqual([200, 200, 200, 200, 429]);
-    expect(hers[4]?.['code']).toBe('relay-calls-limited');
+    expect(hers.map((r) => r.status)).toEqual([200, 200, 200, 200, 429]);
+    expect([hers[4]?.code, hers[4]?.error]).toEqual(['relay-calls-limited', expect.stringContaining('limit of 5 relay calls a minute for one sign-in')]);
 
-    // A minute on. Made-up codes from one address: four exchanges (one call each) reach the relay, then the bridge refuses on its own.
+    // A minute on. Made-up codes from one address: four exchanges (one call each) reach the relay's token endpoint, then the bridge refuses on its own.
     clock += 61_000;
-    expect((await sign(bearer, '203.0.113.1'))['status']).toBe(200);
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
     const tokens = relayed('/token');
-    const exchanges: unknown[] = [];
-    for (let i = 0; i < 6; i++) {
-      const r = await fetch(`${l.base}/ui/oauth/exchange`, {
-        method: 'POST', headers: { 'content-type': 'application/json', ...from('198.51.100.7') },
-        body: JSON.stringify({ code: `madeupcode${i}xxxxxxxx`, code_verifier: 'a'.repeat(43), state: 'b'.repeat(16) }),
-      });
-      exchanges.push(((await r.json()) as Out)['iep:refusalReason']);
-    }
-    expect(exchanges).toEqual([...Array<string>(4).fill('oauth-code-refused'), 'relay-calls-limited', 'relay-calls-limited']);
+    const codes: (readonly [number, unknown])[] = [];
+    for (let i = 0; i < 6; i++) codes.push(await exchange(madeUp(i), '198.51.100.7'));
+    expect(codes).toEqual([...Array<readonly [number, string]>(4).fill([400, 'oauth-code-refused']), [429, 'relay-calls-limited'], [429, 'relay-calls-limited']]);
     expect(relayed('/token') - tokens).toBe(4);
-    expect((await sign(bearer, '203.0.113.1'))['status']).toBe(200);
+    // Another minute: that address has one exchange left of its five in 15 minutes, and the bridge seven in all (the person's, four, this one, and one more).
+    clock += 61_000;
+    const later: (readonly [number, unknown])[] = [];
+    for (const [i, ip] of ['198.51.100.7', '198.51.100.7', '198.51.100.9', '198.51.100.9'].entries()) later.push(await exchange(madeUp(10 + i), ip));
+    expect(later).toEqual([[400, 'oauth-code-refused'], [429, 'relay-calls-limited'], [400, 'oauth-code-refused'], [429, 'relay-busy']]);
+    expect(relayed('/token') - tokens).toBe(6);
+    // So strangers can delay a new sign-in: a real code is refused before the relay is asked anything, with the wait the 15-minute budget leaves.
+    const asked = lim.calls.length;
+    const delayed = await exchangeDirect(l, lim, from('203.0.113.2'), 'u-pk-0000000000d2');
+    expect([delayed.status, delayed.json['iep:refusalReason'], Number(delayed.json['retryAfterSeconds']) > 60]).toEqual([429, 'relay-busy', true]);
+    expect(String(delayed.json['error'])).toContain('(7 code exchanges every 15 minutes in all)');
+    expect(lim.calls.length).toBe(asked);
+    // The person already signed in goes on signing all the while.
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+    // Once the 15 minutes have passed, a new sign-in goes through and signs.
+    clock += 15 * 60_000;
+    const done = await exchangeDirect(l, lim, from('203.0.113.2'), 'u-pk-0000000000d2');
+    expect([done.status, typeof done.json['accessToken']]).toEqual([200, 'string']);
+    expect((await sign(String(done.json['accessToken']), '203.0.113.2')).status).toBe(200);
     expect([relayed('/identity-token'), lim.calls.filter((c) => c.url.startsWith(`${RELAY}/tool/`)).length]).toEqual([0, 0]);
+  });
+
+  it('strangers cannot spend the relay\'s token endpoint: made-up codes from any number of addresses reach it at most 30 times in 15 minutes, under its 50, while a person signed in signs on', async () => {
+    let clock = Date.now();
+    const t0 = clock;
+    // The relay's own limit on its token endpoint, as its OAuth router keeps it for one address: 50 every 15 minutes, then 429.
+    const lim = stubRelay({ cimd: true, tokenLimit: 50 });
+    const l = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: lim.fetchFn, now: () => clock }, { trustProxy: true });
+    const { relayed, sign, exchange, madeUp } = limitMoves(l, lim);
+    const ex = await exchangeDirect(l, lim, from('203.0.113.1'));
+    expect(ex.status).toBe(200);
+    const bearer = String(ex.json['accessToken']);
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+    // Every minute for ten minutes, 20 strangers, each from an address of its own, post a made-up code; she signs once a minute all the while.
+    const minutes: (readonly [number, number, number])[] = [];
+    let n = 0;
+    for (let minute = 0; minute < 10; minute++) {
+      const got = [];
+      for (let i = 0; i < 20; i++) got.push(await exchange(madeUp(n++), `198.51.${minute}.${i + 1}`));
+      expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+      minutes.push([got.filter(([s]) => s === 400).length, got.filter(([s, c]) => s === 429 && c === 'relay-busy').length, got.length]);
+      clock += 61_000;
+    }
+    // The first minute, what callers not signed in may (20, of which her sign-in took 2); the second, the rest of the 30 exchanges every 15 minutes; then none.
+    expect(minutes).toEqual([[18, 2, 20], [11, 9, 20], ...Array<readonly [number, number, number]>(8).fill([0, 20, 20])]);
+    expect(relayed('/token')).toBe(30);
+    expect(lim.tokenRefusals()).toBe(0);
+    // A new person is delayed meanwhile (what strangers can still do), told how long, and the relay is asked nothing for her.
+    const asked = lim.calls.length;
+    const delayed = await exchangeDirect(l, lim, from('203.0.113.2'), 'u-pk-0000000000d3');
+    expect([delayed.status, delayed.json['iep:refusalReason'], Number(delayed.json['retryAfterSeconds'])]).toEqual([429, 'relay-busy', Math.ceil((t0 + 15 * 60_000 - clock) / 1000)]);
+    expect(lim.calls.length).toBe(asked);
+    // Once the bridge's 15 minutes are over she signs in: the relay's own token budget was never spent.
+    clock = t0 + 15 * 60_000 + 1_000;
+    const done = await exchangeDirect(l, lim, from('203.0.113.2'), 'u-pk-0000000000d3');
+    expect([done.status, relayed('/token'), lim.tokenRefusals()]).toEqual([200, 31, 0]);
+    expect((await sign(String(done.json['accessToken']), '203.0.113.2')).status).toBe(200);
+  });
+
+  it('keeps each person signed in on budgets of their own: one account\'s three tokens at their full rate, other accounts at theirs and strangers spending all they may leave another person signing on', async () => {
+    const clock = Date.now();
+    const lim = stubRelay({ cimd: true });
+    const l = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: lim.fetchFn, now: () => clock }, { trustProxy: true });
+    const { sign } = limitMoves(l, lim);
+    const ok = (rs: readonly Signed[]): number => rs.filter((r) => r.status === 200).length;
+    // She signs in through this bridge and signs once.
+    const ex = await exchangeDirect(l, lim, from('203.0.113.1'));
+    expect(ex.status).toBe(200);
+    const bearer = String(ex.json['accessToken']);
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+
+    // Anyone can make an Interego account. This one holds three tokens: one from this bridge's own sign-in, one from the relay directly, and one
+    // for another client (its agent is claude-…, the same person on the identity host); the last two are taken here by one sign each.
+    const ACCOUNT = 'u-pk-a77acce0a77a';
+    const own = await exchangeDirect(l, lim, from('198.51.100.66'), ACCOUNT);
+    const a1 = String(own.json['accessToken']);
+    const a2 = lim.mint(ACCOUNT);
+    const a3 = lim.mint(ACCOUNT, 'Claude');
+    expect([own.status, (await sign(a2, '198.51.100.66')).status, (await sign(a3, '198.51.100.66')).status]).toEqual([200, 200, 200]);
+    // Each token signs at its full rate, 20 a minute: the account has 40 a minute over all its sign-ins (a1's first sign, which named the
+    // person, counted for that sign-in alone), and the rest is refused as that person's own limit.
+    const theirs: Signed[] = [];
+    for (const t of [a1, a2, a3]) for (let i = 0; i < 20; i++) theirs.push(await sign(t, '198.51.100.66'));
+    expect([ok(theirs), theirs.slice(41).map((r) => r.code)]).toEqual([41, Array<string>(19).fill('relay-calls-limited')]);
+    expect(theirs[41]?.error).toContain('limit of 40 relay calls a minute for one person, over all their sign-ins is reached');
+    // Two more accounts, two tokens each, at their full rate: every call goes through, far past the 50 a minute in all the bridge once
+    // counted every signed-in call against.
+    const others: Signed[] = [];
+    for (const [i, account] of ['u-pk-b0b0b0b0b0b0', 'u-pk-c0c0c0c0c0c0'].entries()) {
+      const tokens = [lim.mint(account), lim.mint(account)];
+      for (const t of tokens) expect((await sign(t, `198.51.100.${67 + i}`)).status).toBe(200);
+      for (const t of tokens) for (let k = 0; k < 20; k++) others.push(await sign(t, `198.51.100.${67 + i}`));
+    }
+    expect(ok(others)).toBe(80);
+    // Strangers from many addresses spend what callers not signed in may (20 a minute, of which 9 are spent: her sign-in's two calls,
+    // a1's exchange, and the six signs that took tokens here), and are then refused by the bridge alone.
+    const strangers: Signed[] = [];
+    for (let i = 0; i < 14; i++) strangers.push(await sign(`stranger${i}${'D'.repeat(20)}`, `198.51.100.${100 + i}`));
+    expect(strangers.map((r) => r.code)).toEqual([...Array<string>(11).fill('interego-sign-in-expired'), 'relay-busy', 'relay-busy', 'relay-busy']);
+    // She signs on, at her full rate, all the while: 20 in the minute, then her own limit, as one sign-in.
+    const mine: Signed[] = [];
+    for (let i = 0; i < 20; i++) mine.push(await sign(bearer, '203.0.113.1'));
+    expect([ok(mine), mine[19]?.code]).toEqual([19, 'relay-calls-limited']);
+    expect(mine[19]?.error).toContain('limit of 20 relay calls a minute for one sign-in is reached');
+    // In that one minute the relay signed 1 + 2 + 41 + 4 + 80 + 19 = 147 times through the bridge.
+    expect(lim.signed()).toBe(147);
+    expect(callsTo(lim, '/token')).toHaveLength(2);
+  }, SLOW);
+
+  it('runs only so many relay calls at once: at most two for one person, a pool for people signed in that callers not signed in never touch, and a smaller one for those callers, each refused 429 before the relay is asked', async () => {
+    const lim = stubRelay({ cimd: true });
+    const l = await serve({ relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: lim.fetchFn, limits: { perPersonAtOnce: 2, signedInAtOnce: 4, unprovenAtOnce: 2 } }, { trustProxy: true });
+    const { sign } = limitMoves(l, lim);
+    const ex = await exchangeDirect(l, lim, from('203.0.113.1'));
+    const bearer = String(ex.json['accessToken']);
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+    const a = ['u-pk-a77acce0a77a', 'u-pk-a77acce0a77a', 'u-pk-a77acce0a77a', 'u-pk-b0b0b0b0b0b0', 'u-pk-b0b0b0b0b0b0'].map((u) => lim.mint(u));
+    for (const t of a) expect((await sign(t, '198.51.100.66')).status).toBe(200);
+    const heldUntil = async (want: number): Promise<void> => {
+      for (let i = 0; lim.held() < want; i++) {
+        if (i > 400) throw new Error(`the relay holds ${lim.held()} calls, not ${want}`);
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    };
+    const release = lim.hold();
+    // One person: two calls at once reach the relay, a third is refused as that person's own limit.
+    const running = [sign(a[0] ?? '', '198.51.100.66'), sign(a[1] ?? '', '198.51.100.66')];
+    await heldUntil(2);
+    const third = await sign(a[2] ?? '', '198.51.100.66');
+    expect([third.status, third.code, third.retry, third.header]).toEqual([429, 'relay-calls-limited', 1, '1']);
+    expect(third.error).toContain('at most 2 relay calls at once for one person');
+    // Another person and she still get theirs, up to the pool for people signed in (four here).
+    running.push(sign(a[3] ?? '', '198.51.100.67'), sign(bearer, '203.0.113.1'));
+    await heldUntil(4);
+    const full = await sign(a[4] ?? '', '198.51.100.67');
+    expect([full.status, full.code]).toEqual([429, 'relay-busy']);
+    expect(full.error).toContain('at most 4 relay calls at once for people signed in');
+    // Callers not signed in have places of their own (two here), which the signed-in pool being full does not take away, and are refused beyond them.
+    running.push(sign(`stranger0${'E'.repeat(20)}`, '198.51.100.90'), sign(`stranger1${'E'.repeat(20)}`, '198.51.100.91'));
+    await heldUntil(6);
+    const stranger = await sign(`stranger2${'E'.repeat(20)}`, '198.51.100.92');
+    expect([stranger.status, stranger.code]).toEqual([429, 'relay-busy']);
+    expect(stranger.error).toContain('at most 2 relay calls at once for callers the relay has not accepted here');
+    expect(lim.held()).toBe(6);
+    release();
+    expect((await Promise.all(running)).map((r) => r.code ?? r.status)).toEqual([200, 200, 200, 200, 'interego-sign-in-expired', 'interego-sign-in-expired']);
+    // Each place is given back when its call ends.
+    expect([(await sign(a[2] ?? '', '198.51.100.66')).status, (await sign(a[4] ?? '', '198.51.100.67')).status, (await sign(bearer, '203.0.113.1')).status]).toEqual([200, 200, 200]);
   });
 
   it('the DID-document read ends at its deadline, a slow DNS look-up included, and the request after the look-up is aborted', async () => {
@@ -887,6 +1103,66 @@ describe('the web UI signs a person in with their Interego account and has the r
     const answer = await openPage(bridge, `/ui/oauth/callback?error=access_denied&state=${state}`, sessionOf(p1));
     await answer.until(() => answer.text('#signing').includes('the relay answered "access_denied"'), 'the relay\'s error');
     expect([answer.session(PENDING_KEY), answer.session(SESSION_KEY), answer.errors]).toEqual([null, null, []]);
+  }, SLOW);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  server.ts: the client address the limits count by
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Start bridge/server.ts, as the image runs it, with nothing in its environment but `extra` (on
+ * loopback, port 0); once it says it is listening it is stopped. `started` says whether it got that far.
+ */
+function startServer(extra: Record<string, string>): Promise<{ status: number | null; started: boolean; out: string; err: string }> {
+  const repo = fileURLToPath(new URL('../../../', import.meta.url));
+  const server = fileURLToPath(new URL('../bridge/server.ts', import.meta.url));
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--import', 'tsx', server], {
+      cwd: repo, env: { NODE_NO_WARNINGS: '1', PORT: '0', HOST: '127.0.0.1', ...extra }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let err = '';
+    let started = false;
+    const timer = setTimeout(() => child.kill('SIGKILL'), 120_000);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      out += chunk;
+      if (!started && out.includes('listening on 127.0.0.1:0')) { started = true; child.kill('SIGTERM'); }
+    });
+    child.stderr.on('data', (chunk: string) => { err += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => { clearTimeout(timer); resolve({ status: code, started, out, err }); });
+  });
+}
+
+describe('server.ts: the client address the web UI\'s sign-in limits count by', () => {
+  it('trusts one proxy hop off loopback and none on it unless PEV_TRUST_PROXY_HOPS names 0 to 4, keeps the host guard first, stops on any other value, and says which address it counts by', async () => {
+    const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
+    expect(server).toContain("const proxyHopsValue = env('PEV_TRUST_PROXY_HOPS');");
+    expect(server).toContain('const proxyHops = proxyHopsValue !== undefined ? Number(proxyHopsValue) : loopback ? 0 : 1;');
+    expect(server).toMatch(/if \(proxyHopsValue !== undefined && !\/\^\[0-4\]\$\/\.test\(proxyHopsValue\)\) \{\n[^\n]*PEV_TRUST_PROXY_HOPS is [^\n]*Not listening\.`\);\n\s*process\.exitCode = 1;\n\s*return;/);
+    // The host guard is the hook's first statement, so it stands in front of every route mounted after it; the proxy hops come next.
+    expect(server).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(loopback\) a\.use\(hostAllowlistGuard\(allowedHosts\)\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(proxyHops > 0\) a\.set\('trust proxy', proxyHops\);\n/);
+    expect(server.match(/trust proxy/g)).toHaveLength(1);
+    // The web UI's sign-in names the person a token signs for with the handlers' own policy, and so through the same DID-document cache.
+    expect(server).toContain('...(relayDelegation !== undefined ? { relayDelegation, adminDids } : {}),');
+    expect(server).toContain('relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {})');
+
+    const signIn = { PEV_TRUSTED_RELAY_ADDRESSES: '0x276e11d2229d3a96dc96356c15c03c7f83201ebc', PEV_IDENTITY_HOST: 'identity.interego.xwisee.com', PEV_RELAY_URL: 'https://relay.interego.xwisee.com' };
+    const cases: readonly (readonly [Record<string, string>, string | null, string | null])[] = [
+      [signIn, null, 'web UI sign-in limits count each caller by the address that connects to the bridge (no proxy hop trusted on loopback); behind a reverse proxy every caller is the proxy\'s address, so set PEV_TRUST_PROXY_HOPS to the hops in front'],
+      [{ ...signIn, PEV_TRUST_PROXY_HOPS: '1' }, null, 'web UI sign-in limits count each caller by the address 1 proxy hop(s) in front saw (X-Forwarded-For; PEV_TRUST_PROXY_HOPS=1)'],
+      [{ ...signIn, PEV_TRUST_PROXY_HOPS: 'yes' }, 'PEV_TRUST_PROXY_HOPS is "yes"; it takes how many proxies in front of the bridge set X-Forwarded-For (0 to 4), or unset for 1 off loopback and 0 on loopback. Not listening.', null],
+      [{ PEV_TRUST_PROXY_HOPS: '5' }, 'PEV_TRUST_PROXY_HOPS is "5"', null],
+    ];
+    const runs = await Promise.all(cases.map(([extra]) => startServer(extra)));
+    for (const [i, [extra, stops, says]] of cases.entries()) {
+      const r = runs[i]!;
+      if (stops !== null) expect([r.status, r.started, r.err], JSON.stringify(extra)).toEqual([1, false, expect.stringContaining(stops)]);
+      else expect([r.started, r.out, r.err], JSON.stringify(extra)).toEqual([true, expect.stringContaining(says ?? ''), expect.not.stringContaining('Not listening')]);
+    }
   }, SLOW);
 });
 
