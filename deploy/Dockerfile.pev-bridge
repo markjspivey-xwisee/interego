@@ -112,7 +112,8 @@ ENV PEV_ATTEMPTS_PER_HOUR=5,50
 # did:web:identity.interego.xwisee.com:users:<id>, who may change roles and withdraw reviews) is NOT
 # baked in: the operator sets it on the service, like PEV_ADMIN_ADDRESSES. PEV_CHAT_AGENTS_DECIDE=1
 # (left unset: off) would let a chat agent signed in through the relay, not only this bridge's own
-# web UI, change roles and withdraw or override reviews.
+# web UI, take the decisive acts: change roles, ratify a rubric, countersign or override a judgment,
+# withdraw a review, and remove another learner's transcript.
 ENV PEV_TRUSTED_RELAY_ADDRESSES=0x276e11d2229d3a96dc96356c15c03c7f83201ebc
 ENV PEV_IDENTITY_HOST=identity.interego.xwisee.com
 ENV PEV_RELAY_URL=https://relay.interego.xwisee.com

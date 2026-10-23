@@ -2708,6 +2708,10 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     const signIn = ((ok((await RH['pev.list_scenarios']!({})) as Out))['bridge'] as Out)['interegoSignIn'] as Out;
     expect([signIn['authority'], signIn['identityHost'], signIn['relayAddresses'], signIn['webUiAgentPrefix'], signIn['chatAgentsDecide']])
       .toEqual(['relay-delegated', IDH, [RELAY.address.toLowerCase()], 'practice-evidence-', false]);
+    expect([signIn['decisiveActs'], signIn['decisiveWhenNotTheLearner']]).toEqual([
+      [PEV_ACTION.registerRole, PEV_ACTION.ratifyScenario, PEV_ACTION.countersignAttempt, PEV_ACTION.overrideAttempt, PEV_ACTION.retractReview],
+      [PEV_ACTION.redactAttempt],
+    ]);
     expect(String(signIn['trust'])).toContain('not user-held');
   }, SLOW);
 
@@ -2720,11 +2724,16 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     const target = { recordId: 'urn:pev:record:0123456789abcdef', descriptorUrl: `${RPOD}pev/records/x.ttl`, graphDigest: `graph-nquads-sha256:${'0'.repeat(64)}` };
     refused(await ract(RH, 'pev.retract_review', AG.adminChat, { attemptIri: missing, target, why: 'Withdrawn for a test of the limit.' }), 403, 'chat-agent-may-not-decide');
     refused(await ract(RH, 'pev.override_attempt', AG.reviewerChat, { attemptIri: missing, target, levels: [], sawJudgeLevelsFirst: true }), 403, 'chat-agent-may-not-decide');
+    // A countersign is a reviewer's verdict as an override is (it takes the judge's levels as the
+    // reviewer's own), and a ratification puts a reviewer's name behind a rubric: both are limited too.
+    refused(await ract(RH, 'pev.countersign_attempt', AG.reviewerChat, { attemptIri: missing, target, levels: [], sawJudgeLevelsFirst: true }), 403, 'chat-agent-may-not-decide');
+    refused(await ract(RH, 'pev.ratify_scenario', AG.reviewerChat, { scenarioIri: 'urn:pev:scenario:0123456789abcdef', version: 1, scenarioHash: '0'.repeat(64) }), 403, 'chat-agent-may-not-decide');
     // Nothing was read from the pod, let alone written: the refusal comes before step 2.
     expect([rsnap() === before, rpod.requests.length]).toEqual([true, podRequests]);
     // From the web UI's agent the same acts go on to their own checks.
     refused(await ract(RH, 'pev.retract_review', AG.adminUi, { attemptIri: missing, target, why: 'Withdrawn for a test of the limit.' }), 404, 'attempt-not-found');
     refused(await ract(RH, 'pev.override_attempt', AG.reviewerUi, { attemptIri: missing, target, levels: [], sawJudgeLevelsFirst: true }), 404, 'attempt-not-found');
+    refused(await ract(RH, 'pev.countersign_attempt', AG.reviewerUi, { attemptIri: missing, target, levels: [], sawJudgeLevelsFirst: true }), 404, 'attempt-not-found');
     // PEV_CHAT_AGENTS_DECIDE=1: the chat agent may.
     const decide = createPevHandlers(relayDeps({ chatAgentsDecide: true })) as Handlers;
     expect(ok(await ract(decide, 'pev.register_role', AG.adminChat, { address: P.ben, role: 'reviewer', change: 'add' }))['changed']).toBe(true);
@@ -2733,7 +2742,7 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     expect(ok(await ract(RH, 'pev.review_queue', AG.reviewerChat))['entries']).toEqual([]);
   }, SLOW);
 
-  it('registry membership by DID: an author and a reviewer signed in through chat agents write and ratify a scenario', async () => {
+  it('registry membership by DID: an author signed in through a chat agent writes a scenario, and the reviewer ratifies it from the web UI', async () => {
     const pub = ok(await ract(RH, 'pev.author_scenario', AG.author, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } }));
     X['sc'] = String(pub['scenarioIri']);
     const sc = await headBody(X['sc']) as Extract<PevRecordBody, { kind: 'scenario' }>;
@@ -2742,8 +2751,10 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     // The same scenario as a key-held stranger: not an author, as before.
     refused(await act(RH, 'pev.author_scenario', W.stranger, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } }, {}, { pod: RPOD }), 403, 'not-an-author');
     // The author's own DID, through another agent, cannot ratify what she wrote; the reviewer can.
-    refused(await ract(RH, 'pev.ratify_scenario', AG.author, { scenarioIri: X['sc'], version: 1, scenarioHash: pub['scenarioHash'] }), 403, 'ratifier-is-the-author');
-    const rat = ok(await ract(RH, 'pev.ratify_scenario', AG.reviewerChat, { scenarioIri: X['sc'], version: 1, scenarioHash: pub['scenarioHash'] }));
+    refused(await ract(RH, 'pev.ratify_scenario', agentOf('practice-evidence-u-pk-0000000000b2', P.author), { scenarioIri: X['sc'], version: 1, scenarioHash: pub['scenarioHash'] }), 403, 'ratifier-is-the-author');
+    // A ratification is decisive: not from the reviewer's chat agent, from her web UI agent.
+    refused(await ract(RH, 'pev.ratify_scenario', AG.reviewerChat, { scenarioIri: X['sc'], version: 1, scenarioHash: pub['scenarioHash'] }), 403, 'chat-agent-may-not-decide');
+    const rat = ok(await ract(RH, 'pev.ratify_scenario', AG.reviewerUi, { scenarioIri: X['sc'], version: 1, scenarioHash: pub['scenarioHash'] }));
     expect(rat['ratifiedBy']).toBe(P.reviewer);
   }, SLOW);
 
@@ -2869,5 +2880,19 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     ok(await ract(tight, 'pev.say', AG.ana, { attemptIri: a3['attemptIri'], turnIndex: 1, text: DEMO_LINES.ana[0] }));
     expect(refused(await ract(tight, 'pev.say', AG.anaOther, { attemptIri: a3['attemptIri'], turnIndex: 3, text: DEMO_LINES.ana[1] }), 429, 'model-budget-spent')['scope']).toBe('signer');
     ok(await ract(tight, 'pev.say', AG.ben, { attemptIri: b2['attemptIri'], turnIndex: 1, text: DEMO_LINES.ana[0] }));
+  }, SLOW);
+
+  it('an admin removing another learner\'s transcript is decisive: refused from a chat agent once the attempt is read, writing nothing; the learner removes her own from any agent', async () => {
+    const start = ok(await ract(RH, 'pev.start_attempt', AG.ana, { scenarioIri: X['sc'], scenarioVersion: 1, coached: false }));
+    const iri = String(start['attemptIri']);
+    const view = ok(await ract(RH, 'pev.get_attempt', AG.ana, { attemptIri: iri }));
+    const before = rsnap();
+    const r = refused(await ract(RH, 'pev.redact_attempt', AG.adminChat, { attemptIri: iri, target: view['currentTarget'], why: 'Removed for a test of the chat-agent limit.' }), 403, 'chat-agent-may-not-decide');
+    expect([(r['iep:resolvedBy'] as Out)['env'], r['agentId']]).toEqual(['PEV_CHAT_AGENTS_DECIDE', AG.adminChat]);
+    expect(rsnap()).toBe(before);
+    // From the admin's web UI agent the act goes on to its own checks; a learner's own redaction is open from any agent.
+    refused(await ract(RH, 'pev.redact_attempt', AG.adminUi, { attemptIri: iri, target: view['currentTarget'] }), 400, 'why-required-for-admin');
+    const mine = ok(await ract(RH, 'pev.redact_attempt', AG.anaOther, { attemptIri: iri, target: view['currentTarget'] }));
+    expect([mine['state'], mine['changed']]).toEqual(['redacted', true]);
   }, SLOW);
 });

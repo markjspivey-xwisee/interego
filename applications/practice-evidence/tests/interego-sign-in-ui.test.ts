@@ -20,6 +20,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createHash, randomBytes } from 'node:crypto';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import type { Express, NextFunction, Request as ExpressRequest, Response as ExpressResponse } from 'express';
@@ -27,7 +28,7 @@ import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { pevAffordances } from '../affordances.js';
 import { createPevHandlers, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX, type DemoRoleName, type PevDeps } from '../bridge/handlers.js';
-import { readHead, isTrusted } from '../bridge/pod-helpers.js';
+import { didDocumentFetch, readHead, isTrusted } from '../bridge/pod-helpers.js';
 import { attachUi, hostAllowlistGuard, relayCallFetch, PEV_UI_CLIENT_NAME, UI_CSP, type InteregoUiOptions } from '../bridge/ui.js';
 import { DEMO_POD, demoScenarioInput, demoWallet, inMemoryPod, scriptedPracticeModel } from '../demo/run.js';
 import { PEV_ACTION } from '../src/ontology.js';
@@ -192,11 +193,13 @@ const handlers = createPevHandlers({
 } satisfies PevDeps) as Handlers;
 
 const listeners: TestListener[] = [];
-async function serve(interego: InteregoUiOptions | undefined): Promise<TestListener> {
+async function serve(interego: InteregoUiOptions | undefined, o: { readonly trustProxy?: boolean } = {}): Promise<TestListener> {
   const allowed: string[] = [];
   const app: Express = createVerticalBridge({
     verticalName: 'practice-evidence', affordances: pevAffordances, handlers, deploymentUrl: 'http://127.0.0.1:6110', defaultPodUrl: DEMO_POD,
     middleware: (a) => {
+      // As server.ts does on a deployment behind one proxy hop: req.ip is then the X-Forwarded-For address.
+      if (o.trustProxy === true) a.set('trust proxy', 1);
       a.use((req: ExpressRequest, res: ExpressResponse, next: NextFunction) => hostAllowlistGuard(allowed)(req, res, next));
       attachUi(a, interego ? { interego } : {});
     },
@@ -405,6 +408,103 @@ describe('the sign-in routes: the client document, the start, and their refusals
     await expect(guarded('https://127.0.0.1/token')).rejects.toThrow(/private|loopback/);
     expect(reached).toEqual([]);
   });
+
+  it('a caller who is not signed in cannot spend the relay budget that everyone signed in here shares', async () => {
+    let clock = Date.now();
+    const lim = stubRelay({ cimd: true });
+    const l = await serve({
+      relayUrl: RELAY, deploymentUrl: DEPLOY, relayFetch: lim.fetchFn, now: () => clock,
+      limits: { total: 14, unproven: 8, unprovenPerClient: 4, perSignIn: 5 },
+    }, { trustProxy: true });
+    const from = (ip: string): Record<string, string> => ({ 'x-forwarded-for': ip });
+    const relayed = (path: string): number => lim.calls.filter((c) => c.url === `${RELAY}${path}`).length;
+    // A person signs in from 203.0.113.1: the metadata, the code and the account token, three relay calls.
+    const verifier = b64url(randomBytes(32));
+    const state = b64url(randomBytes(24));
+    const authorize = new URL(`${RELAY}/authorize`);
+    for (const [k, v] of Object.entries({
+      response_type: 'code', client_id: `${DEPLOY}/ui/oauth/client.json`, redirect_uri: `${DEPLOY}/ui/oauth/callback`,
+      code_challenge: b64url(createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256', state, scope: 'mcp', resource: `${RELAY}/`,
+    })) authorize.searchParams.set(k, v);
+    const code = new URL(await lim.signIn(authorize.href, (u) => u.replace(DEPLOY, l.base))).searchParams.get('code') ?? '';
+    const ex = await fetch(`${l.base}/ui/oauth/exchange`, {
+      method: 'POST', headers: { 'content-type': 'application/json', ...from('203.0.113.1') }, body: JSON.stringify({ code, code_verifier: verifier, state }),
+    });
+    const bearer = String(((await ex.json()) as Out)['bearer']);
+    expect(ex.status).toBe(200);
+    const sign = async (token: string, ip: string): Promise<Out> => {
+      const r = await fetch(`${l.base}/ui/relay/sign`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...from(ip) },
+        body: JSON.stringify({ payload: { v: 1, action: PEV_ACTION.getAttempt, nonce: nonce(), podUrl: DEMO_POD } }),
+      });
+      const j = (await r.json()) as Out;
+      return { status: r.status, code: j['iep:refusalReason'] ?? null, retryAfterSeconds: j['retryAfterSeconds'] ?? null };
+    };
+    expect((await sign(bearer, '203.0.113.1'))['status']).toBe(200);
+
+    // A stranger with made-up tokens, from one address: four reach the relay (each refused), then the bridge refuses on its own.
+    const signs = relayed('/tool/sign_request');
+    const made = Array.from({ length: 10 }, (_, i) => `madeup${i}${'A'.repeat(16)}`);
+    const one: Out[] = [];
+    for (const t of made) one.push(await sign(t, '198.51.100.7'));
+    expect(one.map((r) => r['code'])).toEqual([...Array<string>(4).fill('interego-sign-in-expired'), ...Array<string>(6).fill('relay-calls-limited')]);
+    expect([one[4]?.['status'], Number(one[4]?.['retryAfterSeconds']) > 0]).toEqual([429, true]);
+    expect(relayed('/tool/sign_request') - signs).toBe(4);
+    // A token the relay refused is refused again from memory, from any address, at no relay call.
+    expect((await sign(made[0] ?? '', '198.51.100.8'))['code']).toBe('interego-sign-in-expired');
+    expect(relayed('/tool/sign_request') - signs).toBe(4);
+    // Strangers from many addresses together spend only what is left for callers not signed in (8 - 3 - 4 = 1).
+    const many: Out[] = [];
+    for (let i = 0; i < 6; i++) many.push(await sign(`other${i}${'B'.repeat(16)}`, `198.51.100.${20 + i}`));
+    expect(many.map((r) => r['code'])).toEqual(['interego-sign-in-expired', ...Array<string>(5).fill('relay-busy')]);
+    expect(relayed('/tool/sign_request') - signs).toBe(5);
+    // The person signed in still signs, up to her own limit (5 a minute): the strangers spent none of it.
+    const hers: Out[] = [];
+    for (let i = 0; i < 5; i++) hers.push(await sign(bearer, '203.0.113.1'));
+    expect(hers.map((r) => r['status'])).toEqual([200, 200, 200, 200, 429]);
+    expect(hers[4]?.['code']).toBe('relay-calls-limited');
+
+    // A minute on. Made-up codes from one address: two exchanges (two calls each) reach the relay, then the bridge refuses on its own.
+    clock += 61_000;
+    expect((await sign(bearer, '203.0.113.1'))['status']).toBe(200);
+    const tokens = relayed('/token');
+    const exchanges: unknown[] = [];
+    for (let i = 0; i < 5; i++) {
+      const r = await fetch(`${l.base}/ui/oauth/exchange`, {
+        method: 'POST', headers: { 'content-type': 'application/json', ...from('198.51.100.7') },
+        body: JSON.stringify({ code: `madeupcode${i}xxxxxxxx`, code_verifier: 'a'.repeat(43), state: 'b'.repeat(16) }),
+      });
+      exchanges.push(((await r.json()) as Out)['iep:refusalReason']);
+    }
+    expect(exchanges).toEqual(['oauth-code-refused', 'oauth-code-refused', 'relay-calls-limited', 'relay-calls-limited', 'relay-calls-limited']);
+    expect(relayed('/token') - tokens).toBe(2);
+    expect((await sign(bearer, '203.0.113.1'))['status']).toBe(200);
+  });
+
+  it('the DID-document read ends at its deadline, a slow DNS look-up included, and the request after the look-up is aborted', async () => {
+    const dns = createRequire(import.meta.url)('node:dns/promises') as { lookup: (...a: unknown[]) => Promise<unknown> };
+    const real = dns.lookup;
+    let lookedUp = 0;
+    dns.lookup = async (): Promise<unknown> => { await new Promise((r) => setTimeout(r, 1_000)); lookedUp++; return [{ address: '93.184.216.34', family: 4 }]; };
+    syncBuiltinESMExports();
+    const reached: string[] = [];
+    try {
+      const get = didDocumentFetch((async (_u: unknown, init?: RequestInit) => {
+        reached.push(init?.signal?.aborted === true ? 'aborted' : 'live');
+        return new Response(JSON.stringify({ id: 'x' }), { status: 200 });
+      }) as unknown as typeof fetch, { timeoutMs: 200 });
+      const t0 = Date.now();
+      await expect(get('https://identity.slow-dns.test/agents/claude-u-pk-1/did.json')).rejects.toThrow('the identity host gave no answer within 200 ms');
+      expect(Date.now() - t0).toBeLessThan(900);
+      expect(lookedUp).toBe(0);
+      // The look-up answers later; the request it then starts carries a signal the deadline aborted.
+      await new Promise((r) => setTimeout(r, 1_200));
+      expect([lookedUp, reached]).toEqual([1, ['aborted']]);
+    } finally {
+      dns.lookup = real;
+      syncBuiltinESMExports();
+    }
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -501,10 +601,11 @@ describe('the web UI signs a person in with their Interego account and has the r
     expect(p2.errors).toEqual([]);
   }, SLOW);
 
-  it('an answer that does not carry the state this tab sent is refused: no exchange, nothing kept', async () => {
+  it('an answer that does not carry the state this tab sent is refused: no exchange, nothing kept, and the sign-in the tab started still waits', async () => {
     const p1 = await openPage(bridge, '/ui');
     await p1.until(() => p1.q('article.scenario'), 'the scenarios');
     const to = await pressSignIn(p1);
+    const pending = p1.session(PENDING_KEY);
     const back = new URL(await relay.signIn(to.href, deployed));
     back.searchParams.set('state', 'A'.repeat(32));
     const tokens = relay.calls.filter((c) => c.url === `${RELAY}/token`).length;
@@ -512,7 +613,7 @@ describe('the web UI signs a person in with their Interego account and has the r
     await p2.until(() => p2.text('#signing').includes('did not carry the state this tab sent'), 'the state refusal');
     await p2.until(() => p2.q('article.scenario'), 'the scenarios');
     expect([p2.w.location.pathname, p2.w.location.search]).toEqual(['/ui', '']);
-    expect([p2.session(SESSION_KEY), p2.session(PENDING_KEY), p2.text('#acting-as')]).toEqual([null, null, 'whoever signs (paste mode)']);
+    expect([p2.session(SESSION_KEY), p2.session(PENDING_KEY), p2.text('#acting-as')]).toEqual([null, pending, 'whoever signs (paste mode)']);
     expect(p2.asked.filter((x) => x.includes('/ui/oauth/exchange'))).toEqual([]);
     expect(relay.calls.filter((c) => c.url === `${RELAY}/token`).length).toBe(tokens);
     // With no pending sign-in in the tab at all, an answer is refused the same way.
@@ -520,5 +621,29 @@ describe('the web UI signs a person in with their Interego account and has the r
     await p3.until(() => p3.text('#signing').includes('did not start a sign-in'), 'the unexpected-answer refusal');
     expect(p3.session(SESSION_KEY)).toBeNull();
     expect([...p2.errors, ...p3.errors]).toEqual([]);
+  }, SLOW);
+
+  it('shows an error the relay sent only for the sign-in this tab started: a link anyone made, with no state or another, shows none of its text and drops nothing', async () => {
+    const p1 = await openPage(bridge, '/ui');
+    await p1.until(() => p1.q('article.scenario'), 'the scenarios');
+    await pressSignIn(p1);
+    const pending = p1.session(PENDING_KEY);
+    const state = (JSON.parse(pending ?? 'null') as { state: string }).state;
+    const planted = 'Account locked. Call support at +1 555 0100 and read them your code.';
+    for (const query of [`?error=${encodeURIComponent(planted)}`, `?error=${encodeURIComponent(planted)}&state=${'B'.repeat(32)}`]) {
+      const p = await openPage(bridge, `/ui/oauth/callback${query}`, sessionOf(p1));
+      await p.until(() => p.text('#signing').includes('did not carry the state this tab sent'), 'the state refusal');
+      expect(p.text('#signing')).not.toContain('Account locked');
+      expect([p.session(PENDING_KEY), p.w.location.search]).toEqual([pending, '']);
+      // Nor with no sign-in pending at all.
+      const none = await openPage(bridge, `/ui/oauth/callback${query}`);
+      await none.until(() => none.text('#signing').includes('did not start a sign-in'), 'the unexpected-answer refusal');
+      expect(none.text('#signing')).not.toContain('Account locked');
+      expect([...p.errors, ...none.errors]).toEqual([]);
+    }
+    // The relay's own answer to this tab's sign-in: its error is shown, and the sign-in is over.
+    const answer = await openPage(bridge, `/ui/oauth/callback?error=access_denied&state=${state}`, sessionOf(p1));
+    await answer.until(() => answer.text('#signing').includes('the relay answered "access_denied"'), 'the relay\'s error');
+    expect([answer.session(PENDING_KEY), answer.session(SESSION_KEY), answer.errors]).toEqual([null, null, []]);
   }, SLOW);
 });

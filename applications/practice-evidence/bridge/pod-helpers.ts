@@ -443,7 +443,7 @@ function guarded(fetchFn?: typeof fetch, opts: { readonly followRedirects?: bool
 
 /** The most a DID document may be (relay-delegated sign-in reads an agent's from the identity host). */
 export const DID_DOCUMENT_MAX_BYTES = 64 * 1024;
-/** How long one DID-document read may take, redirects and body included. */
+/** How long one DID-document read may take, DNS look-ups, redirects and body included. */
 export const DID_DOCUMENT_TIMEOUT_MS = 8_000;
 
 /**
@@ -453,15 +453,33 @@ export const DID_DOCUMENT_TIMEOUT_MS = 8_000;
  * the limit, a timeout or text that is not JSON throws, and the verifier then refuses the request
  * (502 `agent-document-unreadable`, saying why). It sends no credential. server.ts wraps it in
  * `cachedDidDocuments`; tests inject a fetch of their own instead, so no test reaches the network.
+ *
+ * "In all" includes the guard's DNS look-ups, which run before each hop's request and which no
+ * AbortSignal reaches: the read races a deadline of its own, and at the deadline it aborts the
+ * signal too, so a request that would start after a slow look-up ends at once and holds no socket.
  */
 export function didDocumentFetch(baseFetch: typeof fetch, o: { readonly timeoutMs?: number; readonly maxBytes?: number } = {}): (url: string) => Promise<unknown> {
   const timeoutMs = o.timeoutMs ?? DID_DOCUMENT_TIMEOUT_MS;
   const get = guardedFetchFn(cappedFetch(baseFetch, o.maxBytes ?? DID_DOCUMENT_MAX_BYTES)) as unknown as typeof fetch;
   return async (url: string): Promise<unknown> => {
-    const res = await get(url, { method: 'GET', headers: { accept: 'application/did+json, application/json' }, signal: AbortSignal.timeout(timeoutMs) });
-    if (res.status < 200 || res.status > 299) throw new Error(`the identity host answered HTTP ${res.status}`);
-    const text = await res.text();
-    try { return JSON.parse(text) as unknown; } catch { throw new Error('the DID document is not JSON'); }
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = (async (): Promise<unknown> => {
+      const res = await get(url, { method: 'GET', headers: { accept: 'application/did+json, application/json' }, signal: abort.signal });
+      if (res.status < 200 || res.status > 299) throw new Error(`the identity host answered HTTP ${res.status}`);
+      const text = await res.text();
+      try { return JSON.parse(text) as unknown; } catch { throw new Error('the DID document is not JSON'); }
+    })();
+    // The read that loses the race still settles (the abort ends it); handled here, so it is not an unhandled rejection.
+    read.catch(() => undefined);
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => { abort.abort(); reject(new Error(`the identity host gave no answer within ${timeoutMs} ms`)); }, timeoutMs);
+    });
+    try {
+      return await Promise.race([read, deadline]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   };
 }
 

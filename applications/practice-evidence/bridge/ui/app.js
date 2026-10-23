@@ -407,6 +407,10 @@ async function startInteregoSignIn() {
 /**
  * The callback page: take the code out of the address bar first, check the state against the one
  * this tab sent, then have the bridge exchange the code. Returns a note for the page, or null.
+ * Nothing in the answer is trusted before its state is the tab's: anyone can send a person to this
+ * page with an `error` of their choosing, so the relay's error is shown only for an answer to the
+ * sign-in this tab started, and a sign-in in progress is dropped only by that answer (or once it
+ * has expired), never by one it did not ask for.
  */
 async function finishInteregoSignIn() {
   const params = new URLSearchParams(location.search);
@@ -414,18 +418,21 @@ async function finishInteregoSignIn() {
   const state = params.get('state');
   const error = params.get('error');
   const pending = sessionJson(PENDING_KEY);
-  sessionDrop(PENDING_KEY);
+  const waiting = Boolean(pending && typeof pending.state === 'string' && typeof pending.verifier === 'string' && Date.now() - Number(pending.at) <= PENDING_MS);
+  const ours = waiting && typeof state === 'string' && state === pending.state;
+  // Kept for a later answer only while it waits and this answer is not its own; an expired or unreadable one goes.
+  if (ours || !waiting) sessionDrop(PENDING_KEY);
   const back = pending && typeof pending.back === 'string' && /^#\/[a-z]/.test(pending.back) ? pending.back : '#/practice';
   // Back to the page itself: the code leaves the address bar and the history before anything else.
   history.replaceState(null, '', `${new URL('../../ui', location.href).pathname}${back}`);
   const note = (text) => h('div', { class: 'refusal', role: 'alert' }, h('p', { text }));
-  if (error) return note(`Interego sign-in did not finish: the relay answered "${error.slice(0, 80)}". Nothing was kept; sign in again to try once more.`);
-  if (!pending || typeof pending.state !== 'string' || typeof pending.verifier !== 'string' || Date.now() - Number(pending.at) > PENDING_MS) {
+  if (!waiting) {
     return note('Interego sign-in did not finish: this tab did not start a sign-in in the last 15 minutes, so this answer is not one it is waiting for. Nothing was kept; sign in again.');
   }
-  if (!state || state !== pending.state) {
-    return note('Interego sign-in was refused: the answer did not carry the state this tab sent, so it may not be the sign-in you started. Nothing was kept; sign in again.');
+  if (!ours) {
+    return note('Interego sign-in was refused: the answer did not carry the state this tab sent, so it may not be the sign-in you started. Nothing was kept, and the sign-in this tab started is still waiting for its own answer.');
   }
+  if (error) return note(`Interego sign-in did not finish: the relay answered "${error.slice(0, 80)}". Nothing was kept; sign in again to try once more.`);
   if (!code) return note('Interego sign-in did not finish: the relay sent no code back. Sign in again.');
   try {
     const r = await uiCall('ui/oauth/exchange', {

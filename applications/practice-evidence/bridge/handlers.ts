@@ -135,9 +135,9 @@ export interface PevDeps {
   readonly relayDelegation?: RelayDelegationPolicy;
   /**
    * Whether a chat agent signed in through the relay (any agent whose slug does not start with
-   * `practice-evidence-`, this bridge's own web UI) may take the acts that change who may do what
-   * or undo a reviewer: register_role, retract_review, override_attempt. Default false
-   * (PEV_CHAT_AGENTS_DECIDE=1 sets it).
+   * `practice-evidence-`, this bridge's own web UI) may take the decisive acts (`DECISIVE_ACTS`:
+   * register_role, ratify_scenario, countersign_attempt, override_attempt, retract_review) and
+   * redact_attempt on another learner's attempt. Default false (PEV_CHAT_AGENTS_DECIDE=1 sets it).
    */
   readonly chatAgentsDecide?: boolean;
   /** The relay a person signs in through (PEV_RELAY_URL), reported to the web UI with the sign-in route. */
@@ -547,11 +547,18 @@ interface Signed {
 }
 
 /**
- * The acts that change who may do what or undo a reviewer's call. A relay-delegated request for
- * one of them is read only from this bridge's own web UI (an agent whose slug starts with
- * `WEB_UI_AGENT_PREFIX`) unless the operator lets chat agents decide (PEV_CHAT_AGENTS_DECIDE=1).
+ * The decisive acts: the ones that change who may do what, put a reviewer's name behind a rubric
+ * or an attempt (a ratification makes results on the rubric eligible to leave as evidence, and a
+ * countersign accepts the judge's levels as the reviewer's own, as an override sets them), or
+ * withdraw a review. A relay-delegated request for one of them is read only from this bridge's own
+ * web UI (an agent whose slug starts with `WEB_UI_AGENT_PREFIX`) unless the operator lets chat
+ * agents decide (PEV_CHAT_AGENTS_DECIDE=1), and is refused before anything is read from a pod.
+ * `DECISIVE_ON_ANOTHERS_ATTEMPT` holds the acts that are decisive when the signer is not the
+ * attempt's learner, checked once the attempt is read.
  */
-export const DECISIVE_ACTS: ReadonlySet<PevActionKey> = new Set<PevActionKey>(['registerRole', 'retractReview', 'overrideAttempt']);
+export const DECISIVE_ACTS: ReadonlySet<PevActionKey> = new Set<PevActionKey>(['registerRole', 'ratifyScenario', 'countersignAttempt', 'overrideAttempt', 'retractReview']);
+/** An admin removing another learner's transcript: permanent, so decisive; the learner's own redaction is hers to make from any agent. */
+export const DECISIVE_ON_ANOTHERS_ATTEMPT: ReadonlySet<PevActionKey> = new Set<PevActionKey>(['redactAttempt']);
 /**
  * The agent slug prefix of this bridge's own web UI: the relay names an OAuth client's agent
  * `<client name>-<userId>`, and the UI registers as `practice-evidence`. Any client can call
@@ -559,6 +566,20 @@ export const DECISIVE_ACTS: ReadonlySet<PevActionKey> = new Set<PevActionKey>(['
  * unasked; it does not prove the page made the request.
  */
 export const WEB_UI_AGENT_PREFIX = 'practice-evidence-';
+
+/**
+ * Refused when a chat agent the relay signed for takes a decisive act and the operator has not let
+ * chat agents decide: null when the act may go on (a key-held signer, this bridge's web UI, or
+ * PEV_CHAT_AGENTS_DECIDE=1).
+ */
+function chatAgentRefusal(ctx: Ctx, relay: RelayAttestation | undefined): Declined | null {
+  if (relay === undefined || ctx.relay === null || ctx.deps.chatAgentsDecide === true) return null;
+  const slug = agentSlugOf(relay.agentId, ctx.relay.identityHost) ?? '';
+  if (slug.startsWith(WEB_UI_AGENT_PREFIX)) return null;
+  return decline(403,
+    `This act is decisive here (it changes who may do what, puts a reviewer's name behind a rubric or an attempt, withdraws a review, or removes another learner's transcript), and the Interego relay signed it for ${relay.agentId}, a chat agent. Such acts are taken from this bridge's own web UI (an agent named ${WEB_UI_AGENT_PREFIX}…) unless the operator sets PEV_CHAT_AGENTS_DECIDE=1. Sign in on this bridge's web UI and take it there.`,
+    'chat-agent-may-not-decide', { env: 'PEV_CHAT_AGENTS_DECIDE' }, { agentId: relay.agentId });
+}
 
 /**
  * The signed request, opened: relay-delegated when it is in the `{_signed_payload, _signature}`
@@ -578,12 +599,10 @@ async function openEnvelope(ctx: Ctx, args: Record<string, unknown>, key: PevAct
       if (!checked.ok) throw decline(checked.status, checked.message, checked.code);
       const opened = await openRelayDelegated(found.signedPayload, found.signature, relay);
       if (!opened.ok) throw decline(opened.status, opened.message, opened.code);
-      const slug = agentSlugOf(opened.agentId, relay.identityHost) ?? '';
-      if (DECISIVE_ACTS.has(key) && ctx.deps.chatAgentsDecide !== true && !slug.startsWith(WEB_UI_AGENT_PREFIX)) {
-        throw decline(403,
-          `This act changes who may do what here, or undoes a reviewer's call, and the Interego relay signed it for ${opened.agentId}, a chat agent. Such acts are taken from this bridge's own web UI (an agent named ${WEB_UI_AGENT_PREFIX}…) unless the operator sets PEV_CHAT_AGENTS_DECIDE=1. Sign in on this bridge's web UI and take it there.`,
-          'chat-agent-may-not-decide', { env: 'PEV_CHAT_AGENTS_DECIDE' }, { agentId: opened.agentId });
-      }
+      const limited = DECISIVE_ACTS.has(key)
+        ? chatAgentRefusal(ctx, { authority: 'relay-delegated', principal: opened.principal, agentId: opened.agentId, relaySigner: opened.relaySigner })
+        : null;
+      if (limited !== null) throw limited;
       return relayDelegatedEnvelope(opened, checked);
     }
   }
@@ -1218,6 +1237,7 @@ function interegoSignInOf(ctx: Ctx): Out | null {
     authority: 'relay-delegated', relayUrl: ctx.deps.relayUrl ?? null, identityHost: ctx.relay.identityHost,
     relayAddresses: ctx.relay.relayAddresses, webUiAgentPrefix: WEB_UI_AGENT_PREFIX, chatAgentsDecide: ctx.deps.chatAgentsDecide === true,
     decisiveActs: [...DECISIVE_ACTS].map((k) => A[k]),
+    decisiveWhenNotTheLearner: [...DECISIVE_ON_ANOTHERS_ATTEMPT].map((k) => A[k]),
     trust: 'Relay-attested, not user-held: the Interego relay signs for the agent of your signed-in session and the identity host says whose agent it is, so whoever holds the relay delegation key or controls the identity host can act as any person here. Records made this way carry authority relay-delegated.',
   };
 }
@@ -2514,6 +2534,9 @@ async function redactAttempt(call: Call, args: Record<string, unknown>): Promise
     const a = h.body;
     const isLearner = samePrincipal(a.learner.address, s.signer);
     if (!isLearner && !isAdmin(ctx, s.signer)) throw decline(403, 'Only the learner or an admin may remove the transcript.', 'not-learner-or-admin');
+    // Removing another learner's transcript is permanent, so decisive (DECISIVE_ON_ANOTHERS_ATTEMPT): not from a chat agent unasked.
+    const limited = isLearner ? null : chatAgentRefusal(ctx, s.relay);
+    if (limited !== null) throw limited;
     if (!isLearner && why === undefined) throw decline(400, 'An admin removing a learner\'s transcript says why (10 to 1000 characters).', 'why-required-for-admin');
     const kept = { transcriptHash: a.transcriptHash ?? null, turns: a.turns.length, quotes: a.judgments.reduce((n, j) => n + j.criteria.reduce((m, c) => m + c.quotes.length, 0), 0) };
     if (a.state === 'redacted') {

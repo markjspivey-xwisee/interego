@@ -35,7 +35,9 @@
  * it passes through this bridge on every sign request, so the operator is trusted with it for the
  * session. This module never logs, stores or echoes a bearer or a code, never puts either in a URL
  * it serves, and drops both from any relay text it passes on. Every relay call has a deadline and a
- * size cap and follows no redirect; at most MAX_RELAY_CALLS_IN_FLIGHT run at once.
+ * size cap and follows no redirect; at most MAX_RELAY_CALLS_IN_FLIGHT run at once, and this bridge
+ * makes at most RELAY_LIMITS calls a minute, so a caller who is not signed in cannot spend the
+ * relay's per-address budget that everyone signed in here shares (see RelayLimits).
  *
  * Every UI response carries a Content-Security-Policy that allows only this origin's own script,
  * style and fetches, and no inline script or style; the shells have neither, and the client
@@ -47,6 +49,7 @@
  * 127.0.0.1. Cross-site POSTs are already blocked by the JSON-only body parser and the absence of
  * CORS headers; this closes the rebinding path.
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { guardedFetchFn } from '@interego/core';
@@ -117,6 +120,84 @@ export const MAX_RELAY_CALLS_IN_FLIGHT = 32;
 /** How long the relay's authorization server metadata is kept. */
 const METADATA_TTL_MS = 10 * 60_000;
 
+/**
+ * How many relay calls this bridge makes a minute. The relay limits /tool/<name>, /token and
+ * /identity-token to 60 a minute each per client address, before it checks any credential, and
+ * every call this bridge makes comes from its one address: so whoever makes the bridge call the
+ * relay spends a budget every person signed in here shares. These limits keep it within the
+ * relay's and keep a caller with no sign-in from spending it:
+ *
+ *   total            every relay call, under the relay's 60
+ *   unproven         calls made for no account token the relay has accepted here: a code
+ *                    exchange, the sign-in set-up (metadata, registration), a sign with a token
+ *                    this bridge has not seen the relay accept. A stranger can spend only these,
+ *                    so people already signed in keep the rest of the total.
+ *   unprovenPerClient  of those, from one client address (req.ip: server.ts trusts one proxy hop
+ *                    on a deployment, so it is the address Railway's edge saw)
+ *   perSignIn        calls for one account token the relay accepted here
+ *
+ * A token the relay refuses is answered from memory for a minute, so it costs no further call.
+ */
+export interface RelayLimits {
+  readonly total: number;
+  readonly unproven: number;
+  readonly unprovenPerClient: number;
+  readonly perSignIn: number;
+}
+export const RELAY_LIMITS: RelayLimits = { total: 50, unproven: 20, unprovenPerClient: 10, perSignIn: 20 };
+const LIMIT_WINDOW_MS = 60_000;
+/** How long a token the relay refused is answered from memory. */
+const REFUSED_TOKEN_MS = 60_000;
+/** How long a token the relay accepted counts as signed in here (the identity host's last 24 hours). */
+const ACCEPTED_TOKEN_MS = 24 * 60 * 60_000;
+/** The most tokens each memory holds; the oldest goes first. */
+const TOKEN_MEMORY_MAX = 4096;
+
+/** Fixed one-minute windows, one per key. A key is kept only once a call is admitted under it. */
+class MinuteWindows {
+  private readonly counts = new Map<string, { start: number; n: number }>();
+  constructor(private readonly now: () => number) {}
+  /** Seconds until `cost` more fit under `limit` for `key`: 0 when they fit now. */
+  wait(key: string, limit: number, cost: number): number {
+    const t = this.now();
+    const c = this.counts.get(key);
+    const used = c && t - c.start < LIMIT_WINDOW_MS ? c.n : 0;
+    if (used + cost <= limit) return 0;
+    return c && used > 0 ? Math.max(1, Math.ceil((c.start + LIMIT_WINDOW_MS - t) / 1000)) : Math.ceil(LIMIT_WINDOW_MS / 1000);
+  }
+  take(key: string, cost: number): void {
+    const t = this.now();
+    const c = this.counts.get(key);
+    if (c && t - c.start < LIMIT_WINDOW_MS) { c.n += cost; return; }
+    if (this.counts.size >= 1024) for (const [k, v] of this.counts) if (t - v.start >= LIMIT_WINDOW_MS) this.counts.delete(k);
+    this.counts.set(key, { start: t, n: cost });
+  }
+}
+
+/** Token hashes with the time each is remembered until; bounded, the oldest dropped first. */
+class TokenMemory {
+  private readonly until = new Map<string, number>();
+  constructor(private readonly ttlMs: number, private readonly now: () => number) {}
+  has(h: string): boolean {
+    const u = this.until.get(h);
+    if (u === undefined) return false;
+    if (u > this.now()) return true;
+    this.until.delete(h);
+    return false;
+  }
+  add(h: string): void {
+    this.until.delete(h);
+    this.until.set(h, this.now() + this.ttlMs);
+    while (this.until.size > TOKEN_MEMORY_MAX) { const first = this.until.keys().next(); if (first.done) break; this.until.delete(first.value); }
+  }
+  delete(h: string): void { this.until.delete(h); }
+}
+
+/** Who a relay call is made for: the client's address, and the hash of an account token the relay accepted here (or null). */
+interface Caller { readonly client: string; readonly signIn: string | null }
+const tokenHash = (token: string): string => createHash('sha256').update(token, 'utf8').digest('hex');
+const clientOf = (req: Request): string => req.ip ?? req.socket.remoteAddress ?? 'unknown';
+
 export interface InteregoUiOptions {
   /** The relay a person signs in through (PEV_RELAY_URL), e.g. https://relay.interego.xwisee.com. */
   readonly relayUrl: string;
@@ -129,6 +210,9 @@ export interface InteregoUiOptions {
    */
   readonly relayFetch: typeof fetch;
   readonly timeoutMs?: number;
+  /** Relay calls a minute (`RELAY_LIMITS` unless a test sets others), and the clock they are counted by. */
+  readonly limits?: Partial<RelayLimits>;
+  readonly now?: () => number;
 }
 
 /** What the page needs to send a person to the relay's sign-in page. */
@@ -233,12 +317,46 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
   const cimdUsable = ((): boolean => { try { const u = new URL(clientIdUrl); return u.protocol === 'https:' && u.hash === ''; } catch { return false; } })();
   const timeoutMs = o.timeoutMs ?? RELAY_CALL_TIMEOUT_MS;
   let inFlight = 0;
+  const now = o.now ?? ((): number => Date.now());
+  const limits: RelayLimits = { ...RELAY_LIMITS, ...o.limits };
+  const windows = new MinuteWindows(now);
+  /** Account tokens the relay accepted from this bridge (a sign-in it finished, a sign it made), and ones it refused. */
+  const accepted = new TokenMemory(ACCEPTED_TOKEN_MS, now);
+  const refused = new TokenMemory(REFUSED_TOKEN_MS, now);
 
-  /** One relay call: within the deadline, capped, its JSON parsed (null when it is not JSON). */
-  async function relayJson(url: string, init: RequestInit, secrets: readonly string[]): Promise<{ readonly status: number; readonly json: unknown; readonly retryAfter: string | null }> {
+  /**
+   * Admit `cost` relay calls for `caller`, or refuse (429) without calling the relay: under the
+   * total, and under the caller's own limit (per sign-in for a token the relay accepted here, per
+   * client address and in all for every other call).
+   */
+  function admit(caller: Caller, cost: number): void {
+    const keys: (readonly [string, number, 'bridge' | 'caller'])[] = [['total', limits.total, 'bridge']];
+    if (caller.signIn !== null) keys.push([`sign-in:${caller.signIn}`, limits.perSignIn, 'caller']);
+    else keys.push(['unproven', limits.unproven, 'bridge'], [`client:${caller.client}`, limits.unprovenPerClient, 'caller']);
+    let worst: { readonly wait: number; readonly who: 'bridge' | 'caller'; readonly limit: number } | null = null;
+    for (const [key, limit, who] of keys) {
+      const wait = windows.wait(key, limit, cost);
+      if (wait > 0 && (worst === null || wait > worst.wait)) worst = { wait, who, limit };
+    }
+    if (worst !== null) {
+      throw worst.who === 'caller'
+        ? new Declined(429, `This bridge asks the Interego relay at most ${worst.limit} times a minute for ${caller.signIn !== null ? 'one sign-in' : 'one address that is not signed in'}; try again in ${worst.wait} s.`,
+          'relay-calls-limited', { retryAfterSeconds: worst.wait })
+        : new Declined(429, `This bridge is asking the Interego relay for many people at once and keeps under the relay's own limit; try again in ${worst.wait} s.`,
+          'relay-busy', { retryAfterSeconds: worst.wait });
+    }
+    for (const [key] of keys) windows.take(key, cost);
+  }
+
+  /**
+   * One relay call: within the deadline, capped, its JSON parsed (null when it is not JSON).
+   * `caller` is admitted for it first (`admit`); null when the route admitted its calls already.
+   */
+  async function relayJson(url: string, init: RequestInit, secrets: readonly string[], caller: Caller | null): Promise<{ readonly status: number; readonly json: unknown; readonly retryAfter: string | null }> {
     if (inFlight >= MAX_RELAY_CALLS_IN_FLIGHT) {
       throw new Declined(503, 'This bridge is waiting on the Interego relay for many people at once; try again in a moment.', 'relay-busy', { retryAfterSeconds: 5 });
     }
+    if (caller !== null) admit(caller, 1);
     inFlight++;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -272,9 +390,9 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
 
   let metadataKept: { readonly at: number; readonly value: RelayMetadata } | null = null;
   /** The relay's authorization server metadata (RFC 8414), kept 10 minutes; a failure is not kept. */
-  async function metadata(): Promise<RelayMetadata> {
-    if (metadataKept && Date.now() - metadataKept.at < METADATA_TTL_MS) return metadataKept.value;
-    const r = await relayJson(`${relayBase}/.well-known/oauth-authorization-server`, { method: 'GET', headers: { accept: 'application/json' } }, []);
+  async function metadata(caller: Caller): Promise<RelayMetadata> {
+    if (metadataKept && now() - metadataKept.at < METADATA_TTL_MS) return metadataKept.value;
+    const r = await relayJson(`${relayBase}/.well-known/oauth-authorization-server`, { method: 'GET', headers: { accept: 'application/json' } }, [], caller);
     const m = r.json;
     const unusable = (why: string): Declined => new Declined(502, `The Interego relay's sign-in metadata cannot be used: ${why}.`, 'relay-metadata-unusable');
     if (r.status !== 200 || !isRecord(m)) throw unusable(`it answered HTTP ${r.status}`);
@@ -290,7 +408,7 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       registrationEndpoint: onRelay(m['registration_endpoint']),
       cimd: m['client_id_metadata_document_supported'] === true,
     };
-    metadataKept = { at: Date.now(), value };
+    metadataKept = { at: now(), value };
     return value;
   }
 
@@ -300,7 +418,7 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
    * and the deployment URL is https; otherwise one registered by DCR, once per process (a failed
    * registration is tried again on the next sign-in).
    */
-  async function clientIdFor(meta: RelayMetadata): Promise<{ readonly clientId: string; readonly registration: StartConfig['registration'] }> {
+  async function clientIdFor(meta: RelayMetadata, caller: Caller): Promise<{ readonly clientId: string; readonly registration: StartConfig['registration'] }> {
     if (meta.cimd && cimdUsable) return { clientId: clientIdUrl, registration: 'client-id-metadata-document' };
     if (meta.registrationEndpoint === null) {
       throw new Declined(502, cimdUsable
@@ -313,7 +431,7 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       const r = await relayJson(endpoint, {
         method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify(clientMetadata(false)),
-      }, []);
+      }, [], caller);
       const id = isRecord(r.json) ? r.json['client_id'] : undefined;
       if ((r.status !== 200 && r.status !== 201) || typeof id !== 'string' || id.length === 0 || id.length > 256) {
         throw new Declined(502, `The Interego relay did not register this page as a client (HTTP ${r.status}).`, 'relay-registration-refused');
@@ -357,11 +475,12 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
     res.type('application/json').send(JSON.stringify(clientMetadata(true), null, 2));
   });
 
-  app.get('/ui/oauth/start', async (_req: Request, res: Response) => {
+  app.get('/ui/oauth/start', async (req: Request, res: Response) => {
     secure(res);
     try {
-      const meta = await metadata();
-      const { clientId, registration } = await clientIdFor(meta);
+      const caller: Caller = { client: clientOf(req), signIn: null };
+      const meta = await metadata(caller);
+      const { clientId, registration } = await clientIdFor(meta, caller);
       const out: StartConfig = {
         authorizationEndpoint: meta.authorizationEndpoint, clientId, redirectUri, scope: INTEREGO_SCOPE, resource, registration, relay: relay.origin,
       };
@@ -386,12 +505,15 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       if (typeof verifier !== 'string' || !VERIFIER.test(verifier)) throw new Declined(400, 'code_verifier must be a PKCE verifier: 43 to 128 letters, digits, ".", "_", "~" or "-".', 'pkce-verifier-shape');
       // The page checks the state against the one it sent; the bridge holds none and checks its form.
       if (typeof state !== 'string' || !STATE.test(state)) throw new Declined(400, 'state must be the state the page sent: 16 to 128 base64url characters.', 'oauth-state-shape');
-      const meta = await metadata();
-      const { clientId } = await clientIdFor(meta);
+      const caller: Caller = { client: clientOf(req), signIn: null };
+      const meta = await metadata(caller);
+      const { clientId } = await clientIdFor(meta, caller);
+      // Both calls of the exchange are admitted before the first, so a code is never spent on half of one.
+      admit(caller, 2);
       const form = new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: redirectUri, client_id: clientId, resource });
       const t = await relayJson(meta.tokenEndpoint, {
         method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: form.toString(),
-      }, [code, verifier]);
+      }, [code, verifier], null);
       const tj = isRecord(t.json) ? t.json : {};
       if (t.status !== 200) {
         const err = typeof tj['error'] === 'string' && OAUTH_ERROR.test(tj['error']) ? tj['error'] : null;
@@ -405,7 +527,7 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
         throw new Declined(502, `The Interego relay issued a ${scrub(tokenType, [access])} token, which this page cannot present.`, 'relay-token-unusable');
       }
       // The relay's REST tools take the account token behind this access token, not the access token itself.
-      const id = await relayJson(`${relayBase}/identity-token`, { method: 'GET', headers: { authorization: `Bearer ${access}`, accept: 'application/json' } }, [access, code, verifier]);
+      const id = await relayJson(`${relayBase}/identity-token`, { method: 'GET', headers: { authorization: `Bearer ${access}`, accept: 'application/json' } }, [access, code, verifier], null);
       const ij = isRecord(id.json) ? id.json : {};
       const bearer = ij['identityToken'];
       if (id.status !== 200 || typeof bearer !== 'string' || bearerOf(`Bearer ${bearer}`) === null) {
@@ -413,6 +535,10 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
           ? `The Interego relay gave this sign-in no write scope, so it cannot sign acts (it asked for "${INTEREGO_SCOPE}").`
           : `The Interego relay did not give this sign-in its account token (HTTP ${id.status}).`, 'relay-token-unusable');
       }
+      // The relay issued it: signs with it count against its own sign-in from now on.
+      const h = tokenHash(bearer);
+      refused.delete(h);
+      accepted.add(h);
       res.json({
         signedIn: true, bearer, relay: relay.origin,
         note: 'Keep this token in this tab only and send it only to this bridge\'s ui/relay/sign. It is a credential for your Interego account, and it passes through this bridge on every act it signs.',
@@ -433,13 +559,19 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
         throw new Declined(400, 'payload must be an unsigned practice-evidence act: {v: 1, action: urn:iep:action:pev:…, nonce, podUrl, …}. This route signs nothing else.', 'payload-shape');
       }
       if (typeof payload['nonce'] !== 'string') throw new Declined(400, 'payload.nonce must be a fresh nonce.', 'payload-shape');
+      const expired = (): Declined => new Declined(401, 'The Interego relay did not accept your sign-in (it may have expired). Sign in again.', 'interego-sign-in-expired');
+      // A token the relay refused in the last minute is refused again from memory, at no relay call.
+      const h = tokenHash(bearer);
+      if (refused.has(h)) throw expired();
       const r = await relayJson(`${relayBase}/tool/sign_request`, {
         method: 'POST',
         headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({ payload }),
-      }, [bearer]);
+      }, [bearer], { client: clientOf(req), signIn: accepted.has(h) ? h : null });
       if (r.status === 401 || r.status === 403) {
-        throw new Declined(401, 'The Interego relay did not accept your sign-in (it may have expired). Sign in again.', 'interego-sign-in-expired');
+        accepted.delete(h);
+        refused.add(h);
+        throw expired();
       }
       if (r.status === 429) {
         throw new Declined(429, 'The Interego relay is limiting how often this bridge asks it to sign; try again in a minute.', 'relay-busy', { retryAfterSeconds: Number(r.retryAfter) || 60 });
@@ -459,6 +591,7 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       if (!isRecord(signed) || signed['action'] !== payload['action'] || signed['nonce'] !== payload['nonce']) {
         throw new Declined(502, 'The Interego relay signed something other than this act.', 'relay-signed-something-else');
       }
+      accepted.add(h);
       res.json({ _signature: signature, _signed_payload: signedPayload });
     } catch (e) { send(res, e); }
   });

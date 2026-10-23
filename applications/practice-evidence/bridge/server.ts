@@ -80,8 +80,10 @@
  *                                   kept). The OAuth client id is BRIDGE_DEPLOYMENT_URL/ui/oauth/
  *                                   client.json when that is https; otherwise it registers by DCR.
  *   PEV_CHAT_AGENTS_DECIDE=1        lets a chat agent signed in through the relay (claude-…,
- *                                   chatgpt-…) take register_role, retract_review and
- *                                   override_attempt; by default only this bridge's own web UI
+ *                                   chatgpt-…) take the decisive acts: register_role,
+ *                                   ratify_scenario, countersign_attempt, override_attempt,
+ *                                   retract_review, and redact_attempt on another learner's
+ *                                   attempt; by default only this bridge's own web UI
  *                                   (practice-evidence-… agents) may
  *                                   Each of these five settings, malformed, stops the
  *                                   bridge before it listens.
@@ -104,7 +106,7 @@ import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTur
 import { attemptIriSecret, freshNonce, iriKeyFingerprint, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
 import { cachedDidDocuments, isUserDid } from '../src/relay-delegated.js';
 import {
-  createPevHandlers, describeStartup, DECISIVE_ACTS, DEFAULT_BUDGETS, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX,
+  createPevHandlers, describeStartup, DECISIVE_ACTS, DECISIVE_ON_ANOTHERS_ATTEMPT, DEFAULT_BUDGETS, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX,
   type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
 } from './handlers.js';
 import { didDocumentFetch, operatorPodFetch } from './pod-helpers.js';
@@ -261,7 +263,7 @@ async function main(): Promise<void> {
   }
   const decideRaw = env('PEV_CHAT_AGENTS_DECIDE');
   if (decideRaw !== undefined && decideRaw !== '1' && decideRaw !== '0') {
-    warn(`PEV_CHAT_AGENTS_DECIDE is ${JSON.stringify(decideRaw.slice(0, 40))}; it takes 1 (chat agents signed in through the relay may change roles and withdraw or override reviews) or 0. Not listening.`);
+    warn(`PEV_CHAT_AGENTS_DECIDE is ${JSON.stringify(decideRaw.slice(0, 40))}; it takes 1 (chat agents signed in through the relay may take the decisive acts: change roles, ratify a rubric, countersign or override a judgment, withdraw a review, remove another learner's transcript) or 0. Not listening.`);
     process.exitCode = 1;
     return;
   }
@@ -345,6 +347,10 @@ async function main(): Promise<void> {
       { label: 'pev ontology', href: `${base}/ns/pev`, rel: 'describedby', type: 'text/turtle' },
     ],
     middleware: (a) => {
+      // The web UI's sign-in routes limit each client address (req.ip) on its relay calls. In the
+      // image the bridge listens behind Railway's edge, one proxy hop, so req.ip is the client only
+      // when that hop is trusted; a loopback bridge trusts none, so no caller picks its own address.
+      if (!loopback) a.set('trust proxy', 1);
       if (loopback) a.use(hostAllowlistGuard(allowedHosts));
       attachOntologyServing(a, {
         mountPath: '/ns/pev', ontologyIri: PEV_ONTOLOGY_IRI, namespace: PEV_NS,
@@ -374,8 +380,9 @@ async function main(): Promise<void> {
       : '  model route: none: packet routes only (or a per-request key)');
   say(`  attempts per hour: ${budgets.attemptsPerHour.perSigner} per signer, ${budgets.attemptsPerHour.total} in total (counted in this process only)`);
   say(`  admins: ${deps.adminAddresses?.length ?? 0} address(es), ${relayAddresses.length > 0 ? adminDids.length : 0} Interego DID(s)`);
+  const decisive = `${[...DECISIVE_ACTS].join(', ')}, and ${[...DECISIVE_ON_ANOTHERS_ATTEMPT].join(', ')} on another learner's attempt`;
   say(relayAddresses.length > 0 && identityHost !== undefined
-    ? `  Interego sign-in: ON, relay-attested, not user-held. A request the relay (${relayAddresses.join(', ')}) signs for an agent on ${identityHost} acts as that agent's controller there, a did:web:${identityHost}:users:… person; whoever holds that relay delegation key, or controls ${identityHost}, can act as any person on this bridge. Records made this way carry authority relay-delegated. ${chatAgentsDecide ? `Chat agents may take ${[...DECISIVE_ACTS].join(', ')} (PEV_CHAT_AGENTS_DECIDE=1).` : `Only this bridge's web UI (${WEB_UI_AGENT_PREFIX}… agents) may take ${[...DECISIVE_ACTS].join(', ')}; PEV_CHAT_AGENTS_DECIDE=1 lets chat agents.`} Relay: ${relayUrl ?? 'PEV_RELAY_URL not set'}`
+    ? `  Interego sign-in: ON, relay-attested, not user-held. A request the relay (${relayAddresses.join(', ')}) signs for an agent on ${identityHost} acts as that agent's controller there, a did:web:${identityHost}:users:… person; whoever holds that relay delegation key, or controls ${identityHost}, can act as any person on this bridge. Records made this way carry authority relay-delegated. ${chatAgentsDecide ? `Chat agents may take ${decisive} (PEV_CHAT_AGENTS_DECIDE=1).` : `Only this bridge's web UI (${WEB_UI_AGENT_PREFIX}… agents) may take ${decisive}; PEV_CHAT_AGENTS_DECIDE=1 lets chat agents.`} Relay: ${relayUrl ?? 'PEV_RELAY_URL not set'}`
     : `  Interego sign-in: off (PEV_TRUSTED_RELAY_ADDRESSES is empty): only keys a person holds sign acts${adminDids.length > 0 ? `; the ${adminDids.length} admin DID(s) in PEV_ADMIN_DIDS cannot act until it is on` : ''}`);
   if (relayAddresses.length > 0) {
     say(uiSignIn
