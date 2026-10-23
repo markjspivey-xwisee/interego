@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, playHash, provisionalGraphs,
   PROVISIONAL_EXCHANGE_LIMIT,
-  ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange } from '../provisional-play.js';
+  ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange, type PlayFetchInit } from '../provisional-play.js';
 
 const deadline = Math.floor(Date.now() / 1000) + 7200;
 const play = { audience: 'hallowmarch', proofKeyThumbprint: 'a'.repeat(43), expiresAt: deadline };
@@ -20,27 +20,28 @@ const verified = { valid: true, provisional: true, issuer: 'https://id.example',
   authenticatedAgentId: me.authenticatedAgentId, authenticatedAgentDid: principal.agentId,
   proofKeyThumbprint: play.proofKeyThumbprint, expiresAt: me.tokenExpiresAt,
   capabilities: ['human-play', 'own-pod-checkpoint'] };
-const reply = (status: number, body: any, etag?: string) => ({ status, ok: status >= 200 && status < 300,
+const reply = (status: number, body: unknown, etag?: string) => ({ status, ok: status >= 200 && status < 300,
   headers: { get: (name: string) => name.toLowerCase() === 'etag' ? etag ?? null : null },
   text: async () => JSON.stringify(body), json: async () => JSON.parse(JSON.stringify(body)) });
 const code = (expected: string) => (e: unknown) => e instanceof ProvisionalPlayError && e.code === expected;
-function provider(m: any = me, v: any = verified) {
-  const calls: any[] = [];
-  return { calls, fetch: async (url: string, init: any) => {
+function provider(m: Record<string, unknown> = me, v: Record<string, unknown> = verified) {
+  const calls: { url: string; init: PlayFetchInit }[] = [];
+  return { calls, fetch: async (url: string, init: PlayFetchInit = {}) => {
     calls.push({ url, init });
     return reply(200, url.endsWith('/me') ? m : v);
   }};
 }
 function pod() {
-  const files = new Map<string, { body: any; version: number }>();
+  const files = new Map<string, { body: Record<string, unknown>; version: number }>();
   let failing = false;
-  return { files, fail: () => { failing = true; }, fetch: async (url: string, init: any = {}) => {
+  return { files, fail: () => { failing = true; }, fetch: async (url: string, init: PlayFetchInit = {}) => {
+    const headers = init.headers ?? {};
     const file = files.get(url), etag = file ? '"' + file.version + '"' : undefined;
     if (init.method === 'PUT') {
       if (failing) return reply(503, {});
-      if ((init.headers['If-None-Match'] === '*' && file)
-        || (init.headers['If-Match'] && init.headers['If-Match'] !== etag)) return reply(412, {});
-      const next = { body: JSON.parse(init.body), version: (file?.version ?? 0) + 1 };
+      if ((headers['If-None-Match'] === '*' && file)
+        || (headers['If-Match'] && headers['If-Match'] !== etag)) return reply(412, {});
+      const next = { body: JSON.parse(init.body ?? '{}') as Record<string, unknown>, version: (file?.version ?? 0) + 1 };
       files.set(url, next); return reply(201, {}, '"' + next.version + '"');
     }
     return file ? reply(200, file.body, etag) : reply(404, {});
@@ -74,11 +75,11 @@ test('exchange binds provider-verified proof to the exact native token and confi
   assert.equal(identity.agentId, principal.agentId);
   assert.equal(identity.expiresAt, deadline);
   assert.deepEqual(p.calls.map(c => c.url), ['http://identity.internal:8090/me', 'http://identity.internal:8090/play/provisional/verify']);
-  assert.equal(p.calls[0].init.headers.Authorization, 'Bearer ' + request.identityToken);
+  assert.equal(p.calls[0].init.headers?.Authorization, 'Bearer ' + request.identityToken);
   assert.equal(p.calls[0].init.redirect, 'error');
-  const proof = JSON.parse(p.calls[1].init.body);
+  const proof = JSON.parse(p.calls[1].init.body ?? '{}');
   assert.equal(proof.challenge, createHash('sha256').update(request.identityToken).digest('base64url'));
-  assert.ok(!p.calls[1].init.body.includes(request.identityToken));
+  assert.ok(!p.calls[1].init.body?.includes(request.identityToken));
   await assert.rejects(verifyProvisionalExchange({ ...request, issuer: 'http://attacker/' }, { identityUrl: 'https://id.example', fetch: p.fetch }), code('invalid_provisional_exchange'));
 });
 test('exchange refuses changed user, agent, pod, audience, key, absent marker and capability escalation', async () => {
@@ -142,7 +143,7 @@ test('durable policy permits one recipient and exactly two immutable graph bindi
   await assert.rejects(create()('register_agent', { ...recipient, encryption_public_key: key,
     agent_id: principal.podUrl + 'agents#browser-encryption-' + playHash(key) }, principal, invoke), code('provisional_initial_binding_exists'));
   assert.equal(invoked, 3);
-  assert.equal(Object.keys([...p.files.values()][0].body.entries).length, 3);
+  assert.equal(Object.keys([...p.files.values()][0].body.entries as Record<string, unknown>).length, 3);
 });
 test('only the enrolled browser key can receive initial ciphertext', async () => {
   const p = pod(), guard = createProvisionalToolGuard({ podUrl: 'https://gate.example/svc/', fetch: p.fetch, withMutex: mutex, assertUnpublished: async () => {} });

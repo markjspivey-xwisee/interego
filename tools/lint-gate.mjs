@@ -187,7 +187,9 @@ const UNLINTED_FRONTIER = {
   // Derived-resource confidentiality adds a tracked module; the error ceiling stays fixed.
   // The session-delegation repair module and wiring suite bring the committed
   // census to 187. Bank coverage; the existing error pin remains unchanged.
-  deploy: { errors: 356, files: 187 },
+  // Progressive native play adds fourteen tracked deploy modules and regression suites.
+  // Record the committed file census; new lint debt remains forbidden at the same ceiling.
+  deploy: { errors: 356, files: 201 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -1048,4 +1050,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   console.log(lintGateReport(result));
   process.exit(result.ok ? 0 : 1);
 }
+
 

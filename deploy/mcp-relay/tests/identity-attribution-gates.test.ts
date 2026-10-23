@@ -226,13 +226,13 @@ check('RESERVED_WIRE_FIELDS is the single source of truth',
 const stripCalls = SERVER.match(/stripReservedWireFields\(/g) ?? [];
 check('it is invoked at >= 3 sites (helper + /tool + /messages x2)',
   stripCalls.length >= 4, `found ${stripCalls.length}`);
-const toolRouteStart = SERVER.indexOf("app.post('/tool/:name'");
-const toolRouteBody = SERVER.indexOf('=> {', toolRouteStart) + '=> {'.length;
-const toolRouteStrip = SERVER.indexOf('stripReservedWireFields(req.body);', toolRouteBody);
-const toolRouteLookup = SERVER.indexOf('const toolName', toolRouteBody);
-const provisionalRouteLookup = SERVER.indexOf('await provisionalRestCall(', toolRouteBody);
+const toolRouteStart = SERVER_CODE.indexOf("app.post('/tool/:name'");
+const toolRouteBody = SERVER_CODE.indexOf('=> {', toolRouteStart) + '=> {'.length;
+const toolRouteStrip = SERVER_CODE.indexOf('stripReservedWireFields(req.body);', toolRouteBody);
+const toolRouteLookup = SERVER_CODE.indexOf('const toolName', toolRouteBody);
+const provisionalRouteLookup = SERVER_CODE.indexOf('await provisionalRestCall(', toolRouteBody);
 check('/tool strips before both canonical and provisional tool lookups (outside the auth branch)',
-  toolRouteStart >= 0 && /^\s*stripReservedWireFields\(req\.body\);/.test(SERVER.slice(toolRouteBody))
+  toolRouteStart >= 0 && /^\s*stripReservedWireFields\(req\.body\);/.test(SERVER_CODE.slice(toolRouteBody))
   && toolRouteLookup > toolRouteStrip && provisionalRouteLookup > toolRouteStrip);
 check('/messages strips its JSON-RPC arguments too',
   /stripReservedWireFields\(req\.body\?\.params\?\.arguments\)/.test(SERVER));

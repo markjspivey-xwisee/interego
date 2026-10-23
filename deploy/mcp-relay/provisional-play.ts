@@ -11,8 +11,12 @@ export interface ProvisionalPrincipal {
   userId: string; agentId: string; ownerWebId: string; ownerDid: string; podUrl: string;
   provisionalPlay: ProvisionalPlay;
 }
-export interface PlayFetchResponse { ok: boolean; status: number; headers?: { get(name: string): string | null }; text(): Promise<string>; json(): Promise<any> }
-export type PlayFetch = (url: string, init?: any) => Promise<PlayFetchResponse>;
+export interface PlayFetchInit {
+  method?: string; redirect?: 'error'; signal?: AbortSignal;
+  headers?: Record<string, string>; body?: string;
+}
+export interface PlayFetchResponse { ok: boolean; status: number; headers?: { get(name: string): string | null }; text(): Promise<string>; json(): Promise<unknown> }
+export type PlayFetch = (url: string, init?: PlayFetchInit) => Promise<PlayFetchResponse>;
 
 export class ProvisionalPlayError extends Error {
   status: number;
@@ -20,6 +24,10 @@ export class ProvisionalPlayError extends Error {
   constructor(status: number, code: string) { super(code); this.status = status; this.code = code; }
 }
 function refuse(status: number, code: string): never { throw new ProvisionalPlayError(status, code); }
+function jsonRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) refuse(401, 'invalid_provisional_record');
+  return value as Record<string, unknown>;
+}
 export const playHash = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex');
 export function parseProvisionalPlay(value: unknown): ProvisionalPlay | undefined {
   if (value === undefined) return undefined;
@@ -51,20 +59,20 @@ export async function verifyProvisionalExchange(body: unknown, cfg: {
     || Object.keys(b).some(k => !['identityToken', 'attestation', 'audience', 'proof'].includes(k))) refuse(400, 'invalid_provisional_exchange');
   const identityToken = b.identityToken as string;
   const challenge = createHash('sha256').update(identityToken, 'utf8').digest('base64url');
-  const init = { redirect: 'error', signal: AbortSignal.timeout(15_000) };
-  let me: any, verified: any;
+  const init: PlayFetchInit = { redirect: 'error', signal: AbortSignal.timeout(15_000) };
+  let me: Record<string, unknown>, verified: Record<string, unknown>;
   try {
     const mr = await cfg.fetch(new URL('/me', cfg.identityUrl).href, {
       ...init, headers: { Authorization: 'Bearer ' + identityToken },
     });
     if (!mr.ok) refuse(401, 'invalid_identity_credential');
-    me = await mr.json();
+    me = jsonRecord(await mr.json());
     const vr = await cfg.fetch(new URL('/play/provisional/verify', cfg.identityUrl).href, {
       ...init, method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ attestation: b.attestation, audience: b.audience, challenge, proof: b.proof }),
     });
     if (!vr.ok) refuse(401, 'invalid_provisional_proof');
-    verified = await vr.json();
+    verified = jsonRecord(await vr.json());
   } catch (error) {
     if (error instanceof ProvisionalPlayError) throw error;
     refuse(503, 'provisional_provider_unavailable');
@@ -82,6 +90,7 @@ export async function verifyProvisionalExchange(body: unknown, cfg: {
     || verified.proofKeyThumbprint !== play.proofKeyThumbprint) refuse(401, 'provisional_identity_mismatch');
   const now = (cfg.now ?? Date.now)();
   assertLivePlay(play, now);
+  if (!string(verified.expiresAt, 64) || !string(me.tokenExpiresAt, 64)) refuse(401, 'invalid_provisional_expiry');
   const verifiedExpiry = Date.parse(verified.expiresAt);
   const tokenExpiry = Date.parse(me.tokenExpiresAt);
   if (!Number.isFinite(verifiedExpiry) || !Number.isFinite(tokenExpiry)
@@ -119,17 +128,17 @@ export async function chargeProvisionalExchange(p: ProvisionalPrincipal, cfg: {
   await cfg.withMutex(url, async () => {
     const response = await cfg.fetch(url, { method: 'GET' });
     if (!response.ok && response.status !== 404) refuse(503, 'provisional_exchange_budget_unavailable');
-    const record = response.status === 404
+    const budget = response.status === 404
       ? { binding, expiresAt: p.provisionalPlay.expiresAt, attempts: 0 }
-      : await response.json();
-    if (record.binding !== binding || record.expiresAt !== p.provisionalPlay.expiresAt
-      || !Number.isSafeInteger(record.attempts) || record.attempts < 0) refuse(403, 'provisional_exchange_budget_mismatch');
-    if (record.attempts >= PROVISIONAL_EXCHANGE_LIMIT) refuse(429, 'provisional_exchange_limit');
+      : jsonRecord(await response.json());
+    if (budget.binding !== binding || budget.expiresAt !== p.provisionalPlay.expiresAt
+      || typeof budget.attempts !== 'number' || !Number.isSafeInteger(budget.attempts) || budget.attempts < 0) refuse(403, 'provisional_exchange_budget_mismatch');
+    if (budget.attempts >= PROVISIONAL_EXCHANGE_LIMIT) refuse(429, 'provisional_exchange_limit');
     const etag = response.headers?.get('etag');
     if (response.status !== 404 && !etag) refuse(503, 'provisional_exchange_budget_unavailable');
     const saved = await cfg.fetch(url, { method: 'PUT',
-      headers: { 'Content-Type': 'application/ld+json', ...(response.status === 404 ? { 'If-None-Match': '*' } : { 'If-Match': etag }) },
-      body: JSON.stringify({ binding, expiresAt: p.provisionalPlay.expiresAt, attempts: record.attempts + 1 }),
+      headers: { 'Content-Type': 'application/ld+json', ...(response.status === 404 ? { 'If-None-Match': '*' } : { 'If-Match': etag ?? '' }) },
+      body: JSON.stringify({ binding, expiresAt: p.provisionalPlay.expiresAt, attempts: budget.attempts + 1 }),
     });
     if (!saved.ok) refuse(saved.status === 412 ? 409 : 503, 'provisional_exchange_budget_unavailable');
   });
@@ -189,6 +198,10 @@ export function validateProvisionalTool(name: string, args: Record<string, unkno
 function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 interface LimitRecord { expiresAt: number; entries: Record<string, { fingerprint: string; result?: string; attempts: number; publicKey?: string }> }
+interface SealedPlayEnvelope {
+  version?: unknown; algorithm?: unknown; content?: { algorithm?: unknown };
+  wrappedKeys?: { senderPublicKey?: unknown; recipientPublicKey?: unknown }[];
+}
 /** One recipient + two immutable publications per guest, durable across relay restarts. */
 export function createProvisionalToolGuard(cfg: {
   podUrl: string; fetch: PlayFetch; withMutex: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
@@ -202,7 +215,7 @@ export function createProvisionalToolGuard(cfg: {
       assertLivePlay(p.provisionalPlay);
       const r = await cfg.fetch(url, { method: 'GET' });
       if (!r.ok && r.status !== 404) refuse(503, 'provisional_limits_unavailable');
-      const record: LimitRecord = r.status === 404 ? { expiresAt: p.provisionalPlay.expiresAt, entries: {} } : await r.json();
+      const record: LimitRecord = r.status === 404 ? { expiresAt: p.provisionalPlay.expiresAt, entries: {} } : await r.json() as LimitRecord;
       if (record.expiresAt !== p.provisionalPlay.expiresAt || !record.entries || Object.keys(record.entries).length > 3) refuse(403, 'provisional_limits_mismatch');
       const publicArgs = Object.fromEntries(Object.entries(args).filter(([k]) => !k.startsWith('_')
         && !['pod_name','pod_url','owner_webid'].includes(k) && !(name === 'publish_context' && k === 'agent_id')).sort(([a],[b])=>a.localeCompare(b)));
@@ -212,12 +225,12 @@ export function createProvisionalToolGuard(cfg: {
       if (existing?.result !== undefined) return existing.result;
       if (name === 'publish_context') {
         const recipient = record.entries['recipient'];
-        let envelope: any;
-        try { envelope = JSON.parse(args.graph_content as string); } catch { refuse(403, 'provisional_sealed_binding_required'); }
+        let envelope: SealedPlayEnvelope;
+        try { envelope = JSON.parse(args.graph_content as string) as SealedPlayEnvelope; } catch { refuse(403, 'provisional_sealed_binding_required'); }
         if (!recipient?.result || !recipient.publicKey || envelope?.version !== 1 || envelope.algorithm !== 'X25519-XSalsa20-Poly1305'
           || envelope.content?.algorithm !== 'XSalsa20-Poly1305' || envelope.wrappedKeys?.length !== 1
-          || envelope.wrappedKeys[0].senderPublicKey !== recipient.publicKey
-          || envelope.wrappedKeys[0].recipientPublicKey !== recipient.publicKey) refuse(403, 'provisional_owner_recipient_only');
+          || envelope.wrappedKeys[0]?.senderPublicKey !== recipient.publicKey
+          || envelope.wrappedKeys[0]?.recipientPublicKey !== recipient.publicKey) refuse(403, 'provisional_owner_recipient_only');
         // A lost native acknowledgement must be reconciled by reading the immutable
         // original. Re-publishing a known head can create a second descriptor/history.
         await cfg.assertUnpublished(args.graph_iri as string, p);
@@ -229,13 +242,13 @@ export function createProvisionalToolGuard(cfg: {
         record.entries[reservation] = { fingerprint, attempts: (existing?.attempts ?? 0) + 1,
           ...(name === 'register_agent' ? { publicKey: args.encryption_public_key as string } : {}) };
         const saved = await cfg.fetch(url, { method: 'PUT',
-          headers: { 'Content-Type': 'application/ld+json', ...(r.status === 404 ? { 'If-None-Match': '*' } : { 'If-Match': etag }) },
+          headers: { 'Content-Type': 'application/ld+json', ...(r.status === 404 ? { 'If-None-Match': '*' } : { 'If-Match': etag ?? '' }) },
           body: JSON.stringify(record) });
         if (!saved.ok) refuse(saved.status === 412 ? 409 : 503, 'provisional_limits_unavailable');
       }
       const result = await invoke();
-      let parsed: any;
-      try { parsed = JSON.parse(result); } catch { return result; }
+      let parsed: Record<string, unknown>;
+      try { parsed = jsonRecord(JSON.parse(result)); } catch { return result; }
       if (!parsed.error && Buffer.byteLength(result, 'utf8') <= 32 * 1024) {
         const current = await cfg.fetch(url, { method: 'GET' });
         const etag = current.headers?.get('etag');

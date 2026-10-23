@@ -5,6 +5,7 @@ on:
     paths:
       - 'deploy/identity/**'
       - 'deploy/css-gate/**'
+      - 'deploy/mcp-relay/provisional-play*.ts'
       - 'deploy/Dockerfile.identity'
       - 'deploy/Dockerfile.css-gate'
       - '.github/workflows/provisional-play.yml'
@@ -26,6 +27,8 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Lint provisional native ports
+        run: npx eslint deploy/identity/provisional-play*.ts deploy/mcp-relay/provisional-play*.ts deploy/identity/tests/provisional-play*.ts deploy/mcp-relay/tests/provisional-play*.ts
       - run: npx tsc --noEmit -p deploy/identity/tsconfig.json
       - run: npm test --workspace @interego/identity
   guest-storage:
