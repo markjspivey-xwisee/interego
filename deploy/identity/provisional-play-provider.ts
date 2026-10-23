@@ -44,8 +44,7 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
   // One admission writer per deployment. Canonical anchor CAS separately
   // prevents duplicate/replayed issuance across restarts and concurrent requests.
   let admission = Promise.resolve();
-  let play: ProvisionalPlay;
-  play = new ProvisionalPlay({
+  const play = new ProvisionalPlay({
     issuer: options.issuer, publicPodBase: options.publicPodBase, signingKey: options.signingKey,
     clients, ttlSeconds: options.ttlSeconds ?? 86400, maxPods: options.maxPods ?? 100,
     verifyGrantSignature: async (grant, client) => {
