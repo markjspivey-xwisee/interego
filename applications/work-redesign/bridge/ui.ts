@@ -18,14 +18,20 @@
  *   GET  /ui/oauth/client.json  the Client ID Metadata Document this UI signs in as ("Work Redesign")
  *   GET  /ui/oauth/config       what the page needs to send a person to the relay's sign-in page
  *   GET  /ui/oauth/callback     the page the relay sends the person back to (the same shell)
- *   POST /ui/oauth/exchange     {code, code_verifier, state} → the relay's token, server-side
- *   POST /ui/relay/sign         {payload} + the token → the relay's {_signature, _signed_payload}
+ *   POST /ui/oauth/exchange     {code, code_verifier, state} → the relay's OAuth access token, server-side
+ *   POST /ui/relay/sign         {payload} + that token → the relay's {_signature, _signed_payload}, from its
+ *                               MCP endpoint (tools/call sign_request at <relay>/mcp)
  *   POST /ui/relay/whoami       a relay-signed request → the person it is for, as the handlers name them
  *
  * RELAY-ATTESTED, NOT USER-HELD, AND THE TOKEN PASSES THROUGH THIS BRIDGE. The relay signs each act
- * for the person with its delegation key; the token that lets it do so is sent with every
- * signature through POST /ui/relay/sign, so whoever runs this bridge is trusted with it for the
- * session. It is never logged, stored, echoed or put in a URL here.
+ * for the person with its delegation key. The page holds the relay's own OAuth access token for
+ * the sign-in (about an hour), and sends it with every signature through POST /ui/relay/sign,
+ * which presents it at the relay's /mcp as any MCP client does; for that hour it lets its holder
+ * call the relay's tools as the person, so whoever runs this bridge is trusted with it for the
+ * session. It is never logged, stored, echoed or put in a URL here. The identity server's token
+ * behind the sign-in never reaches this bridge or the page: nothing here calls the relay's
+ * /identity-token or its REST /tool/ routes, and the refresh token the relay's token answer
+ * carries is dropped.
  *
  * All three answers carry the same Content-Security-Policy: scripts, styles and connections
  * from this origin only, no inline script or style, no framing. Because `style-src 'self'`
@@ -48,6 +54,7 @@
  *
  * No environment reads; bridge/server.ts and demo/run.ts attach this.
  */
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { parse as parseQueryString } from 'node:querystring';
 import type { Express, NextFunction, Request, Response } from 'express';
@@ -222,7 +229,7 @@ export const SIGN_IN_PATHS = {
 } as const;
 /** The client name the relay sees. It slugifies it into the agent of the session, work-redesign-<user id>: the slug the handlers take decisive acts from. */
 export const SIGN_IN_CLIENT_NAME = 'Work Redesign';
-/** The scope asked for: the relay's full scope, which its sign_request and /identity-token need. */
+/** The scope asked for: the relay's full scope. Its write-side tools, sign_request among them, refuse a token with mcp:read alone. */
 export const SIGN_IN_SCOPE = 'mcp';
 export const SIGN_IN_TIMEOUT_MS = 8_000;
 /** The most a request to the sign or whoami route may carry (a relay-signed text is at most 64 KiB). */
@@ -239,6 +246,13 @@ const STATE = /^[A-Za-z0-9\-._~]{16,128}$/;
 const TOKEN = /^[\x21-\x7e]{1,8192}$/;
 const BEARER = /^Bearer ([\x21-\x7e]{1,8192})$/i;
 const SIGNATURE = /^0x[0-9a-fA-F]{130}$/;
+/** The relay's MCP endpoint and the one tool the bridge calls there. */
+const RELAY_MCP_PATH = '/mcp';
+const SIGN_TOOL = 'sign_request';
+/** The most an access token's lifetime is taken as, whatever the relay says (the relay's own is an hour). */
+const MAX_TOKEN_SECONDS = 24 * 3600;
+/** The relay's access token lifetime when its token answer says none (deploy/mcp-relay: tokenTtlSec, 3600). */
+const DEFAULT_TOKEN_SECONDS = 3600;
 /** Keys the relay sets itself or drops from what it signs (handleSignRequest): a payload holding one would not be signed as sent. */
 const RELAY_SETS = new Set(['agent_id', 'timestamp', 'subject_pod_url', 'payload', 'pod_name', 'owner_webid', 'owner_name']);
 
@@ -247,9 +261,14 @@ const RELAY_DOWN = 'The Interego relay could not be reached for sign-in.';
 const BAD_EXCHANGE = 'The sign-in could not be finished: this is not what the relay sent back.';
 const NOT_SIGNED_IN = 'Sign in with your Interego account first.';
 const RELAY_REFUSED = 'The Interego relay did not accept your sign-in. Sign in again.';
+const SIGN_IN_ENDED = 'Your Interego sign-in has ended: sign in again.';
 const NOT_SIGNED = 'The Interego relay did not sign this payload.';
+/** The refusal code of POST /ui/relay/sign when the relay no longer takes the tab's token (401): the page forgets it. */
+export const SIGN_IN_EXPIRED = 'interego-sign-in-expired';
+/** The refusal code when the relay's /mcp answers 403 (a token with no mcp scope at all, which cannot sign): the page forgets it too. */
+export const SIGN_IN_REFUSED = 'interego-sign-in-refused';
 /** Said wherever the token is handed out or used. */
-export const TOKEN_PASSES_THROUGH = 'Relay-attested, not a key you hold: the Interego relay signs each act for you. The token your sign-in gave this page is the identity-server bearer behind it, sent through this bridge with every signature, so whoever runs this bridge is trusted with it while it lasts; the bridge never logs, stores or echoes it. Signing out forgets it in this tab; it does not revoke it.';
+export const TOKEN_PASSES_THROUGH = 'Relay-attested, not a key you hold: the Interego relay signs each act for you. This page holds the relay\'s OAuth access token for your sign-in, good for about an hour, and sends it through this bridge with every signature. Until it ends it lets whoever holds it call the relay\'s tools as you, so whoever runs this bridge is trusted with it while you are signed in; the bridge never logs, stores or echoes it. It is not your identity-server token, which never reaches this bridge or this page. Signing out forgets it in this tab but revokes nothing: the relay offers no way to revoke it, so it stays good until it ends.';
 
 class SignInDown extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -262,6 +281,51 @@ function relayText(v: unknown, secrets: readonly string[]): string {
   let t = typeof v === 'string' ? v : '';
   for (const s of secrets) if (s.length >= 8) t = t.split(s).join('[withheld]');
   return [...t].map((c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? ' ' : c)).join('').slice(0, 300);
+}
+
+/**
+ * The JSON-RPC response to request `id` in the body the relay's /mcp answered: the body itself
+ * when it is JSON, else the data of its server-sent events (the streamable HTTP transport answers
+ * either way), whichever message answers `id` (or an error with a null id). Null when none does.
+ */
+export function mcpResponse(text: string, id: string): Record<string, unknown> | null {
+  const messages: unknown[] = [];
+  const t = text.trim();
+  if (t.startsWith('{') || t.startsWith('[')) {
+    try {
+      const j: unknown = JSON.parse(t);
+      messages.push(...(Array.isArray(j) ? j : [j]));
+    } catch { /* not JSON: no answer */ }
+  } else {
+    for (const event of t.split(/\r?\n\r?\n/)) {
+      const data = event.split(/\r?\n/).filter((l) => l.startsWith('data:')).map((l) => l.slice(5).replace(/^ /, '')).join('\n');
+      if (data === '') continue;
+      try { messages.push(JSON.parse(data)); } catch { /* an event that is not JSON answers nothing */ }
+    }
+  }
+  const found = messages.find((m) => isObj(m) && m['jsonrpc'] === '2.0'
+    && ((m['id'] === id && ('result' in m || 'error' in m)) || (m['id'] === null && 'error' in m)));
+  return isObj(found) ? found : null;
+}
+
+/**
+ * What a tools/call result says the tool answered: its JSON object (structuredContent, else the
+ * JSON of its first text content), or why there is none: the result is an error (isError), holds
+ * no object, or the object is the tool's own {error}. `secrets` are withheld from what is repeated.
+ */
+export function toolAnswer(result: unknown, secrets: readonly string[]): { readonly ok: true; readonly value: Record<string, unknown> } | { readonly ok: false; readonly why: string } {
+  if (!isObj(result)) return { ok: false, why: 'tools/call answer holds no result' };
+  const content = Array.isArray(result['content']) ? result['content'] : [];
+  const first: unknown = content[0];
+  const text = isObj(first) && first['type'] === 'text' && typeof first['text'] === 'string' ? first['text'] : '';
+  if (result['isError'] === true) return { ok: false, why: `${SIGN_TOOL} failed${text ? `: ${relayText(text, secrets)}` : ''}` };
+  let value: unknown = result['structuredContent'];
+  if (!isObj(value)) {
+    try { value = JSON.parse(text); } catch { value = null; }
+  }
+  if (!isObj(value)) return { ok: false, why: `${SIGN_TOOL} answered no JSON object` };
+  if (typeof value['error'] === 'string') return { ok: false, why: `${SIGN_TOOL} answered: ${relayText(value['error'], secrets)}` };
+  return { ok: true, value };
 }
 
 /** An answer of one of these routes: JSON, never cached, never sniffed, never referred on. */
@@ -313,9 +377,16 @@ function refusedPost(req: Request, res: Response, max: number, baseHost: string)
  * same metadata once per process by Dynamic Client Registration instead, and GET /ui/oauth/config
  * says which (clientRegistration).
  *
+ * POST /ui/oauth/exchange does only the code-for-token exchange (PKCE, at the relay's token
+ * endpoint) and hands the page the relay's OAuth access token and when it ends; it asks for no
+ * refresh token (the client's metadata names only the authorization_code grant) and drops the one
+ * the relay's answer carries. POST /ui/relay/sign presents the page's access token at the relay's
+ * /mcp, as a stateless tools/call of sign_request with a fresh JSON-RPC id (no initialize, no
+ * session), reads the answer as JSON or as server-sent events, and hands back only the pair.
+ *
  * Every call to the relay goes to the relay's own origin (endpoints its metadata names elsewhere
  * are refused), follows no redirect, takes at most 8 s and reads at most 256 KiB; at most 16 run
- * at once (429 beyond). The code, the verifier and both tokens are never logged, stored or put in
+ * at once (429 beyond). The code, the verifier and the tokens are never logged, stored or put in
  * a URL; a relay's error text is repeated with each of them withheld.
  */
 export function attachInteregoSignIn(app: Express, opts: { readonly base: string; readonly signIn?: UiSignIn }): void {
@@ -339,11 +410,11 @@ export function attachInteregoSignIn(app: Express, opts: { readonly base: string
 
   const clientDocument = (): Record<string, unknown> => ({
     client_id: clientDocUrl, client_name: SIGN_IN_CLIENT_NAME, client_uri: `${base}/ui`, redirect_uris: [callbackUrl],
-    grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none', scope: SIGN_IN_SCOPE,
+    grant_types: ['authorization_code'], response_types: ['code'], token_endpoint_auth_method: 'none', scope: SIGN_IN_SCOPE,
   });
 
-  /** One call to the relay: its status and its JSON body (null when it has none), or SignInDown. */
-  async function relayCall(url: string, init: Omit<RelayRequest, 'redirect' | 'signal'>): Promise<{ readonly status: number; readonly json: unknown }> {
+  /** One call to the relay: its status, its body and that body as JSON (null when it is not), or SignInDown; `secrets` are withheld from any error text. */
+  async function relayCall(url: string, init: Omit<RelayRequest, 'redirect' | 'signal'>, secrets: readonly string[] = []): Promise<{ readonly status: number; readonly text: string; readonly json: unknown }> {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
@@ -351,10 +422,10 @@ export function attachInteregoSignIn(app: Express, opts: { readonly base: string
       const text = await cappedText(r, RELAY_ANSWER_MAX_BYTES, 'the relay\'s answer');
       let json: unknown = null;
       try { json = JSON.parse(text); } catch { json = null; }
-      return { status: r.status, json };
+      return { status: r.status, text, json };
     } catch (e) {
       if (ac.signal.aborted) throw new SignInDown(504, `the relay did not answer within ${timeoutMs} ms`);
-      throw new SignInDown(502, `the relay could not be reached: ${relayText(messageOf(e), [])}`);
+      throw new SignInDown(502, `the relay could not be reached: ${relayText(messageOf(e), secrets)}`);
     } finally {
       clearTimeout(timer);
     }
@@ -473,7 +544,7 @@ export function attachInteregoSignIn(app: Express, opts: { readonly base: string
       const c = await client();
       const ep = await endpoints();
       const form = new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: callbackUrl, client_id: c.id });
-      const t = await relayCall(ep.token, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: form.toString() });
+      const t = await relayCall(ep.token, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: form.toString() }, [code, verifier]);
       const tj = isObj(t.json) ? t.json : {};
       if (t.status !== 200) {
         const secrets = [code, verifier];
@@ -485,22 +556,14 @@ export function attachInteregoSignIn(app: Express, opts: { readonly base: string
       if (typeof access !== 'string' || !TOKEN.test(access)) { no(res, 502, RELAY_DOWN, 'the relay\'s token answer holds no access_token'); return; }
       const kind = tj['token_type'];
       if (typeof kind === 'string' && kind.toLowerCase() !== 'bearer') { no(res, 502, RELAY_DOWN, `the relay issued a ${relayText(kind, [access])} token, which this page cannot present`); return; }
-      // The relay's REST tools (sign_request among them) take the identity-server bearer behind the
-      // sign-in, not the relay's own access token: the relay hands it over for an access token with its full scope.
-      const id = await relayCall(`${relayUrl}/identity-token`, { method: 'GET', headers: { authorization: `Bearer ${access}`, accept: 'application/json' } });
-      const ij = isObj(id.json) ? id.json : {};
-      const token = ij['identityToken'];
-      if (id.status !== 200 || typeof token !== 'string' || !TOKEN.test(token)) {
-        no(res, 502, 'The Interego relay signed you in but gave no token this page can sign with.',
-          `${relayUrl}/identity-token answered ${id.status}${typeof ij['error'] === 'string' ? `: ${relayText(ij['error'], [code, verifier, access])}` : ''}`);
-        return;
-      }
-      // When the page forgets the token: when the relay's access token ends (it says, in seconds), else after expires_in.
-      const exp = ij['expiresAt'];
-      const expiresIn = typeof tj['expires_in'] === 'number' && Number.isFinite(tj['expires_in']) ? tj['expires_in'] : 3600;
-      const until = typeof exp === 'number' && Number.isFinite(exp) ? (exp < 1e11 ? exp * 1000 : exp) : Date.now() + expiresIn * 1000;
+      // The page holds this access token itself, as any MCP client does, and nothing else: no
+      // identity-server token (the bridge never calls /identity-token) and no refresh token (dropped
+      // here, so nothing on this side can renew the sign-in). It forgets the token when it ends:
+      // expires_in from now (the relay's is an hour), at most MAX_TOKEN_SECONDS.
+      const lifetime = tj['expires_in'];
+      const seconds = typeof lifetime === 'number' && Number.isFinite(lifetime) ? Math.min(Math.max(lifetime, 0), MAX_TOKEN_SECONDS) : DEFAULT_TOKEN_SECONDS;
       answer(res, 200, {
-        status: 'signed-in', token, tokenType: 'Bearer', expiresAt: new Date(until).toISOString(), relayUrl,
+        status: 'signed-in', token: access, tokenType: 'Bearer', expiresAt: new Date(Date.now() + seconds * 1000).toISOString(), relayUrl,
         clientId: c.id, clientRegistration: c.how, trust: TOKEN_PASSES_THROUGH,
       });
     });
@@ -511,7 +574,7 @@ export function attachInteregoSignIn(app: Express, opts: { readonly base: string
     const m = BEARER.exec(String(req.headers.authorization ?? ''));
     const bearer = m?.[1];
     if (bearer === undefined) {
-      no(res, 401, NOT_SIGNED_IN, `${SIGN_IN_PATHS.sign} sends the payload to the Interego relay with the token your sign-in gave this page (Authorization: Bearer <token>), and this request carries none`);
+      no(res, 401, NOT_SIGNED_IN, `${SIGN_IN_PATHS.sign} sends the payload to the Interego relay with the access token your sign-in gave this page (Authorization: Bearer <token>), and this request carries none`);
       return;
     }
     const b = isObj(req.body) ? req.body : {};
@@ -525,23 +588,42 @@ export function attachInteregoSignIn(app: Express, opts: { readonly base: string
     const kept = Object.keys(payload).find((k) => k.startsWith('_') || RELAY_SETS.has(k));
     if (kept !== undefined) { no(res, 400, NOT_SIGNED, `payload holds ${JSON.stringify(kept.slice(0, 40))}, which the relay sets itself or drops, so the text it signs would not be this payload`); return; }
     void bounded(res, async () => {
-      const r = await relayCall(`${relayUrl}/tool/sign_request`, {
-        method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ payload }),
-      });
+      // A stateless MCP call, as any MCP client may make one: no initialize and no session, so the
+      // relay serves it from its stateless handler and stamps the session's own agent itself.
+      const rpcId = `wrd-sign-${randomUUID()}`;
+      const secrets = [bearer];
+      const r = await relayCall(`${relayUrl}${RELAY_MCP_PATH}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: rpcId, method: 'tools/call', params: { name: SIGN_TOOL, arguments: { payload } } }),
+      }, secrets);
       const j = isObj(r.json) ? r.json : {};
-      if (r.status === 401 || r.status === 403) {
-        no(res, 401, RELAY_REFUSED, `the relay answered ${r.status}${typeof j['detail'] === 'string' ? `: ${relayText(j['detail'], [bearer])}` : ''}`);
+      const relaySaid = `${typeof j['error'] === 'string' ? `: ${relayText(j['error'], secrets)}` : ''}${typeof j['error_description'] === 'string' ? ` (${relayText(j['error_description'], secrets)})` : ''}`;
+      if (r.status === 401) {
+        answer(res, 401, { ...refuse(401, SIGN_IN_ENDED, `the relay's ${RELAY_MCP_PATH} answered 401${relaySaid}: it no longer takes the access token this tab holds (it has ended, or is not the relay's)`), code: SIGN_IN_EXPIRED });
         return;
       }
-      if (r.status !== 200 || typeof j['error'] === 'string') {
-        no(res, 502, NOT_SIGNED, `the relay answered ${r.status}${typeof j['error'] === 'string' ? `: ${relayText(j['error'], [bearer])}` : ''}`);
+      if (r.status === 403) {
+        answer(res, 401, { ...refuse(401, RELAY_REFUSED, `the relay's ${RELAY_MCP_PATH} answered 403${relaySaid}: the access token this tab holds cannot sign`), code: SIGN_IN_REFUSED });
         return;
       }
-      const signed = j['_signed_payload'];
-      const signature = j['_signature'];
+      if (r.status !== 200) { no(res, 502, NOT_SIGNED, `the relay's ${RELAY_MCP_PATH} answered ${r.status}${relaySaid}`); return; }
+      const rpc = mcpResponse(r.text, rpcId);
+      if (rpc === null) { no(res, 502, NOT_SIGNED, `the relay's ${RELAY_MCP_PATH} answer holds no JSON-RPC response to this request`); return; }
+      const rpcError = rpc['error'];
+      if (rpcError !== undefined) {
+        const e = isObj(rpcError) ? rpcError : {};
+        no(res, 502, NOT_SIGNED, `the relay answered JSON-RPC error${typeof e['code'] === 'number' ? ` ${e['code']}` : ''}${typeof e['message'] === 'string' ? `: ${relayText(e['message'], secrets)}` : ''}`);
+        return;
+      }
+      const tool = toolAnswer(rpc['result'], secrets);
+      if (!tool.ok) { no(res, 502, NOT_SIGNED, `the relay's ${tool.why}`); return; }
+      const signed = tool.value['_signed_payload'];
+      const signature = tool.value['_signature'];
       let parsed: unknown = null;
       try { parsed = typeof signed === 'string' ? JSON.parse(signed) : null; } catch { parsed = null; }
-      if (typeof signed !== 'string' || signed.length > SIGN_IN_MAX_BYTES || typeof signature !== 'string' || !SIGNATURE.test(signature) || !isObj(parsed) || parsed['intent'] !== intent) {
+      if (typeof signed !== 'string' || signed.length > SIGN_IN_MAX_BYTES || typeof signature !== 'string' || !SIGNATURE.test(signature) || !isObj(parsed)
+        || parsed['intent'] !== intent || (typeof payload['nonce'] === 'string' && parsed['nonce'] !== payload['nonce'])) {
         no(res, 502, NOT_SIGNED, 'the relay\'s answer is not {_signature, _signed_payload} over this payload');
         return;
       }

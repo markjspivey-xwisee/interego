@@ -14,11 +14,13 @@
  *
  * A person with no wallet can sign in with their Interego account instead (mode 'interego'): the
  * page sends them to the relay's own sign-in page (PKCE S256, a random state it checks on return),
- * the bridge exchanges the code for the relay's token (POST /ui/oauth/exchange), and from then on
- * every payload is signed by the relay through POST /ui/relay/sign, and sent as the act's
- * {_signed_payload, _signature}. Relay-attested, not a key the person holds; the token passes
- * through the bridge on every signature. It is kept in sessionStorage only (this tab, until it
- * ends or the person signs out), never in localStorage, a URL or the page.
+ * the bridge exchanges the code for the relay's OAuth access token (POST /ui/oauth/exchange), and
+ * from then on every payload is signed by the relay through POST /ui/relay/sign (the relay's MCP
+ * sign_request), and sent as the act's {_signed_payload, _signature}. Relay-attested, not a key
+ * the person holds; the access token passes through the bridge on every signature, and for its
+ * hour it lets its holder call the relay's tools as the person. It is kept in sessionStorage only
+ * (this tab), never in localStorage, a URL or the page, and forgotten when it ends (a timer, and a
+ * check before each signature) or when the person signs out. Nothing revokes it.
  *
  * Untrusted text (anything read from the pod or typed by a person) reaches the page only as
  * text nodes. No innerHTML, no style attribute: widths are set through the CSSOM, which the
@@ -33,13 +35,14 @@ const SIGN_IN = 'Sign in with your Interego account';
 const SIGN_IN_OFFERED = 'Or sign in with your Interego account: your passkey, on the Interego relay\'s own sign-in page. The relay then signs each act for you (relay-attested, not a key you hold), and an admin registers your Interego user DID, which this page shows once you are signed in.';
 const NOT_SIGNED_IN = 'No wallet, and not signed in: this page cannot sign yet, and it reads the pod only where the bridge serves unsigned reads.';
 const SEND_TO_ADMIN = 'This is who you are to this bridge: send it to an admin of this pod to be registered.';
-const SIGNED_OUT = 'Signed out: this tab no longer holds your Interego token. Signing out forgets it here; it does not revoke it.';
+const SIGNED_OUT = 'Signed out: this tab no longer holds the relay\'s access token for your sign-in. Nothing was revoked: the relay offers no way to revoke it, so the token stays good at the relay until it ends, about an hour after you signed in, for anyone who kept a copy (it passed through this bridge with every signature). Your Interego account and its passkeys are untouched.';
+const SIGN_IN_ENDED = 'Your Interego sign-in has ended: sign in again.';
 const RELAY_STEPS = [
   'Press "Sign in with your Interego account" and sign in with your passkey on the Interego relay\'s own page.',
   'Ask an admin to add your Interego user DID (shown at the top of this page once you are signed in) to this pod\'s registry: until then the bridge refuses your requests, for reads as for changes.',
   'Then sign. The page shows the exact payload; the relay signs it for you, and the bridge records it as relay-delegated.',
 ];
-const SESSION_KEY = 'wrd.interego.session';   // sessionStorage: the token and when it ends
+const SESSION_KEY = 'wrd.interego.session';   // sessionStorage: the relay's access token and when it ends
 const FLOW_KEY = 'wrd.interego.flow';         // sessionStorage: the PKCE verifier and state while the relay's page is open
 const CALLBACK_PATH = '/ui/oauth/callback';
 const FLOW_MS = 10 * 60 * 1000;
@@ -48,7 +51,7 @@ const DEMO_KEY = 'DEMO KEY — derived from a published seed';
 const READ_ONLY = 'No wallet: this browser has no EIP-191 wallet, so this page cannot sign, and it reads the pod only where the bridge serves unsigned reads. Install or enable a wallet that supports personal_sign and reload; the bridge accepts only signed envelopes and never asks for a key.';
 const READ_SIGNING = 'Reading this pod needs your signature too: the page asks your wallet to sign one read and reuses it for up to nine minutes.';
 const READ_RELAYED = 'Reading this pod needs a signature too: the relay signs one read for you, and the page reuses it for up to nine minutes.';
-const RELAY_TRUST = 'Relay-attested, not a key you hold: the Interego relay signs each act for you. The token your sign-in gave this tab passes through this bridge with every signature, so whoever runs this bridge is trusted with it while you are signed in.';
+const RELAY_TRUST = 'Relay-attested, not a key you hold: the Interego relay signs each act for you. This tab holds the relay\'s access token for your sign-in (about an hour), and it passes through this bridge with every signature: until it ends it lets whoever holds it call the relay\'s tools as you, so whoever runs this bridge is trusted with it while you are signed in.';
 const READ_ENVELOPE_MS = 9 * 60 * 1000;
 const SIGNING_MEANS = 'Your signature says this description of your work is right, or records why it is not. It is stored with the record, anyone who can read the pod can check it, and you can take a copy of every record about you.';
 const WALLET_STEPS = [
@@ -145,7 +148,7 @@ const store = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* the page works without storage */ } },
   drop(key) { try { localStorage.removeItem(key); } catch { /* the page works without storage */ } },
 };
-/** This tab only: the Interego sign-in (the token, and the PKCE verifier while the relay's page is open). Never localStorage. */
+/** This tab only: the Interego sign-in (the relay's access token, and the PKCE verifier while the relay's page is open). Never localStorage. */
 const tab = {
   get(key) { try { const v = sessionStorage.getItem(key); return v === null ? null : JSON.parse(v); } catch { return null; } },
   set(key, value) { try { sessionStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } },
@@ -216,9 +219,10 @@ const S = {
   reads: new Map(),             // signed read envelopes by signer and pod, reused for up to READ_ENVELOPE_MS
   readRefused: false,           // the last signed read was refused (401 or 403): the holder's copy is still offered
   signIn: null,                 // the bridge's GET /ui/oauth/config: whether, and through which relay, a person can sign in
-  // Signed in with an Interego account: the token (this tab only), and who it is, as the relay's
-  // signature (the agent) and the bridge (the person) say, learned from the first signature.
+  // Signed in with an Interego account: the relay's access token (this tab only), and who it is, as
+  // the relay's signature (the agent) and the bridge (the person) say, learned from the first signature.
   interego: null,               // { token, expiresAt, principal, agentId, relaySigner }
+  signInTimer: null,            // forgets the access token when it ends
 };
 const data = () => S.data || {};
 const reg = () => (S.data && S.data.registry) || { members: [], taskKinds: [], head: null };
@@ -307,22 +311,22 @@ async function post(path, body, bearer) {
 }
 
 /**
- * Sign a payload through the Interego relay: POST /ui/relay/sign with this tab's token, which the
- * bridge forwards to the relay's sign_request. The relay's own timestamp stands for issuedAt, so
- * none is sent; the nonce is fresh. Returns {_signed_payload, _signature}: sent as an act's body,
+ * Sign a payload through the Interego relay: POST /ui/relay/sign with this tab's access token,
+ * which the bridge presents at the relay's /mcp to call sign_request. The relay's own timestamp
+ * stands for issuedAt, so none is sent; the nonce is fresh. Returns {_signed_payload, _signature}: sent as an act's body,
  * or wherever an envelope goes. The first signature also says who signed: the agent from the text
  * the relay signed, and the person that agent belongs to from the bridge (POST /ui/relay/whoami),
  * never from anything this page assumes.
  */
 async function relaySign(payload) {
-  if (Date.parse(S.interego.expiresAt) <= Date.now()) {
-    endSignIn('Your Interego sign-in has ended: sign in again.');
-    throw new NotSigned('signed out', { ok: false, status: 401, body: { error: 'Your Interego sign-in has ended: sign in again.' } });
+  if (!(Date.parse(S.interego.expiresAt) > Date.now())) {
+    endSignIn(SIGN_IN_ENDED);
+    throw new NotSigned('signed out', { ok: false, status: 401, body: { error: SIGN_IN_ENDED } });
   }
   const r = await post('/ui/relay/sign', { payload: { ...payload, nonce: randomHex(16) } }, S.interego.token);
   if (!r.ok) {
-    // 401: the relay no longer takes this tab's token, so it is forgotten.
-    if (r.status === 401) endSignIn(r.body?.error ?? 'Your Interego sign-in has ended: sign in again.');
+    // 401 (interego-sign-in-expired, or a token that cannot sign): the relay no longer takes this tab's token, so it is forgotten.
+    if (r.status === 401) endSignIn(r.body?.error ?? SIGN_IN_ENDED);
     showResult(SIGN_IN_TOOL, r);
     throw new NotSigned('the relay did not sign', r);
   }
@@ -497,8 +501,7 @@ async function boot() {
     S.signIn = await signInConfig();
     if (callback) await finishSignIn(callback);
     S.interego = keptSignIn();
-    if (S.interego) S.mode = 'interego';
-    else if (window.ethereum) S.mode = 'wallet';
+    if (S.interego) { S.mode = 'interego'; forgetAtExpiry(); } else if (window.ethereum) S.mode = 'wallet';
   }
   window.addEventListener('hashchange', render);
   // A sign-in that did not finish (or ended) stays on screen: the first read, refused or not, does not replace it.
@@ -644,7 +647,7 @@ function keptSignIn() {
   if (!k) return null;
   if (typeof k.token !== 'string' || k.token === '' || !(Date.parse(k.expiresAt) > Date.now())) {
     tab.drop(SESSION_KEY);
-    S.result ??= { tool: SIGN_IN_TOOL, ok: false, status: 401, body: { error: 'Your Interego sign-in has ended: sign in again.' } };
+    S.result ??= { tool: SIGN_IN_TOOL, ok: false, status: 401, body: { error: SIGN_IN_ENDED } };
     return null;
   }
   // Who it is is learned again from this page's first signature: the agent from the relay's text, the person from the bridge.
@@ -715,11 +718,31 @@ async function finishSignIn({ q, flow }) {
   if (!code) { fail(NOT_FINISHED, 'the relay sent back no code'); return; }
   const r = await post('/ui/oauth/exchange', { code, code_verifier: flow.verifier, state: flow.state });
   if (!r.ok) { S.result = { tool: SIGN_IN_TOOL, ...r }; return; }
-  if (!tab.set(SESSION_KEY, { token: r.body.token, expiresAt: r.body.expiresAt })) fail('Signed in, but this tab cannot keep the token.', 'sessionStorage is off in this browser');
+  // The relay's access token and when it ends; no refresh token reaches this page (the bridge drops it).
+  if (!tab.set(SESSION_KEY, { token: r.body.token, expiresAt: r.body.expiresAt })) fail('Signed in, but this tab cannot keep the access token.', 'sessionStorage is off in this browser');
 }
 
-/** Forget this tab's sign-in (the token, and every read the relay signed for it); `ok` when the person signed out. */
+/**
+ * Forget the access token when it ends, as the bridge said when it handed it over: the tab's
+ * sessionStorage and this page then hold it no longer, and the page offers the sign-in again.
+ */
+function forgetAtExpiry() {
+  clearTimeout(S.signInTimer);
+  const left = Date.parse(S.interego?.expiresAt ?? '') - Date.now();
+  // setTimeout takes at most 2^31 - 1 ms; the bridge hands out at most a day.
+  S.signInTimer = setTimeout(() => {
+    S.signInTimer = null;
+    if (!S.interego) return;
+    endSignIn(SIGN_IN_ENDED);
+    if (S.busy) render();
+    else void refresh(true);
+  }, Math.min(Math.max(Number.isFinite(left) ? left : 0, 0), 2 ** 31 - 1));
+}
+
+/** Forget this tab's sign-in (the access token, and every read the relay signed for it); `ok` when the person signed out. */
 function endSignIn(note, ok = false) {
+  clearTimeout(S.signInTimer);
+  S.signInTimer = null;
   tab.drop(SESSION_KEY);
   tab.drop(FLOW_KEY);
   S.interego = null;
