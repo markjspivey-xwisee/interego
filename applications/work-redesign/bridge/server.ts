@@ -148,7 +148,7 @@ if (!signInRead.ok) {
 const signIn = signInRead.config;
 // An admin address is an address: a user DID read here would be lower-cased into another user
 // (a user DID is compared as spelled), so one in this list stops the bridge rather than admit the wrong person.
-const notAnAddress = adminAddresses.find((a) => !isAddress(a));
+const notAnAddress = adminAddresses.find((a): boolean => !isAddress(a));
 if (notAnAddress !== undefined) {
   process.stderr.write(`work-redesign bridge did not start: WRD_ADMIN_ADDRESSES holds ${JSON.stringify(notAnAddress.slice(0, 120))}, which is not a 0x address (40 hex characters); a user DID is an admin through WRD_ADMIN_DIDS\n`);
   process.exit(1);
