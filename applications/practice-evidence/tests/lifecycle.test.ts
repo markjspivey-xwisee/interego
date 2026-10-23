@@ -1947,6 +1947,28 @@ describe('with a record key, operator-pod records are sealed to it, still verify
           .includes(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key')).toBe(true);
       }
       expect(stored()).toBe(before);
+      // Without the marks, only what reads a sealed record is refused: here the role registry and
+      // the scenario are plaintext, so such a bridge registers a role and starts a newcomer's
+      // attempt. The keyless bridge writes plaintext, which marks nothing. The bridge holding
+      // another key seals what it writes to its own key, and its first sealed record marks the pod
+      // with that key: from then on the bridge holding the pod's key is refused there, and so is
+      // the keyless one, as on a pod where a bridge with the wrong key wrote first.
+      const [[otherH], [noneH]] = others;
+      ok(await act(noneH, 'pev.register_role', W.admin, { address: W.stranger.address, role: 'learner', change: 'add' }, {}, onLate));
+      expect(fingerprintOfAttemptIri(String(ok(await act(noneH, 'pev.start_attempt', W.newcomer, start, {}, onLate))['attemptIri']))).toBeNull();
+      expect(ok(await act(keyedLate, 'pev.review_queue', W.reviewer, {}, {}, onLate))['awaitingReview']).toBe(1);
+      const sealedRole = ok(await act(otherH, 'pev.register_role', W.admin, { address: W.mallory.address, role: 'learner', change: 'add' }, {}, onLate));
+      const sealedStart = ok(await act(otherH, 'pev.start_attempt', W.stranger, start, {}, onLate));
+      expect([fingerprintOfRecordUrl(String(sealedRole['descriptorUrl'])), fingerprintOfAttemptIri(String(sealedStart['attemptIri']))]).toEqual([otherKey.slice(1), otherKey.slice(1)]);
+      for (const [h, bridgeKey] of [[keyedLate, ownKey], [noneH, null]] as const) {
+        for (const r of [
+          await act(h, 'pev.register_role', W.admin, { address: W.reviewer3.address, role: 'reviewer', change: 'add' }, {}, onLate),
+          await act(h, 'pev.review_queue', W.reviewer, {}, {}, onLate),
+        ]) {
+          refused(r, 409, 'record-key-mismatch');
+          expect([r['podKey'], r['podKeys'], r['bridgeKey'], r['bridgeKeyOnPod']]).toEqual([otherKey, [otherKey], bridgeKey, false]);
+        }
+      }
     } finally {
       restore();
     }

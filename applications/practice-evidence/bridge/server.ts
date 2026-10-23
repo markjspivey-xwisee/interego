@@ -39,10 +39,13 @@
  *                                   every encrypted record unreadable: back it up. A keyed attempt
  *                                   IRI and a sealed record's descriptor URL name the key's public
  *                                   fingerprint (printed at startup), and a bridge with another
- *                                   key, or none, writes nothing on a pod whose own records hold
- *                                   either, and answers nothing from it but the scenario list
- *                                   (409 record-key-mismatch). Holder copies are never encrypted.
- *                                   Never logged.
+ *                                   key, or none, writes nothing on a pod whose own records carry
+ *                                   either mark, and answers nothing from it but the scenario list
+ *                                   (409 record-key-mismatch). Where a pod writer removed the
+ *                                   marks, only the acts that read a sealed record are refused
+ *                                   (record-not-trusted, records-sealed), and a bridge with
+ *                                   another key marks the pod with its own at its first sealed
+ *                                   write. Holder copies are never encrypted. Never logged.
  *   PEV_REQUIRE_RECORD_KEY=1        a deployment guard: the bridge does not start (exit 1) unless
  *                                   PEV_RECORD_KEY is set and well-formed, so a deployment whose
  *                                   key is blank or missing (an unresolved reference, a forgotten
