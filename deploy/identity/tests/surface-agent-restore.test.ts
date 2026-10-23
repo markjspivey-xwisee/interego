@@ -1,8 +1,8 @@
 /**
  * The pure half of restoring forgotten surface agents (surface-agent-restore.ts): which ids
  * parse as `<surface>-<canonical userId>`, when one is restored (a token issued to its user,
- * or its user's pod registry listing it), the bound on anonymous restores, what a registry
- * lists, and which ids POST /register-agent refuses.
+ * or its user's pod registry listing it), the scope it comes back with, the bound on anonymous
+ * restores, what a registry lists, and which ids POST /register-agent refuses.
  *
  * The route half (server.ts started against a stand-in pod server) is
  * tests/surface-agent-restore-routes.test.ts.
@@ -24,7 +24,7 @@ import {
   foreignCanonicalSuffix,
   isSurfaceSlug,
   parseSurfaceAgentId,
-  registryAgentIds,
+  registryAgentScopes,
   surfaceAgentLabel,
   type AdmitInput,
   type RestoreGranted,
@@ -122,7 +122,7 @@ test('label: what ensureSurfaceAgent names a surface agent', () => {
 });
 
 test('restore: an agent the user\'s registry lists, as that user\'s agent', () => {
-  assert.deepEqual(decide(`claude-${ALICE}`, { listed: true }), {
+  assert.deepEqual(decide(`claude-${ALICE}`, { registryScope: 'ReadWrite' }), {
     restore: true, agentId: `claude-${ALICE}`, userId: ALICE, surface: 'claude',
     name: 'Claude (Alice)', scope: 'ReadWrite', confirmedBy: 'registry',
   });
@@ -132,58 +132,72 @@ test('restore: an anonymous lookup never invents an agent the registry does not 
   // A fixed surface the person never used, and a slug the caller made up.
   for (const id of [`windsurf-${ALICE}`, `send-funds-here-${ALICE}`, `claude-${ALICE}`]) {
     assert.deepEqual(decide(id), { restore: false, reason: 'not-in-registry' }, id);
-    assert.deepEqual(decide(id, { listed: false }), { restore: false, reason: 'not-in-registry' }, id);
   }
 });
 
 test('restore: a token issued to the user restores without the registry, and is not counted', () => {
-  const own = decide(`my-tool-${ALICE}`, { tokenUserId: ALICE, listed: false, restoredFor: () => 99 });
+  const own = decide(`my-tool-${ALICE}`, { tokenUserId: ALICE, tokenScope: 'ReadWrite', restoredFor: () => 99 });
   assert.equal(own.restore, true);
   assert.equal(own.restore && own.confirmedBy, 'token');
-  assert.deepEqual(decide(`claude-${ALICE}`, { tokenUserId: BOB, listed: true }), { restore: false, reason: 'token-for-another-user' });
+  assert.deepEqual(decide(`claude-${ALICE}`, { tokenUserId: BOB, registryScope: 'ReadWrite' }), { restore: false, reason: 'token-for-another-user' });
+});
+
+test('restore: with the scope the registry entry or the token records, never a broader one', () => {
+  // An id of this shape registered through POST /register-agent as ReadOnly stays ReadOnly.
+  for (const scope of ['ReadOnly', 'PublishOnly', 'DiscoverOnly', 'ReadWrite'] as const) {
+    const listed = decide(`my-tool-${ALICE}`, { registryScope: scope });
+    assert.equal(listed.restore && listed.scope, scope, scope);
+    const byToken = decide(`my-tool-${ALICE}`, { tokenUserId: ALICE, tokenScope: scope, registryScope: 'ReadWrite' });
+    assert.equal(byToken.restore && byToken.scope, scope, scope);
+  }
+  // A token scope that is not a delegation scope (register-agent once stored any string), or none.
+  for (const tokenScope of ['Admin', 'readwrite', '', 7, null, undefined]) {
+    const r = decide(`my-tool-${ALICE}`, { tokenUserId: ALICE, tokenScope });
+    assert.equal(r.restore && r.scope, 'DiscoverOnly', JSON.stringify(tokenScope));
+  }
 });
 
 test('restore: never for an unknown user, a deleted user, or an id that is not a user', () => {
-  assert.deepEqual(decide('claude-u-pk-000000000000', { listed: true }), { restore: false, reason: 'unknown-user' });
+  assert.deepEqual(decide('claude-u-pk-000000000000', { registryScope: 'ReadWrite' }), { restore: false, reason: 'unknown-user' });
   // A deleted user is one deleteUserCompletely removed from the identities map.
   const afterDelete = new Map(users);
   afterDelete.delete(ALICE);
-  assert.deepEqual(decide(`claude-${ALICE}`, { listed: true, lookup: id => afterDelete.get(id) }), { restore: false, reason: 'unknown-user' });
+  assert.deepEqual(decide(`claude-${ALICE}`, { registryScope: 'ReadWrite', lookup: id => afterDelete.get(id) }), { restore: false, reason: 'unknown-user' });
   assert.deepEqual(decide(`claude-${ALICE}`, { tokenUserId: ALICE, lookup: id => afterDelete.get(id) }), { restore: false, reason: 'unknown-user' });
   // An identity with a canonical id that is not a user (an agent registered under it).
   const agentNamedLikeAUser = (id: string) => (id === ALICE ? { type: 'agent', name: 'Squat' } : undefined);
-  assert.deepEqual(decide(`claude-${ALICE}`, { listed: true, lookup: agentNamedLikeAUser }), { restore: false, reason: 'unknown-user' });
-  assert.deepEqual(decide('claude-markj', { listed: true }), { restore: false, reason: 'not-a-surface-agent' });
-  assert.deepEqual(decide(`Claude-${ALICE}`, { listed: true }), { restore: false, reason: 'not-a-surface-agent' });
+  assert.deepEqual(decide(`claude-${ALICE}`, { registryScope: 'ReadWrite', lookup: agentNamedLikeAUser }), { restore: false, reason: 'unknown-user' });
+  assert.deepEqual(decide('claude-markj', { registryScope: 'ReadWrite' }), { restore: false, reason: 'not-a-surface-agent' });
+  assert.deepEqual(decide(`Claude-${ALICE}`, { registryScope: 'ReadWrite' }), { restore: false, reason: 'not-a-surface-agent' });
 });
 
 test('restore: never for an id the server already holds, or a reserved one', () => {
-  assert.deepEqual(decide(`mcp-client-${ALICE}`, { listed: true }), { restore: false, reason: 'known' });
+  assert.deepEqual(decide(`mcp-client-${ALICE}`, { registryScope: 'ReadWrite' }), { restore: false, reason: 'known' });
   const reserved = (id: string) => /^playwright-passkey-/.test(id);
-  assert.deepEqual(decide(`playwright-passkey-${ALICE}`, { reserved, listed: true }), { restore: false, reason: 'reserved' });
+  assert.deepEqual(decide(`playwright-passkey-${ALICE}`, { reserved, registryScope: 'ReadWrite' }), { restore: false, reason: 'reserved' });
   assert.deepEqual(decide(`playwright-passkey-${ALICE}`, { reserved, tokenUserId: ALICE }), { restore: false, reason: 'reserved' });
-  assert.equal(decide(`claude-${ALICE}`, { reserved, listed: true }).restore, true);
+  assert.equal(decide(`claude-${ALICE}`, { reserved, registryScope: 'ReadWrite' }).restore, true);
 });
 
 test('bound: anonymous restores are capped per user; token-backed ones are not', () => {
   const limits = { perUser: 2 };
-  assert.deepEqual(decide(`my-tool-${ALICE}`, { limits, listed: true, restoredFor: () => 2 }), { restore: false, reason: 'user-limit' });
-  assert.equal(decide(`my-tool-${ALICE}`, { limits, listed: true, restoredFor: () => 1 }).restore, true);
+  assert.deepEqual(decide(`my-tool-${ALICE}`, { limits, registryScope: 'ReadWrite', restoredFor: () => 2 }), { restore: false, reason: 'user-limit' });
+  assert.equal(decide(`my-tool-${ALICE}`, { limits, registryScope: 'ReadWrite', restoredFor: () => 1 }).restore, true);
   assert.equal(decide(`my-tool-${ALICE}`, { limits, tokenUserId: ALICE, restoredFor: () => 2 }).restore, true);
 });
 
-/** A ledger over a registry that lists `registry`, recording what it reads and seeds. */
-function ledgerOver(registry: Record<string, readonly string[]>, perUser = 2) {
+/** A ledger over a registry that lists `registry` (ReadWrite unless `scopes` says), recording what it reads and seeds. */
+function ledgerOver(registry: Record<string, readonly string[]>, perUser = 2, scopes: Record<string, 'ReadOnly'> = {}) {
   const ledger = new SurfaceAgentRestores({ perUser });
   const known = new Map(users);
   const reads: string[] = [];
   const seeded: RestoreGranted[] = [];
-  const base: Pick<AdmitInput, 'lookup' | 'isListed' | 'seed'> = {
+  const base: Pick<AdmitInput, 'lookup' | 'registryScope' | 'seed'> = {
     lookup: id => known.get(id),
-    isListed: async (userId, agentId) => {
+    registryScope: async (userId, agentId) => {
       reads.push(userId);
       await new Promise(resolve => setImmediate(resolve));
-      return (registry[userId] ?? []).includes(agentId);
+      return (registry[userId] ?? []).includes(agentId) ? scopes[agentId] ?? 'ReadWrite' : undefined;
     },
     seed: granted => {
       seeded.push(granted);
@@ -197,7 +211,7 @@ function ledgerOver(registry: Record<string, readonly string[]>, perUser = 2) {
 test('ledger: restores what the registry lists, once, and reads it only when everything else passes', async () => {
   const { reads, seeded, admit } = ledgerOver({ [ALICE]: [`claude-${ALICE}`] });
   assert.equal((await admit(`claude-${ALICE}`)).restore, true);
-  assert.deepEqual(seeded.map(s => [s.agentId, s.confirmedBy]), [[`claude-${ALICE}`, 'registry']]);
+  assert.deepEqual(seeded.map(s => [s.agentId, s.scope, s.confirmedBy]), [[`claude-${ALICE}`, 'ReadWrite', 'registry']]);
   // Held now: refused as known, without a registry read.
   assert.deepEqual(await admit(`claude-${ALICE}`), { restore: false, reason: 'known' });
   for (const id of ['claude-u-pk-000000000000', 'claude-markj', `Claude-${ALICE}`, `claude-${BOB}-${ALICE}`]) await admit(id);
@@ -237,8 +251,17 @@ test('ledger: a user deleted while the registry is read is not restored; an unre
   const pending = admit(`claude-${ALICE}`);
   known.delete(ALICE);
   assert.deepEqual(await pending, { restore: false, reason: 'unknown-user' });
-  assert.deepEqual(await admit(`cursor-${BOB}`, { isListed: async () => { throw new Error('pod down'); } }), { restore: false, reason: 'not-in-registry' });
+  assert.deepEqual(await admit(`cursor-${BOB}`, { registryScope: async () => { throw new Error('pod down'); } }), { restore: false, reason: 'not-in-registry' });
   assert.equal(seeded.length, 0);
+});
+
+test('ledger: a registry entry\'s scope is the one seeded; a token\'s scope wins without a read', async () => {
+  const { admit, reads, seeded } = ledgerOver({ [ALICE]: [`my-tool-${ALICE}`] }, 2, { [`my-tool-${ALICE}`]: 'ReadOnly' });
+  assert.equal((await admit(`my-tool-${ALICE}`)).restore, true);
+  const byToken = await admit(`cursor-${ALICE}`, { tokenUserId: ALICE, tokenScope: 'PublishOnly' });
+  assert.equal(byToken.restore && byToken.scope, 'PublishOnly');
+  assert.deepEqual(seeded.map(s => [s.agentId, s.scope]), [[`my-tool-${ALICE}`, 'ReadOnly'], [`cursor-${ALICE}`, 'PublishOnly']]);
+  assert.deepEqual(reads, [ALICE]);
 });
 
 test('ledger: a deleted user\'s count is released', async () => {
@@ -251,7 +274,8 @@ test('ledger: a deleted user\'s count is released', async () => {
 });
 
 // What the relay writes to `<pod>/agents` (ownerProfileToTurtle in @interego/core, verbatim
-// output for two agents), plus entries this server must not take for one of its agents.
+// output for two agents), entries whose scope is narrower, missing, unknown or listed twice,
+// and entries this server must not take for one of its agents.
 const REGISTRY = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
 @prefix foaf: <http://xmlns.com/foaf/0.1/> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
@@ -281,6 +305,27 @@ const REGISTRY = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns
     a prov:SoftwareAgent ;
     iep:encryptionPublicKey "S2V5" .
 
+<#agent-did%3Aweb%3Aidentity.example%3Aagents%3Aread-only-${ALICE}> a iep:AuthorizedAgent ;
+    iep:agentIdentity <did:web:identity.example:agents:read-only-${ALICE}> ;
+    iep:delegatedBy <https://identity.example/users/${ALICE}/profile#me> ;
+    iep:scope iep:ReadOnly ;
+    iep:validFrom "2026-10-01T00:00:00.000Z"^^xsd:dateTime .
+
+<#agent-read-only-${ALICE}> a iep:AuthorizedAgent ;
+    iep:agentIdentity <read-only-${ALICE}> ;
+    iep:scope iep:ReadOnly .
+
+<#agent-both-${ALICE}> a iep:AuthorizedAgent ;
+    iep:agentIdentity <both-${ALICE}> ;
+    iep:scope iep:ReadWrite .
+<#agent-did%3Aweb%3Aidentity.example%3Aagents%3Aboth-${ALICE}> a iep:AuthorizedAgent ;
+    iep:agentIdentity <did:web:identity.example:agents:both-${ALICE}> ;
+    iep:scope iep:PublishOnly .
+
+<#agent-odd-${ALICE}> a iep:AuthorizedAgent ;
+    iep:agentIdentity <odd-${ALICE}> ;
+    iep:scope iep:Everything .
+
 <#agent-legacy> a iep:AuthorizedAgent ;
     iep:agentIdentity <zed-${ALICE}> .
 <#agent-elsewhere> a iep:AuthorizedAgent ;
@@ -289,13 +334,21 @@ const REGISTRY = `@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns
     iep:agentIdentity <https://identity.example/agents/chatgpt-${ALICE}/profile#agent> .
 `;
 
-test('registry: the agents the relay lists, as this server names them', () => {
-  const ids = registryAgentIds(REGISTRY, ['did:web:identity.example:agents:']);
-  assert.deepEqual([...ids].sort(), [`claude-${ALICE}`, `my-client-${ALICE}`, `zed-${ALICE}`]);
+test('registry: the agents the relay lists, as this server names them, with their scopes', () => {
+  const scopes = registryAgentScopes(REGISTRY, ['did:web:identity.example:agents:']);
+  assert.deepEqual([...scopes].sort(), [
+    [`both-${ALICE}`, 'DiscoverOnly'],      // listed twice, with different scopes: the least
+    [`claude-${ALICE}`, 'ReadWrite'],
+    [`my-client-${ALICE}`, 'ReadWrite'],
+    [`odd-${ALICE}`, 'DiscoverOnly'],       // not a delegation scope
+    [`read-only-${ALICE}`, 'ReadOnly'],     // listed twice, in both forms, with one scope
+    [`zed-${ALICE}`, 'DiscoverOnly'],       // no scope
+  ]);
   // Under another host's DID none of the did:web entries is this server's.
-  assert.deepEqual([...registryAgentIds(REGISTRY, ['did:web:identity.test:agents:'])], [`zed-${ALICE}`]);
-  assert.equal(registryAgentIds('', ['did:web:identity.example:agents:']).size, 0);
-  assert.equal(registryAgentIds('not turtle at all <>', ['did:web:identity.example:agents:']).size, 0);
+  assert.deepEqual([...registryAgentScopes(REGISTRY, ['did:web:identity.test:agents:']).keys()].sort(),
+    [`both-${ALICE}`, `odd-${ALICE}`, `read-only-${ALICE}`, `zed-${ALICE}`]);
+  assert.equal(registryAgentScopes('', ['did:web:identity.example:agents:']).size, 0);
+  assert.equal(registryAgentScopes('not turtle at all <>', ['did:web:identity.example:agents:']).size, 0);
 });
 
 test('register: another user\'s canonical suffix is refused, known to the server or not', () => {

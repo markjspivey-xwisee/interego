@@ -48,7 +48,7 @@ const pods = new Map<string, Record<string, unknown>>([
 // The surface agents each person's registry lists ('fail': the registry cannot be read).
 // Some ids are listed only to show that the other checks still refuse them.
 const registries = new Map<string, readonly string[] | 'fail'>([
-  [ALICE, [`claude-${ALICE}`, `claude-code-vscode-${ALICE}`, `cursor-${ALICE}`, `playwright-passkey-${ALICE}`, `claude-${BOB}-${ALICE}`]],
+  [ALICE, [`claude-${ALICE}`, `claude-code-vscode-${ALICE}`, `cursor-${ALICE}`, `reader-${ALICE}`, `playwright-passkey-${ALICE}`, `claude-${BOB}-${ALICE}`]],
   [BOB, [`my-client-${BOB}`, `claude-code-${BOB}`]],
   [CAROL, [`claude-${CAROL}`, `chatgpt-${CAROL}`]],
   [DAVE, DAVE_TOOLS],
@@ -56,6 +56,8 @@ const registries = new Map<string, readonly string[] | 'fail'>([
   [TRY_USER, [`claude-${TRY_USER}`]],
   [LEGACY, [`claude-${LEGACY}`]],
 ]);
+// Entries listed with a scope other than ReadWrite.
+const registryScopes = new Map<string, string>([[`reader-${ALICE}`, 'ReadOnly']]);
 const registryReads = new Map<string, number>();
 
 /** `<pod>/agents` as the relay's writeAgentRegistry leaves it (ownerProfileToTurtle). */
@@ -78,7 +80,7 @@ function registryTurtle(userId: string, agentIds: readonly string[]): string {
       `${frag(id)} a iep:AuthorizedAgent ;`,
       `    iep:agentIdentity <${did(id)}> ;`,
       `    iep:delegatedBy <${webId}> ;`,
-      '    iep:scope iep:ReadWrite ;',
+      `    iep:scope iep:${registryScopes.get(id) ?? 'ReadWrite'} ;`,
       `    iep:validFrom "${now}"^^xsd:dateTime ;`,
       `    foaf:name "${id}" ;`,
       '    a prov:SoftwareAgent ;',
@@ -142,9 +144,9 @@ let host = '';
 let output = '';
 
 /** A token as issueToken signs it. `agentId` is unknown so a malformed one can be minted too. */
-function token(userId: string, agentId: unknown): string {
+function token(userId: string, agentId: unknown, scope = 'ReadWrite'): string {
   const b64 = Buffer.from(JSON.stringify({
-    userId, agentId, scope: 'ReadWrite', issuedAt: new Date().toISOString(),
+    userId, agentId, scope, issuedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 3600_000).toISOString(), epoch: 0,
   }), 'utf8').toString('base64url');
   return `cg2_${b64}.${crypto.createHmac('sha256', signingKey).update(b64).digest('base64url')}`;
@@ -233,6 +235,22 @@ test('the profile route restores too, named as ensureSurfaceAgent names it', asy
   assert.match(r.body, /iep:scope "ReadWrite"/);
   const webId = await get(`/users/${ALICE}/profile`);
   assert.ok(webId.body.includes(`<${base}/agents/claude-code-vscode-${ALICE}/profile#agent>`), webId.body);
+});
+
+test('a restored agent keeps the scope its registry entry or its token records', async () => {
+  // Listed as ReadOnly (registered that way through POST /register-agent, say): not ReadWrite.
+  const listed = await get(agentPath(`reader-${ALICE}`, 'profile'));
+  assert.equal(listed.status, 200, output);
+  assert.match(listed.body, /iep:scope "ReadOnly"/);
+  // And a token minted for it now carries that scope.
+  const minted = await post('/tokens', { userId: ALICE, agentId: `reader-${ALICE}` }, token(ALICE, `claude-${ALICE}`));
+  assert.equal(minted.status, 200, JSON.stringify(minted.json));
+  assert.equal(minted.json['scope'], 'ReadOnly');
+  // Restored by a token: the scope it was signed with, the least one for a scope that is none.
+  for (const [agentId, scope, expected] of [[`pub-${BOB}`, 'PublishOnly', 'PublishOnly'], [`odd-${BOB}`, 'Admin', 'DiscoverOnly']] as const) {
+    assert.equal((await post('/tokens/verify', { token: token(BOB, agentId, scope) })).json['valid'], true, agentId);
+    assert.match((await get(agentPath(agentId, 'profile'))).body, new RegExp(`iep:scope "${expected}"`), agentId);
+  }
 });
 
 test('an anonymous lookup never invents an agent the person\'s registry does not list', async () => {

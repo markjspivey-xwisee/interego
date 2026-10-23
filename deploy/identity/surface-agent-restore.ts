@@ -18,8 +18,12 @@
  *   - that user's pod registry lists it (an anonymous lookup, such as a DID resolution), or
  *   - a token this server signed for that agent id was issued to that user.
  * Only canonical user ids (derive-userid.ts) are trusted here, because only those are a
- * function of a credential; a display alias or a `u-try-` id is not. The registry check is
- * what keeps a caller from inventing agents: the id alone would let anyone restore
+ * function of a credential; a display alias or a `u-try-` id is not. The agent comes back
+ * with the delegation scope that proof records (the registry's `iep:scope`, or the scope the
+ * token was signed with), never a broader one: an id of this shape may have been registered
+ * through `POST /register-agent` as `ReadOnly`, and `POST /tokens` issues tokens with the
+ * scope the identity holds. The registry check is what keeps a caller from inventing
+ * agents: the id alone would let anyone restore
  * `windsurf-<alice>` or `send-funds-here-<alice>` for a person who never had one, and every
  * restored agent is listed in that person's WebID profile as an authorized agent.
  *
@@ -60,8 +64,22 @@ const SLUG_SEGMENTS = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_AGENT_ID_LENGTH = 64;
 // An `iep:agentIdentity` object in a registry document (the deprecated `cg:` prefix too).
 const REGISTRY_AGENT_IDENTITY = /(?:iep|cg):agentIdentity\s+<([^<>\s]*)>/g;
+// The `iep:scope` of a registry entry, as parseOwnerProfile in @interego/core reads it.
+const REGISTRY_SCOPE = /(?:iep|cg):scope\s+(?:iep|cg):(\w+)/;
 // A bare agent id in a registry: the relay's legacy short form of the agent's did:web.
 const BARE_AGENT_ID = /^[A-Za-z0-9._~-]+$/;
+
+/** The four delegation scopes (DelegationScope in @interego/core). */
+export const DELEGATION_SCOPES = ['ReadWrite', 'ReadOnly', 'PublishOnly', 'DiscoverOnly'] as const;
+export type DelegationScope = typeof DELEGATION_SCOPES[number];
+
+/**
+ * A delegation scope, or the least one for anything else (a missing scope, or one
+ * `POST /register-agent` accepted unchecked), as ownerProfileToTurtle falls back.
+ */
+export function delegationScope(value: unknown): DelegationScope {
+  return (DELEGATION_SCOPES as readonly unknown[]).includes(value) ? value as DelegationScope : 'DiscoverOnly';
+}
 
 export function isSurfaceSlug(surface: string): boolean {
   return RELAY_SLUG.test(surface) && SLUG_SEGMENTS.test(surface);
@@ -157,22 +175,31 @@ export function checkAgentIdForRegistration(agentId: unknown, callerUserId: stri
 }
 
 /**
- * The agent ids an owner's pod agent registry lists. The registry is the Turtle the relay
- * writes to `<pod>/agents` (ownerProfileToTurtle in @interego/core), one
- * `iep:agentIdentity <did:web:<identity host>:agents:<id>>` per authorized agent; revoked
- * agents are not written. `didPrefixes` are the `did:web:<host>:agents:` forms this server
- * mints. A bare id is the relay's legacy short form of the same DID. Anything else (another
- * host's DID, a WebID) is not one of this server's agents and is skipped.
+ * The agent ids an owner's pod agent registry lists, each with its delegation scope. The
+ * registry is the Turtle the relay writes to `<pod>/agents` (ownerProfileToTurtle in
+ * @interego/core): one `<#agent-…>` entry per authorized agent, with
+ * `iep:agentIdentity <did:web:<identity host>:agents:<id>>` and `iep:scope iep:<scope>`;
+ * revoked agents are not written. The entries are split as parseOwnerProfile splits them, so
+ * the scope is the one the relay itself reads. `didPrefixes` are the `did:web:<host>:agents:`
+ * forms this server mints. A bare id is the relay's legacy short form of the same DID.
+ * Anything else (another host's DID, a WebID) is not one of this server's agents and is
+ * skipped. A missing or unknown scope reads as the least one, and so does an agent listed
+ * twice with different scopes (a registry can hold both forms of one agent).
  */
-export function registryAgentIds(turtle: string, didPrefixes: readonly string[]): Set<string> {
-  const ids = new Set<string>();
-  for (const m of turtle.matchAll(REGISTRY_AGENT_IDENTITY)) {
-    const value = m[1]!;
-    const prefix = didPrefixes.find(p => value.startsWith(p));
-    const id = prefix !== undefined ? value.slice(prefix.length) : value;
-    if (BARE_AGENT_ID.test(id)) ids.add(id);
+export function registryAgentScopes(turtle: string, didPrefixes: readonly string[]): Map<string, DelegationScope> {
+  const scopes = new Map<string, DelegationScope>();
+  for (const entry of turtle.split(/(?=<#agent-)/)) {
+    const scope = delegationScope(REGISTRY_SCOPE.exec(entry)?.[1]);
+    for (const m of entry.matchAll(REGISTRY_AGENT_IDENTITY)) {
+      const value = m[1]!;
+      const prefix = didPrefixes.find(p => value.startsWith(p));
+      const id = prefix !== undefined ? value.slice(prefix.length) : value;
+      if (!BARE_AGENT_ID.test(id)) continue;
+      const seen = scopes.get(id);
+      scopes.set(id, seen === undefined || seen === scope ? scope : 'DiscoverOnly');
+    }
   }
-  return ids;
+  return scopes;
 }
 
 export interface RestoreLimits {
@@ -202,9 +229,10 @@ export interface RestoreGranted {
   readonly agentId: string;
   readonly userId: string;
   readonly surface: string;
-  /** seedIdentity's name and scope: what ensureSurfaceAgent gives the same agent. */
+  /** The name ensureSurfaceAgent gives the same agent. */
   readonly name: string;
-  readonly scope: 'ReadWrite';
+  /** The scope the registry lists it with, or the scope of the verified token. */
+  readonly scope: DelegationScope;
   /** A verified token issued to the user, or the user's pod registry (counted). */
   readonly confirmedBy: 'token' | 'registry';
 }
@@ -221,8 +249,13 @@ export interface RestoreInput {
    * signed that agent id for that user, so the registry is not asked and nothing is counted.
    */
   readonly tokenUserId?: string;
-  /** For an anonymous lookup: whether the user's pod agent registry lists this agent. */
-  readonly listed?: boolean;
+  /** With `tokenUserId`: the scope that token was signed with. */
+  readonly tokenScope?: unknown;
+  /**
+   * For an anonymous lookup: the scope the user's pod agent registry lists this agent with;
+   * undefined when it does not list it.
+   */
+  readonly registryScope?: DelegationScope;
   /** Agent ids never restored (server.ts passes the janitor's TEST_AGENT_PATTERN). */
   readonly reserved?: (agentId: string) => boolean;
   readonly restoredFor: (userId: string) => number;
@@ -246,21 +279,21 @@ export function decideSurfaceAgentRestore(input: RestoreInput): RestoreDecision 
     userId: parsed.userId,
     surface: parsed.surface,
     name: surfaceAgentLabel(parsed.surface, user.name),
-    scope: 'ReadWrite',
   } as const;
-  if (input.tokenUserId !== undefined) return { ...granted, confirmedBy: 'token' };
-  if (input.listed !== true) return { restore: false, reason: 'not-in-registry' };
+  if (input.tokenUserId !== undefined) return { ...granted, scope: delegationScope(input.tokenScope), confirmedBy: 'token' };
+  if (input.registryScope === undefined) return { restore: false, reason: 'not-in-registry' };
   const limits = input.limits ?? DEFAULT_RESTORE_LIMITS;
   if (input.restoredFor(parsed.userId) >= limits.perUser) return { restore: false, reason: 'user-limit' };
-  return { ...granted, confirmedBy: 'registry' };
+  return { ...granted, scope: delegationScope(input.registryScope), confirmedBy: 'registry' };
 }
 
-export interface AdmitInput extends Pick<RestoreInput, 'agentId' | 'lookup' | 'tokenUserId' | 'reserved'> {
+export interface AdmitInput extends Pick<RestoreInput, 'agentId' | 'lookup' | 'tokenUserId' | 'tokenScope' | 'reserved'> {
   /**
-   * Whether `userId`'s pod agent registry lists `agentId`. Asked only for an anonymous lookup
-   * that every other check admits, so a refused id costs no pod read. A throw counts as no.
+   * The scope `userId`'s pod agent registry lists `agentId` with, undefined when it does not
+   * list it. Asked only for an anonymous lookup that every other check admits, so a refused
+   * id costs no pod read. A throw counts as not listed.
    */
-  readonly isListed: (userId: string, agentId: string) => Promise<boolean>;
+  readonly registryScope: (userId: string, agentId: string) => Promise<DelegationScope | undefined>;
   /**
    * Seeds the identity. Called in the same tick as the decision that admits it, so two
    * lookups racing for one id seed it once (the second is refused as `known`).
@@ -275,22 +308,22 @@ export class SurfaceAgentRestores {
   constructor(private readonly limits: RestoreLimits = DEFAULT_RESTORE_LIMITS) {}
 
   async admit(input: AdmitInput): Promise<RestoreDecision> {
-    const decide = (listed: boolean): RestoreDecision => decideSurfaceAgentRestore({
+    const decide = (registryScope: DelegationScope | undefined): RestoreDecision => decideSurfaceAgentRestore({
       agentId: input.agentId,
       lookup: input.lookup,
-      ...(input.tokenUserId !== undefined ? { tokenUserId: input.tokenUserId } : {}),
+      ...(input.tokenUserId !== undefined ? { tokenUserId: input.tokenUserId, tokenScope: input.tokenScope } : {}),
       ...(input.reserved ? { reserved: input.reserved } : {}),
-      listed,
+      ...(registryScope !== undefined ? { registryScope } : {}),
       restoredFor: userId => this.perUser.get(userId) ?? 0,
       limits: this.limits,
     });
-    // Everything but the registry first.
-    let decision = decide(true);
+    // Everything but the registry first (as though it listed the agent).
+    let decision = decide('DiscoverOnly');
     if (decision.restore && decision.confirmedBy === 'registry') {
-      const listed = await input.isListed(decision.userId, decision.agentId).catch(() => false);
+      const scope = await input.registryScope(decision.userId, decision.agentId).catch(() => undefined);
       // Again, on the map as it is now: the user may have been deleted, or the agent
       // restored by another lookup, while the registry was read.
-      decision = decide(listed);
+      decision = decide(scope);
     }
     if (decision.restore) {
       if (decision.confirmedBy === 'registry') {

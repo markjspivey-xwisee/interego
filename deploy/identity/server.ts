@@ -56,8 +56,9 @@ import {
   SurfaceAgentRestores,
   checkAgentIdForRegistration,
   foreignCanonicalSuffix,
-  registryAgentIds,
+  registryAgentScopes,
   surfaceAgentLabel,
+  type DelegationScope,
 } from './surface-agent-restore.js';
 import { enrollProvisionalCredential } from './provisional-play-enrollment.js';
 
@@ -1284,7 +1285,8 @@ const TEST_AGENT_PATTERN = new RegExp(process.env['TEST_AGENT_PATTERN'] ?? '^pla
 // so it is restored on demand (surface-agent-restore.ts): only for a canonical user id of a
 // user known here, never for a reserved id, and only when the user's pod agent registry
 // (which the relay writes on OAuth) lists it or a verified token issued to that user names
-// it. Anonymous restores are capped per user as a backstop.
+// it, with the scope that registry entry or token records. Anonymous restores are capped per
+// user as a backstop.
 const surfaceAgentRestores = new SurfaceAgentRestores();
 
 // The forms of an agent's DID this server mints (issueTokenResponse, /me), as the relay
@@ -1297,30 +1299,30 @@ const AGENT_DID_PREFIXES = [...new Set([`did:web:${BASE_URL_HOST}:agents:`, `did
 // read that failed is retried sooner.
 const POD_REGISTRY_TTL_MS = 60_000;
 const POD_REGISTRY_FAILURE_TTL_MS = 5_000;
-const podRegistryCache = new Map<string, { expires: number; ids: Promise<ReadonlySet<string> | null> }>();
+const podRegistryCache = new Map<string, { expires: number; ids: Promise<ReadonlyMap<string, DelegationScope> | null> }>();
 
-async function readPodRegistryAgentIds(userId: string): Promise<ReadonlySet<string> | null> {
+async function readPodRegistryAgentScopes(userId: string): Promise<ReadonlyMap<string, DelegationScope> | null> {
   const url = podAgentRegistryUrl(userId);
   try {
     const r = await podFetch(url, { headers: { Accept: 'text/turtle' } });
-    if (r.status === 404) return new Set();
+    if (r.status === 404) return new Map();
     if (!r.ok) {
       log(`WARN: could not read agent registry ${url}: ${r.status} ${r.statusText}`);
       return null;
     }
-    return registryAgentIds(await r.text(), AGENT_DID_PREFIXES);
+    return registryAgentScopes(await r.text(), AGENT_DID_PREFIXES);
   } catch (err) {
     log(`WARN: could not read agent registry ${url}: ${(err as Error).message}`);
     return null;
   }
 }
 
-/** The agent ids `<pod>/agents` lists for this user; null when the registry could not be read. */
-function podRegistryAgentIds(userId: string): Promise<ReadonlySet<string> | null> {
+/** The agent ids `<pod>/agents` lists for this user, with their scopes; null when it could not be read. */
+function podRegistryAgentScopes(userId: string): Promise<ReadonlyMap<string, DelegationScope> | null> {
   const now = Date.now();
   const cached = podRegistryCache.get(userId);
   if (cached && cached.expires > now) return cached.ids;
-  const entry = { expires: now + POD_REGISTRY_TTL_MS, ids: readPodRegistryAgentIds(userId) };
+  const entry = { expires: now + POD_REGISTRY_TTL_MS, ids: readPodRegistryAgentScopes(userId) };
   podRegistryCache.set(userId, entry);
   void entry.ids.then(ids => {
     if (ids === null) entry.expires = Math.min(entry.expires, Date.now() + POD_REGISTRY_FAILURE_TTL_MS);
@@ -1329,22 +1331,23 @@ function podRegistryAgentIds(userId: string): Promise<ReadonlySet<string> | null
 }
 
 /**
- * Restore a forgotten surface agent as its user's, with the name and scope ensureSurfaceAgent
- * would give it. `tokenUserId` is the user a verified token naming this agent was issued to;
- * without it the user's pod registry must list the agent. Never rejects.
+ * Restore a forgotten surface agent as its user's, with the name ensureSurfaceAgent would give
+ * it. `token` is a verified token naming this agent: the user it was issued to and the scope
+ * it was signed with. Without one the user's pod registry must list the agent, and its entry
+ * gives the scope. Never rejects.
  */
-async function restoreSurfaceAgent(agentId: string, tokenUserId?: string): Promise<void> {
+async function restoreSurfaceAgent(agentId: string, token?: { userId: string; scope: unknown }): Promise<void> {
   if (identities.has(agentId)) return;
   try {
     await surfaceAgentRestores.admit({
       agentId,
       lookup: id => identities.get(id),
       reserved: id => TEST_AGENT_PATTERN.test(id),
-      ...(tokenUserId !== undefined ? { tokenUserId } : {}),
-      isListed: async (userId, id) => (await podRegistryAgentIds(userId))?.has(id) ?? false,
+      ...(token !== undefined ? { tokenUserId: token.userId, tokenScope: token.scope } : {}),
+      registryScope: async (userId, id) => (await podRegistryAgentScopes(userId))?.get(id),
       seed: granted => {
         seedIdentity(granted.agentId, 'agent', granted.name, granted.userId, granted.scope);
-        log(`Restored surface agent ${granted.agentId} for ${granted.userId} (confirmed by ${granted.confirmedBy})`);
+        log(`Restored surface agent ${granted.agentId} for ${granted.userId} as ${granted.scope} (confirmed by ${granted.confirmedBy})`);
       },
     });
   } catch (err) {
@@ -1683,10 +1686,10 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
   }
   // The token's agent may be a surface agent forgotten by a restart, as the anonymous DID
   // document route would restore it. This server signed that agent id for this user, so it
-  // is restored here too (only as this user's `<surface>-<userId>`, without asking the pod
-  // registry and uncounted). The record below is the same either way: nothing the token can
-  // do changes.
-  await restoreSurfaceAgent(payload.agentId, payload.userId);
+  // is restored here too (only as this user's `<surface>-<userId>`, with the scope the token
+  // was signed with, without asking the pod registry and uncounted). The record below is the
+  // same either way: nothing the token can do changes.
+  await restoreSurfaceAgent(payload.agentId, { userId: payload.userId, scope: payload.scope });
   const record: TokenRecord = {
     token,
     userId: payload.userId,
