@@ -9,10 +9,15 @@
  * an authorship proof whose signature verifies, was signed by a platform key this bridge
  * trusts, and sits at exactly the URL its own proof's descriptorId predicts. Anything else — a
  * holder copy, a descriptor someone appended without a trusted proof, a genuine descriptor
- * replayed to another URL — is set aside with a reason and never becomes current. A head that
- * IS eligible but whose graph bytes no longer match the signed digest, or whose descriptor's
- * modal status no longer matches the status its signed payload records, is "altered": every
- * lifecycle call on that graph refuses (409) rather than act on it.
+ * replayed to another URL — is set aside with a reason and never becomes current. Eligibility is
+ * decided from the descriptor alone, before its graph is looked at, so it never depends on what
+ * a party able to write the pod did to the graph, the descriptor's link to it, or its
+ * iep:describes. A head that IS eligible but whose graph bytes no longer match the signed digest,
+ * whose graph is missing, does not open or cannot be found in its document, whose descriptor's
+ * iep:describes no longer names the graph its proof covers, or whose descriptor's modal status no
+ * longer matches the status its signed payload records, is "altered": every lifecycle call on
+ * that graph refuses (409) rather than act on it, and the version before it never becomes
+ * current again; once the bytes are restored it is trusted again.
  *
  * What this cannot stop, and says so in the README: a party with write access to the pod can
  * delete files, or overwrite a genuine descriptor's unsigned facets in place. v1 relies on the
@@ -53,7 +58,7 @@ import {
 import { WRD_NS, WRD_SHAPES_NS, readShapesTurtle } from '../src/ontology.js';
 import {
   buildDescriptor, buildGraphTurtle, parseRecordGraph, slugOf, h16, normalisePodUrl, graphIriOf, isWellFormedText, recordKeyFingerprint, fingerprintOfRecord,
-  type DescriptorSpec, type ModalChoice, type RecordKind, type WrdRecord,
+  kindOfIri, kindOfRecord, type DescriptorSpec, type ModalChoice, type RecordKind, type WrdRecord,
 } from '../src/records.js';
 
 export { normalisePodUrl };
@@ -380,19 +385,21 @@ function placement(entry: ManifestEntry, podUrl: string, container: string, proo
 }
 
 /**
- * A record whose sealed graph did not open. Its descriptor's proof is still checked (the
- * signature, with no content to bind), so a version a trusted platform key signed at its
- * predicted URL stays ELIGIBLE but is never trusted: its graph answers "altered" (409) instead
- * of the previous version becoming current again, which a party able to write the pod could
- * otherwise cause by corrupting one ciphertext. Anything less than that is set aside, as ever.
+ * A record whose graph could not be read as signed: sealed and did not open, missing, linked
+ * outside the pod or not at all, or its signed region not found in the document. Its descriptor's
+ * proof is still checked (the signature, with no content to bind), so a version a trusted platform
+ * key signed at its predicted URL stays ELIGIBLE but is never trusted: its graph answers "altered"
+ * (409) instead of the previous version becoming current again, which a party able to write the
+ * pod could otherwise cause by corrupting one ciphertext, deleting one graph, or editing one
+ * descriptor's link or iep:describes. Anything less than that is set aside, as ever, with why.
  */
-async function sealedShut(entry: ManifestEntry, podUrl: string, descriptorTurtle: string, trusted: ReadonlySet<string>,
+async function placedByDescriptor(entry: ManifestEntry, podUrl: string, descriptorTurtle: string, trusted: ReadonlySet<string>,
   container: string, why: string, cache?: VerifyCache): Promise<LoadedRecord> {
   const proof = parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle);
   const subjectId = firstMatch(/^<([^>]+)>\s*\n\s*a iep:ContextDescriptor/m, descriptorTurtle);
   let verified: Verified = { signatureValid: false, contentBinding: 'unbound' };
   if (proof) {
-    const key = sha256Hex(`sealed\u0000${descriptorTurtle}`);
+    const key = sha256Hex(`descriptor-only\u0000${descriptorTurtle}`);
     const hit = cache?.get(key);
     if (hit) {
       verified = hit;
@@ -415,7 +422,7 @@ async function sealedShut(entry: ManifestEntry, podUrl: string, descriptorTurtle
   return {
     ...unreadable(entry, reason),
     recordId: proof?.descriptorId ?? subjectId ?? '',
-    // The graph this descriptor itself names, not the manifest's word for it (see ofGraph).
+    // The graph this descriptor itself names, for display: which graph it counts toward is decided by ofGraph, never by this.
     graphIri: firstMatch(/iep:describes\s+<([^>]+)>/, descriptorTurtle) ?? '',
     modalStatus: firstMatch(/iep:modalStatus\s+iep:(\w+)/, descriptorTurtle) ?? entry.modalStatus,
     validFrom: firstMatch(/iep:validFrom\s+"([^"]+)"/, descriptorTurtle),
@@ -429,40 +436,79 @@ async function sealedShut(entry: ManifestEntry, podUrl: string, descriptorTurtle
   };
 }
 
+/** Why a version whose descriptor's iep:describes was changed after signing is not trusted. */
+export const DESCRIBES_ALTERED = 'its descriptor was altered after signing: its iep:describes no longer names the graph its proof covers';
+const DESCRIBES = /\b(?:iep|cg):describes\s+<[^>]+>/;
+/** A named graph block's opening line, as wrapAsTriG writes it at column 0. */
+const BLOCK_OPENER = /^<([^<>\s]+)> \{$/gm;
+/** How many named graph blocks of one document signedRegionHeld tries; a document the bridge wrote holds one. */
+const BLOCKS_TRIED = 4;
+
+/**
+ * The signed region of a graph document whose descriptor's iep:describes names no block in it:
+ * the document is read as if the descriptor named, in turn, each graph the document holds a named
+ * block for (only that line differs; the proof, id, modal status and times are the descriptor's
+ * own), and a region is taken only when the platform's proof binds it ('bound') and the record in
+ * it is a version of that graph. So the graph a version belongs to is still the one its signed
+ * content names, and an edit to its iep:describes alone makes that version altered (409), never
+ * a stranger to its own graph. Null when no block binds.
+ */
+async function signedRegionHeld(entry: ManifestEntry, descriptorTurtle: string, graphContent: string, cache?: VerifyCache): Promise<BytesRead | null> {
+  if (!DESCRIBES.test(descriptorTurtle)) return null;
+  const held = [...graphContent.matchAll(BLOCK_OPENER)].map((m) => m[1] ?? '').filter((g) => g !== '').slice(0, BLOCKS_TRIED);
+  for (const graphIri of held) {
+    const as = descriptorTurtle.replace(DESCRIBES, () => `iep:describes <${graphIri}>`);
+    if (as === descriptorTurtle) continue;
+    const bytes = await readBytes(as, graphContent, entry.modalStatus, cache);
+    if (bytes.ok && bytes.read.verified.contentBinding === 'bound' && bytes.read.record !== null && graphIriOf(bytes.read.record.entityIri) === graphIri) return bytes.read;
+  }
+  return null;
+}
+
 /**
  * Read one record from a pod and verify it: the descriptor and the graph are fetched (a sealed
  * graph opened with `recordKey`), their bytes verified (readBytes), and the record is placed: it
  * must sit at exactly the URL its own proof's descriptorId predicts, and be signed by a platform
- * key this bridge trusts. A sealed graph that does not open is handled by sealedShut.
+ * key this bridge trusts. Once the descriptor is read, every way the graph can fail to be read as
+ * signed is decided by placedByDescriptor, so a version eligible by its descriptor stays eligible
+ * (and untrusted). A descriptor whose iep:describes no longer names its graph's signed region is
+ * read through signedRegionHeld, and is altered (DESCRIBES_ALTERED).
  */
 export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: FetchFn, trusted: ReadonlySet<string>,
   cache?: VerifyCache, container: string = WRD_CONTAINER, recordKey?: EncryptionKeyPair): Promise<LoadedRecord> {
   const desc = await getText(entry.descriptorUrl, fetchFn, 'text/turtle');
   if (desc.body === null) return unreadable(entry, `the descriptor is not at its manifest URL (${desc.status})`);
   const descriptorTurtle = desc.body;
+  const shut = (why: string): Promise<LoadedRecord> => placedByDescriptor(entry, podUrl, descriptorTurtle, trusted, container, why, cache);
   const dist = parseDistributionFromDescriptorTurtle(descriptorTurtle);
-  if (!dist) return unreadable(entry, 'the descriptor links no graph');
-  if (!dist.accessURL.startsWith(podUrl)) return unreadable(entry, 'the descriptor links a graph outside this pod');
+  if (!dist) return shut('its descriptor links no graph');
+  if (!dist.accessURL.startsWith(podUrl)) return shut('its descriptor links a graph outside this pod');
   let graphContent: string;
   if (dist.encrypted) {
     const sealed = await getText(dist.accessURL, fetchFn, 'application/jose+json');
-    if (sealed.body === null) return unreadable(entry, `the graph is not at the URL its descriptor names (${sealed.status})`);
+    if (sealed.body === null) return shut(`its graph is not at the URL its descriptor names (${sealed.status})`);
     const opened = recordKey ? openSealedGraph(sealed.body, recordKey) : null;
-    if (opened === null) return sealedShut(entry, podUrl, descriptorTurtle, trusted, container, recordKey ? SEALED_OTHER_KEY : SEALED_NO_KEY, cache);
+    if (opened === null) return shut(recordKey ? SEALED_OTHER_KEY : SEALED_NO_KEY);
     graphContent = opened;
   } else {
     const graph = await getText(dist.accessURL, fetchFn, 'application/trig, text/turtle');
-    if (graph.body === null) return unreadable(entry, `the graph is not at the URL its descriptor names (${graph.status})`);
+    if (graph.body === null) return shut(`its graph is not at the URL its descriptor names (${graph.status})`);
     graphContent = graph.body;
   }
-  const bytes = await readBytes(descriptorTurtle, graphContent, entry.modalStatus, cache);
-  if (!bytes.ok) return unreadable(entry, bytes.why);
+  let bytes = await readBytes(descriptorTurtle, graphContent, entry.modalStatus, cache);
+  let describesAltered = false;
+  if (!bytes.ok) {
+    const held = await signedRegionHeld(entry, descriptorTurtle, graphContent, cache);
+    if (held === null) return shut(bytes.why);
+    bytes = { ok: true, read: held };
+    describesAltered = true;
+  }
   const r = bytes.read;
   const { proof, verified } = r;
   const { signerAddress, signedByTrustedKey, atPredictedUrl } = placement(entry, podUrl, container, proof, r.subjectId, verified.signatureValid, trusted);
   const eligible = signedByTrustedKey && atPredictedUrl;
-  const isTrusted = eligible && verified.contentBinding === 'bound' && r.record !== null && r.modalMatches;
-  const why = distrust(r, signedByTrustedKey, atPredictedUrl, 'it was signed by a key this bridge does not trust');
+  const why = distrust(r, signedByTrustedKey, atPredictedUrl, 'it was signed by a key this bridge does not trust') ?? (describesAltered ? DESCRIBES_ALTERED : null);
+  const isTrusted = eligible && why === null;
   const confidenceText = firstMatch(/iep:epistemicConfidence\s+"([^"]+)"/, descriptorTurtle);
   const confidence = confidenceText === null ? null : Number(confidenceText);
   return {
@@ -546,14 +592,24 @@ export async function verifyHolderBundle(bundle: unknown, expectedPlatform: read
 // ── Heads ────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Whether a record read for `graphIri` is a version of that graph. A record that opened is judged
- * by its signed content: the named graph its proof covers, and the entity that graph is about. A
- * sealed record that did not open is judged by its own descriptor, and stays untrusted anyway.
- * The manifest's `describes` is never enough: the pod's writers can edit it.
+ * Whether a record read for `graphIri` is a version of that graph. A record whose content the
+ * platform's proof binds is judged by that signed content: the named graph its proof covers, and
+ * the entity that graph is about. A record with no signed content to judge by (its graph sealed
+ * and not opened, missing, not found in its document, or changed after signing) is judged, when a
+ * trusted key signed it where its proof says (eligible), by the kind of entity its signed record id
+ * names: it counts toward any graph of that kind the manifest lists it under, so an edit to its
+ * graph or to its descriptor's iep:describes never sets it aside to let an older version become
+ * current; it stays untrusted, and the graph answers "altered" (409). Anything else is judged by
+ * its descriptor, and is set aside anyway. The manifest's `describes` is never enough on its own:
+ * the pod's writers can edit it.
  */
 export function ofGraph(l: LoadedRecord, graphIri: string): boolean {
-  if (l.graphIri !== graphIri) return false;
-  return l.record === null || graphIriOf(l.record.entityIri) === graphIri;
+  if (l.record !== null && l.authorship.contentBinding === 'bound') return l.graphIri === graphIri && graphIriOf(l.record.entityIri) === graphIri;
+  if (l.authorship.eligible) {
+    const kind = kindOfRecord(l.recordId);
+    return kind !== null && kind === kindOfIri(graphIri);
+  }
+  return l.graphIri === graphIri;
 }
 
 export interface GraphHeads {

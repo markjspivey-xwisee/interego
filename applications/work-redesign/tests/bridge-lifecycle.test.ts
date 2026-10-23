@@ -29,6 +29,7 @@ import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type WrdDeps } from '../bridge/handlers.js';
 import {
   readRecord, publishRecord, verifyHolderBundle, operatorPodFetch, openPod, KeyedMutex, StaleHeadError, RecordNotSealableError, WRD_CONTAINER, SEALED_NO_KEY, SEALED_OTHER_KEY,
+  DESCRIBES_ALTERED,
 } from '../bridge/pod-helpers.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
 import { envelopeSha256, entityIri, entityIriKey, iriKeyFingerprint, recordKeyFingerprint, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, type WrdRecord } from '../src/records.js';
@@ -1603,12 +1604,14 @@ describe('work-redesign bridge', () => {
       const shut = await readRecord(entry, POD, w.pod.fetchFn, trusted, undefined, WRD_CONTAINER, key);
       expect(shut).toMatchObject({ record: null, graphContent: '', why, authorship: { signatureValid: true, eligible: true, trusted: false, contentBinding: 'declared' } });
     }
-    // Bridges on the same pod holding another record key, or none: the registry they would read is sealed, so they answer 409 rather than read past it,
-    // and the pod holds IRIs keyed under K1, so they write nothing (409, naming the key fingerprints and WRD_RECORD_KEY).
+    // Bridges on the same pod holding another record key, or none: the pod holds IRIs keyed under K1, so they write nothing, and the registry
+    // they would read is sealed to K1, so they read nothing either (409, naming the key fingerprints and WRD_RECORD_KEY, and why the registry is shut).
     const k1 = `k${iriKeyFingerprint(entityIriKey(K1))}`;
-    for (const [extra, reason, bridgeKey] of [[{ recordKey: K2 }, /sealed to a key this bridge does not hold/, `holds the one with fingerprint k${iriKeyFingerprint(entityIriKey(K2))}`], [{}, /holds no record key/, 'holds no record key']] as const) {
+    for (const [extra, shut, bridgeKey] of [[{ recordKey: K2 }, SEALED_OTHER_KEY, `holds the one with fingerprint k${iriKeyFingerprint(entityIriKey(K2))}`], [{}, SEALED_NO_KEY, 'holds no record key']] as const) {
       const other = await sibling(w, extra);
-      refused(await http(other, 'POST', 'read_records', { envelope: await readEnvelope(other) }), 409, /altered after signing/, reason);
+      const read = refused(await http(other, 'POST', 'read_records', { envelope: await readEnvelope(other) }), 409, /derived under a record key this bridge does not hold/,
+        new RegExp(`fingerprint ${k1}, and this bridge ${bridgeKey} \\(WRD_RECORD_KEY\\).*nor can it use the pod's registry \\(urn:wrd:registry:[0-9a-f:]+graph: ${shut.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\), so it answers no read, whoever signs it`));
+      expect(read['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
       const wrote = refused(await act(other, ADMIN, 'update_registry', { entries: [person(ZED, ['worker'], 'p-zed', 'Zed')] }), 409, /derived under a record key this bridge does not hold/,
         new RegExp(`derived under the record key with fingerprint ${k1}, and this bridge ${bridgeKey} \\(WRD_RECORD_KEY\\)`));
       expect(wrote['iep:resolvedBy']).toEqual({ env: 'WRD_RECORD_KEY' });
@@ -1707,6 +1710,13 @@ describe('work-redesign bridge', () => {
       const passed = ok(await http(w, 'GET', 'envelope_template', undefined, `?${reviseQuery}&${sent}`));
       expect(passed['template']).toMatchObject({ taskIri: ap.t1, descriptorUrl: t1.descriptorUrl, op: null });
       expect(passed['context']).toEqual({});
+    }
+    // A key with a step named for a signature is refused whatever array or index steps follow it: sent here with a value that is no
+    // signature the text check knows (no 0x), so the key alone is what is found. Nothing is filled, and the value is not repeated.
+    const hex = cyRead.signature.slice(2);
+    for (const key of ['signature%5B%5D', 'signature%5B0%5D', 'x%5Bsignature%5D%5B%5D', 'x.signature.0']) {
+      const r = refused(await http(w, 'GET', 'envelope_template', undefined, `?${reviseQuery}&${key}=${hex}`), 400, /A signed read is never sent in a URL/, /POST the same arguments to wrd\.read_envelope_template/);
+      expect([key, r['template'], r['context'], JSON.stringify(r).includes(t1.descriptorUrl), JSON.stringify(r).includes(hex.slice(0, 40))]).toEqual([key, undefined, undefined, false, false]);
     }
     refused(await http(w, 'GET', 'envelope_template', undefined, '?intent=wrd:anything&read_envelope=x'), 400, /never sent in a URL/);
     // The same arguments POSTed with a registered key's signed read in the body are filled from the record, context and all.
@@ -2306,9 +2316,161 @@ describe('work-redesign bridge', () => {
     await captureAp(pure);
     const k2 = await sibling(pure, { recordKey: K2 });
     const pureBefore = (await manifest(pure)).length;
-    refused(await http(k2, 'POST', 'read_records', { envelope: await readEnvelope(k2) }), 409, /altered after signing/, /sealed to a key this bridge does not hold/);
+    refused(await http(k2, 'POST', 'read_records', { envelope: await readEnvelope(k2) }), 409, /derived under a record key this bridge does not hold/, new RegExp(`fingerprint k${fp1}, and this bridge holds the one with fingerprint k${fp2} \\(WRD_RECORD_KEY\\).*nor can it use the pod's registry`));
     refused(await act(k2, ADMIN, 'update_registry', { taskKinds: [{ slug: 'extra-kind', label: 'Extra', definition: 'An extra kind.' }] }), 409, /derived under a record key this bridge does not hold/, /\(WRD_RECORD_KEY\)/);
     expect((await manifest(pure)).length).toBe(pureBefore);
+  }, 120_000);
+
+  it('never sets aside a version a trusted key signed where its proof says for an edit to its descriptor\'s iep:describes alone: the graph answers 409 (altered), no write proceeds from the version before it, and once the bytes are restored it reads again with no fork; a task head and a registry head alike', async () => {
+    const w = await world({ recordKey: K1 });
+    await register(w);
+    const ap = await captureAp(w);
+    const t1First = headOfRow(await taskRow(w, ap.t1));
+    ok(await ratify(w, CY, ap.t1));
+    const t1Head = headOfRow(await taskRow(w, ap.t1));
+    const t1Graph = graphIriOf(ap.t1);
+    const fp2 = recordKeyFingerprint(K2);
+    const t1Sealed = sealedGraphUrl(w, t1Head.descriptorUrl);
+    const sealedBytes = must(w.pod.bodies.get(t1Sealed));
+    const descriptorBytes = must(w.pod.bodies.get(t1Head.descriptorUrl));
+    const entry = must((await manifest(w)).find((e) => e.descriptorUrl === t1Head.descriptorUrl)) as Parameters<typeof readRecord>[0];
+    const trusted = new Set([addr(PLATFORM)]);
+    const t1Versions = async (): Promise<number> => (await manifest(w)).filter((e) => e.describes.includes(t1Graph)).length;
+    expect(await t1Versions()).toBe(2);
+    // iep:describes pointed at another task of the workflow, at an IRI keyed under another key, and at the workflow's own graph; then at
+    // another task's graph with the sealed bytes changed too, so the graph cannot be found at all (only the manifest is left as it was).
+    const edits: Array<[string, string, boolean]> = [
+      ['another task of the workflow', graphIriOf(ap.t2), false],
+      ['an IRI keyed under another key', `urn:wrd:task:k${fp2}:${'2'.repeat(16)}:${'3'.repeat(16)}:graph`, false],
+      ['the workflow', graphIriOf(ap.workflowIri), false],
+      ['another task, with its sealed bytes changed', graphIriOf(ap.t2), true],
+    ];
+    let kinds = 0;
+    for (const [edit, target, ciphertextToo] of edits) {
+      w.pod.tamper(t1Head.descriptorUrl, `iep:describes <${t1Graph}>`, `iep:describes <${target}>`);
+      if (ciphertextToo) corruptSealed(w, t1Sealed);
+      const edited = must(w.pod.bodies.get(t1Head.descriptorUrl));
+      // Placed by its signed descriptor first: eligible, never trusted, and a version of T1's graph, by its signed content when the graph opens.
+      const loaded = await readRecord(entry, POD, w.pod.fetchFn, trusted, undefined, WRD_CONTAINER, K1);
+      expect([edit, loaded.authorship.eligible, loaded.authorship.trusted]).toEqual([edit, true, false]);
+      if (ciphertextToo) expect([edit, loaded.record, loaded.why]).toEqual([edit, null, SEALED_OTHER_KEY]);
+      else expect([edit, loaded.graphIri, loaded.record?.entityIri, loaded.why, loaded.authorship.contentBinding]).toEqual([edit, t1Graph, ap.t1, DESCRIBES_ALTERED, 'bound']);
+      const why = ciphertextToo ? /sealed to a key this bridge does not hold, or the sealed bytes were changed/ : /its descriptor was altered after signing: its iep:describes no longer names the graph its proof covers/;
+      // The bridge that wrote it and a fresh one: T1 is altered, never its first version again, and no other key is suspected.
+      for (const bridge of [w, await sibling(w, { recordKey: K1 })]) {
+        const listed = await list(bridge);
+        expect([edit, arr(listed['altered']), arr(listed['forked']), listed['recordKeyMismatch']]).toEqual([edit, expect.arrayContaining([t1Graph]), [], undefined]);
+        expect(arr(listed['tasks']).map((t) => t['taskIri'])).not.toContain(ap.t1);
+        expect(arr(must(arr(listed['integrity']).find((i) => i['graphIri'] === t1Graph), 'T1 integrity')['heads'])).toEqual([expect.objectContaining({ descriptorUrl: t1Head.descriptorUrl, trusted: false })]);
+        // A write bound to the edited head, or to the version before it, is refused: nothing proceeds from the older version.
+        for (const binding of [t1Head, t1First]) {
+          refused(await act(bridge, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(binding), verdict: 'dispute', note: 'after the edit' }), 409, /altered after signing/, why);
+        }
+      }
+      expect(await t1Versions()).toBe(2);
+      // It stops nothing else.
+      kinds += 1;
+      ok(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: `describes-kind-${kinds}`, label: 'Another', definition: 'Another kind.' }] }), edit);
+      // Restored, T1 reads again from the same head, trusted, with no fork and no restart.
+      w.pod.tamper(t1Head.descriptorUrl, edited, descriptorBytes);
+      if (ciphertextToo) w.pod.tamper(t1Sealed, must(w.pod.bodies.get(t1Sealed)), sealedBytes);
+      const back = await list(w);
+      expect([edit, arr(back['forked']), arr(back['altered'])]).toEqual([edit, [], []]);
+      expect(obj(must(arr(back['tasks']).find((t) => t['taskIri'] === ap.t1))['head'])).toMatchObject({ descriptorUrl: t1Head.descriptorUrl, trusted: true });
+    }
+    ok(await ratify(w, CY, ap.t1, 'dispute', 'one more look after the restore'));
+    expect(await t1Versions()).toBe(3);
+    expect(arr((await list(w))['forked'])).toEqual([]);
+
+    // The registry head alike: Cy is removed, and an edit to only the iep:describes of the version that removed her gives her back no read and no write.
+    ok(await act(w, ADMIN, 'update_registry', { entries: [{ address: CY.address, roles: [] }] }));
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, CY) }), 403, /Only an admin or a key in this pod's registry/);
+    const regHead = obj(obj((await list(w))['registry'])['head']);
+    const regUrl = String(regHead['descriptorUrl']);
+    const registryGraph = graphIriOf(entityIri('registry', POD, 'registry'));
+    const regBytes = must(w.pod.bodies.get(regUrl));
+    const t1Now = headOfRow(await taskRow(w, ap.t1));
+    const before = (await manifest(w)).length;
+    w.pod.tamper(regUrl, `iep:describes <${registryGraph}>`, `iep:describes <urn:wrd:registry:k${fp2}:${'1'.repeat(16)}:${'2'.repeat(16)}:graph>`);
+    for (const bridge of [w, await sibling(w, { recordKey: K1 })]) {
+      for (const who of [CY, ANA, ADMIN]) {
+        for (const tool of ['read_records', 'read_calibration']) {
+          refused(await http(bridge, 'POST', tool, { envelope: await readEnvelope(bridge, who) }), 409, /altered after signing/, new RegExp(`${registryGraph}: its current version is not trusted: its descriptor was altered after signing: its iep:describes no longer names the graph its proof covers`));
+        }
+      }
+      refused(await act(bridge, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1Now), verdict: 'ratify' }), 409, /altered after signing/, /iep:describes no longer names/);
+      refused(await act(bridge, ADMIN, 'update_registry', { taskKinds: [{ slug: 'registry-edit-kind', label: 'Another', definition: 'Another kind.' }] }), 409, /altered after signing/, /iep:describes no longer names/);
+    }
+    expect((await manifest(w)).length).toBe(before);
+    w.pod.tamper(regUrl, must(w.pod.bodies.get(regUrl)), regBytes);
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, CY) }), 403, /Only an admin or a key in this pod's registry/);
+    const restored = await list(w);
+    expect(obj(obj(restored['registry'])['head'])).toMatchObject({ descriptorUrl: regUrl, trusted: true, versions: regHead['versions'] });
+    expect(arr(obj(restored['registry'])['members']).map((m) => m['address'])).not.toContain(addr(CY));
+    expect([arr(restored['forked']), arr(restored['altered'])]).toEqual([[], []]);
+    ok(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: 'after-restore-kind', label: 'Another', definition: 'Another kind.' }] }));
+  }, 120_000);
+
+  it('on a pod whose registry was written under another record key (the usual go-live order), refuses every write and every read, by an admin, a registered key or any other, with the key mismatch naming WRD_RECORD_KEY and both fingerprints, never as one sealed record; the key\'s own bridge goes on', async () => {
+    const reEscape = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Go live under K1: the admin's registry change is the first write. Then a workflow is captured, the first keyed IRIs.
+    const w = await world({ recordKey: K1 });
+    await register(w);
+    const fp1 = recordKeyFingerprint(K1);
+    const fp2 = recordKeyFingerprint(K2);
+    const registryGraph = graphIriOf(entityIri('registry', POD, 'registry'));
+    const regUrl = must((await manifest(w)).find((e) => e.describes.includes(registryGraph))).descriptorUrl;
+    expect(regUrl).toMatch(new RegExp(`/registry-[0-9a-f]{16}-k${fp1}\\.ttl$`));
+    for (const phase of ['the registry alone', 'the registry and a workflow'] as const) {
+      if (phase === 'the registry and a workflow') await captureAp(w);
+      const before = (await manifest(w)).length;
+      for (const [extra, bridgeKey, shut] of [[{ recordKey: K2 }, `holds the one with fingerprint k${fp2}`, SEALED_OTHER_KEY], [{}, 'holds no record key', SEALED_NO_KEY]] as const) {
+        // Alone, the registry's signed record id names K1; with the workflow, its keyed IRIs are found (and reported) first.
+        const [error, mismatch] = phase === 'the registry alone'
+          ? [/sealed to a record key this bridge does not hold/, `${reEscape(registryGraph)} \\(${reEscape(regUrl)}\\) is sealed to the record key with fingerprint k${fp1} \\(its record id, which the platform signed, names it\\), and this bridge ${reEscape(bridgeKey)} \\(WRD_RECORD_KEY\\)`]
+          : [/derived under a record key this bridge does not hold/, `was derived under the record key with fingerprint k${fp1}, and this bridge ${reEscape(bridgeKey)} \\(WRD_RECORD_KEY\\)`];
+        const readWhy = new RegExp(`${mismatch}.*; nor can it use the pod's registry \\(${reEscape(registryGraph)}: ${reEscape(shut)}\\), so it answers no read, whoever signs it, until it runs with that key`);
+        const writeWhy = new RegExp(`${mismatch}.*; it writes nothing and looks nothing up by tuple until it runs with that key`);
+        for (const publicReads of [false, true]) {
+          const other = await sibling(w, { ...extra, publicReads });
+          const answers: Array<[string, Res, RegExp]> = [];
+          // An admin, an operator, a worker, and a key the registry does not hold.
+          for (const who of [ADMIN, ANA, CY, ZED]) {
+            const signedRead = await readEnvelope(other, who);
+            answers.push([`read_records by ${who.address}`, await http(other, 'POST', 'read_records', { envelope: signedRead }), readWhy]);
+            answers.push([`read_calibration by ${who.address}`, await http(other, 'POST', 'read_calibration', { envelope: signedRead, kind: 'agents' }), readWhy]);
+            answers.push([`read_envelope_template by ${who.address}`, await http(other, 'POST', 'read_envelope_template', { intent: 'wrd:capture-workflow', read_envelope: signedRead }), readWhy]);
+            answers.push([`update_registry by ${who.address}`, await act(other, who, 'update_registry', { taskKinds: [{ slug: 'other-key-kind', label: 'Another', definition: 'Another kind.' }] }), writeWhy]);
+            answers.push([`capture_workflow by ${who.address}`, await act(other, who, 'capture_workflow', { workflow: { title: 'Month-end accrual review', unitLabel: 'accrual' }, tasks: [{ name: 'Review accruals', description: 'Check open accruals.', currentLevel: 'person', personAddress: DEE.address, taskKind: 'gl-coding' }] }), writeWhy]);
+            answers.push([`holder_copy by ${who.address}`, await act(other, who, 'holder_copy', {}), writeWhy]);
+          }
+          const run = await runEnvelope(other, `other-key-run-${phase.length}-${bridgeKey.length}-${String(publicReads)}`, entityIri('task', 'a workflow', 'a task'), 'accepted');
+          answers.push(['log_agent_run', await http(other, 'POST', 'log_agent_run', { run_envelope: run, review_envelope: await reviewEnvelope(other, ELI, run, 'accepted') }), writeWhy]);
+          if (publicReads) {
+            // Opened reads too: the GET read model, calibration and a filled template.
+            for (const [tool, query] of [['list_records', ''], ['calibration', ''], ['envelope_template', '?intent=wrd:capture-workflow']] as const) {
+              answers.push([`GET ${tool}`, await http(other, 'GET', tool, undefined, query), readWhy]);
+            }
+          }
+          for (const [what, r, why] of answers) {
+            expect([phase, what, r.status]).toEqual([phase, what, 409]);
+            refused(r, 409, error, why);
+            expect([what, r.body['iep:resolvedBy']]).toEqual([what, { env: 'WRD_RECORD_KEY' }]);
+          }
+        }
+        // Nothing reached the pod.
+        expect((await manifest(w)).length).toBe(before);
+      }
+      // The key's own bridge is unaffected: a fresh one reads as an admin and as a registered key, with no mismatch, and the first goes on writing.
+      const k1 = await sibling(w, { recordKey: K1 });
+      for (const who of [ADMIN, ANA]) {
+        const signedRead = await readEnvelope(k1, who);
+        expect(ok(await http(k1, 'POST', 'read_records', { envelope: signedRead }))['recordKeyMismatch']).toBeUndefined();
+        expect(ok(await http(k1, 'POST', 'read_calibration', { envelope: signedRead }))['recordKeyMismatch']).toBeUndefined();
+        ok(await http(k1, 'POST', 'read_envelope_template', { intent: 'wrd:capture-workflow', read_envelope: signedRead }));
+      }
+      ok(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: `k1-kind-${phase.length}`, label: 'Another', definition: 'Another kind.' }] }));
+    }
   }, 120_000);
 
   it('never counts a run or a decision that does not open as absent: contraryEvidence, runs, awaitingReview and the calibration cells and probe signals they feed say they count only what opens, naming WRD_RECORD_KEY, and whether an allocation in force is permitted is unknown, not worked out from the captured one', async () => {

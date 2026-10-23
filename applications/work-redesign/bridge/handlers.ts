@@ -29,8 +29,10 @@
  * record key, carries the key's public fingerprint, signed by the platform: when the pod holds a
  * version written under a key this bridge does not hold (or under any, and it holds none), the
  * bridge would find those records absent, so it refuses every write and every lookup by tuple
- * (409, naming WRD_RECORD_KEY) and its read model marks what it cannot know. The record id shows
- * it from that key's first write, before any IRI is keyed.
+ * (409, naming WRD_RECORD_KEY and both fingerprints), whoever signs, before the registry is read;
+ * every read too while it cannot use the registry (registryForRead), and otherwise its read model
+ * marks what it cannot know. The record id shows it from that key's first write, before any IRI
+ * is keyed.
  *
  * Every refusal is a typed `refuse()` with an HTTP status; every success carries an outcome
  * flag. No environment reads: bridge/server.ts composes this with its configuration.
@@ -184,8 +186,12 @@ const lower = (a: string): string => a.toLowerCase();
 
 /** A read_envelope parameter, however a client spelled the object into the URL: read_envelope, read_envelope[signature] (qs, jQuery), read_envelope.payload, read_envelope[]. */
 const SIGNED_READ_KEY = /^read[-_]?envelope(?:$|[[.])/i;
-/** A key named for a signature, bare or as the last step of a nested query key (x[signature], x.signature). */
-const SIGNATURE_KEY = /(?:^|[[.])signature\]?$/i;
+/**
+ * A key with a step named for a signature, bare, bracketed or dotted, and whatever bracketed or
+ * dotted steps follow it: signature, signature[], signature[0], x[signature], x[signature][],
+ * x.signature, x.signature.0.
+ */
+const SIGNATURE_KEY = /(?:^|[[.])signature\]?(?:\[[^\]]*\]|\.[^.[\]]*)*$/i;
 /** Text holding a 0x-prefixed 65-byte signature (130 hex), or a "signature" JSON field: what a signed read carries, in a key or a value. */
 const SIGNATURE_TEXT = /0x[0-9a-f]{130}|"signature"\s*:/i;
 /**
@@ -193,7 +199,8 @@ const SIGNATURE_TEXT = /0x[0-9a-f]{130}|"signature"\s*:/i;
  * every parameter of it (each composition installs parseEveryQueryPair: Express's default parser
  * drops every pair after the first 1000, and those would never reach this check), so every key
  * and every value is looked at, nested to any depth, for exactly these: a
- * read_envelope parameter in any spelling above; a key named for a signature; and a key or a
+ * read_envelope parameter in any spelling above; a key with a step named for a signature,
+ * whatever bracketed or dotted steps follow it (SIGNATURE_KEY); and a key or a
  * value holding a 0x-prefixed 65-byte signature or a "signature" JSON field (so a signed read
  * sent as a bare key with no value is found). Nothing else is: a signature written without its
  * 0x, or JSON naming it some other way, passes this check, and the GET still never reads with it.
@@ -515,11 +522,12 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const opened = openEnvelope(raw, intent, call.podUrl, call.now, window);
     if (!opened.ok) throw new Declined(refuse(opened.status, opened.error, opened.why));
     const nonce = String(opened.payload['nonce']);
+    // Nothing is written on a pod holding records written under another record key, whoever signs (write() checks again).
+    // Checked before the registry is read: on such a pod the registry may be sealed to that key, and the refusal names it.
+    await refuseKeyConflict(call);
     if (admins.has(opened.signer) || memberOf(await registryOf(call), opened.signer)) {
       if (!ledger.claim(opened.signer, nonce, call.now)) throw decline(409, REPLAYED, `${opened.signer} already used the nonce ${nonce} on this bridge`);
     }
-    // Nothing is written on a pod holding records written under another record key (write() checks again).
-    await refuseKeyConflict(call);
     return { ...call, actor: opened.signer, actorDid: opened.did, payload: opened.payload, envelope: opened.envelope, nonce };
   }
 
@@ -548,7 +556,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (!opened.ok) throw new Declined(refuse(opened.status, opened.error, opened.why, opened.status === 401 ? readVia(tool) : undefined));
     if (admins.has(opened.signer)) return;
     if (!(await call.view.walk()).complete) throw new IncompleteManifestError(call.podUrl);
-    const reg = await registryOf(call);
+    const reg = await registryForRead(call);
     if (!memberOf(reg, opened.signer)) {
       throw decline(403, 'Only an admin or a key in this pod\'s registry can read its records.', `${opened.signer} is not an admin of this bridge and holds no role in this pod's registry${unregisteredHint(reg, opened.signer)}`, via('update_registry'));
     }
@@ -629,10 +637,13 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       ? `${c.graphIri} (${c.descriptorUrl}) was derived under the record key with fingerprint k${c.fingerprint}, and this bridge ${mine} (WRD_RECORD_KEY): it derives other IRIs for the same records, so it would find them absent`
       : `${c.graphIri} (${c.descriptorUrl}) is sealed to the record key with fingerprint k${c.fingerprint} (its record id, which the platform signed, names it), and this bridge ${mine} (WRD_RECORD_KEY): it cannot open what was written under that key, nor derive the IRIs that key gives new records, so it would find them absent, and what it wrote would be ${recordKey === undefined ? 'in plaintext' : 'sealed where that key\'s bridge could not open it'}`;
   };
+  /** The refusal (409, naming WRD_RECORD_KEY and both fingerprints) for a call a KeyConflict stops, saying what it stops. */
+  const keyConflictRefusal = (c: KeyConflict, stops: string): Declined =>
+    decline(409, c.keyedIri ? KEY_MISMATCH : KEY_SEALED_MISMATCH, `${keyConflictWhy(c)}; ${stops}`, { env: 'WRD_RECORD_KEY' });
   /** Refuse (409, naming WRD_RECORD_KEY) a write or a lookup by tuple on a pod holding records written under another record key. */
   async function refuseKeyConflict(call: Call): Promise<void> {
     const c = await keyConflict(call);
-    if (c) throw decline(409, c.keyedIri ? KEY_MISMATCH : KEY_SEALED_MISMATCH, `${keyConflictWhy(c)}; it writes nothing and looks nothing up by tuple until it runs with that key`, { env: 'WRD_RECORD_KEY' });
+    if (c) throw keyConflictRefusal(c, 'it writes nothing and looks nothing up by tuple until it runs with that key');
   }
 
   // ── Entity IRIs derived from a tuple: keyed when this bridge holds a record key ─────────
@@ -682,6 +693,28 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     let policy: EffectivePolicy;
     try { policy = effectivePolicy(published, podPolicy, head?.loaded.descriptorUrl ?? null); } catch (e) { throw decline(409, INTEGRITY, messageOf(e)); }
     return { entity, head, graph, members, kinds, podPolicy, policy };
+  }
+
+  /**
+   * The registry, for a read (who may read, and the read model, calibration and template built on
+   * it). The key-conflict check runs first: on a pod holding records written under another record
+   * key whose registry this bridge cannot use (sealed to that key, as it is when that key's bridge
+   * wrote the registry first, the usual go-live order), every read is refused with that conflict
+   * (409, naming WRD_RECORD_KEY and both fingerprints), by an admin or anyone else, rather than as
+   * one sealed record; nothing about who may read, or what the records say, can be answered
+   * without it. Where the registry is usable the read goes on, and the read model and calibration
+   * say so under recordKeyMismatch.
+   */
+  async function registryForRead(call: Call): Promise<Registry> {
+    const c = await keyConflict(call);
+    if (c) {
+      const g = await call.view.graph(graphIriOf(entityIri('registry', call.podUrl, 'registry')));
+      if (g.state === 'forked' || g.state === 'altered') {
+        const why = g.state === 'forked' ? 'more than one version claims to be current' : g.heads[0]?.why ?? 'its current version is not trusted';
+        throw keyConflictRefusal(c, `nor can it use the pod's registry (${g.graphIri}: ${why}), so it answers no read, whoever signs it, until it runs with that key`);
+      }
+    }
+    return registryOf(call);
   }
 
   const policyRefOf = (reg: Registry): PolicyRef => ({ ontologyIri: WRD_ONTOLOGY_IRI, ontologySha256: published.ontologySha256, podPolicyHead: reg.policy.podPolicyHead });
@@ -1579,7 +1612,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (signed) await authoriseRead(call, signedRead, 'read_envelope_template');
     const full = publicReads || signed;
     // The registry is read only to fill context, which an unsigned call does not get.
-    const reg = full ? await registryOf(call) : null;
+    const reg = full ? await registryForRead(call) : null;
     const arg = (k: string): string | null => (typeof args[k] === 'string' && args[k] !== '' ? String(args[k]) : null);
     const t: Obj = { intent, podUrl: call.podUrl, issuedAt: call.at, nonce: randomBytes(16).toString('hex') };
     const context: Obj = {};
@@ -2467,6 +2500,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       // The run may be an hour old (logged under a grant, reviewed later): check it as a stored envelope first, freshness later.
       const runOpened = openEnvelope(runRaw, 'wrd:agent-run', call.podUrl, call.now, { pastMs: Number.POSITIVE_INFINITY, futureMs: window.futureMs });
       if (!runOpened.ok) return { ...refuse(runOpened.status, runOpened.error, `run_envelope: ${runOpened.why}`) };
+      // As in openSigned: nothing is written on a pod holding records written under another record key, checked before the registry is read.
+      await refuseKeyConflict(call);
       const reg = await registryOf(call);
       let review: Extract<ReturnType<typeof openEnvelope>, { ok: true }> | null = null;
       if (reviewRaw !== undefined && reviewRaw !== null) {
@@ -2748,7 +2783,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     // The unsigned template is a GET: its arguments travel in the URL, where server, proxy and
     // browser logs keep them. It never reads with a signed read, and a signed read reads every
     // record until it is stale, so the forms of one it detects (signedReadIn: a read_envelope
-    // parameter in any spelling, a key named for a signature, a key or value holding a 0x
+    // parameter in any spelling, a key with a step named for a signature, a key or value holding a 0x
     // signature or a "signature" JSON field) are refused before anything is read, and the
     // refusal points at the POST form.
     'wrd.envelope_template': async (args) => {
@@ -2866,7 +2901,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const workflowFilter = typeof args['workflow'] === 'string' && args['workflow'] !== '' ? args['workflow'] : null;
     const want = (s: string): boolean => kind === null || kind === s;
     const keep = (iri: string, workflowIri: string | null): boolean => (subject === null || subject === iri) && (workflowFilter === null || workflowFilter === workflowIri);
-    const reg = await registryOf(call);
+    const reg = await registryForRead(call);
     const snap = await snapshot(call.view);
     const policy = reg.policy;
     const conflict = await keyConflict(call);
@@ -3231,7 +3266,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
   async function calibrate(call: Call, args: Obj): Promise<Obj> {
     const kind = kindArg(args);
-    const reg = await registryOf(call);
+    const reg = await registryForRead(call);
     const snap = await snapshot(call.view);
     const decisions: DecisionForCalibration[] = [];
     const probes: ProbeOutcome[] = [];

@@ -325,6 +325,13 @@ export const recordIdFor = (kind: EntityKind, graphIri: string, version: number,
  * recordIdFor); null for a version written without a record key.
  */
 export const fingerprintOfRecord = (idOrUrl: string): string | null => /-k([0-9a-f]{8})(?:\.ttl)?$/.exec(idOrUrl)?.[1] ?? null;
+/**
+ * The kind of entity a record id names (recordIdFor: `urn:wrd:record:<kind>-<16 hex>[-k<fp>]`), as
+ * kindOfIri spells it, or null for an id of another shape. The platform's proof signs the id, so
+ * for a version a trusted key signed where its proof says, this is signed too, whatever happened
+ * to its graph or its descriptor's iep:describes.
+ */
+export const kindOfRecord = (recordId: string): string | null => /^urn:wrd:record:([a-z-]+)-[0-9a-f]{16}(?:-k[0-9a-f]{8})?$/.exec(recordId)?.[1] ?? null;
 /** The URL shape of a version written without a record key: `<kind>-<16 hex>.ttl` (its graph is plaintext on the pod). */
 export const UNKEYED_RECORD_URL = /\/[a-z-]+-[0-9a-f]{16}\.ttl$/;
 export function slugOf(recordId: string): string {
