@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-23 — Foxxi: re-pin gUFO to the publisher's corrected file
+
+The gUFO publisher changed `docs/gufo.ttl` on 2026-10-22 (nemo-ufes/gufo `fc7b2a6`, "Closing issue #58"). The only change removes one erroneous triple, `gufo:concernsReifiedQualityValue rdfs:comment gufo:concernsQualityValue`, so the file now has 764 triples instead of 765. The pinned SHA-256 no longer matched what `https://purl.org/nemo/gufo` serves, so `prepare-build-inputs.ts` refused to refresh. That failed every foxxi-bridge image build, and each failed build skipped the deploy job for every service in that run. The manifest now pins `ef6c1ab2…` with 764 triples kept. A full `refreshUpper` run against the live publishers verified every upper ontology against its pin.
+
 ## 2026-10-22 — Container images for the work-redesign and practice-evidence bridges
 
 `deploy/Dockerfile.wrd-bridge` and `deploy/Dockerfile.pev-bridge` build the two bridges as single-stage images, and `deploy/images.json` adds `interego-wrd-bridge` and `interego-pev-bridge` to the build matrix with the prebuilt-packages recipe. Each image copies the packages, the shared vertical code and its own vertical, listens on every interface (`HOST=::`), and bakes in only non-secret defaults: the operator pod path on the gate and, for practice-evidence, lower pilot hourly budgets. Keys, admins, the pod credential and the model route stay unset until they are set on the service. No Railway service is added, so neither bridge deploys yet. The merge itself still redeploys jev-harness-bridge, whose image bundles the whole tree, as any change to `CHANGELOG.md` does.
