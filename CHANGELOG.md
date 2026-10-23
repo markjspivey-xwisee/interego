@@ -72,6 +72,10 @@ A private PostgreSQL maintenance worker journals mutable roots and retains every
 
 Real PostgreSQL 16 fixtures cover retained roots, reader races, failure rollback and TOAST-page reuse; they do not establish production mark throughput. This entry documents this maintenance change. The inherited undocumented backlog measured 398 commits in exact-candidate CI, so the visible ceiling becomes 408 with ten commits of headroom; the continuous documented-through marker stays unchanged and no historical backfill is claimed.
 
+## 2026-10-21 — Private sweep connection failures release both clients
+
+The private sweep worker bounds each PostgreSQL connection attempt to five seconds and closes both clients when either connection fails, including a cleanup rejection from the other client. Failure remains a nonzero exit with sanitized diagnostics before any SQL runs. Injected entry-point fixtures cover both connection failures; the existing real PostgreSQL retention and reclamation cases remain unchanged.
+
 ## 2026-10-21 — Retain URL roots and bound shared-store collector reads
 
 The collector recognizes both legacy URNs and dereferenceable node URLs in control-plane records and current overlays, using the same address codec as fragment traversal. URL-only current heads therefore retain their complete node closure. The PostgreSQL reader takes a bounded header for canonical opaque atoms instead of scanning and parsing their complete payloads to discover that they have no outgoing edges. The header is bound to the stored atom key; unfamiliar historical encodings use the complete JSON fallback, and malformed bindings refuse collection. The breadth-first queue uses a cursor with occasional compaction. Actual-source regressions cover root forms, stale overlays, malformed bindings, and a 20,000-leaf closure; an isolated PostgreSQL 16 fixture verifies reduced TOAST reads for an 8 MiB uncompressed atom. This does not itself retire data, remove the rebuild headroom guard, or claim physical reclamation.
