@@ -573,3 +573,60 @@ export function scenarioResults(i: {
     }),
   };
 }
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  Calibration for a reader who signed nothing: small cells show counts only
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export const CALIBRATION_SMALL_COUNT_RULE = 'A figure resting on 1 to k − 1 reviewed outcomes is hidden (null) and only its count stays: agreement, Brier score, level distance and the unverified-quote rate of a cell with 1 to k − 1 samples, and the blind, test-retest and audit-sample agreement of a subset with 1 to k − 1 rows. A blind or audit-sample agreement is hidden as well when the rest of its cell (samples less that subset) is 1 to k − 1 rows, because the cell\'s agreement less the subset\'s gives the rest\'s. A cell pooled across rubric versions (group_by criterion-content) shows a figure only when the same figure is shown, or rests on no rows, in every rubric-version cell it pools, because the pooled figure less the shown versions\' gives a hidden version\'s. So no hidden figure can be worked out by subtraction from what one read shows. With one or two outcomes such a figure is one review\'s result read back, so it is not shown to a reader who signed nothing. Counts, status and standing stay. Two reads at different times still differ by the reviews recorded between them.';
+
+/** A calibration cell as `pev.calibration` shows it: `ratesSuppressed` when any figure was hidden. */
+export type ShownCalibrationCell = CalibrationCellView & { readonly ratesSuppressed: boolean };
+
+/** The figure families of one cell: `main` is agreement, Brier, level distance and unverified rate. */
+interface HiddenFigures { readonly main: boolean; readonly blind: boolean; readonly repeat: boolean; readonly audit: boolean }
+
+/**
+ * What the rule hides in one cell on its own counts. A blind or audit-sample subset is a part of
+ * the cell's samples, so its agreement and the cell's give the rest's: the rest is checked too.
+ */
+function hiddenByOwnCounts(c: CalibrationCellView, k: number): HiddenFigures {
+  const subset = (n: number): boolean => isSmall(n, k) || (n > 0 && isSmall(c.samples - n, k));
+  return { main: isSmall(c.samples, k), blind: subset(c.blindSamples), repeat: isSmall(c.repeatSamples, k), audit: subset(c.auditSampleSamples) };
+}
+
+/**
+ * The small-count rule of results applied to calibration (CALIBRATION_SMALL_COUNT_RULE): a rate
+ * over 1 to k − 1 outcomes is hidden, its count kept, and so is any figure from which, with the
+ * other figures shown, such a rate could be worked out by subtraction. A cell pooled across rubric
+ * versions is checked against `versionCells`, the rubric-version cells of the same rows: a pooled
+ * figure stays only when no version it pools hides that figure. A pooled cell those cells do not
+ * account for (their counts do not add up to its own) shows no figure. Applied by the unsigned
+ * `pev.calibration`; the review queue ranks with the whole cells and shows only its factors.
+ */
+export function suppressSmallCells(cells: readonly CalibrationCellView[], k: number, versionCells: readonly CalibrationCellView[] = cells): ShownCalibrationCell[] {
+  return cells.map((c) => {
+    let hide = hiddenByOwnCounts(c, k);
+    if (c.grouping === 'criterion-content') {
+      const versions = versionCells.filter((v) => v.grouping === 'rubric-version' && v.judgeId === c.judgeId
+        && v.promptTemplateHash === c.promptTemplateHash && v.criterionId === c.criterionId && v.criterionContentHash === c.criterionContentHash);
+      const sum = (f: (v: CalibrationCellView) => number): number => versions.reduce((n, v) => n + f(v), 0);
+      const accounted = sum((v) => v.samples) === c.samples && sum((v) => v.blindSamples) === c.blindSamples
+        && sum((v) => v.repeatSamples) === c.repeatSamples && sum((v) => v.auditSampleSamples) === c.auditSampleSamples;
+      const inVersions = versions.map((v) => hiddenByOwnCounts(v, k));
+      const anyVersion = (f: keyof HiddenFigures): boolean => !accounted || inVersions.some((h) => h[f]);
+      hide = {
+        main: hide.main || anyVersion('main'), blind: hide.blind || anyVersion('blind'),
+        repeat: hide.repeat || anyVersion('repeat'), audit: hide.audit || anyVersion('audit'),
+      };
+    }
+    return {
+      ...c,
+      ...(hide.main ? { agreementRate: null, meanBrier: null, meanLevelDistance: null, normalisedLevelDistance: null, unverifiedRate: null } : {}),
+      ...(hide.blind ? { blindAgreementRate: null } : {}),
+      ...(hide.repeat ? { repeatAgreement: null } : {}),
+      ...(hide.audit ? { auditSampleAgreementRate: null } : {}),
+      ratesSuppressed: hide.main || hide.blind || hide.repeat || hide.audit,
+    };
+  });
+}

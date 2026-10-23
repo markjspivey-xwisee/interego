@@ -97,14 +97,53 @@ ENV WRD_DEFAULT_POD_URL=https://gate.interego.xwisee.com/work-redesign/
 
 # ★ SECRETS AND PER-DEPLOYMENT VALUES: unset here on purpose, because anything baked into an image
 # is published to everyone who can pull it. Set them on the service.
-#   WRD_PLATFORM_KEY                the key records are signed with; unset → an EPHEMERAL key, and
-#                                   the startup line says records written now are not trusted
-#                                   after a restart
+#   WRD_PLATFORM_KEY                64 hex: the key records are signed with. REQUIRED by this image
+#                                   (WRD_REQUIRE_PLATFORM_KEY=1 below): unset or blank, the bridge
+#                                   exits 1 rather than sign with an EPHEMERAL key, whose records
+#                                   the next restart (every deploy is one) would set aside. Keep it
+#                                   for the life of the pod; to rotate, see the next line
+#   WRD_RECORD_KEY                  64 hex, a different key: the record graphs the bridge writes are
+#                                   sealed to it on the pod, and the entity IRIs it derives are keyed
+#                                   with it (graphs a keyless bridge wrote there before stay
+#                                   plaintext; the read model counts them under plaintext).
+#                                   REQUIRED by this image (WRD_REQUIRE_RECORD_KEY=1 below): unset
+#                                   or blank, the bridge exits 1 rather than write plaintext records
+#                                   that the gate serves to anyone. ★ BACK IT UP before the first
+#                                   write, somewhere other than this service: a lost or changed key
+#                                   leaves every sealed record unreadable (409), with no way back
+#   WRD_POD_WRITE_SECRET            the gate's operator token, sent under the default pod's path only
 #   WRD_ADMIN_ADDRESSES             who may change the role registry
-#   WRD_TRUSTED_PLATFORM_ADDRESSES  earlier platform keys whose records stay trusted
+#   WRD_TRUSTED_PLATFORM_ADDRESSES  earlier platform keys whose records stay trusted. An address that
+#                                   signed records on the pod stays listed for as long as the pod is
+#                                   used: dropping it cuts every line holding a version it signed,
+#                                   and every write to those graphs answers 409. Listing an address
+#                                   after a later key started its own chains (an ephemeral key's,
+#                                   say) forks those graphs (409)
+#   WRD_SERVED_PODS                 pods records are read and written on; unset → the default pod
+#   WRD_PUBLIC_READS                1 → unsigned reads of every record; unset → signed reads only
 ENV WRD_PLATFORM_KEY=
+ENV WRD_RECORD_KEY=
+ENV WRD_POD_WRITE_SECRET=
 ENV WRD_ADMIN_ADDRESSES=
 ENV WRD_TRUSTED_PLATFORM_ADDRESSES=
+ENV WRD_SERVED_PODS=
+ENV WRD_PUBLIC_READS=
+
+# ★ NO PLAINTEXT RECORDS FROM THIS IMAGE. With this set the bridge refuses to start (exit 1, and
+# a line saying why) unless WRD_RECORD_KEY holds a valid 64-hex key; a blank key counts as
+# missing. Not a secret, so it is baked in. Unlike the bridge variables above, where an empty value
+# means unset, this one is read as it is: 1 turns the guard on, 0 turns it off, and any other
+# value set on the service, a blank or whitespace one included (an unresolved reference
+# overriding this 1, say), stops the bridge at startup (exit 1, saying why) rather than let it
+# write plaintext records. A local run without it (unset) keeps the plaintext default.
+ENV WRD_REQUIRE_RECORD_KEY=1
+
+# ★ NO EPHEMERAL PLATFORM KEY FROM THIS IMAGE. With this set the bridge refuses to start (exit 1,
+# and a line saying why) unless WRD_PLATFORM_KEY holds a valid 64-hex key; a blank key counts as
+# missing. Read as it is, like WRD_REQUIRE_RECORD_KEY above: 1 turns the guard on, 0 turns it off,
+# and any other value set on the service, a blank or whitespace one included, stops the bridge at
+# startup (exit 1, saying why).
+ENV WRD_REQUIRE_PLATFORM_KEY=1
 
 # The commit this image was built from, surfaced at /health by the shared createVerticalBridge
 # factory so a deploy can be VERIFIED rather than assumed.

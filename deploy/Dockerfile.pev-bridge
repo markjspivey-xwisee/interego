@@ -104,6 +104,13 @@ ENV PEV_ATTEMPTS_PER_HOUR=5,50
 # ★ SECRETS AND PER-DEPLOYMENT VALUES: unset here on purpose, because anything baked into an image
 # is published to everyone who can pull it. Set them on the service.
 #   PEV_PLATFORM_KEY                the key records are signed with; unset → an ephemeral key
+#   PEV_RECORD_KEY                  64 hex (32 bytes): the key every record's graph is encrypted
+#                                   to on the operator pod, and new attempt IRIs are keyed with.
+#                                   The gate serves GET to anyone, so without it every transcript,
+#                                   judgment and reviewer reason is public. BACK IT UP before the
+#                                   first write: if it is lost, every encrypted record is lost with
+#                                   it, and nothing can recover them. Generate it once, e.g.
+#                                   `openssl rand -hex 32`, and never rotate it in place.
 #   PEV_ADMIN_ADDRESSES             who may change roles and withdraw reviews
 #   PEV_TRUSTED_PLATFORM_ADDRESSES  earlier platform keys whose records stay trusted
 #   PEV_POD_WRITE_SECRET            the operator pod's bearer, sent under that pod's path only
@@ -113,11 +120,19 @@ ENV PEV_ATTEMPTS_PER_HOUR=5,50
 # Never set PEV_DEMO_ROLES on a deployment: it holds demo role keys and refuses a non-loopback
 # HOST anyway.
 ENV PEV_PLATFORM_KEY=
+ENV PEV_RECORD_KEY=
 ENV PEV_ADMIN_ADDRESSES=
 ENV PEV_TRUSTED_PLATFORM_ADDRESSES=
 ENV PEV_POD_WRITE_SECRET=
 ENV PEV_LLM_API_KEY=
 ENV PEV_LLM_MODEL=
+
+# ★ NO PLAINTEXT ON A DEPLOYMENT. With this set the bridge refuses to start (exit 1, saying why)
+# while PEV_RECORD_KEY is missing or blank, which is what an unset or unresolved service variable
+# leaves behind, so the service crash-loops visibly instead of writing transcripts in plaintext to
+# a pod anyone can read. Not a secret. Override it with 0 only for a throwaway pod path; any other
+# value stops the bridge too, a blank override (an unresolved reference) included.
+ENV PEV_REQUIRE_RECORD_KEY=1
 
 # The commit this image was built from, surfaced at /health by the shared createVerticalBridge
 # factory so a deploy can be VERIFIED rather than assumed.

@@ -383,18 +383,22 @@ function checkLevelOnTask(proposed: Allocation, probes: readonly Probe[] | undef
  * Why a task's allocation as it stands is one its classification would not allow, or null. Work
  * is captured as it is done today, and an operator may report an agent already acting on it; this
  * flags such a level once the task is classified (regime, checkability), so a reported current
- * state never reads as an approved one.
+ * state never reads as an approved one. `from` says where the allocation in force came from: as
+ * captured, or a decision that approved it before the task was classified as it now is.
  */
-export function currentAllocationNote(current: Allocation, regime: Regime, answers: ClassificationAnswers, policy: EffectivePolicy): string | null {
+export function currentAllocationNote(current: Allocation, regime: Regime, answers: ClassificationAnswers, policy: EffectivePolicy, from: 'captured' | 'decision' = 'captured'): string | null {
   const levelRule = policy.levels.get(current.level);
   const regimeRule = policy.regimes.get(regime);
   if (!levelRule || !regimeRule) return null;
   if (!levelRule.requiresAgent && current.agentAddress === undefined) return null;
+  const standing = from === 'captured'
+    ? { lead: 'As captured', tail: 'that is a reported current state, not an approved one' }
+    : { lead: 'As a decision put it in force', tail: 'the task\'s classification no longer allows what that decision approved' };
   if (!regimeRule.permittedLevels.includes(current.level)) {
-    return `As captured, this task is done at ${current.level}, which ${regime} work does not permit; that is a reported current state, not an approved one. Propose a change.`;
+    return `${standing.lead}, this task is done at ${current.level}, which ${regime} work does not permit; ${standing.tail}. Propose a change.`;
   }
   if (levelRule.requiresCheckability.length > 0 && !levelRule.requiresCheckability.includes(answers.checkability)) {
-    return `As captured, an agent acts at ${current.level}, but the output's checkability is ${answers.checkability}; that is a reported current state, not an approved one. Propose a change.`;
+    return `${standing.lead}, an agent acts at ${current.level}, but the output's checkability is ${answers.checkability}; ${standing.tail}. Propose a change.`;
   }
   return null;
 }

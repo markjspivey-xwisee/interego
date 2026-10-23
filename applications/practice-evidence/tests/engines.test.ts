@@ -8,13 +8,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Buffer } from 'node:buffer';
 import { Parser } from 'n3';
 import { ethers } from 'ethers';
 import {
-  canonicalJson, importWallet, parseTrig, sha256, sha256Hex, signMessageRaw, validate, validateAgainstShape,
+  canonicalJson, deriveEncryptionKeyPair, importWallet, parseTrig, sha256, sha256Hex, signMessageRaw, validate, validateAgainstShape,
   type ContextDescriptorData,
 } from '@interego/core';
 import {
@@ -31,7 +32,8 @@ import {
   type JudgeCriterionInput, type JudgmentResult, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
 import {
-  actorOf, applyRoleChange, attemptIri, attemptKey, buildRecordDescriptor, checkEnvelope, didOf, modalFor,
+  actorOf, applyRoleChange, attemptIri, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, didOf, fingerprintOfAttemptIri, fingerprintOfRecordUrl, iriKeyFingerprint,
+  isWellFormedText, modalFor, toWellFormedText,
   modelAgentIri, NonceLedger, nextActionsFor, nextActionView, recordBodyFromGraph, recordGraphTurtle, recordIdFor,
   redactBody, registryIri, rubricIriOf, scenarioIri, signDraftReceipt, signEnvelope, signedRequestEnvelope, slugFor,
   standingReview, verifyDraftReceipt, REDACTION_NOTE, EXPORT_VERIFY_STEPS,
@@ -40,7 +42,7 @@ import {
 } from '../src/records.js';
 import {
   auditCoverageOf, calibrationCells, cellJudge, criterionKind, inAuditSample, meanLevelDistance, outcomeRowsOf,
-  priorityOf, QUEUE_WEIGHTS, reviewQueue, scenarioResults, STANDING_EFFECT, suppressRow,
+  priorityOf, QUEUE_WEIGHTS, reviewQueue, scenarioResults, STANDING_EFFECT, suppressRow, suppressSmallCells,
   type QueueCandidate,
 } from '../src/calibration.js';
 import {
@@ -924,6 +926,14 @@ describe('calibration', () => {
     expect(agrees.unverifiedRate).toBe(1);
     expect(agrees.agreementRate).toBe(1);
     expect(cells.find((c) => c.criterionId === 'specific-observation')!.repeatAgreement).toBe(1);
+    // Shown to a reader who signed nothing, a cell of one outcome keeps its counts and loses its figures.
+    const shown = suppressSmallCells(cells, 5).find((c) => c.criterionId === 'asks-their-view')!;
+    expect([shown.samples, shown.repeatSamples, shown.blindSamples, shown.ratesSuppressed]).toEqual([1, 1, 1, true]);
+    expect([shown.agreementRate, shown.meanBrier, shown.meanLevelDistance, shown.normalisedLevelDistance, shown.unverifiedRate, shown.blindAgreementRate, shown.repeatAgreement])
+      .toEqual([null, null, null, null, null, null, null]);
+    expect([shown.status, shown.standing]).toEqual([asks.status, asks.standing]);
+    // k = 1 hides nothing.
+    expect(suppressSmallCells(cells, 1).map(({ ratesSuppressed, ...c }) => [ratesSuppressed, c])).toEqual(cells.map((c) => [false, c]));
   });
 
   it('yields no rows for a withdrawn review or an author test, and keeps rows after redaction', () => {
@@ -949,6 +959,46 @@ describe('calibration', () => {
     expect(pooled).toHaveLength(3);
     expect(pooled.every((c) => c.samples === 2 && c.rubricHash === null && c.grouping === 'criterion-content')).toBe(true);
     expect(pooled[0]!.standing).toMatchObject({ evaluated: false, why: 'pooled across rubric versions; standing is evaluated per rubric version' });
+  });
+
+  it('shows a reader who signed nothing no figure a hidden one follows from by subtraction: pooled versions, and the rest of a subset', () => {
+    const outside = (prefix: string, n: number): string[] => {
+      const out: string[] = [];
+      for (let i = 0; out.length < n; i++) if (!inAuditSample(`urn:pev:attempt:${prefix}${i}-1`)) out.push(`urn:pev:attempt:${prefix}${i}-1`);
+      return out;
+    };
+    const reviewed = (spec: ScenarioSpec, iris: readonly string[], levels: Readonly<Record<string, string>>, saw = true): AttemptBody[] => iris.map((iri) => {
+      const j = judgmentOf(spec, ATTEMPT1, JUDGMENT_CLEAN, 0, BRIDGE_JUDGE);
+      return attemptOf({ spec, iri, state: 'overridden', turns: ATTEMPT1, judgments: [j], reviews: [reviewOf(spec, j, 0, levels, { saw })] });
+    });
+    const cellsOf = (attempts: readonly AttemptBody[], groupBy: 'rubric-version' | 'criterion-content') =>
+      calibrationCells(attempts.flatMap((a) => outcomeRowsOf(a)), { ...CAL, groupBy, auditCoverage: new Map() });
+    const spec = <C extends { criterionId: string }>(cs: readonly C[]): C => cs.find((c) => c.criterionId === 'specific-observation')!;
+    // Version 1: one review, which disagreed with the judge. Version 2 (a weight changed): five that agreed.
+    const v1 = reviewed(MD1, outside('one', 1), { ...ALL_JUDGE, 'specific-observation': 'vague' });
+    const v2 = reviewed(MD2, outside('five', 5), ALL_JUDGE);
+    const versions = cellsOf([...v1, ...v2], 'rubric-version');
+    const pooled = cellsOf([...v1, ...v2], 'criterion-content');
+    const byVersion = suppressSmallCells(versions, 5).filter((c) => c.criterionId === 'specific-observation');
+    expect(byVersion.map((c) => [c.samples, c.agreementRate]).sort()).toEqual([[1, null], [5, 1]]);
+    // The pooled cell has six samples, but its agreement less version 2's would be version 1's one review.
+    expect([spec(pooled).samples, spec(pooled).agreementRate]).toEqual([6, expect.closeTo(5 / 6, 3)]);
+    const shown = spec(suppressSmallCells(pooled, 5, versions));
+    expect([shown.samples, shown.agreementRate, shown.meanBrier, shown.meanLevelDistance, shown.normalisedLevelDistance, shown.unverifiedRate, shown.ratesSuppressed])
+      .toEqual([6, null, null, null, null, null, true]);
+    // A pooled cell with no rubric-version cells to account for it shows no figure at all.
+    expect(suppressSmallCells(pooled, 5).every((c) => c.agreementRate === null && c.meanBrier === null && c.ratesSuppressed)).toBe(true);
+    // With version 1 at five reviews too, nothing is hidden anywhere and the pooled figures show.
+    const v1Five = reviewed(MD1, outside('more', 5), { ...ALL_JUDGE, 'specific-observation': 'vague' });
+    const bigVersions = cellsOf([...v1Five, ...v2], 'rubric-version');
+    const big = spec(suppressSmallCells(cellsOf([...v1Five, ...v2], 'criterion-content'), 5, bigVersions));
+    expect([big.samples, big.agreementRate, big.meanLevelDistance, big.ratesSuppressed]).toEqual([10, 0.5, 0.5, false]);
+    // A blind subset of five in a cell of six: its agreement less the cell's is the one other review's.
+    const blindish = cellsOf([...reviewed(MD2, outside('blind', 5), ALL_JUDGE, false), ...reviewed(MD2, outside('seen', 1), { ...ALL_JUDGE, 'specific-observation': 'vague' })], 'rubric-version');
+    const b = spec(suppressSmallCells(blindish, 5));
+    expect([b.samples, b.blindSamples, typeof b.agreementRate, b.blindAgreementRate, b.ratesSuppressed]).toEqual([6, 5, 'number', null, true]);
+    const evenly = spec(suppressSmallCells(cellsOf([...reviewed(MD2, outside('blind', 5), ALL_JUDGE, false), ...reviewed(MD2, outside('seen', 5), ALL_JUDGE)], 'rubric-version'), 5));
+    expect([evenly.blindAgreementRate, evenly.ratesSuppressed]).toEqual([1, false]);
   });
 
   it('reports audit-sample coverage and flags it partial', () => {
@@ -1478,6 +1528,60 @@ describe('descriptors', () => {
     expect(scenarioIri(POD, 'missed-deadline')).toBe(scenarioIri('https://pod.example.test/practice', 'missed-deadline'));
     expect(attemptKey(POD, SCENARIO_IRI, learnerW.address)).toBe(attemptKey(POD, SCENARIO_IRI, learnerW.address.toLowerCase()));
     expect(slugFor('projection-audit', 'urn:pev:projection:0123456789abcdef', 1, r1)).toBe('projection-0123456789abcdef');
+    // A sealed record's slug ends in its key's fingerprint, which its descriptor URL gives back; no
+    // plaintext record's URL (every kind ends in hex after a dash) reads as one.
+    const container = `${POD}pev/records/`;
+    const kinds = [['scenario', 'urn:pev:scenario:0123456789abcdef'], ['attempt', 'urn:pev:attempt:kabcdef01:0123456789abcdef-2'], ['role-registry', 'urn:pev:role-registry:0123456789abcdef'],
+      ['projection-audit', 'urn:pev:projection:0123456789abcdef']] as const;
+    for (const [kind, iri] of kinds) {
+      const sealed = slugFor(kind, iri, 3, r1, '0a1b2c3d');
+      expect(sealed, kind).toBe(`${slugFor(kind, iri, 3, r1)}-k0a1b2c3d`);
+      expect([fingerprintOfRecordUrl(`${container}${sealed}.ttl`), fingerprintOfRecordUrl(`${container}${slugFor(kind, iri, 3, r1)}.ttl`)], kind).toEqual(['0a1b2c3d', null]);
+    }
+    expect([fingerprintOfRecordUrl(`${container}x-k0a1b2c3d-graph.envelope.jose.json`), fingerprintOfRecordUrl(`${container}x-kabc.ttl`)]).toEqual([null, null]);
+  });
+
+  it('keys attempt IRIs with a secret from the record key: unlinkable to an address without it, stable with it', () => {
+    const k1 = deriveEncryptionKeyPair(`0x${sha256('pev-engines:record-key-1')}`, 'pev-records');
+    const k2 = deriveEncryptionKeyPair(`0x${sha256('pev-engines:record-key-2')}`, 'pev-records');
+    const s1 = attemptIriSecret(k1);
+    expect(s1).toMatch(/^[0-9a-f]{64}$/);
+    // Every bridge holding the same PEV_RECORD_KEY derives the same secret, and another key another.
+    expect(attemptIriSecret(deriveEncryptionKeyPair(`0x${sha256('pev-engines:record-key-1')}`, 'pev-records'))).toBe(s1);
+    expect(attemptIriSecret(k2)).not.toBe(s1);
+    // The secret is not the record key's own secret or public key.
+    expect([s1.includes(Buffer.from(k1.secretKey, 'base64').toString('hex')), s1 === Buffer.from(k1.publicKey, 'base64').toString('hex')]).toEqual([false, false]);
+    const plain = attemptKey(POD, SCENARIO_IRI, learnerW.address);
+    const keyed = attemptKey(POD, SCENARIO_IRI, learnerW.address, s1);
+    // A keyed key names its key's public fingerprint, then the 16 hex keyed with the secret.
+    const fp1 = iriKeyFingerprint(s1);
+    expect(fp1).toMatch(/^[0-9a-f]{8}$/);
+    expect(fp1).toBe(createHmac('sha256', Buffer.from(s1, 'hex')).update('pev-iri-key-fingerprint').digest('hex').slice(0, 8));
+    expect(keyed).toMatch(new RegExp(`^k${fp1}:[0-9a-f]{16}$`));
+    expect(keyed.slice(-16)).toBe(createHmac('sha256', Buffer.from(s1, 'hex')).update(`${POD}|${SCENARIO_IRI}|${learnerW.address.toLowerCase()}`).digest('hex').slice(0, 16));
+    expect(keyed.endsWith(plain)).toBe(false);
+    expect(attemptKey(POD, SCENARIO_IRI, learnerW.address.toLowerCase(), s1)).toBe(keyed);
+    const other = attemptKey(POD, SCENARIO_IRI, learnerW.address, attemptIriSecret(k2));
+    expect([other.slice(-16) === keyed.slice(-16), other.startsWith(`k${fp1}:`)]).toEqual([false, false]);
+    // Every attempt keyed under one key names the same fingerprint, whoever it is, on any scenario:
+    // it names the key, and nothing of the learner, the scenario or the pod.
+    expect(attemptKey(POD, SCENARIO_IRI, reviewerW.address, s1)).not.toBe(keyed);
+    expect([attemptKey(POD, SCENARIO_IRI, reviewerW.address, s1), attemptKey('https://other.example.test/p/', 'urn:pev:scenario:0', learnerW.address, s1)]
+      .map((k) => k.slice(0, 10))).toEqual([`k${fp1}:`, `k${fp1}:`]);
+    // The fingerprint is not part of the secret, the key pair or any segment.
+    expect([s1.includes(fp1), Buffer.from(k1.publicKey, 'base64').toString('hex').includes(fp1), keyed.slice(-16).includes(fp1)]).toEqual([false, false, false]);
+    // The plain key is what anyone recomputes from a candidate address: sha256 of pod, scenario and address.
+    expect(plain).toBe(sha256(`${POD}|${SCENARIO_IRI}|${learnerW.address.toLowerCase()}`).slice(0, 16));
+    expect(attemptIri(keyed, 2)).toMatch(new RegExp(`^urn:pev:attempt:k${fp1}:[0-9a-f]{16}-2$`));
+    expect([fingerprintOfAttemptIri(attemptIri(keyed, 2)), fingerprintOfAttemptIri(attemptIri(plain, 2)), fingerprintOfAttemptIri('urn:pev:scenario:k0123abcd:0')])
+      .toEqual([fp1, null, null]);
+  });
+
+  it('tells well-formed text from text with a lone UTF-16 surrogate, and writes U+FFFD for one', () => {
+    expect(['plain', 'emoji \u{1F600} pair', ''].map(isWellFormedText)).toEqual([true, true, true]);
+    expect(['a \ud800 b', 'a \udc00 b', 'end \ud83d', '\ude00 start', 'two \udc00\ud800'].map(isWellFormedText)).toEqual([false, false, false, false, false]);
+    expect(toWellFormedText('a \ud800 b \u{1F600} \udc00')).toBe('a � b \u{1F600} �');
+    expect(toWellFormedText('fine')).toBe('fine');
   });
 });
 

@@ -339,6 +339,10 @@ describe('parties and allocation', () => {
     expect(currentAllocationNote(audits, 'Emergent', answers(), effective)).toMatch(/Emergent work does not permit/);
     expect(currentAllocationNote(audits, 'Evident', answers(), effective)).toBeNull();
     expect(currentAllocationNote({ level: 'person', personAddress: PERSON }, 'Turbulent', answers(), effective)).toBeNull();
+    // Put in force by a decision, it is not called a reported state: the classification no longer allows what was approved.
+    const decided = currentAllocationNote(audits, 'Emergent', answers(), effective, 'decision');
+    expect(decided).toMatch(/^As a decision put it in force, this task is done at agent-acts-person-audits, which Emergent work does not permit; the task's classification no longer allows what that decision approved\. Propose a change\.$/);
+    expect(decided).not.toMatch(/As captured|reported current state/);
   });
 });
 

@@ -13,6 +13,7 @@
  * environment reads.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { request } from 'node:http';
 import { join, relative } from 'node:path';
@@ -32,7 +33,7 @@ import {
 import { inAuditSample } from '../src/calibration.js';
 import { PEV_ACTION, PEV_NS } from '../src/ontology.js';
 import * as practice from '../src/practice.js';
-import { signEnvelope, signedRequestEnvelope } from '../src/records.js';
+import { signEnvelope, signedRequestEnvelope, RECORD_CLASS } from '../src/records.js';
 
 type Out = Record<string, unknown>;
 type Handlers = Record<string, (args: Record<string, unknown>) => Promise<unknown>>;
@@ -310,7 +311,11 @@ const button = (action: string, extra = ''): string => `button[data-action="${ac
 
 describe('the web UI works, driven in a DOM against the real handlers', () => {
   it('a learner practises with the disclosed scripted model, is judged, a reviewer reviews, and only then can the learner project', async () => {
-    const p = await openUi(demo);
+    const asked: string[] = [];
+    const p = await openUi(demo, (w) => {
+      const f = w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
+      w['fetch'] = (input: unknown, init?: RequestInit): Promise<Response> => { asked.push(String(input)); return f(input, init); };
+    });
     await p.until(() => p.text('#bar').includes('DEMO MODE'), 'the demo banner');
     expect(p.text('#bar')).toContain('SCRIPTED: offline fixture, no model ran');
     await asRole(p, 'learner');
@@ -319,12 +324,16 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
     card.querySelector<HTMLElement>(button(PEV_ACTION.startAttempt))!.click();
     await p.until(() => p.q('#line'), 'the conversation');
+    const askedBefore = asked.length;
     for (const line of DEMO_LINES.ana) {
       const before = p.all('.bubble').length;
       p.set(p.q('#line'), line);
       p.click('#send');
       await p.until(() => p.all('.bubble').length === before + 2, `the reply to "${line.slice(0, 24)}…"`);
     }
+    // Each line is shown from the act's own answer: the attempt is not read again after it.
+    const during = asked.slice(askedBefore).map((u) => new URL(u, 'http://x/').pathname);
+    expect([during.filter((u) => u.endsWith('/pev/say')).length, during.filter((u) => u.endsWith('/pev/get_attempt'))]).toEqual([DEMO_LINES.ana.length, []]);
     const replies = p.all('.bubble.them').slice(1);
     expect(replies.map((b) => b.querySelector('.text')?.textContent)).toEqual(DEMO_LINES.sam.map((x) => x.replace(' (end of conversation)', '')));
     expect(replies.every((b) => (b.textContent ?? '').includes('scripted fixture: no model ran'))).toBe(true);
@@ -386,6 +395,59 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect((statement['verb'] as Out)['id']).toBe('http://adlnet.gov/expapi/verbs/completed');
     expect(((statement['context'] as Out)['extensions'] as Out)[`${PEV_NS}practiceEvidence`]).toBe(true);
     expect(p.text('#projection')).toContain('Nothing was sent anywhere.');
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('an answer that is not the whole pod says so first, and no view then says the pod holds nothing', async () => {
+    // A pod of its own, where two heads (a scenario and an attempt) answer 503: every listing over it is incomplete.
+    const GAPPY = 'https://gappy-pod.demo.test/practice/';
+    const gp = inMemoryPod();
+    const unreadable = new Set<string>();
+    const gappy = (async (input: RequestInfo | URL, init?: RequestInit) => ((init?.method ?? 'GET') === 'GET' && unreadable.has(String(input))
+      ? new Response('busy', { status: 503, statusText: 'Service Unavailable' }) : gp.fetchFn(input, init))) as typeof fetch;
+    const handlers = createPevHandlers({
+      ...base, fetchFn: gappy, holderFetchFn: gappy, defaultPodUrl: GAPPY, servedPods: [GAPPY], model: scriptedPracticeModel(), demoSigner: demoSignerOf(W),
+    }) as Handlers;
+    const registered = (await handlers['pev.register_role']!({
+      envelope: await signEnvelope(W.admin, { v: 1, action: PEV_ACTION.registerRole, issuedAt: new Date().toISOString(), nonce: nonce(), podUrl: GAPPY, address: W.reviewer.address, role: 'reviewer', change: 'add' }),
+    })) as Out;
+    expect(registered['changed']).toBe(true);
+    const MANIFEST = `${GAPPY}.well-known/context-graphs`;
+    const planted = [
+      [`${GAPPY}pev/records/scenario-planted.ttl`, 'urn:pev:scenario:00000000000000aa', RECORD_CLASS.scenario],
+      [`${GAPPY}pev/records/attempt-planted.ttl`, 'urn:pev:attempt:00000000000000aa-1', RECORD_CLASS.attempt],
+    ] as const;
+    let manifest = gp.store.get(MANIFEST)!;
+    for (const [d, iri, cls] of planted) {
+      unreadable.add(d);
+      manifest += `\n<${d}> a iep:ManifestEntry ;\n    iep:describes <${iri}> ;\n    dct:conformsTo <${cls}> ;\n    iep:modalStatus iep:Hypothetical .\n`;
+    }
+    gp.store.set(MANIFEST, manifest);
+    const l = await serve(handlers);
+    const p = await openUi(l);
+    const view = (): string => p.text('#view');
+    const shows = async (heading: string, empty: string): Promise<void> => {
+      await p.until(() => p.text('#view h2') === heading && p.q('#view .incomplete'), `${heading}, marked incomplete`);
+      expect(view(), heading).toContain('Not the whole pod: some records on it could not be read');
+      expect(view(), heading).toContain('could not be read or are not signed by a platform key this bridge trusts');
+      expect(view().includes(empty), heading).toBe(false);
+    };
+    await shows('Practise a scenario', 'No published scenarios on this pod yet');
+    p.w.location.hash = '#/calibration';
+    await shows('Calibration of the judges', 'No reviewed outcomes yet.');
+    await asRole(p, 'learner');
+    p.w.location.hash = '#/mine';
+    await shows('Attempts', 'No attempts yet.');
+    await asRole(p, 'reviewer');
+    p.w.location.hash = '#/review';
+    await shows('Review queue', 'Nothing waits for you.');
+    expect(view()).toContain('At least 0 attempt(s) await review.');
+    // Once the pod answers for them (they are not there: the manifest names nothing it holds), the
+    // answers are whole again, and the empty prompts come back.
+    unreadable.clear();
+    p.w.location.hash = '#/practice';
+    await p.until(() => p.text('#view h2') === 'Practise a scenario' && view().includes('No published scenarios on this pod yet'), 'the whole, empty list');
+    expect(p.q('#view .incomplete')).toBeNull();
     expect(p.errors).toEqual([]);
   }, SLOW);
 
@@ -558,6 +620,65 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     const reads = /env\(\s*'PEV_POD_WRITE_SECRET'|\[\s*'PEV_POD_WRITE_SECRET'\s*\]/;
     expect(others.filter((f) => reads.test(readFileSync(f, 'utf8'))).map((f) => relative(VERTICAL, f))).toEqual([]);
   });
+
+  it('reads PEV_RECORD_KEY only in server.ts and refuses a malformed one; operator records are sealed, holder copies never', () => {
+    expect(server).toMatch(/const recordKeyHex = env\('PEV_RECORD_KEY'\);/);
+    expect(server).toContain("const RECORD_KEY_HEX = /^(0x)?[0-9a-fA-F]{64}$/;");
+    expect(server).toMatch(/if \(recordKeyHex !== undefined && !RECORD_KEY_HEX\.test\(recordKeyHex\)\) \{\n[^}]*Not listening\.'\);\n\s*process\.exitCode = 1;\n\s*return;/);
+    expect(server).toContain("deriveEncryptionKeyPair(recordKeyHex, 'pev-records')");
+    expect(server).toMatch(/\.\.\.\(recordKey \? \{ recordKey \} : \{\}\),/);
+    expect(server).toContain('Set PEV_RECORD_KEY (64 hex) to encrypt them');
+    const reads = /env\(\s*'PEV_RECORD_KEY'|\[\s*'PEV_RECORD_KEY'\s*\]/;
+    expect(others.filter((f) => reads.test(readFileSync(f, 'utf8'))).map((f) => relative(VERTICAL, f))).toEqual([]);
+    // Exactly two publishes: the operator record write, sealed when there is a key, and the holder copy, which never is.
+    const handlers = read('bridge/handlers.ts');
+    const publishes = handlers.split('await publishPevRecord({').slice(1).map((x) => x.slice(0, x.indexOf('});')));
+    expect(publishes).toHaveLength(2);
+    expect(publishes.map((x) => [x.includes('PEV_COPIES_CONTAINER'), x.includes('sealTo')])).toEqual([[false, true], [true, false]]);
+    expect(handlers).toContain('...(ctx.trusted.recordKey ? { sealTo: ctx.trusted.recordKey } : {}),');
+  });
+
+  it('PEV_REQUIRE_RECORD_KEY=1 stops a bridge whose record key is missing or blank before it listens, the image sets it, and a blank guard stops it too', () => {
+    expect(server).toMatch(/const requireRecordKey = requireRaw === '1';/);
+    // The guard is read as set, never through env(), which reads a blank value as unset.
+    expect(server).toContain("const requireSet = process.env['PEV_REQUIRE_RECORD_KEY'];");
+    expect(server).not.toMatch(/env\('PEV_REQUIRE_RECORD_KEY'\)/);
+    expect(server).toMatch(/if \(recordKeyHex === undefined && requireRecordKey\) \{\n[^}]*Not listening\.'\);\n\s*process\.exitCode = 1;\n\s*return;/);
+    const image = readFileSync(join(REPO, 'deploy/Dockerfile.pev-bridge'), 'utf8');
+    expect(image).toMatch(/^ENV PEV_REQUIRE_RECORD_KEY=1$/m);
+    expect(image).toMatch(/^ENV PEV_RECORD_KEY=$/m);
+    expect(image).toMatch(/^#\s+PEV_RECORD_KEY\s+64 hex[\s\S]*?BACK IT UP/m);
+    // The server itself, run under tsx as the image runs it, with nothing else in its environment.
+    const run = (extra: Record<string, string>): { status: number | null; out: string; err: string } => {
+      const r = spawnSync(process.execPath, ['--import', 'tsx', join(VERTICAL, 'bridge/server.ts')], {
+        cwd: REPO, encoding: 'utf8', timeout: 120_000, env: { NODE_NO_WARNINGS: '1', PORT: '0', ...extra },
+      });
+      return { status: r.status, out: r.stdout, err: r.stderr };
+    };
+    const KEY = 'ab'.repeat(32);
+    const missing: readonly Record<string, string>[] = [{ PEV_REQUIRE_RECORD_KEY: '1' }, { PEV_REQUIRE_RECORD_KEY: '1', PEV_RECORD_KEY: '  ' }];
+    for (const extra of missing) {
+      const r = run(extra);
+      expect([r.status, r.out.includes('listening on'), r.err], JSON.stringify(extra))
+        .toEqual([1, false, expect.stringContaining('PEV_REQUIRE_RECORD_KEY=1 and PEV_RECORD_KEY is not set (or is blank')]);
+    }
+    const typo = run({ PEV_REQUIRE_RECORD_KEY: 'yes', PEV_RECORD_KEY: KEY });
+    expect([typo.status, typo.err]).toEqual([1, expect.stringContaining('PEV_REQUIRE_RECORD_KEY is "yes"; it takes 1')]);
+    // Set but blank (an unresolved service reference, or an empty override of the image's 1) is not
+    // "no guard": empty or only spaces, it stops the bridge with the key blank too (where it would
+    // write plaintext) and with a valid key. Each run would otherwise reach the next check (demo
+    // keys on a public host) and stop there, saying so, rather than listen.
+    const blankGuards = ['', '  '].flatMap((g) => ['', KEY].map((k) => ({ PEV_REQUIRE_RECORD_KEY: g, PEV_RECORD_KEY: k })));
+    expect(blankGuards).toHaveLength(4);
+    for (const extra of blankGuards) {
+      const r = run({ ...extra, PEV_DEMO_ROLES: '1', HOST: '0.0.0.0' });
+      expect([r.status, r.out.includes('listening on'), r.err.includes('PEV_DEMO_ROLES'), r.err], JSON.stringify(extra))
+        .toEqual([1, false, false, expect.stringContaining('PEV_REQUIRE_RECORD_KEY is set but blank')]);
+    }
+    // A valid key passes the guard: this run goes on to the next check (demo keys on a public host) and stops there.
+    const passes = run({ PEV_REQUIRE_RECORD_KEY: '1', PEV_RECORD_KEY: `0x${KEY}`, PEV_DEMO_ROLES: '1', HOST: '0.0.0.0' });
+    expect([passes.status, passes.err.includes('PEV_RECORD_KEY'), passes.err]).toEqual([1, false, expect.stringContaining('PEV_DEMO_ROLES=1 needs a loopback HOST')]);
+  }, 300_000);
 
   it('no instruction or label the platform shows says no', () => {
     const DECLINE = /\b(error|reason|refused|denied|forbidden|unauthori[sz]ed|invalid|pending|rejected|conflict|unavailable)\b/i;

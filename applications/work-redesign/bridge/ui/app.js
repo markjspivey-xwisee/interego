@@ -3,9 +3,14 @@
  *
  * A Path-A client: it reads the affordance manifest (GET /affordances?format=jsonld) and calls
  * only the targets and methods it declares. Every number shown comes from an affordance
- * response (wrd.list_records, wrd.calibration, or the answer to a write); every change is an
- * envelope signed by the person acting — in their own wallet, or, only in the offline demo, by
- * a persona key the demo server holds, which this page says on every screen.
+ * response (wrd.read_records, wrd.read_calibration, or the answer to a write); every change is
+ * an envelope signed by the person acting — in their own wallet, or, only in the offline demo,
+ * by a persona key the demo server holds, which this page says on every screen.
+ *
+ * Reads are signed too. The page signs one wrd:read-records envelope per signer and pod and
+ * reuses it for up to nine minutes (the bridge accepts it for fifteen, and a read spends no
+ * nonce); a reused read that has gone stale is signed once more. With nothing to sign with, it
+ * tries the unsigned read model, which a bridge answers only when its operator opened reads.
  *
  * Untrusted text (anything read from the pod or typed by a person) reaches the page only as
  * text nodes. No innerHTML, no style attribute: widths are set through the CSSOM, which the
@@ -18,16 +23,26 @@
 const DEMO_BANNER = 'DEMO — keys are generated and held by this demo server. These are not signatures by real people.';
 const EPHEMERAL = 'EPHEMERAL — records will not be trusted after this server restarts';
 const DEMO_KEY = 'DEMO KEY — derived from a published seed';
-const READ_ONLY = 'Read only: this browser has no EIP-191 wallet, so this page cannot sign. Install or enable a wallet that supports personal_sign and reload; the bridge accepts only signed envelopes and never asks for a key.';
+const READ_ONLY = 'No wallet: this browser has no EIP-191 wallet, so this page cannot sign, and it reads the pod only where the bridge serves unsigned reads. Install or enable a wallet that supports personal_sign and reload; the bridge accepts only signed envelopes and never asks for a key.';
+const READ_SIGNING = 'Reading this pod needs your signature too: the page asks your wallet to sign one read and reuses it for up to nine minutes.';
+const READ_ENVELOPE_MS = 9 * 60 * 1000;
 const SIGNING_MEANS = 'Your signature says this description of your work is right, or records why it is not. It is stored with the record, anyone who can read the pod can check it, and you can take a copy of every record about you.';
 const WALLET_STEPS = [
   'Use a browser wallet that supports personal_sign (EIP-191).',
-  'Ask an admin to add your wallet address to this pod\'s registry: until then the bridge refuses your signature.',
+  'Ask an admin to add your wallet address to this pod\'s registry: until then the bridge refuses your signature, for reads as for changes.',
   'Press "Connect wallet" at the top of the page, then sign. The page shows the exact payload before your wallet does.',
+  READ_SIGNING,
 ];
 const PACKET_SENTENCE = 'Give this to your own AI agent; this server drafts nothing.';
 const PREVIEW_LABEL = 'preview — the platform re-checks when you sign';
 const NO_TOTALS = 'No totals across decisions: percentiles do not add.';
+// A decision whose walk back from its current version stops short (chainUnreadable) is never shown as its whole chain.
+const CHAIN_WHOLE = 'Every version of this decision';
+const CHAIN_CUT = 'Versions of this decision read so far: not every version (the chain is incomplete)';
+const CHAIN_CUT_PRINT = 'Not every version: the chain is incomplete.';
+const chainCuts = (n) => `${n} record chain(s) do not read back to their first version: an earlier version is missing, or is not trusted. Their history is shown as incomplete, never as whole.`;
+const trustCuts = (n, keys) => `${n} of them reach a version signed by a platform key this bridge no longer trusts (${keys.join(', ')}). Every change to them is refused (409) until the operator lists that address in WRD_TRUSTED_PLATFORM_ADDRESSES again: an address that signed records on this pod stays trusted for as long as the pod is used.`;
+const HOLDER_WITHOUT_READ = 'Your read was refused, but anyone named in a record, or who signed one, can still take a copy of every record about their work, registered here or not. The copy keeps the platform\'s original signature; verify a download against the platform address you expect (the README gives the command).';
 const LEVEL_NAMES = {
   person: 'A person does it',
   'person-with-agent-assist': 'A person does it, with an agent assisting',
@@ -63,7 +78,8 @@ const TAB_OF = {
   'wrd.revise_task': 'tasks', 'wrd.ratify_task': 'tasks', 'wrd.classify_task': 'tasks', 'wrd.propose_allocation': 'plan',
   'wrd.value_plan': 'value', 'wrd.submit_decision': 'decisions', 'wrd.countersign_decision': 'decisions', 'wrd.record_outcome': 'decisions',
   'wrd.log_agent_run': 'agents', 'wrd.grant_autonomy': 'agents', 'wrd.revoke_grant': 'agents', 'wrd.holder_copy': 'me',
-  'wrd.list_records': 'tasks', 'wrd.calibration': 'calibration', 'wrd.envelope_template': 'tasks', 'wrd.demo_advance_clock': 'decisions',
+  'wrd.list_records': 'tasks', 'wrd.calibration': 'calibration', 'wrd.read_records': 'tasks', 'wrd.read_calibration': 'calibration',
+  'wrd.envelope_template': 'tasks', 'wrd.read_envelope_template': 'tasks', 'wrd.demo_advance_clock': 'decisions',
 };
 
 // ── Small pure helpers ───────────────────────────────────────────────────────────────────
@@ -156,9 +172,11 @@ const table = (head, rows) => h('div', { class: 'scroll' }, h('table', null,
 // ── State ────────────────────────────────────────────────────────────────────────────────
 
 const S = {
-  tools: new Map(), data: null, cal: null, mode: 'readonly', persona: '', account: '', tab: 'tasks',
+  tools: new Map(), data: null, cal: null, mode: 'readonly', persona: '', personas: [], account: '', tab: 'tasks',
   workflow: '', plan: '', result: null, panel: null, busy: false, planForm: {}, packet: null, decisionOpen: '',
   pod: new URLSearchParams(location.search).get('pod') ?? '',
+  reads: new Map(),             // signed read envelopes by signer and pod, reused for up to READ_ENVELOPE_MS
+  readRefused: false,           // the last signed read was refused (401 or 403): the holder's copy is still offered
 };
 const data = () => S.data || {};
 const reg = () => (S.data && S.data.registry) || { members: [], taskKinds: [], head: null };
@@ -167,7 +185,7 @@ const labelOf = (a) => member(a)?.label ?? short(a);
 const people = () => reg().members.filter((m) => !m.softwareAgent);
 const agentsList = () => reg().members.filter((m) => m.softwareAgent);
 const kindsList = (all) => reg().taskKinds.filter((k) => all || !k.retired);
-const personas = () => data().bridge?.demo?.personas ?? [];
+const personas = () => (S.personas.length ? S.personas : data().bridge?.demo?.personas ?? []);
 const tasks = () => data().tasks ?? [];
 const taskBy = (iri) => tasks().find((t) => t.taskIri === iri);
 const taskName = (iri) => taskBy(iri)?.name ?? short(iri);
@@ -261,26 +279,89 @@ async function send(toolName, body) {
 
 function showResult(tool, r) { S.result = { tool, ...r }; render(); }
 
-/** Show exactly what a write signs: the payload's schema and a template the bridge fills from the pod. Reads only. */
+/**
+ * Show exactly what a write signs: the payload's schema and a template the bridge fills from the
+ * pod. Reads only. When this signer holds a fresh signed read for this pod, it goes as
+ * read_envelope in the POST body of wrd.read_envelope_template, never in a URL, so the bridge
+ * fills the whole template; without one (or if the bridge refuses it), the unsigned GET
+ * wrd.envelope_template carries only the shape and the head binding.
+ */
 async function showPayload(intent, args) {
-  const r = await call('wrd.envelope_template', { intent, pod_url: S.pod || undefined, ...(args || {}) });
-  if (!r.ok) { showResult('wrd.envelope_template', r); return; }
+  const base = { intent, pod_url: S.pod || undefined, ...(args || {}) };
+  const hit = S.reads.get(`${readSigner()}|${S.pod}`);
+  const fresh = readSigner() !== '' && hit && Date.now() - hit.at < READ_ENVELOPE_MS;
+  let r = fresh ? await call('wrd.read_envelope_template', { ...base, read_envelope: hit.envelope }) : await call('wrd.envelope_template', base);
+  if (!r.ok && fresh && (r.status === 401 || r.status === 403)) { S.reads.delete(`${readSigner()}|${S.pod}`); r = await call('wrd.envelope_template', base); }
+  if (!r.ok) { showResult(fresh ? 'wrd.read_envelope_template' : 'wrd.envelope_template', r); return; }
   openPanel(`What “${intent}” signs`, h('div', null,
     h('p', { class: 'small muted', text: `${r.body.signing} Sent to ${r.body.toolName}. Fields still yours to decide: ${(r.body.fill ?? []).join(', ') || 'none'}.` }),
+    r.body.contextWithheld ? h('p', { class: 'small warnbox', text: r.body.contextWithheld }) : null,
     h('h3', { text: 'Template, filled from the pod' }), h('pre', { text: JSON.stringify(r.body.template, null, 2) }),
     Object.keys(r.body.context ?? {}).length ? h('details', null, h('summary', { text: 'What the bridge read to fill it' }), h('pre', { text: JSON.stringify(r.body.context, null, 2) })) : null,
     h('details', null, h('summary', { text: 'JSON Schema' }), h('pre', { text: JSON.stringify(r.body.schema, null, 2) }))));
 }
 const payloadButton = (intent, args) => h('button', { class: 'small', text: 'What this signs', title: 'The payload schema and a template filled from the pod (reads only)', on: { click: () => showPayload(intent, args) } });
 
-async function refresh() {
-  const r = await call('wrd.list_records', { pod_url: S.pod || undefined });
+/** Who would sign a read now, or '' when nothing can sign. */
+function readSigner() {
+  if (S.mode === 'demo') return S.persona ? `demo:${S.persona}` : '';
+  return S.mode === 'wallet' && S.account ? `wallet:${S.account}` : '';
+}
+
+/**
+ * Send one signed read through `send`, which posts the envelope to its tool. The envelope is the
+ * one this signer signed for this pod in the last nine minutes, or a new one over the template
+ * wrd.envelope_template fills (which names the pod the bridge resolves). A reused envelope the
+ * bridge calls stale (401: the demo's scripted clock moves) is dropped and signed once more.
+ */
+async function signedRead(send) {
+  const key = `${readSigner()}|${S.pod}`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let envelope;
+    const hit = S.reads.get(key);
+    const reused = Boolean(hit && Date.now() - hit.at < READ_ENVELOPE_MS);
+    if (reused) {
+      envelope = hit.envelope;
+    } else {
+      const t = await call('wrd.envelope_template', { intent: 'wrd:read-records', pod_url: S.pod || undefined });
+      if (!t.ok) return t;
+      try {
+        envelope = await sign({ intent: 'wrd:read-records', podUrl: t.body.template.podUrl });
+      } catch (e) {
+        return { ok: false, status: 0, body: { error: 'The read was not signed.', 'iep:refusalReason': String(e?.message ?? e) } };
+      }
+      S.reads.set(key, { envelope, at: Date.now() });
+    }
+    const r = await send(envelope);
+    if (r.status === 401 && reused && attempt === 0) { S.reads.delete(key); continue; }
+    return r;
+  }
+  return { ok: false, status: 0, body: { error: 'The read was not signed.' } };
+}
+
+/** Re-read the pod; `quiet` keeps the answer on screen when the read is refused (a holder copy's, say). */
+async function refresh(quiet = false) {
+  const pod = S.pod || undefined;
+  let signed = readSigner() !== '';
+  let r = signed
+    ? await signedRead((envelope) => call('wrd.read_records', { envelope, pod_url: pod }))
+    : await call('wrd.list_records', { pod_url: pod });
+  if (signed && r.status === 403) {
+    // A signer with no role here still reads where the operator opened reads to anyone.
+    const open = await call('wrd.list_records', { pod_url: pod });
+    if (open.ok) { r = open; signed = false; }
+  }
+  // A signed read the bridge refused (401 or 403): the signer may still take their copy (holderCard).
+  S.readRefused = !r.ok && readSigner() !== '' && (r.status === 401 || r.status === 403);
   if (r.ok) S.data = r.body;
-  else { S.data = null; S.result = { tool: 'wrd.list_records', ...r }; }
+  else if (!quiet) { S.data = null; S.result = { tool: signed ? 'wrd.read_records' : 'wrd.list_records', ...r }; }
+  else S.data = null;
   if (S.data && S.tab === 'calibration') {
-    const c = await call('wrd.calibration', { pod_url: S.pod || undefined });
+    const c = signed
+      ? await signedRead((envelope) => call('wrd.read_calibration', { envelope, pod_url: pod }))
+      : await call('wrd.calibration', { pod_url: pod });
     S.cal = c.ok ? c.body : null;
-    if (!c.ok) S.result = { tool: 'wrd.calibration', ...c };
+    if (!c.ok) S.result = { tool: signed ? 'wrd.read_calibration' : 'wrd.calibration', ...c };
   }
   render();
 }
@@ -298,15 +379,18 @@ async function boot() {
   for (const a of m.affordances ?? []) {
     S.tools.set(a.toolName, { path: new URL(a.target, location.href).pathname, method: a.method, title: a.title ?? a.toolName, action: a.action });
   }
-  await refresh();
-  if (data().bridge?.demo?.enabled) {
+  // The signer is chosen before the first read, because reading is signed: only the demo server
+  // declares its persona signer, and it names its personas when asked without one.
+  if (S.tools.has('wrd.demo_envelope')) {
+    const r = await call('wrd.demo_envelope', {});
+    S.personas = r.ok ? r.body.personas ?? [] : [];
     S.mode = 'demo';
-    S.persona = personas().find((p) => p.id === 'ana')?.id ?? personas()[0]?.id ?? '';
+    S.persona = S.personas.find((p) => p.id === 'ana')?.id ?? S.personas[0]?.id ?? '';
   } else if (window.ethereum) {
     S.mode = 'wallet';
   }
   window.addEventListener('hashchange', render);
-  render();
+  await refresh();
 }
 
 // ── Frame: header strip, tabs, result ────────────────────────────────────────────────────
@@ -316,7 +400,12 @@ function render() {
   if (!root) return;
   root.replaceChildren();
   if (!S.data) {
-    add(root, h('h1', { text: 'Work redesign' }), resultNode(), podPicker());
+    // Nothing read: still offer the way to sign a read (or another signer), and another pod. A signer
+    // whose read was refused may still be named in records here (someone removed from the registry,
+    // say): their copy needs no read model, so it is offered here too.
+    const holder = S.readRefused && actor() ? h('section', null, h('h2', { text: 'My record' }), h('p', { class: 'small', text: HOLDER_WITHOUT_READ }), holderCard(null)) : null;
+    add(root, h('h1', { text: 'Work redesign' }), resultNode(), h('div', { class: 'stack' }, signerNode()),
+      S.mode === 'wallet' ? h('p', { class: 'small muted', text: READ_SIGNING }) : null, holder, podPicker());
     return;
   }
   const taskIri = taskFromHash();
@@ -338,6 +427,9 @@ function strip() {
   const altered = (d.altered ?? []).length;
   const forked = (d.forked ?? []).length;
   const untrusted = (d.untrusted ?? []).length;
+  // Every graph whose line is cut, whatever its kind (a bridge that reports chainCuts), else the decisions and grants that say so.
+  const cuts = Array.isArray(d.chainCuts) ? d.chainCuts.length : [...(d.decisions ?? []), ...(d.grants ?? [])].filter((x) => x.chainUnreadable).length;
+  const byKey = (d.chainCuts ?? []).filter((c) => c.untrustedKey);
   return h('header', { class: 'strip' },
     h('div', { class: 'stack' },
       h('div', { class: 'row' }, h('h1', { text: 'Work redesign' }), h('span', { class: 'muted small' }, 'pod ', h('code', { text: d.podUrl })),
@@ -347,21 +439,37 @@ function strip() {
       h('p', { class: 'small muted', text: d.readExposure }),
       d.demoRecords > 0 ? h('p', { class: 'small' }, chip('demo', 'demo'), ` ${d.demoRecords} of ${d.records} records here are ${d.demoLabel}.`) : null,
       altered + forked + untrusted > 0 ? h('p', { class: 'warnbox small' },
-        `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`) : null),
+        `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`) : null,
+      cuts > 0 ? h('p', { class: 'badbox small', text: chainCuts(cuts) }) : null,
+      byKey.length > 0 ? h('p', { class: 'badbox small', text: trustCuts(byKey.length, [...new Set(byKey.map((c) => c.untrustedKey))]) }) : null,
+      (d.sealed ?? []).length > 0 ? h('p', { class: 'badbox small', text: `${d.sealed.length} record(s) are sealed and this bridge cannot open them. ${d.sealedNote ?? ''}` }) : null,
+      d.recordKeyMismatch ? h('p', { class: 'badbox small', text: `Another record key: ${d.recordKeyMismatch.why}` }) : null,
+      d.plaintext ? h('p', { class: 'warnbox small', text: `${d.plaintext.versions} record version(s) written before the record key are plaintext on the pod. ${d.plaintext.why}` }) : null,
+      d.unreadable ? h('p', { class: 'badbox small', text: `Marked, not worked out without them, because records they depend on cannot be read: ${Object.keys(d.unreadable).join(', ')}.` }) : null),
     h('div', { class: 'stack' },
-      S.mode === 'demo' ? [
-        h('div', { class: 'demo-banner', text: DEMO_BANNER }),
-        S.tools.has('wrd.demo_advance_clock') ? demoClockNode() : null,
-        h('div', { class: 'row' }, h('label', { class: 'inline', for: 'persona' }, 'Acting as'),
-          h('select', { id: 'persona', on: { change: (e) => { S.persona = e.target.value; S.panel = null; render(); } } },
-            personas().map((p) => h('option', { value: p.id, selected: p.id === S.persona, text: `${p.label} — ${roles(p.address).join(', ') || (p.id === 'admin' ? 'admin' : 'not registered')}` })))),
-      ] : S.mode === 'wallet' ? h('div', { class: 'row' },
-        S.account ? ['Signing with your wallet ', h('code', { text: S.account })] : h('button', { class: 'primary', text: 'Connect wallet', on: { click: connectWallet } }))
-        : h('p', { class: 'warnbox small', text: READ_ONLY }),
+      signerNode(),
       me ? h('div', { class: 'row small' }, 'Acting address ', h('code', { text: me }),
         m ? [m.roles.map((r) => chip(r)), m.softwareAgent ? chip('software agent', 'warn') : null, m.personRef ? ['person ', h('code', { text: m.personRef })] : null,
           m.principal ? ['principal ', labelOf(m.principal)] : null]
           : chip(S.persona === 'admin' ? 'admin key (signs registry changes only)' : 'not in this pod\'s registry', 'warn')) : null));
+}
+
+/** Who signs: the demo persona picker, the wallet, or why nothing can. Reads are signed as this identity too. */
+function signerNode() {
+  if (S.mode === 'demo') {
+    return [
+      h('div', { class: 'demo-banner', text: DEMO_BANNER }),
+      S.data && S.tools.has('wrd.demo_advance_clock') ? demoClockNode() : null,
+      h('div', { class: 'row' }, h('label', { class: 'inline', for: 'persona' }, 'Acting as'),
+        h('select', { id: 'persona', on: { change: (e) => { S.persona = e.target.value; S.panel = null; S.result = null; refresh(); } } },
+          personas().map((p) => h('option', { value: p.id, selected: p.id === S.persona, text: `${p.label} — ${roles(p.address).join(', ') || (p.id === 'admin' ? 'admin' : 'not registered')}` })))),
+    ];
+  }
+  if (S.mode === 'wallet') {
+    return h('div', { class: 'row' },
+      S.account ? ['Signing with your wallet ', h('code', { text: S.account })] : h('button', { class: 'primary', text: 'Connect wallet', on: { click: connectWallet } }));
+  }
+  return h('p', { class: 'warnbox small', text: READ_ONLY });
 }
 
 /** Demo only: the demo server's clock is scripted, so a visitor's own measurement window can end only when they move it. */
@@ -395,7 +503,8 @@ async function connectWallet() {
     showResult('wallet', { ok: false, status: 0, body: { error: 'The wallet did not connect.', 'iep:refusalReason': String(e?.message ?? e) } });
     return;
   }
-  render();
+  S.result = null;
+  await refresh();
 }
 
 function resultNode() {
@@ -448,7 +557,7 @@ function summaryOf(tool, b) {
   if (tool === 'wrd.holder_copy') {
     return h('p', { text: b.status === 'copied'
       ? `${(b.copied ?? []).filter((c) => !c.skipped).length} version(s) copied, ${(b.copied ?? []).filter((c) => c.skipped).length} already there, to ${b.targetPodUrl}.`
-      : `${(b.bundle ?? []).length} record version(s) in the download.` });
+      : `${(b.bundle ?? []).length} record version(s) in the download.${b.platform?.address ? ` This bridge signs as ${b.platform.address}; verify the download against the address you expect.` : ''}` });
   }
   return null;
 }
@@ -802,13 +911,16 @@ function tasksView() {
         h('td', null, h('strong', { text: t.name }), h('div', { class: 'small muted', text: t.description }), chip(t.taskKind), chip(`quotes ${t.quoteStatus}`), demoChip(t),
           h('div', { class: 'small', text: `In force: ${allocationText(t.effective)}${t.effective.source !== 'captured' ? ` (${SOURCE_NAMES[t.effective.source] ?? t.effective.source})` : ''}` }),
           t.effective.suspended ? h('div', { class: 'badbox small', text: t.effective.suspendedWhy }) : null,
-          t.currentNotPermitted ? h('div', { class: 'warnbox small', text: t.currentNotPermitted }) : null),
+          t.effective.unreadable ? h('div', { class: 'badbox small', text: t.effective.unreadable }) : null,
+          t.currentNotPermitted ? h('div', { class: 'warnbox small', text: t.currentNotPermitted }) : null,
+          t.currentNotPermittedUnreadable ? h('div', { class: 'badbox small', text: t.currentNotPermittedUnreadable }) : null),
         h('td', null, partiesNode(t)),
         h('td', null, statusChip(t.status), t.revision ? h('div', { class: 'small', text: `revised; answers ${t.revision.answers.length} dispute(s)` }) : null),
         h('td', null, c && c.state === 'ok' ? [h('strong', { text: c.regime }), ` ${c.method} `, statusChip(c.status), c.current ? null : chip('classified against an earlier description', 'warn'),
           c.disagreement.length ? chip(`${c.disagreement.length} party disagrees`, 'bad') : null,
-          c.contraryEvidence?.suggestReclassify ? h('div', { class: 'warnbox small' }, c.contraryEvidence.note, ' ', h('button', { text: 'Re-classify', on: { click: () => classifyPanel(t) } })) : null]
-          : c ? chip(`classification ${c.state}: not trusted`, 'bad') : chip('not classified', 'warn')),
+          c.contraryEvidence?.suggestReclassify ? h('div', { class: 'warnbox small' }, c.contraryEvidence.note, ' ', h('button', { text: 'Re-classify', on: { click: () => classifyPanel(t) } })) : null,
+          c.contraryEvidence?.unreadable ? h('div', { class: 'badbox small', text: c.contraryEvidence.unreadable }) : null]
+          : c ? [chip(`classification ${c.state}: not trusted`, 'bad'), c.unreadable ? h('div', { class: 'badbox small', text: c.unreadable }) : null] : chip('not classified', 'warn')),
         h('td', null,
           h('button', { text: 'Open', on: { click: () => { location.hash = `task=${encodeURIComponent(t.taskIri)}`; } } }),
           h('button', { text: 'Copy link', on: { click: () => copyText(new URL(t.link, location.href).href) } }),
@@ -925,7 +1037,7 @@ function planView() {
     const g = s.level === 'agent-acts-within-grant' && s.agentAddress ? activeGrant(s.agentAddress, t.taskKind) : null;
     return h('tr', null,
       h('td', null, h('strong', { text: t.name }), h('div', { class: 'small muted', text: allocationText(t.effective) }), t.effective.source !== 'captured' ? chip(SOURCE_NAMES[t.effective.source] ?? t.effective.source) : null,
-        t.effective.suspended ? chip(t.effective.suspendedWhy, 'bad') : null),
+        t.effective.suspended ? chip(t.effective.suspendedWhy, 'bad') : null, t.effective.unreadable ? chip(t.effective.unreadable, 'bad') : null),
       h('td', null, c?.regime ? [h('strong', { text: c.regime }), h('div', { class: 'small muted', text: REGIME_NOTES[c.regime] ?? '' })] : '—'),
       h('td', null, lock ? chip(lock, 'warn') : [
         select(levelOpts, s.level, (e) => { s.level = e.target.value; render(); }),
@@ -983,7 +1095,7 @@ function planCard(p) {
   const me = actor();
   const changed = p.tasks.filter((r) => r.changed);
   return h('div', { class: 'card' },
-    h('div', null, h('strong', { text: p.title }), ' ', chip(p.planKind), p.stale ? chip(`stale: ${p.stale}`, 'bad') : null, demoChip(p),
+    h('div', null, h('strong', { text: p.title }), ' ', chip(p.planKind), p.stale ? chip(`stale: ${p.stale}`, 'bad') : null, p.unreadable ? chip(p.unreadable, 'bad') : null, demoChip(p),
       h('span', { class: 'small muted', text: ` proposed by ${labelOf(addrOfDid(p.proposedBy))}` })),
     changed.map((r) => h('div', { class: 'small' }, `${taskName(r.taskIri)}: ${allocationText(r.current)} → ${allocationText(r.proposed)}`,
       r.grant ? (r.grant.evidenceFromThisTask ? '' : [' ', chip('grant evidence comes from other tasks', 'warn')]) : '',
@@ -1080,7 +1192,7 @@ function valueView() {
   }
   const p = planBy(S.plan);
   const picker = plans.length === 0 ? h('p', { class: 'muted', text: 'No valued plan yet: propose one in Plan. (Probe plans on Emergent work are never priced.)' })
-    : field('Plan', select(plans.map((x) => [x.planIri, `${x.title}${x.stale ? ' — stale' : ''}`]), S.plan, (e) => { S.plan = e.target.value; render(); }));
+    : field('Plan', select(plans.map((x) => [x.planIri, `${x.title}${x.stale ? ' — stale' : x.unreadable ? ' — cannot be read in full' : ''}`]), S.plan, (e) => { S.plan = e.target.value; render(); }));
   if (!p) return h('section', null, h('h2', { text: 'Value a plan' }), picker);
   const { key, st } = valueDraft(p);
   const save = () => store.set(key, st);
@@ -1132,6 +1244,7 @@ function valueView() {
   return h('section', null,
     h('h2', { text: 'Value a plan with ranges' }), picker,
     p.stale ? h('p', { class: 'badbox', text: `This plan is stale: ${p.stale}` }) : null,
+    p.unreadable ? h('p', { class: 'badbox', text: p.unreadable }) : null,
     h('p', { class: 'small muted', text: 'Give every input as low / likely / high and say where it came from. A single number in "likely" is kept as one number and marked "no range given". These inputs are a draft in this browser until you sign them.' }),
     h('div', { class: 'card' },
       field('Currency (ISO 4217)', input(st.currency, (e) => { st.currency = e.target.value.toUpperCase(); save(); }, { size: 4 })),
@@ -1233,7 +1346,8 @@ function decisionsView() {
 }
 
 function submitForm() {
-  const plans = (data().plans ?? []).filter((p) => !p.stale);
+  // A plan whose staleness cannot be read (a record it was proposed against does not open) is not offered: the bridge would refuse it (409).
+  const plans = (data().plans ?? []).filter((p) => !p.stale && !p.unreadable);
   const st = { planIri: plans[0]?.planIri ?? '', valuationIri: '', metric: 'weekly-cash-delta', basis: '', windowWeeks: 8, description: '', note: '' };
   const body = h('div');
   const draw = () => {
@@ -1284,7 +1398,8 @@ function decisionCard(d, v) {
     d.countersign ? h('p', { class: 'small', text: `${d.countersign.verdict === 'approve' ? 'Countersigned' : 'Declined'} by ${d.countersign.personRef} at ${when(d.countersign.at)}${d.countersign.objectionsConsidered.length ? `, over the named objection(s) on ${d.countersign.objectionsConsidered.map(taskName).join(', ')}` : ''}${(d.countersign.unacknowledgedConsidered ?? []).length ? `, over the silence of the person named on ${d.countersign.unacknowledgedConsidered.map(taskName).join(', ')}` : ''}.` }) : null,
     d.outcome ? outcomeNode(d) : null,
     d.next ? h('p', { class: 'warnbox', text: d.next }) : null,
-    h('h3', { text: 'Every version of this decision' }),
+    h('h3', { text: d.chainUnreadable ? CHAIN_CUT : CHAIN_WHOLE }),
+    d.chainUnreadable ? h('p', { class: 'badbox small', text: d.chainUnreadable }) : null,
     table(['#', 'Status', 'Modal status', 'Signed by', 'At', 'Descriptor'], d.chain.map((c) => h('tr', null, h('td', { text: String(c.version) }), h('td', { text: c.status }), h('td', { text: c.modalStatus }),
       h('td', { text: c.signedBy.map((x) => labelOf(addrOfDid(x))).join(', ') }), h('td', { text: when(c.at) }), h('td', null, h('code', { text: c.descriptorUrl }))))),
     d.status === 'submitted' ? h('div', { class: 'card' }, h('strong', { text: 'Countersign or decline' }),
@@ -1367,6 +1482,8 @@ function printDecision(d, v) {
     r ? h('p', { text: `Cash weekly change ${band(r.scenarios.cash.weeklyDelta, (n) => money(n, r.currency))}; if redeployed ${band(r.scenarios.redeployed.weeklyDelta, (n) => money(n, r.currency))}. NPV (cash) ${band(r.scenarios.cash.npv, (n) => money(n, r.currency))}. Seed ${r.seed}, ${r.draws} draws.` }) : null,
     d.measurementPlan ? h('p', { text: `Measurement: ${d.measurementPlan.windowWeeks} weeks after countersign; ${d.basisLabel}.` }) : null,
     d.outcome ? outcomeNode(d) : null,
+    h('h2', { text: d.chainUnreadable ? CHAIN_CUT : CHAIN_WHOLE }),
+    d.chainUnreadable ? h('p', { class: 'badbox', text: `${CHAIN_CUT_PRINT} ${d.chainUnreadable}` }) : null,
     table(['#', 'Status', 'Modal status', 'Signed by', 'At'], d.chain.map((c) => h('tr', null, h('td', { text: String(c.version) }), h('td', { text: c.status }), h('td', { text: c.modalStatus }),
       h('td', { text: c.signedBy.join(', ') }), h('td', { text: when(c.at) })))),
     h('p', { text: NO_TOTALS }));
@@ -1380,6 +1497,8 @@ function calibrationView() {
   if (!c) return h('section', null, h('h2', { text: 'Calibration' }), h('p', { class: 'muted', text: 'Reading…' }));
   return h('section', null,
     h('h2', { text: 'Calibration: did the predictions land?' }),
+    c.recordKeyMismatch ? h('p', { class: 'badbox small', text: `Another record key: ${c.recordKeyMismatch.why}` }) : null,
+    Object.values(c.unreadable ?? {}).map((why) => h('p', { class: 'badbox small', text: why })),
     h('p', { class: 'small muted', text: `A prediction cell counts measured decisions whose value landed in the ramp-adjusted P10–P90 band (nominal coverage ${c.nominalBandCoverage}). Cells stay Hypothetical below ${c.minSamples} samples. Inconclusive outcomes are excluded and counted.` }),
     table(['Kind', 'Samples', 'In band', 'Mean Brier', 'Mean level distance', 'Status', 'Excluded (inconclusive)', 'Excluded (short window)', 'Ramp-adjusted', 'Dispositions', ''],
       (c.predictionCells ?? []).map((x) => h('tr', null, h('td', null, x.label, x.basisClass === 'uncontrolled' ? chip('no comparison group', 'warn') : null),
@@ -1453,6 +1572,7 @@ function agentsView() {
     table(['Agent', 'Kind of task', 'Model', '#Reviewed', '#Acted under grant', 'Cost per run (agent-reported, reviewed runs)'], (d.runs ?? []).map((r) => h('tr', null,
       h('td', { text: labelOf(r.agentAddress) }), h('td', { text: r.taskKind }), h('td', { text: r.model }), h('td', { class: 'num', text: String(r.reviewed) }), h('td', { class: 'num', text: String(r.actedUnderGrant) }),
       h('td', { text: r.reportedCost ? `${num(r.reportedCost.mean, 4)} ${r.reportedCost.currency} over ${r.reportedCost.runs}` : '—' })))),
+    d.unreadable?.runs ? h('p', { class: 'badbox small', text: d.unreadable.runs }) : null,
     h('details', { class: 'card' }, h('summary', { text: 'Log a run' }),
       S.mode === 'demo' ? [
         field('Signed by the agent (demo persona)', select(agentPersonas.map((p) => [p.id, p.label]), st.persona, (e) => { st.persona = e.target.value; })),
@@ -1468,12 +1588,14 @@ function agentsView() {
       input('', (e) => { st.note = e.target.value; }, { placeholder: 'review note (optional)', size: 40 }),
       h('button', { class: 'primary', text: 'Sign and log', on: { click: logRun } })),
     h('h3', { text: 'Awaiting a person' }),
-    (d.awaitingReview ?? []).length === 0 ? h('p', { class: 'muted small', text: 'No run acted under a grant awaits review.' })
+    d.unreadable?.awaitingReview ? h('p', { class: 'badbox small', text: d.unreadable.awaitingReview }) : null,
+    (d.awaitingReview ?? []).length === 0 ? h('p', { class: 'muted small', text: d.unreadable?.awaitingReview ? 'No run that can be read awaits review.' : 'No run acted under a grant awaits review.' })
       : (d.awaitingReview ?? []).map((a) => h('div', { class: 'small' }, `${labelOf(a.agentAddress)} on “${taskName(a.taskIri)}” (${a.taskKind}) `, demoChip(a), h('button', { text: 'Review', on: { click: () => reviewPanel(a) } }))),
     h('h3', { text: 'Grants' }),
     table(['Agent', 'Kind of task', 'Principal', 'Model', 'Status', 'Evidence', ''], (d.grants ?? []).map((g) => h('tr', null,
       h('td', { text: labelOf(g.agentAddress) }), h('td', { text: g.taskKind }), h('td', { text: labelOf(g.principal) }), h('td', { text: g.model }),
-      h('td', null, chip(g.status, g.active ? 'good' : 'bad'), g.active ? null : h('div', { class: 'small', text: g.why }), demoChip(g)),
+      h('td', null, chip(g.status, g.active ? 'good' : 'bad'), g.active ? null : h('div', { class: 'small', text: g.why }), demoChip(g),
+        g.chainUnreadable ? h('div', { class: 'badbox small', text: g.chainUnreadable }) : null),
       h('td', { class: 'small', text: `${g.evaluation.samples} reviewed runs, ${pct(g.evaluation.acceptedShare)} accepted by a person, ${g.evaluation.distinctConfirmers} ${g.evaluation.distinctConfirmersNote}; ${g.evaluation.readyClaims ?? '—'} ready claims, precision ${pct(g.evaluation.readyClaimPrecision)}; from ${g.evidenceTaskIris.map(taskName).join(', ')}` }),
       h('td', null, g.status === 'granted' ? h('button', { text: 'Revoke…', on: { click: () => revokePanel(g) } }) : g.revokedAt ? h('span', { class: 'small', text: `revoked ${when(g.revokedAt)}: ${g.revocationWhy}` }) : null)))),
     h('div', { class: 'card' }, h('strong', { text: 'Evaluate and grant' }),
@@ -1512,20 +1634,6 @@ function meView() {
   const myPlans = (d.plans ?? []).filter((p) => p.tasks.some((r) => r.changed && [r.current.personAddress, r.current.agentAddress, r.proposed.personAddress, r.proposed.agentAddress].includes(me)));
   const freed = (d.valuations ?? []).filter((v) => myPlans.some((p) => p.planIri === v.planIri))
     .flatMap((v) => v.result.freedPersonHours.perTask.filter((f) => mine.some((t) => t.taskIri === f.taskIri)).map((f) => ({ ...f, plan: planBy(v.planIri)?.title })));
-  const target = input('', null, { placeholder: 'https://your-pod.example/you/', size: 40 });
-  const download = async () => {
-    let envelope;
-    try { envelope = await sign({ intent: 'wrd:holder-copy', podUrl: d.podUrl }); } catch { return; }
-    const out = await send('wrd.holder_copy', { envelope });
-    if (!out) return;
-    const blob = new Blob([JSON.stringify({ holder: out.holder, receipt: out.receiptUrl, bundle: out.bundle }, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = h('a', { href: url, download: `wrd-record-${me}.json` });
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-  };
   return h('section', null,
     h('h2', { text: 'My record' }),
     h('p', { class: 'small muted', text: 'Every record that names you or carries your signature, with every version. Take a copy to a pod you hold, or download it; each copy keeps the platform\'s original signature. This page does not verify a download: the README gives the command that does, offline, against the platform address you expect.' }),
@@ -1535,9 +1643,57 @@ function meView() {
     h('h3', { text: 'Current versions carrying my signature' }),
     signed.length === 0 ? h('p', { class: 'muted small', text: 'None.' }) : signed.map(([k, title, row]) => h('div', { class: 'small' }, chip(k), ` ${title} `, demoChip(row))),
     freed.length ? [h('h3', { text: 'What plans say happens to hours on my work' }), freed.map((f) => h('div', { class: 'small', text: `${f.plan}: ${taskName(f.taskIri)} — ${band(f.band, (n) => num(n, 1))} hours a week; ${f.disposition}${f.note ? ` (${f.note})` : ''}` }))] : null,
-    h('div', { class: 'card' }, field('Copy to my pod', target),
-      h('button', { class: 'primary', text: 'Sign and copy', on: { click: () => act('wrd.holder_copy', 'wrd:holder-copy', { targetPodUrl: target.value.trim() }) } }),
-      h('button', { text: 'Download my record', on: { click: download } })));
+    holderCard(d.podUrl));
+}
+
+/**
+ * Copy to a pod, or download: wrd.holder_copy, signed as the acting identity. It needs no read
+ * model, so it works for a signer whose read is refused: `podUrl` null asks the bridge which pod it
+ * serves (the unsigned template names it), and a refused re-read afterwards leaves the answer shown.
+ */
+function holderCard(podUrl) {
+  const me = actor();
+  const target = input('', null, { placeholder: 'https://your-pod.example/you/', size: 40 });
+  const copy = async (fields) => {
+    if (S.busy) return null;
+    let pod = podUrl;
+    if (!pod) {
+      const t = await call('wrd.envelope_template', { intent: 'wrd:holder-copy', pod_url: S.pod || undefined });
+      if (!t.ok) { showResult('wrd.envelope_template', t); return null; }
+      pod = t.body.template?.podUrl;
+    }
+    S.busy = true;
+    S.result = { pending: true, tool: 'wrd.holder_copy' };
+    render();
+    let r;
+    try {
+      const envelope = await sign({ intent: 'wrd:holder-copy', podUrl: pod, ...fields });
+      r = await call('wrd.holder_copy', { envelope, pod_url: S.pod || undefined });
+    } catch (e) {
+      S.busy = false;
+      if (!(e instanceof NotSigned)) showResult('wrd.holder_copy', { ok: false, status: 0, body: { error: 'Signing did not complete.', 'iep:refusalReason': String(e?.message ?? e) } });
+      else render();
+      return null;
+    }
+    S.busy = false;
+    S.result = { tool: 'wrd.holder_copy', ...r };
+    await refresh(true);
+    return r.ok ? r.body : null;
+  };
+  const download = async () => {
+    const out = await copy({});
+    if (!out) return;
+    const blob = new Blob([JSON.stringify({ holder: out.holder, receipt: out.receiptUrl, bundle: out.bundle }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: `wrd-record-${me}.json` });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
+  return h('div', { class: 'card' }, field('Copy to my pod', target),
+    h('button', { class: 'primary', text: 'Sign and copy', on: { click: () => copy({ targetPodUrl: target.value.trim() }) } }),
+    h('button', { text: 'Download my record', on: { click: download } }));
 }
 
 boot();

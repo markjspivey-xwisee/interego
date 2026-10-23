@@ -13,11 +13,32 @@
  * the pod's role registry, whose every change an admin signed. Separation of duties compares
  * those person references, never keys, and never anything a caller typed.
  *
+ * Reads are scoped: wrd.read_records, wrd.read_calibration and wrd.read_envelope_template answer
+ * a signed read (wrd:read-records), always in a POST body, from an admin or a key the registry
+ * holds, decided on the whole manifest; the GET read model (wrd.list_records, wrd.calibration)
+ * answers 401 unless the operator opens it (publicReads), and the GET wrd.envelope_template fills
+ * only an allowlist (the caller's own IRIs and the head binding), never reads with a signed read,
+ * and refuses (400) the forms of one it detects in its URL (see signedReadIn). Every call names a
+ * pod this bridge serves, or is refused (403) before the pod is read.
+ *
+ * With a record key, the entity IRIs this bridge derives from a tuple (an address and a task, an
+ * agent and a kind of task, a plan and "probe") are keyed with it, each segment separated by kind
+ * and position, so the public manifest does not give the tuple away; records written before the
+ * key keep their unkeyed IRIs and are still found, and their graphs stay plaintext on the pod (the
+ * read model counts them). Every keyed IRI, and the record id of every version written with a
+ * record key, carries the key's public fingerprint, signed by the platform: when the pod holds a
+ * version written under a key this bridge does not hold (or under any, and it holds none), the
+ * bridge would find those records absent, so it refuses every write and every lookup by tuple
+ * (409, naming WRD_RECORD_KEY and both fingerprints), whoever signs, before the registry is read;
+ * every read too while it cannot use the registry (registryForRead), and otherwise its read model
+ * marks what it cannot know. The record id shows it from that key's first write, before any IRI
+ * is keyed.
+ *
  * Every refusal is a typed `refuse()` with an HTTP status; every success carries an outcome
  * flag. No environment reads: bridge/server.ts composes this with its configuration.
  */
 import { randomBytes } from 'node:crypto';
-import { canonicalJson, sha256Hex, createWallet, signMessageRaw, type FetchFn, type ManifestEntry, type Wallet } from '@interego/core';
+import { canonicalJson, sha256Hex, createWallet, signMessageRaw, type EncryptionKeyPair, type FetchFn, type ManifestEntry, type Wallet } from '@interego/core';
 import { fetchAllManifestEntries, predictManifestUrl, PublishShapeViolationError } from '@interego/solid';
 import { refuse, type BridgeRefusal } from '../../_shared/vertical-bridge/refusal.js';
 import {
@@ -40,16 +61,17 @@ import {
 } from '../src/valuation.js';
 import { payloadSchema, isEnvelopeIntent } from '../src/payloads.js';
 import {
-  openEnvelope, verifyStoredEnvelope, NonceLedger, envelopeSha256, didOf, isAddress, isIsoInstant, entityIri, scopePrefix, graphIriOf, recordIdFor,
-  normalisePodUrl, DEFAULT_ENVELOPE_WINDOW,
+  openEnvelope, verifyStoredEnvelope, NonceLedger, envelopeSha256, didOf, isAddress, isIsoInstant, entityIri, entityIriKey, scopePrefix, graphIriOf,
+  recordIdFor, normalisePodUrl, illFormedTextPath, iriKeyFingerprint, fingerprintOfIri, fingerprintOfRecord, kindOfIri, DEFAULT_ENVELOPE_WINDOW, ENTITY_IRI_PATTERN,
+  UNKEYED_RECORD_URL,
   type DecisionPayload, type DescriptorSpec, type EntityKind, type EnvelopeIntent, type ExpertEvidenceBasis, type MeasuredValue,
   type MeasurementPlan, type PartyVerdict, type PlanTaskRow, type PlatformRef, type PolicyRef, type RecordKind, type RecordOf,
   type RecordSigner, type RegistryMember, type RegistryTaskKind, type SignedEnvelope, type TaskPayload, type WrdRecord,
 } from '../src/records.js';
 import {
-  PodView, publishRecord, copyRecordToHolder, openPod, modalFor, KeyedMutex, StaleHeadError, PodWriteError, PodReadError,
-  IncompleteManifestError,
-  type GraphHeads, type LoadedRecord, type PlatformSigner, type VerifyCache,
+  PodView, publishRecord, copyRecordToHolder, openPod, modalFor, isSealedShut, KeyedMutex, StaleHeadError, PodWriteError, PodReadError,
+  IncompleteManifestError, RecordNotSealableError, MORE_THAN_ONE_CURRENT,
+  type GraphHeads, type LineCut, type LoadedRecord, type PlatformSigner, type VerifyCache,
 } from './pod-helpers.js';
 
 export type { PlatformSigner };
@@ -57,9 +79,21 @@ export type { PlatformSigner };
 export interface DemoPersona { readonly id: string; readonly label: string; readonly wallet: Wallet }
 
 export interface WrdDeps {
-  /** Pod transport; tests and the demo inject an in-memory pod. Never patch globalThis.fetch. */
+  /** Pod transport; tests and the demo inject an in-memory pod. Never patch globalThis.fetch. server.ts passes operatorPodFetch(…). */
   readonly fetchFn?: FetchFn;
+  /** Holder-copy transport: never carries the operator's pod credential. Defaults to `fetchFn`; server.ts passes plain fetch. */
+  readonly holderFetchFn?: FetchFn;
   readonly defaultPodUrl?: string;
+  /** Pods this bridge reads and writes records on. Default: [defaultPodUrl] when set, else none, so every call is refused (403). */
+  readonly servedPods?: readonly string[];
+  /** The record key: every new version's graph is sealed to it, and sealed graphs are opened with it. Absent → plaintext records. */
+  readonly recordKey?: EncryptionKeyPair;
+  /**
+   * The operator opens the read model to anyone who can reach the bridge: wrd.list_records and
+   * wrd.calibration answer unsigned GETs, and wrd.envelope_template fills its context from the pod.
+   * Default false: reads need a signed read (wrd.read_records, wrd.read_calibration).
+   */
+  readonly publicReads?: boolean;
   /** Determinism. */
   readonly now?: () => Date;
   /** Absent → a key is generated once, and every record discloses keyKind 'ephemeral'. */
@@ -76,22 +110,52 @@ export interface WrdDeps {
   readonly envelopeWindow?: { readonly pastMs: number; readonly futureMs: number };
   /** Monte Carlo draws; default DRAWS (5000), recorded on every valuation. */
   readonly draws?: number;
+  /**
+   * wrd.holder_copy reads every version on the pod. Default: signers neither an admin nor in the
+   * registry (their keys cost nothing to make) share one lane, one copy at a time, and
+   * HOLDER_COPY_STRANGERS_PER_MINUTE calls a minute, charged when a call arrives; admins and
+   * registry members have their own HOLDER_COPY_CONCURRENT copies at once, which strangers never take.
+   */
+  readonly holderCopyLimits?: { readonly strangersPerMinute: number; readonly concurrent: number };
 }
+
+/** The default holderCopyLimits: a few copies a minute, one at a time, from keys the registry does not hold, and two at once for admins and members. */
+export const HOLDER_COPY_STRANGERS_PER_MINUTE = 4;
+export const HOLDER_COPY_CONCURRENT = 2;
 
 export type WrdHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
 // ── Prose, kept out of return literals ───────────────────────────────────────────────────
 
-const READ_EXPOSURE = 'Anyone who can reach this bridge can read every record on this pod.';
+const READS_SIGNED = 'Reads through this bridge need a signed read from an admin or a key in this pod\'s registry.';
+const READS_PUBLIC = 'Anyone who can reach this bridge can read every record on this pod (the operator opened reads).';
+/** What keyed entity IRIs still show, said exactly (README, "Keyed entity IRIs"). */
+const KEYED_IRI_LINKS = 'A keyed IRI is urn:wrd:<kind>:k<fingerprint>:<scope>:<id>. The fingerprint (8 hex) names the record key it was derived under and reveals nothing about the key. Each segment is keyed with its kind and position, so segments of different kinds or positions never match, and equal segments mean the same thing in the same kind: the scope segment groups records of one kind by what they are scoped to (tasks, classifications, plans and decisions of one workflow; valuations and acknowledgements of one plan; runs of one agent on one kind of task; grants of one agent; holder copies of one holder; every workflow on the pod), which the bridge needs to select them from the manifest, and the id segment is equal where the id is (a task\'s position across workflows, one person\'s acknowledgements of one task across plans, grants on one kind of task across agents, valuations of the same inputs, runs given the same runId). Times link what one call writes: its records share generatedAtTime and validFrom and are written one after another, and capturing a workflow (or recording a task map) writes its first version with its tasks, and adding or retiring a task writes the task with the workflow version that lists or drops it, so which workflow a task belongs to, and its place among the tasks captured with it, are public whatever the IRIs hide. Every other call writes one record.';
+const AT_REST_SEALED = 'Record graphs this bridge writes are sealed to its record key on the pod (the record id of each version written so ends with the key\'s fingerprint), and the entity IRIs this bridge derives from who and what a record is about are keyed with it (records written before the key keep their unkeyed IRIs). Graphs written before the key (versions whose record id names no key) stay plaintext on the pod: this bridge never re-seals a version, so anyone the pod lets read wrd/records/ reads them, and a pod that serves anonymous reads serves them to everyone, until they are removed from the pod; the read model counts them under plaintext. Descriptors and the manifest stay public: each record\'s kind, its signers and whether each signed as curator or validator, its modal status and confidence, its times, and the versions it supersedes and was derived from. What those show together stays public too: for example, a task version signed by a validator alone and left Hypothetical is a dispute by one party, and a decision that carries a confidence and derives from a valuation is a valued one. ' + KEYED_IRI_LINKS;
+const AT_REST_PLAIN = 'Records are written in plaintext: anyone the pod lets read wrd/records/ reads them, and a pod that serves anonymous reads serves them to everyone.';
+const SIGNED_READ_NEEDED = 'Reading records through this bridge needs a signed read.';
+const CONTEXT_WITHHELD = 'Withheld: without a signed read this template carries only the intent, the pod, issuedAt, nonce, the IRIs you named and the head binding (descriptorUrl, graphDigest, recordId). Fields that depend on what a record says (a task\'s text digest, a plan\'s tasks, a decision\'s kind, valuation or window) are left empty. POST the same arguments to wrd.read_envelope_template with a signed wrd:read-records envelope as read_envelope in the JSON body, from an admin or a key in the registry, to have them filled.';
+const SIGNED_READ_IN_URL = 'A signed read is never sent in a URL.';
+const KEY_MISMATCH = 'This pod holds records whose IRIs were derived under a record key this bridge does not hold.';
+const KEY_SEALED_MISMATCH = 'This pod holds records sealed to a record key this bridge does not hold.';
+/** Said beside the versions written before the record key, whose graphs are plaintext on the pod. */
+const PLAINTEXT_NOTE = 'These versions were written without a record key (their record ids name none), so their graphs are plaintext on the pod: anyone the pod lets read wrd/records/ reads them, and a pod that serves anonymous reads serves them to everyone. This bridge never re-seals a version (its proof binds the bytes and the URL it was written at); they stay readable until they are removed from the pod. Each descriptor links its graph.';
+/** How many of those versions the read model lists by URL (it counts them all). */
+const PLAINTEXT_LISTED = 20;
+const SEALED_RECORDS = 'Records this bridge cannot open (sealed to another WRD_RECORD_KEY, or their sealed bytes changed on the pod) are listed here and never read as absent: a figure that would depend on one is marked rather than computed without it (see unreadable).';
 const NEXT_RECLASSIFY = 'Re-classify this task, then propose a plan.';
 const CONTRARY_NOTE = 'Reviewed runs on this task disagree with its classification often enough to look again; nothing changes until someone re-classifies it.';
 const UNACKNOWLEDGED = 'named by the operator, not acknowledged';
+const UNREADABLE_ACK = 'the acknowledgement record cannot be read, so whether the person named acknowledged is unknown';
 const ACKNOWLEDGED = 'acknowledged by the person named';
 const OBJECTED = 'objected to by the person named';
 const NOT_DECLARED = 'not declared';
 const INTEGRITY = 'A record this call depends on was altered after signing, or more than one version claims to be current.';
+const DISTRUSTED_LINE = 'A record this call depends on has an earlier version signed by a platform key this bridge no longer trusts.';
 const BAD_PAYLOAD = 'The envelope payload is malformed.';
+const NOT_WELL_FORMED = 'The request holds text that is not well-formed Unicode.';
 const REPLAYED = 'This envelope was already used.';
+const HOLDER_COPY_BUSY = 'Too many copies are being taken from this bridge right now; nothing was copied.';
 const NOT_FOUND_TASK = 'No such task on this pod.';
 const RETIRED = 'This task was retired.';
 const TASK_MOVED = 'The task changed since you read it.';
@@ -112,7 +176,7 @@ const TOOL_OF_INTENT: Readonly<Record<EnvelopeIntent, string>> = {
   'wrd:propose-allocation': 'wrd.propose_allocation', 'wrd:value-plan': 'wrd.value_plan', 'wrd:submit-decision': 'wrd.submit_decision',
   'wrd:countersign-decision': 'wrd.countersign_decision', 'wrd:record-outcome': 'wrd.record_outcome', 'wrd:agent-run': 'wrd.log_agent_run',
   'wrd:review-agent-run': 'wrd.log_agent_run', 'wrd:grant-autonomy': 'wrd.grant_autonomy', 'wrd:revoke-grant': 'wrd.revoke_grant',
-  'wrd:holder-copy': 'wrd.holder_copy',
+  'wrd:holder-copy': 'wrd.holder_copy', 'wrd:read-records': 'wrd.read_records',
 };
 
 const STATUS_LABEL: Readonly<Record<string, string>> = {
@@ -133,6 +197,49 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const lower = (a: string): string => a.toLowerCase();
 
+/** A read_envelope parameter, however a client spelled the object into the URL: read_envelope, read_envelope[signature] (qs, jQuery), read_envelope.payload, read_envelope[]. */
+const SIGNED_READ_KEY = /^read[-_]?envelope(?:$|[[.])/i;
+/**
+ * A key with a step named for a signature, bare, bracketed or dotted, and whatever bracketed or
+ * dotted steps follow it: signature, signature[], signature[0], x[signature], x[signature][],
+ * x.signature, x.signature.0.
+ */
+const SIGNATURE_KEY = /(?:^|[[.])signature\]?(?:\[[^\]]*\]|\.[^.[\]]*)*$/i;
+/** Text holding a 0x-prefixed 65-byte signature (130 hex), or a "signature" JSON field: what a signed read carries, in a key or a value. */
+const SIGNATURE_TEXT = /0x[0-9a-f]{130}|"signature"\s*:/i;
+/**
+ * Where a GET's arguments carry a signed read, or null. A GET's arguments are its query string,
+ * every parameter of it (each composition installs parseEveryQueryPair: Express's default parser
+ * drops every pair after the first 1000, and those would never reach this check), so every key
+ * and every value is looked at, nested to any depth, for exactly these: a
+ * read_envelope parameter in any spelling above; a key with a step named for a signature,
+ * whatever bracketed or dotted steps follow it (SIGNATURE_KEY); and a key or a
+ * value holding a 0x-prefixed 65-byte signature or a "signature" JSON field (so a signed read
+ * sent as a bare key with no value is found). Nothing else is: a signature written without its
+ * 0x, or JSON naming it some other way, passes this check, and the GET still never reads with it.
+ * The answer names the top-level argument, never text that holds a signature.
+ */
+function signedReadIn(args: Obj): string | null {
+  const keyCarries = (k: string): boolean => SIGNED_READ_KEY.test(k) || SIGNATURE_KEY.test(k) || SIGNATURE_TEXT.test(k);
+  for (const [k, v] of Object.entries(args)) {
+    const where = SIGNATURE_TEXT.test(k) ? 'an argument whose name holds a signature (not repeated here)' : `the argument ${JSON.stringify(k.slice(0, 64))}`;
+    if (keyCarries(k)) return where;
+    const stack: unknown[] = [v];
+    while (stack.length > 0) {
+      const x = stack.pop();
+      if (typeof x === 'string') {
+        if (SIGNATURE_TEXT.test(x)) return where;
+      } else if (typeof x === 'object' && x !== null) {
+        for (const [kk, xx] of Object.entries(x)) {
+          if (keyCarries(kk)) return where;
+          stack.push(xx);
+        }
+      }
+    }
+  }
+  return null;
+}
+
 /** A refusal raised from a helper; the handler wrapper returns it as the answer. */
 class Declined extends Error {
   constructor(readonly refusal: BridgeRefusal) { super(refusal.error); }
@@ -142,6 +249,10 @@ const decline = (status: number, error: string, why: string, resolvedBy?: Record
 /** The affordance that resolves a refusal. */
 const via = (tool: string): Record<string, unknown> => ({ action: `urn:iep:action:wrd:${tool.replace(/_/g, '-')}`, toolName: `wrd.${tool}` });
 const viaToolName = (toolName: string): Record<string, unknown> => via(toolName.replace(/^wrd\./, ''));
+/** The tools a signed read (wrd:read-records) is sent to, always in a POST body. */
+type SignedReadTool = 'read_records' | 'read_calibration' | 'read_envelope_template';
+/** The signed read that resolves a refusal: the tool, and the intent its envelope carries. */
+const readVia = (tool: SignedReadTool): Record<string, unknown> => ({ ...via(tool), intent: 'wrd:read-records' });
 
 function need(p: Obj, key: string, max: number, path = 'payload'): string {
   const v = p[key];
@@ -152,9 +263,10 @@ function need(p: Obj, key: string, max: number, path = 'payload'): string {
 function maybe(p: Obj, key: string, max: number, path = 'payload'): string | undefined {
   return p[key] === undefined ? undefined : need(p, key, max, path);
 }
+const ENTITY_IRI = new RegExp(ENTITY_IRI_PATTERN);
 function needIri(p: Obj, key: string): string {
   const v = p[key];
-  if (typeof v !== 'string' || !/^urn:wrd:[a-z-]+:[0-9a-f]{16}:[0-9a-f]{16}$/.test(v)) throw decline(400, BAD_PAYLOAD, `payload.${key} must be a wrd entity IRI`);
+  if (typeof v !== 'string' || !ENTITY_IRI.test(v)) throw decline(400, BAD_PAYLOAD, `payload.${key} must be a wrd entity IRI`);
   return v;
 }
 const GRAPH_DIGEST = /^graph-nquads-sha256:[0-9a-f]{64}$/;
@@ -173,11 +285,37 @@ const ENTITY_KIND: Readonly<Record<RecordKind, EntityKind>> = {
 
 interface Head<K extends RecordKind> { readonly loaded: LoadedRecord; readonly record: RecordOf<K>; readonly graph: GraphHeads }
 
-/** The current version of a graph as a record of `kind`, null when the graph is absent; 409 when forked or altered. */
+/**
+ * Why a forked or altered graph cannot be used, naming the head that is not trusted (a sealed one
+ * first): its descriptor need not be one the graph's own chain wrote, since a manifest listing can
+ * put a version of another graph of the kind among its heads (see ofGraph), so the operator is
+ * pointed at the bytes to restore. A fork of trusted heads, or of none (a cycle), says which.
+ */
+const unusableWhy = (g: GraphHeads): string => {
+  const bad = g.heads.find(isSealedShut) ?? g.heads.find((h) => !h.authorship.trusted);
+  const why = bad?.why ?? 'it was altered after signing';
+  if (g.state === 'forked') return `${g.why ?? MORE_THAN_ONE_CURRENT}${bad ? `, and one of them (${bad.descriptorUrl}) is not trusted: ${why}` : ''}`;
+  return `its current version${bad ? ` (${bad.descriptorUrl})` : ''} is not trusted: ${why}`;
+};
+/** The refusal for a graph a head of which is sealed and does not open: 409, naming that head and the setting that opens it. */
+const sealedRefusal = (g: GraphHeads): Declined => decline(409, INTEGRITY, `${g.graphIri}: ${unusableWhy(g)}`, { env: 'WRD_RECORD_KEY' });
+/** Why a graph's line does not reach its first version (see PodView.line). */
+const cutWhy = (graphIri: string, cut: LineCut): string => `${graphIri}: ${cut.why}`;
+/** The setting that restores a cut line, when one does: the record key for a version sealed shut, the trusted addresses for one a distrusted platform key signed. */
+const cutSetting = (cut: LineCut): Record<string, unknown> | undefined => (cut.sealed ? { env: 'WRD_RECORD_KEY' }
+  : cut.untrustedKey !== null ? { env: 'WRD_TRUSTED_PLATFORM_ADDRESSES', address: cut.untrustedKey } : undefined);
+
+/**
+ * The current version of a graph as a record of `kind`, null when the graph is absent; 409 when
+ * forked or altered. A head whose sealed graph does not open is altered (never absent): the 409
+ * names WRD_RECORD_KEY.
+ */
 function headIn<K extends RecordKind>(g: GraphHeads, kind: K): Head<K> | null {
   if (g.state === 'absent') return null;
   if (g.state !== 'ok') {
-    throw decline(409, INTEGRITY, `${g.graphIri}: ${g.state === 'forked' ? 'more than one version claims to be current' : 'its current version was altered after signing'}`);
+    if (g.heads.some(isSealedShut)) throw sealedRefusal(g);
+    // A forked graph says which way (two current versions, or none); an altered head says which and why: changed bytes, modal status, describes or link.
+    throw decline(409, INTEGRITY, `${g.graphIri}: ${unusableWhy(g)}`);
   }
   const loaded = g.heads[0];
   if (!loaded || !loaded.record || loaded.record.recordKind !== kind) throw decline(409, INTEGRITY, `${g.graphIri} does not hold a ${kind} record`);
@@ -283,6 +421,15 @@ interface Effective {
   readonly source: 'approved-decision' | 'measured-decision';
 }
 
+/** Whether (and as what) a decision puts its plan's allocations in force: see effectiveFrom. */
+function inForceAs(d: RecordOf<'Decision'>): Effective['source'] | null {
+  const p = d.payload;
+  if (p.decisionKind !== 'valued' || !p.countersign || p.countersign.verdict !== 'approve') return null;
+  if (d.status === 'countersigned') return 'approved-decision';
+  if (d.status === 'measured' && p.outcome?.disposition === 'kept') return 'measured-decision';
+  return null;
+}
+
 /**
  * The allocation each task actually has: from the newest valued decision that changed it and is
  * either approved and still being measured ('approved-decision': the change is in force for its
@@ -294,11 +441,8 @@ function effectiveFrom(decisions: ReadonlyArray<RecordOf<'Decision'>>, planOf: (
   const out = new Map<string, Effective>();
   for (const d of decisions) {
     const p = d.payload;
-    if (p.decisionKind !== 'valued' || !p.countersign || p.countersign.verdict !== 'approve') continue;
-    let source: Effective['source'];
-    if (d.status === 'countersigned') source = 'approved-decision';
-    else if (d.status === 'measured' && p.outcome?.disposition === 'kept') source = 'measured-decision';
-    else continue;
+    const source = inForceAs(d);
+    if (source === null || !p.countersign) continue;
     const at = p.countersign.at;
     for (const row of planOf(p.planIri)?.payload.tasks ?? []) {
       if (!row.changed) continue;
@@ -326,12 +470,30 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const published = readPublishedPolicy();
   const window = deps.envelopeWindow ?? DEFAULT_ENVELOPE_WINDOW;
   const ledger = new NonceLedger(window.pastMs + window.futureMs);
+  const copyLimits = deps.holderCopyLimits ?? { strangersPerMinute: HOLDER_COPY_STRANGERS_PER_MINUTE, concurrent: HOLDER_COPY_CONCURRENT };
+  /** When each recent holder copy from a key the registry does not hold was let through (the last minute's). */
+  const strangerCopies: number[] = [];
+  /** Copies in progress for admins and registry members, and for every other signer, kept apart. */
+  let copiesInProgress = 0;
+  let strangerCopiesInProgress = 0;
   const mutex = new KeyedMutex();
   const verifyCache: VerifyCache = new Map();
   const admins = new Set((deps.adminAddresses ?? []).map(lower));
   const demo = deps.demoPersonas && deps.demoPersonas.size > 0 ? deps.demoPersonas : null;
   const draws = deps.draws ?? DRAWS;
   const clock = (): Date => (deps.now ? deps.now() : new Date());
+  const publicReads = deps.publicReads === true;
+  const recordKey = deps.recordKey;
+  const podOrNull = (u: string): string | null => { try { return normalisePodUrl(u); } catch { return null; } };
+  const served: readonly string[] = (deps.servedPods ?? (deps.defaultPodUrl ? [deps.defaultPodUrl] : []))
+    .map(podOrNull).filter((u): u is string => u !== null);
+  /** What reads and the pod expose, for a read model; `plaintext` is the number of versions written before the record key (with one). */
+  const readExposureOf = (plaintext: number): string => `${publicReads ? READS_PUBLIC : READS_SIGNED} ${recordKey === undefined ? AT_REST_PLAIN
+    : `${plaintext > 0 ? `This pod holds ${plaintext} record version(s) written before the record key, whose graphs are plaintext (listed under plaintext). ` : ''}${AT_REST_SEALED}`}`;
+  /** The key entity IRIs are derived under: present only with a record key. */
+  const iriKey = recordKey ? entityIriKey(recordKey) : undefined;
+  /** The public fingerprint every IRI this bridge keys carries (see iriKeyFingerprint); null without a record key. */
+  const ownFingerprint = iriKey === undefined ? null : iriKeyFingerprint(iriKey);
 
   let platformP: Promise<PlatformSigner> | null = null;
   const platform = (): Promise<PlatformSigner> => {
@@ -361,13 +523,20 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (!raw) throw decline(400, 'No pod to read or write.', 'pass pod_url, set payload.podUrl, or configure the bridge with a default pod');
     let podUrl: string;
     try { podUrl = normalisePodUrl(raw); } catch (e) { throw decline(400, 'The pod URL is not an http(s) URL.', messageOf(e)); }
+    // The served list first, with no network: resolving a caller's host before refusing it would
+    // let anyone tell a privately resolving name from any other by the refusal it gets.
+    if (!served.includes(podUrl)) {
+      throw served.length === 0
+        ? decline(403, 'This bridge serves no pod.', 'pod-not-served: the operator sets WRD_DEFAULT_POD_URL or WRD_SERVED_PODS', { env: 'WRD_SERVED_PODS' })
+        : decline(403, `This bridge reads and writes records only on the pods it serves (${served.join(', ')}).`, `pod-not-served: ${podUrl} is not one of them`);
+    }
     let fetchFn: FetchFn;
     try { fetchFn = await openPod(podUrl, deps.fetchFn); } catch (e) { throw decline(400, 'The pod URL is not a safe target.', messageOf(e)); }
     const p = await platform();
     const now = clock();
     const trusted = new Set([lower(p.wallet.address), ...(deps.trustedPlatformAddresses ?? []).map(lower)]);
     return {
-      podUrl, fetchFn, now, at: now.toISOString(), view: new PodView(podUrl, fetchFn, trusted, verifyCache, strict), platform: p,
+      podUrl, fetchFn, now, at: now.toISOString(), view: new PodView(podUrl, fetchFn, trusted, verifyCache, strict, recordKey), platform: p,
       platformRef: { did: didOf(p.wallet.address), address: lower(p.wallet.address), keyKind: p.keyKind }, trusted,
     };
   }
@@ -375,8 +544,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   /**
    * Open the envelope that authorises this call, then claim its nonce in the in-process ledger —
    * only for a signer the registry knows (or an admin), so keys nobody registered cannot fill
-   * the ledger. Every write is also checked against the pod itself (write(), below), which is the
-   * replay protection that survives a restart and holds across bridge processes.
+   * the ledger (wrd.holder_copy claims any other signer's too, within the budget it bounds them by).
+   * Every write is also checked against the pod itself (write(), below), which is the replay
+   * protection that survives a restart and holds across bridge processes.
    */
   async function openSigned(args: Obj, intent: EnvelopeIntent, key = 'envelope'): Promise<Signed> {
     const raw = args[key];
@@ -384,16 +554,167 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const opened = openEnvelope(raw, intent, call.podUrl, call.now, window);
     if (!opened.ok) throw new Declined(refuse(opened.status, opened.error, opened.why));
     const nonce = String(opened.payload['nonce']);
+    // Nothing is written on a pod holding records written under another record key, whoever signs (write() checks again).
+    // Checked before the registry is read: on such a pod the registry may be sealed to that key, and the refusal names it.
+    await refuseKeyConflict(call);
     if (admins.has(opened.signer) || memberOf(await registryOf(call), opened.signer)) {
       if (!ledger.claim(opened.signer, nonce, call.now)) throw decline(409, REPLAYED, `${opened.signer} already used the nonce ${nonce} on this bridge`);
     }
     return { ...call, actor: opened.signer, actorDid: opened.did, payload: opened.payload, envelope: opened.envelope, nonce };
   }
 
+  /**
+   * Open a signed read (wrd:read-records): shape, intent, pod binding, signature and freshness,
+   * exactly as for a write; then the signer must be an admin or a key the pod's registry holds.
+   * A read changes nothing, so its nonce is not claimed: the same envelope reads again until its
+   * issuedAt leaves the window, which is what lets the web UI sign one read and reuse it.
+   */
+  async function openRead(args: Obj, tool: 'read_records' | 'read_calibration'): Promise<Call> {
+    const raw = args['envelope'];
+    const call = await openCall(args, raw, false);
+    await authoriseRead(call, raw, tool);
+    return call;
+  }
+
+  /**
+   * Check a signed read (wrd:read-records) against an open call: shape, intent, pod binding,
+   * signature and freshness; then the signer must be an admin, or a key the pod's registry holds.
+   * Registry membership is decided on the WHOLE manifest: a lenient view would read an older
+   * registry when the version that removed this key sits behind a segment that did not answer,
+   * so for any signer but an admin an incomplete walk is refused as a write's is (502).
+   */
+  async function authoriseRead(call: Call, raw: unknown, tool: SignedReadTool): Promise<void> {
+    const opened = openEnvelope(raw, 'wrd:read-records', call.podUrl, call.now, window);
+    if (!opened.ok) throw new Declined(refuse(opened.status, opened.error, opened.why, opened.status === 401 ? readVia(tool) : undefined));
+    if (admins.has(opened.signer)) return;
+    if (!(await call.view.walk()).complete) throw new IncompleteManifestError(call.podUrl);
+    const reg = await registryForRead(call);
+    if (!memberOf(reg, opened.signer)) {
+      throw decline(403, 'Only an admin or a key in this pod\'s registry can read its records.', `${opened.signer} is not an admin of this bridge and holds no role in this pod's registry${unregisteredHint(reg, opened.signer)}`, via('update_registry'));
+    }
+  }
+
+  /** The refusal an unsigned GET of the read model gets while reads are not public. */
+  const unsignedRead = (tool: 'read_records' | 'read_calibration'): BridgeRefusal => refuse(401, SIGNED_READ_NEEDED,
+    `this bridge answers unsigned reads only when its operator opens them (WRD_PUBLIC_READS=1); sign a wrd:read-records payload as an admin or a key in the pod's registry and send it as the envelope of wrd.${tool}`,
+    readVia(tool));
+
   async function headOf<K extends RecordKind>(call: Call, entity: string, kind: K): Promise<Head<K> | null> {
     return headIn(await call.view.graph(graphIriOf(entity)), kind);
   }
 
+  // ── Records written under another record key ────────────────────────────────────────
+
+  /**
+   * A version on the pod written under a record key this bridge does not hold (any, when it holds
+   * none): its signed record id names that key's fingerprint (recordIdFor), which shows it from the
+   * key's very first write, a new version of a chain written before the key included; or its
+   * signed content names a graph whose IRI was derived under that key.
+   */
+  interface KeyConflict {
+    readonly graphIri: string; readonly descriptorUrl: string;
+    /** The fingerprint of the record key the version was written under. */
+    readonly fingerprint: string;
+    /** The graph's IRI is keyed under that key (else it is an unkeyed IRI: a chain written before the key, sealed to it). */
+    readonly keyedIri: boolean;
+  }
+  /** A fingerprint other than this bridge's own (any, when this bridge holds no record key). */
+  const foreignFingerprint = (fp: string | null): fp is string => fp !== null && fp !== ownFingerprint;
+  /** An IRI keyed under another key than this bridge's (or under any, when this bridge holds none). */
+  const foreignKeyed = (iri: string): boolean => foreignFingerprint(fingerprintOfIri(iri));
+  const conflicts = new WeakMap<PodView, Promise<KeyConflict | null>>();
+  /**
+   * The first version on the pod written under another record key, or null; looked for once per
+   * call, in the manifest the call walks anyway. Only manifest entries whose descriptor URL ends
+   * with another key's fingerprint, or which name a graph keyed under another key, are read, so a
+   * pod keyed throughout under this bridge's key, or written without any, costs no read here, and
+   * a version the pod cannot serve stops nothing unless its URL names another key. Of those, a
+   * version counts only when a trusted platform key signed it where its proof says (eligible), and
+   * then by what that key signed: the record id, which the URL repeats, or a graph IRI in content
+   * that opened. Never by the envelope's recipient list or the descriptor's iep:describes, which a
+   * pod writer can change: a version of this bridge's own key whose envelope a pod writer edited
+   * does not open, answers 409 where it is used (altered), and stops nothing else. A version found
+   * is a sign this bridge is not the one holding the key the pod's records are written under: it
+   * derives other IRIs for new records than they carry and cannot open what is sealed, so a lookup
+   * by tuple would find nothing and answer from that absence, and a write would start a second
+   * chain beside the one it cannot see, and would seal what the key's own bridge then cannot read
+   * (the registry, say) or, holding no key, write in plaintext what that key would have sealed.
+   */
+  function keyConflict(call: Call): Promise<KeyConflict | null> {
+    let found = conflicts.get(call.view);
+    if (!found) {
+      found = (async (): Promise<KeyConflict | null> => {
+        const names = (e: ManifestEntry): boolean => e.describes.some(foreignKeyed);
+        // Entries naming a keyed IRI first: a conflict found there is reported by the IRI it keys, the plainer account.
+        const candidates = (await call.view.entries()).filter((e) => names(e) || foreignFingerprint(fingerprintOfRecord(e.descriptorUrl)))
+          .sort((a, b) => Number(names(b)) - Number(names(a)));
+        for (const e of candidates) {
+          const l = await call.view.read(e);
+          if (!l.authorship.eligible) continue;
+          const signed = fingerprintOfRecord(l.recordId);
+          const keyedIn = l.authorship.trusted ? fingerprintOfIri(l.graphIri) : null;
+          const fp = foreignFingerprint(signed) ? signed : foreignFingerprint(keyedIn) ? keyedIn : null;
+          if (fp !== null) return { fingerprint: fp, keyedIri: fingerprintOfIri(l.graphIri) === fp, graphIri: l.graphIri, descriptorUrl: l.descriptorUrl };
+        }
+        return null;
+      })();
+      conflicts.set(call.view, found);
+    }
+    return found;
+  }
+  /** Why a bridge facing a KeyConflict cannot answer from what it finds, naming WRD_RECORD_KEY. */
+  const keyConflictWhy = (c: KeyConflict): string => {
+    const mine = ownFingerprint === null ? 'holds no record key' : `holds the one with fingerprint k${ownFingerprint}`;
+    return c.keyedIri
+      ? `${c.graphIri} (${c.descriptorUrl}) was derived under the record key with fingerprint k${c.fingerprint}, and this bridge ${mine} (WRD_RECORD_KEY): it derives other IRIs for the same records, so it would find them absent`
+      : `${c.graphIri} (${c.descriptorUrl}) is sealed to the record key with fingerprint k${c.fingerprint} (its record id, which the platform signed, names it), and this bridge ${mine} (WRD_RECORD_KEY): it cannot open what was written under that key, nor derive the IRIs that key gives new records, so it would find them absent, and what it wrote would be ${recordKey === undefined ? 'in plaintext' : 'sealed where that key\'s bridge could not open it'}`;
+  };
+  /** The refusal (409, naming WRD_RECORD_KEY and both fingerprints) for a call a KeyConflict stops, saying what it stops. */
+  const keyConflictRefusal = (c: KeyConflict, stops: string): Declined =>
+    decline(409, c.keyedIri ? KEY_MISMATCH : KEY_SEALED_MISMATCH, `${keyConflictWhy(c)}; ${stops}`, { env: 'WRD_RECORD_KEY' });
+  /** Refuse (409, naming WRD_RECORD_KEY) a write or a lookup by tuple on a pod holding records written under another record key. */
+  async function refuseKeyConflict(call: Call): Promise<void> {
+    const c = await keyConflict(call);
+    if (c) throw keyConflictRefusal(c, 'it writes nothing and looks nothing up by tuple until it runs with that key');
+  }
+
+  // ── Entity IRIs derived from a tuple: keyed when this bridge holds a record key ─────────
+
+  /** The IRIs a tuple can have on this pod: the keyed form first (with a record key), then the unkeyed form records written without one carry. */
+  const iriForms = (kind: EntityKind, scope: string, id: string): string[] =>
+    (iriKey === undefined ? [entityIri(kind, scope, id)] : [entityIri(kind, scope, id, iriKey), entityIri(kind, scope, id)]);
+  /** The IRI a NEW entity is written under: keyed whenever this bridge holds a record key. */
+  const newEntity = (kind: EntityKind, scope: string, id: string): string => entityIri(kind, scope, id, iriKey);
+  /** The scope prefixes a scope can have on this pod, keyed first. */
+  const scopeForms = (kind: EntityKind, scope: string): string[] =>
+    (iriKey === undefined ? [scopePrefix(kind, scope)] : [scopePrefix(kind, scope, iriKey), scopePrefix(kind, scope)]);
+  /**
+   * The entity a tuple names on this pod: the first form whose graph has a current version
+   * (trusted or not, so a sealed or altered one is found and refused, never passed over), which
+   * keeps an existing unkeyed chain growing under its own IRI; otherwise the form a new entity is
+   * written under. On a pod holding IRIs keyed under another record key, refused (409): the
+   * entity may be there under a form this bridge cannot derive.
+   */
+  async function resolveEntity(call: Call, kind: EntityKind, scope: string, id: string): Promise<string> {
+    await refuseKeyConflict(call);
+    const forms = iriForms(kind, scope, id);
+    for (const e of forms) if ((await call.view.graph(graphIriOf(e))).state !== 'absent') return e;
+    return forms[0] ?? newEntity(kind, scope, id);
+  }
+  /** Every graph on the pod under a scope, in either form; refused (409) as resolveEntity is on a pod keyed under another record key. */
+  async function scopedGraphs(call: Call, kind: EntityKind, scope: string): Promise<string[]> {
+    await refuseKeyConflict(call);
+    const out = new Set<string>();
+    for (const prefix of scopeForms(kind, scope)) for (const g of await call.view.graphIris(prefix)) out.add(g);
+    return [...out].sort();
+  }
+
+  /**
+   * The registry's IRI is never keyed: it is derived from the pod URL alone, which is public, and
+   * every bridge on the pod must find the same one. A bridge holding another record key, or none,
+   * therefore meets the sealed registry and refuses (409), rather than start a second registry
+   * under an IRI only its own key would derive.
+   */
   async function registryOf(call: Call): Promise<Registry> {
     const entity = entityIri('registry', call.podUrl, 'registry');
     const graph = await call.view.graph(graphIriOf(entity));
@@ -406,13 +727,46 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     return { entity, head, graph, members, kinds, podPolicy, policy };
   }
 
+  /**
+   * The registry, for a read (who may read, and the read model, calibration and template built on
+   * it). The key-conflict check runs first: on a pod holding records written under another record
+   * key whose registry this bridge cannot use (sealed to that key, as it is when that key's bridge
+   * wrote the registry first, the usual go-live order), every read is refused with that conflict
+   * (409, naming WRD_RECORD_KEY and both fingerprints), by an admin or anyone else, rather than as
+   * one sealed record; nothing about who may read, or what the records say, can be answered
+   * without it. Where the registry is usable the read goes on, and the read model and calibration
+   * say so under recordKeyMismatch.
+   */
+  async function registryForRead(call: Call): Promise<Registry> {
+    const c = await keyConflict(call);
+    if (c) {
+      const g = await call.view.graph(graphIriOf(entityIri('registry', call.podUrl, 'registry')));
+      if (g.state === 'forked' || g.state === 'altered') {
+        throw keyConflictRefusal(c, `nor can it use the pod's registry (${g.graphIri}: ${unusableWhy(g)}), so it answers no read, whoever signs it, until it runs with that key`);
+      }
+    }
+    return registryOf(call);
+  }
+
   const policyRefOf = (reg: Registry): PolicyRef => ({ ontologyIri: WRD_ONTOLOGY_IRI, ontologySha256: published.ontologySha256, podPolicyHead: reg.policy.podPolicyHead });
 
   interface Written { readonly descriptorUrl: string; readonly graphUrl: string; readonly recordId: string; readonly graphDigest: string }
 
+  /**
+   * A graph's whole trusted line, oldest first, for an answer that depends on all of it: 409 when
+   * the line does not reach its first version (PodView.line: an earlier version that is not
+   * trusted, or one that is missing), naming WRD_RECORD_KEY when that version is sealed and does
+   * not open, never the part of the line after it as if it were the whole.
+   */
+  async function wholeLine(call: Call, g: GraphHeads): Promise<LoadedRecord[]> {
+    const l = await call.view.line(g);
+    if (l.cut) throw decline(409, l.cut.untrustedKey !== null ? DISTRUSTED_LINE : INTEGRITY, cutWhy(g.graphIri, l.cut), cutSetting(l.cut));
+    return l.versions;
+  }
+
   /** The durable replay check: 409 when a version of this graph was already authorised by this signer and nonce. */
   async function refuseReused(call: Signed, g: GraphHeads): Promise<void> {
-    for (const v of await call.view.history(g)) {
+    for (const v of await wholeLine(call, g)) {
       const by = v.record?.authorisedBy;
       if (by && by.signer === call.actor && by.nonce === call.nonce) {
         throw decline(409, REPLAYED, `${call.actor} already used the nonce ${call.nonce} on ${g.graphIri} (version ${v.record?.version ?? '?'})`);
@@ -433,10 +787,12 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     readonly signers: readonly RecordSigner[]; readonly head: Head<K> | null; readonly tag?: string;
     readonly validFrom?: string; readonly validUntil?: string; readonly confidence?: number; readonly derivedFrom?: readonly string[];
   }): Promise<Written> {
+    await refuseKeyConflict(call);
     if (w.head) await refuseReused(call, w.head.graph);
     const version = w.head ? w.head.record.version + 1 : 1;
     const graphIri = graphIriOf(w.entity);
-    const recordId = recordIdFor(ENTITY_KIND[w.kind], graphIri, version, w.tag === undefined ? call.nonce : `${call.nonce}:${w.tag}`);
+    // With a record key the id ends with its fingerprint, so the manifest names the key from this version on (recordIdFor).
+    const recordId = recordIdFor(ENTITY_KIND[w.kind], graphIri, version, w.tag === undefined ? call.nonce : `${call.nonce}:${w.tag}`, ownFingerprint);
     const signers = dedupeSigners(w.signers);
     const record = {
       recordKind: w.kind, entityIri: w.entity, version, status: w.status, payload: w.payload, signers, platform: call.platformRef,
@@ -454,7 +810,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       derivedFrom: w.derivedFrom ?? [],
     };
     return publishRecord({ descriptor, record, expectHead: w.head?.loaded.descriptorUrl ?? null },
-      { podUrl: call.podUrl, fetchFn: call.fetchFn, platform: call.platform, trusted: call.trusted, mutex, cache: verifyCache });
+      { podUrl: call.podUrl, fetchFn: call.fetchFn, platform: call.platform, trusted: call.trusted, mutex, cache: verifyCache, ...(recordKey ? { recordKey } : {}) });
   }
 
   // ── Shared loads ───────────────────────────────────────────────────────────────────────
@@ -469,7 +825,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     return t;
   }
 
-  const classificationEntity = (workflowIri: string, taskIri: string): string => entityIri('classification', workflowIri, taskIri);
+  /** A task's classification entity (keyed or not, see resolveEntity). */
+  const classificationOf = (call: Call, workflowIri: string, taskIri: string): Promise<string> => resolveEntity(call, 'classification', workflowIri, taskIri);
 
   interface WorkflowTask { readonly taskIri: string; readonly task: Head<'Task'>; readonly classification: Head<'Classification'> | null }
   async function workflowTasks(call: Call, wf: Head<'Workflow'>): Promise<WorkflowTask[]> {
@@ -480,7 +837,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       // A retired task the workflow still lists: nothing is proposed on a task list that is
       // wrong, and the refusal names the call that corrects it (classifying it would be refused).
       if (task.record.status === 'retired') throw new Declined(unfinishedRetirement(task, wf.record.entityIri));
-      out.push({ taskIri, task, classification: await headOf(call, classificationEntity(wf.record.entityIri, taskIri), 'Classification') });
+      out.push({ taskIri, task, classification: await headOf(call, await classificationOf(call, wf.record.entityIri, taskIri), 'Classification') });
     }
     return out;
   }
@@ -489,7 +846,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   async function effectiveAllocations(call: Call, workflowIri: string): Promise<Map<string, Effective>> {
     const decisions: Array<RecordOf<'Decision'>> = [];
     const plans = new Map<string, RecordOf<'Plan'>>();
-    for (const g of await call.view.graphIris(scopePrefix('decision', workflowIri))) {
+    for (const g of await scopedGraphs(call, 'decision', workflowIri)) {
       const d = headIn(await call.view.graph(g), 'Decision');
       if (!d) continue;
       decisions.push(d.record);
@@ -502,7 +859,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   /** The task as checkAllocation reads it, with the allocation it has now. */
   async function taskForAllocation(call: Call, task: Head<'Task'>, current: Allocation): Promise<TaskForAllocation> {
     const tp = task.record.payload;
-    const cls = await headOf(call, classificationEntity(tp.workflowIri, task.record.entityIri), 'Classification');
+    const cls = await headOf(call, await classificationOf(call, tp.workflowIri, task.record.entityIri), 'Classification');
     return {
       taskIri: task.record.entityIri, taskKind: tp.taskKind, current,
       descriptionStatus: task.record.status === 'retired' ? 'captured' : task.record.status,
@@ -541,7 +898,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
    * null. Two such decisions at once would each measure the other's effect.
    */
   async function openDecisionOn(call: Call, workflowIri: string, self: string, taskIris: ReadonlySet<string>): Promise<{ readonly decisionIri: string; readonly taskIri: string } | null> {
-    for (const g of await call.view.graphIris(scopePrefix('decision', workflowIri))) {
+    for (const g of await scopedGraphs(call, 'decision', workflowIri)) {
       const d = headIn(await call.view.graph(g), 'Decision');
       if (!d || d.record.entityIri === self || d.record.status !== 'countersigned' || d.record.payload.countersign?.verdict !== 'approve') continue;
       const plan = await headOf(call, d.record.payload.planIri, 'Plan');
@@ -576,15 +933,21 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     return out;
   }
 
-  const grantEntity = (call: Call, agent: string, taskKind: string): string => entityIri('grant', lower(agent), `${call.podUrl}|${taskKind}`);
+  /** The grant an agent holds on a kind of task on this pod (keyed or not, see resolveEntity). */
+  const grantEntity = (call: Call, agent: string, taskKind: string): Promise<string> => resolveEntity(call, 'grant', lower(agent), `${call.podUrl}|${taskKind}`);
 
   type GrantInfo = GrantState & { readonly grantIri: string; readonly evaluation: GrantEvaluation | null };
-  /** Whether a grant is usable right now. Checked on every use: revocation, the agent's registration and declared model, the principal, the task kind. */
+  /**
+   * Whether a grant is usable right now. Checked on every use: revocation, the agent's
+   * registration and declared model, the principal, the task kind. A grant whose sealed record
+   * does not open is not "inactive": it is refused (409, naming WRD_RECORD_KEY).
+   */
   async function grantState(call: Call, reg: Registry, agent: string, taskKind: string): Promise<GrantInfo> {
-    const entity = grantEntity(call, agent, taskKind);
+    const entity = await grantEntity(call, agent, taskKind);
     const g = await call.view.graph(graphIriOf(entity));
     const inactive = (why: string, evaluation: GrantEvaluation | null = null): GrantInfo => ({ active: false, why, grantIri: entity, evaluation });
     if (g.state === 'absent') return inactive(g.untrusted.length > 0 ? "grant record not signed by this bridge's key" : 'no grant');
+    if (g.heads.some(isSealedShut)) throw sealedRefusal(g);
     if (g.state !== 'ok') return inactive('the grant record was altered after signing, or more than one version claims to be current');
     const head = g.heads[0];
     const rec = head?.record;
@@ -618,7 +981,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const classifications = new Map<string, Head<'Classification'> | null>();
     for (const row of plan.record.payload.tasks) {
       tasks.set(row.taskIri, await headOf(call, row.taskIri, 'Task'));
-      classifications.set(row.taskIri, await headOf(call, classificationEntity(workflowIri, row.taskIri), 'Classification'));
+      classifications.set(row.taskIri, await headOf(call, await classificationOf(call, workflowIri, row.taskIri), 'Classification'));
     }
     return { plan, workflow, tasks, classifications };
   }
@@ -666,13 +1029,16 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     return out;
   }
 
-  const ackEntity = (planIri: string, taskIri: string, person: string): string => entityIri('acknowledgement', planIri, `${taskIri}|${lower(person)}`);
+  /** The tuple a person's acknowledgement of their assignment on a plan's task is keyed by. */
+  const ackTuple = (planIri: string, taskIri: string, person: string): readonly [string, string] => [planIri, `${taskIri}|${lower(person)}`];
+  const ackEntity = (call: Call, planIri: string, taskIri: string, person: string): Promise<string> =>
+    resolveEntity(call, 'acknowledgement', ...ackTuple(planIri, taskIri, person));
   async function assignmentStates(call: Call, plan: Head<'Plan'>): Promise<DecisionPayload['assignments']> {
     const out: Array<DecisionPayload['assignments'][number]> = [];
     for (const row of plan.record.payload.tasks) {
       const person = row.proposed.personAddress;
       if (!row.changed || !person) continue;
-      const ack = await headOf(call, ackEntity(plan.record.entityIri, row.taskIri, person), 'Acknowledgement');
+      const ack = await headOf(call, await ackEntity(call, plan.record.entityIri, row.taskIri, person), 'Acknowledgement');
       const state = ack ? (ack.record.status === 'objected' ? 'objected' : 'acknowledged') : 'not-acknowledged';
       out.push({ taskIri: row.taskIri, personAddress: person, state, ...(ack?.record.payload.note ? { note: ack.record.payload.note } : {}) });
     }
@@ -690,7 +1056,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       let sum = 0;
       for (const m of reg.members.values()) {
         if (!m.softwareAgent) continue;
-        for (const g of await call.view.graphIris(scopePrefix('run', `${m.address}|${kind}`))) {
+        for (const g of await scopedGraphs(call, 'run', `${m.address}|${kind}`)) {
           const run = headIn(await call.view.graph(g), 'AgentRun');
           const cost = run?.record.payload.costPerRun;
           if (!cost || cost.currency !== currency || run?.record.status !== 'reviewed') continue;
@@ -743,11 +1109,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       return { ...refuse(422, 'None of the quoted spans appear in the document.', `0 of ${quotes.unverified} quotes were found after the published normalisation; nothing was recorded`, via('task_map_packet')) };
     }
 
-    const workflowIri = entityIri('workflow', call.podUrl, `${call.actor}|${call.nonce}`);
+    const workflowIri = newEntity('workflow', call.podUrl, `${call.actor}|${call.nonce}`);
     const capturedBy = { did: call.actorDid, envelopeSha256: envelopeSha256(call.envelope) };
     const tasks: Array<{ taskIri: string; name: string; quoteStatus: string; descriptorUrl: string; graphDigest: string; link: string }> = [];
     for (const [i, t] of c.value.tasks.entries()) {
-      const taskIri = entityIri('task', workflowIri, String(i + 1));
+      const taskIri = newEntity('task', workflowIri, String(i + 1));
       const verdicts: readonly QuoteVerdict[] = quotes?.perTask[i] ?? [];
       const payload: TaskPayload = {
         workflowIri, index: i + 1, name: t.name, description: t.description, textSha256: taskTextSha256(t.name, t.description),
@@ -795,7 +1161,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${task.record.entityIri} was retired`) };
     const b = needBinding(call.payload);
     if (b.descriptorUrl !== task.loaded.descriptorUrl || b.graphDigest !== task.loaded.graphDigest) {
-      return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('list_records')) };
+      return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('read_records')) };
     }
     const mine = p.ratifications.find((r) => r.party === call.actor);
     if (mine && mine.verdict === verdict && (mine.note ?? '') === (note ?? '')) {
@@ -821,11 +1187,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       return { ...refuse(403, 'Only a person or agent named on this task can ratify or dispute its classification.', `${call.actor} is not named on ${task.record.entityIri}`) };
     }
     if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${task.record.entityIri} was retired`) };
-    const cls = await headOf(call, classificationEntity(p.workflowIri, task.record.entityIri), 'Classification');
+    const cls = await headOf(call, await classificationOf(call, p.workflowIri, task.record.entityIri), 'Classification');
     if (!cls) return { ...refuse(404, 'This task has not been classified.', `${task.record.entityIri} has no classification`, via('classify_task')) };
     const b = needBinding(call.payload);
     if (b.descriptorUrl !== cls.loaded.descriptorUrl || b.graphDigest !== cls.loaded.graphDigest) {
-      return { ...refuse(409, 'The classification changed since you read it.', `the current version is ${cls.loaded.descriptorUrl}`, via('list_records')) };
+      return { ...refuse(409, 'The classification changed since you read it.', `the current version is ${cls.loaded.descriptorUrl}`, via('read_records')) };
     }
     let answers: ClassificationAnswers | undefined;
     if (call.payload['answers'] !== undefined) {
@@ -864,9 +1230,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${task.record.entityIri} was retired`) };
     const b = needBinding(call.payload);
     if (b.descriptorUrl !== plan.loaded.descriptorUrl || b.graphDigest !== plan.loaded.graphDigest) {
-      return { ...refuse(409, 'The plan you read is not this plan.', `the plan's record is ${plan.loaded.descriptorUrl}`, via('list_records')) };
+      return { ...refuse(409, 'The plan you read is not this plan.', `the plan's record is ${plan.loaded.descriptorUrl}`, via('read_records')) };
     }
-    const entity = ackEntity(planIri, task.record.entityIri, call.actor);
+    const entity = await ackEntity(call, planIri, task.record.entityIri, call.actor);
     const head = await headOf(call, entity, 'Acknowledgement');
     const status = verdict === 'acknowledge' ? 'acknowledged' : 'objected';
     if (head && head.record.status === status && (head.record.payload.note ?? '') === (note ?? '')) {
@@ -915,7 +1281,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${r.taskIri} was retired`) };
       if (r.descriptorUrl !== task.loaded.descriptorUrl || r.graphDigest !== task.loaded.graphDigest) {
-        return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('read_records')) };
       }
       const applied = applyTaskChanges(captureTaskOf(p), r.changes);
       const next = applied.task;
@@ -962,15 +1328,20 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       if (!wf) return { ...refuse(404, 'No such workflow on this pod.', `${r.workflowIri} has no record on ${call.podUrl}`) };
       requireOperatorPerson(reg, call.actor);
       if (r.descriptorUrl !== wf.loaded.descriptorUrl || r.graphDigest !== wf.loaded.graphDigest) {
-        return { ...refuse(409, 'The workflow changed since you read it.', `the current version is ${wf.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, 'The workflow changed since you read it.', `the current version is ${wf.loaded.descriptorUrl}`, via('read_records')) };
       }
       if (!kindUsable(reg, r.task.taskKind)) return { ...refuse(400, UNKNOWN_KIND, `${r.task.taskKind}: ${KIND_FIX}`, via('update_registry')) };
       partyCheck(r.task.current);
       const quotes = r.task.sourceQuotes ? await quotesAgainstWorkflow(args, call, r.workflowIri, r.task.sourceQuotes) : [];
       const wp = wf.record.payload;
+      // The next index no task of this workflow has taken, under either form of its IRI.
       let index = wp.taskIris.length + wp.retiredTaskIris.length + 1;
-      while ((await call.view.graph(graphIriOf(entityIri('task', r.workflowIri, String(index))))).chain.length > 0) index += 1;
-      const taskIri = entityIri('task', r.workflowIri, String(index));
+      const taken = async (i: number): Promise<boolean> => {
+        for (const e of iriForms('task', r.workflowIri, String(i))) if ((await call.view.graph(graphIriOf(e))).chain.length > 0) return true;
+        return false;
+      };
+      while (await taken(index)) index += 1;
+      const taskIri = newEntity('task', r.workflowIri, String(index));
       const payload: TaskPayload = {
         workflowIri: r.workflowIri, index, name: r.task.name, description: r.task.description, textSha256: taskTextSha256(r.task.name, r.task.description),
         current: r.task.current, performer: performerOf(r.task.current), namedParties: namedPartiesOf(r.task.current),
@@ -1002,11 +1373,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     requireOperatorPerson(reg, call.actor);
     if (task.record.status === 'retired') return finishRetirement(call, reg, task, r);
     if (r.descriptorUrl !== task.loaded.descriptorUrl || r.graphDigest !== task.loaded.graphDigest) {
-      return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('list_records')) };
+      return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}`, via('read_records')) };
     }
     const wf = await headOf(call, task.record.payload.workflowIri, 'Workflow');
     if (!wf) throw decline(409, INTEGRITY, `the task's workflow ${task.record.payload.workflowIri} has no trusted record`);
-    const first = (await call.view.history(task.graph))[0];
+    const first = (await wholeLine(call, task.graph))[0];
     const startedAt = first?.validFrom ?? null;
     if (!startedAt || Date.parse(startedAt) >= call.now.getTime()) return { ...refuse(409, CLOCK_SKEW, `the task's first version is valid from ${startedAt ?? 'an unknown time'}`) };
     const payload: TaskPayload = { ...task.record.payload, retirement: { by: { did: call.actorDid, envelope: call.envelope }, why: r.why, at: call.at } };
@@ -1042,7 +1413,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     const wf = await headOf(call, tp.workflowIri, 'Workflow');
     if (!wf) throw decline(409, INTEGRITY, `the task's workflow ${tp.workflowIri} has no trusted record`);
     if (!retirementUnfinished(task.record, wf.record)) return { ...refuse(409, RETIRED, `${r.taskIri} was already retired`) };
-    const versions = await call.view.history(task.graph);
+    const versions = await wholeLine(call, task.graph);
     const superseded = versions.length >= 2 ? versions[versions.length - 2] : undefined;
     if (![task.loaded, superseded].some((v) => v !== undefined && v.descriptorUrl === r.descriptorUrl && v.graphDigest === r.graphDigest)) {
       return { ...refuse(409, TASK_MOVED, `the current version is ${task.loaded.descriptorUrl}, which retired the task; bind it to finish the retirement`, finishRetirementVia(r.taskIri, task.loaded)) };
@@ -1233,82 +1604,129 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const WEEK_MS = 7 * 86_400_000;
 
   /**
-   * The payload a write intent needs: its JSON Schema and a template with everything the pod
-   * already knows filled in — podUrl, a fresh issuedAt and nonce, the head the signer must bind,
-   * the plan's tasks for a valuation, the declared window for an outcome. Choices that are the
-   * signer's (verdicts, answers, numbers) are left null and listed in `fill`. Reads only.
+   * The signed read wrd.read_envelope_template fills a template with: `read_envelope` in the JSON
+   * body, the wrd:read-records envelope wrd.read_records takes, as an object or its JSON text.
+   * Undefined when none was sent (authoriseRead then answers 401).
    */
-  async function envelopeTemplate(args: Obj): Promise<unknown> {
+  function readEnvelopeArg(args: Obj): unknown {
+    const v = args['read_envelope'];
+    if (v === undefined || v === null || v === '') return undefined;
+    if (typeof v !== 'string') return v;
+    const malformed = (why: string): Declined => decline(400, 'The envelope is malformed.', why, readVia('read_envelope_template'));
+    if (v.length > 20_000) throw malformed('read_envelope is longer than 20000 characters');
+    let parsed: unknown;
+    try { parsed = JSON.parse(v); } catch { throw malformed('read_envelope must be {payload, signature}, or its JSON text'); }
+    const ill = illFormedTextPath(parsed, 'read_envelope');
+    if (ill !== null) throw decline(400, NOT_WELL_FORMED, `${ill} holds a lone UTF-16 surrogate`);
+    return parsed;
+  }
+
+  /**
+   * The payload a write intent needs: its JSON Schema and a template, with the fields the bridge
+   * may fill filled and the rest null and listed in `fill`. Reads only.
+   *
+   * WHAT IT FILLS DEPENDS ON WHO ASKS. Through wrd.read_envelope_template, with a valid signed read
+   * (`read_envelope` in the POST body: the wrd:read-records envelope wrd.read_records takes, from an
+   * admin or a registered key), or through wrd.envelope_template with reads opened by the operator,
+   * it fills what the pod knows: the plan's changed tasks for a valuation, the valuation a decision
+   * binds, the declared window for an outcome, and the context it read. Otherwise it fills an
+   * ALLOWLIST and nothing else: intent, podUrl, issuedAt, nonce, the IRIs the caller named, and the
+   * head binding of each record they name (descriptorUrl, graphDigest, recordId: what the public
+   * descriptors carry). Nothing else in that template is read out of a graph, and its shape does
+   * not depend on one either: it never branches on a plan's kind, a decision's kind or a task's
+   * retirement. `signed` is true for wrd.read_envelope_template, which needs the signed read.
+   */
+  async function envelopeTemplate(args: Obj, signed: boolean): Promise<unknown> {
     const intent = args['intent'];
     if (!isEnvelopeIntent(intent)) return { ...refuse(400, 'Unknown intent.', `intent must be one of ${Object.keys(TOOL_OF_INTENT).join(', ')}`) };
-    const call = await openCall(args, undefined, false);
-    const reg = await registryOf(call);
+    const signedRead = signed ? readEnvelopeArg(args) : undefined;
+    const call = await openCall(args, signedRead, false);
+    if (signed) await authoriseRead(call, signedRead, 'read_envelope_template');
+    const full = publicReads || signed;
+    // The registry is read only to fill context, which an unsigned call does not get.
+    const reg = full ? await registryForRead(call) : null;
     const arg = (k: string): string | null => (typeof args[k] === 'string' && args[k] !== '' ? String(args[k]) : null);
     const t: Obj = { intent, podUrl: call.podUrl, issuedAt: call.at, nonce: randomBytes(16).toString('hex') };
     const context: Obj = {};
-    const people = [...reg.members.values()].filter((m) => !m.softwareAgent).map((m) => ({ address: m.address, label: m.label, roles: m.roles }));
-    const agents = [...reg.members.values()].filter((m) => m.softwareAgent).map((m) => ({ address: m.address, label: m.label, principal: m.principal, model: m.model }));
-    const kinds = [...reg.kinds.values()].filter((k) => !k.retired).map((k) => ({ slug: k.slug, label: k.label }));
-    const found = async <K extends RecordKind>(iri: string | null, kind: K, what: string): Promise<Head<K> | null> => {
+    const people = reg ? [...reg.members.values()].filter((m) => !m.softwareAgent).map((m) => ({ address: m.address, label: m.label, roles: m.roles })) : [];
+    const agents = reg ? [...reg.members.values()].filter((m) => m.softwareAgent).map((m) => ({ address: m.address, label: m.label, principal: m.principal, model: m.model })) : [];
+    const kinds = reg ? [...reg.kinds.values()].filter((k) => !k.retired).map((k) => ({ slug: k.slug, label: k.label })) : [];
+    /** The head of the record the caller named (404 when there is none; 409 when it is altered, forked or sealed shut), and the IRI as they named it. */
+    const found = async <K extends RecordKind>(key: string, kind: K, what: string): Promise<{ readonly iri: string; readonly head: Head<K> } | null> => {
+      const iri = arg(key);
       if (iri === null) return null;
       const h = await headOf(call, iri, kind);
       if (!h) throw decline(404, `No such ${what} on this pod.`, `${iri} has no record on ${call.podUrl}`);
-      return h;
+      return { iri, head: h };
     };
+    const noBinding = { descriptorUrl: null, graphDigest: null };
     const captureTask = (quotes: boolean): Obj => ({ name: null, description: null, currentLevel: null, personAddress: null, taskKind: null, ...(quotes ? { sourceQuotes: [null] } : {}) });
     switch (intent) {
       case 'wrd:update-registry':
         Object.assign(t, { entries: [{ address: null, roles: [null], label: null, softwareAgent: null, personRef: null }] });
-        Object.assign(context, { members: [...reg.members.values()], taskKinds: [...reg.kinds.values()], podPolicy: reg.podPolicy });
+        if (reg) Object.assign(context, { members: [...reg.members.values()], taskKinds: [...reg.kinds.values()], podPolicy: reg.podPolicy });
         break;
       case 'wrd:capture-workflow':
       case 'wrd:record-task-map':
         Object.assign(t, { workflow: { title: null, unitLabel: null }, tasks: [captureTask(intent === 'wrd:record-task-map')] });
         if (intent === 'wrd:record-task-map') Object.assign(t, { document: { title: null, sha256: null, storeText: false }, draftedBy: { kind: null } });
-        Object.assign(context, { people, agents, taskKinds: kinds, levels: [...reg.policy.levels.keys()].filter((l) => l !== 'agent-acts-within-grant') });
+        if (reg) Object.assign(context, { people, agents, taskKinds: kinds, levels: [...reg.policy.levels.keys()].filter((l) => l !== 'agent-acts-within-grant') });
         break;
       case 'wrd:revise-task': {
-        const task = await found(arg('task_iri'), 'Task', 'task');
-        const wf = await found(arg('workflow_iri'), 'Workflow', 'workflow');
-        const taskWf = task?.record.status === 'retired' ? await headOf(call, task.record.payload.workflowIri, 'Workflow') : null;
-        // A retired task its workflow still lists: the call to make is the retirement again, which finishes it.
-        if (task && retirementUnfinished(task.record, taskWf?.record)) Object.assign(t, { op: 'retire', taskIri: task.record.entityIri, ...bindingOf(task.loaded), why: null });
-        else if (task) Object.assign(t, { op: 'revise', taskIri: task.record.entityIri, ...bindingOf(task.loaded), description: task.record.payload.description, note: null });
-        else if (wf) Object.assign(t, { op: 'add', workflowIri: wf.record.entityIri, ...bindingOf(wf.loaded), task: captureTask(false) });
-        else Object.assign(t, { op: null, taskIri: null, descriptorUrl: null, graphDigest: null });
-        Object.assign(context, { people, agents, taskKinds: kinds });
+        const task = await found('task_iri', 'Task', 'task');
+        const wf = await found('workflow_iri', 'Workflow', 'workflow');
+        if (task && !full) {
+          // Revise or retire again: which one depends on whether the task was retired and its
+          // workflow still lists it, which only its graph says. op is left to the signer.
+          Object.assign(t, { op: null, taskIri: task.iri, ...bindingOf(task.head.loaded) });
+        } else if (task) {
+          const taskWf = task.head.record.status === 'retired' ? await headOf(call, task.head.record.payload.workflowIri, 'Workflow') : null;
+          // A retired task its workflow still lists: the call to make is the retirement again, which finishes it.
+          if (retirementUnfinished(task.head.record, taskWf?.record)) Object.assign(t, { op: 'retire', taskIri: task.iri, ...bindingOf(task.head.loaded), why: null });
+          else Object.assign(t, { op: 'revise', taskIri: task.iri, ...bindingOf(task.head.loaded), description: task.head.record.payload.description, note: null });
+        } else if (wf) {
+          Object.assign(t, { op: 'add', workflowIri: wf.iri, ...bindingOf(wf.head.loaded), task: captureTask(false) });
+        } else {
+          Object.assign(t, { op: null, taskIri: null, ...noBinding });
+        }
+        if (reg) Object.assign(context, { people, agents, taskKinds: kinds });
         break;
       }
       case 'wrd:ratify-task': {
         const subject = arg('subject') ?? 'description';
-        const task = await found(arg('task_iri'), 'Task', 'task');
-        Object.assign(t, { subject, taskIri: task?.record.entityIri ?? null, verdict: null });
+        const task = await found('task_iri', 'Task', 'task');
+        Object.assign(t, { subject, taskIri: task?.iri ?? null, verdict: null });
         if (subject === 'assignment') {
-          const plan = await found(arg('plan_iri'), 'Plan', 'plan');
-          Object.assign(t, { planIri: plan?.record.entityIri ?? null, ...(plan ? bindingOf(plan.loaded) : { descriptorUrl: null, graphDigest: null }) });
+          const plan = await found('plan_iri', 'Plan', 'plan');
+          Object.assign(t, { planIri: plan?.iri ?? null, ...(plan ? bindingOf(plan.head.loaded) : noBinding) });
         } else if (subject === 'classification' && task) {
-          const cls = await headOf(call, classificationEntity(task.record.payload.workflowIri, task.record.entityIri), 'Classification');
-          Object.assign(t, cls ? bindingOf(cls.loaded) : { descriptorUrl: null, graphDigest: null });
+          // The head binding of the task's classification. Which classification is the task's is
+          // public: its first version's descriptor is derived from the task's.
+          const cls = await headOf(call, await classificationOf(call, task.head.record.payload.workflowIri, task.iri), 'Classification');
+          Object.assign(t, cls ? bindingOf(cls.loaded) : noBinding);
           if (cls) Object.assign(context, { answers: cls.record.payload.answers, regime: cls.record.payload.regime });
         } else {
-          Object.assign(t, task ? bindingOf(task.loaded) : { descriptorUrl: null, graphDigest: null });
+          Object.assign(t, task ? bindingOf(task.head.loaded) : noBinding);
         }
         Object.assign(context, { verdicts: subject === 'assignment' ? ['acknowledge', 'object'] : ['ratify', 'dispute'], noteRequiredWith: ['dispute', 'object'] });
         break;
       }
       case 'wrd:classify-task': {
-        const task = await found(arg('task_iri'), 'Task', 'task');
-        Object.assign(t, { taskIri: task?.record.entityIri ?? null, taskTextSha256: task?.record.payload.textSha256 ?? null, answers: Object.fromEntries(CLASSIFICATION_QUESTIONS.map((q) => [q.id, null])) });
-        Object.assign(context, { questions: CLASSIFICATION_QUESTIONS, ...(task ? { name: task.record.payload.name, description: task.record.payload.description } : {}) });
+        const task = await found('task_iri', 'Task', 'task');
+        Object.assign(t, {
+          taskIri: task?.iri ?? null, taskTextSha256: full ? task?.head.record.payload.textSha256 ?? null : null,
+          answers: Object.fromEntries(CLASSIFICATION_QUESTIONS.map((q) => [q.id, null])),
+        });
+        Object.assign(context, { questions: CLASSIFICATION_QUESTIONS, ...(task ? { name: task.head.record.payload.name, description: task.head.record.payload.description } : {}) });
         break;
       }
       case 'wrd:propose-allocation': {
-        const wf = await found(arg('workflow_iri'), 'Workflow', 'workflow');
-        Object.assign(t, { workflowIri: wf?.record.entityIri ?? null, title: null, changes: [{ taskIri: null, proposedLevel: null }] });
-        if (wf) {
-          const effective = await effectiveAllocations(call, wf.record.entityIri);
+        const wf = await found('workflow_iri', 'Workflow', 'workflow');
+        Object.assign(t, { workflowIri: wf?.iri ?? null, title: null, changes: [{ taskIri: null, proposedLevel: null }] });
+        if (wf && reg) {
+          const effective = await effectiveAllocations(call, wf.iri);
           const rows: Obj[] = [];
-          for (const wt of await workflowTasks(call, wf)) {
+          for (const wt of await workflowTasks(call, wf.head)) {
             const c = wt.classification?.record;
             rows.push({
               taskIri: wt.taskIri, name: wt.task.record.payload.name, inForce: effective.get(wt.taskIri)?.allocation ?? wt.task.record.payload.current,
@@ -1320,10 +1738,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         break;
       }
       case 'wrd:value-plan': {
-        const plan = await found(arg('plan_iri'), 'Plan', 'plan');
-        const changed = plan?.record.payload.tasks.filter((r) => r.changed) ?? [];
+        const plan = await found('plan_iri', 'Plan', 'plan');
+        // Which tasks a plan changes is in its graph: without a signed read the rows stay empty.
+        const changed = full ? plan?.head.record.payload.tasks.filter((r) => r.changed) ?? [] : [];
         Object.assign(t, {
-          planIri: plan?.record.entityIri ?? null,
+          planIri: plan?.iri ?? null,
           inputs: {
             currency: null, unitsPerWeek: { current: TRI_TEMPLATE() }, valuePerUnit: TRI_TEMPLATE(), hourlyCost: TRI_TEMPLATE(), oneOffCost: TRI_TEMPLATE(),
             horizonMonths: null, rampMonths: null, annualDiscountRate: null, criticalFailureCeiling: null,
@@ -1331,14 +1750,15 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
             tasks: Object.fromEntries(changed.map((r) => [r.taskIri, { runsPerUnit: TRI_TEMPLATE(), current: STATE_TEMPLATE(), proposed: STATE_TEMPLATE() }])),
           },
         });
-        if (plan) {
+        if (plan && reg) {
+          const pp = plan.head.record.payload;
           Object.assign(context, {
-            planKind: plan.record.payload.planKind,
+            planKind: pp.planKind,
             changedTasks: changed.map((r) => {
               const l = reg.policy.levels.get(r.proposed.level);
               return { taskIri: r.taskIri, regime: r.regime, current: r.current, proposed: r.proposed, oversightRequired: !!l && l.requiresAgent && l.requiresPerson };
             }),
-            unchangedTasks: plan.record.payload.tasks.filter((r) => !r.changed).map((r) => r.taskIri),
+            unchangedTasks: pp.tasks.filter((r) => !r.changed).map((r) => r.taskIri),
             unchangedTasksNote: 'optional, without proposed; required for every task when you give unitsPerWeek.proposed',
             inputBases: INPUT_BASES,
           });
@@ -1346,12 +1766,13 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         break;
       }
       case 'wrd:submit-decision': {
-        const plan = await found(arg('plan_iri'), 'Plan', 'plan');
-        Object.assign(t, { planIri: plan?.record.entityIri ?? null });
-        if (!plan || plan.record.payload.planKind === 'valued') {
+        const plan = await found('plan_iri', 'Plan', 'plan');
+        Object.assign(t, { planIri: plan?.iri ?? null });
+        // Without a signed read the shape is the valued one whatever the plan's kind (which is in its graph); a probe decision drops these fields.
+        if (!full || !plan || plan.head.record.payload.planKind === 'valued') {
           const valuations: Obj[] = [];
-          if (plan) {
-            for (const g of await call.view.graphIris(scopePrefix('valuation', plan.record.entityIri))) {
+          if (plan && full) {
+            for (const g of await scopedGraphs(call, 'valuation', plan.iri)) {
               const v = headIn(await call.view.graph(g), 'Valuation');
               if (v) valuations.push({ valuationIri: v.record.entityIri, valuationHash: v.record.payload.valuationHash, cashWeeklyDelta: v.record.payload.result.scenarios.cash.weeklyDelta });
             }
@@ -1367,9 +1788,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       case 'wrd:countersign-decision':
       case 'wrd:record-outcome': {
-        const d = await found(arg('decision_iri'), 'Decision', 'decision');
-        Object.assign(t, { decisionIri: d?.record.entityIri ?? null, recordId: d?.loaded.recordId ?? null, ...(d ? bindingOf(d.loaded) : { descriptorUrl: null, graphDigest: null }) });
-        const dp = d?.record.payload;
+        const d = await found('decision_iri', 'Decision', 'decision');
+        Object.assign(t, { decisionIri: d?.iri ?? null, recordId: d?.head.loaded.recordId ?? null, ...(d ? bindingOf(d.head.loaded) : noBinding) });
+        // What the decision says (its kind, its countersign time, its plan) is read only for a full template.
+        const dp = full ? d?.head.record.payload : undefined;
         if (intent === 'wrd:countersign-decision') {
           Object.assign(t, { verdict: null, objectionsConsidered: [], unacknowledgedConsidered: [] });
           const plan = dp ? await headOf(call, dp.planIri, 'Plan') : null;
@@ -1386,6 +1808,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           if (dp?.decisionKind === 'probe') {
             Object.assign(t, { probeResults: (dp.probes ?? []).map((pr) => ({ taskIri: pr.taskIri, index: pr.index, signal: null, observed: null, windowStart: at ?? null, windowEnd: at ? new Date(Date.parse(at) + pr.timeboxWeeks * WEEK_MS).toISOString() : null })) });
           } else {
+            // Without a signed read this is the shape whatever the decision's kind; a probe decision sends probeResults instead.
             const weeks = dp?.measurementPlan?.windowWeeks;
             Object.assign(t, { measured: {
               weeklyValueDelta: null, comparisonBasis: dp?.measurementPlan?.comparisonBasis ?? null, windowStart: at ?? null,
@@ -1397,35 +1820,149 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         break;
       }
       case 'wrd:agent-run': {
-        const task = await found(arg('task_iri'), 'Task', 'task');
-        Object.assign(t, { runId: null, taskIri: task?.record.entityIri ?? null, taskKind: task?.record.payload.taskKind ?? null, model: null, outputSha256: null, selfAssessment: { answer: null }, performedAt: call.at });
+        const task = await found('task_iri', 'Task', 'task');
+        Object.assign(t, {
+          runId: null, taskIri: task?.iri ?? null, taskKind: full ? task?.head.record.payload.taskKind ?? null : null, model: null, outputSha256: null,
+          selfAssessment: { answer: null }, performedAt: call.at,
+        });
         Object.assign(context, { agents });
         break;
       }
       case 'wrd:review-agent-run':
         Object.assign(t, { runEnvelopeSha256: null, verdict: null });
-        Object.assign(context, { runEnvelopeSha256: 'sha256Hex(canonicalJson({payload, signature})) of the run envelope you review; wrd.list_records kind=runs lists runs awaiting review with their envelopes' });
+        Object.assign(context, { runEnvelopeSha256: 'sha256Hex(canonicalJson({payload, signature})) of the run envelope you review; wrd.read_records kind=runs lists runs awaiting review with their envelopes' });
         break;
       case 'wrd:grant-autonomy':
         Object.assign(t, { agentAddress: null, taskKind: null });
         Object.assign(context, { agents, taskKinds: kinds });
         break;
       case 'wrd:revoke-grant': {
-        const g = await found(arg('grant_iri'), 'Grant', 'grant');
-        Object.assign(t, { grantIri: g?.record.entityIri ?? null, recordId: g?.loaded.recordId ?? null, ...(g ? bindingOf(g.loaded) : { descriptorUrl: null, graphDigest: null }), why: null });
+        const g = await found('grant_iri', 'Grant', 'grant');
+        Object.assign(t, { grantIri: g?.iri ?? null, recordId: g?.head.loaded.recordId ?? null, ...(g ? bindingOf(g.head.loaded) : noBinding), why: null });
         break;
       }
       case 'wrd:holder-copy':
         Object.assign(context, { targetPodUrl: 'optional: a pod you hold; without it the bundle is returned for download' });
         break;
+      case 'wrd:read-records':
+        Object.assign(context, {
+          tools: ['wrd.read_records', 'wrd.read_calibration', 'wrd.read_envelope_template (as read_envelope)'],
+          reuse: 'the same envelope reads again until issuedAt leaves the window; its nonce is not spent',
+          neverInAUrl: 'send it only in a POST body: a URL is kept in server, proxy and browser logs, and whoever holds a copy reads every record until it is stale',
+        });
+        break;
     }
-    return {
-      intent, toolName: TOOL_OF_INTENT[intent], schema: payloadSchema(intent), template: t, fill: nullPaths(t), context, signing: SIGNING_RULE,
-      status: 'templated', computed: true,
-    };
+    const answer = { intent, toolName: TOOL_OF_INTENT[intent], schema: payloadSchema(intent), template: t, fill: nullPaths(t) };
+    // Unsigned, with reads closed: the allowlisted template only, and no context (some of it is read out of graphs).
+    if (!full) return { ...answer, context: {}, contextWithheld: CONTEXT_WITHHELD, signing: SIGNING_RULE, status: 'templated', computed: true };
+    return { ...answer, context, signing: SIGNING_RULE, status: 'templated', computed: true };
   }
 
   // ── The map ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * The copy itself (wrd.holder_copy, once its caller is let through): every graph's whole line is
+   * read, and every version of the graphs that name the signer, or that it signed, is copied or
+   * returned.
+   */
+  async function holderCopy(call: Signed): Promise<unknown> {
+    const rawTarget = call.payload['targetPodUrl'];
+    let target: string | null = null;
+    if (rawTarget !== undefined && rawTarget !== null) {
+      if (typeof rawTarget !== 'string') return { ...refuse(400, 'The target pod must be an http(s) URL.', 'payload.targetPodUrl must be a string') };
+      try { target = normalisePodUrl(rawTarget); } catch (e) { return { ...refuse(400, 'The target pod must be an http(s) URL.', messageOf(e)) }; }
+      if (target === call.podUrl) return { ...refuse(400, 'Copies go to a pod you hold, not to this one.', 'payload.targetPodUrl is the platform pod') };
+    }
+    const reg = await registryOf(call);
+    const snap = await snapshot(call.view);
+    // A record this bridge cannot read may name the holder: a copy without it would read as
+    // "nothing else names you". Refused rather than answered short, naming the setting when it is
+    // sealed. That holds for a current version that is sealed, altered or forked, and for an
+    // earlier version as much as a current one: a line that does not reach its first version
+    // (PodView.line) would come back without it and every version before it.
+    const shut: Array<{ readonly why: string; readonly sealed: boolean; readonly setting?: Record<string, unknown> }> = snap.graphs
+      .filter((s) => s.g.state === 'altered' || s.g.state === 'forked')
+      .map((s) => (s.g.heads.some(isSealedShut) ? { why: `${s.graphIri}: ${s.g.heads.find(isSealedShut)?.why ?? ''}`, sealed: true } : { why: whyUnusable(s), sealed: false }));
+    const lines = new Map<string, LoadedRecord[]>();
+    for (const s of snap.graphs) {
+      if (s.g.state !== 'ok') continue;
+      const l = await call.view.line(s.g);
+      if (l.cut) shut.push({ why: cutWhy(s.graphIri, l.cut), sealed: l.cut.sealed, ...(l.cut.untrustedKey !== null ? { setting: cutSetting(l.cut) } : {}) });
+      lines.set(s.graphIri, l.versions);
+    }
+    if (shut.length > 0) {
+      // A sealed one is named first: the setting that opens it is the likeliest fix; then one a platform key no longer trusted cut.
+      const sealed = shut.filter((x) => x.sealed);
+      const named = sealed[0] ?? shut.find((x) => x.setting !== undefined) ?? shut[0];
+      return { ...refuse(409, sealed.length > 0
+        ? 'Some records on this pod are sealed to a key this bridge does not hold, so it cannot tell whether they name you; nothing was copied.'
+        : 'Some records on this pod were altered after signing, have more than one current version or none, have an earlier version signed by a key this bridge no longer trusts, or are missing an earlier version, so it cannot tell whether they name you; nothing was copied.',
+      `${shut.length} graph(s) cannot be read in full, for example ${named?.why ?? ''}`, sealed.length > 0 ? { env: 'WRD_RECORD_KEY' } : named?.setting) };
+    }
+    const me = call.actor;
+    const selected = new Set<string>();
+    const myTasks = new Set<string>();
+    const recs = (g: string): WrdRecord[] => (lines.get(g) ?? []).flatMap((l) => (l.record ? [l.record] : []));
+    for (const g of lines.keys()) {
+      const versions = recs(g);
+      const last = versions[versions.length - 1];
+      if (!last || last.recordKind === 'HolderCopy') continue;
+      if (versions.some((v) => v.signers.some((s) => s.address === me))) selected.add(g);
+      if (last.recordKind === 'Task' && versions.some((v) => v.recordKind === 'Task' && v.payload.namedParties.includes(me))) { selected.add(g); myTasks.add(last.entityIri); }
+      if ((last.recordKind === 'AgentRun' || last.recordKind === 'Grant') && last.payload.agentAddress === me) selected.add(g);
+    }
+    const myPlans = new Set<string>();
+    for (const g of lines.keys()) {
+      const last = recs(g).at(-1);
+      if (!last) continue;
+      if (last.recordKind === 'Task' && myTasks.has(last.entityIri)) selected.add(graphIriOf(last.payload.workflowIri));
+      if (last.recordKind === 'Classification' && myTasks.has(last.payload.taskIri)) selected.add(g);
+      if (last.recordKind === 'AgentRun' && myTasks.has(last.payload.taskIri)) selected.add(g);
+      if (last.recordKind === 'Plan' && last.payload.tasks.some((r) => r.changed
+        && [r.current.personAddress, r.current.agentAddress, r.proposed.personAddress, r.proposed.agentAddress].includes(me))) {
+        selected.add(g);
+        myPlans.add(last.entityIri);
+      }
+    }
+    for (const g of lines.keys()) {
+      const last = recs(g).at(-1);
+      if (!last) continue;
+      if ((last.recordKind === 'Valuation' || last.recordKind === 'Decision' || last.recordKind === 'Acknowledgement') && myPlans.has(last.payload.planIri)) selected.add(g);
+    }
+    const chains = [...selected].filter((g) => lines.has(g)).sort();
+    if (chains.length === 0) return { ...refuse(403, 'No record on this pod names this address or carries its signature.', `${me} is named in nothing and signed nothing here`) };
+    const bundle = chains.flatMap((g) => (lines.get(g) ?? []).map((l) => ({
+      descriptorUrl: l.descriptorUrl, recordKind: l.record?.recordKind ?? null, entityIri: l.record?.entityIri ?? null,
+      descriptorTurtle: l.descriptorTurtle, graphTrig: l.graphContent,
+    })));
+    const copied: Array<{ originalDescriptorUrl: string; copyDescriptorUrl: string | null; skipped: boolean }> = [];
+    if (target !== null) {
+      let targetFetch: FetchFn;
+      // The holder's pod is reached through the holder transport, which never carries the operator's credential.
+      try { targetFetch = await openPod(target, deps.holderFetchFn ?? deps.fetchFn); } catch (e) { return { ...refuse(400, 'The target pod is not a safe target.', messageOf(e)) }; }
+      let existing: Set<string>;
+      try {
+        existing = new Set((await fetchAllManifestEntries(predictManifestUrl(target), targetFetch)).entries.map((e) => e.descriptorUrl));
+      } catch (e) {
+        throw new PodReadError(`the holder's pod manifest could not be read: ${messageOf(e)}`, null);
+      }
+      for (const g of chains) {
+        let prev: string | null = null;
+        for (const l of lines.get(g) ?? []) {
+          const r = await copyRecordToHolder(l, { targetPodUrl: target, fetchFn: targetFetch, previousCopyUrl: prev, existing });
+          copied.push({ originalDescriptorUrl: l.descriptorUrl, copyDescriptorUrl: r.descriptorUrl, skipped: r.skipped });
+          prev = r.descriptorUrl;
+        }
+      }
+    }
+    const status = target === null ? 'exported' : 'copied';
+    const w = await write(call, {
+      kind: 'HolderCopy', entity: newEntity('holder-copy', me, `${target ?? 'export'}|${call.nonce}`), status, head: null,
+      payload: { holder: { address: me, did: call.actorDid }, targetPodUrl: target, copied, envelope: call.envelope },
+      signers: [signerOf(reg, me, 'Curator', status === 'copied' ? 'copied their record' : 'exported their record')],
+    });
+    return { holder: { address: me, did: call.actorDid }, status, targetPodUrl: target, copied, bundle, receiptUrl: w.descriptorUrl, platform: call.platformRef, recorded: true };
+  }
 
   const handlers: Record<string, WrdHandler> = {
     'wrd.update_registry': async (args) => {
@@ -1494,7 +2031,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const taskIri = needIri(call.payload, 'taskIri');
       const boundText = call.payload['taskTextSha256'];
       if (typeof boundText !== 'string' || !/^[0-9a-f]{64}$/.test(boundText)) {
-        return { ...refuse(400, BAD_PAYLOAD, "payload.taskTextSha256 must be the task's textSha256 (from wrd.list_records): it binds the answers to the description they are about") };
+        return { ...refuse(400, BAD_PAYLOAD, "payload.taskTextSha256 must be the task's textSha256 (from wrd.read_records): it binds the answers to the description they are about") };
       }
       const personNote = maybe(call.payload, 'notes', LIMITS.note);
       const reg = await registryOf(call);
@@ -1506,13 +2043,13 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       if (task.record.status === 'retired') return { ...refuse(409, RETIRED, `${taskIri} was retired`) };
       if (boundText !== tp.textSha256) {
-        return { ...refuse(409, "The task's description changed since you read it; answer for the current text.", `the current description's textSha256 is ${tp.textSha256}`, via('list_records')) };
+        return { ...refuse(409, "The task's description changed since you read it; answer for the current text.", `the current description's textSha256 is ${tp.textSha256}`, via('read_records')) };
       }
       const answers = coerceAnswers(call.payload['answers']);
       if (!answers) return { ...refuse(400, BAD_PAYLOAD, 'answers must give one of the published options for each of the seven questions') };
       const result = classifyTask(answers, published);
       if (!result.placed) return { ...refuse(400, 'No evidence places this task in a regime.', result.why) };
-      const entity = classificationEntity(tp.workflowIri, taskIri);
+      const entity = await classificationOf(call, tp.workflowIri, taskIri);
       const head = await headOf(call, entity, 'Classification');
       // 'performer' is a registered PERSON named on the task; an agent named on it answers as
       // 'agent': its answers count as its own ratification, never as expert evidence, and the
@@ -1520,8 +2057,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const role = named && isPerson(reg, call.actor) ? 'performer' : named ? 'agent' : holds(reg, call.actor, 'approver') ? 'approver' : 'operator';
       const ratifications = named ? [{ party: call.actor, verdict: 'ratify' as const, envelope: call.envelope, at: call.at }] : [];
       const status = verdictStatus(tp.namedParties, ratifications) === 'ratified' ? 'ratified' : 'classified';
-      const inForce = (await effectiveAllocations(call, tp.workflowIri)).get(taskIri)?.allocation ?? tp.current;
-      const currentNote = currentAllocationNote(inForce, result.regime, answers, reg.policy);
+      const decided = (await effectiveAllocations(call, tp.workflowIri)).get(taskIri);
+      const currentNote = currentAllocationNote(decided?.allocation ?? tp.current, result.regime, answers, reg.policy, decided ? 'decision' : 'captured');
       const notes = [...result.notes, ...(currentNote ? [currentNote] : []), ...(personNote ? [`Classifier's note: ${personNote}`] : [])];
       const w = await write(call, {
         kind: 'Classification', entity, status, head,
@@ -1623,7 +2160,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           ...(grant && grant.active ? { grant: { grantIri: grant.grantIri, evidenceFromThisTask: grant.evidenceTaskIris.includes(t.taskIri), runsCounted: grant.runsCounted } } : {}),
         }];
       });
-      const planIri = entityIri('plan', workflowIri, `${call.actor}|${call.nonce}`);
+      const planIri = newEntity('plan', workflowIri, `${call.actor}|${call.nonce}`);
       const w = await write(call, {
         kind: 'Plan', entity: planIri, status: 'proposed', head: null,
         payload: {
@@ -1697,7 +2234,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         }
         expertEvidence.push({ taskIri: row.taskIri, satisfiedBy });
       }
-      const valuationIri = entityIri('valuation', planIri, sha256Hex(canonicalJson(inputs)));
+      const valuationIri = await resolveEntity(call, 'valuation', planIri, sha256Hex(canonicalJson(inputs)));
       const existing = await headOf(call, valuationIri, 'Valuation');
       if (existing) {
         const ep = existing.record.payload;
@@ -1755,7 +2292,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         valuation = await headOf(call, valuationIri, 'Valuation');
         if (!valuation) return { ...refuse(404, 'No such valuation on this pod.', `${valuationIri} has no record on ${call.podUrl}`, via('value_plan')) };
         if (valuation.record.payload.planIri !== planIri) return { ...refuse(409, 'This valuation is for another plan.', `${valuationIri} values ${valuation.record.payload.planIri}`) };
-        if (valuation.record.payload.valuationHash !== valuationHash) return { ...refuse(409, 'The valuation hash does not match the valuation on the pod.', `the record's hash is ${valuation.record.payload.valuationHash}`, via('list_records')) };
+        if (valuation.record.payload.valuationHash !== valuationHash) return { ...refuse(409, 'The valuation hash does not match the valuation on the pod.', `the record's hash is ${valuation.record.payload.valuationHash}`, via('read_records')) };
         const mp = p['measurementPlan'];
         if (!isObj(mp) || !isOneOf(OUTCOME_METRICS, mp['metric']) || !isOneOf(COMPARISON_BASES, mp['comparisonBasis'])
           || typeof mp['windowWeeks'] !== 'number' || !Number.isInteger(mp['windowWeeks']) || mp['windowWeeks'] < 1 || mp['windowWeeks'] > 104) {
@@ -1779,8 +2316,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const grantChecks = await grantChecksFor(call, reg, pp.tasks);
       const inactive = grantChecks.find((g) => !g.active);
       if (inactive) return { ...refuse(409, `No active grant for this agent on this kind of task: ${inactive.why ?? ''}`, `${inactive.taskIri}: ${inactive.why ?? ''}`, via('grant_autonomy')) };
-      const decisionIri = entityIri('decision', pp.workflowIri, valuation ? `${planIri}|${valuation.record.payload.valuationHash}` : `${planIri}|probe`);
-      if (await headOf(call, decisionIri, 'Decision')) return { ...refuse(409, 'This decision was already submitted.', `${decisionIri} exists`, via('list_records')) };
+      const decisionIri = await resolveEntity(call, 'decision', pp.workflowIri, valuation ? `${planIri}|${valuation.record.payload.valuationHash}` : `${planIri}|probe`);
+      if (await headOf(call, decisionIri, 'Decision')) return { ...refuse(409, 'This decision was already submitted.', `${decisionIri} exists`, via('read_records')) };
       const busy = await openDecisionOn(call, pp.workflowIri, decisionIri, new Set(changedRows.map((r) => r.taskIri)));
       if (busy) return { ...openDecisionRefusal(busy) };
 
@@ -1863,7 +2400,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         return { ...refuse(403, 'The person accountable for an agent this decision puts on the work cannot countersign it.', `${call.actor} is attested as ${me}, the principal of an agent named on a changed task`) };
       }
       if (recordId !== decision.loaded.recordId || b.descriptorUrl !== decision.loaded.descriptorUrl || b.graphDigest !== decision.loaded.graphDigest) {
-        return { ...refuse(409, DECISION_MOVED, `the current version is ${decision.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, DECISION_MOVED, `the current version is ${decision.loaded.descriptorUrl}`, via('read_records')) };
       }
       if (decision.record.status !== 'submitted') return { ...refuse(409, 'Only a submitted decision can be countersigned or declined.', `${decisionIri} is ${decision.record.status}`) };
       const assignmentsNow = await assignmentStates(call, plan);
@@ -1952,7 +2489,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         return { ...refuse(403, 'The person who approved a decision cannot grade it.', `${call.actor} is attested as ${me}, who countersigned ${decisionIri}`) };
       }
       if (recordId !== decision.loaded.recordId || b.descriptorUrl !== decision.loaded.descriptorUrl || b.graphDigest !== decision.loaded.graphDigest) {
-        return { ...refuse(409, DECISION_MOVED, `the current version is ${decision.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, DECISION_MOVED, `the current version is ${decision.loaded.descriptorUrl}`, via('read_records')) };
       }
       if (decision.record.status !== 'countersigned' || !dp.countersign || dp.countersign.verdict !== 'approve') {
         return { ...refuse(409, 'An outcome can be recorded only for a countersigned decision.', `${decisionIri} is ${decision.record.status}`, via('countersign_decision')) };
@@ -2017,7 +2554,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
           let criticalFailures = 0;
           for (const row of plan?.record.payload.tasks ?? []) {
             if (!row.changed || !pilotTasks.has(row.taskIri) || !row.proposed.agentAddress) continue;
-            for (const g of await call.view.graphIris(scopePrefix('run', `${lower(row.proposed.agentAddress)}|${row.taskKind}`))) {
+            for (const g of await scopedGraphs(call, 'run', `${lower(row.proposed.agentAddress)}|${row.taskKind}`)) {
               const run = headIn(await call.view.graph(g), 'AgentRun');
               const r = run ? reviewedRunOf(run.record) : null;
               if (!r || r.taskIri !== row.taskIri) continue;
@@ -2099,6 +2636,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       // The run may be an hour old (logged under a grant, reviewed later): check it as a stored envelope first, freshness later.
       const runOpened = openEnvelope(runRaw, 'wrd:agent-run', call.podUrl, call.now, { pastMs: Number.POSITIVE_INFINITY, futureMs: window.futureMs });
       if (!runOpened.ok) return { ...refuse(runOpened.status, runOpened.error, `run_envelope: ${runOpened.why}`) };
+      // As in openSigned: nothing is written on a pod holding records written under another record key, checked before the registry is read.
+      await refuseKeyConflict(call);
       const reg = await registryOf(call);
       let review: Extract<ReturnType<typeof openEnvelope>, { ok: true }> | null = null;
       if (reviewRaw !== undefined && reviewRaw !== null) {
@@ -2130,7 +2669,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       if (!isIsoInstant(rp['performedAt'])) return { ...refuse(400, BAD_PAYLOAD, 'run payload.performedAt must be an ISO-8601 date-time') };
       const agent = runOpened.signer;
-      const entity = entityIri('run', `${agent}|${taskKind}`, runId);
+      const entity = await resolveEntity(call, 'run', `${agent}|${taskKind}`, runId);
       const head = await headOf(call, entity, 'AgentRun');
       if (head && head.record.status === 'reviewed') return { ...refuse(409, 'This run was already reviewed.', `${entity} is reviewed`) };
       if (head && !review) return { ...refuse(409, 'This run is already logged under its grant; a person reviews it next.', `${entity} is acted-under-grant`, via('log_agent_run')) };
@@ -2226,12 +2765,12 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       const kind = kindUsable(reg, taskKind);
       if (!kind) return { ...refuse(400, UNKNOWN_KIND, `${taskKind}: ${KIND_FIX}`, via('update_registry')) };
-      const entity = grantEntity(call, agent, taskKind);
+      const entity = await grantEntity(call, agent, taskKind);
       const head = await headOf(call, entity, 'Grant');
       if (head && head.record.status === 'granted') return { ...refuse(409, 'This agent already holds a grant on this kind of task.', `${entity} is granted; revoke it first to re-evaluate`, via('revoke_grant')) };
       const since = head && head.record.status === 'revoked' ? head.record.payload.revocation?.at ?? head.loaded.validUntil : null;
       const runs: ReviewedRun[] = [];
-      for (const g of await call.view.graphIris(scopePrefix('run', `${agent}|${taskKind}`))) {
+      for (const g of await scopedGraphs(call, 'run', `${agent}|${taskKind}`)) {
         const run = headIn(await call.view.graph(g), 'AgentRun');
         const r = run ? reviewedRunOf(run.record) : null;
         if (r) runs.push(r);
@@ -2271,7 +2810,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       const head = await headOf(call, grantIri, 'Grant');
       if (!head) return { ...refuse(404, 'No such grant on this pod.', `${grantIri} has no record on ${call.podUrl}`) };
       if (recordId !== head.loaded.recordId || b.descriptorUrl !== head.loaded.descriptorUrl || b.graphDigest !== head.loaded.graphDigest) {
-        return { ...refuse(409, 'The grant changed since you read it.', `the current version is ${head.loaded.descriptorUrl}`, via('list_records')) };
+        return { ...refuse(409, 'The grant changed since you read it.', `the current version is ${head.loaded.descriptorUrl}`, via('read_records')) };
       }
       if (head.record.status === 'revoked') return { ...refuse(409, 'This grant was already revoked.', `${grantIri} is revoked`) };
       const grantedFrom = head.loaded.validFrom;
@@ -2286,366 +2825,614 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
     'wrd.holder_copy': async (args) => {
       const call = await openSigned(args, 'wrd:holder-copy');
-      const rawTarget = call.payload['targetPodUrl'];
-      let target: string | null = null;
-      if (rawTarget !== undefined && rawTarget !== null) {
-        if (typeof rawTarget !== 'string') return { ...refuse(400, 'The target pod must be an http(s) URL.', 'payload.targetPodUrl must be a string') };
-        try { target = normalisePodUrl(rawTarget); } catch (e) { return { ...refuse(400, 'The target pod must be an http(s) URL.', messageOf(e)) }; }
-        if (target === call.podUrl) return { ...refuse(400, 'Copies go to a pod you hold, not to this one.', 'payload.targetPodUrl is the platform pod') };
-      }
-      const reg = await registryOf(call);
-      const snap = await snapshot(call.view);
-      const me = call.actor;
-      const lines = new Map<string, LoadedRecord[]>();
-      for (const s of snap.graphs) if (s.g.state === 'ok') lines.set(s.graphIri, await call.view.history(s.g));
-      const selected = new Set<string>();
-      const myTasks = new Set<string>();
-      const recs = (g: string): WrdRecord[] => (lines.get(g) ?? []).flatMap((l) => (l.record ? [l.record] : []));
-      for (const g of lines.keys()) {
-        const versions = recs(g);
-        const last = versions[versions.length - 1];
-        if (!last || last.recordKind === 'HolderCopy') continue;
-        if (versions.some((v) => v.signers.some((s) => s.address === me))) selected.add(g);
-        if (last.recordKind === 'Task' && versions.some((v) => v.recordKind === 'Task' && v.payload.namedParties.includes(me))) { selected.add(g); myTasks.add(last.entityIri); }
-        if ((last.recordKind === 'AgentRun' || last.recordKind === 'Grant') && last.payload.agentAddress === me) selected.add(g);
-      }
-      const myPlans = new Set<string>();
-      for (const g of lines.keys()) {
-        const last = recs(g).at(-1);
-        if (!last) continue;
-        if (last.recordKind === 'Task' && myTasks.has(last.entityIri)) selected.add(graphIriOf(last.payload.workflowIri));
-        if (last.recordKind === 'Classification' && myTasks.has(last.payload.taskIri)) selected.add(g);
-        if (last.recordKind === 'AgentRun' && myTasks.has(last.payload.taskIri)) selected.add(g);
-        if (last.recordKind === 'Plan' && last.payload.tasks.some((r) => r.changed
-          && [r.current.personAddress, r.current.agentAddress, r.proposed.personAddress, r.proposed.agentAddress].includes(me))) {
-          selected.add(g);
-          myPlans.add(last.entityIri);
+      // A copy reads every version on the pod, so it is bounded before anything else is read. openSigned
+      // claimed the nonce of an admin or a registered key; any other signer (a key made for the purpose
+      // costs nothing, and someone removed from the registry is one) draws on one budget shared by all of
+      // them, and its nonce is claimed too, so no envelope is answered twice.
+      const stranger = !admins.has(call.actor) && !memberOf(await registryOf(call), call.actor);
+      // Wall-clock time, not the bridge's clock (which the offline demo scripts): this bounds load, not what a record says.
+      const t = Date.now();
+      while (strangerCopies.length > 0 && (strangerCopies[0] ?? t) <= t - 60_000) strangerCopies.shift();
+      if (stranger) {
+        // Strangers have their own lane, so keys made for the purpose can never hold the slots an
+        // admin or a member needs, and a stranger's call is charged when it arrives, whether or not
+        // its lane is free, so filling the lane does not leave the budget untouched.
+        if (strangerCopies.length >= copyLimits.strangersPerMinute) {
+          return { ...refuse(429, HOLDER_COPY_BUSY, `this bridge answers at most ${copyLimits.strangersPerMinute} holder copies a minute from keys that are neither an admin nor in this pod's registry, all such keys together; try again in a minute`) };
         }
-      }
-      for (const g of lines.keys()) {
-        const last = recs(g).at(-1);
-        if (!last) continue;
-        if ((last.recordKind === 'Valuation' || last.recordKind === 'Decision' || last.recordKind === 'Acknowledgement') && myPlans.has(last.payload.planIri)) selected.add(g);
-      }
-      const chains = [...selected].filter((g) => lines.has(g)).sort();
-      if (chains.length === 0) return { ...refuse(403, 'No record on this pod names this address or carries its signature.', `${me} is named in nothing and signed nothing here`) };
-      const bundle = chains.flatMap((g) => (lines.get(g) ?? []).map((l) => ({
-        descriptorUrl: l.descriptorUrl, recordKind: l.record?.recordKind ?? null, entityIri: l.record?.entityIri ?? null,
-        descriptorTurtle: l.descriptorTurtle, graphTrig: l.graphContent,
-      })));
-      const copied: Array<{ originalDescriptorUrl: string; copyDescriptorUrl: string | null; skipped: boolean }> = [];
-      if (target !== null) {
-        let targetFetch: FetchFn;
-        try { targetFetch = await openPod(target, deps.fetchFn); } catch (e) { return { ...refuse(400, 'The target pod is not a safe target.', messageOf(e)) }; }
-        let existing: Set<string>;
+        if (!ledger.claim(call.actor, call.nonce, call.now)) return { ...refuse(409, REPLAYED, `${call.actor} already used the nonce ${call.nonce} on this bridge`) };
+        strangerCopies.push(t);
+        if (strangerCopiesInProgress >= 1) {
+          return { ...refuse(429, HOLDER_COPY_BUSY, 'this bridge makes one holder copy at a time for keys that are neither an admin nor in this pod\'s registry; try again shortly with a fresh envelope') };
+        }
+        strangerCopiesInProgress += 1;
         try {
-          existing = new Set((await fetchAllManifestEntries(predictManifestUrl(target), targetFetch)).entries.map((e) => e.descriptorUrl));
-        } catch (e) {
-          throw new PodReadError(`the holder's pod manifest could not be read: ${messageOf(e)}`, null);
-        }
-        for (const g of chains) {
-          let prev: string | null = null;
-          for (const l of lines.get(g) ?? []) {
-            const r = await copyRecordToHolder(l, { targetPodUrl: target, fetchFn: targetFetch, previousCopyUrl: prev, existing });
-            copied.push({ originalDescriptorUrl: l.descriptorUrl, copyDescriptorUrl: r.descriptorUrl, skipped: r.skipped });
-            prev = r.descriptorUrl;
-          }
+          return await holderCopy(call);
+        } finally {
+          strangerCopiesInProgress -= 1;
         }
       }
-      const status = target === null ? 'exported' : 'copied';
-      const w = await write(call, {
-        kind: 'HolderCopy', entity: entityIri('holder-copy', me, `${target ?? 'export'}|${call.nonce}`), status, head: null,
-        payload: { holder: { address: me, did: call.actorDid }, targetPodUrl: target, copied, envelope: call.envelope },
-        signers: [signerOf(reg, me, 'Curator', status === 'copied' ? 'copied their record' : 'exported their record')],
-      });
-      return { holder: { address: me, did: call.actorDid }, status, targetPodUrl: target, copied, bundle, receiptUrl: w.descriptorUrl, recorded: true };
+      if (copiesInProgress >= copyLimits.concurrent) {
+        return { ...refuse(429, HOLDER_COPY_BUSY, `this bridge makes at most ${copyLimits.concurrent} holder copies at once for admins and registry members; try again shortly`) };
+      }
+      copiesInProgress += 1;
+      try {
+        return await holderCopy(call);
+      } finally {
+        copiesInProgress -= 1;
+      }
     },
 
-    'wrd.envelope_template': async (args) => envelopeTemplate(args),
+    // The unsigned template is a GET: its arguments travel in the URL, where server, proxy and
+    // browser logs keep them. It never reads with a signed read, and a signed read reads every
+    // record until it is stale, so the forms of one it detects (signedReadIn: a read_envelope
+    // parameter in any spelling, a key with a step named for a signature, a key or value holding a 0x
+    // signature or a "signature" JSON field) are refused before anything is read, and the
+    // refusal points at the POST form.
+    'wrd.envelope_template': async (args) => {
+      const inUrl = signedReadIn(args);
+      if (inUrl !== null) {
+        return { ...refuse(400, SIGNED_READ_IN_URL,
+          `${inUrl} carries a signed read or a signature and was sent to wrd.envelope_template, whose arguments travel in the URL, where logs keep them; nothing was read or filled. POST the same arguments to wrd.read_envelope_template with read_envelope in the JSON body, and sign a new read: one that has been in a URL should be taken as seen by whoever keeps those logs`,
+          { ...via('read_envelope_template'), method: 'POST', intent: 'wrd:read-records' }) };
+      }
+      return envelopeTemplate(args, false);
+    },
+
+    'wrd.read_envelope_template': async (args) => envelopeTemplate(args, true),
 
     'wrd.list_records': async (args) => {
-      const kind = typeof args['kind'] === 'string' && args['kind'] !== '' ? args['kind'] : null;
-      const sections = ['registry', 'workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'];
-      if (kind !== null && !sections.includes(kind)) return { ...refuse(400, 'Unknown kind.', `kind must be one of ${sections.join(', ')}`) };
-      const subject = typeof args['subject'] === 'string' && args['subject'] !== '' ? args['subject'] : null;
-      const workflowFilter = typeof args['workflow'] === 'string' && args['workflow'] !== '' ? args['workflow'] : null;
-      const want = (s: string): boolean => kind === null || kind === s;
-      const keep = (iri: string, workflowIri: string | null): boolean => (subject === null || subject === iri) && (workflowFilter === null || workflowFilter === workflowIri);
-      const call = await openCall(args, undefined, false);
-      const reg = await registryOf(call);
-      const snap = await snapshot(call.view);
-      const policy = reg.policy;
+      if (!publicReads) return unsignedRead('read_records');
+      const bad = badListKind(args);
+      if (bad) return bad;
+      return listRecords(await openCall(args, undefined, false), args);
+    },
 
-      const tasksRec = recordsOf(snap, 'Task');
-      const graphByIri = new Map(snap.graphs.map((s) => [s.graphIri, s]));
-      const classificationByTask = new Map(recordsOf(snap, 'Classification').map((c) => [c.record.payload.taskIri, c]));
-      const plansRec = recordsOf(snap, 'Plan');
-      const planByIri = new Map(plansRec.map((pl) => [pl.record.entityIri, pl]));
-      const decisionsRec = recordsOf(snap, 'Decision');
-      const runsRec = recordsOf(snap, 'AgentRun');
-      const workflowsRec = recordsOf(snap, 'Workflow');
-      const workflowOfPlan = (planIri: string): string | null => planByIri.get(planIri)?.record.payload.workflowIri ?? null;
-      const label = (a: string): string => memberOf(reg, a)?.label ?? a;
-      const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
-      const records = snap.graphs.filter((s) => s.record !== null).length;
-
-      const effective = effectiveFrom(decisionsRec.map((d) => d.record), (iri) => planByIri.get(iri)?.record ?? null);
-      // Work a decision put under a grant is checked against the grant NOW: revoked or lapsed, it has no authorised performer.
-      const effectiveGrant = new Map<string, { active: boolean; why: string | null }>();
-      for (const t of tasksRec) {
-        const eff = effective.get(t.record.entityIri);
-        if (!eff || eff.allocation.level !== 'agent-acts-within-grant' || !eff.allocation.agentAddress) continue;
-        const g = await grantState(call, reg, eff.allocation.agentAddress, t.record.payload.taskKind);
-        effectiveGrant.set(t.record.entityIri, { active: g.active, why: g.active ? null : g.why });
-      }
-      const listedTasks = new Set(workflowsRec.flatMap((w) => [...w.record.payload.taskIris, ...w.record.payload.retiredTaskIris]));
-      const workflowByIri = new Map(workflowsRec.map((w) => [w.record.entityIri, w.record]));
-      const acks = new Map(recordsOf(snap, 'Acknowledgement').map((a) => [`${a.record.payload.planIri}|${a.record.payload.taskIri}|${a.record.payload.personAddress}`, a.record]));
-
-      const out: Obj = {
-        podUrl: call.podUrl, complete: snap.complete, status: 'listed', readExposure: READ_EXPOSURE, records, demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null,
-        bridge: {
-          platform: call.platformRef, admins: admins.size,
-          demo: { enabled: demo !== null, personas: demo ? [...demo.values()].map((d) => ({ id: d.id, label: d.label, address: lower(d.wallet.address) })) : [] },
-        },
-        vocabulary: {
-          questions: CLASSIFICATION_QUESTIONS,
-          regimes: [...policy.regimes.values()].map((r) => ({ regime: r.regime, method: r.method, permitsChange: r.permitsChange, requiresProbe: r.requiresProbe, pointValuation: r.pointValuation, requiresExpertEvidence: r.requiresExpertEvidence, permittedLevels: r.permittedLevels, note: r.note })),
-          levels: [...policy.levels.values()].sort((x, y) => x.autonomyRank - y.autonomyRank).map((l) => ({ level: l.level, requiresAgent: l.requiresAgent, requiresPerson: l.requiresPerson, requiresGrant: l.requiresGrant, requiresCheckability: l.requiresCheckability })),
-          rules: [...policy.rules.values()].map((r) => ({ id: r.id, iri: r.iri, condition: r.condition })),
-          grantPolicy: policy.grantPolicy, podPolicy: reg.podPolicy, comparisonBases: COMPARISON_BASES, metrics: OUTCOME_METRICS, inputBases: INPUT_BASES,
-          dispositions: { freedHours: FREED_HOURS_DISPOSITIONS, outcome: OUTCOME_DISPOSITIONS }, distinctPeopleNote: DISTINCT_PEOPLE_NOTE, ontologySha256: published.ontologySha256,
-        },
-      };
-      if (want('registry')) {
-        out['registry'] = { members: [...reg.members.values()], taskKinds: [...reg.kinds.values()], head: reg.head ? headInfo(reg.head.loaded) : null };
-      }
-      if (want('workflows')) {
-        out['workflows'] = workflowsRec.filter((w) => keep(w.record.entityIri, w.record.entityIri)).map((w) => {
-          const p = w.record.payload;
-          return {
-            workflowIri: w.record.entityIri, title: p.title, unitLabel: p.unitLabel, ...(p.description ? { description: p.description } : {}), captureMode: p.captureMode,
-            capturedBy: p.capturedBy.did, ...(p.document ? { document: p.document } : {}), ...(p.documentText !== undefined ? { documentText: p.documentText } : {}),
-            draftedBy: p.draftedBy ?? (p.captureMode === 'document' ? NOT_DECLARED : null), ...(p.draftSha256 ? { draftSha256: p.draftSha256 } : {}),
-            taskIris: p.taskIris, retiredTaskIris: p.retiredTaskIris,
-            ...(p.revision ? { revision: { op: p.revision.op, taskIri: p.revision.taskIri, by: p.revision.by.did, ...(p.revision.repairs ? { repairs: p.revision.repairs } : {}) } } : {}),
-            head: headInfo(w.head), demo: w.record.demo === true,
-          };
-        });
-      }
-      if (want('tasks')) {
-        out['tasks'] = tasksRec.filter((t) => keep(t.record.entityIri, t.record.payload.workflowIri)).map((t) => {
-          const p = t.record.payload;
-          const cls = classificationByTask.get(t.record.entityIri);
-          const clsGraph = graphByIri.get(graphIriOf(classificationEntity(p.workflowIri, t.record.entityIri)));
-          const eff = effective.get(t.record.entityIri);
-          const effGrant = effectiveGrant.get(t.record.entityIri);
-          const inForce = eff?.allocation ?? p.current;
-          const clsP = cls?.record.payload;
-          const currentNote = clsP ? currentAllocationNote(inForce, clsP.regime, clsP.answers, policy) : null;
-          const owed = p.owedRatification ?? [];
-          const reviewed = runsRec.filter((r) => r.record.status === 'reviewed' && r.record.payload.taskIri === t.record.entityIri);
-          const reworked = reviewed.filter((r) => r.record.payload.review?.verdict !== 'accepted').length;
-          const critical = reviewed.filter((r) => r.record.payload.review?.verdict === 'critical-failure').length;
-          const share = reviewed.length > 0 ? reworked / reviewed.length : 0;
-          const suggest = (reviewed.length >= policy.grantPolicy.contraryMinRuns && share > policy.grantPolicy.contraryReworkShare) || critical > 0;
-          return {
-            taskIri: t.record.entityIri, workflowIri: p.workflowIri, name: p.name, description: p.description, textSha256: p.textSha256, current: p.current, performer: p.performer,
-            namedParties: p.namedParties.map((a) => {
-              const r = p.ratifications.find((x) => x.party === a);
-              return { address: a, kind: isAgent(reg, a) ? 'agent' : isPerson(reg, a) ? 'person' : 'unregistered', label: label(a), ratification: r ? { verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at } : null };
-            }),
-            // People a revision removed from the task, whose ratification it still needs.
-            owedRatification: owed.map((a) => {
-              const r = p.ratifications.find((x) => x.party === a);
-              return { address: a, label: label(a), ratification: r ? { verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at } : null };
-            }),
-            taskKind: p.taskKind, taskKindDefinition: p.taskKindDefinition, ...(p.externalTaskTerm ? { externalTaskTerm: p.externalTaskTerm } : {}),
-            effective: eff
-              ? {
-                ...eff.allocation, source: eff.source, decisionIri: eff.decisionIri,
-                ...(effGrant ? { grant: effGrant, suspended: !effGrant.active, ...(effGrant.active ? {} : { suspendedWhy: `grant ${effGrant.why ?? 'inactive'}: ${SUSPENDED}` }) } : {}),
-              }
-              : { ...p.current, source: 'captured' },
-            currentNotPermitted: currentNote,
-            status: t.record.status, quoteStatus: p.quoteStatus, quotes: p.quotes, ...(p.revision ? { revision: { note: p.revision.note ?? null, answers: p.revision.answers, quotesCleared: p.revision.quotesCleared, by: p.revision.by.did } } : {}),
-            ...(p.retirement ? { retirement: { why: p.retirement.why, at: p.retirement.at, by: p.retirement.by.did } } : {}),
-            orphaned: !listedTasks.has(t.record.entityIri),
-            // Retired, but the workflow still lists it: retiring it again finishes the retirement.
-            retirementUnfinished: retirementUnfinished(t.record, workflowByIri.get(p.workflowIri)),
-            classification: cls ? {
-              regime: cls.record.payload.regime, method: cls.record.payload.method, rulesFired: cls.record.payload.rulesFired, notes: cls.record.payload.notes,
-              answers: cls.record.payload.answers,
-              answeredBy: { did: cls.record.payload.answeredBy.did, address: cls.record.payload.answeredBy.address, personRef: cls.record.payload.answeredBy.personRef, role: cls.record.payload.answeredBy.role },
-              status: cls.record.status, current: cls.record.payload.taskTextSha256 === p.textSha256,
-              ratifications: cls.record.payload.ratifications.map((r) => ({ party: r.party, verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at })),
-              disagreement: cls.record.payload.ratifications.filter((r) => r.answers).map((r) => ({ party: r.party, answers: r.answers })),
-              contraryEvidence: reviewed.length > 0 ? { reviewedRuns: reviewed.length, reworkedShare: Math.round(share * 10_000) / 10_000, criticalFailures: critical, suggestReclassify: suggest, note: CONTRARY_NOTE } : null,
-              state: 'ok', trusted: true, head: headInfo(cls.head), demo: cls.record.demo === true,
-            } : clsGraph && (clsGraph.g.state === 'altered' || clsGraph.g.state === 'forked') ? {
-              state: clsGraph.g.state, trusted: false,
-              heads: clsGraph.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, contentBinding: h.authorship.contentBinding, why: h.why })),
-            } : null,
-            link: taskLink(t.record.entityIri), head: headInfo(t.head), demo: t.record.demo === true,
-          };
-        });
-      }
-      if (want('plans')) {
-        const out2: Obj[] = [];
-        for (const pl of plansRec) {
-          const p = pl.record.payload;
-          if (!keep(pl.record.entityIri, p.workflowIri)) continue;
-          let stale: string | null = null;
-          const wf = workflowsRec.find((w) => w.record.entityIri === p.workflowIri);
-          for (const row of p.tasks) {
-            const t = tasksRec.find((x) => x.record.entityIri === row.taskIri);
-            const c = classificationByTask.get(row.taskIri);
-            if (row.changed && (t?.record.status === 'retired' || (wf && !wf.record.payload.taskIris.includes(row.taskIri)))) { stale = RETIRED_IN_PLAN; break; }
-            if (!t || t.record.payload.textSha256 !== p.taskTextSha256[row.taskIri] || !c || c.head.descriptorUrl !== p.classificationHeads[row.taskIri]) { stale = STALE_PLAN; break; }
-          }
-          const assignments = p.tasks.filter((r) => r.changed && r.proposed.personAddress).map((r) => {
-            const a = acks.get(`${pl.record.entityIri}|${r.taskIri}|${r.proposed.personAddress ?? ''}`);
-            const state = a ? a.status : 'not-acknowledged';
-            return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state, ...(a?.payload.note ? { note: a.payload.note } : {}), label: state === 'acknowledged' ? ACKNOWLEDGED : state === 'objected' ? OBJECTED : UNACKNOWLEDGED };
-          });
-          out2.push({ planIri: pl.record.entityIri, workflowIri: p.workflowIri, title: p.title, planKind: p.planKind, tasks: p.tasks, proposedBy: p.proposedBy.did, stale, assignments, head: headInfo(pl.head), demo: pl.record.demo === true });
-        }
-        out['plans'] = out2;
-      }
-      if (want('valuations')) {
-        out['valuations'] = recordsOf(snap, 'Valuation').filter((v) => keep(v.record.entityIri, workflowOfPlan(v.record.payload.planIri))).map((v) => ({
-          valuationIri: v.record.entityIri, planIri: v.record.payload.planIri, valuationHash: v.record.payload.valuationHash, inputs: v.record.payload.inputs, result: v.record.payload.result,
-          expertEvidence: v.record.payload.expertEvidence, unratifiedTasks: v.record.payload.unratifiedTasks, head: headInfo(v.head), demo: v.record.demo === true,
-        }));
-      }
-      if (want('decisions')) {
-        const out3: Obj[] = [];
-        for (const d of decisionsRec) {
-          const p = d.record.payload;
-          if (!keep(d.record.entityIri, workflowOfPlan(p.planIri))) continue;
-          const chain = (await call.view.history(d.s.g)).map((l) => ({
-            version: l.record?.version ?? null, status: l.record?.status ?? null, modalStatus: l.modalStatus, signedBy: l.record?.signers.map((s) => s.did) ?? [],
-            at: l.generatedAt, descriptorUrl: l.descriptorUrl, recordId: l.recordId, graphDigest: l.graphDigest,
-          }));
-          out3.push({
-            decisionIri: d.record.entityIri, decisionKind: p.decisionKind, planIri: p.planIri, ...(p.valuationIri ? { valuationIri: p.valuationIri, valuationHash: p.valuationHash } : {}),
-            status: d.record.status, statusLabel: statusLabelOf(d.record.status, p.decisionKind), decisionLevel: p.decisionLevel,
-            ...(p.prediction ? { prediction: p.prediction } : {}), ...(p.freedHours ? { freedHours: p.freedHours } : {}),
-            ...(p.measurementPlan ? { measurementPlan: p.measurementPlan, basisLabel: p.basisLabel } : {}),
-            subjects: p.subjects, assignments: p.assignments, submittedBy: { did: p.submittedBy.did, personRef: p.submittedBy.personRef },
-            ...(p.preparedBy ? { preparedBy: p.preparedBy } : {}),
-            ...(p.countersign ? { countersign: { verdict: p.countersign.verdict, did: p.countersign.did, personRef: p.countersign.personRef, objectionsConsidered: p.countersign.objectionsConsidered, unacknowledgedConsidered: p.countersign.unacknowledgedConsidered ?? [], assignmentsAtCountersign: p.countersign.assignmentsAtCountersign, at: p.countersign.at } } : {}),
-            ...(p.outcome ? { outcome: { did: p.outcome.did, personRef: p.outcome.personRef, disposition: p.outcome.disposition, ...(p.outcome.dispositionNote ? { dispositionNote: p.outcome.dispositionNote } : {}), at: p.outcome.at, ...(p.outcome.valued ? { valued: p.outcome.valued } : {}), ...(p.outcome.probes ? { probes: p.outcome.probes } : {}) } } : {}),
-            ...(p.probes ? { probes: p.probes } : {}),
-            ...(p.outcome?.probes?.some((x) => x.signal !== 'neither') ? { next: NEXT_RECLASSIFY } : {}),
-            grantChecks: p.grantChecks, chain, head: headInfo(d.head), demo: d.record.demo === true,
-          });
-        }
-        out['decisions'] = out3;
-      }
-      if (want('grants')) {
-        const out4: Obj[] = [];
-        for (const gr of recordsOf(snap, 'Grant')) {
-          const p = gr.record.payload;
-          if (subject !== null && subject !== gr.record.entityIri) continue;
-          const state = await grantState(call, reg, p.agentAddress, p.taskKind);
-          const history = await call.view.history(gr.s.g);
-          const grantedAt = [...history].reverse().find((l) => l.record?.status === 'granted')?.generatedAt ?? null;
-          out4.push({
-            grantIri: gr.record.entityIri, agentAddress: p.agentAddress, principal: p.principal, model: p.model, taskKind: p.taskKind, status: gr.record.status,
-            active: state.active, why: state.active ? null : state.why, evaluation: p.evaluation, evidenceTaskIris: p.evaluation.taskIris, grantedAt,
-            ...(p.revocation ? { revokedAt: p.revocation.at, revocationWhy: p.revocation.why } : {}), head: headInfo(gr.head), demo: gr.record.demo === true,
-          });
-        }
-        out['grants'] = out4;
-      }
-      if (want('runs')) {
-        const agg = new Map<string, { agentAddress: string; taskKind: string; model: string; reviewed: number; actedUnderGrant: number; costs: number[]; currency: string | null }>();
-        const awaiting: Obj[] = [];
-        for (const r of runsRec) {
-          const p = r.record.payload;
-          const k = `${p.agentAddress}|${p.taskKind}|${p.model}`;
-          const a = agg.get(k) ?? { agentAddress: p.agentAddress, taskKind: p.taskKind, model: p.model, reviewed: 0, actedUnderGrant: 0, costs: [], currency: null };
-          if (r.record.status === 'reviewed') a.reviewed += 1; else a.actedUnderGrant += 1;
-          if (r.record.status === 'reviewed' && p.costPerRun && (a.currency === null || a.currency === p.costPerRun.currency)) { a.costs.push(p.costPerRun.amount); a.currency = p.costPerRun.currency; }
-          agg.set(k, a);
-          if (r.record.status === 'acted-under-grant') awaiting.push({ runIri: r.record.entityIri, agentAddress: p.agentAddress, taskIri: p.taskIri, taskKind: p.taskKind, runEnvelope: p.runEnvelope, demo: r.record.demo === true });
-        }
-        out['runs'] = [...agg.values()].map((a) => ({
-          agentAddress: a.agentAddress, taskKind: a.taskKind, model: a.model, reviewed: a.reviewed, actedUnderGrant: a.actedUnderGrant,
-          ...(a.costs.length > 0 ? { reportedCost: { runs: a.costs.length, mean: a.costs.reduce((x, y) => x + y, 0) / a.costs.length, currency: a.currency, basis: REPORTED_COST_BASIS } } : {}),
-        }));
-        out['awaitingReview'] = awaiting;
-      }
-      out['untrusted'] = [
-        ...snap.graphs.flatMap((s) => s.g.untrusted),
-        ...snap.foreign.map((e) => ({ descriptorUrl: e.descriptorUrl, why: 'it is outside this pod\'s wrd/records/ container (for example a holder copy)' })),
-      ];
-      out['forked'] = snap.graphs.filter((s) => s.g.state === 'forked').map((s) => s.graphIri);
-      out['altered'] = snap.graphs.filter((s) => s.g.state === 'altered').map((s) => s.graphIri);
-      out['integrity'] = snap.graphs.filter((s) => s.g.state === 'altered' || s.g.state === 'forked').map((s) => ({
-        graphIri: s.graphIri, state: s.g.state,
-        heads: s.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, trusted: h.authorship.trusted, contentBinding: h.authorship.contentBinding, why: h.why })),
-      }));
-      return out;
+    'wrd.read_records': async (args) => {
+      const bad = badListKind(args);
+      if (bad) return bad;
+      return listRecords(await openRead(args, 'read_records'), args);
     },
 
     'wrd.calibration': async (args) => {
-      const kind = typeof args['kind'] === 'string' && args['kind'] !== '' ? args['kind'] : null;
-      if (kind !== null && kind !== 'predictions' && kind !== 'agents' && kind !== 'probes') return { ...refuse(400, 'Unknown kind.', 'kind must be predictions, agents or probes') };
-      const call = await openCall(args, undefined, false);
-      const reg = await registryOf(call);
-      const snap = await snapshot(call.view);
-      const decisions: DecisionForCalibration[] = [];
-      const probes: ProbeOutcome[] = [];
-      for (const d of recordsOf(snap, 'Decision')) {
-        const p = d.record.payload;
-        const o = p.outcome;
-        if (d.record.status !== 'measured' || !o) continue;
-        const demoRecord = d.record.demo === true;
-        if (p.decisionKind === 'valued' && o.valued && p.prediction) {
-          const issued = p.submittedBy.envelope.payload['issuedAt'];
-          decisions.push({
-            decisionIri: d.record.entityIri, level: p.decisionLevel, metric: p.prediction.metric as OutcomeMetric, basis: o.valued.measured.comparisonBasis,
-            verdict: o.valued.verdict, rampAdjusted: o.valued.rampAdjusted, disposition: o.disposition, measuredBy: o.did,
-            submittedAt: typeof issued === 'string' ? issued : o.at, measuredAt: o.at, demo: demoRecord, shortWindow: o.valued.windowShorterThanPlanned === true,
-          });
-        }
-        for (const pr of o.probes ?? []) probes.push({ decisionIri: d.record.entityIri, taskIri: pr.taskIri, index: pr.index, signal: pr.signal, demo: demoRecord });
-      }
-      const runs: ReviewedRun[] = [];
-      const awaiting: Obj[] = [];
-      for (const r of recordsOf(snap, 'AgentRun')) {
-        const rr = reviewedRunOf(r.record);
-        if (rr) runs.push(rr);
-        else if (r.record.status === 'acted-under-grant') awaiting.push({ runIri: r.record.entityIri, agentAddress: r.record.payload.agentAddress, taskKind: r.record.payload.taskKind });
-      }
-      const policy = reg.policy.grantPolicy;
-      const report = calibrationReport({
-        decisions, runs, probes, minSamples: policy.minSamples, policy,
-        currentModelOf: (did) => memberOf(reg, did.replace(/^did:ethr:/, ''))?.model ?? null,
-      });
-      const agentCells: Obj[] = [];
-      for (const c of report.agentCells) {
-        const address = c.agentDid.replace(/^did:ethr:/, '');
-        const g = await grantState(call, reg, address, c.taskKind);
-        agentCells.push({ ...c, agentAddress: address, principal: memberOf(reg, address)?.principal ?? null, grant: { active: g.active, why: g.active ? null : g.why } });
-      }
-      const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
-      return {
-        podUrl: call.podUrl, complete: snap.complete, status: 'calibrated', computed: true, minSamples: report.minSamples, nominalBandCoverage: report.nominalBandCoverage,
-        demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null,
-        ...(kind === null || kind === 'predictions' ? { predictionCells: report.predictionCells } : {}),
-        ...(kind === null || kind === 'agents' ? { agentCells } : {}),
-        ...(kind === null || kind === 'probes' ? { probeSignals: report.probeSignals } : {}),
-        awaitingAPerson: awaiting, grantPolicy: policy, podPolicy: reg.podPolicy,
-      };
+      if (!publicReads) return unsignedRead('read_calibration');
+      const bad = badCalibrationKind(args);
+      if (bad) return bad;
+      return calibrate(await openCall(args, undefined, false), args);
+    },
+
+    'wrd.read_calibration': async (args) => {
+      const bad = badCalibrationKind(args);
+      if (bad) return bad;
+      return calibrate(await openRead(args, 'read_calibration'), args);
     },
   };
+
+  // ── The read model (the GET when reads are public, the signed read always) ───────────
+
+  const LIST_SECTIONS = ['registry', 'workflows', 'tasks', 'plans', 'valuations', 'decisions', 'grants', 'runs'];
+  const kindArg = (args: Obj): string | null => (typeof args['kind'] === 'string' && args['kind'] !== '' ? args['kind'] : null);
+  const badListKind = (args: Obj): BridgeRefusal | null => {
+    const kind = kindArg(args);
+    return kind !== null && !LIST_SECTIONS.includes(kind) ? refuse(400, 'Unknown kind.', `kind must be one of ${LIST_SECTIONS.join(', ')}`) : null;
+  };
+  const badCalibrationKind = (args: Obj): BridgeRefusal | null => {
+    const kind = kindArg(args);
+    return kind !== null && kind !== 'predictions' && kind !== 'agents' && kind !== 'probes' ? refuse(400, 'Unknown kind.', 'kind must be predictions, agents or probes') : null;
+  };
+
+  /** A grant as the read model shows it: active, inactive with why, or (null) a record that cannot be read, with why. */
+  interface GrantView { readonly active: boolean | null; readonly why: string | null }
+  async function grantView(call: Call, reg: Registry, agent: string, taskKind: string): Promise<GrantView> {
+    try {
+      const g = await grantState(call, reg, agent, taskKind);
+      return { active: g.active, why: g.active ? null : g.why };
+    } catch (e) {
+      // Sealed shut: neither active nor inactive. The listing says so and goes on; a lifecycle call refuses (409).
+      if (e instanceof Declined && isObj(e.refusal['iep:resolvedBy']) && e.refusal['iep:resolvedBy']['env'] === 'WRD_RECORD_KEY') {
+        return { active: null, why: String(e.refusal['iep:refusalReason'] ?? '') };
+      }
+      throw e;
+    }
+  }
+  /** The graphs whose current version is sealed and does not open, with why. */
+  const sealedOf = (snap: Snapshot): Obj[] => snap.graphs.filter((s) => s.g.heads.some(isSealedShut))
+    .map((s) => ({ graphIri: s.graphIri, why: s.g.heads.find(isSealedShut)?.why ?? null }));
+  /** Why a graph cannot be used: the head's own why, which names WRD_RECORD_KEY when it is sealed and does not open. */
+  const whyUnusable = (s: SnapGraph): string => `${s.graphIri}: ${unusableWhy(s.g)}`;
+  /** The whys of some graphs, the first three spelled out (every one is listed under sealed, altered or forked). */
+  const whysOf = (shut: readonly SnapGraph[]): string =>
+    `${shut.slice(0, 3).map(whyUnusable).join('; ')}${shut.length > 3 ? `; and ${shut.length - 3} more, listed under sealed, altered or forked` : ''}`;
+  /**
+   * Graphs of one kind whose current version cannot be used (altered, forked, or sealed and not
+   * opened). The kind is public in every entity IRI, keyed or not, so a figure counted from records
+   * of a kind knows when one of them is missing from the count, even when it cannot tell which.
+   */
+  const shutOfKind = (snap: Snapshot, kind: EntityKind): SnapGraph[] =>
+    snap.graphs.filter((s) => kindOfIri(s.graphIri) === kind && (s.g.state === 'altered' || s.g.state === 'forked'));
+  /**
+   * The mark a figure counted from records of these kinds carries when any of them cannot be read
+   * (null when every one opens): the figure is the count of the records that open, and says so,
+   * never presented as if the others were absent.
+   */
+  const countedWithout = (snap: Snapshot, kinds: readonly EntityKind[], figure: string): string | null => {
+    const shut = kinds.flatMap((k) => shutOfKind(snap, k));
+    return shut.length === 0 ? null
+      : `${figure} counts only the records that can be read: ${shut.length} ${kinds.join(' or ')} record(s) cannot be (${whysOf(shut)}), so ${figure} may differ`;
+  };
+  /** What the read model says when the pod holds records written under another record key (see keyConflict). */
+  const keyConflictNote = (c: KeyConflict): Obj => ({
+    why: `${keyConflictWhy(c)}. Writes and lookups by tuple are refused (409), and every answer below that rests on a record written under that key is marked unreadable.`,
+    env: 'WRD_RECORD_KEY', podKey: `k${c.fingerprint}`, bridgeKey: ownFingerprint === null ? null : `k${ownFingerprint}`,
+  });
+  /**
+   * The versions the manifest lists at the URL of a version written without a record key (see
+   * recordIdFor), for a bridge holding one: their graphs are plaintext on the pod. Read from the
+   * manifest alone, so every version is counted, not only current ones. Null when there are none,
+   * or this bridge holds no key (then every record is plaintext, and readExposure says so).
+   */
+  async function plaintextOf(call: Call): Promise<Obj | null> {
+    if (recordKey === undefined) return null;
+    const urls = (await call.view.walk()).entries.map((e) => e.descriptorUrl).filter((u) => UNKEYED_RECORD_URL.test(u));
+    return urls.length === 0 ? null : { versions: urls.length, why: PLAINTEXT_NOTE, descriptorUrls: urls.slice(0, PLAINTEXT_LISTED) };
+  }
+
+  async function listRecords(call: Call, args: Obj): Promise<Obj> {
+    const kind = kindArg(args);
+    const subject = typeof args['subject'] === 'string' && args['subject'] !== '' ? args['subject'] : null;
+    const workflowFilter = typeof args['workflow'] === 'string' && args['workflow'] !== '' ? args['workflow'] : null;
+    const want = (s: string): boolean => kind === null || kind === s;
+    const keep = (iri: string, workflowIri: string | null): boolean => (subject === null || subject === iri) && (workflowFilter === null || workflowFilter === workflowIri);
+    const reg = await registryForRead(call);
+    const snap = await snapshot(call.view);
+    const policy = reg.policy;
+    const conflict = await keyConflict(call);
+    const plaintext = await plaintextOf(call);
+    /**
+     * Records of a kind keyed under another record key: this bridge cannot derive their IRIs from a
+     * tuple, so when a lookup by tuple finds nothing, the record may be one of them. Null when the
+     * absence is an answer (no record of that kind is keyed under another key).
+     */
+    const unknownAbsence = new Map<EntityKind, string | null>();
+    const absenceUnknown = (entityKind: EntityKind): string | null => {
+      if (!unknownAbsence.has(entityKind)) {
+        const foreign = shutOfKind(snap, entityKind).filter((x) => foreignKeyed(x.graphIri));
+        unknownAbsence.set(entityKind, foreign.length === 0 ? null
+          : `${foreign.length} ${entityKind} record(s) on this pod were keyed under another record key and cannot be read, and this may be one of them (${whysOf(foreign)})${conflict ? `: ${keyConflictWhy(conflict)}` : ''}`);
+      }
+      return unknownAbsence.get(entityKind) ?? null;
+    };
+    // Figures counted from runs: their kind is public, which reviewed run each is about is not.
+    const runsUnreadable = (figure: string): string | null => countedWithout(snap, ['run'], figure);
+    /** Every task's contraryEvidence counts reviewed runs: one that does not open may be on any task. */
+    const contraryShut = want('tasks') ? runsUnreadable('contraryEvidence') : null;
+
+    const tasksRec = recordsOf(snap, 'Task');
+    const graphByIri = new Map(snap.graphs.map((s) => [s.graphIri, s]));
+    const classificationByTask = new Map(recordsOf(snap, 'Classification').map((c) => [c.record.payload.taskIri, c]));
+    const plansRec = recordsOf(snap, 'Plan');
+    const planByIri = new Map(plansRec.map((pl) => [pl.record.entityIri, pl]));
+    const decisionsRec = recordsOf(snap, 'Decision');
+    const runsRec = recordsOf(snap, 'AgentRun');
+    const workflowsRec = recordsOf(snap, 'Workflow');
+    /**
+     * A plan's workflow: from the plan when it opens, else from the plan IRI's scope (a plan is
+     * minted under its workflow), so a record about a plan that does not open is not filtered
+     * out of a workflow's answer as if it were not there.
+     */
+    const workflowOfPlan = (planIri: string): string | null => planByIri.get(planIri)?.record.payload.workflowIri
+      ?? (workflowFilter !== null && scopeForms('plan', workflowFilter).some((pre) => planIri.startsWith(pre)) ? workflowFilter : null);
+    const label = (a: string): string => memberOf(reg, a)?.label ?? a;
+    const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
+    const records = snap.graphs.filter((s) => s.record !== null).length;
+
+    const effective = effectiveFrom(decisionsRec.map((d) => d.record), (iri) => planByIri.get(iri)?.record ?? null);
+    // Work a decision put under a grant is checked against the grant NOW: revoked or lapsed, it has no authorised performer.
+    const effectiveGrant = new Map<string, GrantView>();
+    for (const t of tasksRec) {
+      const eff = effective.get(t.record.entityIri);
+      if (!eff || eff.allocation.level !== 'agent-acts-within-grant' || !eff.allocation.agentAddress) continue;
+      effectiveGrant.set(t.record.entityIri, await grantView(call, reg, eff.allocation.agentAddress, t.record.payload.taskKind));
+    }
+    /** A graph of the snapshot whose current version cannot be used (altered, forked, or sealed shut), under any of the given IRIs. */
+    const unusable = (iris: readonly string[]): SnapGraph | undefined =>
+      iris.map((e) => graphByIri.get(graphIriOf(e))).find((s) => s !== undefined && (s.g.state === 'altered' || s.g.state === 'forked'));
+    /**
+     * Decisions on a workflow that cannot be read: the allocation in force may come from one of
+     * them, so the read model says so rather than show the captured allocation as certain. A
+     * decision keyed under another record key cannot be placed on a workflow (its scope is keyed),
+     * so it counts against every workflow.
+     */
+    const unreadableDecisions = (workflowIri: string): string[] => [...new Set([
+      ...scopeForms('decision', workflowIri).flatMap((prefix) => snap.graphs.filter((s) => s.graphIri.startsWith(prefix) && (s.g.state === 'altered' || s.g.state === 'forked')).map((s) => s.graphIri)),
+      ...shutOfKind(snap, 'decision').filter((s) => foreignKeyed(s.graphIri)).map((s) => s.graphIri),
+    ])];
+    /**
+     * The plans that cannot be read of decisions on a workflow that put their plan in force: the
+     * allocation such a decision put in force is its plan's, so without the plan it is unknown.
+     */
+    const unreadablePlansInForce = (workflowIri: string): SnapGraph[] => {
+      const prefixes = scopeForms('decision', workflowIri);
+      const out: SnapGraph[] = [];
+      for (const d of decisionsRec) {
+        if (!prefixes.some((pre) => d.s.graphIri.startsWith(pre)) || inForceAs(d.record) === null) continue;
+        const shut = unusable([d.record.payload.planIri]);
+        if (shut && !out.includes(shut)) out.push(shut);
+      }
+      return out;
+    };
+    /** Graphs whose line was found cut short by an earlier version that does not open (see PodView.line), listed under sealed. */
+    const cutLines: Obj[] = [];
+    /**
+     * Every graph whose current version is usable but whose line does not reach its first version
+     * (PodView.line), with why: a write that checks the whole line refuses on it (409), so it is
+     * named here whatever its kind, not only where a decision's chain or a grant's grantedAt shows
+     * it. `untrustedKey` names the platform key, when a version before was signed by one this bridge
+     * no longer trusts.
+     */
+    const chainCuts: Obj[] = [];
+    for (const s of snap.graphs) {
+      if (s.g.state !== 'ok') continue;
+      const cut = (await call.view.line(s.g)).cut;
+      if (!cut) continue;
+      chainCuts.push({ graphIri: s.graphIri, why: cut.why, sealed: cut.sealed, ...(cut.untrustedKey !== null ? { untrustedKey: cut.untrustedKey } : {}) });
+      if (cut.sealed) cutLines.push({ graphIri: s.graphIri, why: cutWhy(s.graphIri, cut) });
+    }
+    /** Sections counted from records that cannot all be read, with why (rows say so too where they can). */
+    const unreadable: Obj = {};
+    /** Tasks whose currentNotPermitted is unknown because a record it is read from cannot be read. */
+    const permittedShut: string[] = [];
+    const listedTasks = new Set(workflowsRec.flatMap((w) => [...w.record.payload.taskIris, ...w.record.payload.retiredTaskIris]));
+    const workflowByIri = new Map(workflowsRec.map((w) => [w.record.entityIri, w.record]));
+    const acks = new Map(recordsOf(snap, 'Acknowledgement').map((a) => [`${a.record.payload.planIri}|${a.record.payload.taskIri}|${a.record.payload.personAddress}`, a.record]));
+
+    const out: Obj = {
+      podUrl: call.podUrl, complete: snap.complete, status: 'listed', readExposure: readExposureOf(Number(plaintext?.['versions'] ?? 0)), records, demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null,
+      ...(plaintext ? { plaintext } : {}),
+      bridge: {
+        platform: call.platformRef, admins: admins.size, reads: publicReads ? 'public' : 'signed', recordsSealed: recordKey !== undefined,
+        demo: { enabled: demo !== null, personas: demo ? [...demo.values()].map((d) => ({ id: d.id, label: d.label, address: lower(d.wallet.address) })) : [] },
+      },
+      vocabulary: {
+        questions: CLASSIFICATION_QUESTIONS,
+        regimes: [...policy.regimes.values()].map((r) => ({ regime: r.regime, method: r.method, permitsChange: r.permitsChange, requiresProbe: r.requiresProbe, pointValuation: r.pointValuation, requiresExpertEvidence: r.requiresExpertEvidence, permittedLevels: r.permittedLevels, note: r.note })),
+        levels: [...policy.levels.values()].sort((x, y) => x.autonomyRank - y.autonomyRank).map((l) => ({ level: l.level, requiresAgent: l.requiresAgent, requiresPerson: l.requiresPerson, requiresGrant: l.requiresGrant, requiresCheckability: l.requiresCheckability })),
+        rules: [...policy.rules.values()].map((r) => ({ id: r.id, iri: r.iri, condition: r.condition })),
+        grantPolicy: policy.grantPolicy, podPolicy: reg.podPolicy, comparisonBases: COMPARISON_BASES, metrics: OUTCOME_METRICS, inputBases: INPUT_BASES,
+        dispositions: { freedHours: FREED_HOURS_DISPOSITIONS, outcome: OUTCOME_DISPOSITIONS }, distinctPeopleNote: DISTINCT_PEOPLE_NOTE, ontologySha256: published.ontologySha256,
+      },
+    };
+    if (want('registry')) {
+      out['registry'] = { members: [...reg.members.values()], taskKinds: [...reg.kinds.values()], head: reg.head ? headInfo(reg.head.loaded) : null };
+    }
+    if (want('workflows')) {
+      out['workflows'] = workflowsRec.filter((w) => keep(w.record.entityIri, w.record.entityIri)).map((w) => {
+        const p = w.record.payload;
+        return {
+          workflowIri: w.record.entityIri, title: p.title, unitLabel: p.unitLabel, ...(p.description ? { description: p.description } : {}), captureMode: p.captureMode,
+          capturedBy: p.capturedBy.did, ...(p.document ? { document: p.document } : {}), ...(p.documentText !== undefined ? { documentText: p.documentText } : {}),
+          draftedBy: p.draftedBy ?? (p.captureMode === 'document' ? NOT_DECLARED : null), ...(p.draftSha256 ? { draftSha256: p.draftSha256 } : {}),
+          taskIris: p.taskIris, retiredTaskIris: p.retiredTaskIris,
+          ...(p.revision ? { revision: { op: p.revision.op, taskIri: p.revision.taskIri, by: p.revision.by.did, ...(p.revision.repairs ? { repairs: p.revision.repairs } : {}) } } : {}),
+          head: headInfo(w.head), demo: w.record.demo === true,
+        };
+      });
+    }
+    if (want('tasks')) {
+      out['tasks'] = tasksRec.filter((t) => keep(t.record.entityIri, t.record.payload.workflowIri)).map((t) => {
+        const p = t.record.payload;
+        const cls = classificationByTask.get(t.record.entityIri);
+        const clsGraph = unusable(iriForms('classification', p.workflowIri, t.record.entityIri));
+        const eff = effective.get(t.record.entityIri);
+        const effGrant = effectiveGrant.get(t.record.entityIri);
+        // The allocation in force may come from a decision that cannot be read, or from the plan of one that can.
+        const allocationShut = [
+          ...unreadableDecisions(p.workflowIri).map((g) => graphByIri.get(g)).filter((x): x is SnapGraph => x !== undefined),
+          ...unreadablePlansInForce(p.workflowIri),
+        ];
+        // The workflow says whether it lists this task: when it cannot be read, that is unknown, not "no".
+        const wfShut = unusable([p.workflowIri]);
+        const clsP = cls?.record.payload;
+        // No classification found by tuple, on a pod where classifications are keyed under another record key: unknown, not "not classified".
+        const clsUnknown = cls || clsGraph ? null : absenceUnknown('classification');
+        // Whether the allocation in force is one the classification allows is read from both: when
+        // a decision or plan it may come from, or the classification, cannot be read, it is
+        // unknown (null, with why), never worked out from the captured allocation as if that
+        // decision were absent. With no classification at all there is nothing to check.
+        const permittedUnknown = !(cls || clsGraph || clsUnknown !== null) ? null
+          : allocationShut.length > 0 ? `whether the allocation in force is one this task's classification allows is unknown: ${allocationShut.length} decision or plan record(s) it may come from cannot be read (${whysOf(allocationShut)})`
+            : clsGraph && !cls ? `whether the allocation in force is one this task's classification allows is unknown: the classification cannot be read (${whyUnusable(clsGraph)})`
+              : clsUnknown !== null ? `whether the allocation in force is one this task's classification allows is unknown: ${clsUnknown}` : null;
+        if (permittedUnknown !== null) permittedShut.push(t.record.entityIri);
+        const currentNote = clsP && permittedUnknown === null ? currentAllocationNote(eff?.allocation ?? p.current, clsP.regime, clsP.answers, policy, eff ? 'decision' : 'captured') : null;
+        const owed = p.owedRatification ?? [];
+        const reviewed = runsRec.filter((r) => r.record.status === 'reviewed' && r.record.payload.taskIri === t.record.entityIri);
+        const reworked = reviewed.filter((r) => r.record.payload.review?.verdict !== 'accepted').length;
+        const critical = reviewed.filter((r) => r.record.payload.review?.verdict === 'critical-failure').length;
+        const share = reviewed.length > 0 ? reworked / reviewed.length : 0;
+        const suggest = (reviewed.length >= policy.grantPolicy.contraryMinRuns && share > policy.grantPolicy.contraryReworkShare) || critical > 0;
+        // A run that cannot be read may be a reviewed run on this task: the counts are of the runs
+        // that open, and a suggestion only a run that opens can settle (a critical failure) stands.
+        const runsShut = contraryShut;
+        return {
+          taskIri: t.record.entityIri, workflowIri: p.workflowIri, name: p.name, description: p.description, textSha256: p.textSha256, current: p.current, performer: p.performer,
+          namedParties: p.namedParties.map((a) => {
+            const r = p.ratifications.find((x) => x.party === a);
+            return { address: a, kind: isAgent(reg, a) ? 'agent' : isPerson(reg, a) ? 'person' : 'unregistered', label: label(a), ratification: r ? { verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at } : null };
+          }),
+          // People a revision removed from the task, whose ratification it still needs.
+          owedRatification: owed.map((a) => {
+            const r = p.ratifications.find((x) => x.party === a);
+            return { address: a, label: label(a), ratification: r ? { verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at } : null };
+          }),
+          taskKind: p.taskKind, taskKindDefinition: p.taskKindDefinition, ...(p.externalTaskTerm ? { externalTaskTerm: p.externalTaskTerm } : {}),
+          effective: {
+            ...(eff
+              ? {
+                ...eff.allocation, source: eff.source, decisionIri: eff.decisionIri,
+                ...(effGrant ? {
+                  grant: effGrant, suspended: effGrant.active === false,
+                  ...(effGrant.active === false ? { suspendedWhy: `grant ${effGrant.why ?? 'inactive'}: ${SUSPENDED}` } : {}),
+                  ...(effGrant.active === null ? { unreadable: `the grant this work is under cannot be read: ${effGrant.why ?? ''}` } : {}),
+                } : {}),
+              }
+              : { ...p.current, source: 'captured' }),
+            // A decision on this workflow, or the plan of one in force, that cannot be read may have changed the allocation: never shown as certain.
+            ...(allocationShut.length > 0 && !(effGrant?.active === null)
+              ? { unreadable: `${allocationShut.length} decision or plan record(s) the allocation in force may come from cannot be read (${whysOf(allocationShut)}), so the allocation in force may differ from this one` }
+              : {}),
+          },
+          currentNotPermitted: currentNote, ...(permittedUnknown !== null ? { currentNotPermittedUnreadable: permittedUnknown } : {}),
+          status: t.record.status, quoteStatus: p.quoteStatus, quotes: p.quotes, ...(p.revision ? { revision: { note: p.revision.note ?? null, answers: p.revision.answers, quotesCleared: p.revision.quotesCleared, by: p.revision.by.did } } : {}),
+          ...(p.retirement ? { retirement: { why: p.retirement.why, at: p.retirement.at, by: p.retirement.by.did } } : {}),
+          // Both answered from the task's workflow: null (with why) when that cannot be read.
+          orphaned: wfShut ? null : !listedTasks.has(t.record.entityIri),
+          // Retired, but the workflow still lists it: retiring it again finishes the retirement.
+          retirementUnfinished: wfShut ? null : retirementUnfinished(t.record, workflowByIri.get(p.workflowIri)),
+          ...(wfShut ? { workflowUnreadable: `whether the workflow lists this task is unknown: ${whyUnusable(wfShut)}` } : {}),
+          classification: cls ? {
+            regime: cls.record.payload.regime, method: cls.record.payload.method, rulesFired: cls.record.payload.rulesFired, notes: cls.record.payload.notes,
+            answers: cls.record.payload.answers,
+            answeredBy: { did: cls.record.payload.answeredBy.did, address: cls.record.payload.answeredBy.address, personRef: cls.record.payload.answeredBy.personRef, role: cls.record.payload.answeredBy.role },
+            status: cls.record.status, current: cls.record.payload.taskTextSha256 === p.textSha256,
+            ratifications: cls.record.payload.ratifications.map((r) => ({ party: r.party, verdict: r.verdict, ...(r.note ? { note: r.note } : {}), at: r.at })),
+            disagreement: cls.record.payload.ratifications.filter((r) => r.answers).map((r) => ({ party: r.party, answers: r.answers })),
+            contraryEvidence: reviewed.length > 0 || runsShut !== null ? {
+              reviewedRuns: reviewed.length, reworkedShare: Math.round(share * 10_000) / 10_000, criticalFailures: critical,
+              suggestReclassify: runsShut === null ? suggest : critical > 0 ? true : null, note: CONTRARY_NOTE, ...(runsShut !== null ? { unreadable: runsShut } : {}),
+            } : null,
+            state: 'ok', trusted: true, head: headInfo(cls.head), demo: cls.record.demo === true,
+          } : clsGraph && (clsGraph.g.state === 'altered' || clsGraph.g.state === 'forked') ? {
+            state: clsGraph.g.state, trusted: false,
+            heads: clsGraph.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, contentBinding: h.authorship.contentBinding, why: h.why })),
+          } : clsUnknown !== null ? { state: 'unreadable', trusted: false, unreadable: `whether this task is classified is unknown: ${clsUnknown}` } : null,
+          link: taskLink(t.record.entityIri), head: headInfo(t.head), demo: t.record.demo === true,
+        };
+      });
+      if (permittedShut.length > 0) {
+        unreadable['currentNotPermitted'] = `${permittedShut.length} task(s) have currentNotPermitted null because a decision, plan or classification it is read from cannot be read: whether their allocation in force is one their classification allows is unknown (each says why under currentNotPermittedUnreadable: WRD_RECORD_KEY when one is sealed)`;
+      }
+    }
+    if (want('plans')) {
+      const out2: Obj[] = [];
+      for (const pl of plansRec) {
+        const p = pl.record.payload;
+        if (!keep(pl.record.entityIri, p.workflowIri)) continue;
+        let stale: string | null = null;
+        const wf = workflowsRec.find((w) => w.record.entityIri === p.workflowIri);
+        // Staleness is read from the workflow, each task and its classification. A record that
+        // cannot be read (sealed shut, altered or forked) is not absent: nothing is concluded from
+        // it, and when the records that can be read do not show the plan stale, whether it is
+        // stale is unknown: `stale` is null and `unreadable` says why.
+        const shut: string[] = [];
+        const wfShut = unusable([p.workflowIri]);
+        if (wfShut) shut.push(whyUnusable(wfShut));
+        for (const row of p.tasks) {
+          const tShut = unusable([row.taskIri]);
+          const cGraph = unusable(iriForms('classification', p.workflowIri, row.taskIri));
+          const t = tasksRec.find((x) => x.record.entityIri === row.taskIri);
+          const c = classificationByTask.get(row.taskIri);
+          // The classification is found by tuple: not found where classifications are keyed under another record key, it is unknown, not absent.
+          const cShut = cGraph ? whyUnusable(cGraph) : c ? null : absenceUnknown('classification');
+          if (tShut) shut.push(whyUnusable(tShut));
+          if (cShut !== null) shut.push(cShut);
+          if (row.changed && (t?.record.status === 'retired' || (wf && !wf.record.payload.taskIris.includes(row.taskIri)))) { stale = RETIRED_IN_PLAN; break; }
+          if (tShut) continue;
+          if (!t || t.record.payload.textSha256 !== p.taskTextSha256[row.taskIri]) { stale = STALE_PLAN; break; }
+          if (cShut !== null) continue;
+          if (!c || c.head.descriptorUrl !== p.classificationHeads[row.taskIri]) { stale = STALE_PLAN; break; }
+        }
+        const assignments = p.tasks.filter((r) => r.changed && r.proposed.personAddress).map((r) => {
+          const a = acks.get(`${pl.record.entityIri}|${r.taskIri}|${r.proposed.personAddress ?? ''}`);
+          // An acknowledgement that exists and cannot be read is not "not acknowledged".
+          const shutGraph = a ? undefined : unusable(iriForms('acknowledgement', ...ackTuple(pl.record.entityIri, r.taskIri, r.proposed.personAddress ?? '')));
+          // Found by tuple: where acknowledgements are keyed under another record key, one not found is unknown, not "not acknowledged".
+          const shut = shutGraph ? unusableWhy(shutGraph.g) : a ? null : absenceUnknown('acknowledgement');
+          if (shut !== null) return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state: 'unreadable', label: `${UNREADABLE_ACK}: ${shut}` };
+          const state = a ? a.status : 'not-acknowledged';
+          return { taskIri: r.taskIri, personAddress: r.proposed.personAddress, state, ...(a?.payload.note ? { note: a.payload.note } : {}), label: state === 'acknowledged' ? ACKNOWLEDGED : state === 'objected' ? OBJECTED : UNACKNOWLEDGED };
+        });
+        out2.push({
+          planIri: pl.record.entityIri, workflowIri: p.workflowIri, title: p.title, planKind: p.planKind, tasks: p.tasks, proposedBy: p.proposedBy.did, stale,
+          ...(stale === null && shut.length > 0 ? { unreadable: `whether this plan is stale is unknown: ${shut.length} record(s) it was proposed against cannot be read (${shut.join('; ')})` } : {}),
+          assignments, head: headInfo(pl.head), demo: pl.record.demo === true,
+        });
+      }
+      out['plans'] = out2;
+    }
+    if (want('valuations')) {
+      out['valuations'] = recordsOf(snap, 'Valuation').filter((v) => keep(v.record.entityIri, workflowOfPlan(v.record.payload.planIri))).map((v) => ({
+        valuationIri: v.record.entityIri, planIri: v.record.payload.planIri, valuationHash: v.record.payload.valuationHash, inputs: v.record.payload.inputs, result: v.record.payload.result,
+        expertEvidence: v.record.payload.expertEvidence, unratifiedTasks: v.record.payload.unratifiedTasks, head: headInfo(v.head), demo: v.record.demo === true,
+      }));
+    }
+    if (want('decisions')) {
+      const out3: Obj[] = [];
+      for (const d of decisionsRec) {
+        const p = d.record.payload;
+        if (!keep(d.record.entityIri, workflowOfPlan(p.planIri))) continue;
+        const line = await call.view.line(d.s.g);
+        const chain = line.versions.map((l) => ({
+          version: l.record?.version ?? null, status: l.record?.status ?? null, modalStatus: l.modalStatus, signedBy: l.record?.signers.map((s) => s.did) ?? [],
+          at: l.generatedAt, descriptorUrl: l.descriptorUrl, recordId: l.recordId, graphDigest: l.graphDigest,
+        }));
+        // A chain that does not reach its first version says so: never shown as the whole chain. A sealed version is also listed under sealed.
+        const chainCut = line.cut ? cutWhy(d.s.graphIri, line.cut) : null;
+        out3.push({
+          decisionIri: d.record.entityIri, decisionKind: p.decisionKind, planIri: p.planIri, ...(p.valuationIri ? { valuationIri: p.valuationIri, valuationHash: p.valuationHash } : {}),
+          status: d.record.status, statusLabel: statusLabelOf(d.record.status, p.decisionKind), decisionLevel: p.decisionLevel,
+          ...(p.prediction ? { prediction: p.prediction } : {}), ...(p.freedHours ? { freedHours: p.freedHours } : {}),
+          ...(p.measurementPlan ? { measurementPlan: p.measurementPlan, basisLabel: p.basisLabel } : {}),
+          subjects: p.subjects, assignments: p.assignments, submittedBy: { did: p.submittedBy.did, personRef: p.submittedBy.personRef },
+          ...(p.preparedBy ? { preparedBy: p.preparedBy } : {}),
+          ...(p.countersign ? { countersign: { verdict: p.countersign.verdict, did: p.countersign.did, personRef: p.countersign.personRef, objectionsConsidered: p.countersign.objectionsConsidered, unacknowledgedConsidered: p.countersign.unacknowledgedConsidered ?? [], assignmentsAtCountersign: p.countersign.assignmentsAtCountersign, at: p.countersign.at } } : {}),
+          ...(p.outcome ? { outcome: { did: p.outcome.did, personRef: p.outcome.personRef, disposition: p.outcome.disposition, ...(p.outcome.dispositionNote ? { dispositionNote: p.outcome.dispositionNote } : {}), at: p.outcome.at, ...(p.outcome.valued ? { valued: p.outcome.valued } : {}), ...(p.outcome.probes ? { probes: p.outcome.probes } : {}) } } : {}),
+          ...(p.probes ? { probes: p.probes } : {}),
+          ...(p.outcome?.probes?.some((x) => x.signal !== 'neither') ? { next: NEXT_RECLASSIFY } : {}),
+          grantChecks: p.grantChecks, chain, ...(chainCut !== null ? { chainUnreadable: `the chain below is incomplete: ${chainCut}` } : {}),
+          head: headInfo(d.head), demo: d.record.demo === true,
+        });
+      }
+      out['decisions'] = out3;
+    }
+    if (want('grants')) {
+      const out4: Obj[] = [];
+      for (const gr of recordsOf(snap, 'Grant')) {
+        const p = gr.record.payload;
+        if (subject !== null && subject !== gr.record.entityIri) continue;
+        const state = await grantView(call, reg, p.agentAddress, p.taskKind);
+        const line = await call.view.line(gr.s.g);
+        const grantedAt = [...line.versions].reverse().find((l) => l.record?.status === 'granted')?.generatedAt ?? null;
+        const chainCut = line.cut ? cutWhy(gr.s.graphIri, line.cut) : null;
+        out4.push({
+          grantIri: gr.record.entityIri, agentAddress: p.agentAddress, principal: p.principal, model: p.model, taskKind: p.taskKind, status: gr.record.status,
+          active: state.active, why: state.why, evaluation: p.evaluation, evidenceTaskIris: p.evaluation.taskIris, grantedAt,
+          // grantedAt is read from the versions that open: with an earlier one that does not, it may be missing or not the first.
+          ...(chainCut !== null ? { chainUnreadable: `grantedAt may be missing: ${chainCut}` } : {}),
+          ...(p.revocation ? { revokedAt: p.revocation.at, revocationWhy: p.revocation.why } : {}), head: headInfo(gr.head), demo: gr.record.demo === true,
+        });
+      }
+      out['grants'] = out4;
+    }
+    if (want('runs')) {
+      const agg = new Map<string, { agentAddress: string; taskKind: string; model: string; reviewed: number; actedUnderGrant: number; costs: number[]; currency: string | null }>();
+      const awaiting: Obj[] = [];
+      for (const r of runsRec) {
+        const p = r.record.payload;
+        const k = `${p.agentAddress}|${p.taskKind}|${p.model}`;
+        const a = agg.get(k) ?? { agentAddress: p.agentAddress, taskKind: p.taskKind, model: p.model, reviewed: 0, actedUnderGrant: 0, costs: [], currency: null };
+        if (r.record.status === 'reviewed') a.reviewed += 1; else a.actedUnderGrant += 1;
+        if (r.record.status === 'reviewed' && p.costPerRun && (a.currency === null || a.currency === p.costPerRun.currency)) { a.costs.push(p.costPerRun.amount); a.currency = p.costPerRun.currency; }
+        agg.set(k, a);
+        if (r.record.status === 'acted-under-grant') awaiting.push({ runIri: r.record.entityIri, agentAddress: p.agentAddress, taskIri: p.taskIri, taskKind: p.taskKind, runEnvelope: p.runEnvelope, demo: r.record.demo === true });
+      }
+      // A run that cannot be read belongs to an agent and kind of task this bridge cannot see: every row, and the section, says so.
+      const shut = runsUnreadable('runs');
+      out['runs'] = [...agg.values()].map((a) => ({
+        agentAddress: a.agentAddress, taskKind: a.taskKind, model: a.model, reviewed: a.reviewed, actedUnderGrant: a.actedUnderGrant,
+        ...(a.costs.length > 0 ? { reportedCost: { runs: a.costs.length, mean: a.costs.reduce((x, y) => x + y, 0) / a.costs.length, currency: a.currency, basis: REPORTED_COST_BASIS } } : {}),
+        ...(shut !== null ? { unreadable: shut } : {}),
+      }));
+      out['awaitingReview'] = awaiting;
+      if (shut !== null) unreadable['runs'] = shut;
+      const awaitingShut = runsUnreadable('awaitingReview');
+      if (awaitingShut !== null) unreadable['awaitingReview'] = awaitingShut;
+    }
+    out['untrusted'] = [
+      ...snap.graphs.flatMap((s) => s.g.untrusted),
+      ...snap.foreign.map((e) => ({ descriptorUrl: e.descriptorUrl, why: 'it is outside this pod\'s wrd/records/ container (for example a holder copy)' })),
+    ];
+    out['forked'] = snap.graphs.filter((s) => s.g.state === 'forked').map((s) => s.graphIri);
+    // Current versions that do not open, then earlier ones this answer met in a line it walked.
+    const sealed = [...sealedOf(snap), ...cutLines];
+    out['sealed'] = sealed;
+    if (sealed.length > 0) out['sealedNote'] = SEALED_RECORDS;
+    // contraryEvidence is per task, marked on each row; the section-level mark says it once for the whole list.
+    if (contraryShut !== null) unreadable['contraryEvidence'] = contraryShut;
+    if (Object.keys(unreadable).length > 0) out['unreadable'] = unreadable;
+    if (conflict) out['recordKeyMismatch'] = keyConflictNote(conflict);
+    out['altered'] = snap.graphs.filter((s) => s.g.state === 'altered').map((s) => s.graphIri);
+    out['chainCuts'] = chainCuts;
+    out['integrity'] = snap.graphs.filter((s) => s.g.state === 'altered' || s.g.state === 'forked').map((s) => ({
+      graphIri: s.graphIri, state: s.g.state, why: s.g.why,
+      heads: s.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, trusted: h.authorship.trusted, contentBinding: h.authorship.contentBinding, why: h.why })),
+    }));
+    return out;
+  }
+
+  async function calibrate(call: Call, args: Obj): Promise<Obj> {
+    const kind = kindArg(args);
+    const reg = await registryForRead(call);
+    const snap = await snapshot(call.view);
+    const decisions: DecisionForCalibration[] = [];
+    const probes: ProbeOutcome[] = [];
+    for (const d of recordsOf(snap, 'Decision')) {
+      const p = d.record.payload;
+      const o = p.outcome;
+      if (d.record.status !== 'measured' || !o) continue;
+      const demoRecord = d.record.demo === true;
+      if (p.decisionKind === 'valued' && o.valued && p.prediction) {
+        const issued = p.submittedBy.envelope.payload['issuedAt'];
+        decisions.push({
+          decisionIri: d.record.entityIri, level: p.decisionLevel, metric: p.prediction.metric as OutcomeMetric, basis: o.valued.measured.comparisonBasis,
+          verdict: o.valued.verdict, rampAdjusted: o.valued.rampAdjusted, disposition: o.disposition, measuredBy: o.did,
+          submittedAt: typeof issued === 'string' ? issued : o.at, measuredAt: o.at, demo: demoRecord, shortWindow: o.valued.windowShorterThanPlanned === true,
+        });
+      }
+      for (const pr of o.probes ?? []) probes.push({ decisionIri: d.record.entityIri, taskIri: pr.taskIri, index: pr.index, signal: pr.signal, demo: demoRecord });
+    }
+    const runs: ReviewedRun[] = [];
+    const awaiting: Obj[] = [];
+    for (const r of recordsOf(snap, 'AgentRun')) {
+      const rr = reviewedRunOf(r.record);
+      if (rr) runs.push(rr);
+      else if (r.record.status === 'acted-under-grant') awaiting.push({ runIri: r.record.entityIri, agentAddress: r.record.payload.agentAddress, taskKind: r.record.payload.taskKind });
+    }
+    const policy = reg.policy.grantPolicy;
+    const report = calibrationReport({
+      decisions, runs, probes, minSamples: policy.minSamples, policy,
+      currentModelOf: (did) => memberOf(reg, did.replace(/^did:ethr:/, ''))?.model ?? null,
+    });
+    // Cells are computed from the records that open. A decision or run that does not open (its
+    // kind is public in its IRI, its metric, level, agent and kind of task are not) may belong to
+    // any cell: every cell of its section, and the section, is marked, never counted as if absent.
+    const marks = {
+      predictionCells: countedWithout(snap, ['decision'], 'predictionCells'),
+      probeSignals: countedWithout(snap, ['decision'], 'probeSignals'),
+      agentCells: countedWithout(snap, ['run'], 'agentCells'),
+      awaitingAPerson: countedWithout(snap, ['run'], 'awaitingAPerson'),
+    };
+    const mark = (why: string | null): Obj => (why === null ? {} : { unreadable: why });
+    const agentCells: Obj[] = [];
+    for (const c of report.agentCells) {
+      const address = c.agentDid.replace(/^did:ethr:/, '');
+      agentCells.push({ ...c, agentAddress: address, principal: memberOf(reg, address)?.principal ?? null, grant: await grantView(call, reg, address, c.taskKind), ...mark(marks.agentCells) });
+    }
+    const demoRecords = snap.graphs.filter((s) => s.record?.demo === true).length;
+    const sealed = sealedOf(snap);
+    const wanted: Readonly<Record<keyof typeof marks, boolean>> = {
+      predictionCells: kind === null || kind === 'predictions', probeSignals: kind === null || kind === 'probes', agentCells: kind === null || kind === 'agents', awaitingAPerson: true,
+    };
+    const unreadable = Object.fromEntries(Object.entries(marks).filter(([k, why]) => why !== null && wanted[k as keyof typeof marks]));
+    const conflict = await keyConflict(call);
+    return {
+      podUrl: call.podUrl, complete: snap.complete, status: 'calibrated', computed: true, minSamples: report.minSamples, nominalBandCoverage: report.nominalBandCoverage,
+      demoRecords, demoLabel: demoRecords > 0 ? DEMO_LABEL : null, sealed, ...(sealed.length > 0 ? { sealedNote: SEALED_RECORDS } : {}),
+      ...(Object.keys(unreadable).length > 0 ? { unreadable } : {}), ...(conflict ? { recordKeyMismatch: keyConflictNote(conflict) } : {}),
+      ...(wanted.predictionCells ? { predictionCells: report.predictionCells.map((c) => ({ ...c, ...mark(marks.predictionCells) })) } : {}),
+      ...(wanted.agentCells ? { agentCells } : {}),
+      ...(wanted.probeSignals ? { probeSignals: { ...report.probeSignals, ...mark(marks.probeSignals) } } : {}),
+      awaitingAPerson: awaiting, grantPolicy: policy, podPolicy: reg.podPolicy,
+    };
+  }
 
   if (demo) {
     handlers['wrd.demo_envelope'] = async (args) => {
       const id = args['persona'];
+      // Without a persona: who the demo can sign as, so a page can sign its first read.
+      if (id === undefined || id === null || id === '') {
+        return { personas: [...demo.values()].map((d) => ({ id: d.id, label: d.label, address: lower(d.wallet.address) })), demoKey: true, scriptedLabel: DEMO_LABEL, status: 'listed' };
+      }
       const persona = typeof id === 'string' ? demo.get(id) : undefined;
       if (!persona) return { ...refuse(404, 'No such demo persona.', `persona must be one of ${[...demo.keys()].join(', ')}`) };
       const raw = args['payload'];
@@ -2677,6 +3464,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const out: Record<string, WrdHandler> = {};
   for (const [name, fn] of Object.entries(handlers)) {
     out[name] = async (args) => {
+      // Text that is not well-formed UTF-16 (a lone surrogate) cannot be signed, hashed, sealed or
+      // stored as what was sent: refused before any work, so it never reaches a seal or the pod.
+      const ill = illFormedTextPath(args, 'arguments');
+      if (ill !== null) return refuse(400, NOT_WELL_FORMED, `${ill} holds a lone UTF-16 surrogate; nothing was read or written`);
       let result: unknown;
       try {
         result = await fn(args);
@@ -2691,6 +3482,8 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
 const INTENTS_OF_TOOL = new Map<string, EnvelopeIntent[]>();
 for (const [intent, tool] of Object.entries(TOOL_OF_INTENT) as Array<[EnvelopeIntent, string]>) INTENTS_OF_TOOL.set(tool, [...(INTENTS_OF_TOOL.get(tool) ?? []), intent]);
+// The one intent sent to two tools: a signed read reads the records or their calibration.
+INTENTS_OF_TOOL.set('wrd.read_calibration', ['wrd:read-records']);
 
 /**
  * A malformed payload is answered with the whole shape it should have had, not only the first
@@ -2714,10 +3507,12 @@ function withExpectedPayload(toolName: string, result: unknown): unknown {
 /** The status a failure deserves, as a typed refusal. Unexpected failures are the bridge's (500), never the caller's. */
 function failureOf(e: unknown): BridgeRefusal {
   if (e instanceof Declined) return e.refusal;
-  if (e instanceof StaleHeadError) return refuse(409, 'The record changed since it was read; read it again and retry.', e.message, via('list_records'));
+  if (e instanceof StaleHeadError) return refuse(409, 'The record changed since it was read; read it again and retry.', e.message, via('read_records'));
   if (e instanceof IncompleteManifestError) return refuse(502, "The pod's manifest could not be read in full; nothing was written.", e.message);
   if (e instanceof PodWriteError) return refuse(502, e.status === null ? 'The pod did not accept the write.' : `The pod answered ${e.status} to the write.`, e.message);
   if (e instanceof PodReadError) return refuse(502, e.status === null ? 'The pod could not be read.' : `The pod answered ${e.status} to a read.`, e.message);
+  // Sealing happens in this process: its failure is the bridge's, never reported as the pod's.
+  if (e instanceof RecordNotSealableError) return refuse(500, 'The bridge could not seal this record; nothing was written.', e.message);
   if (e instanceof PublishShapeViolationError) {
     return refuse(500, 'The bridge built a record its own shapes refuse; nothing was written.', `${e.message}: ${e.violations.map((v) => v.message).join('; ')}`);
   }
