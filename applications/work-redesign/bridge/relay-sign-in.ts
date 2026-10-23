@@ -82,21 +82,26 @@ export function parseRelaySignIn(v: RelaySignInValues): { readonly ok: true; rea
 }
 
 /** The response fields the capped read uses. */
-interface Answer {
+export interface CappedAnswer {
   readonly status: number;
   readonly headers: { get(name: string): string | null };
   readonly body?: ReadableStream<Uint8Array> | null;
   text(): Promise<string>;
 }
+type Answer = CappedAnswer;
 type GetFn = (url: string, init?: Record<string, unknown>) => Promise<Answer>;
 
 export const DID_DOCUMENT_TIMEOUT_MS = 8_000;
 export const DID_DOCUMENT_MAX_BYTES = 64 * 1024;
 
-/** The body as UTF-8 text, refusing it past `max` bytes (by its Content-Length, and while it is read). */
-async function cappedText(r: Answer, max: number): Promise<string> {
+/**
+ * The body as UTF-8 text, refusing it past `max` bytes (by its Content-Length, and while it is
+ * read); `what` names the body in the error. The web UI's sign-in routes read the relay's answers
+ * through it too (bridge/ui.ts).
+ */
+export async function cappedText(r: Answer, max: number, what = 'the DID document'): Promise<string> {
   const declared = Number(r.headers.get('content-length') ?? Number.NaN);
-  if (Number.isFinite(declared) && declared > max) throw new Error(`the DID document is over ${max} bytes`);
+  if (Number.isFinite(declared) && declared > max) throw new Error(`${what} is over ${max} bytes`);
   const body = r.body;
   if (body && typeof body.getReader === 'function') {
     const reader = body.getReader();
@@ -108,7 +113,7 @@ async function cappedText(r: Answer, max: number): Promise<string> {
       n += value.byteLength;
       if (n > max) {
         await reader.cancel().catch(() => undefined);
-        throw new Error(`the DID document is over ${max} bytes`);
+        throw new Error(`${what} is over ${max} bytes`);
       }
       chunks.push(value);
     }
@@ -118,7 +123,7 @@ async function cappedText(r: Answer, max: number): Promise<string> {
     return new TextDecoder('utf-8', { fatal: true }).decode(all);
   }
   const t = await r.text();
-  if (new TextEncoder().encode(t).byteLength > max) throw new Error(`the DID document is over ${max} bytes`);
+  if (new TextEncoder().encode(t).byteLength > max) throw new Error(`${what} is over ${max} bytes`);
   return t;
 }
 

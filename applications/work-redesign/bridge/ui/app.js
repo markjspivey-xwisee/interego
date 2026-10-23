@@ -12,6 +12,14 @@
  * nonce); a reused read that has gone stale is signed once more. With nothing to sign with, it
  * tries the unsigned read model, which a bridge answers only when its operator opened reads.
  *
+ * A person with no wallet can sign in with their Interego account instead (mode 'interego'): the
+ * page sends them to the relay's own sign-in page (PKCE S256, a random state it checks on return),
+ * the bridge exchanges the code for the relay's token (POST /ui/oauth/exchange), and from then on
+ * every payload is signed by the relay through POST /ui/relay/sign, and sent as the act's
+ * {_signed_payload, _signature}. Relay-attested, not a key the person holds; the token passes
+ * through the bridge on every signature. It is kept in sessionStorage only (this tab, until it
+ * ends or the person signs out), never in localStorage, a URL or the page.
+ *
  * Untrusted text (anything read from the pod or typed by a person) reaches the page only as
  * text nodes. No innerHTML, no style attribute: widths are set through the CSSOM, which the
  * page's Content-Security-Policy allows. localStorage keeps unsigned drafts only (the capture
@@ -21,10 +29,26 @@
 // ── Words the page uses (prose lives here, not in the logic) ─────────────────────────────
 
 const DEMO_BANNER = 'DEMO — keys are generated and held by this demo server. These are not signatures by real people.';
+const SIGN_IN = 'Sign in with your Interego account';
+const SIGN_IN_OFFERED = 'Or sign in with your Interego account: your passkey, on the Interego relay\'s own sign-in page. The relay then signs each act for you (relay-attested, not a key you hold), and an admin registers your Interego user DID, which this page shows once you are signed in.';
+const NOT_SIGNED_IN = 'No wallet, and not signed in: this page cannot sign yet, and it reads the pod only where the bridge serves unsigned reads.';
+const SEND_TO_ADMIN = 'This is who you are to this bridge: send it to an admin of this pod to be registered.';
+const SIGNED_OUT = 'Signed out: this tab no longer holds your Interego token. Signing out forgets it here; it does not revoke it.';
+const RELAY_STEPS = [
+  'Press "Sign in with your Interego account" and sign in with your passkey on the Interego relay\'s own page.',
+  'Ask an admin to add your Interego user DID (shown at the top of this page once you are signed in) to this pod\'s registry: until then the bridge refuses your requests, for reads as for changes.',
+  'Then sign. The page shows the exact payload; the relay signs it for you, and the bridge records it as relay-delegated.',
+];
+const SESSION_KEY = 'wrd.interego.session';   // sessionStorage: the token and when it ends
+const FLOW_KEY = 'wrd.interego.flow';         // sessionStorage: the PKCE verifier and state while the relay's page is open
+const CALLBACK_PATH = '/ui/oauth/callback';
+const FLOW_MS = 10 * 60 * 1000;
 const EPHEMERAL = 'EPHEMERAL — records will not be trusted after this server restarts';
 const DEMO_KEY = 'DEMO KEY — derived from a published seed';
 const READ_ONLY = 'No wallet: this browser has no EIP-191 wallet, so this page cannot sign, and it reads the pod only where the bridge serves unsigned reads. Install or enable a wallet that supports personal_sign and reload; the bridge accepts only signed envelopes and never asks for a key.';
 const READ_SIGNING = 'Reading this pod needs your signature too: the page asks your wallet to sign one read and reuses it for up to nine minutes.';
+const READ_RELAYED = 'Reading this pod needs a signature too: the relay signs one read for you, and the page reuses it for up to nine minutes.';
+const RELAY_TRUST = 'Relay-attested, not a key you hold: the Interego relay signs each act for you. The token your sign-in gave this tab passes through this bridge with every signature, so whoever runs this bridge is trusted with it while you are signed in.';
 const READ_ENVELOPE_MS = 9 * 60 * 1000;
 const SIGNING_MEANS = 'Your signature says this description of your work is right, or records why it is not. It is stored with the record, anyone who can read the pod can check it, and you can take a copy of every record about you.';
 const WALLET_STEPS = [
@@ -121,9 +145,23 @@ const store = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* the page works without storage */ } },
   drop(key) { try { localStorage.removeItem(key); } catch { /* the page works without storage */ } },
 };
+/** This tab only: the Interego sign-in (the token, and the PKCE verifier while the relay's page is open). Never localStorage. */
+const tab = {
+  get(key) { try { const v = sessionStorage.getItem(key); return v === null ? null : JSON.parse(v); } catch { return null; } },
+  set(key, value) { try { sessionStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; } },
+  drop(key) { try { sessionStorage.removeItem(key); } catch { /* nothing was kept */ } },
+};
+const base64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function randomUrlSafe(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  return base64url(a);
+}
 
 const short = (a) => (typeof a === 'string' && a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-4)}` : String(a ?? ''));
 const addrOfDid = (did) => String(did ?? '').replace(/^did:ethr:/, '');
+/** The DID a principal signs records as: an Interego user DID as it is, an address as did:ethr. */
+const didOfPrincipal = (a) => (/^did:web:/.test(String(a)) ? String(a) : `did:ethr:${a}`);
 const num = (n, d = 2) => (typeof n === 'number' && Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: d }) : '—');
 const pct = (n) => (typeof n === 'number' && Number.isFinite(n) ? `${(n * 100).toFixed(1)}%` : '—');
 function money(n, currency) {
@@ -177,6 +215,10 @@ const S = {
   pod: new URLSearchParams(location.search).get('pod') ?? '',
   reads: new Map(),             // signed read envelopes by signer and pod, reused for up to READ_ENVELOPE_MS
   readRefused: false,           // the last signed read was refused (401 or 403): the holder's copy is still offered
+  signIn: null,                 // the bridge's GET /ui/oauth/config: whether, and through which relay, a person can sign in
+  // Signed in with an Interego account: the token (this tab only), and who it is, as the relay's
+  // signature (the agent) and the bridge (the person) say, learned from the first signature.
+  interego: null,               // { token, expiresAt, principal, agentId, relaySigner }
 };
 const data = () => S.data || {};
 const reg = () => (S.data && S.data.registry) || { members: [], taskKinds: [], head: null };
@@ -194,6 +236,7 @@ const taskName = (iri) => taskBy(iri)?.name ?? short(iri);
 const planBy = (iri) => (data().plans ?? []).find((p) => p.planIri === iri);
 function actor() {
   if (S.mode === 'demo') return personas().find((p) => p.id === S.persona)?.address ?? '';
+  if (S.mode === 'interego') return S.interego?.principal ?? '';
   return S.mode === 'wallet' ? S.account : '';
 }
 const roles = (a) => member(a)?.roles ?? [];
@@ -224,7 +267,13 @@ async function call(toolName, body) {
   return { ok: res.ok && j?.kind !== 'refusal', status: res.status, body: j };
 }
 
-class NotSigned extends Error {}
+/** Signing did not happen; `answer`, when there is one, is the refusal that says why. */
+class NotSigned extends Error {
+  constructor(message, answer) { super(message); this.answer = answer; }
+}
+const SIGN_IN_TOOL = 'Interego sign-in';
+/** A relay-signed request ({_signed_payload, _signature}) rather than a key-held envelope ({payload, signature}). */
+const isRelayForm = (e) => Boolean(e) && typeof e === 'object' && typeof e._signed_payload === 'string';
 
 /** Sign a payload as the acting identity (or, in the demo, as a named persona). */
 async function sign(payload, persona) {
@@ -234,13 +283,63 @@ async function sign(payload, persona) {
     if (!r.ok) { showResult('wrd.demo_envelope', r); throw new NotSigned('demo signing refused'); }
     return r.body.envelope;
   }
+  if (S.mode === 'interego' && S.interego) return relaySign(payload);
   if (S.mode === 'wallet' && S.account) {
     const full = { ...payload, issuedAt: new Date().toISOString(), nonce: randomHex(16) };
     const signature = await window.ethereum.request({ method: 'personal_sign', params: [utf8Hex(canonicalJson(full)), S.account] });
     return { payload: full, signature };
   }
-  showResult('sign', { ok: false, status: 0, body: { error: 'Nothing to sign with.', 'iep:refusalReason': S.mode === 'wallet' ? 'connect your wallet first' : READ_ONLY } });
+  showResult('sign', { ok: false, status: 0, body: { error: 'Nothing to sign with.', 'iep:refusalReason': S.mode === 'wallet' ? 'connect your wallet first' : S.signIn?.enabled ? NOT_SIGNED_IN : READ_ONLY } });
   throw new NotSigned('read only');
+}
+
+/** POST JSON to one of this bridge's own sign-in routes (the page never calls the relay: connect-src is 'self'). */
+async function post(path, body, bearer) {
+  const headers = { accept: 'application/json', 'content-type': 'application/json' };
+  if (bearer) headers.authorization = `Bearer ${bearer}`;
+  let res;
+  try { res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) }); } catch (e) {
+    return { ok: false, status: 0, body: { error: 'The bridge could not be reached.', 'iep:refusalReason': String(e?.message ?? e) } };
+  }
+  let j;
+  try { j = await res.json(); } catch { j = { error: `HTTP ${res.status}: the answer was not JSON.` }; }
+  return { ok: res.ok && j?.kind !== 'refusal', status: res.status, body: j };
+}
+
+/**
+ * Sign a payload through the Interego relay: POST /ui/relay/sign with this tab's token, which the
+ * bridge forwards to the relay's sign_request. The relay's own timestamp stands for issuedAt, so
+ * none is sent; the nonce is fresh. Returns {_signed_payload, _signature}: sent as an act's body,
+ * or wherever an envelope goes. The first signature also says who signed: the agent from the text
+ * the relay signed, and the person that agent belongs to from the bridge (POST /ui/relay/whoami),
+ * never from anything this page assumes.
+ */
+async function relaySign(payload) {
+  if (Date.parse(S.interego.expiresAt) <= Date.now()) {
+    endSignIn('Your Interego sign-in has ended: sign in again.');
+    throw new NotSigned('signed out', { ok: false, status: 401, body: { error: 'Your Interego sign-in has ended: sign in again.' } });
+  }
+  const r = await post('/ui/relay/sign', { payload: { ...payload, nonce: randomHex(16) } }, S.interego.token);
+  if (!r.ok) {
+    // 401: the relay no longer takes this tab's token, so it is forgotten.
+    if (r.status === 401) endSignIn(r.body?.error ?? 'Your Interego sign-in has ended: sign in again.');
+    showResult(SIGN_IN_TOOL, r);
+    throw new NotSigned('the relay did not sign', r);
+  }
+  const form = { _signed_payload: r.body._signed_payload, _signature: r.body._signature };
+  let signed = {};
+  try { signed = JSON.parse(form._signed_payload); } catch { signed = {}; }
+  const agentId = typeof signed?.agent_id === 'string' ? signed.agent_id : '';
+  if (!S.interego.principal || S.interego.agentId !== agentId) {
+    const who = await post('/ui/relay/whoami', form);
+    if (!who.ok || who.body.agentId !== agentId || typeof who.body.principal !== 'string') {
+      const answer = who.ok ? { ok: false, status: 0, body: { error: 'The bridge named another agent than the relay signed for.', 'iep:refusalReason': `the relay signed for ${agentId || '(none)'}; the bridge answered for ${who.body.agentId}` } } : who;
+      showResult(SIGN_IN_TOOL, answer);
+      throw new NotSigned('no person named', answer);
+    }
+    S.interego = { ...S.interego, principal: who.body.principal, agentId, relaySigner: who.body.relaySigner ?? '' };
+  }
+  return form;
 }
 
 /** Sign one envelope for `intent`, POST it to `toolName` with `extra`, show the answer, re-read the pod. */
@@ -252,7 +351,8 @@ async function act(toolName, intent, fields, extra) {
   let r;
   try {
     const envelope = await sign({ intent, podUrl: data().podUrl, ...fields });
-    r = await call(toolName, { envelope, ...(extra || {}) });
+    // A relay-signed request is the act's body itself, as the relay's own act sends it; a key-held envelope goes under envelope.
+    r = await call(toolName, isRelayForm(envelope) ? { ...(extra || {}), ...envelope } : { envelope, ...(extra || {}) });
   } catch (e) {
     S.busy = false;
     if (!(e instanceof NotSigned)) showResult(toolName, { ok: false, status: 0, body: { error: 'Signing did not complete.', 'iep:refusalReason': String(e?.message ?? e) } });
@@ -307,6 +407,7 @@ const payloadButton = (intent, args) => h('button', { class: 'small', text: 'Wha
 /** Who would sign a read now, or '' when nothing can sign. */
 function readSigner() {
   if (S.mode === 'demo') return S.persona ? `demo:${S.persona}` : '';
+  if (S.mode === 'interego') return S.interego ? 'interego' : '';
   return S.mode === 'wallet' && S.account ? `wallet:${S.account}` : '';
 }
 
@@ -330,6 +431,7 @@ async function signedRead(send) {
       try {
         envelope = await sign({ intent: 'wrd:read-records', podUrl: t.body.template.podUrl });
       } catch (e) {
+        if (e instanceof NotSigned && e.answer) return e.answer;
         return { ok: false, status: 0, body: { error: 'The read was not signed.', 'iep:refusalReason': String(e?.message ?? e) } };
       }
       S.reads.set(key, { envelope, at: Date.now() });
@@ -388,11 +490,16 @@ async function boot() {
     S.personas = r.ok ? r.body.personas ?? [] : [];
     S.mode = 'demo';
     S.persona = S.personas.find((p) => p.id === 'ana')?.id ?? S.personas[0]?.id ?? '';
-  } else if (window.ethereum) {
-    S.mode = 'wallet';
+  } else {
+    S.signIn = await signInConfig();
+    if (location.pathname === CALLBACK_PATH) await finishSignIn();
+    S.interego = keptSignIn();
+    if (S.interego) S.mode = 'interego';
+    else if (window.ethereum) S.mode = 'wallet';
   }
   window.addEventListener('hashchange', render);
-  await refresh();
+  // A sign-in that did not finish (or ended) stays on screen: the first read, refused or not, does not replace it.
+  await refresh(S.result !== null);
 }
 
 // ── Frame: header strip, tabs, result ────────────────────────────────────────────────────
@@ -407,7 +514,7 @@ function render() {
     // say): their copy needs no read model, so it is offered here too.
     const holder = S.readRefused && actor() ? h('section', null, h('h2', { text: 'My record' }), h('p', { class: 'small', text: HOLDER_WITHOUT_READ }), holderCard(null)) : null;
     add(root, h('h1', { text: 'Work redesign' }), resultNode(), h('div', { class: 'stack' }, signerNode()),
-      S.mode === 'wallet' ? h('p', { class: 'small muted', text: READ_SIGNING }) : null, holder, podPicker());
+      S.mode === 'wallet' ? h('p', { class: 'small muted', text: READ_SIGNING }) : S.mode === 'interego' ? h('p', { class: 'small muted', text: READ_RELAYED }) : null, holder, podPicker());
     return;
   }
   const taskIri = taskFromHash();
@@ -450,7 +557,7 @@ function strip() {
       d.unreadable ? h('p', { class: 'badbox small', text: `Marked, not worked out without them, because records they depend on cannot be read: ${Object.keys(d.unreadable).join(', ')}.` }) : null),
     h('div', { class: 'stack' },
       signerNode(),
-      me ? h('div', { class: 'row small' }, 'Acting address ', h('code', { text: me }),
+      me ? h('div', { class: 'row small' }, S.mode === 'interego' ? 'Your Interego user DID ' : 'Acting address ', h('code', { text: me }),
         m ? [m.roles.map((r) => chip(r)), m.softwareAgent ? chip('software agent', 'warn') : null, m.personRef ? ['person ', h('code', { text: m.personRef })] : null,
           m.principal ? ['principal ', labelOf(m.principal)] : null]
           : chip(S.persona === 'admin' ? 'admin key (signs registry changes only)' : 'not in this pod\'s registry', 'warn')) : null));
@@ -467,9 +574,15 @@ function signerNode() {
           personas().map((p) => h('option', { value: p.id, selected: p.id === S.persona, text: `${p.label} — ${roles(p.address).join(', ') || (p.id === 'admin' ? 'admin' : 'not registered')}` })))),
     ];
   }
+  if (S.mode === 'interego' && S.interego) return interegoNode();
   if (S.mode === 'wallet') {
     return h('div', { class: 'row' },
-      S.account ? ['Signing with your wallet ', h('code', { text: S.account })] : h('button', { class: 'primary', text: 'Connect wallet', on: { click: connectWallet } }));
+      S.account ? ['Signing with your wallet ', h('code', { text: S.account })] : h('button', { class: 'primary', text: 'Connect wallet', on: { click: connectWallet } }),
+      signInButton());
+  }
+  if (S.signIn?.enabled) {
+    return h('div', { class: 'stack' }, h('p', { class: 'warnbox small', text: NOT_SIGNED_IN }),
+      h('div', { class: 'row' }, signInButton()), h('p', { class: 'small muted', text: SIGN_IN_OFFERED }));
   }
   return h('p', { class: 'warnbox small', text: READ_ONLY });
 }
@@ -509,6 +622,119 @@ async function connectWallet() {
   await refresh();
 }
 
+// ── Sign in with your Interego account ───────────────────────────────────────────────────
+
+/** Whether, and through which relay, this bridge signs a person in: GET /ui/oauth/config (null when it does not answer). */
+async function signInConfig() {
+  try {
+    const res = await fetch('/ui/oauth/config', { headers: { accept: 'application/json' } });
+    const j = await res.json();
+    return j && typeof j === 'object' ? j : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The sign-in this tab keeps, or null; one that has ended is forgotten, and the page says so. */
+function keptSignIn() {
+  const k = tab.get(SESSION_KEY);
+  if (!k) return null;
+  if (typeof k.token !== 'string' || k.token === '' || !(Date.parse(k.expiresAt) > Date.now())) {
+    tab.drop(SESSION_KEY);
+    S.result ??= { tool: SIGN_IN_TOOL, ok: false, status: 401, body: { error: 'Your Interego sign-in has ended: sign in again.' } };
+    return null;
+  }
+  // Who it is is learned again from this page's first signature: the agent from the relay's text, the person from the bridge.
+  return { token: k.token, expiresAt: k.expiresAt, principal: '', agentId: '', relaySigner: '' };
+}
+
+/**
+ * Send this tab to the relay's own sign-in page: PKCE S256 (the verifier stays in this tab) and a
+ * random state, both kept in sessionStorage until the relay sends the person back.
+ */
+async function startSignIn() {
+  const c = S.signIn;
+  if (!c?.enabled) {
+    showResult(SIGN_IN_TOOL, { ok: false, status: 0, body: { error: 'Signing in with an Interego account is not available on this bridge.', 'iep:refusalReason': c?.why ?? 'the bridge did not say how to sign in' } });
+    return;
+  }
+  let verifier;
+  let challenge;
+  try {
+    verifier = randomUrlSafe(32);
+    challenge = base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+  } catch (e) {
+    showResult(SIGN_IN_TOOL, { ok: false, status: 0, body: { error: 'This browser cannot start the sign-in here.', 'iep:refusalReason': `PKCE needs crypto.subtle, which a browser offers over https or on localhost: ${e?.message ?? e}` } });
+    return;
+  }
+  const state = randomUrlSafe(24);
+  if (!tab.set(FLOW_KEY, { verifier, state, at: Date.now(), back: `${location.pathname}${location.search}${location.hash}` })) {
+    showResult(SIGN_IN_TOOL, { ok: false, status: 0, body: { error: 'This browser keeps nothing for this tab, so the sign-in could not be finished.', 'iep:refusalReason': 'sessionStorage is off; the PKCE verifier and state must survive the visit to the relay\'s page' } });
+    return;
+  }
+  const u = new URL(c.authorizationEndpoint);
+  const params = [['response_type', 'code'], ['client_id', c.clientId], ['redirect_uri', c.redirectUri], ['scope', c.scope],
+    ['state', state], ['code_challenge', challenge], ['code_challenge_method', 'S256']];
+  for (const [k, v] of params) u.searchParams.set(k, v);
+  // This tab goes to the relay's sign-in page (window.open with '_self' is location.assign by another name).
+  window.open(u.href, '_self');
+}
+
+/**
+ * The relay sent this tab back to /ui/oauth/callback?code=…&state=…. Both leave the address bar
+ * before anything else; then the state must be the one this tab stored when it sent the person to
+ * sign in, and the bridge exchanges the code, with the verifier only this tab holds, for the token.
+ */
+async function finishSignIn() {
+  const q = new URLSearchParams(location.search);
+  const flow = tab.get(FLOW_KEY);
+  tab.drop(FLOW_KEY);
+  const back = typeof flow?.back === 'string' && flow.back.startsWith('/ui') && !flow.back.startsWith(CALLBACK_PATH) ? flow.back : '/ui';
+  history.replaceState(null, '', back);
+  S.pod = new URLSearchParams(location.search).get('pod') ?? '';
+  const fail = (error, why) => { S.result = { tool: SIGN_IN_TOOL, ok: false, status: 0, body: { error, 'iep:refusalReason': why } }; };
+  const NOT_FINISHED = 'Sign-in was not finished, and nothing was exchanged.';
+  if (q.get('error')) { fail('The Interego relay did not sign you in.', `${q.get('error')}${q.get('error_description') ? `: ${q.get('error_description')}` : ''}`); return; }
+  if (!flow || typeof flow.state !== 'string' || typeof flow.verifier !== 'string') { fail(NOT_FINISHED, 'this tab holds no sign-in it started (none, or it was finished already)'); return; }
+  if (q.get('state') !== flow.state) { fail(NOT_FINISHED, 'the state the relay sent back is not the one this tab stored when it sent you to sign in, so this answer is not for this tab'); return; }
+  if (!(Date.now() - Number(flow.at) < FLOW_MS)) { fail(NOT_FINISHED, 'the sign-in was started more than ten minutes ago'); return; }
+  const code = q.get('code');
+  if (!code) { fail(NOT_FINISHED, 'the relay sent back no code'); return; }
+  const r = await post('/ui/oauth/exchange', { code, code_verifier: flow.verifier, state: flow.state });
+  if (!r.ok) { S.result = { tool: SIGN_IN_TOOL, ...r }; return; }
+  if (!tab.set(SESSION_KEY, { token: r.body.token, expiresAt: r.body.expiresAt })) fail('Signed in, but this tab cannot keep the token.', 'sessionStorage is off in this browser');
+}
+
+/** Forget this tab's sign-in (the token, and every read the relay signed for it); `ok` when the person signed out. */
+function endSignIn(note, ok = false) {
+  tab.drop(SESSION_KEY);
+  tab.drop(FLOW_KEY);
+  S.interego = null;
+  for (const k of [...S.reads.keys()]) if (k.startsWith('interego|')) S.reads.delete(k);
+  S.mode = window.ethereum ? 'wallet' : 'readonly';
+  S.panel = null;
+  S.result = ok ? { tool: SIGN_IN_TOOL, ok: true, status: 200, body: { status: 'signed out', note } } : { tool: SIGN_IN_TOOL, ok: false, status: 401, body: { error: note } };
+}
+async function signOut() {
+  endSignIn(SIGNED_OUT, true);
+  await refresh(true);
+}
+
+const signInButton = () => (S.signIn?.enabled ? h('button', { class: 'primary', text: SIGN_IN, on: { click: startSignIn } }) : null);
+
+/** Who is signed in, as the relay's signature (the agent) and the bridge (the person) say; and the way out. */
+function interegoNode() {
+  const i = S.interego;
+  return h('div', { class: 'stack' },
+    h('div', { class: 'row' },
+      i.principal ? h('span', null, 'Signed in as ', h('code', { text: i.principal }), ' via ', h('code', { text: i.agentId }))
+        : h('span', { text: 'Signed in with your Interego account. The bridge names you once the relay signs your first request.' }),
+      chip('relay-attested, not a key you hold', 'warn'),
+      h('button', { text: 'Sign out', on: { click: signOut } })),
+    i.principal && S.readRefused ? h('p', { class: 'small warnbox' }, SEND_TO_ADMIN, ' ', h('code', { text: i.principal })) : null,
+    h('p', { class: 'small muted', text: S.signIn?.trust ?? RELAY_TRUST }));
+}
+
 function resultNode() {
   const r = S.result;
   if (!r) return null;
@@ -541,6 +767,7 @@ function goTab(id) {
 }
 
 function summaryOf(tool, b) {
+  if (tool === SIGN_IN_TOOL && b.note) return h('p', { text: b.note });
   if (tool === 'wrd.classify_task') {
     return h('p', null, `${b.regime} — method ${b.method}; source ${b.regimeSource}; answered as ${b.answeredBy?.role}. Rules fired: `,
       (b.rulesFired ?? []).map((iri) => chip(ruleLabel(iri))), (b.notes ?? []).map((n) => h('div', { class: 'small', text: n })));
@@ -625,7 +852,8 @@ function taskView(iri) {
     h('h3', { text: 'How knowable this work is' }),
     classificationNode(t),
     h('div', { class: 'card' }, h('strong', { text: 'What signing means' }), h('p', { text: SIGNING_MEANS }),
-      S.mode !== 'demo' ? h('ol', null, WALLET_STEPS.map((s) => h('li', { text: s }))) : null),
+      S.mode !== 'demo' ? h('ol', null, (S.mode === 'interego' ? RELAY_STEPS : WALLET_STEPS).map((s) => h('li', { text: s }))) : null,
+      S.mode !== 'demo' && S.mode !== 'interego' && S.signIn?.enabled ? h('p', { class: 'small' }, SIGN_IN_OFFERED, ' ', signInButton()) : null),
     h('div', null,
       h('button', { class: 'primary', disabled: !(named || owed) || t.status === 'retired', title: named || owed ? '' : 'Only the people and agents named on this task (or removed from it by a revision) can ratify or dispute it.', text: 'Ratify or dispute this description', on: { click: () => ratifyPanel(t, 'description') } }),
       h('button', { disabled: !named || !c || c.state !== 'ok', title: named ? '' : 'Only the people and agents named on this task can ratify or dispute its classification.', text: 'Ratify or dispute the classification', on: { click: () => ratifyPanel(t, 'classification') } })));
@@ -1625,7 +1853,7 @@ function evaluationNode(e) {
 function meView() {
   const me = actor();
   if (!me) return h('section', null, h('h2', { text: 'My record' }), h('p', { class: 'warnbox', text: READ_ONLY }));
-  const did = `did:ethr:${me}`;
+  const did = didOfPrincipal(me);
   const d = data();
   const mine = tasks().filter((t) => t.namedParties.some((p) => p.address === me) || (t.owedRatification ?? []).some((p) => p.address === me));
   const signed = [
@@ -1687,7 +1915,7 @@ function holderCard(podUrl) {
     if (!out) return;
     const blob = new Blob([JSON.stringify({ holder: out.holder, receipt: out.receiptUrl, bundle: out.bundle }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = h('a', { href: url, download: `wrd-record-${me}.json` });
+    const a = h('a', { href: url, download: `wrd-record-${String(me).replace(/[^A-Za-z0-9._-]+/g, '_')}.json` });
     document.body.appendChild(a);
     a.click();
     a.remove();

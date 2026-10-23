@@ -77,7 +77,10 @@
  *   WRD_IDENTITY_HOST               the identity host agents and users are on (a bare host name);
  *                                   required with a relay address or an admin DID
  *   WRD_RELAY_URL                   the relay a person signs in through (http(s) base URL), reported
- *                                   to the web UI
+ *                                   to the web UI, whose "Sign in with your Interego account" goes
+ *                                   through it (bridge/ui.ts; on only with a trusted relay address).
+ *                                   The token a person signs in with passes through this bridge on
+ *                                   every signature, so its operator is trusted with it
  *   WRD_CHAT_AGENTS_DECIDE          1 → acts that change who may do what (the registry, countersign,
  *                                   grant, revoke) are taken from chat agents too; unset or 0 → only
  *                                   from this bridge's web UI (agent slug work-redesign-…); any other
@@ -184,6 +187,10 @@ if (key) {
 
 const baseFetch = globalThis.fetch.bind(globalThis);
 const identityHost = signIn.identityHost;
+// One DID-document reader (and so one cache) for the handlers and the web UI's sign-in.
+const fetchDidDocument = didDocumentFetcher(baseFetch);
+const uiRelayPolicy = identityHost !== null && signIn.relayAddresses.length > 0
+  ? { relayAddresses: signIn.relayAddresses, identityHost, fetchDidDocument } : null;
 const app = createVerticalBridge({
   verticalName: 'work-redesign',
   affordances: wrdAffordances,
@@ -202,7 +209,7 @@ const app = createVerticalBridge({
     // Agents' DID documents are read through the SSRF guard, 8 s and 64 KiB at most, kept ten minutes.
     ...(identityHost !== null ? {
       relayDelegation: {
-        relayAddresses: signIn.relayAddresses, identityHost, fetchDidDocument: didDocumentFetcher(baseFetch),
+        relayAddresses: signIn.relayAddresses, identityHost, fetchDidDocument,
         chatAgentsDecide: signIn.chatAgentsDecide, ...(signIn.relayUrl !== null ? { relayUrl: signIn.relayUrl } : {}),
       },
     } : {}),
@@ -219,7 +226,8 @@ const app = createVerticalBridge({
       mountPath: '/ns/wrd', ontologyIri: WRD_ONTOLOGY_IRI, namespace: WRD_NS,
       ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
     });
-    attachUi(a, { base });
+    // "Sign in with your Interego account" in the web UI, through WRD_RELAY_URL; it names a person only through a relay this bridge trusts.
+    attachUi(a, { base, ...(signIn.relayUrl !== null ? { signIn: { relayUrl: signIn.relayUrl, policy: uiRelayPolicy } } : {}) });
   },
 });
 
@@ -231,6 +239,9 @@ process.stdout.write(recordKey
 process.stdout.write(signIn.relayAddresses.length > 0
   ? `work-redesign: sign-in with an Interego account: RELAY-ATTESTED, not user-held: requests the relay (${signIn.relayAddresses.join(', ')}) signs act as the user their agent belongs to on ${identityHost ?? ''}; whoever holds that key or controls that host can act as anyone here. Decisive acts from chat agents: ${signIn.chatAgentsDecide ? 'taken (WRD_CHAT_AGENTS_DECIDE=1)' : 'refused (only this bridge\'s web UI; WRD_CHAT_AGENTS_DECIDE=1 lifts it)'}; ${signIn.adminDids.length} admin DID(s)\n`
   : 'work-redesign: sign-in with an Interego account: off (WRD_TRUSTED_RELAY_ADDRESSES is empty); every signature is a key its signer holds\n');
+process.stdout.write(signIn.relayUrl !== null && uiRelayPolicy !== null
+  ? `work-redesign: web UI sign-in with an Interego account: through ${signIn.relayUrl}, as the client ${base}/ui/oauth/client.json (a Client ID Metadata Document; where the relay cannot read it, as for an http deployment URL, the same metadata is registered once by Dynamic Client Registration when the page first asks how to sign in). The token a person signs in with passes through this bridge on every signature: whoever runs it is trusted with that token while it lasts\n`
+  : `work-redesign: web UI sign-in with an Interego account: off (${signIn.relayUrl === null ? 'WRD_RELAY_URL is not set' : 'no trusted relay: WRD_TRUSTED_RELAY_ADDRESSES is empty'})\n`);
 process.stdout.write(`work-redesign: reads: ${publicReads ? 'PUBLIC (WRD_PUBLIC_READS=1): anyone who can reach this bridge reads every record' : 'signed reads only (wrd.read_records, wrd.read_calibration); unsigned GETs answer 401'}\n`);
 
 // Express 5 hands a failed bind to this callback rather than throwing, so it is handled here:
