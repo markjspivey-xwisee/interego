@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, playHash, provisionalGraphs,
+import { bootstrapProvisionalPod, chargeProvisionalExchange, claimProvisionalExchange, createProvisionalToolGuard, playHash, provisionalGraphs,
   PROVISIONAL_EXCHANGE_LIMIT,
   ProvisionalPlayError, validateProvisionalTool, verifyProvisionalExchange, type PlayFetchInit } from '../provisional-play.js';
 
@@ -21,7 +21,7 @@ const verified = { valid: true, provisional: true, issuer: 'https://id.example',
   proofKeyThumbprint: play.proofKeyThumbprint, expiresAt: me.tokenExpiresAt,
   capabilities: ['human-play', 'own-pod-checkpoint'] };
 const reply = (status: number, body: unknown, etag?: string) => ({ status, ok: status >= 200 && status < 300,
-  headers: { get: (name: string) => name.toLowerCase() === 'etag' ? etag ?? null : null },
+  headers: { get: (name: string) => name.toLowerCase() === 'etag' ? etag ?? null : name.toLowerCase() === 'content-type' ? 'application/json' : null },
   text: async () => JSON.stringify(body), json: async () => JSON.parse(JSON.stringify(body)) });
 const code = (expected: string) => (e: unknown) => e instanceof ProvisionalPlayError && e.code === expected;
 function provider(m: Record<string, unknown> = me, v: Record<string, unknown> = verified) {
@@ -195,3 +195,80 @@ test('provisional exchanges reject oversized native credentials before fetching 
 });
 
 
+
+test('bootstrap writes, locks and caches the internal store while preserving public identity', async () => {
+  const seen: string[] = [], original = principal.podUrl;
+  await bootstrapProvisionalPod(principal, {
+    toInternalPodUrl: url => url === original ? 'http://css.internal:3456/u-guest-1/' : undefined,
+    withMutex: async (url, run) => { seen.push('lock:' + url); return run(); },
+    bootstrap: async url => { seen.push('write:' + url); },
+    markBootstrapped: url => { seen.push('cache:' + url); },
+  });
+  assert.deepEqual(seen, ['lock:http://css.internal:3456/u-guest-1/',
+    'write:http://css.internal:3456/u-guest-1/', 'cache:http://css.internal:3456/u-guest-1/']);
+  assert.equal(principal.podUrl, original);
+  await assert.rejects(bootstrapProvisionalPod({ ...principal, podUrl: 'https://gate.example.evil/victim/' }, {
+    toInternalPodUrl: () => undefined, withMutex: mutex,
+    bootstrap: async () => { assert.fail('foreign pod write'); }, markBootstrapped: () => assert.fail('foreign pod cache'),
+  }), code('provisional_store_unavailable'));
+});
+function legacyBudget(body = '', mediaType = 'text/turtle', validator: string | null = '"1"') {
+  let record = { body, mediaType, version: 1 }, writes = 0;
+  const cfg = {
+    podUrl: 'http://css.internal:3456/svc/', withMutex: mutex,
+    fetch: async (_url: string, init: PlayFetchInit = {}) => {
+      if (init.method === 'PUT') {
+        assert.equal(init.headers?.['Content-Type'], 'application/json');
+        if (init.headers?.['If-Match'] !== '"' + record.version + '"') return reply(412, {});
+        record = { body: init.body!, mediaType: 'application/json', version: record.version + 1 }; writes++;
+        return reply(200, {});
+      }
+      assert.ok(init.headers?.Accept?.includes('application/json'));
+      const snapshot = { ...record };
+      return { ok: true, status: 200,
+        headers: { get: (key: string) => key === 'etag' ? (validator ? '"' + snapshot.version + '"' : null)
+          : key === 'content-type' ? snapshot.mediaType : null },
+        text: async () => snapshot.body, json: async () => JSON.parse(snapshot.body) };
+    },
+  };
+  return { cfg, get writes() { return writes; }, get record() { return record; } };
+}
+test('empty legacy RDF budget is charged as attempt two once, then remains durable opaque JSON', async () => {
+  const f = legacyBudget();
+  await chargeProvisionalExchange(principal, f.cfg);
+  assert.equal(JSON.parse(f.record.body).attempts, 2);
+  await chargeProvisionalExchange(principal, f.cfg);
+  assert.equal(JSON.parse(f.record.body).attempts, 3);
+  assert.equal(f.record.mediaType, 'application/json'); assert.equal(f.writes, 2);
+});
+test('competing legacy migrations have one CAS winner and cannot refund the first charge', async () => {
+  const f = legacyBudget();
+  const cfg = { ...f.cfg, withMutex: async <T>(_key: string, run: () => Promise<T>) => run() };
+  const outcomes = await Promise.allSettled([chargeProvisionalExchange(principal, cfg), chargeProvisionalExchange(principal, cfg)]);
+  assert.equal(outcomes.filter(row => row.status === 'fulfilled').length, 1);
+  assert.equal(JSON.parse(f.record.body).attempts, 2); assert.equal(f.writes, 1);
+});
+test('arbitrary invalid control records and unvalidated empty RDF fail closed without writes', async () => {
+  for (const f of [legacyBudget('', 'application/json'), legacyBudget('{}', 'application/json'),
+    legacyBudget('not an empty graph', 'text/turtle'), legacyBudget('', 'text/turtle', null)]) {
+    await assert.rejects(chargeProvisionalExchange(principal, f.cfg));
+    assert.equal(f.writes, 0);
+  }
+});
+test('the recovered legacy charge still reaches the unchanged lifetime cap', async () => {
+  const f = legacyBudget();
+  for (let n = 2; n <= PROVISIONAL_EXCHANGE_LIMIT; n++) await chargeProvisionalExchange(principal, f.cfg);
+  await assert.rejects(chargeProvisionalExchange(principal, f.cfg), code('provisional_exchange_limit'));
+  assert.equal(JSON.parse(f.record.body).attempts, PROVISIONAL_EXCHANGE_LIMIT);
+});
+test('tool limit counters are requested and persisted as opaque JSON before and after invocation', async () => {
+  const p = pod(), calls: PlayFetchInit[] = [];
+  const guard = createProvisionalToolGuard({ podUrl: 'http://css.internal:3456/svc/', withMutex: mutex,
+    fetch: async (url, init = {}) => { calls.push(init); return p.fetch(url, init); }, assertUnpublished: async () => {} });
+  const result = await guard('register_agent', recipient, principal, async () => '{"ok":true}');
+  assert.equal(result, '{"ok":true}');
+  assert.ok(calls.filter(c => c.method === 'GET').every(c => c.headers?.Accept === 'application/json'));
+  assert.ok(calls.filter(c => c.method === 'PUT').every(c => c.headers?.['Content-Type'] === 'application/json'));
+  const record = [...p.files.values()][0].body as { entries: Record<string, { attempts: number; result: string }> };
+  assert.equal(record.entries.recipient.attempts, 1); assert.equal(record.entries.recipient.result, result);
+});
