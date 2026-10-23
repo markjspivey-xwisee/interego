@@ -2,7 +2,7 @@
 
 ## 2026-10-23 — Foxxi: re-pin gUFO to the publisher's corrected file
 
-The gUFO publisher changed `docs/gufo.ttl` on 2026-10-22 (nemo-ufes/gufo `fc7b2a6`, "Closing issue #58"). The only change removes one erroneous triple, `gufo:concernsReifiedQualityValue rdfs:comment gufo:concernsQualityValue`, so the file now has 764 triples instead of 765. The pinned SHA-256 no longer matched what `https://purl.org/nemo/gufo` serves, so `prepare-build-inputs.ts` refused to refresh. That failed every foxxi-bridge image build, and each failed build skipped the deploy job for every service in that run. The manifest now pins `ef6c1ab2…` with 764 triples kept. A full `refreshUpper` run against the live publishers verified every upper ontology against its pin.
+The gUFO publisher changed `docs/gufo.ttl` on 2026-10-22 (the nemo-ufes/gufo commit "Closing issue #58"). The only change removes one erroneous triple, `gufo:concernsReifiedQualityValue rdfs:comment gufo:concernsQualityValue`, so the file now has 764 triples instead of 765. The pinned SHA-256 no longer matched what `https://purl.org/nemo/gufo` serves, so `prepare-build-inputs.ts` refused to refresh. That failed every foxxi-bridge image build, and each failed build skipped the deploy job for every service in that run. The manifest now pins `ef6c1ab2…` with 764 triples kept. A full `refreshUpper` run against the live publishers verified every upper ontology against its pin.
 
 ## 2026-10-22 — Container images for the work-redesign and practice-evidence bridges
 
