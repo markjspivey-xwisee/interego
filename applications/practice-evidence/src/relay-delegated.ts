@@ -9,17 +9,7 @@
  *      `signing.relayAnchor`);
  *   2. `agent_id` names an agent on the configured identity host, `did:web:<host>:agents:<slug>`;
  *   3. that agent's DID document, fetched from the identity host, has that id and a `controller`
- *      that is a user on the same host, `did:web:<host>:users:<id>`: the principal. When the agent's
- *      id ends in a canonical user id (`<surface>-u-pk-…`, `-u-eth-…`, `-u-did-…`, as the relay
- *      mints them), the controller must be that user.
- *
- * ★ WHEN THE AGENT'S DOCUMENT IS GONE. The identity host keeps the agents the relay mints at
- * sign-in in memory and does not restore them when it restarts, while the relay's session goes on
- * signing as them: measured live, a connector authorised before the restart got 404 for its agent.
- * The relay sets `agent_id` from the session, and the relay key is already what this trusts, so the
- * person is then read from the canonical user id the agent's id ends in, and that user's own DID
- * document (users are restored) must exist on the identity host and name that user. An agent whose
- * id ends in no canonical user id still needs its own document.
+ *      that is a user on the same host, `did:web:<host>:users:<id>`: the principal.
  *
  * ★ WHAT THIS TRUSTS. The relay key can sign for any agent, and the identity host says whose agent
  * it is. So whoever holds the relay's delegation key, or controls the identity host, can act as any
@@ -78,15 +68,6 @@ export function isUserDid(did: string, identityHost: string): boolean {
   return m !== null && SLUG.test(m[1] ?? '');
 }
 
-/** The canonical user id a relay agent's slug ends with (`<surface>-<userId>`), or null. */
-export function userIdOfAgentSlug(slug: string): string | null {
-  return /-(u-(?:pk|eth|did)-[0-9a-f]{12})$/.exec(slug)?.[1] ?? null;
-}
-
-/** Where a did:web user's document is served: `https://<host>/users/<id>/did.json`. */
-export const userDidDocumentUrl = (identityHost: string, userId: string): string =>
-  `https://${identityHost}/users/${encodeURIComponent(userId)}/did.json`;
-
 /** Where a did:web agent's document is served: `https://<host>/agents/<slug>/did.json`. */
 export const agentDidDocumentUrl = (identityHost: string, slug: string): string =>
   `https://${identityHost}/agents/${encodeURIComponent(slug)}/did.json`;
@@ -134,29 +115,15 @@ export async function openRelayDelegated(
   if (slug === null) {
     return no(401, 'agent-not-on-identity-host', `agent_id must be did:web:${policy.identityHost}:agents:<slug>; this request names ${agentId || '(none)'}.`);
   }
-  const why = (e: unknown): string => (e instanceof Error ? e.message : String(e)).slice(0, 200);
-  const asObject = (doc: unknown): Record<string, unknown> => (doc !== null && typeof doc === 'object' && !Array.isArray(doc)) ? doc as Record<string, unknown> : {};
-  const userId = userIdOfAgentSlug(slug);
-  const namedUser = userId === null ? null : `did:web:${policy.identityHost}:users:${userId}`;
   let doc: unknown;
   try { doc = await policy.fetchDidDocument(agentDidDocumentUrl(policy.identityHost, slug)); } catch (e) {
-    // The agent's document is gone (see the header): read the person from the user its id names.
-    if (userId === null || namedUser === null) return no(502, 'agent-document-unreadable', `The DID document of ${agentId} could not be read: ${why(e)}`);
-    let user: unknown;
-    try { user = await policy.fetchDidDocument(userDidDocumentUrl(policy.identityHost, userId)); } catch (e2) {
-      return no(502, 'agent-document-unreadable', `The DID document of ${agentId} could not be read (${why(e)}), nor that of the user its id names, ${namedUser}: ${why(e2)}`);
-    }
-    if (asObject(user)['id'] !== namedUser) return no(401, 'agent-document-mismatch', `The DID document served for ${namedUser} names another id.`);
-    return { ok: true, principal: namedUser, agentId, relaySigner, payload: p, signedPayload, signature };
+    return no(502, 'agent-document-unreadable', `The DID document of ${agentId} could not be read: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`);
   }
-  const d = asObject(doc);
+  const d = (doc !== null && typeof doc === 'object' && !Array.isArray(doc)) ? doc as Record<string, unknown> : {};
   if (d['id'] !== agentId) return no(401, 'agent-document-mismatch', `The DID document served for ${agentId} names another id.`);
   const controller = d['controller'];
   if (typeof controller !== 'string' || !isUserDid(controller, policy.identityHost)) {
     return no(401, 'agent-has-no-user', `${agentId} is not controlled by a user on ${policy.identityHost}.`);
-  }
-  if (namedUser !== null && controller !== namedUser) {
-    return no(401, 'agent-has-no-user', `${agentId} names the user ${namedUser}, but its document names ${controller} as its controller.`);
   }
   return { ok: true, principal: controller, agentId, relaySigner, payload: p, signedPayload, signature };
 }

@@ -1,10 +1,8 @@
 # Changelog
 
-## 2026-10-23 — Work-redesign: an affordance manifest the relay can parse, and sign-in that survives an identity restart
+## 2026-10-23 — Work-redesign: an affordance manifest the relay can parse
 
 The work-redesign bridge's served affordance manifest named the store its reads come from as `<pod>/.well-known/context-graphs`. The shared serializer writes a store straight into an IRI, so the manifest held `<<pod>/…>`, which is not Turtle. Every route answered, but the relay's `act` could neither parse the manifest nor slice an affordance out of it. That left every work-redesign action unreachable from Claude and ChatGPT, signed or not. The store is now named by an IRI, as Foxxi's are. A test in `applications/work-redesign/tests/demo-and-ui.test.ts` parses the served manifest whole with the core parser and resolves every action from it the way `act` does. It fails on the old manifest with the same parse error the relay hit.
-
-The second live failure was in both bridges. The relay-delegated verifier (`src/relay-delegated.ts`, the same file in both) read the person from the agent's DID document on the identity host. The identity host keeps the agents the relay mints at sign-in in memory and does not restore them after a restart, while the relay goes on signing for them. So a Claude connector authorised before the restart got 502 `agent-document-unreadable` (the host answered 404). When an agent's id ends in a canonical user id, as the relay mints them (`<surface>-u-pk-…`), the verifier now takes the person from that id when the agent's document cannot be read. It requires that user's own DID document, which the host does restore, to exist and name them. When the agent's document is there, its controller must be that same user. An agent whose id ends in no canonical user id still needs its own document. The trust is unchanged: the relay key, which sets `agent_id` from the session, was already what these bridges trust.
 
 ## 2026-10-23 — A workflow that writes the Railway singleton settings
 
