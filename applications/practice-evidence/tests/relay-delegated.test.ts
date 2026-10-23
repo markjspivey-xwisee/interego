@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import {
-  agentDidDocumentUrl, agentSlugOf, cachedDidDocuments, isUserDid, openRelayDelegated, relayEnvelopeOf,
+  agentDidDocumentUrl, userIdOfAgentSlug, agentSlugOf, cachedDidDocuments, isUserDid, openRelayDelegated, relayEnvelopeOf,
   type RelayDelegationPolicy,
 } from '../src/relay-delegated.js';
 
@@ -149,6 +149,18 @@ describe('openRelayDelegated', () => {
     for (const controller of [AGENT, `did:web:other.example.test:users:u-1`, [USER], undefined, `did:ethr:${RELAY.address}`]) {
       expect(refusal(await openRelayDelegated(sp, sig, policy({ [urlFor(AGENT)]: docFor(AGENT, controller) }))), JSON.stringify(controller)).toBe('401 agent-has-no-user');
     }
+  });
+
+  // The identity host lets any account register an unused agent id, so a forgotten relay agent can be
+  // claimed by someone else: an agent whose id names a user must be controlled by that user.
+  it('refuses an agent whose id names one user and whose document names another, and never names a person from the id alone', async () => {
+    const { sp, sig } = await relaySigned(BODY);
+    expect(refusal(await openRelayDelegated(sp, sig, policy({ [urlFor(AGENT)]: docFor(AGENT, `did:web:${HOST}:users:u-pk-ffffffffffff`) })))).toBe('401 agent-has-no-user');
+    const forgotten = policy({ [`https://${HOST}/users/u-pk-0123456789ab/did.json`]: { id: USER } });
+    expect(refusal(await openRelayDelegated(sp, sig, forgotten))).toBe('502 agent-document-unreadable');
+    expect(forgotten.reads).toEqual([urlFor(AGENT)]);
+    expect(userIdOfAgentSlug('claude-u-pk-0123456789ab')).toBe('u-pk-0123456789ab');
+    expect(userIdOfAgentSlug('claude-markj')).toBeNull();
   });
 
   it('a payload edited after the relay signed it recovers another address, which is no trusted relay', async () => {

@@ -29,7 +29,6 @@ function fixture(options: { max?: number; ttl?: number } = {}) {
       ledger = { ledger: copy(next), revision: (ledger?.revision ?? 0) + 1 }; return true;
     },
     validate: value => play.open(value),
-    checkActiveCapacity: async () => {},
   }, claims, anchor, limit);
   const make = () => new ProvisionalPlay({ issuer, publicPodBase: 'https://pods.example/',
     signingKey: Buffer.alloc(32, 7), clients: new Map([[audience, service]]), now: () => now,

@@ -5,9 +5,12 @@ export interface PlayAdmissionStore {
   read(): Promise<{ ledger: PlayAdmissionLedger; etag: string } | null>;
   write(ledger: PlayAdmissionLedger, etag: string | null): Promise<boolean>;
   validate(anchor: string): PlayClaims;
-  checkActiveCapacity(limit: number): Promise<void>;
 }
-/** Lifetime admission is never refunded by guest expiry or soft deletion. */
+/**
+ * Reserve before any pod creation. The lifetime count also bounds active Play
+ * pods: failed creation, expiry and deletion never refund an admission. The
+ * native conditional write enforces this across writers and process restarts.
+ */
 export async function reservePlayAdmission(store: PlayAdmissionStore, claims: PlayClaims,
   attestation: string, limit: number): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -23,7 +26,6 @@ export async function reservePlayAdmission(store: PlayAdmissionStore, claims: Pl
       return existing;
     }
     if (Object.keys(ledger.owners).length >= limit) throw new PlayError(503, 'provisional_play_lifetime_capacity');
-    await store.checkActiveCapacity(limit);
     const next = { version: 1 as const, owners: { ...ledger.owners, [claims.userId]: attestation } };
     if (await store.write(next, current?.etag ?? null)) return attestation;
   }

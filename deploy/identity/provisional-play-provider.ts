@@ -15,7 +15,8 @@ export interface PlayProviderOptions {
   ttlSeconds?: number;
   maxPods?: number;
   fetcher?: typeof fetch;
-  listPods(): Promise<string[]>;
+  /** Share the identity host's owner lock with credential mutations and cleanup. */
+  withOwnerLock<T>(userId: string, work: () => Promise<T>): Promise<T>;
   empty(claims: PlayClaims): PlayAnchorDocument;
   committed(document: PlayAnchorDocument): void;
   issueCredential(claims: PlayClaims): Promise<Record<string, unknown>>;
@@ -44,7 +45,7 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
   // One admission writer per deployment. Canonical anchor CAS separately
   // prevents duplicate/replayed issuance across restarts and concurrent requests.
   let admission = Promise.resolve();
-  const play = new ProvisionalPlay({
+  const play: ProvisionalPlay = new ProvisionalPlay({
     issuer: options.issuer, publicPodBase: options.publicPodBase, signingKey: options.signingKey,
     clients, ttlSeconds: options.ttlSeconds ?? 86400, maxPods: options.maxPods ?? 100,
     verifyGrantSignature: async (grant, client) => {
@@ -70,7 +71,9 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
       admission = new Promise(resolve => { release = resolve; });
       await before;
       try {
-        return await provisionPlayAnchor({
+        // The complete read/CAS transaction shares credential ownership's lock:
+        // an unconditional credential PUT must not erase a new replay receipt.
+        return await options.withOwnerLock(claims.userId, () => provisionPlayAnchor({
           read,
           write: async (userId, document, etag) => {
             if (etag === null) {
@@ -104,13 +107,9 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
               return true;
             },
             validate: value => play.open(value),
-            checkActiveCapacity: async maximum => {
-              const pods = await options.listPods();
-              if (pods.filter(name => name.startsWith('u-try-play-')).length >= maximum) throw new PlayError(503, 'provisional_play_capacity');
-            },
           }, owner, anchor, limit),
           empty: options.empty, validate: anchor => play.open(anchor), committed: options.committed,
-        }, claims, attestation, maxPods, receipt);
+        }, claims, attestation, maxPods, receipt));
       } finally { release(); }
     },
     issueCredential: options.issueCredential,
