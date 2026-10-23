@@ -1,12 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
+import * as nodeModule from 'node:module';
 import { enrollProvisionalCredential } from '../provisional-play-enrollment.js';
 import { purgeProvisionalPlayPod } from '../provisional-play-cleanup.js';
 
 const server = readFileSync(new URL('../server.ts', import.meta.url), 'utf8');
-const executable = stripTypeScriptTypes(server);
+const strip = (nodeModule as { stripTypeScriptTypes?: (source: string) => string }).stripTypeScriptTypes;
+// The base-without-verticals gate also exercises the supported Node 20 runtime.
+const executable = strip ? strip(server) : (await import('typescript')).default.transpileModule(server, {
+  compilerOptions: { target: 9, module: 99 },
+}).outputText;
 function productionFunction(name: string): string {
   const start = executable.search(new RegExp(`async function ${name}\\s*\\(`));
   assert.ok(start >= 0, `Production function ${name} exists`);
@@ -22,7 +26,7 @@ function deferred() {
 const userId = `u-try-play-${'1'.repeat(32)}`;
 type Methods = {
   userId: string; provisionalPlayAnchor?: string;
-  webAuthnCredentials: Array<{ id: string }>;
+  webAuthnCredentials: Array<{ id: string; counter?: number }>;
   walletAddresses: string[]; didKeys: Array<{ did: string }>;
 };
 const hasAnyCredential = (m: Methods) => m.webAuthnCredentials.length + m.walletAddresses.length + m.didKeys.length > 0;
@@ -43,6 +47,7 @@ function fixture() {
     <T>(owner: string, work: () => Promise<T>) => Promise<T>;
   let beforePersist: () => Promise<void> = async () => {};
   let beforeDelete: () => Promise<void> = async () => {};
+  let duringVerification: () => Promise<void> = async () => {};
   const read = async () => document ? structuredClone(document) : empty();
   const persist = async (_owner: string, candidate: Methods) => {
     puts++;
@@ -63,6 +68,15 @@ function fixture() {
     (_owner: string, methods: Methods) => { inline++; cached = methods; },
     () => { scheduled++; },
   ) as (owner: string, context: string, update: (m: Methods) => boolean | void, synchronous?: boolean) => Promise<void>;
+  const authenticate = new Function('withIdentityPodMutex', 'fetchPodAuthMethods', 'authenticatePasskey', 'putPodAuthMethods',
+    `${productionFunction('authenticatePlayOwnerPasskey')}; return authenticatePlayOwnerPasskey;`)(
+    withIdentityPodMutex, read,
+    async ({ credential, persist }: { credential: { counter?: number }; persist: () => Promise<void> }) => {
+      await duringVerification();
+      credential.counter = (credential.counter ?? 0) + 1;
+      await persist();
+    }, persist,
+  ) as (owner: string, response: { id: string }, challenge: string, rpId: string, origin: string) => Promise<void>;
   const root = `https://css.test/${userId}/`;
   const cleanup = () => withIdentityPodMutex(userId, () => purgeProvisionalPlayPod({
     userId, cssUrl: 'https://css.test/',
@@ -80,13 +94,14 @@ function fixture() {
     }) as typeof fetch,
   }));
   return {
-    commit, cleanup, deletions,
+    commit, authenticate, cleanup, deletions,
     get document() { return document; }, get cached() { return cached; },
     get checkpoint() { return checkpoint; }, get puts() { return puts; },
     get inline() { return inline; }, get scheduled() { return scheduled; }, get openCalls() { return openCalls; },
     set now(value: number) { now = value; },
     set beforePersist(value: () => Promise<void>) { beforePersist = value; },
     set beforeDelete(value: () => Promise<void>) { beforeDelete = value; },
+    set duringVerification(value: () => Promise<void>) { duringVerification = value; },
   };
 }
 const enroll = (m: Methods) => { m.webAuthnCredentials.push({ id: 'verified-passkey' }); };
@@ -169,6 +184,30 @@ test('ordinary canonical enrollment retains deferred writes and explicit wallet 
   assert.equal(f.puts, 1);
   assert.equal(f.inline, 1);
   assert.equal(f.scheduled, 1);
+});
+
+test('passkey authentication cannot overwrite a concurrently acknowledged enrollment', async () => {
+  const f = fixture();
+  await f.commit(userId, 'webauthn-register', enroll);
+  const started = deferred(), release = deferred();
+  f.duringVerification = async () => { started.resolve(); await release.promise; };
+  const authentication = f.authenticate(userId, { id: 'verified-passkey' }, 'challenge', 'identity.test', 'https://identity.test');
+  await started.promise;
+  let acknowledged = false;
+  const enrollment = f.commit(userId, 'siwe-add-wallet', m => { m.walletAddresses.push('0xverified'); })
+    .then(() => { acknowledged = true; });
+  await Promise.resolve();
+  assert.equal(acknowledged, false);
+  release.resolve();
+  await authentication;
+  await enrollment;
+  assert.equal(acknowledged, true);
+  assert.equal(f.document!.webAuthnCredentials[0].counter, 1);
+  assert.deepEqual(f.document!.walletAddresses, ['0xverified']);
+  // An authentication that starts after enrollment reads its durable addition.
+  await f.authenticate(userId, { id: 'verified-passkey' }, 'next-challenge', 'identity.test', 'https://identity.test');
+  assert.equal(f.document!.webAuthnCredentials[0].counter, 2);
+  assert.deepEqual(f.document!.walletAddresses, ['0xverified']);
 });
 
 test('all four credential routes await the shared commit before acknowledging enrollment', () => {

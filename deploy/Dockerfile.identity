@@ -32,6 +32,7 @@ COPY deploy/identity/provisional-play-admission.ts ./
 COPY deploy/identity/provisional-play-provider.ts ./
 COPY deploy/identity/provisional-play-routes.ts ./
 COPY deploy/identity/provisional-play-cleanup.ts ./
+COPY deploy/identity/provisional-play-enrollment.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────

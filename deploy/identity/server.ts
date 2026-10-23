@@ -767,6 +767,25 @@ async function commitCredentialEnrollment(
   }
 }
 
+async function authenticatePlayOwnerPasskey(
+  userId: string,
+  response: import('@simplewebauthn/server').AuthenticationResponseJSON,
+  challenge: string,
+  rpId: string,
+  origin: string,
+): Promise<void> {
+  await withIdentityPodMutex(userId, async () => {
+    // Authentication writes the whole document to advance the counter. Its
+    // verification must therefore use the same locked snapshot as enrollment.
+    const methods = await fetchPodAuthMethods(userId, { createIfMissing: false });
+    const credential = methods.webAuthnCredentials.find(c => c.id === response.id);
+    if (!credential) throw new Error('Credential indexed but not on file');
+    await authenticatePasskey({ credential, response, challenge, rpId, origin,
+      persist: () => putPodAuthMethods(userId, methods),
+    });
+  });
+}
+
 // ── Pod-side WebID profile/card mirror (DEPRECATED — see FIX A) ──
 //
 // As of FIX A the identity server NO LONGER writes the pod-side
@@ -2682,10 +2701,15 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
   }
 
   try {
-    await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
-      rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
-      persist: () => putPodAuthMethods(userId, methods),
-    });
+    if (userId.startsWith('u-try-play-')) {
+      await authenticatePlayOwnerPasskey(userId, response, expectedChallenge,
+        ch.rpId ?? RP_ID, ch.rpOrigin ?? RP_ORIGIN);
+    } else {
+      await authenticatePasskey({ credential: cred, response, challenge: expectedChallenge,
+        rpId: ch.rpId ?? RP_ID, origin: ch.rpOrigin ?? RP_ORIGIN,
+        persist: () => putPodAuthMethods(userId, methods),
+      });
+    }
   } catch (err) {
     if (err instanceof PasskeyPersistenceError) {
       log(`WARN: refused passkey auth — ${(err as Error).message}`);
