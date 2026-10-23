@@ -207,9 +207,14 @@ describe('work-redesign offline demo and web UI', () => {
   it('bridge/server.ts and the demo install the Host guard first in their middleware hook; the server whenever it binds loopback, the demo always', () => {
     const server = read('../bridge/server.ts');
     const demo = read('../demo/run.ts');
-    expect(server).toMatch(/^const HOST = process\.env\['HOST'\] \?\? '127\.0\.0\.1';$/m);
+    expect(server).toMatch(/^const HOST = env\('HOST'\) \?\? '127\.0\.0\.1';$/m);
     expect(server).toMatch(/^const loopback = isLoopbackBind\(HOST\);$/m);
-    expect(server).toMatch(/^app\.listen\(PORT, HOST, /m);
+    // It binds the HOST the guard decision was made from. The only other bind is 0.0.0.0, after `::`
+    // failed on a host without IPv6, and neither of those is a loopback name.
+    expect(server).toMatch(/^listen\(HOST\);$/m);
+    expect(server.match(/app\.listen\(/g)).toHaveLength(1);
+    expect(server).toMatch(/app\.listen\(PORT, host, /);
+    expect(server).toMatch(/if \(host === '::' && \(err as NodeJS\.ErrnoException\)\.code === 'EAFNOSUPPORT'\) \{ listen\('0\.0\.0\.0'\); return; \}/);
     // The first statement of the hook, so the guard stands in front of the ontology, the UI and every route the factory mounts after it.
     expect(server).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(loopback\) a\.use\(hostAllowlistGuard\(servedHostNames\(PORT, base\)\)\);\n/);
     expect(demo).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*a\.use\(hostAllowlistGuard\(servedHostNames\(port, base\)\)\);\n\s*attachUi\(a, \{ base \}\);/);

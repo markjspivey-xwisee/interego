@@ -28,13 +28,18 @@ import { createWrdHandlers, type PlatformSigner } from './handlers.js';
 import { attachUi, hostAllowlistGuard, isLoopbackBind, servedHostNames } from './ui.js';
 
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((s) => s.trim()).filter((s) => s !== '');
+// An image declares every variable it reads (`ENV NAME=`), so an empty value means unset.
+const env = (name: string): string | undefined => {
+  const v = process.env[name];
+  return v !== undefined && v.trim() !== '' ? v.trim() : undefined;
+};
 
-const PORT = parseInt(process.env['PORT'] ?? '6100', 10);
-const HOST = process.env['HOST'] ?? '127.0.0.1';
-const base = (process.env['BRIDGE_DEPLOYMENT_URL'] ?? `http://127.0.0.1:${PORT}`).replace(/\/$/, '');
+const PORT = parseInt(env('PORT') ?? '6100', 10);
+const HOST = env('HOST') ?? '127.0.0.1';
+const base = (env('BRIDGE_DEPLOYMENT_URL') ?? `http://127.0.0.1:${PORT}`).replace(/\/$/, '');
 const loopback = isLoopbackBind(HOST);
-const defaultPodUrl = process.env['WRD_DEFAULT_POD_URL'];
-const key = process.env['WRD_PLATFORM_KEY'];
+const defaultPodUrl = env('WRD_DEFAULT_POD_URL');
+const key = env('WRD_PLATFORM_KEY');
 
 let platform: PlatformSigner;
 if (key) {
@@ -50,8 +55,8 @@ const app = createVerticalBridge({
   handlers: createWrdHandlers({
     ...(defaultPodUrl ? { defaultPodUrl } : {}),
     platform,
-    adminAddresses: list(process.env['WRD_ADMIN_ADDRESSES']),
-    trustedPlatformAddresses: list(process.env['WRD_TRUSTED_PLATFORM_ADDRESSES']),
+    adminAddresses: list(env('WRD_ADMIN_ADDRESSES')),
+    trustedPlatformAddresses: list(env('WRD_TRUSTED_PLATFORM_ADDRESSES')),
   }),
   deploymentUrl: base,
   ...(defaultPodUrl ? { defaultPodUrl } : {}),
@@ -67,6 +72,19 @@ const app = createVerticalBridge({
   },
 });
 
-app.listen(PORT, HOST, () => {
-  process.stdout.write(`work-redesign bridge ${base}  MCP ${base}/mcp  UI ${base}/ui  (platform ${platform.wallet.address}, ${platform.keyKind})\n`);
-});
+// Express 5 hands a failed bind to this callback rather than throwing, so it is handled here:
+// ignored, the banner printed and the process exited 0, which a container platform reads as a
+// clean stop and does not restart. `::` falls back to 0.0.0.0 on a host without IPv6, as Node does
+// for a listen with no host.
+const listen = (host: string): void => {
+  app.listen(PORT, host, (err?: Error) => {
+    if (err) {
+      if (host === '::' && (err as NodeJS.ErrnoException).code === 'EAFNOSUPPORT') { listen('0.0.0.0'); return; }
+      process.stderr.write(`work-redesign bridge did not start: cannot listen on ${host}:${PORT}: ${err.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(`work-redesign bridge ${base}  MCP ${base}/mcp  UI ${base}/ui  (platform ${platform.wallet.address}, ${platform.keyKind}; listening on ${host}:${PORT})\n`);
+  });
+};
+listen(HOST);
