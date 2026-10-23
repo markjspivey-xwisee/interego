@@ -19,9 +19,12 @@
  * through the relay and taken as relay-delegated from this UI's agent, the person named from the
  * bridge's answer and the agent from the relay's signed text, and sign-out; a token the relay has
  * ended (401 interego-sign-in-expired, the page forgetting it) and one that ends while the page is
- * open (forgotten when it ends); a state that is not the tab's refused with nothing exchanged;
- * POST /ui/relay/sign refusing without a bearer (and what else it refuses, never echoing a bearer
- * or a code); and the client's metadata document as
+ * open (forgotten when it ends); a state that is not the tab's refused with nothing exchanged and
+ * the tab's own sign-in kept, and an `error` in the callback shown only on the answer to that
+ * sign-in; POST /ui/relay/sign refusing without a bearer (and what else it refuses, never echoing
+ * a bearer or a code); the relay limits, with a clock the test moves and X-Forwarded-For naming
+ * each caller (a stranger refused by the bridge alone, a refused token not sent again, the person
+ * signed in signing on, code exchanges inside a 15-minute budget); and the client's metadata document as
  * the relay's CIMD reader requires it (deploy/mcp-relay/oauth-provider.ts), with Dynamic Client
  * Registration where the relay cannot read it.
  */
@@ -35,7 +38,7 @@ import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
-import { attachUi, parseEveryQueryPair, SIGN_IN_CLIENT_NAME, UI_CSP, type UiSignIn } from '../bridge/ui.js';
+import { attachUi, parseEveryQueryPair, SIGN_IN_CLIENT_NAME, UI_CSP, type RelayLimits, type UiSignIn } from '../bridge/ui.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_RECORD_KEY } from '../demo/run.js';
 import type { RelayDelegationPolicy } from '../src/relay-delegated.js';
 
@@ -63,6 +66,8 @@ const RELAY = importWallet(`0x${sha256Hex('wrd-sign-in-test:relay')}`, 'agent', 
 const SIGN_IN = 'Sign in with your Interego account';
 const SESSION_KEY = 'wrd.interego.session';
 const FLOW_KEY = 'wrd.interego.flow';
+/** What the callback page says to an answer that does not carry the state this tab stored. */
+const NOT_STARTED_HERE = 'This tab did not start this sign-in, so nothing in the answer was shown or exchanged.';
 
 /**
  * The relay's rule for an OAuth client it does not know by name (surfaceAgentFromClient in
@@ -250,7 +255,11 @@ interface World {
   readonly fetched: string[];
 }
 /** A bridge on loopback whose UI signs in through a stub relay; the person is an admin by their user DID. */
-async function world(o: { readonly deployed?: string; readonly cimd?: boolean; readonly signIn?: 'on' | 'no-relay-trusted' | 'off'; readonly admin?: boolean } = {}): Promise<World> {
+async function world(o: {
+  readonly deployed?: string; readonly cimd?: boolean; readonly signIn?: 'on' | 'no-relay-trusted' | 'off'; readonly admin?: boolean;
+  /** The sign-in routes' relay limits and their clock, and whether the app trusts one proxy hop (as server.ts does off loopback), so X-Forwarded-For names the client. */
+  readonly limits?: Partial<RelayLimits>; readonly now?: () => number; readonly trustProxy?: boolean;
+} = {}): Promise<World> {
   const clock = demoClock();
   const pod = memoryPod();
   const fetched: string[] = [];
@@ -258,7 +267,9 @@ async function world(o: { readonly deployed?: string; readonly cimd?: boolean; r
   const relay = await stubRelay(() => bridgeBase, clock, o.cimd === undefined ? {} : { cimd: o.cimd });
   const policy: RelayDelegationPolicy = { relayAddresses: [RELAY.address.toLowerCase()], identityHost: IDENTITY, fetchDidDocument: didDocuments(fetched) };
   const deployed = o.deployed ?? DEPLOYED;
-  const signIn: UiSignIn | undefined = o.signIn === 'off' ? undefined : { relayUrl: relay.base, policy: o.signIn === 'no-relay-trusted' ? null : policy };
+  const signIn: UiSignIn | undefined = o.signIn === 'off' ? undefined : {
+    relayUrl: relay.base, policy: o.signIn === 'no-relay-trusted' ? null : policy, ...(o.limits ? { limits: o.limits } : {}), ...(o.now ? { now: o.now } : {}),
+  };
   const handlers = createWrdHandlers({
     fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), recordKey: DEMO_RECORD_KEY,
     platform: { wallet: importWallet(`0x${sha256Hex('wrd-sign-in-test:platform')}`, 'agent', 'wrd-platform'), keyKind: 'demo' },
@@ -266,7 +277,11 @@ async function world(o: { readonly deployed?: string; readonly cimd?: boolean; r
   });
   const l = await listenLoopback(createVerticalBridge({
     verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: deployed,
-    middleware: (a) => { attachUi(a, { base: deployed, ...(signIn ? { signIn } : {}) }); parseEveryQueryPair(a); },
+    middleware: (a) => {
+      if (o.trustProxy === true) a.set('trust proxy', 1);
+      attachUi(a, { base: deployed, ...(signIn ? { signIn } : {}) });
+      parseEveryQueryPair(a);
+    },
   }));
   listeners.push(l);
   bridgeBase = l.base;
@@ -354,12 +369,12 @@ async function startSignIn(page: Page): Promise<URL> {
   return new URL(sent.slice('_self '.length));
 }
 
-const post = async (url: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: Obj; text: string }> => {
+const post = async (url: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: Obj; text: string; retryAfter: string | null }> => {
   const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) });
   const text = await r.text();
   let j: Obj = {};
   try { j = objOf(JSON.parse(text)); } catch { j = {}; }
-  return { status: r.status, body: j, text };
+  return { status: r.status, body: j, text, retryAfter: r.headers.get('retry-after') };
 };
 
 describe('work-redesign web UI: sign in with your Interego account', () => {
@@ -496,23 +511,34 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect([...first.errors, ...page.errors]).toEqual([]);
   }, 120_000);
 
-  it('refuses a callback whose state is not the one this tab stored, or that this tab never started, exchanging nothing', async () => {
+  it('refuses a callback whose state is not the one this tab stored, or that this tab never started, exchanging nothing and keeping the sign-in this tab started, which its own answer still finishes', async () => {
     const w = await world();
     const first = await openPage(w.bridge, '/ui');
     const url = await startSignIn(first);
     const code = await w.relay.authorize(url.href);
+    const flow = first.session()[FLOW_KEY];
+    expect(flow).toBeDefined();
     const forged = 'A'.repeat(32);
     const page = await openPage(w.bridge, `/ui/oauth/callback?code=${code}&state=${forged}`, first.session());
-    await page.until(() => page.text().includes('Sign-in was not finished, and nothing was exchanged.'), 'the refusal');
-    expect(page.text()).toContain('the state the relay sent back is not the one this tab stored when it sent you to sign in');
+    await page.until(() => page.text().includes(NOT_STARTED_HERE), 'the refusal');
+    expect(page.text()).toContain('the answer does not carry the state this tab stored when it sent you to sign in, so it is not the sign-in you started; that sign-in is still waiting for its own answer');
     expect(page.log.filter((r) => r.path.startsWith('/ui/oauth/exchange') || r.path.startsWith('/ui/relay/'))).toEqual([]);
     expect(w.relay.seen.filter((s) => s.path === '/token')).toEqual([]);
-    expect(page.session()).toEqual({});
+    // The code and state left the address bar before any request; the flow this tab stored is kept as it was, and nothing else is.
     expect(page.window.location.pathname + page.window.location.search).toBe('/ui');
+    expect(page.sent.filter((r) => r.addressBar !== '/ui')).toEqual([]);
+    expect(page.session()).toEqual({ [FLOW_KEY]: flow });
     expect(page.text()).toContain(SIGN_IN);
+    // The relay's own answer, arriving after that one, still finishes the sign-in this tab started.
+    const real = await openPage(w.bridge, `/ui/oauth/callback?code=${code}&state=${String(url.searchParams.get('state'))}`, page.session());
+    await real.until(() => real.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`), 'who is signed in');
+    expect(real.log.filter((r) => r.path === '/ui/oauth/exchange').map((r) => r.status)).toEqual([200]);
+    expect(real.session()[FLOW_KEY]).toBeUndefined();
+    expect(w.relay.issued).toHaveLength(1);
     // A tab that started no sign-in (another tab's code, say) is refused the same way.
     const fresh = await openPage(w.bridge, `/ui/oauth/callback?code=${code}&state=${String(url.searchParams.get('state'))}`);
     await fresh.until(() => fresh.text().includes('this tab holds no sign-in it started'), 'the refusal');
+    expect(fresh.text()).toContain(NOT_STARTED_HERE);
     expect(fresh.log.filter((r) => r.path === '/ui/oauth/exchange')).toEqual([]);
     // And the code itself, sent to the bridge with another verifier, is refused by the relay; the answer does not repeat it.
     const wrong = await post(`${w.bridge}/ui/oauth/exchange`, { code, code_verifier: 'v'.repeat(43), state: forged });
@@ -528,8 +554,60 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       const r = await post(`${w.bridge}/ui/oauth/exchange`, body);
       expect([r.status, String(r.body['iep:refusalReason'])]).toEqual([400, expect.stringMatching(why)]);
     }
-    expect([...first.errors, ...page.errors, ...fresh.errors]).toEqual([]);
+    expect([...first.errors, ...page.errors, ...real.errors, ...fresh.errors]).toEqual([]);
   }, 60_000);
+
+  it('shows an error the relay sent only on the answer to the sign-in this tab started: a link anyone made, with no state or another, shows none of its text and drops nothing, and an expired sign-in goes', async () => {
+    const w = await world();
+    const first = await openPage(w.bridge, '/ui');
+    const url = await startSignIn(first);
+    const flow = first.session()[FLOW_KEY];
+    expect(flow).toBeDefined();
+    const state = String(url.searchParams.get('state'));
+    const planted = 'Account locked. Call support at +1 555 0100 and read them your code.';
+    for (const query of [
+      `?error=${encodeURIComponent(planted)}`,
+      `?error=access_denied&error_description=${encodeURIComponent(planted)}&state=${'B'.repeat(32)}`,
+      `?code=${'c'.repeat(32)}`,
+    ]) {
+      const p = await openPage(w.bridge, `/ui/oauth/callback${query}`, first.session());
+      await p.until(() => p.text().includes(NOT_STARTED_HERE), 'the refusal');
+      expect(p.text()).toContain('that sign-in is still waiting for its own answer');
+      expect(p.text()).not.toContain('Account locked');
+      expect(p.text()).not.toContain('access_denied');
+      expect(p.text()).not.toContain('The Interego relay did not sign you in.');
+      // Out of the address bar first, the sign-in this tab started kept, and nothing exchanged.
+      expect(p.window.location.pathname + p.window.location.search).toBe('/ui');
+      expect(p.sent.filter((r) => r.addressBar !== '/ui')).toEqual([]);
+      expect(p.session()).toEqual({ [FLOW_KEY]: flow });
+      expect(p.log.filter((r) => r.path === '/ui/oauth/exchange')).toEqual([]);
+      // Nor with no sign-in pending in the tab at all.
+      const none = await openPage(w.bridge, `/ui/oauth/callback${query}`);
+      await none.until(() => none.text().includes('this tab holds no sign-in it started'), 'the refusal');
+      expect(none.text()).not.toContain('Account locked');
+      expect(none.session()).toEqual({});
+      expect([...p.errors, ...none.errors]).toEqual([]);
+    }
+    // The relay's own answer to this tab's sign-in: its error is shown (as text), and the sign-in is over.
+    const answer = await openPage(w.bridge, `/ui/oauth/callback?error=access_denied&error_description=${encodeURIComponent('The person declined.')}&state=${state}`, first.session());
+    await answer.until(() => answer.text().includes('The Interego relay did not sign you in.'), 'the relay\'s error');
+    expect(answer.text()).toContain('access_denied: The person declined.');
+    expect(answer.text()).not.toContain(NOT_STARTED_HERE);
+    expect(answer.session()).toEqual({});
+    expect(answer.window.location.pathname + answer.window.location.search).toBe('/ui');
+    // A sign-in started over ten minutes ago goes, whatever the answer: with another state, nothing of it is shown either.
+    const old = JSON.stringify({ ...objOf(JSON.parse(flow ?? '{}')), at: Date.now() - 11 * 60_000 });
+    const stale = await openPage(w.bridge, `/ui/oauth/callback?error=${encodeURIComponent(planted)}&state=${'B'.repeat(32)}`, { [FLOW_KEY]: old });
+    await stale.until(() => stale.text().includes('the sign-in this tab started is over ten minutes old, so it was dropped'), 'the expired refusal');
+    expect(stale.text()).not.toContain('Account locked');
+    expect(stale.session()).toEqual({});
+    const late = await openPage(w.bridge, `/ui/oauth/callback?code=${'c'.repeat(32)}&state=${state}`, { [FLOW_KEY]: old });
+    await late.until(() => late.text().includes('the sign-in was started more than ten minutes ago'), 'the late answer refused');
+    expect(late.session()).toEqual({});
+    expect(late.log.filter((r) => r.path === '/ui/oauth/exchange')).toEqual([]);
+    expect(w.relay.seen.filter((s) => s.path === '/token')).toEqual([]);
+    expect([...first.errors, ...answer.errors, ...stale.errors, ...late.errors]).toEqual([]);
+  }, 90_000);
 
   it('takes the code and state out of the address bar, and the flow out of sessionStorage, before the callback page sends any request, so a manifest read that fails leaves neither behind and exchanges nothing', async () => {
     const w = await world();
@@ -621,6 +699,12 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(String(refused.body['iep:refusalReason'])).toBe('the relay\'s /mcp answered 401: invalid_token (Invalid access token: Token not found): it no longer takes the access token this tab holds (it has ended, or is not the relay\'s)');
     expect(refused.text).not.toContain(stale);
     expect(asked()).toBe(1);
+    // Refused again from memory for a while, the relay asked nothing more.
+    const again = await post(sign, { payload: { ...payload, nonce: 'sign-route-0000003' } }, { authorization: `Bearer ${stale}` });
+    expect([again.status, again.body['error'], again.body['code']]).toEqual([401, 'Your Interego sign-in has ended: sign in again.', 'interego-sign-in-expired']);
+    expect(String(again.body['iep:refusalReason'])).toMatch(/refused again here without asking the relay$/);
+    expect(again.text).not.toContain(stale);
+    expect(asked()).toBe(1);
 
     // A token the relay issued, which signs until it ends; then 401 interego-sign-in-expired, without repeating it.
     const live = w.relay.mint();
@@ -638,6 +722,9 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const scoped = await post(sign, { payload }, { authorization: `Bearer ${narrow}` });
     expect([scoped.status, scoped.body['code'], scoped.body['error']]).toEqual([401, 'interego-sign-in-refused', 'The Interego relay did not accept your sign-in. Sign in again.']);
     expect(scoped.text).not.toContain(narrow);
+    const narrowAsked = asked();
+    const scopedAgain = await post(sign, { payload }, { authorization: `Bearer ${narrow}` });
+    expect([scopedAgain.status, scopedAgain.body['code'], asked()]).toEqual([401, 'interego-sign-in-refused', narrowAsked]);
 
     // The relay's JSON-RPC error, a tool error (isError) and the tool's own {error}: refused, the token withheld from the relay's words.
     const other = w.relay.mint();
@@ -672,8 +759,8 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect((await fetch(sign, { method: 'POST', headers: { 'content-type': 'text/plain', ...auth }, body: JSON.stringify({ payload }) })).status).toBe(415);
     expect((await post(sign, { payload: { ...payload, note: 'x'.repeat(70 * 1024) } }, auth)).status).toBe(413);
     expect(asked()).toBe(beforeShape);
-    // The same origin as the page passes the Origin check (and reaches the relay).
-    expect((await post(sign, { payload }, { ...auth, origin: w.bridge })).status).toBe(401);
+    // The same origin as the page passes the Origin check (and, with a token the relay has not refused yet, reaches the relay).
+    expect((await post(sign, { payload }, { authorization: `Bearer acc-${'1'.repeat(32)}`, origin: w.bridge })).status).toBe(401);
     expect(asked()).toBe(beforeShape + 1);
 
     // whoami: only a request a trusted relay signed names anyone.
@@ -681,6 +768,106 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     expect(unsigned.status).toBe(401);
     expect(String(unsigned.body['iep:refusalReason'])).toMatch(/^(signature-unrecoverable|relay-not-trusted): /);
     expect(w.fetched).toEqual([]);
+  }, 60_000);
+
+  it('keeps its relay calls under limits a stranger cannot spend: made-up tokens and codes from one address reach the relay a few times and are then refused by the bridge alone, a refused token is not sent again, strangers from many addresses reach only what is left for callers not signed in while the person signed in goes on signing, and code exchanges stay inside a 15-minute budget', async () => {
+    let clock = Date.now();
+    const w = await world({ trustProxy: true, now: () => clock, limits: { total: 14, unproven: 8, unprovenPerClient: 4, perSignIn: 5, exchanges: 7, exchangesPerClient: 5 } });
+    const from = (ip: string): Record<string, string> => ({ 'x-forwarded-for': ip });
+    const relayed = (path: string): number => w.relay.seen.filter((s) => s.path === path).length;
+    let nonce = 0;
+    const sign = async (token: string, ip: string): Promise<{ status: number; code: unknown; retry: unknown; header: string | null }> => {
+      const r = await post(`${w.bridge}/ui/relay/sign`, { payload: { intent: 'wrd:read-records', podUrl: DEMO_POD, nonce: `limits-${String(nonce++).padStart(12, '0')}` } }, { authorization: `Bearer ${token}`, ...from(ip) });
+      expect(r.text).not.toContain(token);
+      return { status: r.status, code: r.body['code'] ?? null, retry: r.body['retryAfterSeconds'] ?? null, header: r.retryAfter };
+    };
+    /** A code the relay mints for this UI's client, as its sign-in page would, and the verifier it is bound to. */
+    const codeFor = async (): Promise<{ code: string; verifier: string }> => {
+      const verifier = hex(24);
+      const u = new URL(`${w.relay.base}/authorize`);
+      for (const [k, v] of Object.entries({
+        response_type: 'code', client_id: `${DEPLOYED}/ui/oauth/client.json`, redirect_uri: `${DEPLOYED}/ui/oauth/callback`, scope: 'mcp',
+        state: hex(16), code_challenge: b64urlSha256(verifier), code_challenge_method: 'S256',
+      })) u.searchParams.set(k, v);
+      return { code: await w.relay.authorize(u.href), verifier };
+    };
+    const exchange = (code: string, verifier: string, ip: string): ReturnType<typeof post> => post(`${w.bridge}/ui/oauth/exchange`, { code, code_verifier: verifier, state: hex(16) }, from(ip));
+
+    // A person signs in from 203.0.113.1: the relay's metadata and the code, two relay calls; then she signs.
+    const mine = await codeFor();
+    const ex = await exchange(mine.code, mine.verifier, '203.0.113.1');
+    expect([ex.status, relayed('/.well-known/oauth-authorization-server') + relayed('/token')]).toEqual([200, 2]);
+    const bearer = String(ex.body['token']);
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+
+    // A stranger with made-up tokens, from one address: four reach the relay (each refused), then the bridge refuses on its own, saying when to try again.
+    const signs = relayed('/mcp');
+    const made = Array.from({ length: 10 }, (_, i) => `acc-madeup${i}${'a'.repeat(20)}`);
+    const one: Array<Awaited<ReturnType<typeof sign>>> = [];
+    for (const t of made) one.push(await sign(t, '198.51.100.7'));
+    expect(one.map((r) => r.code)).toEqual([...Array<string>(4).fill('interego-sign-in-expired'), ...Array<string>(6).fill('relay-calls-limited')]);
+    expect([one[4]?.status, Number(one[4]?.retry) > 0, one[4]?.header]).toEqual([429, true, String(one[4]?.retry)]);
+    expect(relayed('/mcp') - signs).toBe(4);
+    // A token the relay refused is refused again from memory, from any address, and not sent to the relay again.
+    expect([(await sign(made[0] ?? '', '198.51.100.8')).code, relayed('/mcp') - signs]).toEqual(['interego-sign-in-expired', 4]);
+    expect(w.relay.seen.filter((s) => s.authorization === `Bearer ${made[0] ?? ''}`)).toHaveLength(1);
+    // Strangers from many addresses together reach only what is left for callers not signed in (8 - 2 - 4 = 2).
+    const many: Array<Awaited<ReturnType<typeof sign>>> = [];
+    for (let i = 0; i < 6; i++) many.push(await sign(`acc-other${i}${'b'.repeat(20)}`, `198.51.100.${20 + i}`));
+    expect(many.map((r) => r.code)).toEqual(['interego-sign-in-expired', 'interego-sign-in-expired', ...Array<string>(4).fill('relay-busy')]);
+    expect([many[2]?.status, Number(many[2]?.retry) > 0]).toEqual([429, true]);
+    expect(relayed('/mcp') - signs).toBe(6);
+    // The person signed in still signs, up to her own limit (5 a minute): the strangers spent none of it.
+    const hers: Array<Awaited<ReturnType<typeof sign>>> = [];
+    for (let i = 0; i < 5; i++) hers.push(await sign(bearer, '203.0.113.1'));
+    expect(hers.map((r) => r.status)).toEqual([200, 200, 200, 200, 429]);
+    expect(hers[4]?.code).toBe('relay-calls-limited');
+
+    // A minute on. Made-up codes from one address: four exchanges reach the relay's token endpoint, then the bridge refuses on its own.
+    clock += 61_000;
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+    const tokens = relayed('/token');
+    const madeCodes: Array<readonly [number, unknown]> = [];
+    for (let i = 0; i < 6; i++) {
+      const r = await exchange(`madeupcode${i}${'x'.repeat(12)}`, 'a'.repeat(43), '198.51.100.7');
+      madeCodes.push([r.status, r.body['code'] ?? null]);
+    }
+    expect(madeCodes).toEqual([[400, null], [400, null], [400, null], [400, null], [429, 'relay-calls-limited'], [429, 'relay-calls-limited']]);
+    expect(relayed('/token') - tokens).toBe(4);
+    // Another minute: that address has one exchange left of its five in 15 minutes, and the bridge seven in all (the person's, four, this one, and one more).
+    clock += 61_000;
+    const later: Array<readonly [number, unknown]> = [];
+    for (const ip of ['198.51.100.7', '198.51.100.7', '198.51.100.9', '198.51.100.9']) {
+      const r = await exchange(`madeupcode-later-${later.length}${'x'.repeat(8)}`, 'a'.repeat(43), ip);
+      later.push([r.status, r.body['code'] ?? null]);
+    }
+    expect(later).toEqual([[400, null], [429, 'relay-calls-limited'], [400, null], [429, 'relay-busy']]);
+    expect(relayed('/token') - tokens).toBe(6);
+    // So strangers can delay a new sign-in: a real code is refused before the relay is asked, with the wait the 15-minute budget leaves.
+    const next = await codeFor();
+    const delayed = await exchange(next.code, next.verifier, '203.0.113.2');
+    expect([delayed.status, delayed.body['code'], Number(delayed.body['retryAfterSeconds']) > 60]).toEqual([429, 'relay-busy', true]);
+    expect(relayed('/token') - tokens).toBe(6);
+    // The person already signed in goes on signing all the while.
+    expect((await sign(bearer, '203.0.113.1')).status).toBe(200);
+    // Once the 15 minutes have passed, the new sign-in goes through.
+    clock += 15 * 60_000;
+    const done = await exchange(next.code, next.verifier, '203.0.113.2');
+    expect([done.status, typeof done.body['token']]).toEqual([200, 'string']);
+    expect((await sign(String(done.body['token']), '203.0.113.2')).status).toBe(200);
+    expect(w.relay.seen.filter((s) => s.path === '/identity-token' || s.path.startsWith('/tool/'))).toEqual([]);
+
+    // With no relay call left, how to sign in is a 429 the relay never saw, and the page says why instead of offering nothing.
+    const spent = await world({ limits: { total: 0 } });
+    const cfg = await fetch(`${spent.bridge}/ui/oauth/config`);
+    const cj = objOf(await cfg.json());
+    expect([cfg.status, cj['kind'], cj['code'], cj['retryAfterSeconds'], cfg.headers.get('retry-after')]).toEqual([429, 'refusal', 'relay-busy', 60, '60']);
+    expect(spent.relay.seen).toEqual([]);
+    const page = await openPage(spent.bridge, '/ui');
+    await page.until(() => page.text().includes('Signing in with your Interego account is not available at this moment'), 'the busy note');
+    expect(page.text()).toContain('try again in 60 s');
+    expect(page.text()).not.toContain(SIGN_IN);
+    expect(page.errors).toEqual([]);
   }, 60_000);
 
   it('serves the client\'s metadata document as the relay\'s CIMD reader requires it (client_id its own URL, https redirect, no client secret), says how the client is registered, and falls back to Dynamic Client Registration where the relay cannot read it', async () => {

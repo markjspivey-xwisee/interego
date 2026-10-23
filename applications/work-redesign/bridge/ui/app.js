@@ -39,6 +39,8 @@ const NOT_SIGNED_IN = 'No wallet, and not signed in: this page cannot sign yet, 
 const SEND_TO_ADMIN = 'This is who you are to this bridge: send it to an admin of this pod to be registered.';
 const SIGNED_OUT = 'Signed out: this tab no longer holds the relay\'s access token for your sign-in. Nothing was revoked: the relay offers no way to revoke it, so the token stays good at the relay until it ends, about an hour after you signed in, for anyone who kept a copy (it passed through this bridge with every signature). Until it ends a holder can also trade it at the relay for the identity-server token behind your sign-in, which works on your account itself (linking a wallet, removing sign-in methods, deleting the account) for up to a day, and one already traded stays good that long. "Sign out everywhere" on the identity server\'s dashboard ends every identity-server token, but not the relay\'s access token.';
 const SIGN_IN_ENDED = 'Your Interego sign-in has ended: sign in again.';
+const NOT_STARTED_HERE = 'This tab did not start this sign-in, so nothing in the answer was shown or exchanged.';
+const SIGN_IN_BUSY = 'Signing in with your Interego account is not available at this moment: reload this page shortly to try again.';
 const RELAY_STEPS = [
   'Press "Sign in with your Interego account" and sign in with your passkey on the Interego relay\'s own page.',
   'Ask an admin to add your Interego user DID (shown at the top of this page once you are signed in) to this pod\'s registry: until then the bridge refuses your requests, for reads as for changes.',
@@ -592,6 +594,7 @@ function signerNode() {
     return h('div', { class: 'stack' }, h('p', { class: 'warnbox small', text: NOT_SIGNED_IN }),
       h('div', { class: 'row' }, signInButton()), h('p', { class: 'small muted', text: SIGN_IN_OFFERED }));
   }
+  if (S.signIn?.busy) return h('div', { class: 'stack' }, h('p', { class: 'warnbox small', text: `${SIGN_IN_BUSY} ${S.signIn.why}` }), h('p', { class: 'small muted', text: READ_ONLY }));
   return h('p', { class: 'warnbox small', text: READ_ONLY });
 }
 
@@ -632,11 +635,16 @@ async function connectWallet() {
 
 // ── Sign in with your Interego account ───────────────────────────────────────────────────
 
-/** Whether, and through which relay, this bridge signs a person in: GET /ui/oauth/config (null when it does not answer). */
+/**
+ * Whether, and through which relay, this bridge signs a person in: GET /ui/oauth/config (null when
+ * it does not answer). A refusal (429: the bridge is keeping its calls to the relay under a limit)
+ * is not set up right now, and says so with the bridge's own words.
+ */
 async function signInConfig() {
   try {
     const res = await fetch('/ui/oauth/config', { headers: { accept: 'application/json' } });
     const j = await res.json();
+    if (j && typeof j === 'object' && j.kind === 'refusal') return { enabled: false, busy: true, why: String(j.error ?? `HTTP ${res.status}`) };
     return j && typeof j === 'object' ? j : null;
   } catch {
     return null;
@@ -690,32 +698,45 @@ async function startSignIn() {
 
 /**
  * When the relay sent this tab back to /ui/oauth/callback?code=…&state=…, take its answer: the
- * query, and the flow this tab stored when it sent the person to sign in, out of the address bar
- * and sessionStorage at once, before boot() sends anything. Null on any other page.
+ * query out of the address bar at once, before boot() sends anything, and the flow this tab
+ * stored when it sent the person to sign in. Anyone can send a person to this page, with no state
+ * or another and an `error` of their choosing, so the flow leaves sessionStorage here only for the
+ * answer that carries its state, or once it has expired (or cannot be read); otherwise it stays,
+ * waiting for its own answer. Null on any other page.
  */
 function takeCallback() {
   if (location.pathname !== CALLBACK_PATH) return null;
   const q = new URLSearchParams(location.search);
-  const flow = tab.get(FLOW_KEY);
-  tab.drop(FLOW_KEY);
+  const kept = tab.get(FLOW_KEY);
+  const flow = kept && typeof kept.state === 'string' && typeof kept.verifier === 'string' ? kept : null;
+  const ours = flow !== null && q.get('state') === flow.state;
+  const expired = flow !== null && !(Date.now() - Number(flow.at) < FLOW_MS);
+  if (ours || expired || flow === null) tab.drop(FLOW_KEY);
   const back = typeof flow?.back === 'string' && flow.back.startsWith('/ui') && !flow.back.startsWith(CALLBACK_PATH) ? flow.back : '/ui';
   history.replaceState(null, '', back);
   S.pod = new URLSearchParams(location.search).get('pod') ?? '';
-  return { q, flow };
+  return { q, flow, ours, expired };
 }
 
 /**
  * Finish the sign-in takeCallback took out of the address bar: the state must be the one this tab
  * stored when it sent the person to sign in, and the bridge exchanges the code, with the verifier
- * only this tab holds, for the token.
+ * only this tab holds, for the token. Nothing in an answer with another state is shown or acted on,
+ * not even the relay's error: the page says only that this tab did not start this sign-in.
  */
-async function finishSignIn({ q, flow }) {
+async function finishSignIn({ q, flow, ours, expired }) {
   const fail = (error, why) => { S.result = { tool: SIGN_IN_TOOL, ok: false, status: 0, body: { error, 'iep:refusalReason': why } }; };
   const NOT_FINISHED = 'Sign-in was not finished, and nothing was exchanged.';
-  if (q.get('error')) { fail('The Interego relay did not sign you in.', `${q.get('error')}${q.get('error_description') ? `: ${q.get('error_description')}` : ''}`); return; }
-  if (!flow || typeof flow.state !== 'string' || typeof flow.verifier !== 'string') { fail(NOT_FINISHED, 'this tab holds no sign-in it started (none, or it was finished already)'); return; }
-  if (q.get('state') !== flow.state) { fail(NOT_FINISHED, 'the state the relay sent back is not the one this tab stored when it sent you to sign in, so this answer is not for this tab'); return; }
-  if (!(Date.now() - Number(flow.at) < FLOW_MS)) { fail(NOT_FINISHED, 'the sign-in was started more than ten minutes ago'); return; }
+  if (!ours) {
+    fail(NOT_STARTED_HERE, flow === null ? 'this tab holds no sign-in it started (none, or it was finished already)'
+      : expired ? 'the answer does not carry the state this tab stored, and the sign-in this tab started is over ten minutes old, so it was dropped'
+        : 'the answer does not carry the state this tab stored when it sent you to sign in, so it is not the sign-in you started; that sign-in is still waiting for its own answer');
+    return;
+  }
+  // The answer to this tab's own sign-in: the relay's words are shown (as text), and the sign-in is over.
+  const error = q.get('error');
+  if (error) { const d = q.get('error_description'); fail('The Interego relay did not sign you in.', `${error.slice(0, 80)}${d ? `: ${d.slice(0, 300)}` : ''}`); return; }
+  if (expired) { fail(NOT_FINISHED, 'the sign-in was started more than ten minutes ago'); return; }
   const code = q.get('code');
   if (!code) { fail(NOT_FINISHED, 'the relay sent back no code'); return; }
   const r = await post('/ui/oauth/exchange', { code, code_verifier: flow.verifier, state: flow.state });

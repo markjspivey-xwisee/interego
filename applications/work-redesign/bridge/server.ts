@@ -9,8 +9,11 @@
  *                                   never binds every interface unless told to. Bound to
  *                                   loopback, it answers only the Host names 127.0.0.1, localhost
  *                                   and [::1] on PORT and the host of BRIDGE_DEPLOYMENT_URL, and
- *                                   refuses any other (421): the DNS-rebinding guard
- *   BRIDGE_DEPLOYMENT_URL           the public base URL (default http://127.0.0.1:<PORT>)
+ *                                   refuses any other (421): the DNS-rebinding guard. Bound to
+ *                                   any other address (the image, behind Railway's edge), it
+ *                                   trusts one proxy hop for the client address (req.ip) the web
+ *                                   UI's sign-in routes count relay calls by
+ *   BRIDGE_DEPLOYMENT_URL          the public base URL (default http://127.0.0.1:<PORT>)
  *   WRD_DEFAULT_POD_URL             the pod to use when a call names none
  *   WRD_SERVED_PODS                 comma list of the pods records are read from and written to;
  *                                   default the default pod. A call naming any other pod is
@@ -240,6 +243,10 @@ const app = createVerticalBridge({
   middleware: (a) => {
     // First, so it stands in front of the ontology, the UI and every route the factory mounts after this hook.
     if (loopback) a.use(hostAllowlistGuard(servedHostNames(PORT, base)));
+    // The web UI's sign-in routes limit each client address (req.ip) on their relay calls. In the
+    // image the bridge listens behind Railway's edge, one proxy hop, so req.ip is the client only
+    // when that hop is trusted; a loopback bridge trusts none, so no caller picks its own address.
+    if (!loopback) a.set('trust proxy', 1);
     // Every query parameter reaches the handlers, so the GET template's signed-read check sees past the default parser's first 1000.
     parseEveryQueryPair(a);
     attachOntologyServing(a, {

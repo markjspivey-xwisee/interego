@@ -1070,6 +1070,10 @@ describe('work-redesign offline demo and web UI', () => {
     expect(server).toMatch(/if \(host === '::' && \(err as NodeJS\.ErrnoException\)\.code === 'EAFNOSUPPORT'\) \{ listen\('0\.0\.0\.0'\); return; \}/);
     // The first statement of the hook, so the guard stands in front of the ontology, the UI and every route the factory mounts after it.
     expect(server).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(loopback\) a\.use\(hostAllowlistGuard\(servedHostNames\(PORT, base\)\)\);\n/);
+    // Off loopback (the image, behind Railway's edge) it trusts one proxy hop, so the sign-in routes' per-address limits count the client, not the edge; on loopback none, so no caller names its own address.
+    expect(server).toMatch(/^\s*if \(!loopback\) a\.set\('trust proxy', 1\);$/m);
+    expect(server.match(/trust proxy/g)).toHaveLength(1);
+    expect(demo).not.toMatch(/trust proxy/);
     expect(demo).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*a\.use\(hostAllowlistGuard\(servedHostNames\(port, base\)\)\);\n\s*attachUi\(a, \{ base \}\);/);
     // Both parse every query parameter, so the GET template's signed-read check sees past the default parser's first 1000 pairs.
     for (const src of [server, demo]) expect(/middleware: \(a\) => \{\n([\s\S]*?)\n\s*\},\n/.exec(src)?.[1]).toMatch(/^\s*parseEveryQueryPair\(a\);$/m);
