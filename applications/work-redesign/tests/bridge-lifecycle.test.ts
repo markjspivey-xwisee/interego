@@ -3309,7 +3309,7 @@ describe('work-redesign bridge', () => {
     const fields = { disposition: 'kept', measured: { weeklyValueDelta: 100, comparisonBasis: 'staggered', windowStart: csAt, windowEnd: plusWeeks(csAt, 8), method: 'Staggered roll-out across two AP teams' } };
     // Weeks later the stored countersign is re-verified offline: a bridge that trusts no relay now cannot, and says which setting.
     const noRelay = await sibling(w, { relayDelegation: { relayAddresses: [], identityHost: IDENTITY, fetchDidDocument: async () => { throw new Error('never read'); } } });
-    refused(await recordOutcome(noRelay, ELI, decisionIri, fields), 409, /countersign on this decision no longer verifies/, /trusts no relay now \(WRD_TRUSTED_RELAY_ADDRESSES\)/);
+    refused(await recordOutcome(noRelay, ELI, decisionIri, fields), 409, /countersign on this decision no longer verifies/, /trusts no relay now, for new requests or retired \(WRD_TRUSTED_RELAY_ADDRESSES, WRD_RETIRED_RELAY_ADDRESSES\)/);
     // The bridge that trusts the relay re-verifies it without reading any agent's DID document again.
     const fetched = idh.fetched.length;
     const outcome = ok(await recordOutcome(w, ELI, decisionIri, fields));
@@ -3359,6 +3359,103 @@ describe('work-redesign bridge', () => {
     // The run is the agent's own: a relay-signed run (a person standing in for the agent) is no run at all.
     refused(await http(w, 'POST', 'log_agent_run', await relaySigned(w, 'claude', OLU, { intent: 'wrd:agent-run', runId: 'relay-run-1', taskIri: ap.t1 })), 401, /signed envelope is required/, /run_envelope/);
   });
+
+  it('takes an outcome through the relay only from this bridge\'s web UI agent unless WRD_CHAT_AGENTS_DECIDE=1: recorded reverted, it takes an approved allocation out of force, as a revocation would', async () => {
+    const idh = identityHost([ZOE]);
+    const w = await world(relayDeps(idh));
+    const { ap, planIri, valuation } = await valuedP1(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(ZOE, ['operator', 'approver'], 'p-zoe', 'Zoe')] }));
+    const decisionIri = String((await submitValued(w, planIri, valuation))['decisionIri']);
+    await acknowledgeAll(w, planIri);
+    ok(await countersign(w, BO, decisionIri, 'approve'));
+    expect(obj((await taskRow(w, ap.t1))['effective'])).toMatchObject({ source: 'approved-decision', decisionIri });
+    w.clock.advance(60 * 60_000);
+    const csAt = String(obj((await decisionRow(w, decisionIri))['countersign'])['at']);
+    const reverted = async (surface: string): Promise<Res> => {
+      const h = headOfRow(await decisionRow(w, decisionIri));
+      return relayAct(w, surface, ZOE, 'record_outcome', {
+        decisionIri, recordId: h.recordId, ...bound(h), disposition: 'reverted', dispositionNote: 'Rolled back after the first close',
+        measured: { weeklyValueDelta: 0, comparisonBasis: 'staggered', windowStart: csAt, windowEnd: new Date(Date.parse(csAt) + 30 * 60_000).toISOString(), method: 'Stopped before the window' },
+      });
+    };
+    // From Claude or ChatGPT: refused before anything is read, naming the setting; the allocation stays in force.
+    const chat = refused(await reverted('claude'), 403, /WRD_CHAT_AGENTS_DECIDE=1/, new RegExp(`wrd:record-outcome was signed by the relay for ${ZOE} through the agent ${agentDid(slugOf('claude', ZOE))}`));
+    expect(obj(chat['iep:resolvedBy'])).toEqual({ env: 'WRD_CHAT_AGENTS_DECIDE' });
+    refused(await reverted('chatgpt'), 403, /WRD_CHAT_AGENTS_DECIDE=1/);
+    expect(obj((await taskRow(w, ap.t1))['effective'])).toMatchObject({ source: 'approved-decision', decisionIri });
+    expect(obj(obj((await list(w))['bridge'])['relayDelegation'])['decisiveIntents']).toContain('wrd:record-outcome');
+    // From this bridge's web UI agent it is taken, and the task falls back to how it was captured.
+    expect(ok(await reverted('work-redesign'))).toMatchObject({ status: 'measured', disposition: 'reverted' });
+    expect(obj((await taskRow(w, ap.t1))['effective'])['source']).toBe('captured');
+  }, 120_000);
+
+  it('rotates the relay key: a key moved to WRD_RETIRED_RELAY_ADDRESSES takes no new request, and a countersign it signed still re-verifies when the outcome is recorded; listed in neither, that outcome answers 409', async () => {
+    const NEW_RELAY = wallet('interego-relay-rotated', 'agent');
+    const idh = identityHost([ZOE, ROOT_ADMIN]);
+    const w = await world({ ...relayDeps(idh), adminDids: [ROOT_ADMIN] });
+    const { planIri, valuation } = await valuedP1(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(ZOE, ['approver'], 'p-zoe', 'Zoe')] }));
+    const decisionIri = String((await submitValued(w, planIri, valuation))['decisionIri']);
+    await acknowledgeAll(w, planIri);
+    const h = headOfRow(await decisionRow(w, decisionIri));
+    ok(await relayAct(w, 'work-redesign', ZOE, 'countersign_decision', { decisionIri, recordId: h.recordId, ...bound(h), verdict: 'approve' }));
+    const csAt = String(obj((await decisionRow(w, decisionIri))['countersign'])['at']);
+    w.clock.advance(9 * WEEK);
+    const fields = { disposition: 'kept', measured: { weeklyValueDelta: 100, comparisonBasis: 'staggered', windowStart: csAt, windowEnd: plusWeeks(csAt, 8), method: 'Staggered roll-out across two AP teams' } };
+    // The relay signs with its new key now, and the operator retires the old one.
+    const rotated = await sibling(w, { ...relayDeps(idh, { relayAddresses: [NEW_RELAY.address], retiredRelayAddresses: [RELAY.address] }), adminDids: [ROOT_ADMIN] });
+    expect(obj(obj((await list(rotated))['bridge'])['relayDelegation'])).toMatchObject({ trustedRelays: [addr(NEW_RELAY)], retiredRelays: [addr(RELAY)] });
+    // A new request the retired key signs is not relay-delegated (the key-held route refuses it); the new key's is.
+    const change = { entries: [didPerson(ZOE, ['approver', 'operator'], 'p-zoe', 'Zoe')] };
+    refused(await relayAct(rotated, 'work-redesign', ROOT_ADMIN, 'update_registry', change), 401, /signed envelope is required/);
+    ok(await relayAct(rotated, 'work-redesign', ROOT_ADMIN, 'update_registry', change, {}, { signer: NEW_RELAY }));
+    // A bridge that lists only the new key cannot re-verify the stored countersign, and says which setting would.
+    const newOnly = await sibling(w, { ...relayDeps(idh, { relayAddresses: [NEW_RELAY.address] }), adminDids: [ROOT_ADMIN] });
+    refused(await recordOutcome(newOnly, ELI, decisionIri, fields), 409, /countersign on this decision no longer verifies/,
+      new RegExp(`recovers to ${addr(RELAY)}, which is neither a relay this bridge trusts now nor one it lists as retired \\(WRD_RETIRED_RELAY_ADDRESSES\\)`));
+    // The rotated bridge re-verifies it through the retired key.
+    expect(ok(await recordOutcome(rotated, ELI, decisionIri, fields))).toMatchObject({ status: 'measured', disposition: 'kept' });
+  }, 120_000);
+
+  it('takes only 0x addresses as admin addresses: a user DID there throws rather than enter the admins lower-cased, as another user', () => {
+    expect(() => createWrdHandlers({ adminAddresses: [ADMIN.address, ROOT_ADMIN] })).toThrow(/^adminAddresses holds did:web:identity\.interego\.xwisee\.com:users:u-pk-0404A0B0C0D0, which is not a 0x address/);
+    expect(() => createWrdHandlers({ adminAddresses: [OLU] })).toThrow(/^adminAddresses holds/);
+    expect(() => createWrdHandlers({ adminDids: [ADMIN.address] })).toThrow(/^adminDids holds/);
+    expect(() => createWrdHandlers({ adminAddresses: [ADMIN.address.toLowerCase()], adminDids: [ROOT_ADMIN] })).not.toThrow();
+  });
+
+  it('reads what an affordance takes beside the envelope from inside the relay-signed payload, all the relay\'s act sends: a task map\'s document (which the record then keeps, so only with storeText), a revision\'s document, and a template\'s arguments under template', async () => {
+    const idh = identityHost([OLU]);
+    const w = await world(relayDeps(idh));
+    await register(w);
+    ok(await act(w, ADMIN, 'update_registry', { entries: [didPerson(OLU, ['operator'], 'p-olu', 'Olu')] }));
+    const mapFields = (storeText: boolean): Obj => ({
+      workflow: { title: 'Supplier invoice processing', unitLabel: 'invoice' }, tasks: AP_TASKS().slice(0, 1),
+      document: { title: 'AP SOP', sha256: sha256Hex(SOP), storeText }, draftedBy: { kind: 'agent', agent: 'test fixture standing in for the client agent' },
+    });
+    const map = (storeText: boolean, documentText = SOP): Obj => ({ intent: 'wrd:record-task-map', ...mapFields(storeText), document_text: documentText });
+    // The record keeps the text the relay signed, whatever storeText says: so it is taken only with storeText true.
+    refused(await http(w, 'POST', 'record_task_map', await relaySigned(w, 'claude', OLU, map(false))), 400, /would be stored with the record/, /storeText true/);
+    refused(await http(w, 'POST', 'record_task_map', await relaySigned(w, 'claude', OLU, map(true, `${SOP} and more`))), 400, /not the one the signer bound/);
+    const captured = ok(await http(w, 'POST', 'record_task_map', await relaySigned(w, 'claude', OLU, map(true))), 'relay-signed task map');
+    const taskIri = String(must(arr(captured['tasks'])[0], 'task')['taskIri']);
+    // A revision with new quotes takes the workflow's document from the signed payload too, where the workflow stored its text.
+    const quote = 'Match each invoice to its purchase order and goods receipt';
+    const revision = async (iri: string): Promise<Res> => http(w, 'POST', 'revise_task', await relaySigned(w, 'claude', OLU, {
+      intent: 'wrd:revise-task', op: 'revise', taskIri: iri, ...bound(headOfRow(await taskRow(w, iri))), sourceQuotes: [quote], document_text: SOP,
+    }));
+    ok(await revision(taskIri), 'relay-signed revision with quotes');
+    // On a workflow that did not store its text, the same revision would store it: refused, saying to send it beside the pair.
+    const unstored = ok(await act(w, ANA, 'record_task_map', mapFields(false), { document_text: SOP }));
+    refused(await revision(String(must(arr(unstored['tasks'])[0], 'task')['taskIri'])), 400, /would be stored with the record/, /did not store its document text; send document_text beside the signed pair/);
+    // A relay-signed read's own intent is wrd:read-records: the template it asks for goes under template, and an argument beside the pair wins.
+    const t = ok(await http(w, 'POST', 'read_envelope_template', await relaySigned(w, 'claude', OLU, { intent: 'wrd:read-records', template: { intent: 'wrd:classify-task', task_iri: taskIri } })));
+    expect(obj(t['template'])).toMatchObject({ intent: 'wrd:classify-task', taskIri });
+    expect(String(obj(t['template'])['taskTextSha256'])).toMatch(/^[0-9a-f]{64}$/);
+    const beside = ok(await http(w, 'POST', 'read_envelope_template', { ...(await relaySigned(w, 'claude', OLU, { intent: 'wrd:read-records', template: { intent: 'wrd:classify-task' } })), intent: 'wrd:capture-workflow' }));
+    expect(obj(beside['template'])['intent']).toBe('wrd:capture-workflow');
+    refused(await http(w, 'POST', 'read_envelope_template', await relaySigned(w, 'claude', OLU, { intent: 'wrd:read-records' })), 400, /Unknown intent/, /under template in the payload the relay signs/);
+  }, 120_000);
 
   it('answers 502, not 200, when the pod refuses a write with 403', async () => {
     const w = await world();

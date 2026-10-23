@@ -275,12 +275,12 @@ export function bindRelayDelegated(v: RelayVerified, intent: EnvelopeIntent, pod
   };
 }
 
-/** What a stored relay-delegated envelope is checked against: the relay addresses trusted now and the identity host. */
+/** What a stored relay-delegated envelope is checked against: the relay addresses trusted now or retired from new requests (WRD_RETIRED_RELAY_ADDRESSES), and the identity host. */
 export interface StoredRelayCheck { readonly relayAddresses: readonly string[]; readonly identityHost: string }
 
 /**
  * Re-check a stored relay-delegated envelope, offline: the relay's signature over the stored text
- * recovers to a relay trusted now (and to the relaySigner stored), the text names the stored agent
+ * recovers to a relay trusted now or retired (and to the relaySigner stored), the text names the stored agent
  * (on the identity host), the stored principal is a user on that host, and the stored payload is
  * the text as this bridge reads it. The agent's DID document is NOT fetched again: that the agent
  * belonged to this principal is what the bridge read from the identity host when it took the act,
@@ -289,14 +289,14 @@ export interface StoredRelayCheck { readonly relayAddresses: readonly string[]; 
 function verifyStoredRelay(env: SignedEnvelope, intent: EnvelopeIntent, podUrl: string, relay: StoredRelayCheck | undefined):
   { readonly ok: true; readonly signer: string; readonly did: string; readonly authority: 'relay-delegated' } | { readonly ok: false; readonly why: string } {
   if (relay === undefined || relay.relayAddresses.length === 0) {
-    return { ok: false, why: 'the stored envelope was signed by the Interego relay for a person, and this bridge trusts no relay now (WRD_TRUSTED_RELAY_ADDRESSES)' };
+    return { ok: false, why: 'the stored envelope was signed by the Interego relay for a person, and this bridge trusts no relay now, for new requests or retired (WRD_TRUSTED_RELAY_ADDRESSES, WRD_RETIRED_RELAY_ADDRESSES)' };
   }
   const text = env.signedPayload ?? '';
   let recovered: string;
   try { recovered = recoverMessageSigner(`sha256:${sha256Hex(text)}`, env.signature).toLowerCase(); } catch {
     return { ok: false, why: 'no address can be recovered from the stored relay signature' };
   }
-  if (!relay.relayAddresses.map((a) => a.toLowerCase()).includes(recovered)) return { ok: false, why: `the stored relay signature recovers to ${recovered}, which is not a relay this bridge trusts now` };
+  if (!relay.relayAddresses.map((a) => a.toLowerCase()).includes(recovered)) return { ok: false, why: `the stored relay signature recovers to ${recovered}, which is neither a relay this bridge trusts now nor one it lists as retired (WRD_RETIRED_RELAY_ADDRESSES)` };
   if (recovered !== (env.relaySigner ?? '').toLowerCase()) return { ok: false, why: 'the stored relay signature does not recover to the relaySigner stored beside it' };
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { parsed = undefined; }

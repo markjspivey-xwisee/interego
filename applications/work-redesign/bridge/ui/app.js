@@ -471,6 +471,9 @@ async function refresh(quiet = false) {
 }
 
 async function boot() {
+  // The relay's answer leaves the address bar (and this tab's sign-in flow leaves sessionStorage)
+  // before this page sends any request, even the manifest's read, so a failure below leaves neither.
+  const callback = takeCallback();
   const root = document.getElementById('app');
   let m;
   try {
@@ -492,7 +495,7 @@ async function boot() {
     S.persona = S.personas.find((p) => p.id === 'ana')?.id ?? S.personas[0]?.id ?? '';
   } else {
     S.signIn = await signInConfig();
-    if (location.pathname === CALLBACK_PATH) await finishSignIn();
+    if (callback) await finishSignIn(callback);
     S.interego = keptSignIn();
     if (S.interego) S.mode = 'interego';
     else if (window.ethereum) S.mode = 'wallet';
@@ -681,17 +684,27 @@ async function startSignIn() {
 }
 
 /**
- * The relay sent this tab back to /ui/oauth/callback?code=…&state=…. Both leave the address bar
- * before anything else; then the state must be the one this tab stored when it sent the person to
- * sign in, and the bridge exchanges the code, with the verifier only this tab holds, for the token.
+ * When the relay sent this tab back to /ui/oauth/callback?code=…&state=…, take its answer: the
+ * query, and the flow this tab stored when it sent the person to sign in, out of the address bar
+ * and sessionStorage at once, before boot() sends anything. Null on any other page.
  */
-async function finishSignIn() {
+function takeCallback() {
+  if (location.pathname !== CALLBACK_PATH) return null;
   const q = new URLSearchParams(location.search);
   const flow = tab.get(FLOW_KEY);
   tab.drop(FLOW_KEY);
   const back = typeof flow?.back === 'string' && flow.back.startsWith('/ui') && !flow.back.startsWith(CALLBACK_PATH) ? flow.back : '/ui';
   history.replaceState(null, '', back);
   S.pod = new URLSearchParams(location.search).get('pod') ?? '';
+  return { q, flow };
+}
+
+/**
+ * Finish the sign-in takeCallback took out of the address bar: the state must be the one this tab
+ * stored when it sent the person to sign in, and the bridge exchanges the code, with the verifier
+ * only this tab holds, for the token.
+ */
+async function finishSignIn({ q, flow }) {
   const fail = (error, why) => { S.result = { tool: SIGN_IN_TOOL, ok: false, status: 0, body: { error, 'iep:refusalReason': why } }; };
   const NOT_FINISHED = 'Sign-in was not finished, and nothing was exchanged.';
   if (q.get('error')) { fail('The Interego relay did not sign you in.', `${q.get('error')}${q.get('error_description') ? `: ${q.get('error_description')}` : ''}`); return; }

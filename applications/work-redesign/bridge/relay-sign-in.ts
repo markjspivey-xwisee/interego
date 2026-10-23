@@ -16,6 +16,8 @@ import { isAddress } from '../src/records.js';
 export interface RelaySignInConfig {
   /** Lower-cased 0x addresses of the relay delegation keys trusted; empty: no request is relay-delegated. */
   readonly relayAddresses: readonly string[];
+  /** Lower-cased 0x addresses of relay keys retired from new requests, read only to re-check stored countersigns they signed. */
+  readonly retiredRelayAddresses: readonly string[];
   /** The identity host user DIDs must be on (lower-cased), or null: then the registry takes no user DID either. */
   readonly identityHost: string | null;
   /** The relay a person signs in through, for the web UI; null when not set. */
@@ -28,7 +30,7 @@ export interface RelaySignInConfig {
 
 /** The raw values, as server.ts reads them (an empty value already read as unset). */
 export interface RelaySignInValues {
-  readonly relays?: string | undefined; readonly identityHost?: string | undefined; readonly relayUrl?: string | undefined;
+  readonly relays?: string | undefined; readonly retiredRelays?: string | undefined; readonly identityHost?: string | undefined; readonly relayUrl?: string | undefined;
   readonly adminDids?: string | undefined; readonly chatAgentsDecide?: string | undefined;
 }
 
@@ -38,6 +40,8 @@ const items = (v: string | undefined): string[] => (v ?? '').split(',').map((s) 
 /**
  * Read the sign-in settings, or say which one is malformed (the bridge then does not start):
  *   WRD_TRUSTED_RELAY_ADDRESSES  comma list of 0x addresses; empty → no request is relay-delegated
+ *   WRD_RETIRED_RELAY_ADDRESSES  comma list of 0x addresses retired from new requests (key rotation), none of them
+ *                                also trusted; read only to re-check stored countersigns
  *   WRD_IDENTITY_HOST            a bare host name (no scheme, port or path); required with a relay address or an admin DID
  *   WRD_RELAY_URL                the relay's http(s) base URL, no query, fragment or credentials
  *   WRD_ADMIN_DIDS               comma list of did:web:<WRD_IDENTITY_HOST>:users:<id>
@@ -50,6 +54,12 @@ export function parseRelaySignIn(v: RelaySignInValues): { readonly ok: true; rea
     if (!isAddress(a)) return no(`WRD_TRUSTED_RELAY_ADDRESSES holds ${JSON.stringify(String(a).slice(0, 80))}, which is not a 0x address (40 hex characters)`);
     relayAddresses.push(a.toLowerCase());
   }
+  const retiredRelayAddresses: string[] = [];
+  for (const a of items(v.retiredRelays)) {
+    if (!isAddress(a)) return no(`WRD_RETIRED_RELAY_ADDRESSES holds ${JSON.stringify(String(a).slice(0, 80))}, which is not a 0x address (40 hex characters)`);
+    if (relayAddresses.includes(a.toLowerCase())) return no(`WRD_RETIRED_RELAY_ADDRESSES holds ${a.toLowerCase()}, which WRD_TRUSTED_RELAY_ADDRESSES lists too: a retired relay key takes no new request, so list it in one or the other`);
+    retiredRelayAddresses.push(a.toLowerCase());
+  }
   let identityHost: string | null = null;
   if (v.identityHost !== undefined) {
     const h = v.identityHost.trim().toLowerCase();
@@ -58,6 +68,9 @@ export function parseRelaySignIn(v: RelaySignInValues): { readonly ok: true; rea
   }
   if (relayAddresses.length > 0 && identityHost === null) {
     return no('WRD_TRUSTED_RELAY_ADDRESSES is set and WRD_IDENTITY_HOST is not: a relay-signed request names an agent on the identity host, and without one no person can be found for it');
+  }
+  if (retiredRelayAddresses.length > 0 && identityHost === null) {
+    return no('WRD_RETIRED_RELAY_ADDRESSES is set and WRD_IDENTITY_HOST is not: a stored relay-signed countersign names an agent on the identity host, and without one none is re-checked');
   }
   let relayUrl: string | null = null;
   if (v.relayUrl !== undefined) {
@@ -78,7 +91,7 @@ export function parseRelaySignIn(v: RelaySignInValues): { readonly ok: true; rea
   if (decide !== undefined && decide !== '' && decide !== '0' && decide !== '1') {
     return no(`WRD_CHAT_AGENTS_DECIDE is neither 1 nor 0; set it to 1 to take decisive acts from chat agents too, or to 0 (or unset it) to take them only from this bridge's web UI`);
   }
-  return { ok: true, config: { relayAddresses, identityHost, relayUrl, adminDids, chatAgentsDecide: decide === '1' } };
+  return { ok: true, config: { relayAddresses, retiredRelayAddresses, identityHost, relayUrl, adminDids, chatAgentsDecide: decide === '1' } };
 }
 
 /** The response fields the capped read uses. */

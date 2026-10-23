@@ -891,7 +891,7 @@ describe('envelopes', () => {
     const stored: SignedEnvelope = opened.envelope;
     expect(verifyStoredEnvelope(stored, 'wrd:countersign-decision', POD, check)).toEqual({ ok: true, signer: principal, did: principal, authority: 'relay-delegated' });
     expect(verifyStoredEnvelope(stored, 'wrd:countersign-decision', POD)).toMatchObject({ ok: false, why: expect.stringMatching(/trusts no relay now/) });
-    expect(verifyStoredEnvelope(stored, 'wrd:countersign-decision', POD, { ...check, relayAddresses: [ANA.address] })).toMatchObject({ ok: false, why: expect.stringMatching(/not a relay this bridge trusts now/) });
+    expect(verifyStoredEnvelope(stored, 'wrd:countersign-decision', POD, { ...check, relayAddresses: [ANA.address] })).toMatchObject({ ok: false, why: expect.stringMatching(/neither a relay this bridge trusts now nor one it lists as retired/) });
     expect(verifyStoredEnvelope(stored, 'wrd:record-outcome', POD, check)).toMatchObject({ ok: false });
     expect(verifyStoredEnvelope({ ...stored, agentId: `did:web:${host}:agents:claude-someone-else` }, 'wrd:countersign-decision', POD, check)).toMatchObject({ ok: false, why: expect.stringMatching(/does not name the stored agent/) });
     expect(verifyStoredEnvelope({ ...stored, relaySigner: PERSON }, 'wrd:countersign-decision', POD, check)).toMatchObject({ ok: false, why: expect.stringMatching(/relaySigner stored/) });

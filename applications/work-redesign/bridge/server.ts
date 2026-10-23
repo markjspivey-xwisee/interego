@@ -63,7 +63,9 @@
  *                                   it to 1. Read as it is, like WRD_REQUIRE_RECORD_KEY: any other
  *                                   value, blank or whitespace included, stops the bridge (exit 1,
  *                                   saying why)
- *   WRD_ADMIN_ADDRESSES             comma list of addresses that may change the role registry
+ *   WRD_ADMIN_ADDRESSES             comma list of 0x addresses that may change the role registry; a
+ *                                   value that is not one (a user DID goes in WRD_ADMIN_DIDS) stops
+ *                                   the bridge
  *   WRD_ADMIN_DIDS                  comma list of did:web:<WRD_IDENTITY_HOST>:users:<id>: people who
  *                                   sign in with their Interego account and are admins too. Not
  *                                   baked into the image; a malformed value stops the bridge
@@ -74,6 +76,12 @@
  *                                   NOT USER-HELD: whoever holds a listed key, or controls the
  *                                   identity host, can act here as any person. Empty → no request is
  *                                   relay-delegated. A malformed value stops the bridge
+ *   WRD_RETIRED_RELAY_ADDRESSES     comma list of 0x addresses of relay delegation keys retired from
+ *                                   new requests (key rotation): no request they sign now is
+ *                                   relay-delegated, and a countersign they signed still re-verifies
+ *                                   when its outcome is recorded. An address in both lists, a
+ *                                   malformed one, or one set without WRD_IDENTITY_HOST stops the
+ *                                   bridge
  *   WRD_IDENTITY_HOST               the identity host agents and users are on (a bare host name);
  *                                   required with a relay address or an admin DID
  *   WRD_RELAY_URL                   the relay a person signs in through (http(s) base URL), reported
@@ -82,7 +90,7 @@
  *                                   The token a person signs in with passes through this bridge on
  *                                   every signature, so its operator is trusted with it
  *   WRD_CHAT_AGENTS_DECIDE          1 → acts that change who may do what (the registry, countersign,
- *                                   grant, revoke) are taken from chat agents too; unset or 0 → only
+ *                                   an outcome, grant, revoke) are taken from chat agents too; unset or 0 → only
  *                                   from this bridge's web UI (agent slug work-redesign-…); any other
  *                                   value stops the bridge
  *   WRD_TRUSTED_PLATFORM_ADDRESSES  comma list of earlier platform keys whose records stay trusted.
@@ -98,6 +106,7 @@ import { WRD_NS, WRD_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '
 import { createWrdHandlers, type PlatformSigner } from './handlers.js';
 import { operatorPodFetch } from './pod-helpers.js';
 import { didDocumentFetcher, parseRelaySignIn } from './relay-sign-in.js';
+import { isAddress } from '../src/records.js';
 import { attachUi, hostAllowlistGuard, isLoopbackBind, parseEveryQueryPair, servedHostNames } from './ui.js';
 
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((s) => s.trim()).filter((s) => s !== '');
@@ -121,11 +130,12 @@ const requireRecordKeyValue = process.env['WRD_REQUIRE_RECORD_KEY'];
 const requirePlatformKeyValue = process.env['WRD_REQUIRE_PLATFORM_KEY'];
 const publicReads = env('WRD_PUBLIC_READS') === '1';
 const key = env('WRD_PLATFORM_KEY');
+const adminAddresses = list(env('WRD_ADMIN_ADDRESSES'));
 
 // Sign in with an Interego account (relay-delegated): every value is checked here, and a malformed
 // one stops the bridge, as a malformed key does, rather than switch the route off or on unseen.
 const signInRead = parseRelaySignIn({
-  relays: env('WRD_TRUSTED_RELAY_ADDRESSES'), identityHost: env('WRD_IDENTITY_HOST'), relayUrl: env('WRD_RELAY_URL'),
+  relays: env('WRD_TRUSTED_RELAY_ADDRESSES'), retiredRelays: env('WRD_RETIRED_RELAY_ADDRESSES'), identityHost: env('WRD_IDENTITY_HOST'), relayUrl: env('WRD_RELAY_URL'),
   adminDids: env('WRD_ADMIN_DIDS'), chatAgentsDecide: env('WRD_CHAT_AGENTS_DECIDE'),
 });
 if (!signInRead.ok) {
@@ -133,6 +143,13 @@ if (!signInRead.ok) {
   process.exit(1);
 }
 const signIn = signInRead.config;
+// An admin address is an address: a user DID read here would be lower-cased into another user
+// (a user DID is compared as spelled), so one in this list stops the bridge rather than admit the wrong person.
+const notAnAddress = adminAddresses.find((a) => !isAddress(a));
+if (notAnAddress !== undefined) {
+  process.stderr.write(`work-redesign bridge did not start: WRD_ADMIN_ADDRESSES holds ${JSON.stringify(notAnAddress.slice(0, 120))}, which is not a 0x address (40 hex characters); a user DID is an admin through WRD_ADMIN_DIDS\n`);
+  process.exit(1);
+}
 
 // The guard is on only for exactly 1 and off only for 0 or unset: any other value, blank or
 // whitespace included, is a misconfiguration that would otherwise switch it off without a word.
@@ -203,13 +220,13 @@ const app = createVerticalBridge({
     ...(recordKey ? { recordKey } : {}),
     publicReads,
     platform,
-    adminAddresses: list(env('WRD_ADMIN_ADDRESSES')),
+    adminAddresses,
     adminDids: signIn.adminDids,
     trustedPlatformAddresses: list(env('WRD_TRUSTED_PLATFORM_ADDRESSES')),
     // Agents' DID documents are read through the SSRF guard, 8 s and 64 KiB at most, kept ten minutes.
     ...(identityHost !== null ? {
       relayDelegation: {
-        relayAddresses: signIn.relayAddresses, identityHost, fetchDidDocument,
+        relayAddresses: signIn.relayAddresses, retiredRelayAddresses: signIn.retiredRelayAddresses, identityHost, fetchDidDocument,
         chatAgentsDecide: signIn.chatAgentsDecide, ...(signIn.relayUrl !== null ? { relayUrl: signIn.relayUrl } : {}),
       },
     } : {}),
@@ -237,7 +254,7 @@ process.stdout.write(recordKey
   ? `work-redesign: records written from now on are sealed to the record key (public key ${recordKey.publicKey}); records written before it stay plaintext on the pod (the read model counts them under plaintext); descriptors and the manifest stay public\n`
   : 'work-redesign: WARNING: no WRD_RECORD_KEY — records are written in PLAINTEXT, and on a pod that serves anonymous reads (the gate does) anyone can read every record\n');
 process.stdout.write(signIn.relayAddresses.length > 0
-  ? `work-redesign: sign-in with an Interego account: RELAY-ATTESTED, not user-held: requests the relay (${signIn.relayAddresses.join(', ')}) signs act as the user their agent belongs to on ${identityHost ?? ''}; whoever holds that key or controls that host can act as anyone here. Decisive acts from chat agents: ${signIn.chatAgentsDecide ? 'taken (WRD_CHAT_AGENTS_DECIDE=1)' : 'refused (only this bridge\'s web UI; WRD_CHAT_AGENTS_DECIDE=1 lifts it)'}; ${signIn.adminDids.length} admin DID(s)\n`
+  ? `work-redesign: sign-in with an Interego account: RELAY-ATTESTED, not user-held: requests the relay (${signIn.relayAddresses.join(', ')}) signs act as the user their agent belongs to on ${identityHost ?? ''}; whoever holds that key or controls that host can act as anyone here. Decisive acts from chat agents: ${signIn.chatAgentsDecide ? 'taken (WRD_CHAT_AGENTS_DECIDE=1)' : 'refused (only this bridge\'s web UI; WRD_CHAT_AGENTS_DECIDE=1 lifts it)'}; ${signIn.adminDids.length} admin DID(s); ${signIn.retiredRelayAddresses.length} retired relay key(s) whose stored countersigns still re-verify\n`
   : 'work-redesign: sign-in with an Interego account: off (WRD_TRUSTED_RELAY_ADDRESSES is empty); every signature is a key its signer holds\n');
 process.stdout.write(signIn.relayUrl !== null && uiRelayPolicy !== null
   ? `work-redesign: web UI sign-in with an Interego account: through ${signIn.relayUrl}, as the client ${base}/ui/oauth/client.json (a Client ID Metadata Document; where the relay cannot read it, as for an http deployment URL, the same metadata is registered once by Dynamic Client Registration when the page first asks how to sign in). The token a person signs in with passes through this bridge on every signature: whoever runs it is trusted with that token while it lasts\n`

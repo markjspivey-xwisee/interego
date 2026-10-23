@@ -112,12 +112,13 @@ ENV WRD_DEFAULT_POD_URL=https://gate.interego.xwisee.com/work-redesign/
 #                                   write, somewhere other than this service: a lost or changed key
 #                                   leaves every sealed record unreadable (409), with no way back
 #   WRD_POD_WRITE_SECRET            the gate's operator token, sent under the default pod's path only
-#   WRD_ADMIN_ADDRESSES             who may change the role registry
+#   WRD_ADMIN_ADDRESSES             who may change the role registry: 0x addresses only (a user DID
+#                                   goes in WRD_ADMIN_DIDS); any other value stops the bridge
 #   WRD_ADMIN_DIDS                  people who sign in with their Interego account and are admins
 #                                   too: did:web:<WRD_IDENTITY_HOST>:users:<id>, comma separated.
 #                                   Per deployment, so not baked in; a malformed value stops the bridge
-#   WRD_CHAT_AGENTS_DECIDE          1 → acts that change who may do what (registry, countersign,
-#                                   grant, revoke) are taken from chat agents (Claude, ChatGPT) too;
+#   WRD_CHAT_AGENTS_DECIDE          1 → acts that change who may do what (registry, countersign, an
+#                                   outcome, grant, revoke) are taken from chat agents (Claude, ChatGPT) too;
 #                                   unset → only from this bridge's web UI. Any other value stops it
 #   WRD_TRUSTED_PLATFORM_ADDRESSES  earlier platform keys whose records stay trusted. An address that
 #                                   signed records on the pod stays listed for as long as the pod is
@@ -146,7 +147,16 @@ ENV WRD_CHAT_AGENTS_DECIDE=
 # delegation address, the identity host, and the relay the web UI signs in through. Set
 # WRD_TRUSTED_RELAY_ADDRESSES to empty on the service to take no relay-signed request at all; a
 # malformed value of any of the three stops the bridge at startup (exit 1, saying which).
+#
+# ROTATING THE RELAY KEY. WRD_TRUSTED_RELAY_ADDRESSES is the keys NEW requests are taken from;
+# WRD_RETIRED_RELAY_ADDRESSES (empty here) is keys taken from no new request, read only to re-check
+# a countersign one of them signed when that decision's outcome is recorded. When the relay
+# rotates, list the new address beside the old one in WRD_TRUSTED_RELAY_ADDRESSES on the service
+# until the relay signs with the new key, then move the old address to WRD_RETIRED_RELAY_ADDRESSES,
+# and keep it there while any decision countersigned through it may still have its outcome
+# recorded. Dropped from both, those outcomes answer 409. An address in both stops the bridge.
 ENV WRD_TRUSTED_RELAY_ADDRESSES=0x276e11d2229d3a96dc96356c15c03c7f83201ebc
+ENV WRD_RETIRED_RELAY_ADDRESSES=
 ENV WRD_IDENTITY_HOST=identity.interego.xwisee.com
 ENV WRD_RELAY_URL=https://relay.interego.xwisee.com
 

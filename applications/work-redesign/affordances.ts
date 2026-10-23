@@ -164,7 +164,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     inputs: [
       envelope('wrd:record-task-map'),
       ...RELAY_INPUTS,
-      { name: 'document_text', type: 'string', required: true, description: 'The document the quotes come from; its sha256 must equal payload.document.sha256.' },
+      { name: 'document_text', type: 'string', required: false, description: 'The document the quotes come from; its sha256 must equal payload.document.sha256. Required: beside the envelope, or, relay-signed (act … sign_payload: true sends only the signed pair), inside the payload the relay signs, which the record then keeps, so only with payload.document.storeText true.' },
       POD_INPUT,
     ],
     outputs: {
@@ -199,7 +199,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     inputs: [
       envelope('wrd:revise-task'),
       ...RELAY_INPUTS,
-      { name: 'document_text', type: 'string', required: false, description: "Only with new sourceQuotes: the workflow's document, whose sha256 must match the one recorded." },
+      { name: 'document_text', type: 'string', required: false, description: "Only with new sourceQuotes: the workflow's document, whose sha256 must match the one recorded. Relay-signed (act … sign_payload: true sends only the signed pair), it goes inside the payload the relay signs, which the record then keeps, so only for a workflow that stored its document text." },
       POD_INPUT,
     ],
     outputs: {
@@ -395,7 +395,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     toolName: 'wrd.read_envelope_template',
     targetTemplate: '{base}/wrd/read_envelope_template',
     title: 'Get the payload to sign for a write, filled from the pod (signed read)',
-    description: `wrd.envelope_template with a signed read, carried in the JSON body so it never appears in a URL: the JSON Schema and a template — ${TEMPLATE_SHAPE} — filled with ${TEMPLATE_FILLED}. For an admin or a key in the pod's registry; any other key is refused (403), and a stale read 401, as wrd.read_records refuses them. Signs nothing and writes nothing.`,
+    description: `wrd.envelope_template with a signed read, carried in the JSON body so it never appears in a URL: the JSON Schema and a template — ${TEMPLATE_SHAPE} — filled with ${TEMPLATE_FILLED}. For an admin or a key in the pod's registry; any other key is refused (403), and a stale read 401, as wrd.read_records refuses them. Relay-signed (act … sign_payload: true sends only the signed pair), the payload the relay signs is the read's, intent wrd:read-records, with the arguments below (intent, task_iri, …) under template: {"intent": "wrd:read-records", "podUrl": …, "nonce": …, "template": {"intent": "wrd:classify-task", "task_iri": …}}. Signs nothing and writes nothing.`,
     method: 'POST',
     annotations: { title: 'Payload template (signed read)', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     reads: READS,
@@ -405,7 +405,8 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
         description: `The signed read: ${READ_ENVELOPE.description} In the JSON body, never in a URL.`,
       },
       ...RELAY_INPUTS,
-      ...TEMPLATE_INPUTS,
+      // Relay-signed, the intent travels under template in the signed payload, so it is not required beside it.
+      ...TEMPLATE_INPUTS.map((i) => (i.name === 'intent' ? { ...i, required: false, description: 'The write intent; required, beside the read or, relay-signed, under template in the payload the relay signs.' } : i)),
     ],
     outputs: TEMPLATE_OUTPUTS,
   },

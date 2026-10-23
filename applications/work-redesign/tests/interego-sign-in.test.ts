@@ -11,8 +11,9 @@
  * minting a code for the URL the page sent the tab to.
  *
  * Checked: the button, the authorize URL (PKCE S256 over the verifier the tab keeps, a random
- * state, the client's metadata document as client_id), the callback (the code out of the address
- * bar before anything else, the state checked, the exchange server-side), a decisive act signed
+ * state, the client's metadata document as client_id), the callback (the code and state out of the
+ * address bar, and the flow out of sessionStorage, before the page sends any request, so a failed
+ * manifest read leaves neither behind; the state checked, the exchange server-side), a decisive act signed
  * through the relay and taken as relay-delegated from this UI's agent, the person named from the
  * bridge's answer and the agent from the relay's signed text, and sign-out; a state that is not
  * the tab's refused with nothing exchanged; POST /ui/relay/sign refusing without a bearer (and
@@ -205,14 +206,16 @@ interface Page {
   readonly errors: string[];
   /** The URLs the page sent this tab to (window.open with '_self'). */
   readonly opened: string[];
+  /** Every request the page sent, failed ones included, with the address bar as it left. */
+  readonly sent: Array<{ readonly path: string; readonly addressBar: string }>;
   text(): string;
   click(text: string): void;
   fill(input: Element, value: string): void;
   session(): Record<string, string>;
   until<T>(fn: () => T | null | undefined | false, what: string, ms?: number): Promise<T>;
 }
-/** The shipped shell at `path` and app.js in a jsdom window, its sessionStorage seeded with `session` (the tab's, across the relay's page). */
-async function openPage(bridge: string, path: string, session: Record<string, string> = {}): Promise<Page> {
+/** The shipped shell at `path` and app.js in a jsdom window, its sessionStorage seeded with `session` (the tab's, across the relay's page); a request to `failPath` fails as a network error does. */
+async function openPage(bridge: string, path: string, session: Record<string, string> = {}, failPath?: string): Promise<Page> {
   const errors: string[] = [];
   const vc = new VirtualConsole();
   vc.on('jsdomError', (e: Error) => errors.push(`jsdomError: ${e.message}`));
@@ -227,8 +230,11 @@ async function openPage(bridge: string, path: string, session: Record<string, st
   (w as unknown as { open: (u: string, t: string) => null }).open = (u, t) => { opened.push(`${t} ${u}`); return null; };
   (w as unknown as { scrollTo: () => void }).scrollTo = () => undefined;
   const log: Logged[] = [];
+  const sent: Array<{ path: string; addressBar: string }> = [];
   w['fetch'] = async (input: unknown, init?: RequestInit): Promise<globalThis.Response> => {
     const url = new URL(String(input), w.location.href);
+    sent.push({ path: url.pathname, addressBar: w.location.pathname + w.location.search });
+    if (url.pathname === failPath) throw new TypeError('Failed to fetch');
     const r = await fetch(url, init);
     let body: Obj = {};
     try { body = typeof init?.body === 'string' ? objOf(JSON.parse(init.body)) : {}; } catch { body = {}; }
@@ -240,7 +246,7 @@ async function openPage(bridge: string, path: string, session: Record<string, st
   w.eval(APP_JS);
   const d = w.document;
   return {
-    window: w, log, errors, opened,
+    window: w, log, errors, opened, sent,
     text: () => d.getElementById('app')?.textContent ?? '',
     click: (text) => {
       const b = [...d.querySelectorAll('button')].find((x) => x.textContent === text);
@@ -311,8 +317,10 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
     const code = await w.relay.authorize(url.href);
     const page = await openPage(w.bridge, `/ui/oauth/callback?code=${code}&state=${String(p['state'])}`, first.session());
     await page.until(() => page.text().includes(`Signed in as ${PERSON} via ${agentOf('work-redesign')}`), 'who is signed in');
-    // The code left the address bar before anything else; nothing the page asked for carried it, or the token, in a URL.
+    // The code left the address bar before anything else: every request, the manifest's read first, left from /ui; nothing the page asked for carried it, or the token, in a URL.
     expect(page.window.location.pathname + page.window.location.search).toBe('/ui');
+    expect(page.sent[0]?.path).toBe('/affordances');
+    expect(page.sent.filter((r) => r.addressBar !== '/ui')).toEqual([]);
     const kept = objOf(JSON.parse(page.session()[SESSION_KEY] ?? '{}'));
     const token = String(kept['token']);
     expect(token).toMatch(/^idt-[0-9a-f]{32}$/);
@@ -421,6 +429,20 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       expect([r.status, String(r.body['iep:refusalReason'])]).toEqual([400, expect.stringMatching(why)]);
     }
     expect([...first.errors, ...page.errors, ...fresh.errors]).toEqual([]);
+  }, 60_000);
+
+  it('takes the code and state out of the address bar, and the flow out of sessionStorage, before the callback page sends any request, so a manifest read that fails leaves neither behind and exchanges nothing', async () => {
+    const w = await world();
+    const first = await openPage(w.bridge, '/ui');
+    const url = await startSignIn(first);
+    const code = await w.relay.authorize(url.href);
+    const page = await openPage(w.bridge, `/ui/oauth/callback?code=${code}&state=${String(url.searchParams.get('state'))}`, first.session(), '/affordances');
+    await page.until(() => page.text().includes('The affordance manifest could not be read'), 'the failed manifest read');
+    expect(page.sent).toEqual([{ path: '/affordances', addressBar: '/ui' }]);
+    expect(page.window.location.pathname + page.window.location.search).toBe('/ui');
+    expect(page.session()).toEqual({});
+    expect(w.relay.seen.filter((s) => s.path === '/token')).toEqual([]);
+    expect([...first.errors, ...page.errors]).toEqual([]);
   }, 60_000);
 
   it('shows a person no one has registered their user DID, from the bridge\'s answer, to send to an admin, while their read is refused', async () => {

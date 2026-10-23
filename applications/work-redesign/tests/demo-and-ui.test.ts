@@ -636,17 +636,24 @@ describe('work-redesign offline demo and web UI', () => {
     }
   }, 300_000);
 
-  it('reads the sign-in settings strictly: relay addresses, the identity host, the relay URL, admin DIDs and WRD_CHAT_AGENTS_DECIDE, each malformed value refused with what is wrong', () => {
+  it('reads the sign-in settings strictly: relay addresses (trusted and retired), the identity host, the relay URL, admin DIDs and WRD_CHAT_AGENTS_DECIDE, each malformed value refused with what is wrong', () => {
     const RELAY_ADDRESS = '0x276E11D2229D3a96Dc96356C15C03c7F83201eBc';
     const HOST = 'identity.interego.xwisee.com';
     const ADMIN_DID = `did:web:${HOST}:users:u-pk-f2a9c751075a`;
-    expect(parseRelaySignIn({})).toEqual({ ok: true, config: { relayAddresses: [], identityHost: null, relayUrl: null, adminDids: [], chatAgentsDecide: false } });
-    expect(parseRelaySignIn({ relays: ` ${RELAY_ADDRESS}, `, identityHost: 'Identity.Interego.Xwisee.com', relayUrl: 'https://relay.interego.xwisee.com/', adminDids: ADMIN_DID, chatAgentsDecide: '1' }))
-      .toEqual({ ok: true, config: { relayAddresses: [RELAY_ADDRESS.toLowerCase()], identityHost: HOST, relayUrl: 'https://relay.interego.xwisee.com', adminDids: [ADMIN_DID], chatAgentsDecide: true } });
+    const RETIRED = '0x00000000000000000000000000000000000000Aa';
+    expect(parseRelaySignIn({})).toEqual({ ok: true, config: { relayAddresses: [], retiredRelayAddresses: [], identityHost: null, relayUrl: null, adminDids: [], chatAgentsDecide: false } });
+    expect(parseRelaySignIn({ relays: ` ${RELAY_ADDRESS}, `, retiredRelays: RETIRED, identityHost: 'Identity.Interego.Xwisee.com', relayUrl: 'https://relay.interego.xwisee.com/', adminDids: ADMIN_DID, chatAgentsDecide: '1' }))
+      .toEqual({ ok: true, config: { relayAddresses: [RELAY_ADDRESS.toLowerCase()], retiredRelayAddresses: [RETIRED.toLowerCase()], identityHost: HOST, relayUrl: 'https://relay.interego.xwisee.com', adminDids: [ADMIN_DID], chatAgentsDecide: true } });
+    // A retired key alone (sign-in off for new requests) still re-checks what it signed.
+    expect(parseRelaySignIn({ retiredRelays: RETIRED, identityHost: HOST })).toMatchObject({ ok: true, config: { relayAddresses: [], retiredRelayAddresses: [RETIRED.toLowerCase()] } });
     expect(parseRelaySignIn({ chatAgentsDecide: '0' })).toMatchObject({ ok: true, config: { chatAgentsDecide: false } });
     const no = (v: Parameters<typeof parseRelaySignIn>[0]): string => { const r = parseRelaySignIn(v); return r.ok ? 'accepted' : r.why; };
     expect(no({ relays: '0x123', identityHost: HOST })).toMatch(/^WRD_TRUSTED_RELAY_ADDRESSES holds "0x123", which is not a 0x address/);
     expect(no({ relays: RELAY_ADDRESS })).toMatch(/^WRD_TRUSTED_RELAY_ADDRESSES is set and WRD_IDENTITY_HOST is not/);
+    expect(no({ retiredRelays: '0x123', identityHost: HOST })).toMatch(/^WRD_RETIRED_RELAY_ADDRESSES holds "0x123", which is not a 0x address/);
+    expect(no({ retiredRelays: ADMIN_DID, identityHost: HOST })).toMatch(/^WRD_RETIRED_RELAY_ADDRESSES holds/);
+    expect(no({ retiredRelays: RETIRED })).toMatch(/^WRD_RETIRED_RELAY_ADDRESSES is set and WRD_IDENTITY_HOST is not/);
+    expect(no({ relays: RELAY_ADDRESS, retiredRelays: RELAY_ADDRESS.toLowerCase(), identityHost: HOST })).toMatch(new RegExp(`^WRD_RETIRED_RELAY_ADDRESSES holds ${RELAY_ADDRESS.toLowerCase()}, which WRD_TRUSTED_RELAY_ADDRESSES lists too`));
     for (const h of ['https://identity.interego.xwisee.com', 'identity.interego.xwisee.com:443', 'identity.interego.xwisee.com/agents', 'localhost', 'a b.example']) {
       expect(no({ identityHost: h }), h).toMatch(/^WRD_IDENTITY_HOST must be a bare host name/);
     }
@@ -685,7 +692,7 @@ describe('work-redesign offline demo and web UI', () => {
     expect(asked).toBe(0);
   });
 
-  it('the production server reads the sign-in settings at startup: off without a relay address, relay-attested with one (saying so), and any malformed value stops it, saying which', async () => {
+  it('the production server reads the sign-in settings at startup: off without a relay address, relay-attested with one (saying so), and any malformed value stops it, saying which, as does an admin address that is not an address', async () => {
     const RELAY_ADDRESS = '0x276e11d2229d3a96dc96356c15c03c7f83201ebc';
     const HOST = 'identity.interego.xwisee.com';
     const IMAGE = { WRD_TRUSTED_RELAY_ADDRESSES: RELAY_ADDRESS, WRD_IDENTITY_HOST: HOST, WRD_RELAY_URL: 'https://relay.interego.xwisee.com' };
@@ -701,6 +708,12 @@ describe('work-redesign offline demo and web UI', () => {
       [{ ...IMAGE, WRD_ADMIN_DIDS: RELAY_ADDRESS }, /did not start: WRD_ADMIN_DIDS holds "0x276e11d2229d3a96dc96356c15c03c7f83201ebc", which is not did:web:identity\.interego\.xwisee\.com:users:<id>/, null],
       [{ WRD_ADMIN_DIDS: `did:web:${HOST}:users:u-pk-f2a9c751075a` }, /did not start: WRD_ADMIN_DIDS is set and WRD_IDENTITY_HOST is not/, null],
       [{ ...IMAGE, WRD_CHAT_AGENTS_DECIDE: 'yes' }, /did not start: WRD_CHAT_AGENTS_DECIDE is neither 1 nor 0/, null],
+      [{ ...IMAGE, WRD_RETIRED_RELAY_ADDRESSES: '0x00000000000000000000000000000000000000aa' }, null, /0 admin DID\(s\); 1 retired relay key\(s\) whose stored countersigns still re-verify/],
+      [{ ...IMAGE, WRD_RETIRED_RELAY_ADDRESSES: RELAY_ADDRESS }, /did not start: WRD_RETIRED_RELAY_ADDRESSES holds 0x276e11d2229d3a96dc96356c15c03c7f83201ebc, which WRD_TRUSTED_RELAY_ADDRESSES lists too/, null],
+      [{ ...IMAGE, WRD_RETIRED_RELAY_ADDRESSES: 'nope' }, /did not start: WRD_RETIRED_RELAY_ADDRESSES holds "nope", which is not a 0x address/, null],
+      // A user DID in the address list would be lower-cased into another user: it stops the bridge, pointing at WRD_ADMIN_DIDS.
+      [{ ...IMAGE, WRD_ADMIN_ADDRESSES: `0x${'ab'.repeat(20)}, did:web:${HOST}:users:u-pk-0404A0B0C0D0` }, new RegExp(`did not start: WRD_ADMIN_ADDRESSES holds "did:web:${HOST.replace(/\./g, '\\.')}:users:u-pk-0404A0B0C0D0", which is not a 0x address \\(40 hex characters\\); a user DID is an admin through WRD_ADMIN_DIDS`), null],
+      [{ WRD_ADMIN_ADDRESSES: `0x${'ab'.repeat(20)}` }, null, /sign-in with an Interego account: off/],
     ];
     const runs = await startEach(cases.map(([env]) => env));
     for (const [i, [env, stops, says]] of cases.entries()) {
@@ -716,6 +729,8 @@ describe('work-redesign offline demo and web UI', () => {
     expect(dockerfile).toMatch(/^ENV WRD_RELAY_URL=https:\/\/relay\.interego\.xwisee\.com$/m);
     expect(dockerfile).toMatch(/^ENV WRD_ADMIN_DIDS=$/m);
     expect(dockerfile).toMatch(/^ENV WRD_CHAT_AGENTS_DECIDE=$/m);
+    expect(dockerfile).toMatch(/^ENV WRD_RETIRED_RELAY_ADDRESSES=$/m);
+    expect(dockerfile).toMatch(/ROTATING THE RELAY KEY/);
     expect(dockerfile).toMatch(/RELAY-ATTESTED, NOT USER-HELD/);
   }, 300_000);
 
