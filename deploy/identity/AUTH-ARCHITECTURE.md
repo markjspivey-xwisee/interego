@@ -169,6 +169,8 @@ Two relay env vars control the fallback:
 
 A deployment that always serves a single surface (e.g. a dedicated mobile-only relay) can set `RELAY_DEFAULT_SURFACE_AGENT=claude-mobile` to pin the label.
 
+**Surface agents are restored on demand.** The identity server keeps surface agents only in memory, and its boot-time rebuild brings back one placeholder agent per user. When `GET /agents/<id>/did.json` or `/agents/<id>/profile` finds no agent and the id is exactly `<surface>-<userId>`, with a relay-shaped slug and the canonical id (`u-pk-`, `u-eth-` or `u-did-` and 12 hex) of a user the server knows, it restores that user's agent with the name and scope `ensureSurfaceAgent` would give it (`surface-agent-restore.ts`); a verified token for that agent, issued to that user, restores it too. Unknown, deleted or non-canonical users, ambiguous ids and ids matching the janitor's `TEST_AGENT_PATTERN` are never restored, and anonymous restores of slugified client names are capped (4 per user, 1024 in all). Because the id is what names the owner, `POST /register-agent` refuses with 403 an id ending in another user's canonical id, so nobody can register `claude-<victim>` and appear as its controller; the caller's own `<surface>-<their userId>` still registers.
+
 ## Threat model: who reads and writes `auth-methods.jsonld`
 
 The pod's CSS is allow-all behind the css-gate, and the record is plaintext, so the gate is what decides who touches it (`deploy/css-gate/server.mjs`).
