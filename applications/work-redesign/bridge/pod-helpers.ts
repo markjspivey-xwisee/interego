@@ -61,7 +61,7 @@
  */
 import {
   assertSafeFetchTarget, guardedFetchFn, canonicalGraphDigest, canonicalGraphDigestResult, createSignedAuthorship,
-  makeWalletDelegationSigner, makeWalletDelegationVerifier, verifySignedAuthorship, sha256Hex, openEncryptedEnvelope,
+  makeWalletDelegationSigner, makeWalletDelegationVerifier, verifySignedAuthorship, sha256Hex, openEncryptedEnvelope, turtleIriRef,
   type AuthorshipProof, type EncryptedEnvelope, type EncryptionKeyPair, type FetchFn, type IRI, type ManifestEntry, type Wallet,
 } from '@interego/core';
 import {
@@ -470,7 +470,10 @@ async function signedRegionHeld(entry: ManifestEntry, descriptorTurtle: string, 
   if (!DESCRIBES.test(descriptorTurtle)) return null;
   const held = [...graphContent.matchAll(BLOCK_OPENER)].map((m) => m[1] ?? '').filter((g) => g !== '').slice(0, BLOCKS_TRIED);
   for (const graphIri of held) {
-    const as = descriptorTurtle.replace(DESCRIBES, () => `iep:describes <${graphIri}>`);
+    // The block name comes from the pod's bytes, so it is serialized as an IRI or skipped.
+    const ref = turtleIriRef(graphIri);
+    if (ref === null) continue;
+    const as = descriptorTurtle.replace(DESCRIBES, () => `iep:describes ${ref}`);
     if (as === descriptorTurtle) continue;
     const bytes = await readBytes(as, graphContent, entry.modalStatus, cache);
     if (bytes.ok && bytes.read.verified.contentBinding === 'bound' && bytes.read.record !== null && graphIriOf(bytes.read.record.entityIri) === graphIri) return bytes.read;
