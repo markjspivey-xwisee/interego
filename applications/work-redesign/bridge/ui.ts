@@ -27,11 +27,14 @@
  * for the person with its delegation key. The page holds the relay's own OAuth access token for
  * the sign-in (about an hour), and sends it with every signature through POST /ui/relay/sign,
  * which presents it at the relay's /mcp as any MCP client does; for that hour it lets its holder
- * call the relay's tools as the person, so whoever runs this bridge is trusted with it for the
- * session. It is never logged, stored, echoed or put in a URL here. The identity server's token
- * behind the sign-in never reaches this bridge or the page: nothing here calls the relay's
- * /identity-token or its REST /tool/ routes, and the refresh token the relay's token answer
- * carries is dropped.
+ * call the relay's tools as the person, and the relay's GET /identity-token trades it for the
+ * identity server's bearer behind the sign-in (up to a day; it links a wallet, removes sign-in
+ * methods, deletes the account). Nothing here calls /identity-token or the REST /tool/ routes, and
+ * the refresh token the relay's token answer carries is dropped, but that is what this code does,
+ * not a boundary: no narrower token can sign (sign_request takes the scope mcp or mcp:write, and
+ * /identity-token takes exactly those), so whoever runs this bridge, or holds a copy of the token,
+ * is trusted with the person's account for up to a day, past the hour and past sign-out. The
+ * token is never logged, stored, echoed or put in a URL here.
  *
  * All three answers carry the same Content-Security-Policy: scripts, styles and connections
  * from this origin only, no inline script or style, no framing. Because `style-src 'self'`
@@ -268,7 +271,7 @@ export const SIGN_IN_EXPIRED = 'interego-sign-in-expired';
 /** The refusal code when the relay's /mcp answers 403 (a token with no mcp scope at all, which cannot sign): the page forgets it too. */
 export const SIGN_IN_REFUSED = 'interego-sign-in-refused';
 /** Said wherever the token is handed out or used. */
-export const TOKEN_PASSES_THROUGH = 'Relay-attested, not a key you hold: the Interego relay signs each act for you. This page holds the relay\'s OAuth access token for your sign-in, good for about an hour, and sends it through this bridge with every signature. Until it ends it lets whoever holds it call the relay\'s tools as you, so whoever runs this bridge is trusted with it while you are signed in; the bridge never logs, stores or echoes it. It is not your identity-server token, which never reaches this bridge or this page. Signing out forgets it in this tab but revokes nothing: the relay offers no way to revoke it, so it stays good until it ends.';
+export const TOKEN_PASSES_THROUGH = 'Relay-attested, not a key you hold: the Interego relay signs each act for you. This page holds the relay\'s OAuth access token for your sign-in, good for about an hour, and sends it through this bridge with every signature; the bridge never logs, stores or echoes it. Until it ends it lets whoever holds it call the relay\'s tools as you, and the relay will also trade it, at its /identity-token, for the identity-server token behind your sign-in: that one is good for up to a day and works on your account itself (linking a wallet, removing your sign-in methods, deleting the account). This bridge never asks for it, but no narrower token can sign, so whoever runs this bridge, and anyone who gets a copy of your access token while it lasts, is trusted with your account for up to a day, past the hour and past signing out. Signing out forgets the access token in this tab but revokes nothing: the relay offers no way to revoke it, so it stays good until it ends. "Sign out everywhere" on the identity server\'s dashboard ends every identity-server token, a traded one included, but not the relay\'s access token.';
 
 class SignInDown extends Error {
   constructor(readonly status: number, message: string) { super(message); }
@@ -557,8 +560,9 @@ export function attachInteregoSignIn(app: Express, opts: { readonly base: string
       const kind = tj['token_type'];
       if (typeof kind === 'string' && kind.toLowerCase() !== 'bearer') { no(res, 502, RELAY_DOWN, `the relay issued a ${relayText(kind, [access])} token, which this page cannot present`); return; }
       // The page holds this access token itself, as any MCP client does, and nothing else: no
-      // identity-server token (the bridge never calls /identity-token) and no refresh token (dropped
-      // here, so nothing on this side can renew the sign-in). It forgets the token when it ends:
+      // identity-server token (the bridge never calls /identity-token, though the relay would trade
+      // this token there for one) and no refresh token (dropped here, so nothing on this side can
+      // renew the sign-in). It forgets the token when it ends:
       // expires_in from now (the relay's is an hour), at most MAX_TOKEN_SECONDS.
       const lifetime = tj['expires_in'];
       const seconds = typeof lifetime === 'number' && Number.isFinite(lifetime) ? Math.min(Math.max(lifetime, 0), MAX_TOKEN_SECONDS) : DEFAULT_TOKEN_SECONDS;

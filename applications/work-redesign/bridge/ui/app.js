@@ -18,9 +18,11 @@
  * from then on every payload is signed by the relay through POST /ui/relay/sign (the relay's MCP
  * sign_request), and sent as the act's {_signed_payload, _signature}. Relay-attested, not a key
  * the person holds; the access token passes through the bridge on every signature, and for its
- * hour it lets its holder call the relay's tools as the person. It is kept in sessionStorage only
- * (this tab), never in localStorage, a URL or the page, and forgotten when it ends (a timer, and a
- * check before each signature) or when the person signs out. Nothing revokes it.
+ * hour it lets its holder call the relay's tools as the person and trade it at the relay's
+ * /identity-token for the identity-server token behind the sign-in (good on the account itself
+ * for up to a day). It is kept in sessionStorage only (this tab), never in localStorage, a URL or
+ * the page, and forgotten when it ends (a timer, and a check before each signature) or when the
+ * person signs out. Nothing revokes it.
  *
  * Untrusted text (anything read from the pod or typed by a person) reaches the page only as
  * text nodes. No innerHTML, no style attribute: widths are set through the CSSOM, which the
@@ -35,7 +37,7 @@ const SIGN_IN = 'Sign in with your Interego account';
 const SIGN_IN_OFFERED = 'Or sign in with your Interego account: your passkey, on the Interego relay\'s own sign-in page. The relay then signs each act for you (relay-attested, not a key you hold), and an admin registers your Interego user DID, which this page shows once you are signed in.';
 const NOT_SIGNED_IN = 'No wallet, and not signed in: this page cannot sign yet, and it reads the pod only where the bridge serves unsigned reads.';
 const SEND_TO_ADMIN = 'This is who you are to this bridge: send it to an admin of this pod to be registered.';
-const SIGNED_OUT = 'Signed out: this tab no longer holds the relay\'s access token for your sign-in. Nothing was revoked: the relay offers no way to revoke it, so the token stays good at the relay until it ends, about an hour after you signed in, for anyone who kept a copy (it passed through this bridge with every signature). Your Interego account and its passkeys are untouched.';
+const SIGNED_OUT = 'Signed out: this tab no longer holds the relay\'s access token for your sign-in. Nothing was revoked: the relay offers no way to revoke it, so the token stays good at the relay until it ends, about an hour after you signed in, for anyone who kept a copy (it passed through this bridge with every signature). Until it ends a holder can also trade it at the relay for the identity-server token behind your sign-in, which works on your account itself (linking a wallet, removing sign-in methods, deleting the account) for up to a day, and one already traded stays good that long. "Sign out everywhere" on the identity server\'s dashboard ends every identity-server token, but not the relay\'s access token.';
 const SIGN_IN_ENDED = 'Your Interego sign-in has ended: sign in again.';
 const RELAY_STEPS = [
   'Press "Sign in with your Interego account" and sign in with your passkey on the Interego relay\'s own page.',
@@ -51,7 +53,7 @@ const DEMO_KEY = 'DEMO KEY — derived from a published seed';
 const READ_ONLY = 'No wallet: this browser has no EIP-191 wallet, so this page cannot sign, and it reads the pod only where the bridge serves unsigned reads. Install or enable a wallet that supports personal_sign and reload; the bridge accepts only signed envelopes and never asks for a key.';
 const READ_SIGNING = 'Reading this pod needs your signature too: the page asks your wallet to sign one read and reuses it for up to nine minutes.';
 const READ_RELAYED = 'Reading this pod needs a signature too: the relay signs one read for you, and the page reuses it for up to nine minutes.';
-const RELAY_TRUST = 'Relay-attested, not a key you hold: the Interego relay signs each act for you. This tab holds the relay\'s access token for your sign-in (about an hour), and it passes through this bridge with every signature: until it ends it lets whoever holds it call the relay\'s tools as you, so whoever runs this bridge is trusted with it while you are signed in.';
+const RELAY_TRUST = 'Relay-attested, not a key you hold: the Interego relay signs each act for you. This tab holds the relay\'s access token for your sign-in (about an hour), and it passes through this bridge with every signature: until it ends it lets whoever holds it call the relay\'s tools as you, and trade it at the relay for the identity-server token behind your sign-in, which works on your account itself for up to a day. So whoever runs this bridge is trusted with your account for up to a day, past signing out.';
 const READ_ENVELOPE_MS = 9 * 60 * 1000;
 const SIGNING_MEANS = 'Your signature says this description of your work is right, or records why it is not. It is stored with the record, anyone who can read the pod can check it, and you can take a copy of every record about you.';
 const WALLET_STEPS = [

@@ -88,8 +88,10 @@
  *                                   to the web UI, whose "Sign in with your Interego account" goes
  *                                   through it (bridge/ui.ts; on only with a trusted relay address).
  *                                   The relay's OAuth access token a person signs in with (about
- *                                   an hour) passes through this bridge on every signature, so its
- *                                   operator is trusted with it
+ *                                   an hour) passes through this bridge on every signature, and the
+ *                                   relay's /identity-token trades it for their identity-server
+ *                                   token (good on the account itself for up to a day), so its
+ *                                   operator is trusted with their account for that day
  *   WRD_CHAT_AGENTS_DECIDE          1 → acts that change who may do what (the registry, countersign,
  *                                   an outcome, grant, revoke) are taken from chat agents too; unset or 0 → only
  *                                   from this bridge's web UI (agent slug work-redesign-…); any other
@@ -258,7 +260,7 @@ process.stdout.write(signIn.relayAddresses.length > 0
   ? `work-redesign: sign-in with an Interego account: RELAY-ATTESTED, not user-held: requests the relay (${signIn.relayAddresses.join(', ')}) signs act as the user their agent belongs to on ${identityHost ?? ''}; whoever holds that key or controls that host can act as anyone here. Decisive acts from chat agents: ${signIn.chatAgentsDecide ? 'taken (WRD_CHAT_AGENTS_DECIDE=1)' : 'refused (only this bridge\'s web UI; WRD_CHAT_AGENTS_DECIDE=1 lifts it)'}; ${signIn.adminDids.length} admin DID(s); ${signIn.retiredRelayAddresses.length} retired relay key(s) whose stored countersigns still re-verify\n`
   : 'work-redesign: sign-in with an Interego account: off (WRD_TRUSTED_RELAY_ADDRESSES is empty); every signature is a key its signer holds\n');
 process.stdout.write(signIn.relayUrl !== null && uiRelayPolicy !== null
-  ? `work-redesign: web UI sign-in with an Interego account: through ${signIn.relayUrl}, as the client ${base}/ui/oauth/client.json (a Client ID Metadata Document; where the relay cannot read it, as for an http deployment URL, the same metadata is registered once by Dynamic Client Registration when the page first asks how to sign in). The relay's OAuth access token a person signs in with (about an hour; it lets its holder call the relay's tools as them) passes through this bridge on every signature: whoever runs it is trusted with that token while it lasts\n`
+  ? `work-redesign: web UI sign-in with an Interego account: through ${signIn.relayUrl}, as the client ${base}/ui/oauth/client.json (a Client ID Metadata Document; where the relay cannot read it, as for an http deployment URL, the same metadata is registered once by Dynamic Client Registration when the page first asks how to sign in). The relay's OAuth access token a person signs in with (about an hour; it lets its holder call the relay's tools as them, and the relay's /identity-token trades it for their identity-server token, good on the account itself for up to a day) passes through this bridge on every signature: whoever runs it is trusted with that account for up to a day after each sign-in\n`
   : `work-redesign: web UI sign-in with an Interego account: off (${signIn.relayUrl === null ? 'WRD_RELAY_URL is not set' : 'no trusted relay: WRD_TRUSTED_RELAY_ADDRESSES is empty'})\n`);
 process.stdout.write(`work-redesign: reads: ${publicReads ? 'PUBLIC (WRD_PUBLIC_READS=1): anyone who can reach this bridge reads every record' : 'signed reads only (wrd.read_records, wrd.read_calibration); unsigned GETs answer 401'}\n`);
 

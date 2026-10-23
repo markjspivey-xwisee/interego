@@ -481,11 +481,14 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
 
     // Sign-out: the token is forgotten in this tab, the page says plainly that nothing was revoked, offers the sign-in again, and nothing after it carries a bearer.
     expect(page.text()).toContain('This page holds the relay\'s OAuth access token for your sign-in, good for about an hour');
-    expect(page.text()).toContain('It is not your identity-server token, which never reaches this bridge or this page.');
+    expect(page.text()).toContain('the relay will also trade it, at its /identity-token, for the identity-server token behind your sign-in: that one is good for up to a day and works on your account itself');
+    expect(page.text()).not.toContain('never reaches');
     const before = page.log.length;
     page.click('Sign out');
     await page.until(() => page.text().includes('Signed out: this tab no longer holds the relay\'s access token for your sign-in.'), 'the sign-out');
     expect(page.text()).toContain('Nothing was revoked: the relay offers no way to revoke it, so the token stays good at the relay until it ends, about an hour after you signed in');
+    expect(page.text()).toContain('trade it at the relay for the identity-server token behind your sign-in, which works on your account itself (linking a wallet, removing sign-in methods, deleting the account) for up to a day, and one already traded stays good that long');
+    expect(page.text()).not.toContain('untouched');
     expect(page.session()[SESSION_KEY]).toBeUndefined();
     expect(page.text()).toContain(SIGN_IN);
     expect(page.text()).not.toContain(`Signed in as ${PERSON}`);
@@ -704,10 +707,13 @@ describe('work-redesign web UI: sign in with your Interego account', () => {
       enabled: true, relayUrl: w.relay.base, authorizationEndpoint: `${w.relay.base}/authorize`, clientId: `${DEPLOYED}/ui/oauth/client.json`,
       clientRegistration: 'client-id-metadata-document', redirectUri: `${DEPLOYED}/ui/oauth/callback`, scope: 'mcp', identityHost: IDENTITY,
     });
-    // The trust note names the token the page holds, what it lets its holder do, and what signing out does not do.
+    // The trust note names the token the page holds, what it lets its holder do (the relay's tools, and a trade at /identity-token for the account's own bearer), and what signing out does not do.
     expect(String(config['trust'])).toMatch(/the relay's OAuth access token for your sign-in, good for about an hour, and sends it through this bridge with every signature/);
     expect(String(config['trust'])).toMatch(/call the relay's tools as you/);
-    expect(String(config['trust'])).toMatch(/It is not your identity-server token, which never reaches this bridge or this page/);
+    expect(String(config['trust'])).toMatch(/trade it, at its \/identity-token, for the identity-server token behind your sign-in/);
+    expect(String(config['trust'])).toMatch(/linking a wallet, removing your sign-in methods, deleting the account/);
+    expect(String(config['trust'])).toMatch(/trusted with your account for up to a day, past the hour and past signing out/);
+    expect(String(config['trust'])).not.toMatch(/never reaches/);
     expect(String(config['trust'])).toMatch(/revokes nothing/);
     // The callback page is the shell, under the same CSP: one external script, nothing inline.
     const cb = await fetch(`${w.bridge}/ui/oauth/callback?code=c&state=s`);
