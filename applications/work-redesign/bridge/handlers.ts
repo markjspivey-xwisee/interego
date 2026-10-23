@@ -17,16 +17,19 @@
  * a signed read (wrd:read-records), always in a POST body, from an admin or a key the registry
  * holds, decided on the whole manifest; the GET read model (wrd.list_records, wrd.calibration)
  * answers 401 unless the operator opens it (publicReads), and the GET wrd.envelope_template fills
- * only an allowlist (the caller's own IRIs and the head binding) and refuses a signed read in its
- * URL (400). Every call names a pod this bridge serves, or is refused (403) before the pod is read.
+ * only an allowlist (the caller's own IRIs and the head binding), never reads with a signed read,
+ * and refuses (400) the forms of one it detects in its URL (see signedReadIn). Every call names a
+ * pod this bridge serves, or is refused (403) before the pod is read.
  *
  * With a record key, the entity IRIs this bridge derives from a tuple (an address and a task, an
  * agent and a kind of task, a plan and "probe") are keyed with it, each segment separated by kind
  * and position, so the public manifest does not give the tuple away; records written before the
  * key keep their unkeyed IRIs and are still found. Every keyed IRI carries the key's public
- * fingerprint: when the pod holds one derived under a key this bridge does not hold (or any, and
- * it holds none), the bridge would find those records absent, so it refuses every write and every
- * lookup by tuple (409, naming WRD_RECORD_KEY) and its read model marks what it cannot know.
+ * fingerprint, and every sealed graph names the record public key it was sealed to: when the pod
+ * holds an IRI derived under a key this bridge does not hold, or a version sealed to one (or any
+ * of either, and it holds none), the bridge would find those records absent, so it refuses every
+ * write and every lookup by tuple (409, naming WRD_RECORD_KEY) and its read model marks what it
+ * cannot know. The sealed version shows it from that key's first write, before any IRI is keyed.
  *
  * Every refusal is a typed `refuse()` with an HTTP status; every success carries an outcome
  * flag. No environment reads: bridge/server.ts composes this with its configuration.
@@ -119,6 +122,7 @@ const SIGNED_READ_NEEDED = 'Reading records through this bridge needs a signed r
 const CONTEXT_WITHHELD = 'Withheld: without a signed read this template carries only the intent, the pod, issuedAt, nonce, the IRIs you named and the head binding (descriptorUrl, graphDigest, recordId). Fields that depend on what a record says (a task\'s text digest, a plan\'s tasks, a decision\'s kind, valuation or window) are left empty. POST the same arguments to wrd.read_envelope_template with a signed wrd:read-records envelope as read_envelope in the JSON body, from an admin or a key in the registry, to have them filled.';
 const SIGNED_READ_IN_URL = 'A signed read is never sent in a URL.';
 const KEY_MISMATCH = 'This pod holds records whose IRIs were derived under a record key this bridge does not hold.';
+const KEY_SEALED_MISMATCH = 'This pod holds records sealed to a record key this bridge does not hold.';
 const SEALED_RECORDS = 'Records this bridge cannot open (sealed to another WRD_RECORD_KEY, or their sealed bytes changed on the pod) are listed here and never read as absent: a figure that would depend on one is marked rather than computed without it (see unreadable).';
 const NEXT_RECLASSIFY = 'Re-classify this task, then propose a plan.';
 const CONTRARY_NOTE = 'Reviewed runs on this task disagree with its classification often enough to look again; nothing changes until someone re-classifies it.';
@@ -172,26 +176,38 @@ const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const lower = (a: string): string => a.toLowerCase();
 
-/** A query key that carries a signed read, however a client spelled the object into the URL: read_envelope, read_envelope[signature] (qs, jQuery), read_envelope.payload, read_envelope[]. */
+/** A read_envelope parameter, however a client spelled the object into the URL: read_envelope, read_envelope[signature] (qs, jQuery), read_envelope.payload, read_envelope[]. */
 const SIGNED_READ_KEY = /^read[-_]?envelope(?:$|[[.])/i;
-/** A key naming a signature, bare or as the last step of a nested query key (x[signature], x.signature). */
+/** A key named for a signature, bare or as the last step of a nested query key (x[signature], x.signature). */
 const SIGNATURE_KEY = /(?:^|[[.])signature\]?$/i;
-/** An EIP-191 signature (65 bytes), or JSON text that names a signature: what a signed read carries. */
+/** Text holding a 0x-prefixed 65-byte signature (130 hex), or a "signature" JSON field: what a signed read carries, in a key or a value. */
 const SIGNATURE_TEXT = /0x[0-9a-f]{130}|"signature"\s*:/i;
 /**
- * The query key that carries a signed read, or null. A GET's arguments are its query string, so
- * this looks at every key and every value, nested or not: read_envelope in any of the spellings an
- * object takes in a query string, any key naming a signature, and any value holding a signature or
- * JSON that names one. The unsigned template takes nothing of the kind.
+ * Where a GET's arguments carry a signed read, or null. A GET's arguments are its query string,
+ * so every key and every value is looked at, nested to any depth, for exactly these: a
+ * read_envelope parameter in any spelling above; a key named for a signature; and a key or a
+ * value holding a 0x-prefixed 65-byte signature or a "signature" JSON field (so a signed read
+ * sent as a bare key with no value is found). Nothing else is: a signature written without its
+ * 0x, or JSON naming it some other way, passes this check, and the GET still never reads with it.
+ * The answer names the top-level argument, never text that holds a signature.
  */
-function signedReadKeyIn(args: Obj): string | null {
-  const carries = (v: unknown, depth: number): boolean => {
-    if (typeof v === 'string') return SIGNATURE_TEXT.test(v);
-    if (depth > 8 || typeof v !== 'object' || v === null) return false;
-    return Object.entries(v).some(([k, x]) => SIGNED_READ_KEY.test(k) || SIGNATURE_KEY.test(k) || carries(x, depth + 1));
-  };
+function signedReadIn(args: Obj): string | null {
+  const keyCarries = (k: string): boolean => SIGNED_READ_KEY.test(k) || SIGNATURE_KEY.test(k) || SIGNATURE_TEXT.test(k);
   for (const [k, v] of Object.entries(args)) {
-    if (SIGNED_READ_KEY.test(k) || SIGNATURE_KEY.test(k) || carries(v, 0)) return k;
+    const where = SIGNATURE_TEXT.test(k) ? 'an argument whose name holds a signature (not repeated here)' : `the argument ${JSON.stringify(k.slice(0, 64))}`;
+    if (keyCarries(k)) return where;
+    const stack: unknown[] = [v];
+    while (stack.length > 0) {
+      const x = stack.pop();
+      if (typeof x === 'string') {
+        if (SIGNATURE_TEXT.test(x)) return where;
+      } else if (typeof x === 'object' && x !== null) {
+        for (const [kk, xx] of Object.entries(x)) {
+          if (keyCarries(kk)) return where;
+          stack.push(xx);
+        }
+      }
+    }
   }
   return null;
 }
@@ -537,43 +553,99 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     return headIn(await call.view.graph(graphIriOf(entity)), kind);
   }
 
-  // ── IRIs derived under another record key ───────────────────────────────────────────
+  // ── Records written under another record key ────────────────────────────────────────
 
-  /** A graph on the pod whose IRI was derived under a record key this bridge does not hold. */
-  interface KeyConflict { readonly fingerprint: string; readonly graphIri: string; readonly descriptorUrl: string }
+  /**
+   * What on the pod was written under a record key this bridge does not hold: a graph whose IRI was
+   * derived under another key (fingerprint set), or a version sealed to another key (sealedTo set),
+   * which is what shows it from that key's very first write, before it has keyed any IRI.
+   */
+  interface KeyConflict {
+    readonly graphIri: string; readonly descriptorUrl: string;
+    /** The fingerprint an IRI keyed under another key carries; null for a version sealed to another key (its IRI may carry none). */
+    readonly fingerprint: string | null;
+    /** The record public keys a version sealed to another key names as its recipients ([] when it names none); null for a keyed IRI. */
+    readonly sealedTo: readonly string[] | null;
+  }
   /** An IRI keyed under another key than this bridge's (or under any, when this bridge holds none). */
   const foreignKeyed = (iri: string): boolean => { const fp = fingerprintOfIri(iri); return fp !== null && fp !== ownFingerprint; };
+  /**
+   * A version sealed to a record key this bridge does not hold: a trusted platform key signed it
+   * where its proof says (eligible), its graph is sealed and did not open, and its envelope names
+   * no recipient that is this bridge's record public key (any sealed version, when this bridge
+   * holds no key). A sealed graph whose envelope names this bridge's key and still does not open
+   * had its ciphertext changed on the pod: that graph answers 409 where it is used, and is no key
+   * conflict, so changing one ciphertext does not stop the key's own bridge.
+   */
+  const sealedToAnother = (l: LoadedRecord): boolean => l.authorship.eligible && isSealedShut(l)
+    && (recordKey === undefined || (l.sealedTo !== null && !l.sealedTo.includes(recordKey.publicKey)));
+  /**
+   * Per descriptor URL, whether that version is sealed to another key, kept across calls, so each
+   * version is read for this once per process, not on every call. A version's URL carries its
+   * record id, which carries the nonce of the call that wrote it, so no write puts another
+   * version at a URL already read; and a bridge publishes a version's graph and descriptor before
+   * its manifest entry, so a URL read from the manifest already holds what it will hold.
+   */
+  const sealVerdicts = new Map<string, KeyConflict | null>();
+  const SEAL_VERDICT_LIMIT = 50_000;
+  const SEAL_READ_BATCH = 16;
   const conflicts = new WeakMap<PodView, Promise<KeyConflict | null>>();
   /**
-   * The first graph on the pod keyed under another record key, or null; looked for once per call,
-   * in the manifest the call walks anyway. Only a version a trusted platform key signed where its
-   * proof says counts (as for every version), so an entry a pod writer adds to the manifest does
-   * not stop the bridge. Such a graph means this bridge derives other IRIs than the records on the
-   * pod carry: a lookup by tuple would find nothing and answer from that absence, and a write would
-   * start a second chain beside the one it cannot see.
+   * The first graph on the pod keyed under another record key, else the first version sealed to
+   * another key, or null; looked for once per call, in the manifest the call walks anyway. Only a
+   * version a trusted platform key signed where its proof says counts (as for every version), so
+   * an entry a pod writer adds to the manifest does not stop the bridge. Either means this bridge
+   * is not the one holding the key the pod's records are written under: it derives other IRIs for
+   * new records than they carry and cannot open what is sealed, so a lookup by tuple would find
+   * nothing and answer from that absence, and a write would start a second chain beside the one it
+   * cannot see, and would seal what the key's own bridge then cannot read (the registry, say) or,
+   * holding no key, write in plaintext what that key would have sealed.
    */
   function keyConflict(call: Call): Promise<KeyConflict | null> {
     let found = conflicts.get(call.view);
     if (!found) {
       found = (async (): Promise<KeyConflict | null> => {
-        for (const e of await call.view.entries()) {
+        const entries = await call.view.entries();
+        for (const e of entries) {
           if (!e.describes.some(foreignKeyed)) continue;
           const l = await call.view.read(e);
-          if (l.authorship.eligible && foreignKeyed(l.graphIri)) return { fingerprint: fingerprintOfIri(l.graphIri) ?? '', graphIri: l.graphIri, descriptorUrl: l.descriptorUrl };
+          if (l.authorship.eligible && foreignKeyed(l.graphIri)) return { fingerprint: fingerprintOfIri(l.graphIri) ?? '', sealedTo: null, graphIri: l.graphIri, descriptorUrl: l.descriptorUrl };
         }
-        return null;
+        return sealedConflict(call, entries);
       })();
       conflicts.set(call.view, found);
     }
     return found;
   }
+  /** The first version among `entries` sealed to another record key (see sealedToAnother), reading only versions this process has not read for it before. */
+  async function sealedConflict(call: Call, entries: readonly ManifestEntry[]): Promise<KeyConflict | null> {
+    const unseen: ManifestEntry[] = [];
+    for (const e of entries) {
+      const known = sealVerdicts.get(e.descriptorUrl);
+      if (known) return known;
+      if (known === undefined) unseen.push(e);
+    }
+    for (let i = 0; i < unseen.length; i += SEAL_READ_BATCH) {
+      const loaded = await Promise.all(unseen.slice(i, i + SEAL_READ_BATCH).map((e) => call.view.read(e)));
+      let hit: KeyConflict | null = null;
+      for (const l of loaded) {
+        const v: KeyConflict | null = sealedToAnother(l) ? { fingerprint: null, sealedTo: l.sealedTo ?? [], graphIri: l.graphIri, descriptorUrl: l.descriptorUrl } : null;
+        if (sealVerdicts.size >= SEAL_VERDICT_LIMIT) sealVerdicts.clear();
+        sealVerdicts.set(l.descriptorUrl, v);
+        hit ??= v;
+      }
+      if (hit) return hit;
+    }
+    return null;
+  }
   /** Why a bridge facing a KeyConflict cannot answer from what it finds, naming WRD_RECORD_KEY. */
-  const keyConflictWhy = (c: KeyConflict): string =>
-    `${c.graphIri} (${c.descriptorUrl}) was derived under the record key with fingerprint k${c.fingerprint}, and this bridge ${ownFingerprint === null ? 'holds no record key' : `holds the one with fingerprint k${ownFingerprint}`} (WRD_RECORD_KEY): it derives other IRIs for the same records, so it would find them absent`;
-  /** Refuse (409, naming WRD_RECORD_KEY) a write or a lookup by tuple on a pod holding IRIs keyed under another record key. */
+  const keyConflictWhy = (c: KeyConflict): string => (c.fingerprint !== null
+    ? `${c.graphIri} (${c.descriptorUrl}) was derived under the record key with fingerprint k${c.fingerprint}, and this bridge ${ownFingerprint === null ? 'holds no record key' : `holds the one with fingerprint k${ownFingerprint}`} (WRD_RECORD_KEY): it derives other IRIs for the same records, so it would find them absent`
+    : `${c.graphIri} (${c.descriptorUrl}) is sealed to ${c.sealedTo && c.sealedTo.length > 0 ? `the record key with public key ${c.sealedTo.join(', ')}` : 'a record key its envelope does not name'}, and this bridge ${recordKey === undefined ? 'holds no record key' : `holds the one with public key ${recordKey.publicKey}`} (WRD_RECORD_KEY): it cannot open what was written under that key, nor derive the IRIs that key gives new records, so it would find them absent, and what it wrote would be ${recordKey === undefined ? 'in plaintext' : 'sealed where that key\'s bridge could not open it'}`);
+  /** Refuse (409, naming WRD_RECORD_KEY) a write or a lookup by tuple on a pod holding records written under another record key. */
   async function refuseKeyConflict(call: Call): Promise<void> {
     const c = await keyConflict(call);
-    if (c) throw decline(409, KEY_MISMATCH, `${keyConflictWhy(c)}; it writes nothing and looks nothing up by tuple until it runs with that key`, { env: 'WRD_RECORD_KEY' });
+    if (c) throw decline(409, c.fingerprint !== null ? KEY_MISMATCH : KEY_SEALED_MISMATCH, `${keyConflictWhy(c)}; it writes nothing and looks nothing up by tuple until it runs with that key`, { env: 'WRD_RECORD_KEY' });
   }
 
   // ── Entity IRIs derived from a tuple: keyed when this bridge holds a record key ─────────
@@ -2686,15 +2758,16 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     },
 
     // The unsigned template is a GET: its arguments travel in the URL, where server, proxy and
-    // browser logs keep them. A signed read reads every record until it is stale, so one sent
-    // here is refused before anything is read, and the refusal points at the POST form. So is one
-    // spelled the way an object goes into a query string (read_envelope[signature]=…,
-    // read_envelope.payload=…), or any argument carrying a signature.
+    // browser logs keep them. It never reads with a signed read, and a signed read reads every
+    // record until it is stale, so the forms of one it detects (signedReadIn: a read_envelope
+    // parameter in any spelling, a key named for a signature, a key or value holding a 0x
+    // signature or a "signature" JSON field) are refused before anything is read, and the
+    // refusal points at the POST form.
     'wrd.envelope_template': async (args) => {
-      const inUrl = signedReadKeyIn(args);
+      const inUrl = signedReadIn(args);
       if (inUrl !== null) {
         return { ...refuse(400, SIGNED_READ_IN_URL,
-          `${JSON.stringify(inUrl.slice(0, 64))} carries a signed read or a signature and was sent to wrd.envelope_template, whose arguments travel in the URL, where logs keep them; nothing was read or filled. POST the same arguments to wrd.read_envelope_template with read_envelope in the JSON body, and sign a new read: one that has been in a URL should be taken as seen by whoever keeps those logs`,
+          `${inUrl} carries a signed read or a signature and was sent to wrd.envelope_template, whose arguments travel in the URL, where logs keep them; nothing was read or filled. POST the same arguments to wrd.read_envelope_template with read_envelope in the JSON body, and sign a new read: one that has been in a URL should be taken as seen by whoever keeps those logs`,
           { ...via('read_envelope_template'), method: 'POST', intent: 'wrd:read-records' }) };
       }
       return envelopeTemplate(args, false);
@@ -2782,10 +2855,11 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     return shut.length === 0 ? null
       : `${figure} counts only the records that can be read: ${shut.length} ${kinds.join(' or ')} record(s) cannot be (${whysOf(shut)}), so ${figure} may differ`;
   };
-  /** What the read model says when the pod holds IRIs keyed under another record key (see keyConflict). */
+  /** What the read model says when the pod holds records written under another record key (see keyConflict). */
   const keyConflictNote = (c: KeyConflict): Obj => ({
-    why: `${keyConflictWhy(c)}. Writes and lookups by tuple are refused (409), and every answer below that rests on a record keyed under that key is marked unreadable.`,
-    env: 'WRD_RECORD_KEY', podKey: `k${c.fingerprint}`, bridgeKey: ownFingerprint === null ? null : `k${ownFingerprint}`,
+    why: `${keyConflictWhy(c)}. Writes and lookups by tuple are refused (409), and every answer below that rests on a record written under that key is marked unreadable.`,
+    env: 'WRD_RECORD_KEY', podKey: c.fingerprint === null ? null : `k${c.fingerprint}`, bridgeKey: ownFingerprint === null ? null : `k${ownFingerprint}`,
+    ...(c.sealedTo !== null ? { sealedTo: c.sealedTo, bridgePublicKey: recordKey?.publicKey ?? null } : {}),
   });
 
   async function listRecords(call: Call, args: Obj): Promise<Obj> {

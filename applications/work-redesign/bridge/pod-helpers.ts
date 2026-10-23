@@ -26,7 +26,9 @@
  * bytes unchanged. A sealed graph that does not open — sealed to another key, no key held, or
  * ciphertext changed on the pod — is never read as an empty or valid record: a descriptor that is
  * otherwise eligible stays eligible and untrusted (so its graph answers "altered", 409, and an
- * older version never silently becomes current again), and one that is not is set aside.
+ * older version never silently becomes current again), and one that is not is set aside. Each
+ * read also says whom a sealed graph's envelope names as its recipients (sealedTo), so a bridge
+ * can tell a version sealed to another record key from one whose ciphertext changed.
  *
  * ── WHAT THE MANIFEST SAYS IS ONLY A HINT ─────────────────────────────────────────────────────
  * Which descriptors describe a graph, and which version supersedes which, are read from the
@@ -232,6 +234,12 @@ export interface LoadedRecord {
   readonly authorship: Authorship;
   /** Why the record is not trusted, in plain words; null when it is. */
   readonly why: string | null;
+  /**
+   * For a sealed graph, the record public keys its envelope wraps the content key for, as the
+   * envelope names them; null for a plaintext graph, or a sealed one whose envelope does not
+   * parse as one (who it was sealed to is then unknown).
+   */
+  readonly sealedTo: readonly string[] | null;
 }
 
 interface Verified { readonly signatureValid: boolean; readonly contentBinding: string }
@@ -252,7 +260,7 @@ function unreadable(entry: ManifestEntry, why: string): LoadedRecord {
       signatureValid: false, signerAddress: null, signedByTrustedKey: false, atPredictedUrl: false, contentBinding: 'unbound',
       modalMatches: false, eligible: false, trusted: false, proof: null,
     },
-    why,
+    why, sealedTo: null,
   };
 }
 
@@ -363,6 +371,21 @@ export function openSealedGraph(body: string, key: EncryptionKeyPair): string | 
 }
 
 /**
+ * The record public keys a sealed graph document wraps its content key for, as its envelope names
+ * them (unauthenticated: the envelope's own word), or null when it does not parse as an envelope.
+ * Never throws.
+ */
+export function sealedRecipients(body: string): string[] | null {
+  let env: unknown;
+  try { env = JSON.parse(body); } catch { return null; }
+  if (typeof env !== 'object' || env === null) return null;
+  const wrapped = (env as { wrappedKeys?: unknown }).wrappedKeys;
+  if (!Array.isArray(wrapped)) return null;
+  return wrapped.map((w) => (typeof w === 'object' && w !== null ? (w as { recipientPublicKey?: unknown }).recipientPublicKey : undefined))
+    .filter((k): k is string => typeof k === 'string');
+}
+
+/**
  * Where a record sits and who signed it, from its descriptor alone: what readRecord decides for
  * every record, and all it can decide for one whose sealed graph did not open.
  */
@@ -383,7 +406,7 @@ function placement(entry: ManifestEntry, podUrl: string, container: string, proo
  * otherwise cause by corrupting one ciphertext. Anything less than that is set aside, as ever.
  */
 async function sealedShut(entry: ManifestEntry, podUrl: string, descriptorTurtle: string, trusted: ReadonlySet<string>,
-  container: string, why: string, cache?: VerifyCache): Promise<LoadedRecord> {
+  container: string, why: string, sealedTo: readonly string[] | null, cache?: VerifyCache): Promise<LoadedRecord> {
   const proof = parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle);
   const subjectId = firstMatch(/^<([^>]+)>\s*\n\s*a iep:ContextDescriptor/m, descriptorTurtle);
   let verified: Verified = { signatureValid: false, contentBinding: 'unbound' };
@@ -422,6 +445,7 @@ async function sealedShut(entry: ManifestEntry, podUrl: string, descriptorTurtle
       signatureValid: verified.signatureValid, signerAddress, signedByTrustedKey, atPredictedUrl, contentBinding: verified.contentBinding,
       modalMatches: false, eligible, trusted: false, proof,
     },
+    sealedTo,
   };
 }
 
@@ -440,11 +464,13 @@ export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: 
   if (!dist) return unreadable(entry, 'the descriptor links no graph');
   if (!dist.accessURL.startsWith(podUrl)) return unreadable(entry, 'the descriptor links a graph outside this pod');
   let graphContent: string;
+  let sealedTo: string[] | null = null;
   if (dist.encrypted) {
     const sealed = await getText(dist.accessURL, fetchFn, 'application/jose+json');
     if (sealed.body === null) return unreadable(entry, `the graph is not at the URL its descriptor names (${sealed.status})`);
+    sealedTo = sealedRecipients(sealed.body);
     const opened = recordKey ? openSealedGraph(sealed.body, recordKey) : null;
-    if (opened === null) return sealedShut(entry, podUrl, descriptorTurtle, trusted, container, recordKey ? SEALED_OTHER_KEY : SEALED_NO_KEY, cache);
+    if (opened === null) return sealedShut(entry, podUrl, descriptorTurtle, trusted, container, recordKey ? SEALED_OTHER_KEY : SEALED_NO_KEY, sealedTo, cache);
     graphContent = opened;
   } else {
     const graph = await getText(dist.accessURL, fetchFn, 'application/trig, text/turtle');
@@ -476,7 +502,7 @@ export async function readRecord(entry: ManifestEntry, podUrl: string, fetchFn: 
       signatureValid: verified.signatureValid, signerAddress, signedByTrustedKey, atPredictedUrl,
       contentBinding: verified.contentBinding, modalMatches: r.modalMatches, eligible, trusted: isTrusted, proof,
     },
-    why,
+    why, sealedTo,
   };
 }
 

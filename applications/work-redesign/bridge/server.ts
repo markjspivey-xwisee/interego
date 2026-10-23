@@ -31,8 +31,10 @@
  *                                   world-readable on a pod that serves anonymous reads. Keep a
  *                                   copy: a lost key leaves every sealed record unreadable (409),
  *                                   with no way back, and every keyed IRI names its key's
- *                                   fingerprint, so a bridge with another key (or none) on a pod
- *                                   holding keyed records refuses every write (409)
+ *                                   fingerprint and every sealed graph its public key, so a
+ *                                   bridge with another key (or none) on a pod holding records
+ *                                   written under it refuses every write (409), from that key's
+ *                                   first sealed write on
  *   WRD_REQUIRE_RECORD_KEY          1 → the bridge does not start (exit 1) without a valid
  *                                   WRD_RECORD_KEY (blank counts as missing), so a deployment
  *                                   cannot fall back to plaintext records. The image sets it;

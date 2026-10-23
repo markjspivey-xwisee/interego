@@ -22,10 +22,10 @@
  * On the pod the walk leaves behind (sealed, reads closed): an unsigned wrd.envelope_template
  * holds nothing beyond its allowlist for any intent that reads a record, valued and probe
  * decisions alike, while the same arguments with a signed read, POSTed to
- * wrd.read_envelope_template, are filled (and the GET refuses a signed read); no tuple behind an
- * entity IRI (who is assigned which task, which agent works which kind of task, which decision is
- * a probe) can be recovered from the pod's public bytes by recomputing an unkeyed hash; every
- * keyed IRI names the key's fingerprint, and no keyed segment is shared between two kinds or
+ * wrd.read_envelope_template, are filled (and the GET refuses the forms of a signed read it
+ * detects, nested or not, in a key or a value); no tuple behind an entity IRI (who is assigned
+ * which task, which agent works which kind of task, which decision is a probe) can be recovered
+ * from the pod's public bytes by recomputing an unkeyed hash; every keyed IRI names the key's fingerprint, and no keyed segment is shared between two kinds or
  * positions; the only instant two kinds share is a workflow version's with its tasks, the link
  * README and readExposure name. The production server refuses to start without a record key when the image requires
  * one.
@@ -300,6 +300,18 @@ describe('work-redesign offline demo and web UI', () => {
     // The GET form never takes one: it is refused (400) before anything is read, and nothing is filled.
     const inUrl = objOf(await h['wrd.envelope_template']!({ intent: 'wrd:classify-task', task_iri: tasks[0]?.['taskIri'], read_envelope: JSON.stringify(read) }));
     expect([inUrl['iep:refusalStatus'], inUrl['error'], inUrl['template']]).toEqual([400, 'A signed read is never sent in a URL.', undefined]);
+    // Nor nested, in a key or a value, at any depth (an MCP client sends objects): every form it detects is refused, and the refusal repeats no signature.
+    for (const args of [
+      { filter: { [read.signature]: '' } }, { filter: [{ by: { [JSON.stringify(read)]: true } }] }, { [JSON.stringify(read)]: '' }, { [read.signature]: '' },
+      { filter: { deep: [[[[[[[[[[[read.signature]]]]]]]]]]] } }, { filter: { by: { signature: 'anything' } } }, { filter: { 'read-envelope': {} } },
+    ]) {
+      const r = objOf(await h['wrd.envelope_template']!({ intent: 'wrd:read-records', ...args }));
+      expect([Object.keys(args)[0], r['iep:refusalStatus'], r['error'], r['template'], JSON.stringify(r).includes(read.signature.slice(2, 40))])
+        .toEqual([Object.keys(args)[0], 400, 'A signed read is never sent in a URL.', undefined, false]);
+    }
+    // A form it does not detect (the signature without its 0x) is not refused, and still is not read: the template holds only its fixed shape.
+    const undetected = objOf(await h['wrd.envelope_template']!({ intent: 'wrd:read-records', filter: { [read.signature.slice(2)]: read.signature.slice(2) } }));
+    expect([undetected['kind'], undetected['context'], Object.keys(objOf(undetected['template'])).sort()]).toEqual([undefined, {}, ['intent', 'issuedAt', 'nonce', 'podUrl']]);
     const valuedPlan = plans.find((p) => p['planKind'] === 'valued' && rows(p['tasks']).some((x) => x['changed'] === true));
     const changed = rows(objOf(valuedPlan)['tasks']).filter((x) => x['changed'] === true).map((x) => String(x['taskIri'])).sort();
     const valueT = await filled('wrd:value-plan', { plan_iri: objOf(valuedPlan)['planIri'] }, true);
