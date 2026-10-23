@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-23 — Deploy plumbing for the work-redesign and practice-evidence bridges
+
+`tools/railway-services.mjs` has rows for the two new Railway services, `wrd-bridge` and `pev-bridge`, which were created in the fleet project on 2026-10-23. Each is declared a singleton with no deploy overlap, because each keeps its replay ledger, locks and hourly budgets in process. A new dispatch-only workflow, "Provision wrd/pev bridge keys", runs `tools/vertical-bridges-provision.mjs` on master. It generates each bridge's platform key and record key inside the runner and writes them straight to Railway. A key that is already set is never overwritten, because a changed record key makes every sealed record unreadable. No value is printed, and only variable names are read back. It also copies `PEV_LLM_API_KEY` from the GitHub secret of that name when that secret exists. The workflow's default is a dry run.
+
 ## 2026-10-22 — Container images for the work-redesign and practice-evidence bridges
 
 `deploy/Dockerfile.wrd-bridge` and `deploy/Dockerfile.pev-bridge` build the two bridges as single-stage images, and `deploy/images.json` adds `interego-wrd-bridge` and `interego-pev-bridge` to the build matrix with the prebuilt-packages recipe. Each image copies the packages, the shared vertical code and its own vertical, listens on every interface (`HOST=::`), and bakes in only non-secret defaults: the operator pod path on the gate and, for practice-evidence, lower pilot hourly budgets. Keys, admins, the pod credential and the model route stay unset until they are set on the service. No Railway service is added, so neither bridge deploys yet. The merge itself still redeploys jev-harness-bridge, whose image bundles the whole tree, as any change to `CHANGELOG.md` does.
