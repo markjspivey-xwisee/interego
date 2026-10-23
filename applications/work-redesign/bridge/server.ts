@@ -53,11 +53,21 @@
  *                                   the GET wrd.envelope_template fills only the shape and the
  *                                   head binding; wrd.read_envelope_template fills it all for
  *                                   that signed read, sent in the POST body (never in a URL)
- *   WRD_PLATFORM_KEY                hex secp256k1 key the bridge signs records with; absent → an
- *                                   EPHEMERAL key, and records written now are not trusted
- *                                   after a restart
+ *   WRD_PLATFORM_KEY                64 hex: the secp256k1 key the bridge signs records with; a
+ *                                   malformed value stops the bridge; absent → an EPHEMERAL key,
+ *                                   and records written now are not trusted after a restart
+ *   WRD_REQUIRE_PLATFORM_KEY        1 → the bridge does not start (exit 1) without a valid
+ *                                   WRD_PLATFORM_KEY (blank counts as missing), so a deployment
+ *                                   cannot fall back to an ephemeral key whose records the next
+ *                                   restart sets aside; 0 or unset → no such guard. The image sets
+ *                                   it to 1. Read as it is, like WRD_REQUIRE_RECORD_KEY: any other
+ *                                   value, blank or whitespace included, stops the bridge (exit 1,
+ *                                   saying why)
  *   WRD_ADMIN_ADDRESSES             comma list of addresses that may change the role registry
- *   WRD_TRUSTED_PLATFORM_ADDRESSES  comma list of earlier platform keys whose records stay trusted
+ *   WRD_TRUSTED_PLATFORM_ADDRESSES  comma list of earlier platform keys whose records stay trusted.
+ *                                   An address that signed records on the pod stays listed for as
+ *                                   long as the pod is used: dropping it cuts every line holding a
+ *                                   version it signed, and writes to those graphs answer 409
  */
 import { createWallet, importWallet, deriveEncryptionKeyPair, type EncryptionKeyPair, type FetchFn } from '@interego/core';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
@@ -69,8 +79,8 @@ import { operatorPodFetch } from './pod-helpers.js';
 import { attachUi, hostAllowlistGuard, isLoopbackBind, parseEveryQueryPair, servedHostNames } from './ui.js';
 
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((s) => s.trim()).filter((s) => s !== '');
-// An image declares every variable it reads (`ENV NAME=`), so an empty value means unset; the one
-// exception is WRD_REQUIRE_RECORD_KEY, read as it is below.
+// An image declares every variable it reads (`ENV NAME=`), so an empty value means unset; the
+// exceptions are WRD_REQUIRE_RECORD_KEY and WRD_REQUIRE_PLATFORM_KEY, read as they are below.
 const env = (name: string): string | undefined => {
   const v = process.env[name];
   return v !== undefined && v.trim() !== '' ? v.trim() : undefined;
@@ -86,6 +96,7 @@ const writeSecret = env('WRD_POD_WRITE_SECRET');
 const recordKeyHex = env('WRD_RECORD_KEY');
 // Not through env(): a blank value must not read as unset here, where unset turns the guard off.
 const requireRecordKeyValue = process.env['WRD_REQUIRE_RECORD_KEY'];
+const requirePlatformKeyValue = process.env['WRD_REQUIRE_PLATFORM_KEY'];
 const publicReads = env('WRD_PUBLIC_READS') === '1';
 const key = env('WRD_PLATFORM_KEY');
 
@@ -111,6 +122,25 @@ if (recordKeyHex !== undefined) {
     process.exit(1);
   }
   recordKey = deriveEncryptionKeyPair(recordKeyHex, 'wrd-records');
+}
+
+// The same reading for the platform key's guard: on only for exactly 1, off only for 0 or unset.
+if (requirePlatformKeyValue !== undefined && requirePlatformKeyValue !== '0' && requirePlatformKeyValue !== '1') {
+  process.stderr.write(`work-redesign bridge did not start: WRD_REQUIRE_PLATFORM_KEY is ${requirePlatformKeyValue.trim() === '' ? 'blank' : 'neither 1 nor 0'}; set it to 1 to require a platform key, or to 0 (or unset it) to allow an ephemeral one\n`);
+  process.exit(1);
+}
+const requirePlatformKey = requirePlatformKeyValue === '1';
+// A deployment that requires a platform key does not start without one: an ephemeral key's records
+// are set aside after the next restart (every deploy is one), and trusting its address afterwards
+// forks every graph a later key wrote to. env() reads a blank key as unset.
+if (requirePlatformKey && key === undefined) {
+  process.stderr.write('work-redesign bridge did not start: WRD_REQUIRE_PLATFORM_KEY=1 and WRD_PLATFORM_KEY is not set (64 hex characters); an ephemeral key\'s records would not be trusted after the next restart\n');
+  process.exit(1);
+}
+// A platform key that is set but malformed stops the bridge, whether or not one is required.
+if (key !== undefined && !/^(0x)?[0-9a-fA-F]{64}$/.test(key)) {
+  process.stderr.write('work-redesign bridge did not start: WRD_PLATFORM_KEY must be 64 hex characters (32 bytes)\n');
+  process.exit(1);
 }
 
 let platform: PlatformSigner;

@@ -41,6 +41,8 @@ const CHAIN_WHOLE = 'Every version of this decision';
 const CHAIN_CUT = 'Versions of this decision read so far: not every version (the chain is incomplete)';
 const CHAIN_CUT_PRINT = 'Not every version: the chain is incomplete.';
 const chainCuts = (n) => `${n} record chain(s) do not read back to their first version: an earlier version is missing, or is not trusted. Their history is shown as incomplete, never as whole.`;
+const trustCuts = (n, keys) => `${n} of them reach a version signed by a platform key this bridge no longer trusts (${keys.join(', ')}). Every change to them is refused (409) until the operator lists that address in WRD_TRUSTED_PLATFORM_ADDRESSES again: an address that signed records on this pod stays trusted for as long as the pod is used.`;
+const HOLDER_WITHOUT_READ = 'Your read was refused, but anyone named in a record, or who signed one, can still take a copy of every record about their work, registered here or not. The copy keeps the platform\'s original signature; verify a download against the platform address you expect (the README gives the command).';
 const LEVEL_NAMES = {
   person: 'A person does it',
   'person-with-agent-assist': 'A person does it, with an agent assisting',
@@ -174,6 +176,7 @@ const S = {
   workflow: '', plan: '', result: null, panel: null, busy: false, planForm: {}, packet: null, decisionOpen: '',
   pod: new URLSearchParams(location.search).get('pod') ?? '',
   reads: new Map(),             // signed read envelopes by signer and pod, reused for up to READ_ENVELOPE_MS
+  readRefused: false,           // the last signed read was refused (401 or 403): the holder's copy is still offered
 };
 const data = () => S.data || {};
 const reg = () => (S.data && S.data.registry) || { members: [], taskKinds: [], head: null };
@@ -336,7 +339,8 @@ async function signedRead(send) {
   return { ok: false, status: 0, body: { error: 'The read was not signed.' } };
 }
 
-async function refresh() {
+/** Re-read the pod; `quiet` keeps the answer on screen when the read is refused (a holder copy's, say). */
+async function refresh(quiet = false) {
   const pod = S.pod || undefined;
   let signed = readSigner() !== '';
   let r = signed
@@ -347,8 +351,11 @@ async function refresh() {
     const open = await call('wrd.list_records', { pod_url: pod });
     if (open.ok) { r = open; signed = false; }
   }
+  // A signed read the bridge refused (401 or 403): the signer may still take their copy (holderCard).
+  S.readRefused = !r.ok && readSigner() !== '' && (r.status === 401 || r.status === 403);
   if (r.ok) S.data = r.body;
-  else { S.data = null; S.result = { tool: signed ? 'wrd.read_records' : 'wrd.list_records', ...r }; }
+  else if (!quiet) { S.data = null; S.result = { tool: signed ? 'wrd.read_records' : 'wrd.list_records', ...r }; }
+  else S.data = null;
   if (S.data && S.tab === 'calibration') {
     const c = signed
       ? await signedRead((envelope) => call('wrd.read_calibration', { envelope, pod_url: pod }))
@@ -393,9 +400,12 @@ function render() {
   if (!root) return;
   root.replaceChildren();
   if (!S.data) {
-    // Nothing read: still offer the way to sign a read (or another signer), and another pod.
+    // Nothing read: still offer the way to sign a read (or another signer), and another pod. A signer
+    // whose read was refused may still be named in records here (someone removed from the registry,
+    // say): their copy needs no read model, so it is offered here too.
+    const holder = S.readRefused && actor() ? h('section', null, h('h2', { text: 'My record' }), h('p', { class: 'small', text: HOLDER_WITHOUT_READ }), holderCard(null)) : null;
     add(root, h('h1', { text: 'Work redesign' }), resultNode(), h('div', { class: 'stack' }, signerNode()),
-      S.mode === 'wallet' ? h('p', { class: 'small muted', text: READ_SIGNING }) : null, podPicker());
+      S.mode === 'wallet' ? h('p', { class: 'small muted', text: READ_SIGNING }) : null, holder, podPicker());
     return;
   }
   const taskIri = taskFromHash();
@@ -417,7 +427,9 @@ function strip() {
   const altered = (d.altered ?? []).length;
   const forked = (d.forked ?? []).length;
   const untrusted = (d.untrusted ?? []).length;
-  const cuts = [...(d.decisions ?? []), ...(d.grants ?? [])].filter((x) => x.chainUnreadable).length;
+  // Every graph whose line is cut, whatever its kind (a bridge that reports chainCuts), else the decisions and grants that say so.
+  const cuts = Array.isArray(d.chainCuts) ? d.chainCuts.length : [...(d.decisions ?? []), ...(d.grants ?? [])].filter((x) => x.chainUnreadable).length;
+  const byKey = (d.chainCuts ?? []).filter((c) => c.untrustedKey);
   return h('header', { class: 'strip' },
     h('div', { class: 'stack' },
       h('div', { class: 'row' }, h('h1', { text: 'Work redesign' }), h('span', { class: 'muted small' }, 'pod ', h('code', { text: d.podUrl })),
@@ -429,6 +441,7 @@ function strip() {
       altered + forked + untrusted > 0 ? h('p', { class: 'warnbox small' },
         `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`) : null,
       cuts > 0 ? h('p', { class: 'badbox small', text: chainCuts(cuts) }) : null,
+      byKey.length > 0 ? h('p', { class: 'badbox small', text: trustCuts(byKey.length, [...new Set(byKey.map((c) => c.untrustedKey))]) }) : null,
       (d.sealed ?? []).length > 0 ? h('p', { class: 'badbox small', text: `${d.sealed.length} record(s) are sealed and this bridge cannot open them. ${d.sealedNote ?? ''}` }) : null,
       d.recordKeyMismatch ? h('p', { class: 'badbox small', text: `Another record key: ${d.recordKeyMismatch.why}` }) : null,
       d.plaintext ? h('p', { class: 'warnbox small', text: `${d.plaintext.versions} record version(s) written before the record key are plaintext on the pod. ${d.plaintext.why}` }) : null,
@@ -544,7 +557,7 @@ function summaryOf(tool, b) {
   if (tool === 'wrd.holder_copy') {
     return h('p', { text: b.status === 'copied'
       ? `${(b.copied ?? []).filter((c) => !c.skipped).length} version(s) copied, ${(b.copied ?? []).filter((c) => c.skipped).length} already there, to ${b.targetPodUrl}.`
-      : `${(b.bundle ?? []).length} record version(s) in the download.` });
+      : `${(b.bundle ?? []).length} record version(s) in the download.${b.platform?.address ? ` This bridge signs as ${b.platform.address}; verify the download against the address you expect.` : ''}` });
   }
   return null;
 }
@@ -1621,20 +1634,6 @@ function meView() {
   const myPlans = (d.plans ?? []).filter((p) => p.tasks.some((r) => r.changed && [r.current.personAddress, r.current.agentAddress, r.proposed.personAddress, r.proposed.agentAddress].includes(me)));
   const freed = (d.valuations ?? []).filter((v) => myPlans.some((p) => p.planIri === v.planIri))
     .flatMap((v) => v.result.freedPersonHours.perTask.filter((f) => mine.some((t) => t.taskIri === f.taskIri)).map((f) => ({ ...f, plan: planBy(v.planIri)?.title })));
-  const target = input('', null, { placeholder: 'https://your-pod.example/you/', size: 40 });
-  const download = async () => {
-    let envelope;
-    try { envelope = await sign({ intent: 'wrd:holder-copy', podUrl: d.podUrl }); } catch { return; }
-    const out = await send('wrd.holder_copy', { envelope });
-    if (!out) return;
-    const blob = new Blob([JSON.stringify({ holder: out.holder, receipt: out.receiptUrl, bundle: out.bundle }, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = h('a', { href: url, download: `wrd-record-${me}.json` });
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-  };
   return h('section', null,
     h('h2', { text: 'My record' }),
     h('p', { class: 'small muted', text: 'Every record that names you or carries your signature, with every version. Take a copy to a pod you hold, or download it; each copy keeps the platform\'s original signature. This page does not verify a download: the README gives the command that does, offline, against the platform address you expect.' }),
@@ -1644,9 +1643,57 @@ function meView() {
     h('h3', { text: 'Current versions carrying my signature' }),
     signed.length === 0 ? h('p', { class: 'muted small', text: 'None.' }) : signed.map(([k, title, row]) => h('div', { class: 'small' }, chip(k), ` ${title} `, demoChip(row))),
     freed.length ? [h('h3', { text: 'What plans say happens to hours on my work' }), freed.map((f) => h('div', { class: 'small', text: `${f.plan}: ${taskName(f.taskIri)} — ${band(f.band, (n) => num(n, 1))} hours a week; ${f.disposition}${f.note ? ` (${f.note})` : ''}` }))] : null,
-    h('div', { class: 'card' }, field('Copy to my pod', target),
-      h('button', { class: 'primary', text: 'Sign and copy', on: { click: () => act('wrd.holder_copy', 'wrd:holder-copy', { targetPodUrl: target.value.trim() }) } }),
-      h('button', { text: 'Download my record', on: { click: download } })));
+    holderCard(d.podUrl));
+}
+
+/**
+ * Copy to a pod, or download: wrd.holder_copy, signed as the acting identity. It needs no read
+ * model, so it works for a signer whose read is refused: `podUrl` null asks the bridge which pod it
+ * serves (the unsigned template names it), and a refused re-read afterwards leaves the answer shown.
+ */
+function holderCard(podUrl) {
+  const me = actor();
+  const target = input('', null, { placeholder: 'https://your-pod.example/you/', size: 40 });
+  const copy = async (fields) => {
+    if (S.busy) return null;
+    let pod = podUrl;
+    if (!pod) {
+      const t = await call('wrd.envelope_template', { intent: 'wrd:holder-copy', pod_url: S.pod || undefined });
+      if (!t.ok) { showResult('wrd.envelope_template', t); return null; }
+      pod = t.body.template?.podUrl;
+    }
+    S.busy = true;
+    S.result = { pending: true, tool: 'wrd.holder_copy' };
+    render();
+    let r;
+    try {
+      const envelope = await sign({ intent: 'wrd:holder-copy', podUrl: pod, ...fields });
+      r = await call('wrd.holder_copy', { envelope, pod_url: S.pod || undefined });
+    } catch (e) {
+      S.busy = false;
+      if (!(e instanceof NotSigned)) showResult('wrd.holder_copy', { ok: false, status: 0, body: { error: 'Signing did not complete.', 'iep:refusalReason': String(e?.message ?? e) } });
+      else render();
+      return null;
+    }
+    S.busy = false;
+    S.result = { tool: 'wrd.holder_copy', ...r };
+    await refresh(true);
+    return r.ok ? r.body : null;
+  };
+  const download = async () => {
+    const out = await copy({});
+    if (!out) return;
+    const blob = new Blob([JSON.stringify({ holder: out.holder, receipt: out.receiptUrl, bundle: out.bundle }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: `wrd-record-${me}.json` });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
+  return h('div', { class: 'card' }, field('Copy to my pod', target),
+    h('button', { class: 'primary', text: 'Sign and copy', on: { click: () => copy({ targetPodUrl: target.value.trim() }) } }),
+    h('button', { text: 'Download my record', on: { click: download } }));
 }
 
 boot();

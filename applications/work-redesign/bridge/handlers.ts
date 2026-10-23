@@ -110,7 +110,17 @@ export interface WrdDeps {
   readonly envelopeWindow?: { readonly pastMs: number; readonly futureMs: number };
   /** Monte Carlo draws; default DRAWS (5000), recorded on every valuation. */
   readonly draws?: number;
+  /**
+   * wrd.holder_copy reads every version on the pod. Default: at most HOLDER_COPY_STRANGERS_PER_MINUTE
+   * calls a minute from signers neither an admin nor in the registry, together (their keys cost
+   * nothing to make), and HOLDER_COPY_CONCURRENT copies in progress at once, whoever signs.
+   */
+  readonly holderCopyLimits?: { readonly strangersPerMinute: number; readonly concurrent: number };
 }
+
+/** The default holderCopyLimits: a few copies a minute from keys the registry does not hold, and two copies at once. */
+export const HOLDER_COPY_STRANGERS_PER_MINUTE = 4;
+export const HOLDER_COPY_CONCURRENT = 2;
 
 export type WrdHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
@@ -140,9 +150,11 @@ const ACKNOWLEDGED = 'acknowledged by the person named';
 const OBJECTED = 'objected to by the person named';
 const NOT_DECLARED = 'not declared';
 const INTEGRITY = 'A record this call depends on was altered after signing, or more than one version claims to be current.';
+const DISTRUSTED_LINE = 'A record this call depends on has an earlier version signed by a platform key this bridge no longer trusts.';
 const BAD_PAYLOAD = 'The envelope payload is malformed.';
 const NOT_WELL_FORMED = 'The request holds text that is not well-formed Unicode.';
 const REPLAYED = 'This envelope was already used.';
+const HOLDER_COPY_BUSY = 'Too many copies are being taken from this bridge right now; nothing was copied.';
 const NOT_FOUND_TASK = 'No such task on this pod.';
 const RETIRED = 'This task was retired.';
 const TASK_MOVED = 'The task changed since you read it.';
@@ -288,6 +300,9 @@ const unusableWhy = (g: GraphHeads): string => {
 const sealedRefusal = (g: GraphHeads): Declined => decline(409, INTEGRITY, `${g.graphIri}: ${unusableWhy(g)}`, { env: 'WRD_RECORD_KEY' });
 /** Why a graph's line does not reach its first version (see PodView.line). */
 const cutWhy = (graphIri: string, cut: LineCut): string => `${graphIri}: ${cut.why}`;
+/** The setting that restores a cut line, when one does: the record key for a version sealed shut, the trusted addresses for one a distrusted platform key signed. */
+const cutSetting = (cut: LineCut): Record<string, unknown> | undefined => (cut.sealed ? { env: 'WRD_RECORD_KEY' }
+  : cut.untrustedKey !== null ? { env: 'WRD_TRUSTED_PLATFORM_ADDRESSES', address: cut.untrustedKey } : undefined);
 
 /**
  * The current version of a graph as a record of `kind`, null when the graph is absent; 409 when
@@ -454,6 +469,10 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   const published = readPublishedPolicy();
   const window = deps.envelopeWindow ?? DEFAULT_ENVELOPE_WINDOW;
   const ledger = new NonceLedger(window.pastMs + window.futureMs);
+  const copyLimits = deps.holderCopyLimits ?? { strangersPerMinute: HOLDER_COPY_STRANGERS_PER_MINUTE, concurrent: HOLDER_COPY_CONCURRENT };
+  /** When each recent holder copy from a key the registry does not hold was let through (the last minute's). */
+  const strangerCopies: number[] = [];
+  let copiesInProgress = 0;
   const mutex = new KeyedMutex();
   const verifyCache: VerifyCache = new Map();
   const admins = new Set((deps.adminAddresses ?? []).map(lower));
@@ -520,8 +539,9 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
   /**
    * Open the envelope that authorises this call, then claim its nonce in the in-process ledger —
    * only for a signer the registry knows (or an admin), so keys nobody registered cannot fill
-   * the ledger. Every write is also checked against the pod itself (write(), below), which is the
-   * replay protection that survives a restart and holds across bridge processes.
+   * the ledger (wrd.holder_copy claims any other signer's too, within the budget it bounds them by).
+   * Every write is also checked against the pod itself (write(), below), which is the replay
+   * protection that survives a restart and holds across bridge processes.
    */
   async function openSigned(args: Obj, intent: EnvelopeIntent, key = 'envelope'): Promise<Signed> {
     const raw = args[key];
@@ -735,7 +755,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
    */
   async function wholeLine(call: Call, g: GraphHeads): Promise<LoadedRecord[]> {
     const l = await call.view.line(g);
-    if (l.cut) throw decline(409, INTEGRITY, cutWhy(g.graphIri, l.cut), l.cut.sealed ? { env: 'WRD_RECORD_KEY' } : undefined);
+    if (l.cut) throw decline(409, l.cut.untrustedKey !== null ? DISTRUSTED_LINE : INTEGRITY, cutWhy(g.graphIri, l.cut), cutSetting(l.cut));
     return l.versions;
   }
 
@@ -1835,6 +1855,110 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
   // ── The map ──────────────────────────────────────────────────────────────────────────
 
+  /**
+   * The copy itself (wrd.holder_copy, once its caller is let through): every graph's whole line is
+   * read, and every version of the graphs that name the signer, or that it signed, is copied or
+   * returned.
+   */
+  async function holderCopy(call: Signed): Promise<unknown> {
+    const rawTarget = call.payload['targetPodUrl'];
+    let target: string | null = null;
+    if (rawTarget !== undefined && rawTarget !== null) {
+      if (typeof rawTarget !== 'string') return { ...refuse(400, 'The target pod must be an http(s) URL.', 'payload.targetPodUrl must be a string') };
+      try { target = normalisePodUrl(rawTarget); } catch (e) { return { ...refuse(400, 'The target pod must be an http(s) URL.', messageOf(e)) }; }
+      if (target === call.podUrl) return { ...refuse(400, 'Copies go to a pod you hold, not to this one.', 'payload.targetPodUrl is the platform pod') };
+    }
+    const reg = await registryOf(call);
+    const snap = await snapshot(call.view);
+    // A record this bridge cannot read may name the holder: a copy without it would read as
+    // "nothing else names you". Refused rather than answered short, naming the setting when it is
+    // sealed. That holds for a current version that is sealed, altered or forked, and for an
+    // earlier version as much as a current one: a line that does not reach its first version
+    // (PodView.line) would come back without it and every version before it.
+    const shut: Array<{ readonly why: string; readonly sealed: boolean; readonly setting?: Record<string, unknown> }> = snap.graphs
+      .filter((s) => s.g.state === 'altered' || s.g.state === 'forked')
+      .map((s) => (s.g.heads.some(isSealedShut) ? { why: `${s.graphIri}: ${s.g.heads.find(isSealedShut)?.why ?? ''}`, sealed: true } : { why: whyUnusable(s), sealed: false }));
+    const lines = new Map<string, LoadedRecord[]>();
+    for (const s of snap.graphs) {
+      if (s.g.state !== 'ok') continue;
+      const l = await call.view.line(s.g);
+      if (l.cut) shut.push({ why: cutWhy(s.graphIri, l.cut), sealed: l.cut.sealed, ...(l.cut.untrustedKey !== null ? { setting: cutSetting(l.cut) } : {}) });
+      lines.set(s.graphIri, l.versions);
+    }
+    if (shut.length > 0) {
+      // A sealed one is named first: the setting that opens it is the likeliest fix; then one a platform key no longer trusted cut.
+      const sealed = shut.filter((x) => x.sealed);
+      const named = sealed[0] ?? shut.find((x) => x.setting !== undefined) ?? shut[0];
+      return { ...refuse(409, sealed.length > 0
+        ? 'Some records on this pod are sealed to a key this bridge does not hold, so it cannot tell whether they name you; nothing was copied.'
+        : 'Some records on this pod were altered after signing, have more than one current version or none, have an earlier version signed by a key this bridge no longer trusts, or are missing an earlier version, so it cannot tell whether they name you; nothing was copied.',
+      `${shut.length} graph(s) cannot be read in full, for example ${named?.why ?? ''}`, sealed.length > 0 ? { env: 'WRD_RECORD_KEY' } : named?.setting) };
+    }
+    const me = call.actor;
+    const selected = new Set<string>();
+    const myTasks = new Set<string>();
+    const recs = (g: string): WrdRecord[] => (lines.get(g) ?? []).flatMap((l) => (l.record ? [l.record] : []));
+    for (const g of lines.keys()) {
+      const versions = recs(g);
+      const last = versions[versions.length - 1];
+      if (!last || last.recordKind === 'HolderCopy') continue;
+      if (versions.some((v) => v.signers.some((s) => s.address === me))) selected.add(g);
+      if (last.recordKind === 'Task' && versions.some((v) => v.recordKind === 'Task' && v.payload.namedParties.includes(me))) { selected.add(g); myTasks.add(last.entityIri); }
+      if ((last.recordKind === 'AgentRun' || last.recordKind === 'Grant') && last.payload.agentAddress === me) selected.add(g);
+    }
+    const myPlans = new Set<string>();
+    for (const g of lines.keys()) {
+      const last = recs(g).at(-1);
+      if (!last) continue;
+      if (last.recordKind === 'Task' && myTasks.has(last.entityIri)) selected.add(graphIriOf(last.payload.workflowIri));
+      if (last.recordKind === 'Classification' && myTasks.has(last.payload.taskIri)) selected.add(g);
+      if (last.recordKind === 'AgentRun' && myTasks.has(last.payload.taskIri)) selected.add(g);
+      if (last.recordKind === 'Plan' && last.payload.tasks.some((r) => r.changed
+        && [r.current.personAddress, r.current.agentAddress, r.proposed.personAddress, r.proposed.agentAddress].includes(me))) {
+        selected.add(g);
+        myPlans.add(last.entityIri);
+      }
+    }
+    for (const g of lines.keys()) {
+      const last = recs(g).at(-1);
+      if (!last) continue;
+      if ((last.recordKind === 'Valuation' || last.recordKind === 'Decision' || last.recordKind === 'Acknowledgement') && myPlans.has(last.payload.planIri)) selected.add(g);
+    }
+    const chains = [...selected].filter((g) => lines.has(g)).sort();
+    if (chains.length === 0) return { ...refuse(403, 'No record on this pod names this address or carries its signature.', `${me} is named in nothing and signed nothing here`) };
+    const bundle = chains.flatMap((g) => (lines.get(g) ?? []).map((l) => ({
+      descriptorUrl: l.descriptorUrl, recordKind: l.record?.recordKind ?? null, entityIri: l.record?.entityIri ?? null,
+      descriptorTurtle: l.descriptorTurtle, graphTrig: l.graphContent,
+    })));
+    const copied: Array<{ originalDescriptorUrl: string; copyDescriptorUrl: string | null; skipped: boolean }> = [];
+    if (target !== null) {
+      let targetFetch: FetchFn;
+      // The holder's pod is reached through the holder transport, which never carries the operator's credential.
+      try { targetFetch = await openPod(target, deps.holderFetchFn ?? deps.fetchFn); } catch (e) { return { ...refuse(400, 'The target pod is not a safe target.', messageOf(e)) }; }
+      let existing: Set<string>;
+      try {
+        existing = new Set((await fetchAllManifestEntries(predictManifestUrl(target), targetFetch)).entries.map((e) => e.descriptorUrl));
+      } catch (e) {
+        throw new PodReadError(`the holder's pod manifest could not be read: ${messageOf(e)}`, null);
+      }
+      for (const g of chains) {
+        let prev: string | null = null;
+        for (const l of lines.get(g) ?? []) {
+          const r = await copyRecordToHolder(l, { targetPodUrl: target, fetchFn: targetFetch, previousCopyUrl: prev, existing });
+          copied.push({ originalDescriptorUrl: l.descriptorUrl, copyDescriptorUrl: r.descriptorUrl, skipped: r.skipped });
+          prev = r.descriptorUrl;
+        }
+      }
+    }
+    const status = target === null ? 'exported' : 'copied';
+    const w = await write(call, {
+      kind: 'HolderCopy', entity: newEntity('holder-copy', me, `${target ?? 'export'}|${call.nonce}`), status, head: null,
+      payload: { holder: { address: me, did: call.actorDid }, targetPodUrl: target, copied, envelope: call.envelope },
+      signers: [signerOf(reg, me, 'Curator', status === 'copied' ? 'copied their record' : 'exported their record')],
+    });
+    return { holder: { address: me, did: call.actorDid }, status, targetPodUrl: target, copied, bundle, receiptUrl: w.descriptorUrl, platform: call.platformRef, recorded: true };
+  }
+
   const handlers: Record<string, WrdHandler> = {
     'wrd.update_registry': async (args) => {
       const call = await openSigned(args, 'wrd:update-registry');
@@ -2696,101 +2820,30 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
 
     'wrd.holder_copy': async (args) => {
       const call = await openSigned(args, 'wrd:holder-copy');
-      const rawTarget = call.payload['targetPodUrl'];
-      let target: string | null = null;
-      if (rawTarget !== undefined && rawTarget !== null) {
-        if (typeof rawTarget !== 'string') return { ...refuse(400, 'The target pod must be an http(s) URL.', 'payload.targetPodUrl must be a string') };
-        try { target = normalisePodUrl(rawTarget); } catch (e) { return { ...refuse(400, 'The target pod must be an http(s) URL.', messageOf(e)) }; }
-        if (target === call.podUrl) return { ...refuse(400, 'Copies go to a pod you hold, not to this one.', 'payload.targetPodUrl is the platform pod') };
+      // A copy reads every version on the pod, so it is bounded before anything else is read. openSigned
+      // claimed the nonce of an admin or a registered key; any other signer (a key made for the purpose
+      // costs nothing, and someone removed from the registry is one) draws on one budget shared by all of
+      // them, and its nonce is claimed too, so no envelope is answered twice.
+      const stranger = !admins.has(call.actor) && !memberOf(await registryOf(call), call.actor);
+      // Wall-clock time, not the bridge's clock (which the offline demo scripts): this bounds load, not what a record says.
+      const t = Date.now();
+      while (strangerCopies.length > 0 && (strangerCopies[0] ?? t) <= t - 60_000) strangerCopies.shift();
+      if (stranger && strangerCopies.length >= copyLimits.strangersPerMinute) {
+        return { ...refuse(429, HOLDER_COPY_BUSY, `this bridge answers at most ${copyLimits.strangersPerMinute} holder copies a minute from keys that are neither an admin nor in this pod's registry, all such keys together; try again in a minute`) };
       }
-      const reg = await registryOf(call);
-      const snap = await snapshot(call.view);
-      // A record this bridge cannot read may name the holder: a copy without it would read as
-      // "nothing else names you". Refused rather than answered short, naming the setting when it is
-      // sealed. That holds for a current version that is sealed, altered or forked, and for an
-      // earlier version as much as a current one: a line that does not reach its first version
-      // (PodView.line) would come back without it and every version before it.
-      const shut: Array<{ readonly why: string; readonly sealed: boolean }> = snap.graphs
-        .filter((s) => s.g.state === 'altered' || s.g.state === 'forked')
-        .map((s) => (s.g.heads.some(isSealedShut) ? { why: `${s.graphIri}: ${s.g.heads.find(isSealedShut)?.why ?? ''}`, sealed: true } : { why: whyUnusable(s), sealed: false }));
-      const lines = new Map<string, LoadedRecord[]>();
-      for (const s of snap.graphs) {
-        if (s.g.state !== 'ok') continue;
-        const l = await call.view.line(s.g);
-        if (l.cut) shut.push({ why: cutWhy(s.graphIri, l.cut), sealed: l.cut.sealed });
-        lines.set(s.graphIri, l.versions);
+      if (copiesInProgress >= copyLimits.concurrent) {
+        return { ...refuse(429, HOLDER_COPY_BUSY, `this bridge makes at most ${copyLimits.concurrent} holder copies at once; try again shortly`) };
       }
-      if (shut.length > 0) {
-        // A sealed one is named first: the setting that opens it is the likeliest fix.
-        const sealed = shut.filter((x) => x.sealed);
-        return { ...refuse(409, sealed.length > 0
-          ? 'Some records on this pod are sealed to a key this bridge does not hold, so it cannot tell whether they name you; nothing was copied.'
-          : 'Some records on this pod were altered after signing, have more than one current version or none, or are missing an earlier version, so it cannot tell whether they name you; nothing was copied.',
-        `${shut.length} graph(s) cannot be read in full, for example ${(sealed[0] ?? shut[0])?.why ?? ''}`, sealed.length > 0 ? { env: 'WRD_RECORD_KEY' } : undefined) };
+      if (stranger) {
+        if (!ledger.claim(call.actor, call.nonce, call.now)) return { ...refuse(409, REPLAYED, `${call.actor} already used the nonce ${call.nonce} on this bridge`) };
+        strangerCopies.push(t);
       }
-      const me = call.actor;
-      const selected = new Set<string>();
-      const myTasks = new Set<string>();
-      const recs = (g: string): WrdRecord[] => (lines.get(g) ?? []).flatMap((l) => (l.record ? [l.record] : []));
-      for (const g of lines.keys()) {
-        const versions = recs(g);
-        const last = versions[versions.length - 1];
-        if (!last || last.recordKind === 'HolderCopy') continue;
-        if (versions.some((v) => v.signers.some((s) => s.address === me))) selected.add(g);
-        if (last.recordKind === 'Task' && versions.some((v) => v.recordKind === 'Task' && v.payload.namedParties.includes(me))) { selected.add(g); myTasks.add(last.entityIri); }
-        if ((last.recordKind === 'AgentRun' || last.recordKind === 'Grant') && last.payload.agentAddress === me) selected.add(g);
+      copiesInProgress += 1;
+      try {
+        return await holderCopy(call);
+      } finally {
+        copiesInProgress -= 1;
       }
-      const myPlans = new Set<string>();
-      for (const g of lines.keys()) {
-        const last = recs(g).at(-1);
-        if (!last) continue;
-        if (last.recordKind === 'Task' && myTasks.has(last.entityIri)) selected.add(graphIriOf(last.payload.workflowIri));
-        if (last.recordKind === 'Classification' && myTasks.has(last.payload.taskIri)) selected.add(g);
-        if (last.recordKind === 'AgentRun' && myTasks.has(last.payload.taskIri)) selected.add(g);
-        if (last.recordKind === 'Plan' && last.payload.tasks.some((r) => r.changed
-          && [r.current.personAddress, r.current.agentAddress, r.proposed.personAddress, r.proposed.agentAddress].includes(me))) {
-          selected.add(g);
-          myPlans.add(last.entityIri);
-        }
-      }
-      for (const g of lines.keys()) {
-        const last = recs(g).at(-1);
-        if (!last) continue;
-        if ((last.recordKind === 'Valuation' || last.recordKind === 'Decision' || last.recordKind === 'Acknowledgement') && myPlans.has(last.payload.planIri)) selected.add(g);
-      }
-      const chains = [...selected].filter((g) => lines.has(g)).sort();
-      if (chains.length === 0) return { ...refuse(403, 'No record on this pod names this address or carries its signature.', `${me} is named in nothing and signed nothing here`) };
-      const bundle = chains.flatMap((g) => (lines.get(g) ?? []).map((l) => ({
-        descriptorUrl: l.descriptorUrl, recordKind: l.record?.recordKind ?? null, entityIri: l.record?.entityIri ?? null,
-        descriptorTurtle: l.descriptorTurtle, graphTrig: l.graphContent,
-      })));
-      const copied: Array<{ originalDescriptorUrl: string; copyDescriptorUrl: string | null; skipped: boolean }> = [];
-      if (target !== null) {
-        let targetFetch: FetchFn;
-        // The holder's pod is reached through the holder transport, which never carries the operator's credential.
-        try { targetFetch = await openPod(target, deps.holderFetchFn ?? deps.fetchFn); } catch (e) { return { ...refuse(400, 'The target pod is not a safe target.', messageOf(e)) }; }
-        let existing: Set<string>;
-        try {
-          existing = new Set((await fetchAllManifestEntries(predictManifestUrl(target), targetFetch)).entries.map((e) => e.descriptorUrl));
-        } catch (e) {
-          throw new PodReadError(`the holder's pod manifest could not be read: ${messageOf(e)}`, null);
-        }
-        for (const g of chains) {
-          let prev: string | null = null;
-          for (const l of lines.get(g) ?? []) {
-            const r = await copyRecordToHolder(l, { targetPodUrl: target, fetchFn: targetFetch, previousCopyUrl: prev, existing });
-            copied.push({ originalDescriptorUrl: l.descriptorUrl, copyDescriptorUrl: r.descriptorUrl, skipped: r.skipped });
-            prev = r.descriptorUrl;
-          }
-        }
-      }
-      const status = target === null ? 'exported' : 'copied';
-      const w = await write(call, {
-        kind: 'HolderCopy', entity: newEntity('holder-copy', me, `${target ?? 'export'}|${call.nonce}`), status, head: null,
-        payload: { holder: { address: me, did: call.actorDid }, targetPodUrl: target, copied, envelope: call.envelope },
-        signers: [signerOf(reg, me, 'Curator', status === 'copied' ? 'copied their record' : 'exported their record')],
-      });
-      return { holder: { address: me, did: call.actorDid }, status, targetPodUrl: target, copied, bundle, receiptUrl: w.descriptorUrl, recorded: true };
     },
 
     // The unsigned template is a GET: its arguments travel in the URL, where server, proxy and
@@ -2991,8 +3044,23 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
       }
       return out;
     };
-    /** Graphs whose line an answer walked and found cut short by an earlier version that does not open (see PodView.line). */
+    /** Graphs whose line was found cut short by an earlier version that does not open (see PodView.line), listed under sealed. */
     const cutLines: Obj[] = [];
+    /**
+     * Every graph whose current version is usable but whose line does not reach its first version
+     * (PodView.line), with why: a write that checks the whole line refuses on it (409), so it is
+     * named here whatever its kind, not only where a decision's chain or a grant's grantedAt shows
+     * it. `untrustedKey` names the platform key, when a version before was signed by one this bridge
+     * no longer trusts.
+     */
+    const chainCuts: Obj[] = [];
+    for (const s of snap.graphs) {
+      if (s.g.state !== 'ok') continue;
+      const cut = (await call.view.line(s.g)).cut;
+      if (!cut) continue;
+      chainCuts.push({ graphIri: s.graphIri, why: cut.why, sealed: cut.sealed, ...(cut.untrustedKey !== null ? { untrustedKey: cut.untrustedKey } : {}) });
+      if (cut.sealed) cutLines.push({ graphIri: s.graphIri, why: cutWhy(s.graphIri, cut) });
+    }
     /** Sections counted from records that cannot all be read, with why (rows say so too where they can). */
     const unreadable: Obj = {};
     /** Tasks whose currentNotPermitted is unknown because a record it is read from cannot be read. */
@@ -3193,7 +3261,6 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         }));
         // A chain that does not reach its first version says so: never shown as the whole chain. A sealed version is also listed under sealed.
         const chainCut = line.cut ? cutWhy(d.s.graphIri, line.cut) : null;
-        if (chainCut !== null && line.cut?.sealed) cutLines.push({ graphIri: d.s.graphIri, why: chainCut });
         out3.push({
           decisionIri: d.record.entityIri, decisionKind: p.decisionKind, planIri: p.planIri, ...(p.valuationIri ? { valuationIri: p.valuationIri, valuationHash: p.valuationHash } : {}),
           status: d.record.status, statusLabel: statusLabelOf(d.record.status, p.decisionKind), decisionLevel: p.decisionLevel,
@@ -3220,7 +3287,6 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
         const line = await call.view.line(gr.s.g);
         const grantedAt = [...line.versions].reverse().find((l) => l.record?.status === 'granted')?.generatedAt ?? null;
         const chainCut = line.cut ? cutWhy(gr.s.graphIri, line.cut) : null;
-        if (chainCut !== null && line.cut?.sealed) cutLines.push({ graphIri: gr.s.graphIri, why: chainCut });
         out4.push({
           grantIri: gr.record.entityIri, agentAddress: p.agentAddress, principal: p.principal, model: p.model, taskKind: p.taskKind, status: gr.record.status,
           active: state.active, why: state.why, evaluation: p.evaluation, evidenceTaskIris: p.evaluation.taskIris, grantedAt,
@@ -3269,6 +3335,7 @@ export function createWrdHandlers(deps: WrdDeps = {}): Record<string, WrdHandler
     if (Object.keys(unreadable).length > 0) out['unreadable'] = unreadable;
     if (conflict) out['recordKeyMismatch'] = keyConflictNote(conflict);
     out['altered'] = snap.graphs.filter((s) => s.g.state === 'altered').map((s) => s.graphIri);
+    out['chainCuts'] = chainCuts;
     out['integrity'] = snap.graphs.filter((s) => s.g.state === 'altered' || s.g.state === 'forked').map((s) => ({
       graphIri: s.graphIri, state: s.g.state, why: s.g.why,
       heads: s.g.heads.map((h) => ({ descriptorUrl: h.descriptorUrl, trusted: h.authorship.trusted, contentBinding: h.authorship.contentBinding, why: h.why })),

@@ -27,8 +27,9 @@
  * which task, which agent works which kind of task, which decision is a probe) can be recovered
  * from the pod's public bytes by recomputing an unkeyed hash; every keyed IRI names the key's fingerprint, and no keyed segment is shared between two kinds or
  * positions; the only instant two kinds share is a workflow version's with its tasks, the link
- * README and readExposure name. The production server refuses to start without a record key when the image requires
- * one.
+ * README and readExposure name. The production server refuses to start without a record key, or
+ * without a platform key, when the image requires one. In the UI, a signer whose read is refused is
+ * still offered their copy, and a line cut by a platform key no longer trusted is named in the header.
  */
 import { describe, it, expect, afterAll } from 'vitest';
 import { spawn } from 'node:child_process';
@@ -102,6 +103,10 @@ function hostRequest(port: number, method: 'GET' | 'POST', path: string, host: s
 interface UiPage {
   readonly log: Array<{ method: string; path: string; query: string; status: number; body: Record<string, unknown> }>;
   readonly errors: string[];
+  /** The files the page handed the browser to save (URL.createObjectURL), in order. */
+  readonly saved: Blob[];
+  /** The text of one of them (jsdom's Blob has no text()). */
+  readSaved(i: number): Promise<string>;
   text(): string;
   q(sel: string): Element | null;
   all(sel: string): Element[];
@@ -132,10 +137,22 @@ async function openUi(base: string): Promise<UiPage> {
   (w as unknown as { scrollTo: () => void }).scrollTo = () => undefined;
   // Nor print: the summary is rendered into #print, and window.print() only opens the dialog.
   (w as unknown as { print: () => void }).print = () => undefined;
+  // Nor save a file: the blob the page saves is kept, and the link it clicks to save it goes nowhere.
+  const saved: Blob[] = [];
+  (w.URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => { saved.push(b); return '#saved'; };
+  (w.URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => undefined;
   w.eval(APP_JS);
   const d = w.document;
   return {
-    log, errors,
+    log, errors, saved,
+    readSaved: (i) => new Promise<string>((resolve, reject) => {
+      const blob = saved[i];
+      if (!blob) { reject(new Error(`no saved file ${i}`)); return; }
+      const reader = new w.FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error('the saved file could not be read'));
+      reader.readAsText(blob);
+    }),
     text: () => d.getElementById('app')?.textContent ?? '',
     q: (sel) => d.querySelector(sel),
     all: (sel) => [...d.querySelectorAll(sel)],
@@ -160,6 +177,44 @@ async function openUi(base: string): Promise<UiPage> {
       }
     },
   };
+}
+
+/**
+ * Start the production server (bridge/server.ts) with the environment this process has minus every
+ * WRD_ variable, plus `extra`; once it says it is listening it is stopped. `started` says whether it
+ * got that far.
+ */
+function startServer(extra: NodeJS.ProcessEnv): Promise<{ status: number | null; started: boolean; stderr: string; stdout: string }> {
+  const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const server = fileURLToPath(new URL('../bridge/server.ts', import.meta.url));
+  const base: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('WRD_')));
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--import', 'tsx', server], {
+      cwd: root, env: { ...base, PORT: '0', HOST: '127.0.0.1', WRD_DEFAULT_POD_URL: DEMO_POD, ...extra }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let started = false;
+    const timer = setTimeout(() => child.kill('SIGKILL'), 120_000);
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+      if (!started && /listening on 127\.0\.0\.1:0\)/.test(stdout)) { started = true; child.kill('SIGTERM'); }
+    });
+    child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => { clearTimeout(timer); resolve({ status: code, started, stderr, stdout }); });
+  });
+}
+/** Run `cases` through `startServer`, three at a time (each start compiles and loads the whole bridge), in order. */
+async function startEach(cases: readonly NodeJS.ProcessEnv[]): Promise<Array<Awaited<ReturnType<typeof startServer>>>> {
+  const runs: Array<Awaited<ReturnType<typeof startServer>>> = [];
+  const queue = [...cases.entries()];
+  await Promise.all([0, 1, 2].map(async () => {
+    for (let next = queue.shift(); next !== undefined; next = queue.shift()) runs[next[0]] = await startServer(next[1]);
+  }));
+  return runs;
 }
 
 describe('work-redesign offline demo and web UI', () => {
@@ -496,9 +551,16 @@ describe('work-redesign offline demo and web UI', () => {
     expect(server).toMatch(/if \(requireRecordKeyValue !== undefined && requireRecordKeyValue !== '0' && requireRecordKeyValue !== '1'\) \{\n[^\n]*did not start: WRD_REQUIRE_RECORD_KEY is [^\n]*\n\s*process\.exit\(1\);/);
     expect(server).toMatch(/^const requireRecordKey = requireRecordKeyValue === '1';$/m);
     expect(server).toMatch(/if \(requireRecordKey && recordKeyHex === undefined\) \{\n[^\n]*WRD_REQUIRE_RECORD_KEY=1 and WRD_RECORD_KEY is not set[^\n]*\n\s*process\.exit\(1\);/);
+    // WRD_REQUIRE_PLATFORM_KEY is read the same way, and the image requires a platform key as it requires a record key.
+    expect(server).toMatch(/^const requirePlatformKeyValue = process\.env\['WRD_REQUIRE_PLATFORM_KEY'\];$/m);
+    expect(server).not.toMatch(/env\('WRD_REQUIRE_PLATFORM_KEY'\)/);
+    expect(server).toMatch(/if \(requirePlatformKeyValue !== undefined && requirePlatformKeyValue !== '0' && requirePlatformKeyValue !== '1'\) \{\n[^\n]*did not start: WRD_REQUIRE_PLATFORM_KEY is [^\n]*\n\s*process\.exit\(1\);/);
+    expect(server).toMatch(/if \(requirePlatformKey && key === undefined\) \{\n[^\n]*WRD_REQUIRE_PLATFORM_KEY=1 and WRD_PLATFORM_KEY is not set[^\n]*\n\s*process\.exit\(1\);/);
     // The image requires a record key, declares it unset, and says to back it up.
     const dockerfile = readFileSync(new URL('../../../deploy/Dockerfile.wrd-bridge', import.meta.url), 'utf8');
     expect(dockerfile).toMatch(/^ENV WRD_REQUIRE_RECORD_KEY=1$/m);
+    expect(dockerfile).toMatch(/^ENV WRD_REQUIRE_PLATFORM_KEY=1$/m);
+    expect(dockerfile).toMatch(/^ENV WRD_PLATFORM_KEY=$/m);
     expect(dockerfile).toMatch(/^ENV WRD_RECORD_KEY=$/m);
     expect(dockerfile).toMatch(/#\s+WRD_RECORD_KEY\s[\s\S]*?BACK IT UP/);
     const vertical = fileURLToPath(new URL('..', import.meta.url));
@@ -510,42 +572,12 @@ describe('work-redesign offline demo and web UI', () => {
   });
 
   it('the production server reads WRD_REQUIRE_RECORD_KEY as it is: unset or 0 starts with or without a record key, 1 starts only with a valid one (a blank key counts as missing), and any other value, blank or whitespace included, never starts: exit 1, saying why', async () => {
-    const root = fileURLToPath(new URL('../../../', import.meta.url));
-    const server = fileURLToPath(new URL('../bridge/server.ts', import.meta.url));
-    const base: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('WRD_')));
     const KEY = 'ab'.repeat(32);
-    /** Start the server; once it says it is listening it is stopped. `started` says whether it got that far. */
-    const start = (extra: NodeJS.ProcessEnv): Promise<{ status: number | null; started: boolean; stderr: string; stdout: string }> => new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, ['--import', 'tsx', server], {
-        cwd: root, env: { ...base, PORT: '0', HOST: '127.0.0.1', WRD_DEFAULT_POD_URL: DEMO_POD, ...extra }, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      let started = false;
-      const timer = setTimeout(() => child.kill('SIGKILL'), 120_000);
-      child.stdout.setEncoding('utf8');
-      child.stderr.setEncoding('utf8');
-      child.stdout.on('data', (chunk: string) => {
-        stdout += chunk;
-        if (!started && /listening on 127\.0\.0\.1:0\)/.test(stdout)) { started = true; child.kill('SIGTERM'); }
-      });
-      child.stderr.on('data', (chunk: string) => { stderr += chunk; });
-      child.on('error', reject);
-      child.on('close', (code) => { clearTimeout(timer); resolve({ status: code, started, stderr, stdout }); });
-    });
     const cases: Array<readonly [string | undefined, string | undefined]> = [];
     for (const guard of [undefined, '0', '1', '', '  ', 'yes', ' 1']) for (const key of [undefined, KEY]) cases.push([guard, key]);
     // A blank or whitespace record key counts as missing where one is required; a malformed one stops the bridge whether or not one is.
     cases.push(['1', ''], ['1', '   '], ['1', 'abc'], [undefined, 'abc']);
-    // Three at a time: each start compiles and loads the whole bridge.
-    const runs: Array<Awaited<ReturnType<typeof start>>> = [];
-    const queue = [...cases.entries()];
-    await Promise.all([0, 1, 2].map(async () => {
-      for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-        const [i, [guard, key]] = next;
-        runs[i] = await start({ ...(guard === undefined ? {} : { WRD_REQUIRE_RECORD_KEY: guard }), ...(key === undefined ? {} : { WRD_RECORD_KEY: key }) });
-      }
-    }));
+    const runs = await startEach(cases.map(([guard, key]) => ({ ...(guard === undefined ? {} : { WRD_REQUIRE_RECORD_KEY: guard }), ...(key === undefined ? {} : { WRD_RECORD_KEY: key }) })));
     for (const [i, [guard, key]] of cases.entries()) {
       const r = must(runs[i], 'run');
       const label = `WRD_REQUIRE_RECORD_KEY=${JSON.stringify(guard)} WRD_RECORD_KEY=${JSON.stringify(key)}`;
@@ -566,6 +598,37 @@ describe('work-redesign offline demo and web UI', () => {
         // Blank, whitespace or any other value: never read as unset, never as on; the bridge stops and says which.
         const said = guard.trim() === '' ? /did not start: WRD_REQUIRE_RECORD_KEY is blank; set it to 1 to require a record key, or to 0 \(or unset it\) to allow plaintext records/
           : /did not start: WRD_REQUIRE_RECORD_KEY is neither 1 nor 0; set it to 1 to require a record key, or to 0 \(or unset it\) to allow plaintext records/;
+        expect([label, r.started, r.status, said.test(r.stderr)]).toEqual([label, false, 1, true]);
+        expect([label, /listening on/.test(r.stdout)]).toEqual([label, false]);
+      }
+    }
+  }, 300_000);
+
+  it('the production server reads WRD_REQUIRE_PLATFORM_KEY as it is: unset or 0 starts with or without a platform key (an ephemeral one, said so, without), 1 starts only with a valid one (a blank key counts as missing), any other value, blank or whitespace included, never starts (exit 1, saying why), and a malformed platform key never starts', async () => {
+    const KEY = `0x${'cd'.repeat(32)}`;
+    const cases: Array<readonly [string | undefined, string | undefined]> = [];
+    for (const guard of [undefined, '0', '1', '', '  ', 'yes']) for (const key of [undefined, KEY]) cases.push([guard, key]);
+    cases.push(['1', ''], ['1', '   '], ['1', 'abc'], [undefined, 'abc']);
+    const runs = await startEach(cases.map(([guard, key]) => ({ ...(guard === undefined ? {} : { WRD_REQUIRE_PLATFORM_KEY: guard }), ...(key === undefined ? {} : { WRD_PLATFORM_KEY: key }) })));
+    const ADDRESS = importWallet(KEY, 'agent', 'p').address;
+    for (const [i, [guard, key]] of cases.entries()) {
+      const r = must(runs[i], 'run');
+      const label = `WRD_REQUIRE_PLATFORM_KEY=${JSON.stringify(guard)} WRD_PLATFORM_KEY=${JSON.stringify(key)}`;
+      if (key === 'abc') {
+        expect([label, r.started, r.status, /did not start: WRD_PLATFORM_KEY must be 64 hex characters/.test(r.stderr)]).toEqual([label, false, 1, true]);
+      } else if (guard === undefined || guard === '0') {
+        expect([label, r.started, /did not start/.test(r.stderr)]).toEqual([label, true, false]);
+        expect([label, key === undefined ? /using an EPHEMERAL platform key/.test(r.stdout) : r.stdout.includes(`(platform ${ADDRESS}, configured;`)]).toEqual([label, true]);
+      } else if (guard === '1') {
+        if (key === KEY) {
+          expect([label, r.started, /did not start/.test(r.stderr), r.stdout.includes(`(platform ${ADDRESS}, configured;`)]).toEqual([label, true, false, true]);
+        } else {
+          expect([label, r.started, r.status, /did not start: WRD_REQUIRE_PLATFORM_KEY=1 and WRD_PLATFORM_KEY is not set/.test(r.stderr)]).toEqual([label, false, 1, true]);
+          expect([label, /EPHEMERAL/.test(r.stdout)]).toEqual([label, false]);
+        }
+      } else {
+        const said = guard.trim() === '' ? /did not start: WRD_REQUIRE_PLATFORM_KEY is blank; set it to 1 to require a platform key, or to 0 \(or unset it\) to allow an ephemeral one/
+          : /did not start: WRD_REQUIRE_PLATFORM_KEY is neither 1 nor 0; set it to 1 to require a platform key, or to 0 \(or unset it\) to allow an ephemeral one/;
         expect([label, r.started, r.status, said.test(r.stderr)]).toEqual([label, false, 1, true]);
         expect([label, /listening on/.test(r.stdout)]).toEqual([label, false]);
       }
@@ -759,6 +822,81 @@ describe('work-redesign offline demo and web UI', () => {
     expect(page.all('main table td .badbox').map((x) => x.textContent)).toEqual([grantWhy]);
     expect(page.errors).toEqual([]);
   }, 180_000);
+
+  it('the web UI still offers a signer whose read is refused their copy: someone removed from the registry downloads every record about their work from the no-data screen; and a line cut by a platform key the bridge no longer trusts is named in the header', async () => {
+    const pod = memoryPod();
+    const clock = demoClock();
+    const seed = (id: string, type: 'human' | 'agent' = 'human') => importWallet(`0x${sha256Hex(`wrd-ui-holder:${id}`)}`, type, id);
+    const admin = seed('admin');
+    const ana = seed('ana');
+    const cy = seed('cy');
+    const oldKey = seed('platform-old', 'agent');
+    const newKey = seed('platform-new', 'agent');
+    const personas = new Map([['ana', { id: 'ana', label: 'Ana (demo)', wallet: ana }], ['cy', { id: 'cy', label: 'Cy (demo)', wallet: cy }]]);
+    const compose = (platform: typeof oldKey, trusted: readonly string[]) => createWrdHandlers({
+      fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), platform: { wallet: platform, keyKind: 'demo' }, adminAddresses: [admin.address],
+      recordKey: DEMO_RECORD_KEY, demoPersonas: personas, trustedPlatformAddresses: trusted,
+    });
+    let n = 0;
+    const signed = async (who: typeof ana, intent: string, fields: Obj): Promise<Obj> => {
+      n += 1;
+      const payload = { intent, podUrl: DEMO_POD, issuedAt: clock.now().toISOString(), nonce: `ui-holder-${String(n).padStart(8, '0')}`, ...fields };
+      return { payload, signature: await signMessageRaw(who, canonicalJson(payload)) };
+    };
+    const person = (w: typeof ana, label: string, roles: string[]) => ({ address: w.address, roles, label, softwareAgent: false, personRef: `p-${label.toLowerCase()}` });
+    // Under the old platform key: the registry, and a workflow Cy captures.
+    const before = compose(oldKey, []);
+    expect(objOf(await before['wrd.update_registry']!({ envelope: await signed(admin, 'wrd:update-registry', {
+      entries: [person(ana, 'Ana', ['operator', 'worker']), person(cy, 'Cy', ['operator', 'worker'])],
+      taskKinds: [{ slug: 'invoice-matching', label: 'Invoice matching', definition: 'Match an invoice to its purchase order.' }],
+    }) }))['status']).toBe('registered');
+    expect(objOf(await before['wrd.capture_workflow']!({ envelope: await signed(cy, 'wrd:capture-workflow', {
+      workflow: { title: 'Accounts payable', unitLabel: 'invoice' },
+      tasks: [{ name: 'Match invoices', description: 'Three-way match before approval.', currentLevel: 'person', personAddress: cy.address, taskKind: 'invoice-matching' }],
+    }) }))['status']).toBe('captured');
+    // The key is rotated (the old one still trusted), and Cy leaves: the new key writes the registry version that removes her.
+    const rotated = compose(newKey, [oldKey.address]);
+    expect(objOf(await rotated['wrd.update_registry']!({ envelope: await signed(admin, 'wrd:update-registry', { entries: [{ address: cy.address, roles: [] }] }) }))['status']).toBe('registered');
+
+    const serve = async (handlers: ReturnType<typeof compose>): Promise<string> => {
+      const l = await listenLoopback(createVerticalBridge({
+        verticalName: 'work-redesign', affordances: [...wrdAffordances, ...wrdDemoAffordances], handlers, deploymentUrl: 'http://127.0.0.1', middleware: (a) => { attachUi(a, { base: 'http://127.0.0.1' }); parseEveryQueryPair(a); },
+      }));
+      listeners.push(l);
+      return l.base;
+    };
+    const page = await openUi(await serve(rotated));
+    await page.until(() => page.text().includes('Platform signer'), 'the records');
+    expect(page.all('header.strip p.badbox').map((p) => p.textContent).join(' ')).not.toMatch(/no longer trusts/);
+    // Cy: her read is refused, and the no-data screen still offers her copy.
+    page.select('#persona', 'cy');
+    await page.until(() => page.text().includes('Only an admin or a key in this pod'), 'the refusal');
+    const HOLDER = 'Your read was refused, but anyone named in a record, or who signed one, can still take a copy of every record about their work, registered here or not.';
+    expect(page.text()).toContain(HOLDER);
+    expect(page.all('h2').map((x) => x.textContent)).toContain('My record');
+    const beforeCopy = page.log.length;
+    page.click('Download my record');
+    await page.until(() => page.saved.length === 1, 'the download');
+    const copyCalls = page.log.slice(beforeCopy).filter((r) => r.path === '/wrd/holder_copy');
+    expect(copyCalls.map((r) => `${r.method} ${r.path} ${r.status}`)).toEqual(['POST /wrd/holder_copy 200']);
+    expect(objOf(copyCalls[0]?.body['envelope'])['payload']).toMatchObject({ intent: 'wrd:holder-copy', podUrl: DEMO_POD });
+    const file = JSON.parse(await page.readSaved(0)) as Obj;
+    expect(rows(file['bundle']).length).toBeGreaterThan(0);
+    await page.until(() => page.text().includes('record version(s) in the download'), 'the answer');
+    expect(page.text()).toContain(`This bridge signs as ${newKey.address.toLowerCase()}`);
+    // The answer stays on screen: the re-read after it, refused again, does not replace it.
+    expect(page.text()).not.toContain('Only an admin or a key in this pod');
+    expect(page.errors).toEqual([]);
+
+    // The old address dropped: the registry's line is cut there, and the header says so, naming the address.
+    const alone = await openUi(await serve(compose(newKey, [])));
+    const TRUST = new RegExp(`^1 of them reach a version signed by a platform key this bridge no longer trusts \\(${oldKey.address.toLowerCase()}\\)\\. Every change to them is refused \\(409\\) until the operator lists that address in WRD_TRUSTED_PLATFORM_ADDRESSES again`);
+    await alone.until(() => alone.text().includes('Platform signer'), 'the records');
+    const banners = alone.all('header.strip p.badbox').map((p) => p.textContent ?? '');
+    expect(banners).toContain('1 record chain(s) do not read back to their first version: an earlier version is missing, or is not trusted. Their history is shown as incomplete, never as whole.');
+    expect(banners.some((b) => TRUST.test(b))).toBe(true);
+    expect(alone.errors).toEqual([]);
+  }, 120_000);
 
   it('a loopback bridge refuses (421, typed) a Host naming another site before any route, and answers its loopback names and its public host', async () => {
     const PUBLIC = 'https://bridge.example.org';

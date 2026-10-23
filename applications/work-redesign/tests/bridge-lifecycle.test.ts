@@ -29,8 +29,9 @@ import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type WrdDeps } from '../bridge/handlers.js';
 import {
   readRecord, publishRecord, verifyHolderBundle, operatorPodFetch, openPod, KeyedMutex, StaleHeadError, RecordNotSealableError, WRD_CONTAINER, SEALED_NO_KEY, SEALED_OTHER_KEY,
-  DESCRIBES_ALTERED, SUBJECT_ALTERED, PROOF_ALTERED, DESCRIPTOR_UNPARSEABLE,
+  DESCRIBES_ALTERED, SUBJECT_ALTERED, PROOF_ALTERED, DESCRIPTOR_UNPARSEABLE, PodView, type LoadedRecord,
 } from '../bridge/pod-helpers.js';
+import { LINKS_MORE_THAN_ONE } from '../bridge/descriptor-rdf.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
 import { envelopeSha256, entityIri, entityIriKey, iriKeyFingerprint, recordKeyFingerprint, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, type WrdRecord } from '../src/records.js';
 import { parseEveryQueryPair } from '../bridge/ui.js';
@@ -441,6 +442,68 @@ async function logReviewedRun(w: World, runId: string, taskIri: string, self: 'a
 
 async function manifest(w: World, podUrl = POD): Promise<Array<{ descriptorUrl: string; describes: readonly string[]; supersedes?: readonly string[]; modalStatus?: string }>> {
   return (await fetchAllManifestEntries(predictManifestUrl(podUrl), w.pod.fetchFn)).entries;
+}
+
+/**
+ * Edits a party able to write the pod (without the record key) can make to a version's descriptor,
+ * each with what it must read as: null when the version stays trusted, else why it is altered. Each
+ * is applied to the descriptor as the bridge wrote it (`prev` is the version before's). None of them
+ * may ever set a version aside: a version a trusted key signed where its proof says reads trusted or
+ * altered, never as if it were deleted. The first group changes no triple (RDF-identical
+ * respellings) or only a comment; the rest change what the bridge reads, or stop it parsing.
+ */
+function descriptorEdits(): Array<readonly [string, (d: string, prev: string) => string, string | null]> {
+  const SUBJECT = /^<urn:wrd:record:[^>]+>\n {4}a iep:ContextDescriptor ;/m;
+  const PROOF = /<> iep:authorshipProof \[[^\]]*\] \./;
+  const IEP_IRI = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
+  const PROOF_TERMS = /\biep:(authorshipProof|SignedAuthorship|scheme|issuer|verificationMethod|signerAddress|created|ownerWebId|descriptorId|agentDid|contentHash|proofValue)\b/g;
+  const UNUSED_PREFIX = '@prefix café: <urn:unused#> .\n';
+  const take = (re: RegExp, text: string): string => must(re.exec(text), String(re))[0];
+  const commented = (block: string): string => block.split('\n').map((l) => `# ${l}`).join('\n');
+  const atSubject = (d: string, f: (subject: string) => string): string => d.replace(take(SUBJECT, d), f(take(SUBJECT, d)));
+  const atProof = (d: string, f: (proof: string) => string): string => d.replace(take(PROOF, d), f(take(PROOF, d)));
+  const fullIris = (p: string): string => p.replace(PROOF_TERMS, (_, n: string) => `<${IEP_IRI}${n}>`);
+  const escaped = (text: string): string => [...text].map((c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
+  return [
+    // Respellings and comments: the same RDF, read the same way.
+    ['a leading space before the subject line', (d) => atSubject(d, (x) => ` ${x}`), null],
+    ['the subject joined to its type line', (d) => atSubject(d, (x) => x.replace('>\n    a ', '> a ')), null],
+    ['a comment between the subject and its type', (d) => atSubject(d, (x) => x.replace('>\n    a ', '>\n    # typed below ]\n    a ')), null],
+    ['rdf:type for a', (d) => atSubject(d, (x) => x.replace('    a iep:', '    rdf:type iep:')), null],
+    ['CRLF line ends', (d) => d.split('\n').join('\r\n'), null],
+    ['the proof moved above the subject', (d) => { const p = take(PROOF, d); return atSubject(d.replace(p, ''), (x) => `${p}\n\n${x}`); }, null],
+    ['a comment naming iep:authorshipProof [ above it', (d) => atSubject(d, (x) => `# see iep:authorshipProof [ below ]\n${x}`), null],
+    ['a comment opening iep:authorshipProof [ with a forged proofValue, never closed, right above the real proof', (d) => atProof(d, (p) => `# iep:authorshipProof [ iep:proofValue "0x${'ab'.repeat(65)}" ;\n${p}`), null],
+    ['a ] comment inside the real proof', (d) => atProof(d, (p) => p.replace('a iep:SignedAuthorship ;\n', 'a iep:SignedAuthorship ;\n    # the block ] ends below\n')), null],
+    ['the real proof spelled with full IRIs', (d) => atProof(d, fullIris), null],
+    ['the version before\'s genuine proof in a comment above the real one', (d, prev) => atProof(d, (p) => `${commented(take(PROOF, prev))}\n${p}`), null],
+    ['a \\u escape in the proof\'s record id', (d) => atProof(d, (p) => p.replace('iep:descriptorId <u', 'iep:descriptorId <\\u0075')), null],
+    ['a \\u escape in the proof\'s issuer', (d) => atProof(d, (p) => p.replace('iep:issuer <d', 'iep:issuer <\\U00000064')), null],
+    ['the proofValue spelled in \\u escapes', (d) => atProof(d, (p) => p.replace(/iep:proofValue "([^"]+)"/, (_, v: string) => `iep:proofValue "${escaped(v)}"`)), null],
+    ['the created instant in a long single-quoted literal', (d) => atProof(d, (p) => p.replace(/iep:created "([^"]+)"/, "iep:created '''$1'''")), null],
+    ['an unused prefix with a non-ASCII name', (d) => `${UNUSED_PREFIX}${d}`, null],
+    ['that prefix, and the proof spelled with full IRIs', (d) => `${UNUSED_PREFIX}${atProof(d, fullIris)}`, null],
+    ['that prefix, and the proofValue single-quoted', (d) => `${UNUSED_PREFIX}${atProof(d, (p) => p.replace(/iep:proofValue "([^"]+)"/, "iep:proofValue '$1'"))}`, null],
+    ['that prefix, and the proof under another prefix name', (d) => `@prefix prüf: <${IEP_IRI}> .\n${UNUSED_PREFIX}${atProof(d, (p) => p.replace(PROOF_TERMS, (_, n: string) => `prüf:${n}`))}`, null],
+    ['the proof as a labelled blank node over separate statements', (d) => atProof(d, (p) => p.replace('<> iep:authorshipProof [', '<> iep:authorshipProof _:proof .\n_:proof').replace(/\n\] \.$/, ' .')), null],
+    ['a comment holding a decoy link to another graph above the real link', (d) => d.replace('<> iep:affordance [', '# iep:affordance [ hydra:target <https://elsewhere.example/x> ; dcat:mediaType "text/plain" ]\n<> iep:affordance ['), null],
+    ['a comment naming another graph with iep:describes, at the top', (d) => `# iep:describes <urn:wrd:task:elsewhere:graph>\n${d}`, null],
+    ['hydra:target and dcat:accessURL written as full IRIs', (d) => d.replace('hydra:target <', '<http://www.w3.org/ns/hydra/core#target> <').replace('dcat:accessURL <', '<http://www.w3.org/ns/dcat#accessURL> <'), null],
+    ['iep:describes written as a full IRI', (d) => d.replace('iep:describes <', `<${IEP_IRI}describes> <`), null],
+    // An unsigned triple, or a subject, added: what the bridge reads is unchanged.
+    ['a literal holding ] inside the real proof', (d) => atProof(d, (p) => p.replace('a iep:SignedAuthorship ;\n', 'a iep:SignedAuthorship ;\n    <http://www.w3.org/2000/01/rdf-schema#comment> "the block ] ends below" ;\n')), null],
+    ['another descriptor subject above it', (d) => atSubject(d, (x) => `<urn:wrd:note:above>\n    a iep:ContextDescriptor .\n\n${x}`), null],
+    // What the bridge reads, changed: altered (409), never set aside.
+    ['the version before\'s genuine proof as RDF above the real one', (d, prev) => atProof(d, (p) => `${take(PROOF, prev)}\n${p}`), PROOF_ALTERED],
+    ['the real proof only in a comment', (d) => atProof(d, (p) => commented(p)), PROOF_ALTERED],
+    ['the real proof only in a comment, spelled with full IRIs', (d) => atProof(d, (p) => commented(fullIris(p))), PROOF_ALTERED],
+    ['the proof\'s signerAddress changed', (d) => atProof(d, (p) => p.replace(/iep:signerAddress "0x[0-9a-fA-F]{40}"/, `iep:signerAddress "0x${'1'.repeat(40)}"`)), PROOF_ALTERED],
+    ['the subject changed', (d) => atSubject(d, (x) => x.replace('<urn:wrd:record:', '<urn:wrd:record:changed-')), SUBJECT_ALTERED],
+    ['a second link, to a graph elsewhere, stated as RDF', (d) => `${d}\n<> iep:affordance [ hydra:target <https://elsewhere.example/x> ; dcat:mediaType "text/plain" ] .\n`, LINKS_MORE_THAN_ONE],
+    ['a stray } above the subject, so it no longer parses', (d) => atSubject(d, (x) => `}\n${x}`), DESCRIPTOR_UNPARSEABLE],
+    ['a stray } above, and the proof spelled with full IRIs', (d) => `}\n${atProof(d, fullIris)}`, DESCRIPTOR_UNPARSEABLE],
+    ['a stray } above, and the proofValue spelled in \\u escapes', (d) => `}\n${atProof(d, (p) => p.replace(/iep:proofValue "([^"]+)"/, (_, v: string) => `iep:proofValue "${escaped(v)}"`))}`, DESCRIPTOR_UNPARSEABLE],
+  ];
 }
 
 // ── The tests ────────────────────────────────────────────────────────────────────────────
@@ -2420,35 +2483,7 @@ describe('work-redesign bridge', () => {
     const t1Head = headOfRow(await taskRow(w, ap.t1));
     const t1Graph = graphIriOf(ap.t1);
     const trusted = new Set([addr(PLATFORM)]);
-    const SUBJECT = /^<urn:wrd:record:[^>]+>\n {4}a iep:ContextDescriptor ;/m;
-    const PROOF = /<> iep:authorshipProof \[[^\]]*\] \./;
-    const IEP_IRI = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
-    const PROOF_TERMS = /\biep:(authorshipProof|scheme|issuer|verificationMethod|signerAddress|created|ownerWebId|descriptorId|agentDid|contentHash|proofValue)\b/g;
-    const take = (re: RegExp, text: string): string => must(re.exec(text), String(re))[0];
-    const commented = (block: string): string => block.split('\n').map((l) => `# ${l}`).join('\n');
-    const atSubject = (d: string, f: (subject: string) => string): string => d.replace(take(SUBJECT, d), f(take(SUBJECT, d)));
-    const atProof = (d: string, f: (proof: string) => string): string => d.replace(take(PROOF, d), f(take(PROOF, d)));
-    // [what was edited, the edit (given the version before's descriptor too), null when it reads trusted, else why it is altered]
-    const edits: Array<readonly [string, (d: string, prev: string) => string, string | null]> = [
-      ['a leading space before the subject line', (d) => atSubject(d, (x) => ` ${x}`), null],
-      ['the subject joined to its type line', (d) => atSubject(d, (x) => x.replace('>\n    a ', '> a ')), null],
-      ['a comment between the subject and its type', (d) => atSubject(d, (x) => x.replace('>\n    a ', '>\n    # typed below ]\n    a ')), null],
-      ['rdf:type for a', (d) => atSubject(d, (x) => x.replace('    a iep:', '    rdf:type iep:')), null],
-      ['CRLF line ends', (d) => d.split('\n').join('\r\n'), null],
-      ['the proof moved above the subject', (d) => { const p = take(PROOF, d); return atSubject(d.replace(p, ''), (x) => `${p}\n\n${x}`); }, null],
-      ['another descriptor subject above it', (d) => atSubject(d, (x) => `<urn:wrd:note:above>\n    a iep:ContextDescriptor .\n\n${x}`), null],
-      ['a comment naming iep:authorshipProof [ above it', (d) => atSubject(d, (x) => `# see iep:authorshipProof [ below ]\n${x}`), null],
-      ['a comment opening iep:authorshipProof [ with a forged proofValue, never closed, right above the real proof', (d) => atProof(d, (p) => `# iep:authorshipProof [ iep:proofValue "0x${'ab'.repeat(65)}" ;\n${p}`), null],
-      ['a ] comment inside the real proof', (d) => atProof(d, (p) => p.replace('a iep:SignedAuthorship ;\n', 'a iep:SignedAuthorship ;\n    # the block ] ends below\n')), null],
-      // No `iep:authorshipProof [` left in the text, or none a text scan can read to its end: the proof is found as the RDF states it.
-      ['the real proof spelled with full IRIs', (d) => atProof(d, (p) => p.replace(PROOF_TERMS, (_, n: string) => `<${IEP_IRI}${n}>`)), null],
-      ['a literal holding ] inside the real proof', (d) => atProof(d, (p) => p.replace('a iep:SignedAuthorship ;\n', 'a iep:SignedAuthorship ;\n    <http://www.w3.org/2000/01/rdf-schema#comment> "the block ] ends below" ;\n')), null],
-      ['the version before\'s genuine proof in a comment above the real one', (d, prev) => atProof(d, (p) => `${commented(take(PROOF, prev))}\n${p}`), null],
-      ['the version before\'s genuine proof as RDF above the real one', (d, prev) => atProof(d, (p) => `${take(PROOF, prev)}\n${p}`), PROOF_ALTERED],
-      ['the real proof only in a comment', (d) => atProof(d, (p) => commented(p)), PROOF_ALTERED],
-      ['the subject changed', (d) => atSubject(d, (x) => x.replace('<urn:wrd:record:', '<urn:wrd:record:changed-')), SUBJECT_ALTERED],
-      ['a stray } above the subject, so it no longer parses', (d) => atSubject(d, (x) => `}\n${x}`), DESCRIPTOR_UNPARSEABLE],
-    ];
+    const edits = descriptorEdits();
     const escape = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     // A task head: placed (eligible) every time, trusted or altered as the table says, never set aside for the version before it.
@@ -2518,6 +2553,132 @@ describe('work-redesign bridge', () => {
     ok(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: 'after-layout-kind', label: 'Another', definition: 'Another kind.' }] }));
     expect(arr((await list(w))['forked'])).toEqual([]);
   }, 180_000);
+
+  it('reads every edit in the table the same way on a decision\'s current version and on an earlier version of a task, a decision and the registry: a respelling or a comment leaves the line whole and the head current; an edit to what the bridge reads makes that version altered, a current one answering 409 and an earlier one cutting the line there; none ever makes another version current, and restored, every line reads whole', async () => {
+    const w = await world({ recordKey: K1 });
+    const { ap, planIri, valuation } = await valuedP1(w);
+    const decisionIri = String((await submitValued(w, planIri, valuation))['decisionIri']);
+    await acknowledgeAll(w, planIri);
+    ok(await countersign(w, BO, decisionIri, 'approve'));
+    ok(await act(w, ADMIN, 'update_registry', { taskKinds: [{ slug: 'earlier-edits-kind', label: 'Another', definition: 'Another kind.' }] }));
+    const view = (): PodView => new PodView(POD, w.pod.fetchFn, new Set([addr(PLATFORM)]), new Map(), true, K1);
+    const graphs = { task: graphIriOf(ap.t1), decision: graphIriOf(decisionIri), registry: graphIriOf(entityIri('registry', POD, 'registry')) };
+    const lines = new Map<string, LoadedRecord[]>();
+    for (const g of Object.values(graphs)) {
+      const v = view();
+      const l = await v.line(await v.graph(g));
+      expect([g, l.cut, l.versions.length >= 2]).toEqual([g, null, true]);
+      lines.set(g, l.versions);
+    }
+    // [what, the graph, which version: 1 the current one, 2 the one before it]
+    const targets: ReadonlyArray<readonly [string, string, 1 | 2]> = [
+      ['the decision\'s current version', graphs.decision, 1],
+      ['the task\'s version before its current one', graphs.task, 2],
+      ['the decision\'s version before its current one', graphs.decision, 2],
+      ['the registry\'s version before its current one', graphs.registry, 2],
+    ];
+    for (const [what, g, back] of targets) {
+      const versions = must(lines.get(g));
+      const head = must(versions[versions.length - 1]);
+      const target = must(versions[versions.length - back]);
+      const prev = versions[versions.length - back - 1] ?? target;
+      const bytes = must(w.pod.bodies.get(target.descriptorUrl));
+      const prevBytes = must(w.pod.bodies.get(prev.descriptorUrl));
+      for (const [edit, apply, why] of descriptorEdits()) {
+        const edited = apply(bytes, prevBytes);
+        const label = `${what}: ${edit}`;
+        expect([label, edited === bytes]).toEqual([label, false]);
+        w.pod.tamper(target.descriptorUrl, bytes, edited);
+        const v = view();
+        const gh = await v.graph(g);
+        const l = await v.line(gh);
+        // Never another version current, nothing set aside.
+        expect([label, gh.heads.map((h) => h.descriptorUrl), gh.untrusted]).toEqual([label, [head.descriptorUrl], []]);
+        if (why === null) {
+          expect([label, gh.state, l.cut, l.versions.map((x) => x.descriptorUrl)]).toEqual([label, 'ok', null, versions.map((x) => x.descriptorUrl)]);
+        } else if (back === 1) {
+          expect([label, gh.state, gh.why]).toEqual([label, 'altered', why]);
+        } else {
+          expect([label, gh.state, l.cut?.descriptorUrl, l.cut?.why]).toEqual([label, 'ok', target.descriptorUrl, `an earlier version (${target.descriptorUrl}) is not trusted: ${why}`]);
+        }
+        w.pod.tamper(target.descriptorUrl, edited, bytes);
+      }
+      const v = view();
+      const restored = await v.graph(g);
+      expect([what, restored.state, (await v.line(restored)).cut]).toEqual([what, 'ok', null]);
+    }
+    expect(arr((await list(w))['forked'])).toEqual([]);
+  }, 300_000);
+
+  it('a platform address dropped from the trusted list cuts every line holding a version it signed: the read model names each under chainCuts with that address, and a write to such a graph refuses (409) naming WRD_TRUSTED_PLATFORM_ADDRESSES, never a deletion; listed again, the writes go ahead', async () => {
+    const OLD = wallet('platform-old', 'agent');
+    const w = await world({ platform: { wallet: OLD, keyKind: 'configured' } });
+    await register(w);
+    const ap = await captureAp(w);
+    // The key is rotated: the new key signs, the old one stays trusted, and both graphs gain a version the new key signs.
+    const rotated = await sibling(w, { trustedPlatformAddresses: [OLD.address] });
+    ok(await act(rotated, ADMIN, 'update_registry', { taskKinds: [{ slug: 'after-rotation', label: 'Another', definition: 'Another kind.' }] }));
+    ok(await ratify(rotated, CY, ap.t1));
+    const registryGraph = graphIriOf(entityIri('registry', POD, 'registry'));
+    expect(arr((await list(rotated))['chainCuts'])).toEqual([]);
+    // The old address dropped: every graph with a version it signed is cut there.
+    const alone = await sibling(rotated, {});
+    const listed = await list(alone);
+    const cuts = arr(listed['chainCuts']);
+    expect(cuts.filter((c) => c['graphIri'] === registryGraph || c['graphIri'] === graphIriOf(ap.t1)).map((c) => [c['graphIri'], c['untrustedKey'], c['sealed']]).sort())
+      .toEqual([[graphIriOf(ap.t1), addr(OLD), false], [registryGraph, addr(OLD), false]].sort());
+    expect(String(must(cuts.find((c) => c['graphIri'] === registryGraph))['why'])).toMatch(/was signed by the platform key 0x[0-9a-f]{40}, which this bridge does not trust: a platform address that signed records on this pod must stay in WRD_TRUSTED_PLATFORM_ADDRESSES/);
+    // Every graph the old key alone signed reads absent; those are not cuts. The registry the new key extended is current.
+    expect(obj(obj(listed['registry'])['head'])['trusted']).toBe(true);
+    const refusal = refused(await act(alone, ADMIN, 'update_registry', { taskKinds: [{ slug: 'while-distrusted', label: 'Another', definition: 'Another kind.' }] }), 409, /an earlier version signed by a platform key this bridge no longer trusts/,
+      /which this bridge does not trust: a platform address that signed records on this pod must stay in WRD_TRUSTED_PLATFORM_ADDRESSES/);
+    expect(refusal['iep:resolvedBy']).toEqual({ env: 'WRD_TRUSTED_PLATFORM_ADDRESSES', address: addr(OLD) });
+    expect(String(refusal['iep:refusalReason'])).not.toMatch(/it was deleted/);
+    // Listed again: the line is whole, and the write goes ahead.
+    const again = await sibling(alone, { trustedPlatformAddresses: [OLD.address] });
+    expect(arr((await list(again))['chainCuts'])).toEqual([]);
+    ok(await act(again, ADMIN, 'update_registry', { taskKinds: [{ slug: 'trusted-again', label: 'Another', definition: 'Another kind.' }] }));
+  }, 120_000);
+
+  it('bounds holder copies: one from a key neither an admin nor in the registry spends its nonce (a replay is 409) and draws on a budget all such keys share (429 beyond it, before anything is read); someone removed from the registry still takes their copy; a registered key never draws on that budget; and no more copies run at once than the limit (429)', async () => {
+    let hold: Promise<void> | null = null;
+    const w = await world((pod) => ({
+      recordKey: K1, holderCopyLimits: { strangersPerMinute: 2, concurrent: 1 },
+      // While `hold` is set, a read of a task's sealed graph waits for it: a copy in progress, held there.
+      fetchFn: async (url, init) => {
+        if (hold && /\/task-[0-9a-f]{16}[^/]*-graph\.envelope\.jose\.json$/.test(String(url))) await hold;
+        return pod.fetchFn(url, init);
+      },
+    }));
+    await register(w);
+    const ap = await captureAp(w);
+    ok(await ratify(w, CY, ap.t1));
+    // Cy leaves: removed from the registry, she can no longer read, and still takes her copy.
+    ok(await act(w, ADMIN, 'update_registry', { entries: [{ address: CY.address, roles: [] }] }));
+    refused(await http(w, 'POST', 'read_records', { envelope: await readEnvelope(w, CY) }), 403, /Only an admin or a key in this pod's registry/);
+    const cyCopy = await envelope(w, CY, 'wrd:holder-copy', {});
+    const copied = ok(await http(w, 'POST', 'holder_copy', { envelope: cyCopy }), 'Cy\'s copy');
+    expect(arr(copied['bundle']).length).toBeGreaterThan(0);
+    expect(obj(copied['platform'])['address']).toBe(addr(PLATFORM));
+    // Her envelope is spent: a replay is refused before anything is read.
+    refused(await http(w, 'POST', 'holder_copy', { envelope: cyCopy }), 409, /already used/);
+    // A key nobody registered, named in nothing: 403, and that spends the second of two.
+    refused(await act(w, ZED, 'holder_copy', {}), 403, /No record on this pod names this address/);
+    const third = await http(w, 'POST', 'holder_copy', { envelope: await envelope(w, ZED, 'wrd:holder-copy', {}) });
+    refused(third, 429, /Too many copies/, /at most 2 holder copies a minute from keys that are neither an admin nor in this pod's registry/);
+    // A registered key does not draw on that budget.
+    ok(await act(w, DEE, 'holder_copy', {}), 'Dee\'s copy');
+    // One copy at a time: a second sent while the first is held answers 429, and the first completes.
+    let release: () => void = () => undefined;
+    hold = new Promise<void>((r) => { release = r; });
+    const first = act(w, DEE, 'holder_copy', {});
+    await new Promise((r) => setTimeout(r, 300));
+    refused(await act(w, ANA, 'holder_copy', {}), 429, /Too many copies/, /at most 1 holder copies at once/);
+    release();
+    hold = null;
+    ok(await first, 'the held copy');
+    ok(await act(w, ANA, 'holder_copy', {}), 'Ana\'s copy, after');
+  }, 120_000);
 
   it('never reads a line short for an edit to an earlier version of its own key: with only its iep:describes or its link edited, its proof broken, or its manifest entry removed, a write that checks the whole line refuses (409), a replayed registry change among them, the holder\'s copy refuses, and a decision\'s chain says it is incomplete; restored, the replay is refused as a replay and every line reads whole', async () => {
     const w = await world({ recordKey: K1 });
@@ -2877,6 +3038,6 @@ describe('work-redesign bridge', () => {
       expect(typeof r.body['iep:refusalReason'], r.tool).toBe('string');
       expect(typeof r.body['error'], r.tool).toBe('string');
     }
-    expect(new Set(fromBridge.map((r) => r.status))).toEqual(new Set([400, 401, 403, 404, 409, 422, 501, 502]));
+    expect(new Set(fromBridge.map((r) => r.status))).toEqual(new Set([400, 401, 403, 404, 409, 422, 429, 501, 502]));
   });
 });

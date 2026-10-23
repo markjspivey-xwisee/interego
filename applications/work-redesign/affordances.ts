@@ -349,7 +349,7 @@ export const wrdAffordances: ReadonlyArray<Affordance> = [
     inputs: [envelope('wrd:holder-copy'), POD_INPUT],
     outputs: {
       description: 'What was copied (or exported) and the bundle itself.',
-      properties: { holder: { type: 'object' }, targetPodUrl: { type: 'string' }, copied: { type: 'array' }, bundle: { type: 'array' }, receiptUrl: { type: 'string' }, ...RECORDED },
+      properties: { holder: { type: 'object' }, targetPodUrl: { type: 'string' }, copied: { type: 'array' }, bundle: { type: 'array' }, receiptUrl: { type: 'string' }, platform: { type: 'object' }, ...RECORDED },
       required: ['holder', 'status', 'bundle'],
     },
   },
