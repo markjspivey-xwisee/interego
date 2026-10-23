@@ -28,6 +28,8 @@
  * but does not open with it (anyone can seal bytes to a public key) is a `RecordUnreadable` saying
  * why: opening happens in this process, so only a failed request is a `PodTransportFailed`.
  * Plaintext records (written before a key was set, and every holder copy) are read as before.
+ * A sealed record's descriptor URL ends in its key's fingerprint (the handlers choose the slug), so
+ * the manifest alone says which record keys a pod's records are under: `keyMarksOf`.
  *
  * Transport: every request goes through the substrate's SSRF guard (`guardedFetchFn`), which
  * re-checks every redirect hop and refuses a redirect on a write. Nothing here retries: the
@@ -46,7 +48,7 @@ import {
 } from '@interego/solid';
 import { PEV_SHAPES_NS, readShapesTurtle } from '../src/ontology.js';
 import {
-  fingerprintOfAttemptIri, graphIriOf, isWellFormedText, podBase, recordBodyFromGraph, registryIri, RECORD_CLASS,
+  fingerprintOfAttemptIri, fingerprintOfRecordUrl, graphIriOf, isWellFormedText, podBase, recordBodyFromGraph, registryIri, RECORD_CLASS,
   type PevRecordBody, type Role, type RoleRegistryBody,
 } from '../src/records.js';
 
@@ -593,20 +595,34 @@ export function isDeleted(v: ReadRecord | DeletedVersion): v is DeletedVersion {
   return 'contentDeleted' in v;
 }
 
-/** A keyed attempt IRI in a manifest and the key fingerprint it carries (see `iriKeyFingerprint`). */
-export interface KeyedIri { readonly graphIri: string; readonly fingerprint: string }
+/**
+ * A place in the pod's manifest that names a record key, and that key's fingerprint
+ * (`iriKeyFingerprint`): a keyed attempt IRI (`by: 'attempt-iri'`, `at` the IRI), or the descriptor
+ * URL of a record sealed to the key (`by: 'sealed-record'`, `at` the URL, whose slug ends in
+ * `-k<fingerprint>`). Every record a bridge seals carries one, so a pod on which a record key has
+ * written anything says which key from its manifest alone, whether or not an attempt was started.
+ */
+export interface KeyMark { readonly fingerprint: string; readonly at: string; readonly by: 'attempt-iri' | 'sealed-record' }
 
-/** Every keyed attempt IRI the manifest entries describe, each once, in manifest order. */
-export function keyedIrisOf(entries: readonly ManifestEntry[]): KeyedIri[] {
+const PEV_RECORD_CLASSES = new Set(Object.values(RECORD_CLASS));
+
+/**
+ * Every key mark in the manifest entries, each place once, in manifest order. A sealed-record mark
+ * counts only on an entry filed as a pev record (`dct:conformsTo` a pev record class). The manifest
+ * is writable by anyone who can write the pod, so a mark can be added; it can only make a bridge
+ * refuse, never write.
+ */
+export function keyMarksOf(entries: readonly ManifestEntry[]): KeyMark[] {
   const seen = new Set<string>();
-  const out: KeyedIri[] = [];
+  const out: KeyMark[] = [];
+  const add = (fingerprint: string | null, at: string, by: KeyMark['by']): void => {
+    if (fingerprint === null || seen.has(at)) return;
+    seen.add(at);
+    out.push({ fingerprint, at, by });
+  };
   for (const e of entries) {
-    for (const g of e.describes) {
-      const fingerprint = fingerprintOfAttemptIri(g);
-      if (fingerprint === null || seen.has(g)) continue;
-      seen.add(g);
-      out.push({ graphIri: g, fingerprint });
-    }
+    for (const g of e.describes) add(fingerprintOfAttemptIri(g), g, 'attempt-iri');
+    if ((e.conformsTo ?? []).some((c) => PEV_RECORD_CLASSES.has(c))) add(fingerprintOfRecordUrl(e.descriptorUrl), e.descriptorUrl, 'sealed-record');
   }
   return out;
 }
@@ -624,8 +640,8 @@ export interface HeadsOfKind {
   readonly sealed: number;
   /** False when the cap left graphs unread or any head was sealed: the records are not all there are. */
   readonly complete: boolean;
-  /** The keyed attempt IRIs anywhere in the manifest this read walked (every kind). */
-  readonly keyedIris: readonly KeyedIri[];
+  /** The key marks anywhere in the manifest this read walked (every kind): see `KeyMark`. */
+  readonly keyMarks: readonly KeyMark[];
 }
 
 /**
@@ -667,7 +683,7 @@ export async function readHeadsOfKind(
       throw e;
     }
   }
-  return { records, untrusted, forked, sealed, complete: graphs.length <= o.max && sealed === 0, keyedIris: keyedIrisOf(all) };
+  return { records, untrusted, forked, sealed, complete: graphs.length <= o.max && sealed === 0, keyMarks: keyMarksOf(all) };
 }
 
 export interface RoleRegistryView {

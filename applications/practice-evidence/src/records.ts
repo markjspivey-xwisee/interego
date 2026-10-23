@@ -790,16 +790,32 @@ export function recordLocal(recordId: string): string {
   return recordId.startsWith('urn:pev:record:') ? recordId.slice('urn:pev:record:'.length) : sha256(recordId).slice(0, 16);
 }
 
-/** Descriptor slug, unique per record (§3): a race from one head writes two resources, never one twice. */
-export function slugFor(kind: PevRecordBody['kind'], graphIri: string, seq: number, recordId: string): string {
+/**
+ * Descriptor slug, unique per record (§3): a race from one head writes two resources, never one
+ * twice. A record sealed to a record key ends in `-k<fingerprint>` (`keyFingerprint`, the key's
+ * `iriKeyFingerprint`), so the pod's manifest names, for every sealed record, which key sealed it:
+ * see `fingerprintOfRecordUrl`.
+ */
+export function slugFor(kind: PevRecordBody['kind'], graphIri: string, seq: number, recordId: string, keyFingerprint?: string): string {
   const rec8 = recordLocal(recordId).slice(0, 8);
   const tail = graphIri.slice(graphIri.lastIndexOf(':') + 1);
+  const mark = keyFingerprint === undefined ? '' : `-k${keyFingerprint}`;
   switch (kind) {
-    case 'scenario': return `scenario-${tail}-s${seq}-${rec8}`;
-    case 'attempt': return `attempt-${tail}-s${seq}-${rec8}`;
-    case 'role-registry': return `roles-${tail}-s${seq}-${rec8}`;
-    case 'projection-audit': return `projection-${tail}`;
+    case 'scenario': return `scenario-${tail}-s${seq}-${rec8}${mark}`;
+    case 'attempt': return `attempt-${tail}-s${seq}-${rec8}${mark}`;
+    case 'role-registry': return `roles-${tail}-s${seq}-${rec8}${mark}`;
+    case 'projection-audit': return `projection-${tail}${mark}`;
   }
+}
+
+/** A sealed record's descriptor URL: `…-k<fingerprint>.ttl` (no unsealed slug ends in `-k` and 8 hex). */
+const SEALED_RECORD_URL = /-k([0-9a-f]{8})\.ttl$/;
+/**
+ * The key fingerprint a sealed record's descriptor URL carries (see `slugFor`), or null for a
+ * plaintext record's. Like a keyed attempt IRI's, it is a key identifier and says nothing else.
+ */
+export function fingerprintOfRecordUrl(descriptorUrl: string): string | null {
+  return SEALED_RECORD_URL.exec(descriptorUrl)?.[1] ?? null;
 }
 
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]{1,120}$/;

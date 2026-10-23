@@ -37,9 +37,10 @@
  *                                   does not start. Plaintext records and plain attempt IRIs
  *                                   written earlier stay as they are, and readable. Losing it makes
  *                                   every encrypted record unreadable: back it up. A keyed attempt
- *                                   IRI names the key's public fingerprint, and a bridge with
- *                                   another key, or none, writes nothing on a pod holding one
- *                                   (409 record-key-mismatch). Holder copies are never encrypted.
+ *                                   IRI and a sealed record's descriptor URL name the key's public
+ *                                   fingerprint (printed at startup), and a bridge with another
+ *                                   key, or none, writes nothing on a pod holding either (409
+ *                                   record-key-mismatch). Holder copies are never encrypted.
  *                                   Never logged.
  *   PEV_REQUIRE_RECORD_KEY=1        a deployment guard: the bridge does not start (exit 1) unless
  *                                   PEV_RECORD_KEY is set and well-formed, so a deployment whose
@@ -64,7 +65,7 @@ import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
-import { freshNonce, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
+import { attemptIriSecret, freshNonce, iriKeyFingerprint, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
 import {
   createPevHandlers, describeStartup, DEFAULT_BUDGETS, DEMO_ROLE_NAMES,
   type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
@@ -242,7 +243,7 @@ async function main(): Promise<void> {
   say(`  pod: ${defaultPodUrl ?? 'none (each act names its pod)'}; records read and written on: ${anyPod ? 'any public pod (PEV_SERVED_PODS=*)' : servedPods.length > 0 ? servedPods.join(', ') : 'NO pod: set PEV_DEFAULT_POD_URL or PEV_SERVED_PODS, or every act is refused'}`);
   say(`  pod credential: ${writeSecret ? 'configured, sent on reads and writes under the operator pod' : 'not configured'}`);
   say(recordKey
-    ? `  records are encrypted to this bridge's record key (PEV_RECORD_KEY, public key ${recordKey.publicKey}): the pod holds the graph of every record written from now on only as ciphertext, and new attempt IRIs are keyed with it, so no one without the key can tell whose an attempt is. Still readable by anyone the pod lets read: descriptors and the manifest (signer, record kind, modal status, times, trust level, the authors, ratifiers, reviewers and admins they name, never a learner) and, per attempt, how many versions, when, whether reviewed and whether redacted. Records and attempt IRIs written before the key was set stay as they were: plaintext, and a plain hash of the learner's address. Back the key up: without it no encrypted record can be read again`
+    ? `  records are encrypted to this bridge's record key (PEV_RECORD_KEY, public key ${recordKey.publicKey}, fingerprint k${iriKeyFingerprint(attemptIriSecret(recordKey))}, which every record it seals and every attempt IRI it keys names on the pod): the pod holds the graph of every record written from now on only as ciphertext, and new attempt IRIs are keyed with it, so no one without the key can tell whose an attempt is. Still readable by anyone the pod lets read: descriptors and the manifest (signer, record kind, modal status, times, trust level, the authors, ratifiers, reviewers and admins they name, never a learner) and, per attempt, how many versions, when, whether reviewed and whether redacted. Records and attempt IRIs written before the key was set stay as they were: plaintext, and a plain hash of the learner's address. Back the key up: without it no encrypted record can be read again`
     : '  records are plaintext: anyone the pod lets read pev/records/ reads every transcript (a pod that serves reads anonymously serves them to everyone), and attempt IRIs are a plain hash of the learner\'s address, so anyone holding a candidate address finds that learner\'s attempts. Set PEV_RECORD_KEY (64 hex) to encrypt them');
   say(`  platform key: ${platformKeyKind}, address ${platformWallet.address}`);
   if (platformKeyKind === 'ephemeral') {

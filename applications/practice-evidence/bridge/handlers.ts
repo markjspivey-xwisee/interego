@@ -8,7 +8,7 @@
  * ── ONE ORDER FOR EVERY ACT (§6.2) ──────────────────────────────────────────────────────────
  *   1. the signed envelope and every payload check that needs no record   → 401 / 400
  *   2. the pod: named in the signed payload, public, and (for writes) served → 400 / 403;
- *      for writes, holding no attempt keyed under another record key        → 409
+ *      for writes, holding nothing under another record key (key marks)     → 409
  *   3. the nonce (writes): a signed envelope acts once                   → 409
  *   4. a lock on the one graph the act changes
  *   5. the head record, read back from the pod and checked (trust rule)  → 404 / 409
@@ -20,6 +20,8 @@
  *  11. a fresh read of the chain's heads: someone else moved it         → 409
  *  12. the platform signs the exact graph; the descriptor is validated; the publish is a
  *      compare-and-set behind the shapes gate.
+ * Every read an act can be refused on (the head, the role registry, the scenario chain an answer
+ * rests on) comes before step 12, and nothing after it can refuse: a refused act wrote nothing.
  *
  * Identity is ONLY the address recovered from the signature (DECISIONS #1). No input names a
  * person, a provenance, a modal status or a key — except a per-request model key (BYOK), which
@@ -69,10 +71,10 @@ import {
 } from '../src/calibration.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
 import {
-  createGraphLocks, deleteResource, isDeleted, isTrusted, keyedIrisOf, listEntries, normalPod, placementProblem, publishPevRecord, readChain,
+  createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, publishPevRecord, readChain,
   readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship, underPod,
   ChainForked, GraphMissing, PodTransportFailed, RecordNotSealable, RecordSealed, RecordUnreadable, PEV_COPIES_CONTAINER,
-  type DeletedVersion, type KeyedIri, type ReadCache, type ReadRecord, type RoleRegistryView, type TrustedPlatform,
+  type DeletedVersion, type KeyMark, type ReadCache, type ReadRecord, type RoleRegistryView, type TrustedPlatform,
 } from './pod-helpers.js';
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -451,8 +453,9 @@ function notServed(ctx: Ctx): Declined {
 
 /**
  * A signed act. `write` acts write to the operator pod (and consume their nonce); they and any act
- * with `keyChecked` (a holder copy) are refused (409 record-key-mismatch) on a pod that holds an
- * attempt keyed under another record key than this bridge's, before the nonce is spent.
+ * with `keyChecked` (a holder copy) are refused (409 record-key-mismatch) on a pod whose manifest
+ * names another record key than this bridge's (a keyed attempt IRI or a sealed record's mark), or
+ * any, when this bridge holds none, before the nonce is spent.
  */
 async function signedAct(
   call: Call, args: Record<string, unknown>, key: PevActionKey,
@@ -473,7 +476,7 @@ async function signedAct(
   const pod = await publicPod(podUrl);
   if (!servesPod(ctx, pod)) throw notServed(ctx);
   if (o.keyChecked ?? o.write ?? false) {
-    const mismatch = keyMismatchIn(ctx, keyedIrisOf(await listEntries(pod, ctx.fetchFn)));
+    const mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn)));
     if (mismatch) throw keyMismatchDecline(ctx, mismatch);
   }
   const nonce = String(env.payload['nonce']);
@@ -487,41 +490,83 @@ async function signedAct(
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
-//  Attempts keyed under another record key
+//  Records under another record key
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+/** What the pod's manifest says about record keys that are not this bridge's. */
+interface KeyMismatch {
+  /** The first place in the manifest naming a key that is not this bridge's (any key, when it holds none). */
+  readonly mark: KeyMark;
+  /** Every such key's fingerprint on the pod, sorted. */
+  readonly podKeys: readonly string[];
+  /** True when the pod also holds records under this bridge's own key: bridges holding different keys wrote to it. */
+  readonly ownKeyToo: boolean;
+}
+
 /**
- * The first attempt IRI on the pod keyed under a record key other than this bridge's, or under any
- * when this bridge holds none, or null. A keyed IRI names its key's fingerprint; one that is not
- * this bridge's means this bridge derives other IRIs for the same learners than the pod holds: a
- * lookup of a learner's attempts would find them absent, and a start would begin a second chain
- * beside them (sealed to another key, or plaintext). Plain IRIs (written before any key) are not
- * keyed and never count. The check reads the manifest only, so an entry a pod writer adds can stop
- * this bridge's writes, which a pod writer can do in other ways too (forking a chain); it can never
- * make the bridge write.
+ * The record keys the pod holds records under that are not this bridge's, or null. Every record a
+ * bridge seals carries its key's fingerprint in its descriptor URL, and every attempt IRI it keys
+ * carries it too (`keyMarksOf`), so the manifest alone says which key the pod's records are under,
+ * from the first record a key sealed, whether an attempt was started under it or not. A bridge
+ * holding another key, or none, would derive other attempt IRIs for the same learners (finding
+ * their attempts absent and starting a second chain beside them) and write what the pod's key
+ * cannot open (or plaintext), so it writes nothing. Plain IRIs and plaintext records carry no
+ * mark: a pod that never had a key works as before. The check reads the manifest only, so an
+ * entry a pod writer adds can stop this bridge's writes, which a pod writer can do in other ways
+ * too (forking a chain); it can never make the bridge write.
  */
-function keyMismatchIn(ctx: Ctx, keyed: readonly KeyedIri[]): KeyedIri | null {
-  return keyed.find((k) => k.fingerprint !== ctx.ownFingerprint) ?? null;
-}
-
-function keyMismatchWhy(ctx: Ctx, m: KeyedIri): string {
-  return `This pod holds the attempt ${m.graphIri}, whose IRI was derived under the record key with fingerprint k${m.fingerprint}, and this bridge ${
-    ctx.ownFingerprint === null ? 'holds no record key' : `holds the one with fingerprint k${ctx.ownFingerprint}`} (PEV_RECORD_KEY): it derives other attempt IRIs for the same learners, so it would find their attempts absent and start second chains beside them`;
-}
-
-/** The refusal of a write, or of a read that would rest on attempts this bridge cannot derive or open. */
-function keyMismatchDecline(ctx: Ctx, m: KeyedIri): Declined {
-  return decline(409, `${keyMismatchWhy(ctx, m)}. It writes nothing on this pod, and answers nothing that rests on its attempts, until it runs with that key; set PEV_RECORD_KEY to it.`,
-    'record-key-mismatch', { env: 'PEV_RECORD_KEY' },
-    { graphIri: m.graphIri, podKey: `k${m.fingerprint}`, bridgeKey: ctx.ownFingerprint === null ? null : `k${ctx.ownFingerprint}` });
-}
-
-/** What a read that is still answered (a scenario list, one attempt) carries when the pod's keyed attempts are not this bridge's. */
-function keyMismatchMark(ctx: Ctx, m: KeyedIri): Out {
+function keyMismatchIn(ctx: Ctx, marks: readonly KeyMark[]): KeyMismatch | null {
+  const foreign = marks.filter((m) => m.fingerprint !== ctx.ownFingerprint);
+  const first = foreign[0];
+  if (first === undefined) return null;
   return {
-    graphIri: m.graphIri, podKey: `k${m.fingerprint}`, bridgeKey: ctx.ownFingerprint === null ? null : `k${ctx.ownFingerprint}`,
-    resolvedBy: { env: 'PEV_RECORD_KEY' },
-    note: 'This pod holds attempts keyed under a record key this bridge does not hold. This bridge writes nothing on this pod, and answers nothing that rests on its attempts, until it runs with that key; what is shown here is only what it can read.',
+    mark: first, podKeys: [...new Set(foreign.map((m) => m.fingerprint))].sort(),
+    ownKeyToo: ctx.ownFingerprint !== null && marks.some((m) => m.fingerprint === ctx.ownFingerprint),
+  };
+}
+
+function keyMismatchWhy(ctx: Ctx, m: KeyMismatch): string {
+  const where = m.mark.by === 'attempt-iri'
+    ? `the attempt ${m.mark.at}, whose IRI was derived under the record key with fingerprint k${m.mark.fingerprint}`
+    : `the record ${m.mark.at}, sealed to the record key with fingerprint k${m.mark.fingerprint}`;
+  const more = m.podKeys.length > 1 ? ` (and records under ${m.podKeys.filter((k) => k !== m.mark.fingerprint).map((k) => `k${k}`).join(', ')})` : '';
+  return `This pod holds ${where}${more}, and this bridge ${
+    ctx.ownFingerprint === null ? 'holds no record key' : `holds the one with fingerprint k${ctx.ownFingerprint}`} (PEV_RECORD_KEY): it derives other attempt IRIs for the same learners, so it would find their attempts absent and start second chains beside them, and what it wrote would not be under the pod's record key`;
+}
+
+/**
+ * What the operator can do. The pod's records say which keys wrote to it, not which key is the
+ * operator's: a bridge holding the wrong key may have written first. So the advice is to switch
+ * keys only where that is the one reading (this bridge holds none), and otherwise to check.
+ */
+function keyMismatchAdvice(ctx: Ctx, m: KeyMismatch): string {
+  const pod = m.podKeys.map((k) => `k${k}`).join(' and ');
+  if (ctx.ownFingerprint === null) return `Set PEV_RECORD_KEY to the key this pod's records are under (${pod}), from the operator's backup.`;
+  if (m.ownKeyToo) {
+    return `This pod holds records under this bridge's key (k${ctx.ownFingerprint}) as well as ${pod}: bridges holding different keys wrote to it, or someone who can write the pod added manifest entries. The operator decides which key the pod keeps; this pod does not say which is right, so PEV_RECORD_KEY is not changed on the strength of it.`;
+  }
+  return `If ${pod} is the operator's record key (a bridge holding a key prints its fingerprint when it starts), set PEV_RECORD_KEY to it from the operator's backup. If this bridge's key (k${ctx.ownFingerprint}) is the operator's, a bridge holding another key wrote to this pod first, or someone who can write the pod added the entry: the operator decides what the pod keeps.`;
+}
+
+/** The fields a key mismatch is reported with: where the manifest names the other key, and both keys' fingerprints (never the keys). */
+function keyMismatchFields(ctx: Ctx, m: KeyMismatch): Out {
+  return {
+    markedAt: m.mark.at, markedBy: m.mark.by, podKey: `k${m.mark.fingerprint}`, podKeys: m.podKeys.map((k) => `k${k}`),
+    bridgeKey: ctx.ownFingerprint === null ? null : `k${ctx.ownFingerprint}`, bridgeKeyOnPod: m.ownKeyToo,
+  };
+}
+
+/** The refusal of a write, or of a read that would rest on records this bridge cannot derive or open. */
+function keyMismatchDecline(ctx: Ctx, m: KeyMismatch): Declined {
+  return decline(409, `${keyMismatchWhy(ctx, m)}. It writes nothing on this pod, and answers nothing that rests on its attempts, until every bridge on it holds one record key. ${keyMismatchAdvice(ctx, m)}`,
+    'record-key-mismatch', { env: 'PEV_RECORD_KEY' }, keyMismatchFields(ctx, m));
+}
+
+/** What a read that is still answered (a scenario list, one attempt) carries when the pod's records are under another key. */
+function keyMismatchMark(ctx: Ctx, m: KeyMismatch): Out {
+  return {
+    ...keyMismatchFields(ctx, m), resolvedBy: { env: 'PEV_RECORD_KEY' },
+    note: 'This pod holds records under a record key this bridge does not hold (keyed attempt IRIs, or records sealed to it). This bridge writes nothing on this pod, and answers nothing that rests on its attempts, until every bridge on it holds one record key; what is shown here is only what it can read.',
   };
 }
 
@@ -532,7 +577,7 @@ function keyMismatchMark(ctx: Ctx, m: KeyedIri): Out {
  */
 function sealedDecline(n: number, what: string): Declined {
   return decline(409,
-    `${n} record(s) on this pod are sealed to a record key this bridge does not hold, or it holds none, so ${what} cannot be computed: without them it would read as complete. Set PEV_RECORD_KEY to the key that wrote them.`,
+    `${n} record(s) on this pod are sealed to a record key this bridge does not hold, or it holds none, so ${what} cannot be computed: without them it would read as complete. If the key that wrote them is the operator's record key, set PEV_RECORD_KEY to it.`,
     'records-sealed', { env: 'PEV_RECORD_KEY' }, { sealedRecordsSkipped: n });
 }
 
@@ -689,9 +734,10 @@ interface Written { readonly descriptorUrl: string; readonly graphUrl: string; r
 /**
  * Sign and publish the next record of a chain. The heads are read again right before the
  * publish; anything but exactly the head this act read means someone else moved the chain. With
- * a record key the graph is sealed to it; the proof is over the plaintext graph either way. Every
- * version gets a fresh salt in its body (RecordCommon.salt), so its public content hash confirms
- * no guess of what it holds.
+ * a record key the graph is sealed to it, and its descriptor URL carries the key's fingerprint
+ * (`slugFor`); the proof is over the plaintext graph either way. Every version gets a fresh salt in
+ * its body (RecordCommon.salt), so its public content hash confirms no guess of what it holds.
+ * Nothing an act awaits after this can refuse it: every read it rests on comes first.
  */
 async function writeRecord(call: Call, w: {
   readonly pod: string; readonly body: PevRecordBody; readonly seq: number; readonly prev: ReadRecord | null;
@@ -725,7 +771,9 @@ async function writeRecord(call: Call, w: {
   if (fresh.length !== expected.length || fresh.some((h, i) => h !== expected[i])) throw moved();
   try {
     const r = await publishPevRecord({
-      podUrl: w.pod, descriptor, graphTurtle, slug: slugFor(body.kind, graphIri, w.seq, recordId), authorshipProof: proof,
+      podUrl: w.pod, descriptor, graphTurtle, authorshipProof: proof,
+      // A sealed record's slug names its key's fingerprint, so the manifest says which key wrote it.
+      slug: slugFor(body.kind, graphIri, w.seq, recordId, ctx.ownFingerprint ?? undefined),
       ...(w.prev ? { supersedes: w.prev.descriptorUrl, currentHeads: fresh } : {}), fetchFn: ctx.fetchFn,
       ...(ctx.trusted.recordKey ? { sealTo: ctx.trusted.recordKey } : {}),
     });
@@ -851,17 +899,22 @@ interface Ratification { readonly ratified: boolean; readonly ratifiedBy: string
 
 /**
  * Whether the scenario version an attempt practised has a trusted ratified record with the same
- * hashes. A scenario record sealed to a key this bridge does not hold is NOT an answer of "not
- * ratified": the bridge cannot tell, so the RecordSealed goes on to the caller as a 409 naming
- * PEV_RECORD_KEY, and nothing (no skip audit) is written on the strength of it.
+ * hashes. A version that is read and fails the trust rule is skipped, never used. A chain this
+ * bridge cannot read is NOT an answer of "not ratified": a version sealed to a key it does not
+ * hold (409 naming PEV_RECORD_KEY), an envelope naming its key that does not open, a graph that is
+ * gone, a manifest chaining elsewhere (409 record-not-trusted, saying why) or two heads (409
+ * chain-forked) goes on to the caller as a refusal, and nothing (no skip audit, no review) is
+ * written on the strength of it: every act reads this before it writes.
  */
 async function ratificationOf(call: Call, pod: string, a: AttemptBody): Promise<Ratification> {
   let chain: readonly (ReadRecord | DeletedVersion)[];
   try {
     chain = await readChain(pod, a.scenario.scenarioIri, call.ctx.trusted, call.ctx.fetchFn, call.cache);
   } catch (e) {
-    if (e instanceof RecordSealed) throw e;
-    if (e instanceof RecordUnreadable || e instanceof ChainForked || e instanceof GraphMissing) return { ratified: false, ratifiedBy: null };
+    if (e instanceof ChainForked) {
+      throw decline(409, `The scenario ${a.scenario.scenarioIri} has ${e.heads.length} competing latest versions, so whether the rubric version this attempt used was ratified cannot be read; nothing is claimed about it.`,
+        'chain-forked', undefined, { heads: e.heads });
+    }
     throw e;
   }
   for (const v of chain) {
@@ -905,16 +958,13 @@ async function eligibility(call: Call, pod: string, h: AttemptHead): Promise<Eli
   if (!isObj(t) || t['recordId'] !== review.target.recordId || t['descriptorUrl'] !== review.target.descriptorUrl
     || t['graphDigest'] !== review.target.graphDigest) return notVerifiable;
   if (!underPod(review.target.descriptorUrl, pod)) return notVerifiable;
-  try {
-    const before = await readRecord(review.target.descriptorUrl, call.ctx.trusted, call.ctx.fetchFn, call.cache);
-    if (!isTrusted(before) || placementProblem(before.body, pod, a.attemptIri) !== undefined
-      || before.recordId !== review.target.recordId || before.graphDigest !== review.target.graphDigest) return notVerifiable;
-  } catch (e) {
-    // Sealed to another key: unknown, not "not verifiable". The caller refuses with PEV_RECORD_KEY.
-    if (e instanceof RecordSealed) throw e;
-    if (e instanceof RecordUnreadable || e instanceof GraphMissing) return notVerifiable;
-    throw e;
-  }
+  // A target read and found untrusted, or not the version signed for, is not verifiable. One that
+  // cannot be read at all (sealed to another key, an envelope naming this key that does not open,
+  // its graph gone) is unknown, not "not verifiable": the RecordUnreadable or GraphMissing goes on
+  // to the caller as a 409 saying why, and no skip audit is written.
+  const before = await readRecord(review.target.descriptorUrl, call.ctx.trusted, call.ctx.fetchFn, call.cache);
+  if (!isTrusted(before) || placementProblem(before.body, pod, a.attemptIri) !== undefined
+    || before.recordId !== review.target.recordId || before.graphDigest !== review.target.graphDigest) return notVerifiable;
   const asOf = await readRoleRegistryAt(pod, review.reviewedAt, call.ctx.trusted, call.ctx.fetchFn, call.cache);
   const held = asOf.roles.get(review.reviewer.address.toLowerCase()) ?? new Set<Role>();
   if (!held.has('reviewer') || held.has('agent')) return notVerifiable;
@@ -1227,7 +1277,7 @@ async function ratifyScenario(call: Call, args: Record<string, unknown>): Promis
 function sealedScenariosMark(n: number): Out {
   return {
     count: n, resolvedBy: { env: 'PEV_RECORD_KEY' },
-    note: `${n} scenario record(s) on this pod are sealed to a record key this bridge does not hold, or it holds none; they are not in this list, so a scenario missing from it may be one of them. Set PEV_RECORD_KEY to the key that wrote them.`,
+    note: `${n} scenario record(s) on this pod are sealed to a record key this bridge does not hold, or it holds none; they are not in this list, so a scenario missing from it may be one of them. If the key that wrote them is the operator's record key, set PEV_RECORD_KEY to it.`,
   };
 }
 
@@ -1241,7 +1291,7 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
     const chain = await readChain(pod, one, ctx.trusted, ctx.fetchFn, call.cache);
     const versions = chain.flatMap((v) => (!isDeleted(v) && isTrusted(v) && v.body.kind === 'scenario'
       ? [{ version: v.body.version, status: v.body.status, descriptorUrl: v.descriptorUrl, rubricHash: v.body.rubricHash, at: v.body.at }] : []));
-    const mismatch = keyMismatchIn(ctx, keyedIrisOf(await listEntries(pod, ctx.fetchFn)));
+    const mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn)));
     return {
       podUrl: pod,
       scenario: { ...scenarioView(h.rec, h.body), counterpart: h.body.scenario.counterpart, endsWhen: h.body.scenario.endsWhen },
@@ -1253,7 +1303,7 @@ async function listScenarios(call: Call, args: Record<string, unknown>): Promise
   const scenarios = read.records
     .flatMap((r) => (r.body.kind === 'scenario' && (drafts || r.body.status !== 'draft') ? [scenarioView(r, r.body)] : []))
     .sort((x, y) => String(x['title']).localeCompare(String(y['title'])));
-  const mismatch = keyMismatchIn(ctx, read.keyedIris);
+  const mismatch = keyMismatchIn(ctx, read.keyMarks);
   return {
     podUrl: pod, scenarios, untrustedRecordsSkipped: read.untrusted + read.forked, sealedRecordsSkipped: read.sealed, complete: read.complete,
     ...(read.sealed > 0 ? { sealedRecords: sealedScenariosMark(read.sealed) } : {}),
@@ -1293,9 +1343,9 @@ async function startAttempt(call: Call, args: Record<string, unknown>): Promise<
   const key = keys[0]!;
   return ctx.lock(`${s.pod}|attempts|${key}`, async () => {
     const all = await listEntries(s.pod, ctx.fetchFn);
-    // This lookup is by learner: on the manifest it is made from, every keyed attempt must be
-    // keyed under this bridge's key, or her attempts under another key would read as none.
-    const mismatch = keyMismatchIn(ctx, keyedIrisOf(all));
+    // This lookup is by learner: on the manifest it is made from, every record must be under this
+    // bridge's key (or plaintext), or her attempts under another key would read as none.
+    const mismatch = keyMismatchIn(ctx, keyMarksOf(all));
     if (mismatch) throw keyMismatchDecline(ctx, mismatch);
     const prefixes = keys.map((k) => `urn:pev:attempt:${k}-`);
     const mine = [...new Set(all.flatMap((e) => e.describes.filter((d) => prefixes.some((p) => d.startsWith(p)))))];
@@ -1494,6 +1544,7 @@ async function recordTurns(call: Call, args: Record<string, unknown>): Promise<O
   const iri = needAttemptIri(s.payload);
   return ctx.lock(`${s.pod}|${iri}`, async () => {
     const h = await conversationHead(call, s, iri, turnIndex);
+    const roles = (await rolesOn(call, s.pod)).of(s.signer);
     const learner: Turn = { index: turnIndex, speaker: 'learner', text: learnerText, textSha256: sha256(learnerText), at: s.at, source: 'learner-signed', envelope: s.stored };
     const disclosure: InferenceDisclosure = {
       provider: declared.provider, model: declared.model, keySource: 'mcp-client', route: 'client-packet', declaredBy: s.signerDid,
@@ -1504,7 +1555,7 @@ async function recordTurns(call: Call, args: Record<string, unknown>): Promise<O
     };
     const body = withExchange(h.body, learner, counterpart, endAfter, actOf(s, 'recordTurns'), iso(ctx));
     const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
-    return exchangeOut(ctx, s, body, w, learner, counterpart, (await rolesOn(call, s.pod)).of(s.signer));
+    return exchangeOut(ctx, s, body, w, learner, counterpart, roles);
   });
 }
 
@@ -1521,6 +1572,7 @@ async function endConversation(call: Call, args: Record<string, unknown>): Promi
     if (learnerTurnCount(h.body.turns) === 0) {
       throw decline(409, 'Say something first; an attempt with no learner line has nothing to judge.', 'no-learner-turns');
     }
+    const roles = (await rolesOn(call, s.pod)).of(s.signer);
     const last = h.body.turns[h.body.turns.length - 1];
     const endedBy = h.body.endProposedAtTurn !== undefined && last !== undefined && h.body.endProposedAtTurn === last.index
       ? 'learner-confirmed-counterpart-end' : 'learner';
@@ -1533,7 +1585,7 @@ async function endConversation(call: Call, args: Record<string, unknown>): Promi
     return {
       attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'ended', endedBy, transcriptHash: body.transcriptHash,
       currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-      nextActions: nextFor(ctx, body, s.signer, (await rolesOn(call, s.pod)).of(s.signer), false), recorded: true,
+      nextActions: nextFor(ctx, body, s.signer, roles, false), recorded: true,
     };
   });
 }
@@ -1557,14 +1609,14 @@ function repeatOf(a: AttemptBody, judgeId: string, promptTemplateHash: string): 
   return earlier ? earlier.index : null;
 }
 
-async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, disclosure?: InferenceDisclosure): Promise<Out> {
+/** Write a judgment. `roles` are the signer's, read before: nothing after the write can refuse. */
+async function recordJudgmentOn(call: Call, s: Signed, h: AttemptHead, j: JudgmentResult, key: PevActionKey, roles: ReadonlySet<Role>, disclosure?: InferenceDisclosure): Promise<Out> {
   const { ctx } = call;
   const a = h.body;
   const judgments = [...a.judgments, j];
   const body: AttemptBody = { ...a, at: j.judgedAt, state: a.state === 'ended' ? 'judged' : a.state, judgments, acts: [...a.acts, actOf(s, key)] };
   const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce, ...(disclosure ? { disclosure } : {}) });
   const primary = judgments[0]!;
-  const roles = (await rolesOn(call, s.pod)).of(s.signer);
   return {
     attemptIri: a.attemptIri, descriptorUrl: w.descriptorUrl, state: body.state, modalStatus: modalFor(body), judgment: j,
     judgmentCount: judgments.length, agreement: agreementOf(a.scenarioSpec, judgments), provisional: primary.provisional,
@@ -1606,7 +1658,7 @@ async function judgeAttempt(call: Call, args: Record<string, unknown>): Promise<
       repeatOf: repeatOf(h.body, judgeId, JUDGE_PROMPT_TEMPLATE_HASH), rubricHash: h.body.scenario.rubricHash,
       transcriptHash: h.body.transcriptHash ?? transcriptHash(h.body.turns),
     });
-    return recordJudgmentOn(call, s, h, j, 'judgeAttempt', disclosure);
+    return recordJudgmentOn(call, s, h, j, 'judgeAttempt', roles, disclosure);
   });
 }
 
@@ -1668,7 +1720,7 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
       chosenBy: 'judge-registry', requestedBy: { did: s.signerDid, role: 'judge' },
       repeatOf: repeatOf(a, judge.id, promptTemplateHash), rubricHash: a.scenario.rubricHash, transcriptHash: tHash,
     });
-    return recordJudgmentOn(call, s, h, j, 'recordJudgment');
+    return recordJudgmentOn(call, s, h, j, 'recordJudgment', roles);
   });
 }
 
@@ -1682,12 +1734,12 @@ async function recordJudgment(call: Call, args: Record<string, unknown>): Promis
  * list that would read an attempt this bridge cannot see as absent (nothing awaiting review, no
  * attempt of the signer's, a figure without it), so it is refused (409) rather than computed when
  * any attempt head is sealed to a record key this bridge does not hold (`records-sealed`), or the
- * pod holds attempts keyed under another record key (`record-key-mismatch`); both name
- * PEV_RECORD_KEY. Untrusted and forked heads are skipped and counted, as before.
+ * pod's manifest names another record key (`record-key-mismatch`: keyed attempt IRIs or sealed
+ * records' marks); both name PEV_RECORD_KEY. Untrusted and forked heads are skipped and counted.
  */
 async function attemptBodies(call: Call, pod: string, what: string): Promise<{ readonly heads: readonly ReadRecord[]; readonly bodies: readonly AttemptBody[]; readonly untrusted: number; readonly complete: boolean }> {
   const read = await readHeadsOfKind(pod, 'attempt', call.ctx.trusted, { max: 2000, fetchFn: call.ctx.fetchFn, cache: call.cache });
-  const mismatch = keyMismatchIn(call.ctx, read.keyedIris);
+  const mismatch = keyMismatchIn(call.ctx, read.keyMarks);
   if (mismatch) throw keyMismatchDecline(call.ctx, mismatch);
   if (read.sealed > 0) throw sealedDecline(read.sealed, what);
   const heads = read.records.filter((r) => r.body.kind === 'attempt');
@@ -1757,7 +1809,7 @@ function levelPicks(p: P): LevelPick[] {
 }
 
 /** Steps 5–8 shared by countersign and override. */
-async function reviewable(call: Call, s: Signed, iri: string, picks: readonly LevelPick[]): Promise<{ h: AttemptHead; primary: JudgmentResult }> {
+async function reviewable(call: Call, s: Signed, iri: string, picks: readonly LevelPick[]): Promise<{ h: AttemptHead; primary: JudgmentResult; roles: ReadonlySet<Role> }> {
   const { ctx } = call;
   const h = await attemptHead(call, s.pod, iri);
   const a = h.body;
@@ -1795,13 +1847,18 @@ async function reviewable(call: Call, s: Signed, iri: string, picks: readonly Le
   const missing = crit.filter((c) => !seen.has(c.id)).map((c) => c.id);
   if (missing.length > 0) problems.push(`missing: ${missing.join(', ')}`);
   if (problems.length > 0) throw decline(400, `List every criterion exactly once with a level of that criterion (${problems.join('; ')}).`, 'levels-incomplete', undefined, { problems });
-  return { h, primary };
+  return { h, primary, roles };
 }
 
+/**
+ * Write a review. Whether the rubric version is ratified is read first: a scenario chain this
+ * bridge cannot read refuses the review before anything is written, never after.
+ */
 async function writeReview(call: Call, s: Signed, h: AttemptHead, primary: JudgmentResult, outcome: 'countersigned' | 'overridden',
-  finalLevels: readonly FinalLevel[], key: PevActionKey): Promise<Out> {
+  finalLevels: readonly FinalLevel[], key: PevActionKey, roles: ReadonlySet<Role>): Promise<Out> {
   const { ctx } = call;
   const a = h.body;
+  const rat = await ratificationOf(call, s.pod, a);
   const at = iso(ctx);
   const assessment = assess(a.scenarioSpec, Object.fromEntries(finalLevels.map((f) => [f.criterionId, f.levelId])), false);
   const review: ReviewResult = {
@@ -1810,7 +1867,6 @@ async function writeReview(call: Call, s: Signed, h: AttemptHead, primary: Judgm
   };
   const body: AttemptBody = { ...a, at, state: outcome, reviews: [...a.reviews, review], acts: [...a.acts, actOf(s, key)] };
   const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
-  const rat = await ratificationOf(call, s.pod, a);
   const nonRepeat = a.judgments.filter((j) => j.repeatOf === null).length;
   return {
     attemptIri: a.attemptIri, descriptorUrl: w.descriptorUrl, state: outcome, modalStatus: 'Asserted', supersedes: h.rec.descriptorUrl,
@@ -1819,7 +1875,7 @@ async function writeReview(call: Call, s: Signed, h: AttemptHead, primary: Judgm
     outcomesRecorded: a.scenarioSpec.rubric.criteria.length * nonRepeat,
     projectable: rat.ratified, projectableWhy: rat.ratified ? EVIDENCE_WHY.ready : EVIDENCE_WHY.notRatified,
     currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-    nextActions: nextFor(ctx, body, s.signer, (await rolesOn(call, s.pod)).of(s.signer), rat.ratified), recorded: true,
+    nextActions: nextFor(ctx, body, s.signer, roles, rat.ratified), recorded: true,
   };
 }
 
@@ -1837,7 +1893,7 @@ async function countersignAttempt(call: Call, args: Record<string, unknown>): Pr
   const iri = needAttemptIri(s.payload);
   const picks = levelPicks(s.payload);
   return call.ctx.lock(`${s.pod}|${iri}`, async () => {
-    const { h, primary } = await reviewable(call, s, iri, picks);
+    const { h, primary, roles } = await reviewable(call, s, iri, picks);
     if (primary.unverifiedCriteria.length > 0) {
       throw decline(409, `A quote did not check out for ${primary.unverifiedCriteria.join(', ')}; set those levels yourself with an override.`, 'unverified-criteria-need-override',
         { action: A.overrideAttempt, criteria: primary.unverifiedCriteria });
@@ -1851,7 +1907,7 @@ async function countersignAttempt(call: Call, args: Record<string, unknown>): Pr
       const pk = picks.find((x) => x.criterionId === c.id)!;
       return { criterionId: c.id, levelId: pk.levelId, from: 'judge', ...(pk.why !== undefined ? { why: pk.why } : {}) };
     });
-    return writeReview(call, s, h, primary, 'countersigned', finalLevels, 'countersignAttempt');
+    return writeReview(call, s, h, primary, 'countersigned', finalLevels, 'countersignAttempt', roles);
   });
 }
 
@@ -1860,7 +1916,7 @@ async function overrideAttempt(call: Call, args: Record<string, unknown>): Promi
   const iri = needAttemptIri(s.payload);
   const picks = levelPicks(s.payload);
   return call.ctx.lock(`${s.pod}|${iri}`, async () => {
-    const { h, primary } = await reviewable(call, s, iri, picks);
+    const { h, primary, roles } = await reviewable(call, s, iri, picks);
     const needWhyFor: string[] = [];
     let changes = false;
     const finalLevels: FinalLevel[] = h.body.scenarioSpec.rubric.criteria.map((c) => {
@@ -1880,7 +1936,7 @@ async function overrideAttempt(call: Call, args: Record<string, unknown>): Promi
     if (!changes) {
       throw decline(409, 'Every level equals the judgment and every quote checked out; countersign it instead.', 'override-changes-nothing', { action: A.countersignAttempt });
     }
-    return writeReview(call, s, h, primary, 'overridden', finalLevels, 'overrideAttempt');
+    return writeReview(call, s, h, primary, 'overridden', finalLevels, 'overrideAttempt', roles);
   });
 }
 
@@ -1904,6 +1960,7 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     }
     notReplayed(a, s);
     checkTarget(needTarget(s.payload), h.rec);
+    const roles = (await rolesOn(call, s.pod)).of(s.signer);
     const at = iso(ctx);
     const reopening: Reopening = {
       index: a.reopenings.length, kind: 'contest', by: s.actor, role: 'learner', at, why: String(s.payload['why']),
@@ -1914,7 +1971,7 @@ async function contestReview(call: Call, args: Record<string, unknown>): Promise
     return {
       attemptIri: iri, descriptorUrl: w.descriptorUrl, state: 'contested', modalStatus: 'Hypothetical', reopening,
       currentTarget: { recordId: w.recordId, descriptorUrl: w.descriptorUrl, graphDigest: w.graphDigest },
-      nextActions: nextFor(ctx, body, s.signer, (await rolesOn(call, s.pod)).of(s.signer), false), recorded: true,
+      nextActions: nextFor(ctx, body, s.signer, roles, false), recorded: true,
     };
   });
 }
@@ -2279,8 +2336,8 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
     eligibility(call, s.pod, h), ratificationOf(call, s.pod, a), readChain(s.pod, iri, ctx.trusted, ctx.fetchFn, call.cache), listEntries(s.pod, ctx.fetchFn),
   ]);
   // Read by its IRI, this attempt is what it is; but the acts nextActions offers are writes, which
-  // a pod holding attempts keyed under another record key refuses, so the answer says so.
-  const mismatch = keyMismatchIn(ctx, keyedIrisOf(entries));
+  // a pod holding records under another record key refuses, so the answer says so.
+  const mismatch = keyMismatchIn(ctx, keyMarksOf(entries));
   const review = standingReview(a);
   const judged = a.judgments.length > 0;
   return {
@@ -2409,13 +2466,13 @@ export async function describeStartup(deps: PevDeps): Promise<{ readonly lines: 
   const ctx = makeContext(deps);
   const pod = podBase(deps.defaultPodUrl);
   const registry = await registryStartup(ctx, pod);
-  // Attempts keyed under another record key: every write on this pod will be refused.
-  let mismatch: KeyedIri | null = null;
-  try { mismatch = keyMismatchIn(ctx, keyedIrisOf(await listEntries(pod, ctx.fetchFn))); } catch { mismatch = null; }
+  // Records under another record key: every write on this pod will be refused.
+  let mismatch: KeyMismatch | null = null;
+  try { mismatch = keyMismatchIn(ctx, keyMarksOf(await listEntries(pod, ctx.fetchFn))); } catch { mismatch = null; }
   if (!mismatch) return registry;
   return {
     ...registry,
-    lines: [...registry.lines, `${keyMismatchWhy(ctx, mismatch)}. This bridge writes nothing on ${pod} until it runs with that key: set PEV_RECORD_KEY to it (from the operator's backup), or set PEV_DEFAULT_POD_URL to a fresh pod path.`],
+    lines: [...registry.lines, `${keyMismatchWhy(ctx, mismatch)}. This bridge writes nothing on ${pod} until every bridge on it holds one record key. ${keyMismatchAdvice(ctx, mismatch)} Or set PEV_DEFAULT_POD_URL to a fresh pod path.`],
   };
 }
 
@@ -2445,7 +2502,7 @@ async function registryStartup(ctx: Ctx, pod: string): Promise<{ readonly lines:
     if (e instanceof RecordSealed) {
       return {
         lines: [e.bridgeHasKey
-          ? `The role registry on ${pod} is sealed to a record key this bridge does not hold, so no role on that pod counts. Set PEV_RECORD_KEY to the key that wrote it (from the operator's backup), or set PEV_DEFAULT_POD_URL to a fresh pod path.`
+          ? `The role registry on ${pod} is sealed to a record key this bridge does not hold, so no role on that pod counts. If the key that wrote it is the operator's record key, set PEV_RECORD_KEY to it (from the operator's backup); if this bridge's is, a bridge holding another key wrote it. Or set PEV_DEFAULT_POD_URL to a fresh pod path.`
           : `The role registry on ${pod} is sealed, and this bridge has no record key, so no role on that pod counts. Set PEV_RECORD_KEY to the key that wrote it (from the operator's backup).`],
         registryTrusted: false,
       };

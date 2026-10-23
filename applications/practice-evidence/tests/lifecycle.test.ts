@@ -33,7 +33,7 @@ import {
   type JudgmentResult, type ScenarioSpec,
 } from '../src/practice.js';
 import {
-  attemptIriSecret, attemptKey, didOf, fingerprintOfAttemptIri, iriKeyFingerprint, modelAgentIri, recordGraphTurtle, recordLocal, registryIri, signEnvelope,
+  attemptIriSecret, attemptKey, didOf, fingerprintOfAttemptIri, fingerprintOfRecordUrl, iriKeyFingerprint, modelAgentIri, recordGraphTurtle, recordLocal, registryIri, signEnvelope,
   signedRequestEnvelope, type PevRecordBody,
 } from '../src/records.js';
 import { CMI5_CATEGORY_PREFIX, statementProblems, VERB_COMPLETED } from '../src/projections.js';
@@ -1243,6 +1243,12 @@ describe('with a record key, operator-pod records are sealed to it, still verify
       salts.set(rec.body.kind, [...(salts.get(rec.body.kind) ?? []), String(rec.body.salt)]);
     }
     expect(descriptors.length).toBe(graphs.length);
+    // Every sealed record's descriptor URL names the key that sealed it, so the pod's manifest says
+    // which key its records are under from the first one sealed; the plaintext version names none.
+    const own = iriKeyFingerprint(attemptIriSecret(RECORD_KEY));
+    expect(descriptors.map((u) => fingerprintOfRecordUrl(u))).toEqual(descriptors.map((u) => (u === plainDescriptor ? null : own)));
+    expect((await discover(SEALED, {}, { fetch: vault.fetchFn })).filter((e) => e.descriptorUrl.startsWith(`${SEALED}${PEV_RECORDS_CONTAINER}`))
+      .every((e) => (fingerprintOfRecordUrl(e.descriptorUrl) === null) === (e.descriptorUrl === plainDescriptor))).toBe(true);
     // Every version of every kind carries its own salt: 24 base64url characters (144 bits) from the
     // system's random source, never this test's predictable nonces.
     expect([...salts.keys()].sort()).toEqual(['attempt', 'projection-audit', 'role-registry', 'scenario']);
@@ -1372,15 +1378,22 @@ describe('with a record key, operator-pod records are sealed to it, still verify
       const r = refused(await act(h, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on), 409, 'record-not-trusted');
       expect(r['iep:resolvedBy']).toEqual({ env: 'PEV_RECORD_KEY' });
       expect(String(r['error'])).toContain(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key');
-      // The pod holds attempts keyed under the record key: every write is refused before any record
-      // is read, naming both keys' fingerprints (never the keys).
+      // The pod holds records sealed to the record key, and attempts keyed under it: every write is
+      // refused before any record is read, naming both keys' fingerprints (never the keys) and where
+      // the manifest names the pod's (a sealed record's URL, or a keyed attempt IRI).
       const bridgeKey = hasKey ? `k${iriKeyFingerprint(attemptIriSecret(OTHER_KEY))}` : null;
       for (const w of [
         await act(h, 'pev.register_role', W.admin, { address: W.ben.address, role: 'learner', change: 'add' }, {}, on),
         await act(h, 'pev.say', W.ana, { attemptIri: V['attempt'], turnIndex: 9, text: 'Reading this needs the key.' }, {}, on),
       ]) {
         refused(w, 409, 'record-key-mismatch');
-        expect([w['iep:resolvedBy'], w['podKey'], w['bridgeKey'], fingerprintOfAttemptIri(String(w['graphIri']))]).toEqual([{ env: 'PEV_RECORD_KEY' }, podKey, bridgeKey, podKey.slice(1)]);
+        const at = String(w['markedAt']);
+        expect([w['iep:resolvedBy'], w['podKey'], w['podKeys'], w['bridgeKey'], w['bridgeKeyOnPod'], w['markedBy'] === 'sealed-record' ? fingerprintOfRecordUrl(at) : fingerprintOfAttemptIri(at)])
+          .toEqual([{ env: 'PEV_RECORD_KEY' }, podKey, [podKey], bridgeKey, false, podKey.slice(1)]);
+        // Which key the pod's records are under is a fact; which key is the operator's is not.
+        expect(String(w['error'])).toContain(hasKey
+          ? `If ${podKey} is the operator's record key (a bridge holding a key prints its fingerprint when it starts), set PEV_RECORD_KEY to it from the operator's backup. If this bridge's key (${bridgeKey}) is the operator's`
+          : `Set PEV_RECORD_KEY to the key this pod's records are under (${podKey})`);
       }
       // A listing skips the sealed scenario and counts it apart; it never answers as if the pod held none.
       const list = ok((await h['pev.list_scenarios']!({})) as Out);
@@ -1389,8 +1402,8 @@ describe('with a record key, operator-pod records are sealed to it, still verify
       expect(list['recordKeyMismatch']).toMatchObject({ podKey, bridgeKey, resolvedBy: { env: 'PEV_RECORD_KEY' } });
       const startup = await describeStartup({ ...base, ...sealedDeps, ...(hasKey ? { recordKey: OTHER_KEY } : {}) });
       expect(startup.registryTrusted).toBe(false);
-      expect(startup.lines.join('\n')).toContain('Set PEV_RECORD_KEY to the key that wrote it');
-      expect(startup.lines.join('\n')).toContain(`derived under the record key with fingerprint ${podKey}`);
+      expect(startup.lines.join('\n')).toContain(hasKey ? 'If the key that wrote it is the operator\'s record key, set PEV_RECORD_KEY to it' : 'Set PEV_RECORD_KEY to the key that wrote it');
+      expect(startup.lines.join('\n')).toContain(`the record key with fingerprint ${podKey}`);
     }
     expect(JSON.stringify([...vault.store].sort())).toBe(before);
     await expect(readRecord(V['override']!, { ...TRUSTED, recordKey: OTHER_KEY }, vault.fetchFn)).rejects.toBeInstanceOf(RecordSealed);
@@ -1443,6 +1456,35 @@ describe('with a record key, operator-pod records are sealed to it, still verify
       vault.store.set(graph, original);
     }
     expect(ok(await act(keyed, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on))['headDescriptorUrl']).toBe(head);
+    // The same envelope at the scenario head a projection rests on, or at the version a standing
+    // review targeted, is not "not ratified" or "not verifiable": the projection is refused saying
+    // why, and nothing is written (no skip audit).
+    // Ben's lines are his own (later tests search the pod for Ana's), so no quote checks out and his
+    // reviewer says why for every level.
+    const fresh = make({ ...sealedDeps, recordKey: RECORD_KEY, model: scriptedPracticeModel() });
+    const bIri = String(ok(await act(fresh, 'pev.start_attempt', W.ben, { scenarioIri: V['scenario'], scenarioVersion: 1, coached: false }, {}, on))['attemptIri']);
+    ok(await act(fresh, 'pev.say', W.ben, { attemptIri: bIri, turnIndex: 1, text: 'The report came in on Friday, a day after it was due.' }, {}, on));
+    ok(await act(fresh, 'pev.end_conversation', W.ben, { attemptIri: bIri, turnIndex: 3 }, {}, on));
+    const bj = ok(await act(fresh, 'pev.judge_attempt', W.ben, { attemptIri: bIri }, {}, on));
+    const lv = levels([['specific-observation', 'vague', 'Says it was late, not when it was due or what it was.'], ['asks-their-view', 'no', 'Never asks for his side of it.'],
+      ['agrees-next-step', 'none', 'No next step is agreed in the one line there is.']]);
+    ok(await act(fresh, 'pev.override_attempt', W.reviewer2, { attemptIri: bIri, target: bj['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }, {}, on));
+    const scenarioHead = String(((ok((await fresh['pev.list_scenarios']!({ scenario_iri: V['scenario'] })) as Out))['scenario'] as Out)['descriptorUrl']);
+    const reviewTarget = String((bj['currentTarget'] as Out)['descriptorUrl']);
+    for (const [what, descriptorUrl] of [['the scenario head', scenarioHead], ['the version the review targeted', reviewTarget]] as const) {
+      const g = graphUrlOf(vault.store, descriptorUrl)!;
+      const kept = vault.store.get(g)!;
+      vault.store.set(g, sealedToBridge(new Uint8Array([0xff, 0xfe, 0x80, 0x80])));
+      try {
+        const unchanged = JSON.stringify([...vault.store].sort());
+        const r = refused(await act(fresh, 'pev.project_attempt', W.ben, { attemptIri: bIri, format: 'xapi' }, {}, on), 409, 'record-not-trusted');
+        expect(String(r['error']), what).toContain('its graph envelope names this bridge\'s record key but cannot be opened: it opens to bytes that are not UTF-8 text');
+        expect([r['descriptorUrl'], r['skipAudit'], JSON.stringify([...vault.store].sort()) === unchanged], what).toEqual([descriptorUrl, undefined, true]);
+      } finally {
+        vault.store.set(g, kept);
+      }
+    }
+    expect(ok(await act(fresh, 'pev.project_attempt', W.ben, { attemptIri: bIri, format: 'xapi' }, {}, on))['practiceEvidence']).toBe(true);
   }, SLOW);
 
   it('holder copies stay plaintext on the learner\'s pod and verify without the key; the export gives the opened bytes', async () => {
@@ -1670,6 +1712,31 @@ describe('with a record key, operator-pod records are sealed to it, still verify
   const lateDeps: Partial<PevDeps> = { fetchFn: vault.fetchFn, holderFetchFn: vault.fetchFn, defaultPodUrl: LATE };
   const plainLate = make({ ...lateDeps, model: scriptedPracticeModel() });
   const keyedLate = make({ ...lateDeps, recordKey: RECORD_KEY, model: scriptedPracticeModel() });
+  const stored = (): string => JSON.stringify([...vault.store].sort());
+
+  /**
+   * The pod as it would be if its sealed records carried no key mark, as someone who can write the
+   * pod could make it by rewriting the manifest: each marked descriptor moved to the URL without the
+   * mark and the manifest rewritten to match (the descriptors still point at their envelopes).
+   * Returns what puts the pod back.
+   */
+  const stripMarks = (podUrl: string): (() => void) => {
+    const saved = new Map(vault.store);
+    const manifestUrl = `${podUrl}.well-known/context-graphs`;
+    let manifest = vault.store.get(manifestUrl)!;
+    let moved = 0;
+    for (const [u, b] of [...vault.store]) {
+      if (!u.startsWith(podUrl) || fingerprintOfRecordUrl(u) === null) continue;
+      const bare = u.replace(/-k[0-9a-f]{8}\.ttl$/, '.ttl');
+      vault.store.delete(u);
+      vault.store.set(bare, b);
+      manifest = manifest.split(`<${u}>`).join(`<${bare}>`);
+      moved += 1;
+    }
+    expect(moved).toBeGreaterThan(0);
+    vault.store.set(manifestUrl, manifest);
+    return () => { vault.store.clear(); for (const [k, v] of saved) vault.store.set(k, v); };
+  };
 
   it('a record sealed to another key is never read as absent: listings count it apart, and answers that would rest on it are refused', async () => {
     // Without a key every act works on a pod that never had one: roles, a ratified scenario, Ana's
@@ -1689,61 +1756,260 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     };
     const ana = String(ok(await act(plainLate, 'pev.start_attempt', W.ana, start, {}, onLate))['attemptIri']);
     const j = await converse(plainLate, W.ana, ana);
-    expect(ok(await act(plainLate, 'pev.override_attempt', W.reviewer2, { attemptIri: ana, target: j['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }, {}, onLate))['projectable']).toBe(true);
+    const ov = ok(await act(plainLate, 'pev.override_attempt', W.reviewer2, { attemptIri: ana, target: j['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }, {}, onLate));
+    expect(ov['projectable']).toBe(true);
     const ben = String(ok(await act(plainLate, 'pev.start_attempt', W.ben, start, {}, onLate))['attemptIri']);
     // The key is set and Ben's attempt goes on under it: its head is sealed, its IRI still plain, so
-    // no IRI on the pod says a key is in use. It waits for review.
+    // no IRI on the pod says a key is in use; but every version sealed names the key in its URL. It
+    // waits for review.
     await converse(keyedLate, W.ben, ben);
     expect(fingerprintOfAttemptIri(ben)).toBeNull();
+    const marked = (await discover(LATE, {}, { fetch: vault.fetchFn })).map((e) => fingerprintOfRecordUrl(e.descriptorUrl)).filter((f) => f !== null);
+    expect([marked.length, new Set(marked)]).toEqual([5, new Set([ownKey.slice(1)])]);
     const queue = ok(await act(keyedLate, 'pev.review_queue', W.reviewer, {}, {}, onLate));
     expect([(queue['entries'] as Out[]).map((e) => e['attemptIri']), queue['awaitingReview'], queue['complete']]).toEqual([[ben], 1, true]);
-    let before = JSON.stringify([...vault.store].sort());
+    let before = stored();
     const others = [[make({ ...lateDeps, recordKey: OTHER_KEY, model: scriptedPracticeModel() }), true], [plainLate, false]] as const;
+    const contest = { attemptIri: ana, target: ov['currentTarget'], why: 'Sam agreed the date with me; please read turn five again.' };
     for (const [h, hasKey] of others) {
-      // Each answer that would count or list without Ben's attempt (nothing awaiting review, no
-      // attempt of his, results and calibration without it) is refused, naming the key.
+      // Before the marks such a bridge, finding no keyed IRI, started a newcomer's attempt under its
+      // own key (which then locked the bridge holding the pod's key out) and sealed a contest onto
+      // Ana's plaintext chain. Now the sealed records name the pod's key: it starts nothing, writes
+      // nothing, and refuses each answer that would count or list without Ben's attempt.
       for (const [what, r] of [
+        ['a newcomer starts', await act(h, 'pev.start_attempt', W.newcomer, start, {}, onLate)],
+        ['Ana contests', await act(h, 'pev.contest_review', W.ana, contest, {}, onLate)],
+        ['a role', await act(h, 'pev.register_role', W.admin, { address: W.stranger.address, role: 'learner', change: 'add' }, {}, onLate)],
         ['queue', await act(h, 'pev.review_queue', W.reviewer, {}, {}, onLate)],
         ['his attempts', await act(h, 'pev.get_attempt', W.ben, {}, {}, onLate)],
         ['results', await act(h, 'pev.scenario_results', W.reviewer, { scenarioIri: sIri }, {}, onLate)],
         ['calibration', (await h['pev.calibration']!({})) as Out],
       ] as const) {
-        refused(r, 409, 'records-sealed');
-        expect([r['iep:resolvedBy'], r['sealedRecordsSkipped']], what).toEqual([{ env: 'PEV_RECORD_KEY' }, 1]);
-        expect(String(r['error']), what).toContain('sealed to a record key this bridge does not hold, or it holds none');
+        refused(r, 409, 'record-key-mismatch');
+        expect([r['iep:resolvedBy'], r['podKey'], r['markedBy'], r['bridgeKey']], what).toEqual([{ env: 'PEV_RECORD_KEY' }, ownKey, 'sealed-record', hasKey ? otherKey : null]);
         expect([r['awaitingReview'], r['attempts'], r['cells']], what).toEqual([undefined, undefined, undefined]);
       }
       const his = refused(await act(h, 'pev.get_attempt', W.ben, { attemptIri: ben }, {}, onLate), 409, 'record-not-trusted');
       expect([his['iep:resolvedBy'], String(his['error']).includes(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key')])
         .toEqual([{ env: 'PEV_RECORD_KEY' }, true]);
-      // The scenario is still plaintext, so the list is whole.
+      // The scenario is still plaintext, so the list is whole, and says the pod's records are under another key.
       const list = ok((await h['pev.list_scenarios']!({})) as Out);
-      expect([(list['scenarios'] as Out[]).length, list['sealedRecordsSkipped'], list['complete'], list['sealedRecords']]).toEqual([1, 0, true, undefined]);
+      expect([(list['scenarios'] as Out[]).length, list['sealedRecordsSkipped'], list['complete'], list['sealedRecords'], (list['recordKeyMismatch'] as Out)['podKey']])
+        .toEqual([1, 0, true, undefined, ownKey]);
     }
-    expect(JSON.stringify([...vault.store].sort())).toBe(before);
+    expect(stored()).toBe(before);
+    // Where a sealed record carries no mark, the seal itself still keeps it from reading as absent:
+    // each answer that would count or list without Ben's attempt is refused, naming the key.
+    let restore = stripMarks(LATE);
+    try {
+      before = stored();
+      for (const [h, hasKey] of others) {
+        for (const [what, r] of [
+          ['queue', await act(h, 'pev.review_queue', W.reviewer, {}, {}, onLate)],
+          ['his attempts', await act(h, 'pev.get_attempt', W.ben, {}, {}, onLate)],
+          ['results', await act(h, 'pev.scenario_results', W.reviewer, { scenarioIri: sIri }, {}, onLate)],
+          ['calibration', (await h['pev.calibration']!({})) as Out],
+        ] as const) {
+          refused(r, 409, 'records-sealed');
+          expect([r['iep:resolvedBy'], r['sealedRecordsSkipped']], what).toEqual([{ env: 'PEV_RECORD_KEY' }, 1]);
+          expect(String(r['error']), what).toContain('sealed to a record key this bridge does not hold, or it holds none');
+          expect([r['awaitingReview'], r['attempts'], r['cells']], what).toEqual([undefined, undefined, undefined]);
+        }
+        expect(String(refused(await act(h, 'pev.get_attempt', W.ben, { attemptIri: ben }, {}, onLate), 409, 'record-not-trusted')['error'])
+          .includes(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key')).toBe(true);
+      }
+      expect(stored()).toBe(before);
+    } finally {
+      restore();
+    }
     // The author saves version 2 as a draft with the key set: the scenario's head is now sealed.
     const md = demoScenarioInput('missed-deadline', 2) as Out;
     ok(await act(keyedLate, 'pev.author_scenario', W.author, { scenario: { ...md, title: `${String(md['title'])} (revised)` }, status: 'draft', basedOnVersion: 1, draftAssistance: { used: false } }, {}, onLate));
-    before = JSON.stringify([...vault.store].sort());
+    before = stored();
     for (const [h, hasKey] of others) {
       // The list says it is not the whole pod, and why, rather than "no scenarios".
       const list = ok((await h['pev.list_scenarios']!({ include_drafts: true })) as Out);
       expect([(list['scenarios'] as Out[]).length, list['untrustedRecordsSkipped'], list['sealedRecordsSkipped'], list['complete']]).toEqual([0, 0, 1, false]);
       expect(list['sealedRecords']).toMatchObject({ count: 1, resolvedBy: { env: 'PEV_RECORD_KEY' } });
-      // A scenario head sealed to another key is not "not ratified": the projection is refused
-      // naming PEV_RECORD_KEY and nothing is written (no skip audit).
-      const x = refused(await act(h, 'pev.project_attempt', W.ana, { attemptIri: ana, format: 'xapi' }, {}, onLate), 409, 'record-not-trusted');
-      expect(x['iep:resolvedBy']).toEqual({ env: 'PEV_RECORD_KEY' });
-      expect(String(x['error'])).toContain(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key');
-      expect(x['skipAudit']).toBeUndefined();
-      // Reading the attempt says the same, rather than "rubric not ratified".
-      refused(await act(h, 'pev.get_attempt', W.ana, { attemptIri: ana }, {}, onLate), 409, 'record-not-trusted');
+      // A projection writes (its audit), so it is refused for the key mismatch before anything is read.
+      refused(await act(h, 'pev.project_attempt', W.ana, { attemptIri: ana, format: 'xapi' }, {}, onLate), 409, 'record-key-mismatch');
+      // Reading the attempt: a scenario head sealed to another key is not "rubric not ratified".
+      const r = refused(await act(h, 'pev.get_attempt', W.ana, { attemptIri: ana }, {}, onLate), 409, 'record-not-trusted');
+      expect([r['iep:resolvedBy'], String(r['error']).includes(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key')]).toEqual([{ env: 'PEV_RECORD_KEY' }, true]);
     }
-    expect(JSON.stringify([...vault.store].sort())).toBe(before);
-    // The bridge holding the key reads the sealed head, finds version 1 ratified, and projects.
+    expect(stored()).toBe(before);
+    // With the marks gone the projection reaches the sealed scenario head, which is not "not
+    // ratified": refused naming PEV_RECORD_KEY, nothing written (no skip audit).
+    restore = stripMarks(LATE);
+    try {
+      before = stored();
+      for (const [h, hasKey] of others) {
+        const x = refused(await act(h, 'pev.project_attempt', W.ana, { attemptIri: ana, format: 'xapi' }, {}, onLate), 409, 'record-not-trusted');
+        expect(x['iep:resolvedBy']).toEqual({ env: 'PEV_RECORD_KEY' });
+        expect(String(x['error'])).toContain(hasKey ? 'sealed to a record key this bridge does not hold' : 'this bridge has no record key');
+        expect(x['skipAudit']).toBeUndefined();
+      }
+      expect(stored()).toBe(before);
+    } finally {
+      restore();
+    }
+    // The bridge holding the key goes on: it reads the sealed head, finds version 1 ratified, and
+    // projects; the queue still has Ben's attempt; the author tries the draft, keyed under its key.
     const y = ok(await act(keyedLate, 'pev.project_attempt', W.ana, { attemptIri: ana, format: 'xapi' }, {}, onLate));
     expect(y['practiceEvidence']).toBe(true);
     expect(ok(await act(keyedLate, 'pev.review_queue', W.reviewer, {}, {}, onLate))['awaitingReview']).toBe(1);
+    const tried = ok(await act(keyedLate, 'pev.start_attempt', W.author, { ...start, scenarioVersion: 2 }, {}, onLate));
+    expect([tried['authorTest'], fingerprintOfAttemptIri(String(tried['attemptIri']))]).toEqual([true, ownKey.slice(1)]);
+  }, SLOW);
+
+  it('a refused act wrote nothing: every read an act can be refused on comes before its write, with the key marks or without them', async () => {
+    const WIN = 'https://window-pod.example.test/practice/';
+    const onWin = { pod: WIN };
+    const winDeps: Partial<PevDeps> = { fetchFn: vault.fetchFn, holderFetchFn: vault.fetchFn, defaultPodUrl: WIN };
+    const plainW = make({ ...winDeps, model: scriptedPracticeModel() });
+    const keyedW = make({ ...winDeps, recordKey: RECORD_KEY, model: scriptedPracticeModel() });
+    // Before the key: roles, two ratified scenarios, and an attempt in each state a later act needs.
+    for (const [who, role] of [[W.author, 'author'], [W.reviewer, 'reviewer'], [W.reviewer2, 'reviewer']] as const) {
+      ok(await act(plainW, 'pev.register_role', W.admin, { address: who.address, role, change: 'add' }, {}, onWin));
+    }
+    const sc: Record<string, string> = {};
+    for (const k of ['missed-deadline', 'renegotiate-scope'] as const) {
+      const p = ok(await act(plainW, 'pev.author_scenario', W.author, { scenario: demoScenarioInput(k), status: 'published', draftAssistance: { used: false } }, {}, onWin));
+      ok(await act(plainW, 'pev.ratify_scenario', W.reviewer, { scenarioIri: p['scenarioIri'], version: 1, scenarioHash: p['scenarioHash'] }, {}, onWin));
+      sc[k] = String(p['scenarioIri']);
+    }
+    const startOn = async (w: Wallet, k: string): Promise<string> =>
+      String(ok(await act(plainW, 'pev.start_attempt', w, { scenarioIri: sc[k], scenarioVersion: 1, coached: false }, {}, onWin))['attemptIri']);
+    const say = async (w: Wallet, iri: string, lines: readonly string[]): Promise<void> => {
+      for (const [i, text] of lines.entries()) ok(await act(plainW, 'pev.say', w, { attemptIri: iri, turnIndex: 1 + 2 * i, text }, {}, onWin));
+    };
+    const judged = async (w: Wallet, iri: string, lines: readonly string[]): Promise<Out> => {
+      await say(w, iri, lines);
+      ok(await act(plainW, 'pev.end_conversation', w, { attemptIri: iri, turnIndex: 1 + 2 * lines.length }, {}, onWin));
+      return ok(await act(plainW, 'pev.judge_attempt', w, { attemptIri: iri }, {}, onWin));
+    };
+    const lv = levels([['specific-observation', 'specific'], ['asks-their-view', 'first', 'Asks for his side before saying anything else about it.'],
+      ['agrees-next-step', 'owner-and-date', 'Sam owns the status note and Tuesday 10am is the date; the second quote is not in the transcript.']]);
+    const ana = await startOn(W.ana, 'missed-deadline');
+    const ja = await judged(W.ana, ana, DEMO_LINES.ana);
+    const reviewed = ok(await act(plainW, 'pev.override_attempt', W.reviewer2, { attemptIri: ana, target: ja['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }, {}, onWin));
+    const mal = await startOn(W.mallory, 'missed-deadline');
+    const jm = await judged(W.mallory, mal, DEMO_LINES.ana);
+    const ben = await startOn(W.ben, 'renegotiate-scope');
+    const jb = await judged(W.ben, ben, DEMO_LINES.ben);
+    expect((jb['judgment'] as JudgmentResult).unverifiedCriteria).toEqual([]);
+    const cara = await startOn(W.newcomer, 'missed-deadline');
+    const sam = await startOn(W.stranger, 'missed-deadline');
+    await say(W.stranger, sam, [DEMO_LINES.ana[0]]);
+    // The acts, as each learner or reviewer signs them.
+    const acts: Record<string, (h: Handlers) => Promise<Out>> = {
+      'contest_review': (h) => act(h, 'pev.contest_review', W.ana, { attemptIri: ana, target: reviewed['currentTarget'], why: 'Sam agreed the date with me; please read turn five again.' }, {}, onWin),
+      'record_turns': (h) => act(h, 'pev.record_turns', W.newcomer, {
+        attemptIri: cara, turnIndex: 1, learnerText: DEMO_LINES.ana[0], counterpartText: DEMO_LINES.sam[0], counterpartDisclosure: { provider: 'own', model: 'own-model' },
+      }, {}, onWin),
+      'end_conversation': (h) => act(h, 'pev.end_conversation', W.stranger, { attemptIri: sam, turnIndex: 3 }, {}, onWin),
+      'countersign_attempt': (h) => act(h, 'pev.countersign_attempt', W.reviewer2, {
+        attemptIri: ben, target: jb['currentTarget'], levels: levels([['names-constraint', 'specific'], ['explores-interests', 'one-question']]), sawJudgeLevelsFirst: true,
+      }, {}, onWin),
+      'override_attempt': (h) => act(h, 'pev.override_attempt', W.reviewer2, { attemptIri: mal, target: jm['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }, {}, onWin),
+    };
+    const others = [[make({ ...winDeps, recordKey: OTHER_KEY, model: scriptedPracticeModel() }), 'another key'], [make({ ...winDeps, model: scriptedPracticeModel() }), 'no key']] as const;
+    /** Each act on each other bridge is refused with `code`, naming PEV_RECORD_KEY, and the pod is byte for byte as it was. */
+    const allRefused = async (names: readonly string[], code: string): Promise<void> => {
+      const before = stored();
+      for (const [h, which] of others) {
+        for (const name of names) {
+          const r = refused(await acts[name]!(h), 409, code);
+          expect(r['iep:resolvedBy'], `${which}: ${name}`).toEqual({ env: 'PEV_RECORD_KEY' });
+          if (code === 'record-not-trusted') expect(String(r['error']), `${which}: ${name}`).toMatch(/sealed to a record key this bridge does not hold|sealed, and this bridge has no record key/);
+          expect(stored() === before, `${which}: ${name} changed the pod`).toBe(true);
+        }
+      }
+    };
+    // The key is set and the author saves a second version of each scenario as a draft: both heads
+    // are sealed (and marked); the registry is still plaintext and no attempt IRI is keyed.
+    for (const k of ['missed-deadline', 'renegotiate-scope'] as const) {
+      const md = demoScenarioInput(k, 2) as Out;
+      ok(await act(keyedW, 'pev.author_scenario', W.author, { scenario: { ...md, title: `${String(md['title'])} (revised)` }, status: 'draft', basedOnVersion: 1, draftAssistance: { used: false } }, {}, onWin));
+    }
+    const all = Object.keys(acts);
+    await allRefused(all, 'record-key-mismatch');
+    // Without the marks, a review reaches the sealed scenario head it says is or is not projectable.
+    // It is read before the review is written, so the refusal comes with nothing written; before,
+    // the review was written first, sealed to the other key or in plaintext, and then refused.
+    let restore = stripMarks(WIN);
+    try {
+      await allRefused(['countersign_attempt', 'override_attempt'], 'record-not-trusted');
+    } finally {
+      restore();
+    }
+    // The key's bridge changes a role: the registry head is sealed too. Without the marks every act
+    // reaches it, before its write.
+    ok(await act(keyedW, 'pev.register_role', W.admin, { address: W.reviewer3.address, role: 'reviewer', change: 'add' }, {}, onWin));
+    await allRefused(all, 'record-key-mismatch');
+    restore = stripMarks(WIN);
+    try {
+      await allRefused(all, 'record-not-trusted');
+    } finally {
+      restore();
+    }
+    // The bridge holding the key does every one of them.
+    const done: (readonly [string, Out])[] = [];
+    for (const name of all) done.push([name, ok(await acts[name]!(keyedW))]);
+    expect(done.map(([name, r]) => [name, r['state'], r['recorded']])).toEqual([
+      ['contest_review', 'contested', true], ['record_turns', 'in-conversation', true], ['end_conversation', 'ended', true],
+      ['countersign_attempt', 'countersigned', true], ['override_attempt', 'overridden', true],
+    ]);
+    expect(done.filter(([name]) => name.endsWith('_attempt')).map(([, r]) => r['projectable'])).toEqual([true, true]);
+  }, SLOW);
+
+  it('the first record key to seal a record on a pod is the one its manifest names; a bridge holding another is told to check which is the operator\'s', async () => {
+    const CLAIMED = 'https://claimed-pod.example.test/practice/';
+    const onC = { pod: CLAIMED };
+    const cDeps: Partial<PevDeps> = { fetchFn: vault.fetchFn, holderFetchFn: vault.fetchFn, defaultPodUrl: CLAIMED };
+    const k1 = make({ ...cDeps, recordKey: RECORD_KEY });
+    const k2 = make({ ...cDeps, recordKey: OTHER_KEY });
+    const none = make(cDeps);
+    // A bridge holding another key writes first: the pod's records are now under that key. Nothing
+    // on the pod says which key the operator meant, so the refusal says what to check, not which to use.
+    const first = ok(await act(k2, 'pev.register_role', W.admin, { address: W.author.address, role: 'author', change: 'add' }, {}, onC));
+    expect(fingerprintOfRecordUrl(String(first['descriptorUrl']))).toBe(otherKey.slice(1));
+    const before = stored();
+    const r = refused(await act(k1, 'pev.register_role', W.admin, { address: W.reviewer.address, role: 'reviewer', change: 'add' }, {}, onC), 409, 'record-key-mismatch');
+    expect([r['podKey'], r['podKeys'], r['bridgeKey'], r['bridgeKeyOnPod'], r['markedAt']]).toEqual([otherKey, [otherKey], ownKey, false, first['descriptorUrl']]);
+    for (const said of [String(r['error']), (await describeStartup({ ...base, ...cDeps, recordKey: RECORD_KEY })).lines.join('\n')]) {
+      expect(said).toContain(`If ${otherKey} is the operator's record key (a bridge holding a key prints its fingerprint when it starts), set PEV_RECORD_KEY to it from the operator's backup.`);
+      expect(said).toContain(`If this bridge's key (${ownKey}) is the operator's, a bridge holding another key wrote to this pod first`);
+      expect(said).not.toContain('until it runs with that key');
+    }
+    expect(String(refused(await act(none, 'pev.register_role', W.admin, { address: W.reviewer.address, role: 'reviewer', change: 'add' }, {}, onC), 409, 'record-key-mismatch')['error']))
+      .toContain(`Set PEV_RECORD_KEY to the key this pod's records are under (${otherKey}), from the operator's backup.`);
+    expect(stored()).toBe(before);
+    // Records under both keys (a race, or an entry someone who can write the pod added): each bridge
+    // is refused, and neither is told to switch.
+    const MANIFEST = `${CLAIMED}.well-known/context-graphs`;
+    const manifest = vault.store.get(MANIFEST)!;
+    const url = String(first['descriptorUrl']);
+    const at = manifest.indexOf(`<${url}> a iep:ManifestEntry`);
+    expect(at).toBeGreaterThanOrEqual(0);
+    const block = manifest.slice(at, manifest.indexOf(' .\n', at) + 3);
+    const forgedUrl = url.replace(/-k[0-9a-f]{8}\.ttl$/, `-${ownKey}.ttl`);
+    vault.store.set(MANIFEST, `${manifest}\n${block.replace(`<${url}>`, `<${forgedUrl}>`)}`);
+    try {
+      const both = stored();
+      for (const [h, mine, theirs] of [[k1, ownKey, otherKey], [k2, otherKey, ownKey]] as const) {
+        const x = refused(await act(h, 'pev.register_role', W.admin, { address: W.reviewer.address, role: 'reviewer', change: 'add' }, {}, onC), 409, 'record-key-mismatch');
+        expect([x['podKeys'], x['bridgeKey'], x['bridgeKeyOnPod']]).toEqual([[theirs], mine, true]);
+        expect(String(x['error'])).toContain(`This pod holds records under this bridge's key (${mine}) as well as ${theirs}`);
+        expect(String(x['error'])).toContain('The operator decides which key the pod keeps');
+        expect(String(x['error'])).not.toContain(`set PEV_RECORD_KEY to it`);
+      }
+      expect(stored()).toBe(both);
+    } finally {
+      vault.store.set(MANIFEST, manifest);
+    }
+    // The bridge holding the key that wrote goes on.
+    ok(await act(k2, 'pev.register_role', W.admin, { address: W.reviewer.address, role: 'reviewer', change: 'add' }, {}, onC));
   }, SLOW);
 });
 
@@ -1787,5 +2053,44 @@ describe('the handlers decline only through refuse(), and a success never reads 
     expect(offenders).toEqual([]);
     expect(reasonKeys).toEqual([]);
     expect(src).not.toMatch(/kind:\s*'refusal'|'iep:refusalStatus'\s*:/);
+  });
+
+  it('no act awaits anything after it writes a record but the deletes a redaction makes: a refusal never follows a write', () => {
+    const file = fileURLToPath(new URL('../bridge/handlers.ts', import.meta.url));
+    const sf = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+    const isFunction = (n: ts.Node): boolean => ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isMethodDeclaration(n);
+    const callee = (e: ts.AwaitExpression): string => (ts.isCallExpression(e.expression) && ts.isIdentifier(e.expression.expression) ? e.expression.expression.text : e.expression.getText(sf));
+    const awaitsIn = (n: ts.Node): ts.AwaitExpression[] => {
+      const out: ts.AwaitExpression[] = [];
+      const walk = (x: ts.Node): void => { if (ts.isAwaitExpression(x)) out.push(x); ts.forEachChild(x, walk); };
+      walk(n);
+      return out;
+    };
+    const line = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+    const after: string[] = [];
+    let writes = 0;
+    const visit = (n: ts.Node): void => {
+      if (ts.isAwaitExpression(n) && callee(n) === 'writeRecord') {
+        writes += 1;
+        // Every statement control can reach after this one, block by block, up to its function.
+        let at: ts.Node = n;
+        let done = false;
+        while (!done && !isFunction(at)) {
+          const parent: ts.Node = at.parent;
+          if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
+            const rest = parent.statements.slice(parent.statements.indexOf(at as ts.Statement) + 1);
+            for (const st of rest) {
+              for (const a of awaitsIn(st)) after.push(`line ${line(a)}: await ${callee(a)}`);
+              if (ts.isReturnStatement(st) || ts.isThrowStatement(st)) { done = true; break; }
+            }
+          }
+          at = parent;
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    expect(writes).toBeGreaterThanOrEqual(14);
+    expect(after.filter((x) => !x.endsWith('await deleteEarlierGraphs'))).toEqual([]);
   });
 });

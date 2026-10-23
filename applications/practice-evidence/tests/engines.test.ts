@@ -32,7 +32,7 @@ import {
   type JudgeCriterionInput, type JudgmentResult, type ScenarioSpec, type Turn,
 } from '../src/practice.js';
 import {
-  actorOf, applyRoleChange, attemptIri, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, didOf, fingerprintOfAttemptIri, iriKeyFingerprint,
+  actorOf, applyRoleChange, attemptIri, attemptIriSecret, attemptKey, buildRecordDescriptor, checkEnvelope, didOf, fingerprintOfAttemptIri, fingerprintOfRecordUrl, iriKeyFingerprint,
   isWellFormedText, modalFor, toWellFormedText,
   modelAgentIri, NonceLedger, nextActionsFor, nextActionView, recordBodyFromGraph, recordGraphTurtle, recordIdFor,
   redactBody, registryIri, rubricIriOf, scenarioIri, signDraftReceipt, signEnvelope, signedRequestEnvelope, slugFor,
@@ -1528,6 +1528,17 @@ describe('descriptors', () => {
     expect(scenarioIri(POD, 'missed-deadline')).toBe(scenarioIri('https://pod.example.test/practice', 'missed-deadline'));
     expect(attemptKey(POD, SCENARIO_IRI, learnerW.address)).toBe(attemptKey(POD, SCENARIO_IRI, learnerW.address.toLowerCase()));
     expect(slugFor('projection-audit', 'urn:pev:projection:0123456789abcdef', 1, r1)).toBe('projection-0123456789abcdef');
+    // A sealed record's slug ends in its key's fingerprint, which its descriptor URL gives back; no
+    // plaintext record's URL (every kind ends in hex after a dash) reads as one.
+    const container = `${POD}pev/records/`;
+    const kinds = [['scenario', 'urn:pev:scenario:0123456789abcdef'], ['attempt', 'urn:pev:attempt:kabcdef01:0123456789abcdef-2'], ['role-registry', 'urn:pev:role-registry:0123456789abcdef'],
+      ['projection-audit', 'urn:pev:projection:0123456789abcdef']] as const;
+    for (const [kind, iri] of kinds) {
+      const sealed = slugFor(kind, iri, 3, r1, '0a1b2c3d');
+      expect(sealed, kind).toBe(`${slugFor(kind, iri, 3, r1)}-k0a1b2c3d`);
+      expect([fingerprintOfRecordUrl(`${container}${sealed}.ttl`), fingerprintOfRecordUrl(`${container}${slugFor(kind, iri, 3, r1)}.ttl`)], kind).toEqual(['0a1b2c3d', null]);
+    }
+    expect([fingerprintOfRecordUrl(`${container}x-k0a1b2c3d-graph.envelope.jose.json`), fingerprintOfRecordUrl(`${container}x-kabc.ttl`)]).toEqual([null, null]);
   });
 
   it('keys attempt IRIs with a secret from the record key: unlinkable to an address without it, stable with it', () => {
