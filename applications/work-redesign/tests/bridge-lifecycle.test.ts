@@ -31,7 +31,8 @@ import {
   readRecord, publishRecord, verifyHolderBundle, operatorPodFetch, openPod, KeyedMutex, StaleHeadError, RecordNotSealableError, WRD_CONTAINER, SEALED_NO_KEY, SEALED_OTHER_KEY,
 } from '../bridge/pod-helpers.js';
 import { memoryPod, demoClock, DEMO_POD, DEMO_HOLDER_POD, type MemoryPod, type DemoClock } from '../demo/run.js';
-import { envelopeSha256, entityIri, entityIriKey, iriKeyFingerprint, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, type WrdRecord } from '../src/records.js';
+import { envelopeSha256, entityIri, entityIriKey, iriKeyFingerprint, recordKeyFingerprint, graphIriOf, buildDescriptor, recordIdFor, illFormedTextPath, type WrdRecord } from '../src/records.js';
+import { parseEveryQueryPair } from '../bridge/ui.js';
 import { normaliseForQuote } from '../src/work.js';
 import { meanRampFactor, monthsBetween, DEMO_LABEL } from '../src/valuation.js';
 import { WRD_NS } from '../src/ontology.js';
@@ -131,7 +132,8 @@ async function world(extra: Partial<WrdDeps> | ((pod: MemoryPod) => Partial<WrdD
     fetchFn: pod.fetchFn, defaultPodUrl: POD, now: () => clock.now(), platform: { wallet: PLATFORM, keyKind: 'configured' },
     adminAddresses: [ADMIN.address], ...(typeof extra === 'function' ? extra(pod) : extra),
   });
-  const app = createVerticalBridge({ verticalName: 'work-redesign', affordances, handlers, deploymentUrl: 'http://127.0.0.1' });
+  // Composed as bridge/server.ts composes it: every query parameter reaches the handlers.
+  const app = createVerticalBridge({ verticalName: 'work-redesign', affordances, handlers, deploymentUrl: 'http://127.0.0.1', middleware: parseEveryQueryPair });
   const l = await listenLoopback(app);
   listeners.push(l);
   return { pod, clock, base: l.base, nonce: 0 };
@@ -160,7 +162,7 @@ async function sibling(w: World, extra: Partial<WrdDeps>): Promise<World> {
   const handlers = createWrdHandlers({
     fetchFn: w.pod.fetchFn, defaultPodUrl: POD, now: () => w.clock.now(), platform: { wallet: PLATFORM, keyKind: 'configured' }, adminAddresses: [ADMIN.address], ...extra,
   });
-  const l = await listenLoopback(createVerticalBridge({ verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: 'http://127.0.0.1' }));
+  const l = await listenLoopback(createVerticalBridge({ verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: 'http://127.0.0.1', middleware: parseEveryQueryPair }));
   listeners.push(l);
   return { pod: w.pod, clock: w.clock, base: l.base, nonce: w.nonce + 200_000 };
 }
@@ -196,7 +198,7 @@ async function restart(w: World): Promise<World> {
   const handlers = createWrdHandlers({
     fetchFn: w.pod.fetchFn, defaultPodUrl: POD, now: () => w.clock.now(), platform: { wallet: PLATFORM, keyKind: 'configured' }, adminAddresses: [ADMIN.address],
   });
-  const l = await listenLoopback(createVerticalBridge({ verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: 'http://127.0.0.1' }));
+  const l = await listenLoopback(createVerticalBridge({ verticalName: 'work-redesign', affordances: wrdAffordances, handlers, deploymentUrl: 'http://127.0.0.1', middleware: parseEveryQueryPair }));
   listeners.push(l);
   return { pod: w.pod, clock: w.clock, base: l.base, nonce: w.nonce + 100_000 };
 }
@@ -1683,6 +1685,23 @@ describe('work-redesign bridge', () => {
       // The refusal never repeats the signature it found.
       expect([sent, JSON.stringify(inUrl).includes(cyRead.signature.slice(2, 40))]).toEqual([sent, false]);
     }
+    // However many parameters come first: Express's default parser keeps 1000 pairs (empty ones count) and drops the rest,
+    // so the bridge parses every pair (parseEveryQueryPair), and a signed read after a thousand others is refused too.
+    const empties = '&'.repeat(1000);
+    const fillers = Array.from({ length: 1000 }, (_, i) => `f${i}=1`).join('&');
+    const late = [`${empties}&read_envelope=${asJson}`, `${fillers}&read_envelope=${asJson}`, `${empties}&${asJson}`, `${empties}&signature=${cyRead.signature}`,
+      `${fillers}&x=${cyRead.signature}`, `${fillers}&read_envelope%5Bsignature%5D=${cyRead.signature}`];
+    for (const sent of late) {
+      const r = refused(await http(w, 'GET', 'envelope_template', undefined, `?${reviseQuery}&${sent}`), 400, /A signed read is never sent in a URL/);
+      expect([sent.length, r['template'], JSON.stringify(r).includes(cyRead.signature.slice(2, 40))]).toEqual([sent.length, undefined, false]);
+    }
+    // Composed without it, the same URL is answered 200 from the template, the signed read unseen: why every composition installs it.
+    const bare = await listenLoopback(createVerticalBridge({
+      verticalName: 'work-redesign', affordances: wrdAffordances, deploymentUrl: 'http://127.0.0.1',
+      handlers: createWrdHandlers({ fetchFn: w.pod.fetchFn, defaultPodUrl: POD, now: () => w.clock.now(), platform: { wallet: PLATFORM, keyKind: 'configured' }, adminAddresses: [ADMIN.address] }),
+    }));
+    listeners.push(bare);
+    expect((await fetch(`${bare.base}/wrd/envelope_template?${reviseQuery}&${empties}&read_envelope=${asJson}`)).status).toBe(200);
     // Only those forms are detected: a signature without its 0x, alone or as a key, is not refused, and the GET still fills only its allowlist.
     for (const sent of [`note=${cyRead.signature.slice(2)}`, cyRead.signature.slice(2)]) {
       const passed = ok(await http(w, 'GET', 'envelope_template', undefined, `?${reviseQuery}&${sent}`));
@@ -1787,9 +1806,23 @@ describe('work-redesign bridge', () => {
     } as unknown as WrdRecord;
     const at = (await manifest(w)).length;
     await expect(publishRecord({
-      descriptor: { recordId: recordIdFor('workflow', graphIriOf(entity), 1, 'not-sealable-0001'), graphIri: graphIriOf(entity), recordKind: 'Workflow', now, validFrom: now, modal: 'Hypothetical', platformDid: `did:ethr:${addr(PLATFORM)}`, signers: [], derivedFrom: [] },
+      descriptor: { recordId: recordIdFor('workflow', graphIriOf(entity), 1, 'not-sealable-0001', recordKeyFingerprint(K1)), graphIri: graphIriOf(entity), recordKind: 'Workflow', now, validFrom: now, modal: 'Hypothetical', platformDid: `did:ethr:${addr(PLATFORM)}`, signers: [], derivedFrom: [] },
       record, expectHead: null,
     }, { podUrl: POD, fetchFn: w.pod.fetchFn, platform: { wallet: PLATFORM, keyKind: 'configured' }, trusted: new Set([addr(PLATFORM)]), mutex: new KeyedMutex(), recordKey: K1 })).rejects.toBeInstanceOf(RecordNotSealableError);
+    expect((await manifest(w)).length).toBe(at);
+
+    // A version's record id names the record key its graph is sealed to, or none for a plaintext graph, and never another: publishRecord writes nothing otherwise.
+    const fine = { ...record, payload: { ...(record as unknown as { payload: Obj }).payload, title: 'Month-end review' } } as unknown as WrdRecord;
+    const g = graphIriOf(entity);
+    for (const [recordId, recordKey] of [
+      [recordIdFor('workflow', g, 1, 'mark-0001'), K1], [recordIdFor('workflow', g, 1, 'mark-0002', recordKeyFingerprint(K2)), K1], [recordIdFor('workflow', g, 1, 'mark-0003', recordKeyFingerprint(K1)), undefined],
+    ] as const) {
+      await expect(publishRecord({
+        descriptor: { recordId, graphIri: g, recordKind: 'Workflow', now, validFrom: now, modal: 'Hypothetical', platformDid: `did:ethr:${addr(PLATFORM)}`, signers: [], derivedFrom: [] },
+        record: fine, expectHead: null,
+      }, { podUrl: POD, fetchFn: w.pod.fetchFn, platform: { wallet: PLATFORM, keyKind: 'configured' }, trusted: new Set([addr(PLATFORM)]), mutex: new KeyedMutex(), ...(recordKey ? { recordKey } : {}) }))
+        .rejects.toThrow(/must (end -k[0-9a-f]{8}, the fingerprint of the record key its graph is sealed to|name no record key)/);
+    }
     expect((await manifest(w)).length).toBe(at);
   }, 60_000);
 
@@ -1862,7 +1895,7 @@ describe('work-redesign bridge', () => {
     const grant = entityIri('grant', addr(AGENT), `${POD}|invoice-matching`, entityIriKey(K1));
     const now = w.clock.now().toISOString();
     const sealedGrant = await publishRecord({
-      descriptor: { recordId: recordIdFor('grant', graphIriOf(grant), 1, 'sealed-grant-0001'), graphIri: graphIriOf(grant), recordKind: 'Grant', now, validFrom: now, modal: 'Asserted', platformDid: `did:ethr:${addr(PLATFORM)}`, signers: [], derivedFrom: [] },
+      descriptor: { recordId: recordIdFor('grant', graphIriOf(grant), 1, 'sealed-grant-0001', recordKeyFingerprint(K1)), graphIri: graphIriOf(grant), recordKind: 'Grant', now, validFrom: now, modal: 'Asserted', platformDid: `did:ethr:${addr(PLATFORM)}`, signers: [], derivedFrom: [] },
       record: {
         recordKind: 'Grant', entityIri: grant, version: 1, status: 'granted', signers: [], platform: { did: `did:ethr:${addr(PLATFORM)}`, address: addr(PLATFORM), keyKind: 'configured' },
         payload: {
@@ -2121,7 +2154,7 @@ describe('work-redesign bridge', () => {
     ok(await act(k1, CY, 'ratify_task', { subject: 'description', taskIri: ap.t3, ...bound(t3), verdict: 'ratify' }));
   }, 120_000);
 
-  it('shows a record key from its first sealed write: on a keyless pod where the key\'s bridge has only sealed one new version of an old chain, a bridge with another key or none writes nothing and looks nothing up by tuple (409, naming WRD_RECORD_KEY and the public keys) and marks its read model; the key\'s own bridge goes on, a changed ciphertext of its own does not stop it, a keyless pod stays keyless, and a pod keyed throughout refuses another key', async () => {
+  it('shows a record key from its first sealed write: on a keyless pod where the key\'s bridge has only sealed one new version of an old chain, whose signed record id names the key, a bridge with another key or none writes nothing and looks nothing up by tuple (409, naming WRD_RECORD_KEY and both fingerprints) and marks its read model; the key\'s own bridge goes on and counts the plaintext versions written before the key, no edit of its own envelope or descriptor stops it, a keyless pod stays keyless, and a pod keyed throughout refuses another key', async () => {
     const reEscape = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const keyedIri = /^urn:wrd:[a-z-]+:k[0-9a-f]{8}:/;
     // History written without a key; a second keyless bridge goes on writing it keylessly, and nothing is mismatched.
@@ -2137,7 +2170,11 @@ describe('work-redesign bridge', () => {
 
     // The operator sets WRD_RECORD_KEY (K1), and its bridge writes ONE record: Cy ratifies T1, a new version of T1's chain under its unkeyed IRI, sealed to K1.
     const k1 = await sibling(w, { recordKey: K1 });
+    const fp1 = recordKeyFingerprint(K1);
+    const fp2 = recordKeyFingerprint(K2);
     const start = (await manifest(w)).length;
+    // Before it, every version on the pod was written without a key: no record id names one.
+    expect((await manifest(w)).filter((e) => /-k[0-9a-f]{8}\.ttl$/.test(e.descriptorUrl))).toEqual([]);
     ok(await ratify(k1, CY, ap.t1));
     const entries = await manifest(w);
     expect(entries.length).toBe(start + 1);
@@ -2147,14 +2184,23 @@ describe('work-redesign bridge', () => {
     expect(k1Read['recordKeyMismatch']).toBeUndefined();
     const t1Head = headOfRow(must(arr(k1Read['tasks']).find((t) => t['taskIri'] === ap.t1)));
     expect(must(w.pod.bodies.get(t1Head.descriptorUrl))).toMatch(/iep:encrypted true/);
+    // Its record id, which the platform signs and the descriptor's URL repeats, names K1's fingerprint: the manifest shows the key from this first write.
+    expect([t1Head.recordId, t1Head.descriptorUrl]).toEqual([expect.stringMatching(new RegExp(`^urn:wrd:record:task-[0-9a-f]{16}-k${fp1}$`)), expect.stringMatching(new RegExp(`/task-[0-9a-f]{16}-k${fp1}\\.ttl$`))]);
+    // The versions written before the key stay plaintext on the pod; the key's bridge counts and lists them, and readExposure says so.
+    const plaintext = obj(k1Read['plaintext'], 'plaintext');
+    expect(plaintext['versions']).toBe(start);
+    expect(arr(plaintext['descriptorUrls']).length).toBe(Math.min(start, 20));
+    expect(String(plaintext['why'])).toMatch(/written without a record key.*plaintext on the pod.*until they are removed/);
+    for (const u of plaintext['descriptorUrls'] as string[]) expect(sealedGraphUrl(w, u)).not.toMatch(/envelope\.jose\.json$/);
+    expect(String(k1Read['readExposure'])).toMatch(new RegExp(`This pod holds ${start} record version\\(s\\) written before the record key, whose graphs are plaintext \\(listed under plaintext\\)\\. Record graphs this bridge writes are sealed`));
+    expect(String(k1Read['readExposure'])).toMatch(/Graphs written before the key .* stay plaintext on the pod/);
     const texts = new Map(arr(k1Read['tasks']).map((t) => [String(t['taskIri']), String(t['textSha256'])]));
-    const fp2 = iriKeyFingerprint(entityIriKey(K2));
 
-    // No IRI on the pod is keyed, but the sealed version names K1's public key: a bridge holding K2, or no key, writes nothing.
+    // No IRI on the pod is keyed, but the sealed version's signed record id names K1: a bridge holding K2, or no key, writes nothing.
     const before = (await manifest(w)).length;
-    for (const [extra, bridgeKey] of [[{ recordKey: K2 }, `holds the one with public key ${K2.publicKey}`], [{}, 'holds no record key']] as const) {
+    for (const [extra, bridgeKey] of [[{ recordKey: K2 }, `holds the one with fingerprint k${fp2}`], [{}, 'holds no record key']] as const) {
       const other = await sibling(w, extra);
-      const why = new RegExp(`${reEscape(graphIriOf(ap.t1))} \\(${reEscape(t1Head.descriptorUrl)}\\) is sealed to the record key with public key ${reEscape(K1.publicKey)}, and this bridge ${reEscape(bridgeKey)} \\(WRD_RECORD_KEY\\): it cannot open what was written under that key`);
+      const why = new RegExp(`${reEscape(graphIriOf(ap.t1))} \\(${reEscape(t1Head.descriptorUrl)}\\) is sealed to the record key with fingerprint k${fp1} \\(its record id, which the platform signed, names it\\), and this bridge ${reEscape(bridgeKey)} \\(WRD_RECORD_KEY\\): it cannot open what was written under that key`);
       const writes: Array<[string, Res]> = [];
       writes.push(['classify_task', await act(other, ANA, 'classify_task', { taskIri: ap.t2, taskTextSha256: must(texts.get(ap.t2)), answers: ANSWERS.knowable })]);
       writes.push(['ratify_task', await act(other, DEE, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1Head), verdict: 'dispute', note: 'not this way' })]);
@@ -2179,28 +2225,80 @@ describe('work-redesign bridge', () => {
       refused(await template(other, `intent=wrd:ratify-task&subject=classification&task_iri=${encodeURIComponent(ap.t2)}`, false), 409, /sealed to a record key/, why);
       // The read model answers what it can read, says why under recordKeyMismatch, and lists the version it cannot open.
       const read = await list(other);
-      expect(obj(read['recordKeyMismatch'])).toEqual({
-        why: expect.stringMatching(why), env: 'WRD_RECORD_KEY', podKey: null, sealedTo: [K1.publicKey],
-        bridgeKey: extra.recordKey ? `k${fp2}` : null, bridgePublicKey: extra.recordKey ? K2.publicKey : null,
-      });
+      expect(obj(read['recordKeyMismatch'])).toEqual({ why: expect.stringMatching(why), env: 'WRD_RECORD_KEY', podKey: `k${fp1}`, bridgeKey: extra.recordKey ? `k${fp2}` : null });
       expect(arr(read['sealed']).map((x) => x['graphIri'])).toEqual([graphIriOf(ap.t1)]);
-      expect(obj(ok(await calibration(other))['recordKeyMismatch'])).toMatchObject({ env: 'WRD_RECORD_KEY', podKey: null, sealedTo: [K1.publicKey] });
+      expect(obj(ok(await calibration(other))['recordKeyMismatch'])).toEqual({ why: expect.stringMatching(why), env: 'WRD_RECORD_KEY', podKey: `k${fp1}`, bridgeKey: extra.recordKey ? `k${fp2}` : null });
+      // A bridge with no key says every record is plaintext; it counts none apart.
+      if (!extra.recordKey) expect([read['plaintext'], String(read['readExposure'])]).toEqual([undefined, expect.stringMatching(/Records are written in plaintext/)]);
     }
+    // The version that names K1 is read to decide (the URL alone could be a pod writer's): while the pod cannot serve it, a bridge holding no key
+    // writes nothing and answers 502, naming it, rather than write past it; then 409 again.
+    const failing = await sibling(w, { fetchFn: (async (url, init) => (String(url) === t1Head.descriptorUrl
+      ? new Response('pod failure', { status: 500, statusText: 'Internal Server Error' }) : w.pod.fetchFn(url, init))) as PodFetch });
+    refused(await act(failing, ADMIN, 'update_registry', { taskKinds: [{ slug: 'extra-kind', label: 'Extra', definition: 'An extra kind.' }] }), 502, undefined, new RegExp(reEscape(t1Head.descriptorUrl)));
+    expect((await manifest(w)).length).toBe(before);
 
     // The key's own bridge goes on: the registry (sealed to K1 from now on), and a classification under a keyed IRI.
     ok(await act(k1, ADMIN, 'update_registry', { taskKinds: [{ slug: 'extra-kind', label: 'Extra', definition: 'An extra kind.' }] }));
     ok(await classify(k1, ANA, ap.t2, ANSWERS.knowable));
     expect((await manifest(w)).length).toBe(before + 2);
     expect((await list(k1))['recordKeyMismatch']).toBeUndefined();
-    // A sealed version of its own whose ciphertext changed on the pod is no other key: a fresh K1 bridge reads every version again and is not stopped;
-    // that graph alone answers 409.
-    corruptSealed(w, sealedGraphUrl(w, t1Head.descriptorUrl));
-    const k1Again = await sibling(w, { recordKey: K1 });
-    const again = await list(k1Again);
-    expect(again['recordKeyMismatch']).toBeUndefined();
-    expect(arr(again['altered'])).toContain(graphIriOf(ap.t1));
-    ok(await act(k1Again, ADMIN, 'update_registry', { taskKinds: [{ slug: 'another-kind', label: 'Another', definition: 'Another kind.' }] }));
-    refused(await act(k1Again, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1Head), verdict: 'ratify' }), 409, /altered after signing/, /sealed to a key this bridge does not hold, or the sealed bytes were changed/);
+    // Whom a version was sealed to is what the platform signed, never the envelope's own word: a pod writer who changes a K1 version's ciphertext,
+    // names K2 as its recipient, or empties its recipients stops nothing but that graph (409), for a fresh K1 bridge and for one that saw the edit,
+    // and once the bytes are restored the graph opens again, with no restart.
+    const t1Sealed = sealedGraphUrl(w, t1Head.descriptorUrl);
+    const sealedBytes = must(w.pod.bodies.get(t1Sealed));
+    // Each K1 bridge below writes, so each signs from its own run of nonces.
+    let bridges = 0;
+    const k1Bridge = async (extra: Partial<WrdDeps> = {}): Promise<World> => {
+      const b = await sibling(w, { recordKey: K1, ...extra });
+      bridges += 1;
+      b.nonce += bridges * 10_000;
+      return b;
+    };
+    const k1Saw = await k1Bridge();
+    const edits: Array<[string, (env: Obj) => void]> = [
+      ['ciphertext', (env) => { const c = String(obj(env['content'])['ciphertext']); obj(env['content'])['ciphertext'] = `${c.slice(0, 8)}${c.charAt(8) === 'A' ? 'B' : 'A'}${c.slice(9)}`; }],
+      ['recipient', (env) => { obj(arr(env['wrappedKeys'])[0])['recipientPublicKey'] = K2.publicKey; }],
+      ['no recipients', (env) => { env['wrappedKeys'] = []; }],
+    ];
+    let kinds = 0;
+    for (const [edit, change] of edits) {
+      const env = JSON.parse(sealedBytes) as Obj;
+      change(env);
+      w.pod.tamper(t1Sealed, sealedBytes, JSON.stringify(env));
+      for (const bridge of [await k1Bridge(), k1Saw]) {
+        const again = await list(bridge);
+        expect([edit, again['recordKeyMismatch']]).toEqual([edit, undefined]);
+        expect(arr(again['altered'])).toContain(graphIriOf(ap.t1));
+        kinds += 1;
+        ok(await act(bridge, ADMIN, 'update_registry', { taskKinds: [{ slug: `edit-kind-${kinds}`, label: 'Another', definition: 'Another kind.' }] }), edit);
+        refused(await act(bridge, CY, 'ratify_task', { subject: 'description', taskIri: ap.t1, ...bound(t1Head), verdict: 'ratify' }), 409, /altered after signing/, /sealed to a key this bridge does not hold, or the sealed bytes were changed/);
+      }
+      w.pod.tamper(t1Sealed, JSON.stringify(env), sealedBytes);
+      expect(obj(must(arr((await list(k1Saw))['tasks']).find((t) => t['taskIri'] === ap.t1)))['head']).toMatchObject({ descriptorUrl: t1Head.descriptorUrl, trusted: true });
+    }
+    // Nor does a descriptor of its own whose iep:describes a pod writer changed, with the manifest, to an IRI keyed under K2 (its sealed bytes changed too, so it does not open).
+    const forged = `urn:wrd:task:k${fp2}:${'2'.repeat(16)}:${'3'.repeat(16)}:graph`;
+    const manifestUrl = predictManifestUrl(POD);
+    const descriptorBytes = must(w.pod.bodies.get(t1Head.descriptorUrl));
+    const manifestBytes = must(w.pod.bodies.get(manifestUrl));
+    corruptSealed(w, t1Sealed);
+    w.pod.tamper(t1Head.descriptorUrl, `iep:describes <${graphIriOf(ap.t1)}>`, `iep:describes <${forged}>`);
+    w.pod.tamper(manifestUrl, manifestBytes, manifestBytes.split('\n\n').map((b) => (b.startsWith(`<${t1Head.descriptorUrl}>`) ? b.replace(`<${graphIriOf(ap.t1)}>`, `<${forged}>`) : b)).join('\n\n'));
+    expect(must((await manifest(w)).find((e) => e.descriptorUrl === t1Head.descriptorUrl)).describes).toEqual([forged]);
+    const k1Forged = await k1Bridge();
+    expect((await list(k1Forged))['recordKeyMismatch']).toBeUndefined();
+    ok(await act(k1Forged, ADMIN, 'update_registry', { taskKinds: [{ slug: 'forged-kind', label: 'Another', definition: 'Another kind.' }] }));
+    w.pod.tamper(t1Head.descriptorUrl, must(w.pod.bodies.get(t1Head.descriptorUrl)), descriptorBytes);
+    w.pod.tamper(manifestUrl, must(w.pod.bodies.get(manifestUrl)), must(w.pod.bodies.get(manifestUrl)).replace(`<${forged}>`, `<${graphIriOf(ap.t1)}>`));
+    w.pod.tamper(t1Sealed, must(w.pod.bodies.get(t1Sealed)), sealedBytes);
+    // A version of another workflow the pod cannot serve stops no unrelated write either: only versions whose URL names another key are read for this.
+    const t3Head = headOfRow(must(arr((await list(k1))['tasks']).find((t) => t['taskIri'] === ap.t3)));
+    const t4Head = headOfRow(must(arr((await list(k1))['tasks']).find((t) => t['taskIri'] === ap.t4)));
+    const t4Down = await k1Bridge({ fetchFn: (async (url, init) => (String(url) === t4Head.descriptorUrl
+      ? new Response('pod failure', { status: 500, statusText: 'Internal Server Error' }) : w.pod.fetchFn(url, init))) as PodFetch });
+    ok(await act(t4Down, CY, 'ratify_task', { subject: 'description', taskIri: ap.t3, ...bound(t3Head), verdict: 'ratify' }));
 
     // A pod keyed throughout: another key's bridge cannot read it (its registry is sealed) and writes nothing.
     const pure = await world({ recordKey: K1 });

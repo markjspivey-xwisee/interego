@@ -42,7 +42,7 @@ import { listenLoopback } from '../../_shared/vertical-bridge/listen-loopback.js
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers, type DemoPersona } from '../bridge/handlers.js';
 import { readRecord, openSealedGraph, HOLDER_CONTAINER, WRD_CONTAINER } from '../bridge/pod-helpers.js';
-import { attachUi, hostAllowlistGuard, servedHostNames } from '../bridge/ui.js';
+import { attachUi, hostAllowlistGuard, parseEveryQueryPair, servedHostNames } from '../bridge/ui.js';
 import { envelopeSha256, entityIri, entityIriKey, graphIriOf } from '../src/records.js';
 import { normaliseForQuote } from '../src/work.js';
 import { meanRampFactor, monthsBetween, DEMO_LABEL } from '../src/valuation.js';
@@ -345,6 +345,8 @@ export async function runDemo(opts: {
       // refuse every Host but its own before any route (DNS rebinding), as bridge/server.ts does.
       a.use(hostAllowlistGuard(servedHostNames(port, base)));
       attachUi(a, { base });
+      // Every query parameter reaches the handlers, as in bridge/server.ts.
+      parseEveryQueryPair(a);
     },
   });
   handler = app as unknown as (req: IncomingMessage, res: ServerResponse) => void;

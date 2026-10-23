@@ -15,6 +15,7 @@
  *   WRD_SERVED_PODS                 comma list of the pods records are read from and written to;
  *                                   default the default pod. A call naming any other pod is
  *                                   refused (403 pod-not-served); with neither set, every call is
+ *                                   refused (403: this bridge serves no pod)
  *   WRD_POD_WRITE_SECRET            the operator pod's credential (bearer), sent on reads and
  *                                   writes whose URL lies under WRD_DEFAULT_POD_URL's path and
  *                                   origin, and nowhere else; never to a holder's pod; never
@@ -27,14 +28,16 @@
  *                                   bridge derives are keyed with a key derived from it;
  *                                   descriptors and the manifest stay public (signers, kinds,
  *                                   modal status, times, supersedes and derivation links).
- *                                   Absent → plaintext records, and the startup says they are
+ *                                   Graphs written before the key stay plaintext on the pod
+ *                                   (the read model counts them under plaintext). Absent →
+ *                                   plaintext records, and the startup says they are
  *                                   world-readable on a pod that serves anonymous reads. Keep a
  *                                   copy: a lost key leaves every sealed record unreadable (409),
- *                                   with no way back, and every keyed IRI names its key's
- *                                   fingerprint and every sealed graph its public key, so a
- *                                   bridge with another key (or none) on a pod holding records
- *                                   written under it refuses every write (409), from that key's
- *                                   first sealed write on
+ *                                   with no way back, and every keyed IRI and the record id of
+ *                                   every version sealed to it name its fingerprint, so a bridge
+ *                                   with another key (or none) on a pod holding records written
+ *                                   under it refuses every write (409), from that key's first
+ *                                   sealed write on
  *   WRD_REQUIRE_RECORD_KEY          1 → the bridge does not start (exit 1) without a valid
  *                                   WRD_RECORD_KEY (blank counts as missing), so a deployment
  *                                   cannot fall back to plaintext records. The image sets it;
@@ -59,7 +62,7 @@ import { wrdAffordances } from '../affordances.js';
 import { WRD_NS, WRD_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { createWrdHandlers, type PlatformSigner } from './handlers.js';
 import { operatorPodFetch } from './pod-helpers.js';
-import { attachUi, hostAllowlistGuard, isLoopbackBind, servedHostNames } from './ui.js';
+import { attachUi, hostAllowlistGuard, isLoopbackBind, parseEveryQueryPair, servedHostNames } from './ui.js';
 
 const list = (v: string | undefined): string[] => (v ?? '').split(',').map((s) => s.trim()).filter((s) => s !== '');
 // An image declares every variable it reads (`ENV NAME=`), so an empty value means unset.
@@ -127,6 +130,8 @@ const app = createVerticalBridge({
   middleware: (a) => {
     // First, so it stands in front of the ontology, the UI and every route the factory mounts after this hook.
     if (loopback) a.use(hostAllowlistGuard(servedHostNames(PORT, base)));
+    // Every query parameter reaches the handlers, so the GET template's signed-read check sees past the default parser's first 1000.
+    parseEveryQueryPair(a);
     attachOntologyServing(a, {
       mountPath: '/ns/wrd', ontologyIri: WRD_ONTOLOGY_IRI, namespace: WRD_NS,
       ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
@@ -138,7 +143,7 @@ const app = createVerticalBridge({
 process.stdout.write(`work-redesign: records read and written on ${servedPods.length > 0 ? servedPods.join(', ') : 'NO pod: set WRD_DEFAULT_POD_URL or WRD_SERVED_PODS, or every call is refused'}\n`);
 process.stdout.write(`work-redesign: pod credential: ${writeSecret ? 'configured (sent under the default pod\'s path only)' : 'not configured'}\n`);
 process.stdout.write(recordKey
-  ? `work-redesign: records sealed to the record key (public key ${recordKey.publicKey}); descriptors and the manifest stay public\n`
+  ? `work-redesign: records written from now on are sealed to the record key (public key ${recordKey.publicKey}); records written before it stay plaintext on the pod (the read model counts them under plaintext); descriptors and the manifest stay public\n`
   : 'work-redesign: WARNING: no WRD_RECORD_KEY — records are written in PLAINTEXT, and on a pod that serves anonymous reads (the gate does) anyone can read every record\n');
 process.stdout.write(`work-redesign: reads: ${publicReads ? 'PUBLIC (WRD_PUBLIC_READS=1): anyone who can reach this bridge reads every record' : 'signed reads only (wrd.read_records, wrd.read_calibration); unsigned GETs answer 401'}\n`);
 

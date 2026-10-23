@@ -43,7 +43,7 @@ import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { wrdAffordances, wrdDemoAffordances } from '../affordances.js';
 import { createWrdHandlers } from '../bridge/handlers.js';
-import { attachUi, hostAllowlistGuard, isLoopbackBind, servedHostNames, UI_CSP } from '../bridge/ui.js';
+import { attachUi, hostAllowlistGuard, isLoopbackBind, parseEveryQueryPair, servedHostNames, UI_CSP } from '../bridge/ui.js';
 import { runDemo, memoryPod, demoClock, DEMO_REFUSALS, DEMO_POD, DEMO_HOLDER_POD, DEMO_RECORD_KEY, type MemoryPod, type DemoReport } from '../demo/run.js';
 import { h16, entityIriKey, iriKeyFingerprint } from '../src/records.js';
 
@@ -549,7 +549,7 @@ describe('work-redesign offline demo and web UI', () => {
     const captured = await handlers['wrd.capture_workflow']!({ envelope: { payload: capture, signature: await signMessageRaw(ana, canonicalJson(capture)) } }) as Record<string, unknown>;
     expect(captured['status']).toBe('captured');
     const l = await listenLoopback(createVerticalBridge({
-      verticalName: 'work-redesign', affordances: [...wrdAffordances, ...wrdDemoAffordances], handlers, deploymentUrl: 'http://127.0.0.1', middleware: (a) => attachUi(a, { base: 'http://127.0.0.1' }),
+      verticalName: 'work-redesign', affordances: [...wrdAffordances, ...wrdDemoAffordances], handlers, deploymentUrl: 'http://127.0.0.1', middleware: (a) => { attachUi(a, { base: 'http://127.0.0.1' }); parseEveryQueryPair(a); },
     }));
     listeners.push(l);
 
@@ -606,7 +606,7 @@ describe('work-redesign offline demo and web UI', () => {
 
     // A production composition and a browser with no wallet: nothing can sign, and the unsigned read model answers 401.
     const prod = await listenLoopback(createVerticalBridge({
-      verticalName: 'work-redesign', affordances: wrdAffordances, deploymentUrl: 'http://127.0.0.1', middleware: (a) => attachUi(a, { base: 'http://127.0.0.1' }),
+      verticalName: 'work-redesign', affordances: wrdAffordances, deploymentUrl: 'http://127.0.0.1', middleware: (a) => { attachUi(a, { base: 'http://127.0.0.1' }); parseEveryQueryPair(a); },
       handlers: createWrdHandlers({ fetchFn: pod.fetchFn, defaultPodUrl: DEMO_POD, now: () => clock.now(), recordKey: DEMO_RECORD_KEY, adminAddresses: [admin.address] }),
     }));
     listeners.push(prod);
@@ -691,6 +691,8 @@ describe('work-redesign offline demo and web UI', () => {
     // The first statement of the hook, so the guard stands in front of the ontology, the UI and every route the factory mounts after it.
     expect(server).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(loopback\) a\.use\(hostAllowlistGuard\(servedHostNames\(PORT, base\)\)\);\n/);
     expect(demo).toMatch(/middleware: \(a\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*a\.use\(hostAllowlistGuard\(servedHostNames\(port, base\)\)\);\n\s*attachUi\(a, \{ base \}\);/);
+    // Both parse every query parameter, so the GET template's signed-read check sees past the default parser's first 1000 pairs.
+    for (const src of [server, demo]) expect(/middleware: \(a\) => \{\n([\s\S]*?)\n\s*\},\n/.exec(src)?.[1]).toMatch(/^\s*parseEveryQueryPair\(a\);$/m);
     // One composition each, so there is no second app without the guard.
     for (const src of [server, demo]) {
       expect(src.match(/createVerticalBridge\(/g)).toHaveLength(1);

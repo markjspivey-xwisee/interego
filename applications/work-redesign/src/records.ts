@@ -229,6 +229,8 @@ export function entityIriKey(recordKey: { readonly secretKey: string }): string 
 export function iriKeyFingerprint(key: string): string {
   return createHmac('sha256', Buffer.from(key, 'hex')).update('wrd-iri-key-fingerprint', 'utf8').digest('hex').slice(0, 8);
 }
+/** A record key's public fingerprint: the one its keyed IRIs carry, and the one the ids of the versions sealed to it end with (recordIdFor). */
+export const recordKeyFingerprint = (recordKey: { readonly secretKey: string }): string => iriKeyFingerprint(entityIriKey(recordKey));
 /** Where a segment sits in an entity IRI; part of what a keyed segment is derived from. */
 type SegmentPosition = 'scope' | 'id';
 /**
@@ -307,9 +309,24 @@ export function illFormedTextPath(v: unknown, path = 'input'): string | null {
   return null;
 }
 export const graphIriOf = (entity: string): string => `${entity}:graph`;
-/** One id per write attempt: the nonce makes it unique, so a retry never lands on a partial write's URL. */
-export const recordIdFor = (kind: EntityKind, graphIri: string, version: number, nonce: string): string =>
-  `urn:wrd:record:${kind}-${h16(`${graphIri}|${version}|${nonce}`)}`;
+/**
+ * One id per write attempt: the nonce makes it unique, so a retry never lands on a partial write's
+ * URL. A version written with a record key (its graph sealed to that key) ends `-k<fingerprint>`,
+ * the key's public fingerprint (iriKeyFingerprint of its entityIriKey, as in a keyed IRI). The id
+ * is what the platform's authorship proof signs, and the descriptor sits at the URL predicted from
+ * the id's last segment, so for every version a trusted platform key signed, the manifest names
+ * which record key it was written under, or that it was written without one, before anything is
+ * read: a pod writer can neither add the mark nor change it without the proof failing.
+ */
+export const recordIdFor = (kind: EntityKind, graphIri: string, version: number, nonce: string, keyFingerprint?: string | null): string =>
+  `urn:wrd:record:${kind}-${h16(`${graphIri}|${version}|${nonce}`)}${keyFingerprint ? `-k${keyFingerprint}` : ''}`;
+/**
+ * The record key fingerprint a record id, or the URL of the descriptor it names, ends with (see
+ * recordIdFor); null for a version written without a record key.
+ */
+export const fingerprintOfRecord = (idOrUrl: string): string | null => /-k([0-9a-f]{8})(?:\.ttl)?$/.exec(idOrUrl)?.[1] ?? null;
+/** The URL shape of a version written without a record key: `<kind>-<16 hex>.ttl` (its graph is plaintext on the pod). */
+export const UNKEYED_RECORD_URL = /\/[a-z-]+-[0-9a-f]{16}\.ttl$/;
 export function slugOf(recordId: string): string {
   const i = recordId.lastIndexOf(':');
   return i < 0 ? recordId : recordId.slice(i + 1);

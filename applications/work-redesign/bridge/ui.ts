@@ -25,9 +25,15 @@
  * install it first in their `middleware` hook, which the shared factory runs before every route
  * except its build-identity `/health`.
  *
+ * `parseEveryQueryPair` makes the app parse every parameter of a query string. Express's default
+ * parser keeps the first 1000 pairs (empty ones count) and drops the rest without a word, so a
+ * signed read placed after them would never reach the GET wrd.envelope_template's check and would
+ * be answered 200 from a URL that logs keep. Both compositions install it in their hook.
+ *
  * No environment reads; bridge/server.ts and demo/run.ts attach this.
  */
 import { readFileSync } from 'node:fs';
+import { parse as parseQueryString } from 'node:querystring';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { refuse } from '../../_shared/vertical-bridge/refusal.js';
 
@@ -189,4 +195,16 @@ export function hostAllowlistGuard(allowed: readonly string[]): (req: Request, r
     res.status(421).json(refuse(421, 'This bridge does not answer for that host name.',
       'the Host header is not a name this bridge is served under, which is what a page that rebinds its own DNS name to the bridge sends'));
   };
+}
+
+/**
+ * Parse every pair of a query string: node:querystring's parse, as Express's default ('simple')
+ * parser is, with no cap on the number of keys (its default, 1000, drops the rest silently). A
+ * GET's arguments are its query, and a check over them (signedReadIn, for the GET
+ * wrd.envelope_template) sees only what the parser keeps. Node's header-size limit (16 KiB by
+ * default) bounds the request line, and so how many pairs there can be. Express reads the setting
+ * on each request, so it can be set at any point before the app serves one.
+ */
+export function parseEveryQueryPair(app: Express): void {
+  app.set('query parser', (query: string) => parseQueryString(query, '&', '=', { maxKeys: 0 }));
 }

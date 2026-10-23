@@ -424,6 +424,7 @@ function strip() {
         `${altered} graph(s) altered after signing, ${forked} forked, ${untrusted} descriptor(s) set aside as untrusted. Altered or forked records are never used as a current version.`) : null,
       (d.sealed ?? []).length > 0 ? h('p', { class: 'badbox small', text: `${d.sealed.length} record(s) are sealed and this bridge cannot open them. ${d.sealedNote ?? ''}` }) : null,
       d.recordKeyMismatch ? h('p', { class: 'badbox small', text: `Another record key: ${d.recordKeyMismatch.why}` }) : null,
+      d.plaintext ? h('p', { class: 'warnbox small', text: `${d.plaintext.versions} record version(s) written before the record key are plaintext on the pod. ${d.plaintext.why}` }) : null,
       d.unreadable ? h('p', { class: 'badbox small', text: `Marked, not worked out without them, because records they depend on cannot be read: ${Object.keys(d.unreadable).join(', ')}.` }) : null),
     h('div', { class: 'stack' },
       signerNode(),
