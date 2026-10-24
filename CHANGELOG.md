@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-24 — Solid server: expired sessions and tokens are deleted again
+
+The live Solid server's hourly clean-up of expired entries had failed every time it ran, four times an hour, with "Cannot read properties of undefined (reading 'startsWith')", so nothing that expired was ever deleted: login cookies, password-reset records, the identity provider's stored sessions, grants and tokens, and WebID ownership tokens all stayed in the pod's `/.internal/` area for good. The clean-up reads every document under `/.internal/`, and before 15 October the resource locker kept its reader counts there too. A count is a bare number with no key, and any count left behind (a restart in the middle of a read is enough) was read as an entry with an undefined key, which stopped each clean-up run before it deleted anything. Expired entries were already ignored on read, so nothing expired was ever honoured; they only piled up.
+
+The server's internal storage now leaves out documents that have no key when it lists its entries, in both `pgsl-server.json` and `pgsl-server-redis.json`. Once this is deployed, the next hourly run deletes every expired entry that has piled up, old ones included. Any left-over lock counts stay where they are; nothing reads them. `test/expiring-cleanup.it.ts` boots the server from its real config, plants such a count, and runs the clean-up. Without the fix it fails with the same error as the live log.
+
 ## 2026-10-24 — Practice Evidence: the scenario list fits a phone
 
 On a phone, Practice Evidence's scenario list was 33 px wider than the screen whenever a scenario showed the badge "Rubric awaiting approval: results won't count as evidence yet". A badge never wrapped, and the list's one column grew to fit it, so the whole page scrolled sideways. In the shared design system a badge now wraps when it is too long for its container, and never grows wider than it. Work Redesign already did this for badges in its stacked tables. The scenario list's column is now capped at the screen's width. Measured on the live site at 390 px, every Practice Evidence view now fits, and nothing changes at desktop width.
