@@ -187,3 +187,16 @@ test('the same for a DID: refused beside other credentials, returning when liste
   assert.equal(empty.writes.length, 1);
   assert.equal(empty.writes[0]!.ifAbsent, true);
 });
+
+test('a credential that may not open an account: refused on an empty pod, still returning where listed', async () => {
+  // A did:web is verified against a key the caller supplies, so it cannot create an account.
+  for (const doc of [null, record({ sessionEpoch: 2 })]) {
+    const p = pod(doc);
+    assert.deepEqual(await wallet(p, { mayCreate: false }), { kind: 'refused' });
+    assert.equal(p.writes.length, 0);
+  }
+  const listed = pod(record({ walletAddresses: [WALLET] }));
+  assert.equal((await wallet(listed, { mayCreate: false })).kind, 'returning');
+  assert.equal(listed.writes.length, 0);
+  assert.equal((await wallet(pod('unreadable'), { mayCreate: false })).kind, 'unreadable');
+});

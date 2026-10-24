@@ -189,7 +189,9 @@ const UNLINTED_FRONTIER = {
   // census to 187. Bank coverage; the existing error pin remains unchanged.
   // Progressive native play adds fourteen tracked deploy modules and regression suites.
   // Record the committed file census; new lint debt remains forbidden at the same ceiling.
-  deploy: { errors: 356, files: 201 },
+  // Identity sign-in fixes add six tracked modules and suites (first-sign-in, per-account read
+  // limit, did:web key binding): 213 files. Error ceiling unchanged.
+  deploy: { errors: 356, files: 213 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
