@@ -79,6 +79,8 @@ const S = {
   seq: 0,
   lastRoute: '',
   copiedMemberId: false,        // memory only: ticks the checklist's Member ID step
+  sessions: null,               // memory only: { any, own } from the last attempt list read as this person; null until one is read
+  checklistOpen: null,          // memory only: the person opened (true) or collapsed (false) Getting started; null: the default
   queueCount: null,             // memory only: the To review count in the navigation
   checklistRole: null,          // which role's Getting started steps are shown
   checklistAll: false,          // every step shown, not just the next few
@@ -411,6 +413,25 @@ function formField(o) {
 
 function errorText(text) { return h('p', { class: 'error-text', role: 'alert' }, icon('warning'), text); }
 
+/** Say what is wrong under one control (null clears it); the control is marked invalid and points at the text. */
+function fieldError(control, text) {
+  const id = `${control.id}-error`;
+  const old = document.getElementById(id);
+  if (old) old.remove();
+  const described = (control.getAttribute('aria-describedby') || '').split(' ').filter((x) => x && x !== id);
+  if (!text) {
+    control.removeAttribute('aria-invalid');
+    if (described.length) control.setAttribute('aria-describedby', described.join(' ')); else control.removeAttribute('aria-describedby');
+    return;
+  }
+  const p = errorText(text);
+  p.id = id;
+  control.setAttribute('aria-invalid', 'true');
+  control.setAttribute('aria-describedby', [...described, id].join(' '));
+  control.after(p);
+  if (typeof control.focus === 'function') control.focus();
+}
+
 function linkButton(href, label, cls, iconName) {
   const ic = iconName ? icon(iconName, 'sm') : null;
   return h('a', { class: `btn ${cls || 'btn--secondary'}`, href }, iconName === 'arrow-right' ? null : ic, label, iconName === 'arrow-right' ? ic : null);
@@ -608,6 +629,7 @@ async function connectWallet() {
   S.account = accounts[0];
   S.mode = 'wallet';
   S.readEnvelopes.clear();
+  S.sessions = null;
 }
 
 /** Paste mode (chosen on purpose): show the exact text to sign, wait for the signature. */
@@ -655,6 +677,7 @@ function pasteSign(payload) {
 // sessionStorage only: the token ends with the tab, and no other page of this origin keeps it.
 const SESSION_KEY = 'pev.interego.session';
 const PENDING_KEY = 'pev.interego.pending';
+/** localStorage, a per-viewer convenience: Getting started hidden in this browser until the account menu brings it back. */
 const CHECKLIST_HIDDEN_KEY = 'pev.checklist.hidden';
 const PENDING_MS = 15 * 60 * 1000;
 /** The longest this tab keeps a sign-in, whatever it is told: the relay's access tokens last an hour. */
@@ -793,7 +816,7 @@ function keepInterego(k) {
 }
 
 function sessionEndedCallout() {
-  return callout({ tone: 'warning', title: 'Your session has ended', body: 'Sessions last up to an hour. Sign in again to pick up where you left off.',
+  return callout({ tone: 'warning', title: 'Your sign-in has ended', body: 'Sign-ins last up to an hour. Sign in again; your practice is saved.',
     alert: true, extraClass: 'refusal', actions: [signInButton('interego', 'Sign in again', 'sm')], techLines: [SIGN_IN_ENDED] });
 }
 
@@ -860,6 +883,7 @@ async function confirmInteregoSignIn() {
   if (!S.interego || !S.pod) return;
   try {
     const r = await act(ACT.getAttempt, {}, { read: true });
+    learnSessions(r);
     const who = r.signedAs;
     if (S.interego && who && who.authority === 'relay-delegated' && typeof who.principal === 'string') S.interego.principal = who.principal;
   } catch (e) {
@@ -876,6 +900,8 @@ function forgetInterego() {
   S.interego = null;
   if (S.mode === 'interego') S.mode = S.demoRoles.length ? 'demo' : S.account ? 'wallet' : 'paste';
   S.readEnvelopes.clear();
+  S.sessions = null;
+  S.checklistOpen = null;
 }
 
 /** What signing out does and does not do, in plain words: it revokes nothing at the relay. */
@@ -894,7 +920,7 @@ function signOutInterego() {
   route();
   clear($('#signing')).append(callout({
     tone: 'neutral', id: 'interego-signed-out', role: 'status', title: "You're signed out of this tab",
-    body: "Your Interego session isn't ended early: it stays valid until it expires (within an hour), and anyone with a copy could use it until then. Practice Evidence keeps no copy.",
+    body: "Your Interego sign-in isn't ended early: it stays valid until it expires (within an hour), and anyone with a copy could use it until then. Practice Evidence keeps no copy.",
     kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'What this means' }), h('div', { class: 'disclosure__body' }, h('p', { text: signedOutWords(expiresAt) })))],
   }));
 }
@@ -998,6 +1024,7 @@ const FORM_CHECKS = {
   'why-too-short': 'Please add a reason (at least 10 characters).', 'override-why-missing': 'Please add a reason (at least 10 characters).',
   'levels-differ-from-judge': "Your levels differ from the AI's, so this is \"Sign off my levels\" with reasons.",
   'override-changes-nothing': "Your levels match the AI's: use Confirm all levels.",
+  'address-format': "That isn't a Member ID or a wallet address. Ask the person to copy their Member ID from their account menu (it starts with did:web: and contains :users:), or paste a wallet address (0x followed by 40 letters and digits).",
 };
 
 /** A refusal's plain title, message and the one action that resolves it. */
@@ -1009,7 +1036,7 @@ function friendly(err, o) {
       actions: [interegoOffered() ? signInButton('interego', 'Sign in with Interego', 'sm') : null] };
   }
   if (code === 'interego-sign-in-expired' || code === 'interego-bearer-missing') {
-    return { tone: 'warning', title: 'Your session has ended', message: 'Sessions last up to an hour. Sign in again to pick up where you left off.',
+    return { tone: 'warning', title: 'Your sign-in has ended', message: 'Sign-ins last up to an hour. Sign in again; your practice is saved.',
       actions: [signInButton('interego', 'Sign in again', 'sm')] };
   }
   if (code === 'envelope-expired') {
@@ -1055,7 +1082,7 @@ function friendly(err, o) {
     return { tone: 'danger', title: "We couldn't reach this workspace's storage", message: 'Nothing was saved. Please try again; if it keeps happening, tell your admin.', actions: [retryButton(o)] };
   }
   if (code === 'record-key-mismatch' || code === 'record-not-trusted' || code === 'records-sealed') {
-    return { tone: 'danger', title: "Some records here can't be opened", message: "Some records here can't be opened by this service. Please contact your admin." };
+    return { tone: 'danger', title: "Some records here can't be opened", message: "Some records here can't be opened by this service. Please tell your admin." };
   }
   if (STEP_ORDER[code]) return { tone: 'warning', title: STEP_ORDER[code][0], message: STEP_ORDER[code][1] };
   if (code === 'unverified-criteria-need-override') {
@@ -1064,7 +1091,7 @@ function friendly(err, o) {
     return { tone: 'warning', title: `A quote didn't match for ${which}. Set those levels yourself and add a reason.`, message: '' };
   }
   if (FORM_CHECKS[code]) return { tone: 'warning', title: FORM_CHECKS[code], message: '' };
-  return { tone: 'danger', title: 'Something went wrong', message: 'Nothing was saved. Please try again. If it keeps happening, contact us and include the details below.', actions: [retryButton(o)] };
+  return { tone: 'danger', title: 'Something went wrong', message: 'Nothing was saved. Please try again. If it keeps happening, tell your admin and include the details below.', actions: [retryButton(o)] };
 }
 
 /** Every failure, as a callout: what happened and what to do, then the bridge's own words under Technical details. */
@@ -1188,7 +1215,8 @@ function menuLink(label, iconName, href) { return h('a', { class: 'menu__item', 
 function demoBanner() {
   const r = S.demoRoles.find((x) => x.role === S.role);
   const sel = h('select', { id: 'role', class: 'select', 'aria-label': 'Demo role', onchange: (e) => {
-    S.role = e.target.value; remember('pev.role', S.role); S.readEnvelopes.clear(); S.checklistRole = null; S.queueCount = null; renderHeader(); route();
+    S.role = e.target.value; remember('pev.role', S.role); S.readEnvelopes.clear(); S.checklistRole = null; S.queueCount = null; S.sessions = null; S.checklistOpen = null;
+    renderHeader(); route();
   } }, S.demoRoles.map((x) => h('option', { value: x.role, text: demoLabel(x) })));
   sel.value = S.role;
   return h('div', { class: 'env-banner', role: 'note' },
@@ -1250,7 +1278,7 @@ function accountActions() {
   }
   if (S.mode === 'wallet') menu.append(h('p', { class: 'menu__text mono', text: S.account }));
   menu.append(...(S.mode === 'demo' ? [] : [h('hr', { class: 'menu__sep' })]),
-    menuItem('Getting started', 'check', () => { sessionDrop(CHECKLIST_HIDDEN_KEY); go('#/practice'); }),
+    menuItem('Getting started', 'check', () => { forget(CHECKLIST_HIDDEN_KEY); S.checklistOpen = true; go('#/practice'); }),
     menuItem('Use my own AI provider key', 'sparkle', () => openSettings('byok')),
     menuItem('Workspace settings', 'clipboard', () => openSettings('')),
     menuLink('Help and guides', 'info', 'ui/help'),
@@ -1260,6 +1288,19 @@ function accountActions() {
       h('button', { type: 'button', id: 'interego-sign-out', class: 'menu__item menu__item--danger', onclick: () => signOutInterego() }, icon('sign-in'), 'Sign out'));
   }
   return [btn, menu];
+}
+
+/**
+ * Which AI steps a key of your own is used for here. A workspace offers replies and assessments in
+ * the web app only when it has a built-in AI (the attempt's own next steps say so), so on one with
+ * none a key is used for drafts only.
+ */
+function byokHint(b) {
+  const replies = !b || b.counterpartRoute !== 'none';
+  const assessments = !b || b.judgeRoute !== 'none';
+  if (!replies && !assessments) return 'Used for AI drafts of scenarios. To practice or be assessed here, use your own AI assistant. Sent with each draft, used once, never stored.';
+  const steps = [replies ? 'replies' : null, assessments ? 'assessments' : null, 'drafts'].filter(Boolean);
+  return `AI steps this workspace offers: ${steps.length === 3 ? 'replies, assessments and drafts' : steps.join(' and ')}. Sent with each one, used once, never stored.`;
 }
 
 function workspaceDialog() {
@@ -1303,7 +1344,7 @@ function workspaceDialog() {
       about.length ? h('section', { class: 'settings__section' }, h('h3', { text: 'About this workspace' }), about) : null,
       h('section', { class: 'settings__section', id: 'byok-section' }, h('h3', { text: 'Your own AI provider key (advanced)' }),
         h('label', { class: 'choice' }, toggle, h('span', { class: 'choice__text' }, 'Use my own AI provider key for AI steps in this tab',
-          h('span', { class: 'choice__hint', text: 'AI steps this workspace offers: replies, assessments and drafts. Sent with each one, used once, never stored.' }))),
+          h('span', { class: 'choice__hint', text: byokHint(b) }))),
         fields)),
     h('div', { class: 'modal__footer' }, h('button', { type: 'button', class: 'btn btn--primary', text: 'Done', onclick: () => closeDialog(d) })));
   d.addEventListener('click', (e) => { if (e.target === d) closeDialog(d); });
@@ -1350,6 +1391,7 @@ function renderHeader() {
 }
 
 function remember(k, v) { try { localStorage.setItem(k, v); } catch { /* storage is optional */ } }
+function forget(k) { try { localStorage.removeItem(k); } catch { /* storage is optional */ } }
 function recall(k) { try { return localStorage.getItem(k); } catch { return null; } }
 
 const NAV = [
@@ -1378,6 +1420,32 @@ function renderTabs() {
   }
   nav.append(h('div', { class: 'side-nav__footer' }, h('a', { class: 'side-nav__link', href: 'ui/help' }, icon('info'), 'Help')));
   nav.append(h('a', { class: 'side-nav__link side-nav__mobile-only', href: 'ui/help' }, icon('info'), 'Help'));
+  if (!nav.dataset.watched) {
+    nav.dataset.watched = '1';
+    nav.addEventListener('scroll', () => markTabEdges(nav), { passive: true });
+    addEventListener('resize', () => { revealCurrentTab(nav); markTabEdges(nav); });
+  }
+  revealCurrentTab(nav);
+  markTabEdges(nav);
+}
+
+/** On a phone the navigation is one scrolling row: the current item is scrolled into it, clear of the edge fade. */
+function revealCurrentTab(nav) {
+  const cur = nav.querySelector('.side-nav__link[aria-current="page"]');
+  if (!cur || !(nav.scrollWidth > nav.clientWidth)) return;
+  const pad = 48;
+  const left = cur.offsetLeft;
+  const right = left + cur.offsetWidth;
+  if (left < nav.scrollLeft + pad) nav.scrollLeft = Math.max(0, left - pad);
+  else if (right > nav.scrollLeft + nav.clientWidth - pad) nav.scrollLeft = right - nav.clientWidth + pad;
+}
+
+/** Which ends of that row have more items past them, for the fade that says so (app.css). */
+function markTabEdges(nav) {
+  const more = nav.scrollWidth > nav.clientWidth + 1;
+  const mark = (name, on) => { if (on) nav.setAttribute(name, ''); else nav.removeAttribute(name); };
+  mark('data-more-start', more && nav.scrollLeft > 1);
+  mark('data-more-end', more && nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 1);
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -1399,23 +1467,40 @@ async function route() {
     const se = document.scrollingElement || document.documentElement;
     if (se) se.scrollTop = 0;
   }
+  // Signed reads can take seconds (each is a signing round trip, then the workspace's storage): the
+  // view says it is loading until its data is in, below whatever it could draw at once.
+  const loading = loadingLine();
+  root.append(loading);
   try {
     if (S.needPod && name !== 'roles' && name !== 'signin') { root.append(needStorageNote()); return; }
+    let pending;
     if (name === 'signin') viewSignIn(root);
-    else if (name === 'attempt' && param) await viewAttempt(root, param, seq);
-    else if (name === 'review' && param) await viewReview(root, param, seq);
-    else if (name === 'review') await viewQueue(root);
-    else if (name === 'results' && param) await viewResults(root, param);
-    else if (name === 'calibration') await viewCalibration(root);
-    else if (name === 'author') await viewAuthor(root, param);
+    else if (name === 'attempt' && param) pending = viewAttempt(root, param, seq);
+    else if (name === 'review' && param) pending = viewReview(root, param, seq);
+    else if (name === 'review') pending = viewQueue(root);
+    else if (name === 'results' && param) pending = viewResults(root, param);
+    else if (name === 'calibration') pending = viewCalibration(root);
+    else if (name === 'author') pending = viewAuthor(root, param);
     else if (name === 'roles') viewRoles(root);
-    else if (name === 'mine') await viewMine(root);
-    else await viewPractice(root);
+    else if (name === 'mine') pending = viewMine(root);
+    else pending = viewPractice(root);
+    // Below the page header and anything else the view drew before its first wait.
+    if (pending && loading.isConnected) root.append(loading);
+    else loading.remove();
+    await pending;
   } catch (e) {
     if (seq !== S.seq) return;
     if (e instanceof NeedsSignIn) root.append(signInGate(name || 'practice'));
     else root.append(problemCallout(e, { retry: () => route() }));
+  } finally {
+    loading.remove();
   }
+}
+
+function loadingLine() {
+  return h('div', { class: 'view-loading', role: 'status' },
+    h('p', { class: 'busy-line text-tertiary' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Loading…'),
+    h('span', { class: 'skeleton skeleton--block', 'aria-hidden': 'true' }));
 }
 
 const go = (hash) => { if (location.hash === hash) route(); else location.hash = hash; };
@@ -1477,9 +1562,9 @@ const CHECKLISTS = {
   learner: [
     { signIn: true, title: 'Sign in with Interego', text: "Your Interego account is how Practice Evidence knows it's you." },
     { member: true, title: 'Copy your Member ID and send it to your admin', text: 'Your admin uses this to give you a role.' },
-    { title: 'Pick a scenario', text: "Read what you're practicing and open the rubric.", scroll: '#scenarios', label: 'See scenarios' },
-    { title: 'Start', text: 'Say whether anyone helped you prepare, then press Start practice.' },
-    { title: 'Have the conversation', text: 'Type your line and press Send, or let your own AI play the other person. Finish when you are ready.' },
+    { practice: true, title: 'Pick a scenario', text: "Read what you're practicing and open the rubric.", scroll: '#scenarios', label: 'See scenarios' },
+    { practice: true, title: 'Start', text: 'Say whether anyone helped you prepare, then press Start practice.' },
+    { practice: true, title: 'Have the conversation', text: 'Type your line and press Send, or let your own AI play the other person. Finish when you are ready.' },
     { title: 'Get your feedback', text: 'Press Get AI assessment when the workspace has built-in AI. Otherwise, your appointed judge will assess the session.' },
     { title: 'After review', text: 'Download your record, request another review, or share it as a learning record.' },
     { title: 'Practice again', text: 'Start again from the session page whenever you like.', href: '#/mine', label: 'My practice' },
@@ -1520,16 +1605,50 @@ const CHECKLISTS = {
   ],
 };
 
-function checklistVisible() { return S.mode !== 'paste' && sessionGet(CHECKLIST_HIDDEN_KEY) !== '1'; }
+function checklistVisible() { return S.mode !== 'paste' && recall(CHECKLIST_HIDDEN_KEY) !== '1'; }
 
-function checklist() {
+/** True when an attempt in a list is the signer's own: an address as its did:ethr (case-insensitive), a DID as it is. */
+function isOwnAttempt(a, principal) {
+  if (typeof principal !== 'string' || !principal || typeof a.learner !== 'string') return false;
+  const did = /^0x[0-9a-fA-F]{40}$/.test(principal) ? `did:ethr:${principal}` : principal;
+  return did.startsWith('did:ethr:') ? a.learner.toLowerCase() === did.toLowerCase() : a.learner === did;
+}
+
+/** What an attempt list read as this person says about them: any session they can see, and any of their own. */
+function learnSessions(r) {
+  if (!r || !Array.isArray(r.attempts)) return;
+  const me = r.signedAs && r.signedAs.principal;
+  S.sessions = { any: r.attempts.length > 0, own: r.attempts.some((a) => isOwnAttempt(a, me)) };
+}
+
+/**
+ * Getting started: each role's first steps. Done-ness comes only from what the app knows (signed
+ * in, the Member ID copied, sessions of one's own), so it shows no count that could stall. Once the
+ * person can see any session the card starts collapsed. It paints itself into `slot`.
+ */
+function paintChecklist(slot) {
+  const repaint = () => paintChecklist(slot);
+  clear(slot);
   const role = S.checklistRole || (S.mode === 'demo' ? DEMO_CHECKLIST_ROLE[S.role] : null) || 'learner';
+  const practiced = Boolean(S.sessions && S.sessions.own);
+  const hide = h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Hide', onclick: () => { remember(CHECKLIST_HIDDEN_KEY, '1'); clear(slot); } });
+  const collapsed = S.checklistOpen === false || (S.checklistOpen === null && Boolean(S.sessions && S.sessions.any));
+  if (collapsed) {
+    slot.append(h('section', { class: 'checklist checklist--collapsed', 'aria-labelledby': 'gs-title' },
+      h('div', { class: 'checklist__header' },
+        h('div', { class: 'split' }, h('div', {}, h('h2', { class: 'checklist__title', id: 'gs-title', text: 'Getting started' }),
+          h('p', { class: 'checklist__meta', text: 'The first steps for each role, whenever you need them.' })),
+        h('div', { class: 'btn-group' },
+          h('button', { type: 'button', class: 'btn btn--secondary btn--sm', 'aria-expanded': 'false', text: 'Show steps', onclick: () => { S.checklistOpen = true; repaint(); } }),
+          hide)))));
+    return;
+  }
   const steps = CHECKLISTS[role];
-  const isDone = (s) => (s.signIn && S.mode !== 'paste') || (s.member && (S.copiedMemberId || S.mode === 'demo'));
-  const done = steps.filter(isDone).length;
+  const isDone = (s) => (s.signIn && S.mode !== 'paste') || (s.member && (S.copiedMemberId || S.mode === 'demo' || (role === 'learner' && practiced)))
+    || (s.practice && practiced);
   const current = steps.findIndex((s) => !isDone(s));
   const picker = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Show steps for' }, CHECKLIST_ROLES.map(([k, label]) => h('button', {
-    type: 'button', 'aria-pressed': k === role ? 'true' : 'false', text: label, onclick: () => { S.checklistRole = k; route(); },
+    type: 'button', 'aria-pressed': k === role ? 'true' : 'false', text: label, onclick: () => { S.checklistRole = k; repaint(); },
   })));
   const memberText = S.mode === 'demo' ? 'Demo people already have roles.' : null;
   const item = (s, i) => {
@@ -1540,9 +1659,9 @@ function checklist() {
     if (!d && s.member) {
       const principal = S.interego && S.interego.principal;
       const value = principal || S.account;
-      if (value) action = h('button', { type: 'button', class: cls, text: principal ? 'Copy my Member ID' : 'Copy my wallet address', onclick: () => { S.copiedMemberId = true; copyText(value, principal ? 'Member ID' : 'Wallet address'); route(); } });
+      if (value) action = h('button', { type: 'button', class: cls, text: principal ? 'Copy my Member ID' : 'Copy my wallet address', onclick: () => { S.copiedMemberId = true; copyText(value, principal ? 'Member ID' : 'Wallet address'); repaint(); } });
     } else if (s.href) action = h('a', { class: cls, href: s.href, text: s.label });
-    else if (s.scroll) action = h('button', { type: 'button', class: cls, text: s.label, onclick: () => scrollToEl(s.scroll) });
+    else if (s.scroll && !d) action = h('button', { type: 'button', class: cls, text: s.label, onclick: () => scrollToEl(s.scroll) });
     return h('li', { class: 'checklist__item', 'data-state': state },
       h('span', { class: 'checklist__mark' }, d ? icon('check') : null),
       h('p', { class: 'checklist__title-item' }, h('span', { class: 'visually-hidden', text: d ? 'Done: ' : i === current ? 'Next step: ' : '' }), s.title),
@@ -1551,16 +1670,28 @@ function checklist() {
   };
   const limit = S.checklistAll || current < 0 ? steps.length : current + 3;
   const hidden = steps.length - Math.min(limit, steps.length);
-  return h('section', { class: 'checklist', 'aria-labelledby': 'gs-title' },
+  const collapse = S.sessions && S.sessions.any
+    ? h('button', { type: 'button', class: 'btn btn--ghost btn--sm', 'aria-expanded': 'true', text: 'Collapse', onclick: () => { S.checklistOpen = false; repaint(); } }) : null;
+  slot.append(h('section', { class: 'checklist', 'aria-labelledby': 'gs-title' },
     h('div', { class: 'checklist__header' },
-      h('div', { class: 'split' }, h('h2', { class: 'checklist__title', id: 'gs-title', text: 'Getting started' }),
-        h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Hide', onclick: () => { sessionPut(CHECKLIST_HIDDEN_KEY, '1'); route(); } })),
-      h('div', { class: 'checklist__picker' }, h('span', { text: 'Show steps for' }), picker),
-      h('p', { class: 'checklist__meta', text: `${done} of ${steps.length} done` }),
-      h('progress', { class: 'progress', max: steps.length, value: done, 'aria-label': 'Setup progress' }, `${done} of ${steps.length}`)),
+      h('div', { class: 'split' }, h('h2', { class: 'checklist__title', id: 'gs-title', text: 'Getting started' }), h('div', { class: 'btn-group' }, collapse, hide)),
+      h('div', { class: 'checklist__picker' }, h('span', { text: 'Show steps for' }), picker)),
     h('ol', { class: 'checklist__list' }, steps.slice(0, limit).map(item)),
     hidden > 0 || S.checklistAll ? h('div', { class: 'checklist__footer' }, h('button', { type: 'button', class: 'btn btn--link',
-      text: S.checklistAll ? 'Show fewer steps' : `Show all ${steps.length} steps`, onclick: () => { S.checklistAll = !S.checklistAll; route(); } })) : null);
+      text: S.checklistAll ? 'Show fewer steps' : `Show all ${steps.length} steps`, onclick: () => { S.checklistAll = !S.checklistAll; repaint(); } })) : null));
+}
+
+/**
+ * The Getting started card's place on Practice. When it is not yet known whether the person has
+ * any session and the bridge signs for demo roles (so asking costs no one a signature), it asks
+ * first, then paints; otherwise it paints at once.
+ */
+function checklistSlot() {
+  const slot = h('div', { class: 'checklist-slot' });
+  if (S.sessions === null && S.mode === 'demo') {
+    act(ACT.getAttempt, {}, { read: true }).then(learnSessions, () => {}).finally(() => { if (slot.isConnected) paintChecklist(slot); });
+  } else paintChecklist(slot);
+  return slot;
 }
 
 async function viewPractice(root) {
@@ -1569,7 +1700,7 @@ async function viewPractice(root) {
     actions: [h('label', { class: 'choice' }, drafts, h('span', { class: 'choice__text', text: 'Include drafts (authors can try their own)' }))] }));
   if (S.mode === 'paste' && !S.manual) root.append(welcomeCard(), para("Browse the scenarios below. You'll need to sign in to start one."));
   else if (S.mode === 'paste') root.append(manualNote());
-  else if (checklistVisible()) root.append(checklist());
+  else if (checklistVisible()) root.append(checklistSlot());
   const r = await invoke(ACT.listScenarios, podArgs({ include_drafts: S.showDrafts ? 'true' : undefined }));
   S.pod = r.podUrl;
   S.bridge = r.bridge;
@@ -1637,6 +1768,7 @@ function startForm(scenarioIri, versionOf, label) {
     if (!yes.checked && !no.checked) return errorText('Please say whether anyone helped you prepare.');
     const version = await versionOf();
     const r = await act(ACT.startAttempt, { scenarioIri, scenarioVersion: version, coached: yes.checked, ...(help.value.trim() ? { assistance: help.value.trim() } : {}) });
+    S.sessions = { any: true, own: true };
     go(attemptHash(r.attemptIri));
     return null;
   }, { progress: 'Starting…' }) }, icon('chat'), label);
@@ -1688,10 +1820,13 @@ function scenarioCard(s) {
     card.append(h('div', { class: 'card__footer scenario__start' },
       startForm(s.scenarioIri, async () => s.version, s.status === 'draft' ? 'Try it yourself (test run)' : 'Start practice')));
   }
+  // Results, editing and approving are team tools: a demo learner, whose roles are known, never sees them.
+  if (S.mode === 'demo' && DEMO_CHECKLIST_ROLE[S.role] === 'learner') return card;
   const out = h('div', { class: 'outcome' });
-  const links = h('div', { class: 'card__footer scenario__links' },
+  const links = h('div', { class: 'card__footer scenario__links', role: 'group', 'aria-label': 'For authors, reviewers and admins' },
+    h('span', { class: 'scenario__links-label', text: 'For authors, reviewers and admins' }),
     linkButton(`#/results/${encodeURIComponent(s.scenarioIri)}`, 'Results', 'btn--ghost btn--sm', 'chart'),
-    linkButton(`#/author/${encodeURIComponent(s.scenarioIri)}`, 'Edit (new version)', 'btn--ghost btn--sm', 'document'));
+    linkButton(`#/author/${encodeURIComponent(s.scenarioIri)}`, 'Edit (authors)', 'btn--ghost btn--sm', 'document'));
   if (s.status === 'published') {
     const rat = h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Approve this rubric (reviewers)', dataset: { action: ACT.ratifyScenario }, onclick: () => busy(rat, out, async () => {
       const r = await act(ACT.ratifyScenario, { scenarioIri: s.scenarioIri, version: s.version, scenarioHash: s.scenarioHash });
@@ -1726,7 +1861,7 @@ function attemptLede(v) {
     case 'countersigned': case 'overridden': return 'A reviewer has signed off. This is your final result.';
     case 'contested': return 'You asked for another review. A different reviewer will look at it.';
     case 'review-retracted': return `The review was withdrawn: ${(withdrawn && withdrawn.why) || 'no reason given'}. The session is back in the review list.`;
-    case 'redacted': return 'The conversation text was deleted from this workspace.';
+    case 'redacted': return v.finalAssessment ? 'The conversation text was deleted from this workspace. The reviewed result is kept.' : 'The conversation text was deleted from this workspace.';
     default: return '';
   }
 }
@@ -1738,7 +1873,9 @@ function attemptMeta(v) {
     badge(`Session ${v.attemptNumber}`, '', 'Counted per person per scenario. Starting over with a different sign-in (a new wallet, say) restarts the count.'),
     badge(v.coached ? 'Had help preparing' : 'No help preparing'),
     badge(scored ? 'Scored · pass mark' : 'Feedback only'),
-    v.modalStatus === 'Asserted' ? badge('Final: reviewed', 'success', 'A qualified reviewer stood behind every level.') : badge('Provisional', '', 'Not yet reviewed by a person.'),
+    // From the result itself: a review that still stands is final, whatever happened to the text since.
+    v.finalAssessment ? badge('Final: reviewed', 'success', 'A qualified reviewer stood behind every level.')
+      : v.provisional && v.state !== 'judged' ? badge('Provisional', '', 'Not yet reviewed by a person.') : null,
     v.scenario.rubricRatified ? badge('Rubric approved', 'success') : badge('Rubric awaiting approval', 'warning'),
   ];
 }
@@ -1891,9 +2028,12 @@ function packetTurnForm(v, box, out, turnIndex) {
   const getBtn = h('button', { type: 'button', class: 'btn btn--secondary', text: 'Get instructions for my AI', dataset: { action: ACT.counterpartPacket }, onclick: () => busy(getBtn, packetOut, async () => {
     if (!box.value.trim()) return errorText('Write your line first: the instructions include it.');
     const p = await act(ACT.counterpartPacket, { attemptIri: v.attemptIri, turnIndex, learnerText: box.value }, { read: true });
-    return callout({ tone: 'info', title: 'Instructions ready', body: p.instructions,
+    // The server's instructions are written for an agent with the connector; a person gets plain steps.
+    return callout({ tone: 'info', title: 'Instructions ready',
+      body: `Copy these instructions into Claude or ChatGPT. Paste the line it writes for ${v.counterpartName} below, and say which AI wrote it (its provider and model).`,
       actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy for my AI', onclick: () => copyText(JSON.stringify(p.request, null, 2), 'Instructions') })],
-      kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request (JSON)' }), jsonBlock(p.request))] });
+      kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request (JSON)' }), jsonBlock(p.request))],
+      techLines: [p.instructions] });
   }) });
   const recBtn = h('button', { type: 'button', class: 'btn btn--primary', text: 'Save both lines', dataset: { action: ACT.recordTurns }, onclick: () => busy(recBtn, out, async () => {
     const r = await act(ACT.recordTurns, {
@@ -2105,11 +2245,13 @@ function projectionsPanel(v) {
       return h('div', { class: 'stack' },
         callout({ tone: 'success', title: 'Statement created', body: "It was checked against Practice Evidence's rules and logged. Nothing was sent anywhere.",
           actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', onclick: () => download(`statement-${r.statementId}.json`, text, 'application/json') }, icon('download', 'sm'), 'Download statement')] }),
-        h('h3', { text: 'What this record leaves out' }), h('ul', {}, r.lossy.map((x) => h('li', { text: x }))),
+        h('h3', { text: 'What this record includes' }),
+        para('It includes your final levels and result, and a link to your full record. It leaves out your quotes, the conversation text and the reviewer\'s reasons. Download your record for those.'),
+        format === 'cmi5' ? para("No learning platform launched this session, so a platform won't match it to a course enrolment.") : null,
         h('details', { class: 'disclosure' }, h('summary', { text: 'Show the statement (JSON)' }), h('pre', { class: 'json statement', text })),
         h('details', { class: 'disclosure' }, h('summary', { text: 'How to send it to your learning record store' }),
           h('div', { class: 'disclosure__body' }, h('p', { text: 'Nothing was sent anywhere. To record it in your learning record store, send it with your own credentials:' }), jsonBlock(r.lrsRequest))),
-        tech([`Statement ${r.statementId}`]));
+        tech([`Statement ${r.statementId}`, 'What the statement leaves out, in full:', ...(Array.isArray(r.lossy) ? r.lossy : []).map((x) => `· ${x}`)]));
     }, { progress: 'Creating…' }) });
     return b;
   };
@@ -2151,11 +2293,12 @@ function actionsPanel(v, o, inConversation) {
     } else if (n.action === ACT.judgePacket) {
       end.append(btn('Get the hand-off', async () => {
         const p = await act(ACT.judgePacket, { attemptIri: v.attemptIri }, { read: true });
-        return callout({ tone: 'info', title: 'Hand-off ready', body: p.instructions,
-          actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy hand-off', onclick: () => copyText(JSON.stringify(p, null, 2), 'Hand-off') })],
-          kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request (JSON)' }), jsonBlock(p)),
-            h('p', { class: 'callout__body' }, "Send this session's link to your appointed judge. ",
-              h('button', { type: 'button', class: 'btn btn--link', text: 'Copy session link', onclick: () => copyText(location.href, 'Session link') }))] });
+        return callout({ tone: 'info', title: 'Hand-off ready',
+          body: "Send this to your appointed judge with the session's link. They assess the session in Claude or ChatGPT with the Interego connector and save the result. A reviewer still signs off.",
+          actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy hand-off', onclick: () => copyText(JSON.stringify(p, null, 2), 'Hand-off') }),
+            h('button', { type: 'button', class: 'btn btn--ghost btn--sm', text: 'Copy session link', onclick: () => copyText(location.href, 'Session link') })],
+          kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request (JSON)' }), jsonBlock(p))],
+          techLines: [p.instructions] });
       }, 'btn--secondary', 'One moment…'));
     } else if (n.action === ACT.exportRecord) {
       end.append(btn('Download', async () => {
@@ -2223,6 +2366,17 @@ function actionsPanel(v, o, inConversation) {
   return h('section', { class: 'card actions' }, h('div', { class: 'card__header' }, h('h2', { class: 'card__title', text: 'What you can do next' })), body);
 }
 
+/** One saved version, in plain words: its state, and whether it was final or provisional when saved. */
+function versionWords(x) {
+  if (x.contentDeleted) return 'Earlier version: text deleted';
+  if (x.trusted === false) return "Earlier version: couldn't be verified";
+  const state = STATE_WORDS[x.state] || 'Saved version';
+  // A withdrawn review or deleted text is said by the state itself; only these two add a word.
+  if (x.modalStatus === 'Asserted') return `${state} · Final`;
+  if (x.modalStatus === 'Hypothetical') return `${state} · Provisional`;
+  return state;
+}
+
 function versionsPanel(v) {
   const a = v.authorship || {};
   const bound = a.valid && a.contentBinding === 'bound' && a.platformKnown;
@@ -2231,7 +2385,7 @@ function versionsPanel(v) {
     bound ? null : para("This record doesn't match its signature. Don't rely on it; contact your admin.", 'text-sm'),
     h('details', { class: 'disclosure' }, h('summary', { text: `History (${v.versions.length} saved versions)` }),
       h('div', { class: 'disclosure__body' }, h('ol', { class: 'list' }, v.versions.map((x) => h('li', {}, h('div', { class: 'list__item' },
-        h('div', { class: 'list__main' }, h('span', { class: 'list__title', text: `${STATE_WORDS[x.state] || 'Text deleted'} · ${x.modalStatus === 'Asserted' ? 'Final' : 'Provisional'}` }),
+        h('div', { class: 'list__main' }, h('span', { class: 'list__title', text: versionWords(x) }),
           h('code', { class: 'mono list__meta', text: x.descriptorUrl })))))))),
     tech([`Session ${v.attemptIri}`, `Learner ${v.learner.did} (${v.learner.kind})`, `Modal status ${v.modalStatus}`, `Service signing key ${v.keyKind}`, `Content binding ${a.contentBinding}`])));
 }
@@ -2456,6 +2610,9 @@ async function viewResults(root, scenarioIri) {
   }
   const titles = Object.fromEntries(r.final.perCriterion.map((d) => [d.criterionId, d.title]));
   const t = (id) => titles[id] || id;
+  const labels = new Map();
+  for (const d of [...r.final.perCriterion, ...r.provisional.perCriterion]) for (const l of d.levels || []) labels.set(`${d.criterionId}|${l.levelId}`, l.label);
+  const lvl = (c, l) => labels.get(`${c}|${l}`) || String(l);
   root.append(resultCard('Final levels (reviewed sessions)', [distributionTable(r.final.perCriterion, r.k, 'Final levels')]));
   root.append(h('div', { class: 'grid-2' },
     resultCard('With help preparing', [distributionTable(r.final.byCoached.coached, r.k, 'With help preparing')]),
@@ -2470,7 +2627,12 @@ async function viewResults(root, scenarioIri) {
   if (r.reviewerChangesShown === 'each') {
     if (!r.reviewerChanges.length) changes.push(para("Reviewers haven't changed any AI levels on this scenario."));
     else {
-      changes.push(h('ul', {}, r.reviewerChanges.map((x) => h('li', { text: `${t(x.criterionId)}: ${x.judgeLevelId} → ${x.finalLevelId} (${fmtDate(x.reviewedAt)}): ${x.why === null ? '(deleted with the conversation text)' : x.why}` }))));
+      // Every level a reviewer set by hand: a different one is a change; the AI's own level kept is said as kept.
+      changes.push(h('ul', {}, r.reviewerChanges.map((x) => h('li', { text: [
+        `${t(x.criterionId)}: ${x.judgeLevelId === x.finalLevelId ? `kept the AI's level, ${lvl(x.criterionId, x.finalLevelId)}`
+          : `changed ${lvl(x.criterionId, x.judgeLevelId)} to ${lvl(x.criterionId, x.finalLevelId)}`}`,
+        fmtDate(x.reviewedAt),
+        x.why === null ? 'no reason available' : `reason: ${x.why}`].join(' · ') }))));
     }
   } else {
     changes.push(para('Each change and its reason are shown to reviewers and admins only.'));
@@ -2677,7 +2839,9 @@ function authorForm(A, paint) {
   }, { progress: 'Drafting…' }) }, icon('sparkle'), 'Draft with AI');
   const packetBtn = h('button', { type: 'button', class: 'btn btn--secondary', text: 'Draft with my own AI', dataset: { action: ACT.draftScenarioPacket }, onclick: () => busy(packetBtn, draftOut, async () => {
     const p = await invoke(ACT.draftScenarioPacket, { brief: brief.value, ...(source.value.trim() ? { source_text: source.value } : {}) });
-    return callout({ tone: 'info', title: 'Instructions ready', body: p.instructions, techLines: [p.recordWith && p.recordWith.note],
+    return callout({ tone: 'info', title: 'Instructions ready',
+      body: 'Copy these instructions into Claude or ChatGPT. Paste the draft it writes under Paste a draft (advanced), then read and edit it before you save.',
+      techLines: [p.instructions, p.recordWith && p.recordWith.note],
       actions: [h('button', { type: 'button', class: 'btn btn--secondary btn--sm', text: 'Copy for my AI', onclick: () => copyText(JSON.stringify(p.request, null, 2), 'Instructions') })],
       kids: [h('details', { class: 'disclosure' }, h('summary', { text: 'Show the request (JSON)' }), jsonBlock(p.request))] });
   }) });
@@ -2841,8 +3005,20 @@ function viewRoles(root) {
       h('option', { value: '', text: 'Choose a demo person…' }), S.demoRoles.map((r) => h('option', { value: r.address, text: demoLabel(r) })));
     form.lastChild.append(formField({ label: 'Fill from a demo person', control: pick }));
   }
+  address.addEventListener('input', () => fieldError(address, null));
   const btn = h('button', { type: 'button', class: 'btn btn--primary', text: 'Save change', dataset: { action: ACT.registerRole }, onclick: () => busy(btn, out, async () => {
-    const r = await act(ACT.registerRole, { address: address.value.trim(), role: role.value, change: change.value });
+    const value = address.value.trim();
+    // Checked here first, so an empty field is never signed and sent.
+    if (!value) { fieldError(address, 'Enter their Member ID or wallet address.'); return null; }
+    fieldError(address, null);
+    let r;
+    try {
+      r = await act(ACT.registerRole, { address: value, role: role.value, change: change.value });
+    } catch (e) {
+      // A mistyped ID is the field's problem, said under the field: trying the same again cannot succeed.
+      if (e instanceof Refused && e.code === 'address-format') { fieldError(address, FORM_CHECKS['address-format']); return null; }
+      throw e;
+    }
     return h('div', { class: 'stack' },
       r.changed ? callout({ tone: 'success', title: 'Saved' }) : callout({ tone: 'neutral', title: 'Nothing changed: they already had that.' }),
       h('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Team members', tabindex: '0' }, h('table', { class: 'table members' },
@@ -2860,6 +3036,7 @@ function viewRoles(root) {
 async function viewMine(root) {
   root.append(pageHeader({ title: 'My practice', lede: "Your own practice sessions. Reviewers and admins see every session in the workspace, except authors' test runs." }));
   const r = await act(ACT.getAttempt, {}, { read: true });
+  learnSessions(r);
   root.append(...coverageNotes(r));
   if (!r.attempts.length) {
     if (whole(r)) root.append(emptyState({ icon: 'chat', title: "You haven't practiced yet", text: 'Pick a scenario to start.', actions: [linkButton('#/practice', 'Browse scenarios', 'btn--primary')] }));
@@ -2867,6 +3044,8 @@ async function viewMine(root) {
   }
   const resultOf = (a) => {
     if (a.finalPercent !== undefined) return `${a.finalPercent}% · ${a.finalMeetsPassRule ? 'meets the pass mark' : 'below the pass mark'}`;
+    // Text deleted: whatever result it had is kept on the session page, never shown here as a provisional one.
+    if (a.state === 'redacted') return a.provisionalPercent !== undefined ? 'Result kept: open to see' : 'Open to see';
     if (a.provisionalPercent !== undefined) return `${a.provisionalPercent}% · provisional`;
     if (['judged', 'countersigned', 'overridden', 'contested', 'review-retracted'].includes(a.state)) return 'Feedback only';
     return '—';
@@ -2888,6 +3067,8 @@ async function viewMine(root) {
 
 async function detectSigning() {
   S.hasWallet = typeof window.ethereum !== 'undefined';
+  // The bridge already said whether it holds demo keys; ask for its roles only when it does, or when it could not say.
+  if (S.bridge && S.bridge.demoSigning === false) return;
   try {
     const r = await invoke(ACT.signAsDemoRole, {});
     if (r.demo && Array.isArray(r.roles)) {
@@ -2922,8 +3103,8 @@ async function main() {
   const signInNoteNode = CALLBACK_PATH.test(location.pathname) ? await finishInteregoSignIn() : restoreInteregoSession();
   try {
     await loadManifest();
-    await detectSigning();
     await loadBridge();
+    await detectSigning();
   } catch (e) {
     renderHeader();
     renderTabs();

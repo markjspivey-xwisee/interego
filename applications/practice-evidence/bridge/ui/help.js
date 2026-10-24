@@ -1,8 +1,9 @@
-// Practice Evidence help page: shows this workspace's address and offers to copy it. Text only; nothing is parsed as markup.
-const out = document.getElementById('workspace-address');
-const copy = document.getElementById('copy-workspace-address');
-if (out) {
-  const address = new URL('../', location.href).href;
+// Practice Evidence help page: shows this workspace's addresses and offers to copy them. Text only; nothing is parsed as markup.
+function showAddress(outId, copyId, path) {
+  const out = document.getElementById(outId);
+  const copy = document.getElementById(copyId);
+  if (!out) return;
+  const address = new URL(path, location.href).href;
   out.textContent = address;
   if (copy && navigator.clipboard) {
     copy.hidden = false;
@@ -11,3 +12,6 @@ if (out) {
     });
   }
 }
+showAddress('workspace-address', 'copy-workspace-address', '../');
+// The MCP endpoint answers an MCP client, not a browser, so it is shown to copy rather than linked.
+showAddress('mcp-address', 'copy-mcp-address', '../mcp');

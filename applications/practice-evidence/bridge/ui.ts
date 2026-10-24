@@ -17,6 +17,9 @@
  *                               workspace's address on it
  *   GET  /ui/favicon.svg        the mark
  *
+ * Their "Contact" links go to the guide's contact section, or to the operator's own contact page
+ * when server.ts passes one (PEV_CONTACT_URL, https only: no page carries an email address).
+ *
  * Interego sign-in (`attachUi(app, { interego })`, on when the operator sets PEV_RELAY_URL and
  * trusts a relay): a person with no key of their own signs in with their Interego account on the
  * relay's own sign-in page (their passkey), and the page then has the relay sign each act for the
@@ -82,6 +85,11 @@ const APP_JS = readUiFile('app.js');
 const APP_CSS = `${designSystemCss()}\n${readUiFile('app.css')}`;
 const LANDING_HTML = readUiFile('landing.html');
 const HELP_HTML = readUiFile('help.html');
+/** Where the landing page's "Contact" links go by default: the guide's contact section. */
+const LANDING_CONTACT_HREF = 'href="ui/help#contact"';
+/** The guide's own "Contact us" link (its table of contents still goes to the section), and the paragraph its contact section ends with by default. */
+const HELP_CONTACT_LINK = '<a href="#contact">Contact us</a>';
+const HELP_CONTACT_DEFAULT = /<p id="contact-interego">[^<]*<\/p>/;
 const HELP_JS = readUiFile('help.js');
 const FAVICON_SVG = readUiFile('favicon.svg');
 
@@ -877,17 +885,54 @@ export function wantsLandingPage(req: Request): boolean {
 }
 
 /**
+ * The operator's contact page (PEV_CONTACT_URL), as the pages may link it: an https URL with no
+ * user name, password or `@` anywhere (no page carries an email address, so no mailto: and no
+ * address in a query either), normalised. Null for anything else, which leaves the default links.
+ */
+export function contactUrlOf(raw: string): string | null {
+  if (raw.includes('@') || raw.length > 500) return null;
+  let u: URL;
+  try { u = new URL(raw); } catch { return null; }
+  if (u.protocol !== 'https:' || u.username !== '' || u.password !== '' || u.hostname === '') return null;
+  return u.href;
+}
+
+const attr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/**
+ * The landing page and the guide, with the operator's contact page when it set one: every
+ * "Contact" link on the landing page and the guide's own "Contact us" go there, and the guide's
+ * contact section links it. Without one, both pages are the files as they are.
+ */
+export function contactPages(contactUrl?: string): { readonly landing: string; readonly help: string } {
+  if (contactUrl === undefined) return { landing: LANDING_HTML, help: HELP_HTML };
+  const url = contactUrlOf(contactUrl);
+  if (url === null) throw new Error('contactPages: the contact URL must be https, with no @ in it.');
+  if (!LANDING_HTML.includes(LANDING_CONTACT_HREF) || !HELP_HTML.includes(HELP_CONTACT_LINK) || !HELP_CONTACT_DEFAULT.test(HELP_HTML)) {
+    throw new Error('contactPages: the landing page or the guide no longer has the contact links this replaces.');
+  }
+  const href = `href="${attr(url)}"`;
+  return {
+    landing: LANDING_HTML.split(LANDING_CONTACT_HREF).join(href),
+    help: HELP_HTML.split(HELP_CONTACT_LINK).join(`<a ${href}>Contact us</a>`)
+      .replace(HELP_CONTACT_DEFAULT, () => `<p id="contact-interego">To talk about pricing, a pilot or a new workspace, <a ${href}>contact Interego</a>.</p>`),
+  };
+}
+
+/**
  * Mount the landing page at / (browsers only), GET /ui, /ui/app.js, /ui/app.css, the guide at
  * /ui/help, its script and the favicon, and the Interego sign-in routes (or their refusals).
+ * `contactUrl` (PEV_CONTACT_URL, checked with contactUrlOf) is where the pages' Contact links go.
  */
-export function attachUi(app: Express, o: { readonly interego?: InteregoUiOptions } = {}): void {
+export function attachUi(app: Express, o: { readonly interego?: InteregoUiOptions; readonly contactUrl?: string } = {}): void {
+  const pages = contactPages(o.contactUrl);
   // First, so it runs before the factory's own GET / (registered after this hook); anything but a
   // browser's page request falls through to it unchanged.
   app.get('/', (req: Request, res: Response, next: NextFunction) => {
     if (!wantsLandingPage(req)) { next(); return; }
     secure(res);
     res.vary('Accept');
-    res.type('text/html; charset=utf-8').send(LANDING_HTML);
+    res.type('text/html; charset=utf-8').send(pages.landing);
   });
   app.get('/ui', (req: Request, res: Response) => {
     // The shell's URLs are relative to /ui; at /ui/ they would resolve one level too deep.
@@ -901,7 +946,7 @@ export function attachUi(app: Express, o: { readonly interego?: InteregoUiOption
     // Its URLs are relative to /ui/help, as the shell's are to /ui.
     if (req.path.endsWith('/')) { res.redirect(301, '../help'); return; }
     secure(res);
-    res.type('text/html; charset=utf-8').send(HELP_HTML);
+    res.type('text/html; charset=utf-8').send(pages.help);
   });
   app.get('/ui/help.js', (_req: Request, res: Response) => { secure(res); res.type('text/javascript; charset=utf-8').send(HELP_JS); });
   app.get('/ui/favicon.svg', (_req: Request, res: Response) => { secure(res); res.type('image/svg+xml').send(FAVICON_SVG); });

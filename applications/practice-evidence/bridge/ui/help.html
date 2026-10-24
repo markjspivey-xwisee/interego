@@ -186,7 +186,7 @@
       <h3>What the Interego sign-in service sees</h3>
       <p>When you sign in with Interego, the Interego sign-in service confirms each step for you, and it sees what it signs, including the text of your lines. Practice Evidence never sees your passkey.</p>
       <h3>How long you stay signed in</h3>
-      <p>Sessions last up to an hour. Signing out clears this browser tab. Your Interego session itself stays valid until it expires, within that hour.</p>
+      <p>A sign-in lasts up to an hour. Signing out clears this browser tab. Your Interego sign-in itself stays valid until it expires, within that hour. Your practice is saved either way.</p>
     </section>
 
     <section id="troubleshooting" aria-labelledby="troubleshooting-title">
@@ -194,7 +194,7 @@
       <p>Each message in the app says what happened and what to do. The most common ones:</p>
       <dl class="kv">
         <dt>Please sign in to continue</dt><dd>Sign in with Interego (or another way from the sign-in menu), then try the step again.</dd>
-        <dt>Your session has ended</dt><dd>Sessions last up to an hour. Sign in again to pick up where you left off.</dd>
+        <dt>Your sign-in has ended</dt><dd>Sign-ins last up to an hour. Sign in again; your practice is saved.</dd>
         <dt>That took a little too long</dt><dd>Each step has to be confirmed within a few minutes. Try again.</dd>
         <dt>You don't have access to this</dt><dd>Your role doesn't include this step. Copy your Member ID from the account menu and send it to your admin.</dd>
         <dt>Please do this in the web app</dt><dd>Approving rubrics, signing off reviews, changing roles and withdrawing reviews happen in the web app, not from a chat assistant.</dd>
@@ -206,9 +206,9 @@
         <dt>We couldn't reach this workspace's storage</dt><dd>Nothing was saved. Try again; if it keeps happening, tell your admin.</dd>
         <dt>Some records here can't be opened</dt><dd>The records were written with a key this service doesn't hold. Contact your admin.</dd>
         <dt>Finish the conversation first</dt><dd>Some steps follow others: finish the conversation before it's assessed, and have it assessed before it's reviewed.</dd>
-        <dt>Something went wrong</dt><dd>Nothing was saved. Try again in a moment.</dd>
+        <dt>Something went wrong</dt><dd>Nothing was saved. Try again in a moment. If it keeps happening, tell your admin.</dd>
       </dl>
-      <p>If something keeps going wrong, open <strong>Technical details</strong> under the message, copy what it says, and send it to us.</p>
+      <p>If something keeps going wrong, open <strong>Technical details</strong> under the message, copy what it says, and send it to your admin.</p>
     </section>
 
     <section id="glossary" aria-labelledby="glossary-title">
@@ -244,17 +244,19 @@
         <div class="disclosure__body">
           <ul>
             <li><a href="../affordances">Action list (Turtle; add ?format=jsonld for JSON-LD)</a></li>
-            <li><a href="../mcp">MCP endpoint</a></li>
             <li><a href="../ns/pev">Vocabulary</a></li>
             <li><a href="https://github.com/markjspivey-xwisee/interego/blob/master/applications/practice-evidence/README.md">Signing manually or with a wallet (README)</a></li>
           </ul>
+          <p class="label">MCP endpoint (for an MCP client; a browser can't open it)</p>
+          <div class="input-group"><code id="mcp-address">the address of this site, followed by /mcp</code><button id="copy-mcp-address" class="btn btn--secondary btn--sm" type="button" hidden>Copy</button></div>
         </div>
       </details>
     </section>
 
     <section id="contact" aria-labelledby="contact-title">
       <h2 id="contact-title">Contact</h2>
-      <p>To talk about pricing, a pilot or your setup, contact the person at your organization who set up Practice Evidence.</p>
+      <p>For help with your workspace, your role or your records, talk to the person at your organization who set up Practice Evidence (your admin).</p>
+      <p id="contact-interego">To talk about pricing, a pilot or a new workspace, ask the person who gave you this address to put you in touch with Interego.</p>
     </section>
   </div>
 </div>

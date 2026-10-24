@@ -26,7 +26,7 @@ import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { listenLoopback, type TestListener } from '../../_shared/vertical-bridge/listen-loopback.js';
 import { pevAffordances } from '../affordances.js';
 import { createPevHandlers, DEMO_ROLE_NAMES, type DemoRoleName, type PevDeps } from '../bridge/handlers.js';
-import { attachUi, hostAllowlistGuard, UI_CSP } from '../bridge/ui.js';
+import { attachUi, contactPages, contactUrlOf, hostAllowlistGuard, UI_CSP } from '../bridge/ui.js';
 import {
   DEMO_LINES, DEMO_POD, DEMO_ROLE_LABELS, FABRICATED_QUOTE, demoScenarioInput, demoSignerOf, demoWallet, inMemoryPod, scriptedPracticeModel,
 } from '../demo/run.js';
@@ -65,22 +65,22 @@ const plainHandlers = createPevHandlers({ ...base, model: scriptedPracticeModel(
 const noModelHandlers = createPevHandlers(base) as Handlers;
 
 /** The app as server.ts composes it, minus the ontology module (which no test may import). */
-function bridgeApp(handlers: Handlers, allowed: string[]): Express {
+function bridgeApp(handlers: Handlers, allowed: string[], ui: Parameters<typeof attachUi>[1] = {}): Express {
   return createVerticalBridge({
     verticalName: 'practice-evidence', affordances: pevAffordances, handlers, deploymentUrl: 'http://127.0.0.1:6110', defaultPodUrl: DEMO_POD,
     hypermediaLinks: [{ label: 'Web UI', href: 'http://127.0.0.1:6110/ui', rel: 'alternate', type: 'text/html' }],
     middleware: (a) => {
       // The port is known only after listening, so the allowed names are read per request.
       a.use((req: ExpressRequest, res: ExpressResponse, next: NextFunction) => hostAllowlistGuard(allowed)(req, res, next));
-      attachUi(a);
+      attachUi(a, ui);
     },
   });
 }
 
 const listeners: TestListener[] = [];
-async function serve(handlers: Handlers): Promise<TestListener> {
+async function serve(handlers: Handlers, ui: Parameters<typeof attachUi>[1] = {}): Promise<TestListener> {
   const allowed: string[] = [];
-  const l = await listenLoopback(bridgeApp(handlers, allowed));
+  const l = await listenLoopback(bridgeApp(handlers, allowed, ui));
   allowed.push(`127.0.0.1:${l.port}`, `localhost:${l.port}`);
   listeners.push(l);
   return l;
@@ -335,6 +335,31 @@ describe('the web UI is served under a strict content policy', () => {
     expect(src).not.toMatch(/fetch\(\s*['"`]https?:|import\(|<script/);
   });
 
+  it('sends the Contact links to the operator\'s contact page when it sets one, and no page carries an email address', async () => {
+    // Unset, the pages are the files: the Contact links go to the guide's contact section.
+    expect(contactPages()).toEqual({ landing: read('bridge/ui/landing.html'), help: read('bridge/ui/help.html') });
+    const url = 'https://interego.example/contact?from=practice-evidence';
+    const pages = contactPages(url);
+    expect(pages.landing).not.toContain('ui/help#contact');
+    expect(pages.landing.split(`href="${url}"`).length - 1).toBe(2);
+    expect(pages.help).toContain(`<a href="${url}">Contact us</a>`);
+    expect(pages.help).toContain(`<a href="${url}">contact Interego</a>`);
+    // The guide's own table of contents still goes to its contact section.
+    expect(pages.help).toContain('<a href="#contact">Contact</a>');
+    for (const bad of ['mailto:sales@interego.example', 'https://sales@interego.example/', 'https://interego.example/?to=sales@interego.example',
+      'http://interego.example/contact', 'javascript:alert(1)', 'not a url']) expect(contactUrlOf(bad), bad).toBeNull();
+    expect(contactUrlOf('https://interego.example/a"b<c>')).toBe('https://interego.example/a%22b%3Cc%3E');
+    const l = await serve(demoHandlers, { contactUrl: url });
+    expect(await (await fetch(`${l.base}/`, { headers: { accept: BROWSER } })).text()).toBe(pages.landing);
+    expect(await (await fetch(`${l.base}/ui/help`)).text()).toBe(pages.help);
+    const EMAIL = /[\w.+-]+@[\w-]+\.[\w.-]+/;
+    for (const html of [pages.landing, pages.help, read('bridge/ui/landing.html'), read('bridge/ui/help.html'), read('bridge/ui/app.js')]) expect(html).not.toMatch(EMAIL);
+    // The MCP endpoint is shown to copy, not linked: a browser that opens it waits on a stream.
+    expect(read('bridge/ui/help.html')).not.toContain('href="../mcp"');
+    expect(read('bridge/ui/help.html')).toContain('<code id="mcp-address">');
+    expect(read('bridge/ui/help.js')).toContain("showAddress('mcp-address', 'copy-mcp-address', '../mcp');");
+  });
+
   it('serves the mark as the favicon under the same policy', async () => {
     const r = await fetch(`${demo.base}/ui/favicon.svg`);
     expect([r.status, r.headers.get('content-security-policy')]).toEqual([200, UI_CSP]);
@@ -548,6 +573,11 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect((statement['verb'] as Out)['id']).toBe('http://adlnet.gov/expapi/verbs/completed');
     expect(((statement['context'] as Out)['extensions'] as Out)[`${PEV_NS}practiceEvidence`]).toBe(true);
     expect(p.text('#projection')).toContain('Nothing was sent anywhere.');
+    // What it leaves out, in plain words; the server's own list stays under Technical details.
+    const shownProjection = visibleText(p.q('#projection'));
+    expect(shownProjection).toContain('It leaves out your quotes, the conversation text and the reviewer\'s reasons.');
+    expect(shownProjection).not.toMatch(/transcript hash|descriptor URL|attemptNumber|declaredBy/);
+    expect(p.text('#projection .disclosure__body--tech')).toContain('carries the transcript hash, not the transcript');
     expect(p.errors).toEqual([]);
   }, SLOW);
 
@@ -765,6 +795,121 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     await paste.until(() => paste.q('#line') ?? paste.q('#view .refusal'), 'the conversation');
     expect(paste.q('#line')).not.toBeNull();
     expect(paste.errors).toEqual([]);
+  }, SLOW);
+
+  it('a workspace with no built-in AI: no demo-key probe, plain instructions for the learner\'s own AI, and a key offered for drafts only', async () => {
+    const ana = W.learner;
+    const asked: string[] = [];
+    const p = await openUi(noModel, (w) => {
+      w['TextEncoder'] = TextEncoder;
+      const f = w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
+      w['fetch'] = (input: unknown, init?: RequestInit): Promise<Response> => { asked.push(`${init?.method ?? 'GET'} ${new URL(String(input), 'http://x/').pathname}`); return f(input, init); };
+      w['ethereum'] = {
+        request: async ({ method, params }: { method: string; params?: string[] }): Promise<unknown> => {
+          if (method === 'eth_requestAccounts') return [ana.address];
+          if (method === 'personal_sign') return signMessageRaw(ana, Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8'));
+          throw new Error(`unsupported ${method}`);
+        },
+      };
+    });
+    await p.until(() => p.q('article.scenario'), 'the scenarios');
+    // list_scenarios already said this bridge holds no demo keys, so the page never asks for them.
+    expect(asked.filter((x) => x.endsWith('/pev/sign_as_demo_role'))).toEqual([]);
+    expect(p.text('#workspace-settings')).toContain('Used for AI drafts of scenarios. To practice or be assessed here, use your own AI assistant.');
+    p.q('#connect-wallet')!.click();
+    await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
+    const card = await p.until(() => p.q('article.scenario'), 'the scenarios, again');
+    card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
+    card.querySelector<HTMLElement>(button(PEV_ACTION.startAttempt))!.click();
+    await p.until(() => p.q('#line') ?? p.q('#view .refusal'), 'the conversation');
+    expect(p.q('#send')).toBeNull();
+    p.set(p.q('#line'), 'Thanks for making time. The report was due Thursday at noon.');
+    p.click(button(PEV_ACTION.counterpartPacket));
+    const ready = await p.until(() => p.all('#view .packet .callout').find((c) => (c.textContent ?? '').includes('Instructions ready')) ?? p.q('#view .packet .refusal'), 'the instructions');
+    const shown = visibleText(ready);
+    expect(shown).toContain('Copy these instructions into Claude or ChatGPT.');
+    expect(shown).not.toMatch(/pev\.|\bbridge\b|sampled|signed by the learner/);
+    // The server's own instructions, for an agent with the connector, are kept under Technical details.
+    expect(ready.querySelector('.disclosure__body--tech')?.textContent).toContain('pev.record_turns');
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('Team says what is wrong with a mistyped or empty Member ID under the field, and sends nothing for an empty one', async () => {
+    const asked: string[] = [];
+    const p = await openUi(demo, (w) => {
+      const f = w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
+      w['fetch'] = (input: unknown, init?: RequestInit): Promise<Response> => { asked.push(new URL(String(input), 'http://x/').pathname); return f(input, init); };
+    });
+    await p.until(() => p.text('#bar').includes('DEMO MODE'), 'the demo banner');
+    await asRole(p, 'admin');
+    p.w.location.hash = '#/roles';
+    await p.until(() => p.q(button(PEV_ACTION.registerRole)), 'the roles form');
+    const sent = (): number => asked.filter((x) => x.endsWith('/pev/register_role')).length;
+    const before = sent();
+    p.set(p.q('#member-id'), '   ');
+    p.click(button(PEV_ACTION.registerRole));
+    await p.until(() => p.q('#member-id-error'), 'the empty-field message');
+    expect([p.text('#member-id-error'), p.q('#member-id')!.getAttribute('aria-invalid'), sent()]).toEqual(['Enter their Member ID or wallet address.', 'true', before]);
+    p.set(p.q('#member-id'), 'bob@example');
+    expect(p.q('#member-id-error')).toBeNull();
+    p.click(button(PEV_ACTION.registerRole));
+    await p.until(() => p.q('#member-id-error') ?? p.q('#view .refusal'), 'the format message');
+    expect(p.text('#member-id-error')).toContain('That isn\'t a Member ID or a wallet address.');
+    expect([p.q('#view .refusal'), sent()]).toEqual([null, before + 1]);
+    expect(p.q('#member-id')!.getAttribute('aria-describedby')).toContain('member-id-error');
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('a view says it is loading while its signed read is on its way, under its header', async () => {
+    let slow = false;
+    const p = await openUi(demo, (w) => {
+      const f = w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
+      w['fetch'] = async (input: unknown, init?: RequestInit): Promise<Response> => {
+        if (slow && String(input).endsWith('/pev/get_attempt')) await new Promise((r) => setTimeout(r, 600));
+        return f(input, init);
+      };
+    });
+    await p.until(() => p.q('article.scenario'), 'the scenarios');
+    await asRole(p, 'learner');
+    slow = true;
+    p.w.location.hash = '#/mine';
+    await p.until(() => p.text('#view h1') === 'My practice' && p.q('#view .view-loading'), 'the loading line under the header');
+    expect(p.text('#view .view-loading')).toContain('Loading…');
+    expect(p.q('#view .page-header')!.compareDocumentPosition(p.q('#view .view-loading')!) & p.w.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await p.until(() => p.q('#view table.mine') ?? p.q('#view .empty'), 'my practice');
+    expect(p.q('#view .view-loading')).toBeNull();
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('a reviewed session whose text was deleted reads the same everywhere: its kept result, never "provisional"', async () => {
+    const attemptIri = S['attempt'];
+    expect(attemptIri, 'the first driven test leaves a reviewed attempt').toBeTruthy();
+    const v = await direct(demoHandlers, 'pev.get_attempt', W.learner, PEV_ACTION.getAttempt, { attemptIri });
+    const red = await direct(demoHandlers, 'pev.redact_attempt', W.learner, PEV_ACTION.redactAttempt, { attemptIri, target: v['currentTarget'], why: 'Ana deleted the words of her practice.' });
+    expect(red['state']).toBe('redacted');
+    const p = await openUi(demo);
+    await p.until(() => p.text('#bar').includes('DEMO MODE'), 'the demo banner');
+    await asRole(p, 'learner');
+    p.w.location.hash = '#/mine';
+    const row = await p.until(() => p.all('#view table.mine tbody tr').find((tr) => tr.querySelector(`a[href="#/attempt/${encodeURIComponent(attemptIri ?? '')}"]`)), 'the session in my practice');
+    const result = row.querySelector('td[data-label="Result"]')?.textContent ?? '';
+    expect(result).toBe('100.0% · meets the pass mark');
+    p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri ?? '')}`;
+    await p.until(() => p.text('#state') === 'Conversation text deleted' && p.q('#assessment'), 'the session');
+    const meta = p.text('#view .page-header__meta');
+    expect([meta.includes('Final: reviewed'), meta.includes('Provisional')]).toEqual([true, false]);
+    expect(p.text('#assessment')).toContain('Final: a qualified reviewer signed off every level.');
+    // What reviewers changed, as a reviewer reads it: level names, and a level kept is not called a change.
+    await asRole(p, 'reviewer');
+    p.w.location.hash = `#/results/${encodeURIComponent(S['md'] ?? '')}`;
+    const changes = await p.until(() => p.all('#view section.card').find((c) => c.querySelector('.card__title')?.textContent === 'What reviewers changed'), 'what reviewers changed');
+    const items = [...changes.querySelectorAll('li')].map((li) => li.textContent ?? '').filter((x) => !/reviewed sessions$/.test(x));
+    expect(items.length).toBeGreaterThan(0);
+    for (const x of items) {
+      expect(x).toMatch(/: (kept the AI's level, |changed )/);
+      expect(x).not.toMatch(/→|owner-and-date|asks-their-view/);
+    }
+    expect(p.errors).toEqual([]);
   }, SLOW);
 });
 
