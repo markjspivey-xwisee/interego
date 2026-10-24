@@ -535,4 +535,41 @@ describe('work-redesign customer site', () => {
     expect(firstButton('Refresh')?.closest('.app-header') ?? null).not.toBeNull();
     expect(page.errors).toEqual([]);
   }, 60_000);
+
+  it('lets a change stopped early or reversed be recorded before its planned measurement period ends, and holds only a kept change to the whole period', async () => {
+    const l = await minimalDemo();
+    const page = await openUi(l.base);
+    await page.until(() => page.text().includes('Match invoices'), 'the demo');
+    // The page's clock is the real one until someone moves the demo clock.
+    const now = Date.now();
+    // Approved a week into a six-week measurement period, by someone other than Ana (the demo's first persona, a process lead).
+    const decision = {
+      decisionIri: 'urn:wrd:decision:early-stop', status: 'countersigned', decisionKind: 'valued', preparedBy: [{ personRef: 'p-other' }],
+      countersign: { at: new Date(now - 7 * 86400000).toISOString(), personRef: 'p-approver' }, measurementPlan: { windowWeeks: 6, comparisonBasis: 'staggered' },
+    };
+    const recordWhy = page.window.eval('recordWhy') as (d: unknown, disposition?: string) => string;
+    expect(recordWhy(decision, 'kept')).toMatch(/^The measurement period ends /);
+    expect(recordWhy(decision, 'stopped-early')).toBe('');
+    expect(recordWhy(decision, 'reverted')).toBe('');
+    // Home's "Results due" list still waits for the planned end, which is when a kept change's results fall due.
+    expect((page.window.eval('canRecordResults') as (d: unknown) => boolean)(decision)).toBe(false);
+    expect((page.window.eval('canRecordResults') as (d: unknown) => boolean)({ ...decision, countersign: { ...decision.countersign, at: new Date(now - 7 * 7 * 86400000).toISOString() } })).toBe(true);
+
+    // The form itself: "Kept" holds the button back and says until when; choosing "Stopped early" or "Reversed" releases it.
+    const outcomeForm = page.window.eval('outcomeForm') as (d: unknown, binding: unknown) => HTMLElement;
+    const sign = (el: HTMLElement): HTMLButtonElement => must([...el.querySelectorAll('button')].find((b) => b.textContent === 'Sign and record results'), 'the sign button') as HTMLButtonElement;
+    let form = outcomeForm(decision, {});
+    expect(sign(form).disabled).toBe(true);
+    expect(form.querySelector('.why-not')?.textContent).toMatch(/^Why can't I\? The measurement period ends /);
+    for (const [disposition, label] of [['stopped-early', 'Stopped early'], ['reverted', 'Reversed']] as const) {
+      const what = must(form.querySelector('select'), 'the disposition select') as HTMLSelectElement;
+      expect([...what.options].find((o) => o.value === disposition)?.textContent).toBe(label);
+      what.value = disposition;
+      what.dispatchEvent(new page.window.Event('change', { bubbles: true }));
+      form = outcomeForm(decision, {});
+      expect(sign(form).disabled, disposition).toBe(false);
+      expect(form.querySelector('.why-not'), disposition).toBeNull();
+    }
+    expect(page.errors).toEqual([]);
+  }, 60_000);
 });

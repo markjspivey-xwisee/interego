@@ -1726,15 +1726,20 @@ function windowEnds(d) {
   return at + weeks * 7 * 86400000;
 }
 function canRecordResults(d) { return d.status === 'countersigned' && recordWhy(d) === ''; }
-/** Why this person can't record a decision's results now ('' when they can), in the words the form shows. */
-function recordWhy(d) {
+/**
+ * Why this person can't record a decision's results now ('' when they can), in the words the form shows.
+ * Only a kept change waits for the whole planned measurement period: one stopped early or reversed is
+ * recorded over the period it actually ran (checkWindowLength in src/valuation.ts), and the bridge checks
+ * those dates itself.
+ */
+function recordWhy(d, disposition = 'kept') {
   const ref = myRef();
   if (!(can('operator') || can('approver'))) return 'Only process leads and approvers can record results.';
   const prepared = [...(d.preparedBy ?? []).map((x) => x.personRef), d.submittedBy?.personRef].filter(Boolean);
   if (ref && prepared.includes(ref)) return 'You helped prepare this decision, so someone who didn\'t records its results.';
   if (ref && d.countersign?.personRef === ref) return 'You approved this decision, so someone else records its results.';
   const ends = windowEnds(d);
-  if (!(ends <= nowMs())) return Number.isFinite(ends) ? `The measurement period ends ${day(new Date(ends).toISOString())}.` : 'The measurement period hasn\'t started.';
+  if (disposition === 'kept' && !(ends <= nowMs())) return Number.isFinite(ends) ? `The measurement period ends ${day(new Date(ends).toISOString())}.` : 'The measurement period hasn\'t started.';
   return '';
 }
 /** Why this person can't approve or decline a submitted decision ('' when they can): the rules canApprove applies. */
@@ -2999,7 +3004,7 @@ function outcomeForm(d, binding) {
   const st = S.planForm[key] ??= { disposition: 'kept', note: '', measured: '', low: '', high: '', basis: d.measurementPlan?.comparisonBasis ?? 'staggered',
     windowStart: cs, windowEnd: d.measurementPlan ? plusWeeks(cs, d.measurementPlan.windowWeeks) : cs, method: '', runs: '', critical: '',
     probes: (d.probes ?? []).map((p) => ({ taskIri: p.taskIri, index: p.index, signal: 'neither', observed: '', windowStart: cs, windowEnd: plusWeeks(cs, p.timeboxWeeks) })) };
-  const why = recordWhy(d);
+  const why = recordWhy(d, st.disposition);
   const problems = () => {
     const out = [];
     if (st.disposition !== 'kept' && !st.note.trim()) out.push(['dispositionNote', 'Reason is required unless the change was kept']);
@@ -3031,9 +3036,9 @@ function outcomeForm(d, binding) {
   return h('div', { class: 'card decision__record' }, h('div', { class: 'card__body stack' },
     h('h3', { text: 'Record results' }),
     h('p', { text: 'Record what actually happened over the whole measurement period. If the change was reversed or stopped early, say why.' }),
-    hint('Only someone who neither prepared nor approved this decision, after the measurement period has ended.'),
+    hint('Only someone who neither prepared nor approved this decision. A kept change is recorded once the measurement period has ended; one stopped early or reversed can be recorded now, over the period it actually ran.'),
     h('div', { class: 'form-row' },
-      field('What happened to the change', select((data().vocabulary?.dispositions?.outcome ?? Object.keys(OUTCOME_NAMES)).map((x) => [x, OUTCOME_NAMES[x] ?? x]), st.disposition, (e) => { st.disposition = e.target.value; })),
+      field('What happened to the change', select((data().vocabulary?.dispositions?.outcome ?? Object.keys(OUTCOME_NAMES)).map((x) => [x, OUTCOME_NAMES[x] ?? x]), st.disposition, (e) => { st.disposition = e.target.value; render(); })),
       field('Reason', input(st.note, (e) => { st.note = e.target.value; }), { hint: 'Needed unless the change was kept.', path: 'dispositionNote' })),
     d.decisionKind === 'valued' ? [
       h('div', { class: 'form-row form-row--3' },

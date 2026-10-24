@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-24 — Work Redesign: a change stopped early or reversed can be recorded before its planned end
+
+The Record results form had kept "Sign and record results" disabled until the planned measurement period ended, whatever was chosen under "What happened to the change". The bridge already accepts a change stopped early or reversed over the period it actually ran, and checks those dates itself, so the form now holds back only a kept change. The button and its "Why can't I?" line follow the choice as it changes. Home's "Results due" list still waits for the planned end, which is when a kept change's results fall due.
+
 ## 2026-10-24 — Work Redesign: the customer site, after its first review
 
 `GET /` now serves the landing page only to an `Accept` that names `text/html` itself, names no Markdown, and ranks no JSON, JSON-LD or RDF type as high as HTML. A client that sent `application/json, text/html;q=0.9`, or listed Markdown beside HTML, had been getting the landing page; it gets the JSON-LD or HMD it got before the site existed. Every major browser's own header still gets the page.
