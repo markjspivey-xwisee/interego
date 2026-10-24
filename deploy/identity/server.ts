@@ -2788,6 +2788,24 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   } else {
     // Mode (A) fresh user — derive userId from the credential itself.
     targetUserId = deriveUserIdFromCredentialId(credentialId);
+    // ★ This credential id is not in the index, so an account already under its id holds
+    // other credentials: a u-pk- id keeps 48 bits of a hash of the credential id, which a
+    // software authenticator chooses. Enrolling would add this passkey to that account and
+    // hand the caller its token. Refused as first-sign-in.ts refuses a wallet or DID that
+    // its derived account does not hold; a pod that cannot be read is not written over.
+    const account = await ensureAccountLoaded(targetUserId);
+    if (account === 'unreadable') {
+      res.status(503).json({
+        error: 'Could not read this account just now',
+        detail: 'The pod holding this account did not answer. Nothing was changed; try registering again in a minute.',
+      });
+      return;
+    }
+    if (account === 'loaded') {
+      log(`Refused passkey registration: ${targetUserId}, derived from its credential id, is an existing account`);
+      res.status(401).json({ error: 'This passkey is not registered. Sign in with an existing credential for this account and add this passkey from there.' });
+      return;
+    }
   }
 
   // Ensure an Identity shell exists for the target. Seeded users already
