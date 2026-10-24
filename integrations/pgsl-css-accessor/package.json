@@ -23,7 +23,8 @@
     "test:it": "tsx test/accessor.it.ts",
     "test:server": "tsx test/server.it.ts",
     "test:contract": "tsx test/contract.it.ts",
-    "test:native": "tsx test/native-commit.it.ts"
+    "test:native": "tsx test/native-commit.it.ts",
+    "test:expiry": "tsx test/expiring-cleanup.it.ts"
   },
   "dependencies": {
     "@solid/community-server": "^7.1.9"
