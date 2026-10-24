@@ -100,6 +100,10 @@
  *                                   (practice-evidence-… agents) may
  *                                   Each of these five settings, malformed, stops the
  *                                   bridge before it listens.
+ *   PEV_CONTACT_URL                 optional: the https page the landing page's and the guide's
+ *                                   "Contact" links go to (a page, never an email address: a
+ *                                   value with an @ is ignored, as is one that is not https). Unset,
+ *                                   they go to the guide's contact section
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
  *                                   route (this bridge never picks a model)
@@ -123,7 +127,7 @@ import {
   type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
 } from './handlers.js';
 import { didDocumentFetch, operatorPodFetch } from './pod-helpers.js';
-import { attachUi, hostAllowlistGuard, relayCallFetch } from './ui.js';
+import { attachUi, contactUrlOf, hostAllowlistGuard, relayCallFetch } from './ui.js';
 
 const say = (line: string): void => { process.stdout.write(`${line}\n`); };
 const warn = (line: string): void => { process.stderr.write(`${line}\n`); };
@@ -291,6 +295,13 @@ async function main(): Promise<void> {
     return;
   }
   const proxyHops = proxyHopsValue !== undefined ? Number(proxyHopsValue) : loopback ? 0 : 1;
+  // Cosmetic, so a bad value is reported and left out rather than stopping the bridge.
+  const contactRaw = env('PEV_CONTACT_URL');
+  const contactUrl = contactRaw !== undefined ? contactUrlOf(contactRaw) ?? undefined : undefined;
+  if (contactRaw !== undefined && contactUrl === undefined) {
+    warn(`PEV_CONTACT_URL is ${JSON.stringify(contactRaw.slice(0, 120))}; it takes an https page with no @ in it (no page carries an email address). Ignored: the Contact links go to the guide's contact section.`);
+  }
+  const contact = contactUrl !== undefined ? { contactUrl } : {};
   // The web UI's "Sign in with your Interego account": on when there is a relay to sign in through
   // and the route trusts it. Its relay calls follow no redirect, are capped and timed, and go through
   // the SSRF guard unless the operator's relay is on loopback (a local relay, which the guard refuses).
@@ -382,13 +393,14 @@ async function main(): Promise<void> {
         ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
       });
       attachUi(a, uiSignIn && relayUrl !== undefined
-        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}) } }
-        : {});
+        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}) }, ...contact }
+        : contact);
     },
   });
 
   say(`practice-evidence bridge  ${base}`);
   say(`  web UI ${base}/ui  |  MCP ${base}/mcp  |  manifest ${base}/affordances  |  ontology ${base}/ns/pev`);
+  say(`  Contact links: ${contactUrl ?? `the guide's contact section (${base}/ui/help#contact); set PEV_CONTACT_URL to an https page to send them there`}`);
   say(`  pod: ${defaultPodUrl ?? 'none (each act names its pod)'}; records read and written on: ${anyPod ? 'any public pod (PEV_SERVED_PODS=*)' : servedPods.length > 0 ? servedPods.join(', ') : 'NO pod: set PEV_DEFAULT_POD_URL or PEV_SERVED_PODS, or every act is refused'}`);
   say(`  pod credential: ${writeSecret ? 'configured, sent on reads and writes under the operator pod' : 'not configured'}`);
   say(recordKey

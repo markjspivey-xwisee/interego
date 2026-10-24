@@ -2601,7 +2601,8 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
       .slice(0, 100)
       .map((a) => {
         const review = standingReview(a);
-        const reviewed = (a.state === 'countersigned' || a.state === 'overridden') && review !== null;
+        // Deleting the text keeps the levels a reviewer signed, so a redacted attempt's standing review is still its result.
+        const reviewed = (a.state === 'countersigned' || a.state === 'overridden' || a.state === 'redacted') && review !== null;
         const primary = a.judgments[0];
         const prov = percentOf(primary?.provisional);
         const fin = reviewed ? percentOf(review.assessment) : undefined;

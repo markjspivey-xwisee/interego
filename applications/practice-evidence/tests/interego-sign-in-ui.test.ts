@@ -411,7 +411,7 @@ const sessionOf = (p: Page): Record<string, string> => {
 /** Press the button and read where the page sends the person; jsdom reports the navigation it cannot make. */
 async function pressSignIn(p: Page): Promise<URL> {
   const btn = await p.until(() => p.q('#interego-sign-in'), 'the Interego sign-in button');
-  expect(btn.textContent).toBe('Sign in with your Interego account');
+  expect(btn.textContent).toBe('Sign in with Interego');
   btn.click();
   const link = await p.until(() => p.q('#interego-continue') as HTMLAnchorElement | null, 'the link to the relay');
   await p.until(() => p.errors.includes(NAVIGATION), 'the navigation to the relay');
@@ -511,6 +511,15 @@ afterAll(async () => { for (const l of listeners) await l.close(); });
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 describe('the sign-in routes: the client document, the start, and their refusals', () => {
+  it('the callback page, like every page the bridge serves, has no inline script or style and loads nothing from another origin', async () => {
+    const r = await fetch(`${bridge.base}/ui/oauth/callback?code=abc&state=def`);
+    expect([r.status, r.headers.get('content-security-policy')]).toEqual([200, UI_CSP]);
+    const html = await r.text();
+    expect(html).not.toMatch(/<script(?![^>]*\ssrc=)[^>]*>/i);
+    expect(html).not.toMatch(/\sstyle=|<style/i);
+    expect(html).not.toMatch(/(?:src|<link[^>]+href)="(?:https?:)?\/\//i);
+  });
+
   it('serves a Client ID Metadata Document whose client_id is its own URL on the deployment URL', async () => {
     const r = await fetch(`${bridge.base}/ui/oauth/client.json`);
     expect([r.status, r.headers.get('content-type')]).toEqual([200, expect.stringMatching(/^application\/json/)]);
@@ -922,6 +931,34 @@ describe('the sign-in routes: the client document, the start, and their refusals
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 describe('the web UI signs a person in with their Interego account and has the relay sign every act', () => {
+  it('a signed-out visitor sees a welcome and the scenarios, not a refusal, and pressing Start asks them to sign in and sends nothing', async () => {
+    const p = await openPage(bridge, '/ui');
+    await p.until(() => p.q('#view .welcome') && p.q('article.scenario'), 'the welcome and the scenarios');
+    expect(p.text('#view .welcome')).toContain('Welcome to Practice Evidence');
+    expect(p.q('#view .welcome [data-sign-in="interego"]')).not.toBeNull();
+    expect([p.q('#view .refusal'), p.text('#signing'), p.text('#acting-as')]).toEqual([null, '', 'Not signed in']);
+    const posted = (): string[] => p.asked.filter((x) => x.startsWith('POST /pev/') && x !== 'POST /pev/sign_as_demo_role');
+    expect([p.asked.filter((x) => x.includes('/ui/relay/sign')), posted()]).toEqual([[], []]);
+    const card = p.q('article.scenario')!;
+    card.querySelector<HTMLInputElement>('input[type=radio][value=no]')!.checked = true;
+    card.querySelector<HTMLElement>(`button[data-action="${PEV_ACTION.startAttempt}"]`)!.click();
+    await p.until(() => p.q('#view .signin-needed'), 'the sign-in callout');
+    expect([p.q('#signing textarea[readonly]'), posted(), p.asked.filter((x) => x.includes('/ui/relay/sign'))]).toEqual([null, [], []]);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('the sign-in screen sends the person to Interego from its own button', async () => {
+    const p = await openPage(bridge, '/ui');
+    await p.until(() => p.q('article.scenario'), 'the scenarios');
+    p.w.location.hash = '#/signin';
+    const gate = await p.until(() => p.q('#view .auth'), 'the sign-in screen');
+    expect(gate.textContent).toContain('Sign in to Practice Evidence');
+    gate.querySelector<HTMLElement>('[data-sign-in="interego"]')!.click();
+    await p.until(() => p.q('#interego-continue'), 'the link to the relay');
+    await p.until(() => p.errors.includes(NAVIGATION), 'the navigation to the relay');
+    expect(p.errors.filter((e) => e !== NAVIGATION)).toEqual([]);
+  }, SLOW);
+
   it('button → the relay with PKCE and a state → callback → exchange → acts the bridge reads as relay-delegated → sign-out', async () => {
     // The relay answers /mcp as Server-Sent Events until the act below, which it answers as JSON.
     relay.state.answerAs = 'sse';
@@ -929,7 +966,7 @@ describe('the web UI signs a person in with their Interego account and has the r
     // ── The button: the relay's authorize URL, with a PKCE S256 challenge of a verifier only this tab holds.
     const p1 = await openPage(bridge, '/ui');
     await p1.until(() => p1.q('article.scenario'), 'the scenarios');
-    expect(p1.text('#acting-as')).toBe('whoever signs (paste mode)');
+    expect(p1.text('#acting-as')).toBe('Not signed in');
     const to = await pressSignIn(p1);
     const pending = JSON.parse(p1.session(PENDING_KEY) ?? 'null') as { verifier: string; state: string; back: string };
     const q = (k: string): string | null => to.searchParams.get(k);
@@ -953,7 +990,9 @@ describe('the web UI signs a person in with their Interego account and has the r
 
     const p2 = await openPage(bridge, callbackPath, sessionOf(p1));
     const agent = `did:web:${IDH}:agents:${WEB_UI_AGENT_PREFIX}${USER}`;
-    await p2.until(() => p2.text('#acting-as') === `Signed in as ${PRINCIPAL} via ${agent}`, 'the signed-in principal and agent');
+    await p2.until(() => p2.text('#acting-as') === `Signed in as ${USER} via the Practice Evidence web app`, 'the signed-in principal and agent');
+    // The exact agent the relay signed for is kept, beside the plain words.
+    expect(p2.text('#interego-agent')).toBe(agent);
     // The code left the address bar first; the page is /ui again, on the view it left from.
     expect([p2.w.location.pathname, p2.w.location.search, p2.w.location.hash]).toEqual(['/ui', '', pending.back]);
     expect((p2.q('#interego-did') as HTMLInputElement).value).toBe(PRINCIPAL);
@@ -1003,7 +1042,7 @@ describe('the web UI signs a person in with their Interego account and has the r
     relay.state.answerAs = 'sse';
     p2.w.location.hash = '#/roles';
     await p2.until(() => p2.q(`button[data-action="${PEV_ACTION.registerRole}"]`), 'the roles form');
-    const field = p2.q('input[aria-label="Address"]') as HTMLInputElement;
+    const field = p2.q('#member-id') as HTMLInputElement;
     field.value = OTHER;
     p2.q(`button[data-action="${PEV_ACTION.registerRole}"]`)!.click();
     await p2.until(() => p2.q('#view .outcome table') ?? p2.q('#view .refusal'), 'the registry');
@@ -1013,15 +1052,21 @@ describe('the web UI signs a person in with their Interego account and has the r
     // ── Sign-out: the token leaves the tab, the page says plainly that nothing was revoked, and the next act is not signed by the relay.
     const signs = callsTo(relay, '/mcp').length;
     p2.q('#interego-sign-out')!.click();
-    await p2.until(() => p2.text('#acting-as') === 'whoever signs (paste mode)', 'paste mode again');
-    expect([p2.session(SESSION_KEY), p2.q('#interego-did'), p2.q('#interego-sign-in')?.textContent]).toEqual([null, null, 'Sign in with your Interego account']);
+    await p2.until(() => p2.text('#acting-as') === 'Not signed in', 'paste mode again');
+    expect([p2.session(SESSION_KEY), p2.q('#interego-did'), p2.q('#interego-sign-in')?.textContent]).toEqual([null, null, 'Sign in with Interego']);
     const out = p2.text('#interego-signed-out');
     for (const says of ['Nothing was revoked', 'offers no way to revoke', 'until it expires', 'whoever has a copy can call the relay\'s tools as you', 'keeps no copy']) expect(out).toContain(says);
     expect(p2.long.length).toBe(1);
     p2.long[0]?.fire();
     expect(p2.text('#signing')).not.toContain('has ended');
+    // Signed out, a view that needs a signature shows the sign-in screen and sends nothing; signing
+    // manually is one click from it, and only then does the page show the exact text to sign.
     p2.w.location.hash = '#/mine';
-    await p2.until(() => p2.q('#signing textarea[readonly]'), 'the paste signing panel');
+    await p2.until(() => p2.q('#view .auth'), 'the sign-in gate');
+    expect(p2.q('#signing textarea[readonly]')).toBeNull();
+    p2.q('#view [data-sign-in="manual"]')!.click();
+    await p2.until(() => p2.q('#signing textarea[readonly]'), 'the manual signing panel');
+    expect((JSON.parse(p2.text('#signing pre.json')) as Out)['action']).toBe(PEV_ACTION.getAttempt);
     expect(callsTo(relay, '/mcp').length).toBe(signs);
     expect(p2.errors).toEqual([]);
     // Every act was a tools/call at /mcp with the access token: no /identity-token, no /tool/.
@@ -1036,23 +1081,24 @@ describe('the web UI signs a person in with their Interego account and has the r
     // Kept past its expiry: dropped on load, said so, and never sent.
     const stale = await openPage(bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ accessToken: token, at: Date.now() - 3_700_000, expiresAt: Date.now() - 100_000 }) });
     await stale.until(() => stale.q('article.scenario'), 'the scenarios');
-    expect([stale.text('#acting-as'), stale.session(SESSION_KEY), stale.text('#signing').includes('has ended')]).toEqual(['whoever signs (paste mode)', null, true]);
+    expect([stale.text('#acting-as'), stale.session(SESSION_KEY), stale.text('#signing').includes('has ended')]).toEqual(['Not signed in', null, true]);
     // Kept in an older shape with no expiry, or claiming to last past an hour: dropped the same way.
     for (const kept of [{ bearer: token, at: Date.now() }, { accessToken: token, at: Date.now(), expiresAt: Date.now() + 2 * 3_600_000 }]) {
       const p = await openPage(bridge, '/ui', { [SESSION_KEY]: JSON.stringify(kept) });
       await p.until(() => p.q('article.scenario'), 'the scenarios');
-      expect([p.text('#acting-as'), p.session(SESSION_KEY)]).toEqual(['whoever signs (paste mode)', null]);
+      expect([p.text('#acting-as'), p.session(SESSION_KEY)]).toEqual(['Not signed in', null]);
       expect([...stale.asked, ...p.asked].filter((x) => x === 'POST /ui/relay/sign')).toEqual([]);
     }
     // Live: signed in, until its timer fires at the expiry.
     const p = await openPage(bridge, '/ui', { [SESSION_KEY]: JSON.stringify({ accessToken: token, at: Date.now(), expiresAt: Date.now() + 3_600_000 }) });
     const agent = `did:web:${IDH}:agents:${WEB_UI_AGENT_PREFIX}${USER}`;
-    await p.until(() => p.text('#acting-as') === `Signed in as ${PRINCIPAL} via ${agent}`, 'the signed-in principal and agent');
+    await p.until(() => p.text('#acting-as') === `Signed in as ${USER} via the Practice Evidence web app`, 'the signed-in principal and agent');
+    expect(p.text('#interego-agent')).toBe(agent);
     expect(p.text('#bar')).toContain('This tab holds the relay\'s access token for this sign-in until');
     expect(p.long.map((t) => t.ms > 3_590_000 && t.ms <= 3_600_000)).toEqual([true]);
     const signsBefore = p.asked.filter((x) => x === 'POST /ui/relay/sign').length;
     p.long[0]?.fire();
-    await p.until(() => p.text('#acting-as') === 'whoever signs (paste mode)', 'paste mode at the expiry');
+    await p.until(() => p.text('#acting-as') === 'Not signed in', 'paste mode at the expiry');
     expect([p.session(SESSION_KEY), p.text('#signing').includes('Your Interego sign-in has ended')]).toEqual([null, true]);
     await p.until(() => p.q('article.scenario'), 'the scenarios again');
     expect(p.asked.filter((x) => x === 'POST /ui/relay/sign').length).toBe(signsBefore);
@@ -1071,7 +1117,7 @@ describe('the web UI signs a person in with their Interego account and has the r
     await p2.until(() => p2.text('#signing').includes('did not carry the state this tab sent'), 'the state refusal');
     await p2.until(() => p2.q('article.scenario'), 'the scenarios');
     expect([p2.w.location.pathname, p2.w.location.search]).toEqual(['/ui', '']);
-    expect([p2.session(SESSION_KEY), p2.session(PENDING_KEY), p2.text('#acting-as')]).toEqual([null, pending, 'whoever signs (paste mode)']);
+    expect([p2.session(SESSION_KEY), p2.session(PENDING_KEY), p2.text('#acting-as')]).toEqual([null, pending, 'Not signed in']);
     expect(p2.asked.filter((x) => x.includes('/ui/oauth/exchange'))).toEqual([]);
     expect(relay.calls.filter((c) => c.url === `${RELAY}/token`).length).toBe(tokens);
     // With no pending sign-in in the tab at all, an answer is refused the same way.
