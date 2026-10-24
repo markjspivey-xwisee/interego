@@ -341,6 +341,28 @@ function encodeEd25519Multibase(rawKey: Buffer): string {
 }
 
 /**
+ * The raw 32-byte Ed25519 key in a `publicKeyMultibase`: the W3C form
+ * 'z' + base58btc(0xed 0x01 || key) first, then the legacy 'z' + base64url(key)
+ * this server once wrote. Null when neither yields a key (or the value is not a string,
+ * as in a malformed auth-methods document).
+ */
+function decodeEd25519Multibase(multibase: unknown): { key: Buffer; format: 'base58btc' | 'base64url-legacy' } | null {
+  if (typeof multibase !== 'string' || !multibase.startsWith('z')) return null;
+  const encoded = multibase.slice(1);
+  try {
+    const decoded = base58btcDecode(encoded);
+    if (decoded.length === 34
+      && decoded[0] === ED25519_MULTICODEC[0]
+      && decoded[1] === ED25519_MULTICODEC[1]) {
+      return { key: Buffer.from(decoded.subarray(2)), format: 'base58btc' };
+    }
+  } catch { /* try the legacy form */ }
+  const legacy = Buffer.from(encoded, 'base64url');
+  if (legacy.length >= 32) return { key: Buffer.from(legacy.subarray(legacy.length - 32)), format: 'base64url-legacy' };
+  return null;
+}
+
+/**
  * Encode a 32-byte raw X25519 public key as a W3C-spec multibase string:
  *   'z' + base58btc(0xec 0x01 || rawKey)
  * Canonical form for `publicKeyMultibase` on `X25519KeyAgreementKey2020`
@@ -2927,13 +2949,18 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   // arithmetic per character that's redundant after the first call.
   let publicKeyRaw: Buffer;
   let didKeyFormat: 'base58btc' | 'base64url-legacy' | null = null;
+  // Only a did:key names its key. For any other DID the key is the caller's claim, and on
+  // an account it must be the key stored with the DID (checked before a token is issued).
+  const keyInDid = did.startsWith('did:key:z') && did.length > 10;
   const parseStart = timingEnabled() ? startTiming() : 0;
-  const cached = getCachedParsedDid(did);
+  // Only a did:key is cached by its DID. A caller-supplied key cached under a did:web DID
+  // was served to the next sign-in with that DID, whoever made it, for the cache's 60s.
+  const cached = keyInDid ? getCachedParsedDid(did) : undefined;
   if (cached) {
     publicKeyRaw = cached.publicKeyRaw;
     didKeyFormat = cached.format;
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'hit' });
-  } else if (did.startsWith('did:key:z') && did.length > 10) {
+  } else if (keyInDid) {
     // Per W3C did:key spec: 'z' + base58btc(0xed 0x01 || rawKey32) for
     // Ed25519. We accept the spec form first and the legacy
     // 'z' + base64url(rawKey32) shape this server originally emitted as
@@ -2950,39 +2977,17 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: didKeyFormat });
   } else if (publicKeyMultibase?.startsWith('z')) {
     // Caller-supplied publicKeyMultibase for non-did:key DIDs (did:web, etc.).
-    // Try W3C base58btc-with-multicodec first; fall back to the legacy
-    // base64url form for back-compat.
-    const encoded = publicKeyMultibase.slice(1);
-    let resolved: Buffer | null = null;
-    let resolvedFormat: 'base58btc' | 'base64url-legacy' | null = null;
-    try {
-      const decoded = base58btcDecode(encoded);
-      if (decoded.length === 34
-        && decoded[0] === ED25519_MULTICODEC[0]
-        && decoded[1] === ED25519_MULTICODEC[1]) {
-        resolved = Buffer.from(decoded.subarray(2));
-        resolvedFormat = 'base58btc';
-      }
-    } catch { /* fall through */ }
-    if (!resolved) {
-      try {
-        const legacy = Buffer.from(encoded, 'base64url');
-        if (legacy.length >= 32) {
-          resolved = Buffer.from(legacy.subarray(legacy.length - 32));
-          resolvedFormat = 'base64url-legacy';
-          log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
-        }
-      } catch { /* fall through */ }
-    }
-    if (!resolved || !resolvedFormat) {
+    // W3C base58btc-with-multicodec first; the legacy base64url form for back-compat.
+    const decoded = decodeEd25519Multibase(publicKeyMultibase);
+    if (!decoded) {
       res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
       return;
     }
-    publicKeyRaw = resolved;
-    // Cache the parsed result for did:web too — TTL is 60s per the
-    // did-parse module so a rotated did:web key still surfaces quickly.
-    setCachedParsedDid(did, publicKeyRaw, resolvedFormat);
-    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: resolvedFormat, source: 'multibase' });
+    if (decoded.format === 'base64url-legacy') {
+      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
+    }
+    publicKeyRaw = decoded.key;
+    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: decoded.format, source: 'multibase' });
   } else {
     res.status(400).json({ error: 'Supply publicKeyMultibase alongside non-did:key DIDs' });
     return;
@@ -3137,6 +3142,18 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     }
   }
   if (!registered) {
+    // ★ A DID that does not name its key signs in to an account only with the key stored
+    // when the DID was added. The signature above was checked against whatever key the
+    // caller sent, so without this anyone who knew such a DID could sign in as its account
+    // with a key of their own.
+    if (!keyInDid) {
+      const onFile = (await readAuthMethods(user.id)).didKeys.find(k => k.did === did);
+      if (onFile && !decodeEd25519Multibase(onFile.publicKeyMultibase)?.key.equals(publicKeyRaw)) {
+        log(`Refused DID ${did} for ${user.id}: signed with a key other than the one on file`);
+        res.status(401).json({ error: 'This DID is registered with a different key' });
+        return;
+      }
+    }
     // A returning sign-in or an added DID: the indexed account, the bearer's, or the one
     // found above holding it. Append the DID if it is not already bound.
     try {
