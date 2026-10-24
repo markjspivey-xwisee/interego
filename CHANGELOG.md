@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-24 — Reviewed rolling-history MIME in the native checkpoint SDK
+
+NativeCommitStore accepts the explicit versioned `application/vnd.interego.rolling-checkpoint-delta-v1+br` byte-artifact MIME alongside the legacy `application/vnd.interego.rolling-checkpoint+gzip` MIME. This permits the application-owned lossless rolling-history codec without changing the native encrypted CAS request format or interpreting compressed application data in the SDK. Tests cover both encrypted round trips, stale CAS, wrong owner/type, explicit composition, cold-read scope binding, the 1 MiB encrypted ceiling, and per-write byte reservations. No relay wire change or service deployment is included.
+
 ## 2026-10-23 — Identity: every account loads at startup again
 
 Since 20:49 UTC every identity-server start logged `Account index: 0 loaded, 360 without credentials … over 360 pod(s)`, where the start before it had loaded 509 accounts from 942 pods. The pod store's root now holds a file, `provisional-play-admission.json`, and `listPods` read the root's `ldp:contains` list only up to the first `.` or `;`. That file sorts after `markj/` and before every `svc-` and `u-` pod, so the listing stopped there. No account pod was loaded, the sign-in indexes were empty, and every account's DID document answered 404 after each restart. Passkey sign-in found no credential, and a returning wallet or DID was registered as a first-time user. The pods themselves were untouched: through the gate the same root lists 958 children, and the accounts' `auth-methods.jsonld` are there. `listPods` now reads the object list as IRIs up to the end of the statement, as `provisional-play-cleanup.ts` already did. On the live root listing it returns 957 children, not 360. A test in `deploy/identity/tests/account-index.test.ts` puts a dotted file and a `;` in the middle of the list.
