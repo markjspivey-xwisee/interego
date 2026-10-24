@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-24 — Identity: a did:web signs in only with the key its account lists
+
+`POST /auth/did` checks a `did:key` against the key the DID itself encodes, but any other DID, such as a `did:web`, against a key the caller sends alongside it. The server then looked the account up by the DID string alone and issued its token, so anyone who knew a registered `did:web` could sign in to that account with a key of their own. A `did:web` now signs in only when its account lists that same key for it; the keys are compared as raw bytes, so the older base64url spelling of a key matches the base58btc one. Otherwise the answer is 401, with nothing issued and nothing written, and an account the server cannot read refuses rather than trusting the DID.
+
+The server also cached a `did:web`'s key by DID for a minute and used it in place of the key the next caller sent, so a stranger's attempt could lock the owner out. Only a `did:key` is cached now. And a `did:web` nobody had registered could be claimed as a new account with any key. Nothing proves such a key belongs to the DID, and nothing in the platform signs in that way (every client uses a `did:key`), so a `did:web` can no longer open an account by itself: it is added from a signed-in account, and then signs in with the key added. `did:key` sign-ins are unchanged.
+
 ## 2026-10-24 — Identity: a first-time wallet or DID sign-in no longer overwrites an existing account
 
 A wallet or DID that the identity server's in-memory indexes did not know was treated as a brand-new account: the server derived the account id from it (`u-eth-…`, `u-did-…`) and wrote that account's `auth-methods.jsonld` holding only the new credential, without reading the pod first. The indexes miss credentials for reasons that say nothing about the pod — it was unreadable or not yet loaded when the container started, or the owner had removed that wallet or DID — and each time the write replaced the account's passkeys, other wallets and DIDs with the one credential, and gave a removed credential its access back.

@@ -399,6 +399,46 @@ function parseEd25519DidKey(did: string): { ok: true; publicKey: Buffer; format:
   };
 }
 
+/**
+ * The raw 32-byte Ed25519 key in a `publicKeyMultibase` value: the W3C form
+ * 'z' + base58btc(0xed 0x01 || key) first, then the legacy 'z' + base64url(key) this server
+ * once emitted, which clients still send and pods still hold. Null when neither yields a key.
+ */
+function decodeEd25519PublicKeyMultibase(value: unknown): { publicKey: Buffer; format: 'base58btc' | 'base64url-legacy' } | null {
+  if (typeof value !== 'string' || !value.startsWith('z')) return null;
+  const encoded = value.slice(1);
+  try {
+    const decoded = base58btcDecode(encoded);
+    if (decoded.length === 34
+      && decoded[0] === ED25519_MULTICODEC[0]
+      && decoded[1] === ED25519_MULTICODEC[1]) {
+      return { publicKey: Buffer.from(decoded.subarray(2)), format: 'base58btc' };
+    }
+  } catch { /* fall through */ }
+  try {
+    const legacy = Buffer.from(encoded, 'base64url');
+    if (legacy.length >= 32) return { publicKey: Buffer.from(legacy.subarray(legacy.length - 32)), format: 'base64url-legacy' };
+  } catch { /* fall through */ }
+  return null;
+}
+
+/**
+ * Whether an account lists `did` with this key. A did:key is its own key. Any other DID was
+ * verified against a key the caller supplied, so the account must hold that same key for it;
+ * keys are compared as raw bytes, so either encoding of one key matches.
+ */
+function accountHoldsDidKey(m: AuthMethods, did: string, keyFromDid: boolean, publicKeyRaw: Buffer): boolean {
+  return m.didKeys.some(k => k.did === did
+    && (keyFromDid || decodeEd25519PublicKeyMultibase(k.publicKeyMultibase)?.publicKey.equals(publicKeyRaw) === true));
+}
+
+/**
+ * The refusals of /auth/did. A DID that is not a did:key gets one answer whether or not some
+ * account lists it, so the answer does not say which DIDs are registered here.
+ */
+const DID_NOT_REGISTERED = 'This DID is not registered. Sign in with an existing credential for this account and add this DID from there.';
+const DID_KEY_NOT_REGISTERED = 'This DID is not registered with this key, and only a did:key can open an account by itself. Sign in with an existing credential and add this DID from there.';
+
 function generateEd25519(): KeyPair {
   // Ed25519 — signing / authentication / assertionMethod.
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -759,8 +799,10 @@ async function claimFirstSignInOnPod(
   displayName: string,
   holds: (methods: AuthMethods) => boolean,
   add: (methods: AuthMethods) => void,
+  mayCreate = true,
 ): Promise<FirstSignInOutcome<AuthMethods>> {
   const outcome = await withIdentityPodMutex(userId, () => claimFirstSignIn<AuthMethods>({
+    mayCreate,
     read: async () => {
       // A deferred write still queued behind this mutex is what the pod is about to hold.
       const pending = identityPendingPodWrites.has(userId) ? authMethodsCache.get(userId) : undefined;
@@ -2912,7 +2954,10 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
 /**
  * POST /auth/did — verify an Ed25519 signature against a pre-registered
  * DID key. Supports did:key (self-sovereign, public-key-encoded-as-DID)
- * and did:web (DID document hosted at an https URL we can fetch).
+ * and other DIDs such as did:web, whose key the caller sends in
+ * publicKeyMultibase (no DID document is fetched). Such a DID signs in
+ * only to an account that lists it with that key, and cannot open an
+ * account by itself: add it with a bearer token (or bootstrap invite).
  *
  * Body: {
  *   did: string,              // did:key:z... or did:web:...
@@ -2920,7 +2965,7 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
  *   signature: string,        // base64url Ed25519 signature of nonce
  *   userId?: string,          // first-time: register this DID to this user
  *   name?: string,            // first-time display name
- *   publicKeyMultibase?: string,  // for did:key, or first-time registration
+ *   publicKeyMultibase?: string,  // required for a DID that is not a did:key
  * }
  */
 app.post('/auth/did', authEnrollLimiter, async (req, res) => {
@@ -2950,12 +2995,14 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   let publicKeyRaw: Buffer;
   let didKeyFormat: 'base58btc' | 'base64url-legacy' | null = null;
   const parseStart = timingEnabled() ? startTiming() : 0;
-  const cached = getCachedParsedDid(did);
+  // A did:key names its own key; any other DID is verified against the key the caller sends.
+  const keyFromDid = did.startsWith('did:key:z') && did.length > 10;
+  const cached = keyFromDid ? getCachedParsedDid(did) : undefined;
   if (cached) {
     publicKeyRaw = cached.publicKeyRaw;
     didKeyFormat = cached.format;
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'hit' });
-  } else if (did.startsWith('did:key:z') && did.length > 10) {
+  } else if (keyFromDid) {
     // Per W3C did:key spec: 'z' + base58btc(0xed 0x01 || rawKey32) for
     // Ed25519. We accept the spec form first and the legacy
     // 'z' + base64url(rawKey32) shape this server originally emitted as
@@ -2970,41 +3017,20 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     didKeyFormat = parsed.format;
     setCachedParsedDid(did, publicKeyRaw, didKeyFormat);
     if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: didKeyFormat });
-  } else if (publicKeyMultibase?.startsWith('z')) {
-    // Caller-supplied publicKeyMultibase for non-did:key DIDs (did:web, etc.).
-    // Try W3C base58btc-with-multicodec first; fall back to the legacy
-    // base64url form for back-compat.
-    const encoded = publicKeyMultibase.slice(1);
-    let resolved: Buffer | null = null;
-    let resolvedFormat: 'base58btc' | 'base64url-legacy' | null = null;
-    try {
-      const decoded = base58btcDecode(encoded);
-      if (decoded.length === 34
-        && decoded[0] === ED25519_MULTICODEC[0]
-        && decoded[1] === ED25519_MULTICODEC[1]) {
-        resolved = Buffer.from(decoded.subarray(2));
-        resolvedFormat = 'base58btc';
-      }
-    } catch { /* fall through */ }
-    if (!resolved) {
-      try {
-        const legacy = Buffer.from(encoded, 'base64url');
-        if (legacy.length >= 32) {
-          resolved = Buffer.from(legacy.subarray(legacy.length - 32));
-          resolvedFormat = 'base64url-legacy';
-          log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
-        }
-      } catch { /* fall through */ }
-    }
-    if (!resolved || !resolvedFormat) {
+  } else if (typeof publicKeyMultibase === 'string' && publicKeyMultibase.startsWith('z')) {
+    // Caller-supplied publicKeyMultibase for non-did:key DIDs (did:web, etc.). It proves only
+    // that the caller holds this key, so it is checked against the account below, and it is
+    // never cached: a key one caller sent must not stand in for another caller's request.
+    const decoded = decodeEd25519PublicKeyMultibase(publicKeyMultibase);
+    if (!decoded) {
       res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
       return;
     }
-    publicKeyRaw = resolved;
-    // Cache the parsed result for did:web too — TTL is 60s per the
-    // did-parse module so a rotated did:web key still surfaces quickly.
-    setCachedParsedDid(did, publicKeyRaw, resolvedFormat);
-    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: resolvedFormat, source: 'multibase' });
+    if (decoded.format === 'base64url-legacy') {
+      log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
+    }
+    publicKeyRaw = decoded.publicKey;
+    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'none', format: decoded.format, source: 'multibase' });
   } else {
     res.status(400).json({ error: 'Supply publicKeyMultibase alongside non-did:key DIDs' });
     return;
@@ -3055,6 +3081,13 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   let userId = didIndex.get(did);
   let user = userId ? identities.get(userId) : undefined;
   if (timingEnabled()) logTiming('did-index-lookup', indexLookupStart, { hit: !!user });
+  // The DID string names the account; for a DID that is not its own key, the signature proved
+  // only that the caller holds the key it sent. Sign in only if the account holds that key for
+  // this DID. An unreadable pod gives no keys, so it refuses rather than trusting the DID.
+  if (user && !keyFromDid && !accountHoldsDidKey(await readAuthMethods(user.id, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
+    res.status(401).json({ error: DID_KEY_NOT_REGISTERED });
+    return;
+  }
 
   // Authenticated add-did: bearer token binds this DID to the caller.
   if (!user) {
@@ -3106,10 +3139,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     // been removed from it. Read the pod first and create the account only if it holds no
     // credentials (first-sign-in.ts). FIX A deferred this write off the response path; it is
     // synchronous now, because the deferred write was blind and could replace a whole account.
+    // Only a did:key can open an account by itself: nothing here proves that a key the caller
+    // supplied belongs to any other DID (no DID document is fetched), so such a DID signs in
+    // to an account whose pod lists it with this key, or is added from a signed-in account.
+    const mayCreate = keyFromDid || resolved.mode !== 'derive';
     const outcome = await claimFirstSignInOnPod(targetUserId, agentId, displayName,
-      // A did:key is its own key. Any other DID was verified against a key the caller supplied,
-      // so the pod must list that key for the DID, or this is someone else's account.
-      m => m.didKeys.some(k => k.did === did && (did.startsWith('did:key:') || k.publicKeyMultibase === canonicalPublicKeyMultibase)),
+      m => accountHoldsDidKey(m, did, keyFromDid, publicKeyRaw),
       m => {
         m.didKeys.push({
           did,
@@ -3117,7 +3152,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
           keyType: 'Ed25519VerificationKey2020',
           createdAt: new Date().toISOString(),
         });
-      });
+      }, mayCreate);
     if (outcome.kind === 'unreadable' || outcome.kind === 'unconfirmed') {
       log(`WARN: first-time DID sign-in to ${targetUserId} not completed (${outcome.kind}): ${outcome.reason}`);
       // Nothing was written, so a bootstrap invite spent by resolveTargetUserId is still
@@ -3130,7 +3165,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       return;
     }
     if (outcome.kind === 'refused') {
-      res.status(401).json({ error: 'This DID is not registered. Sign in with an existing credential for this account and add this DID from there.' });
+      res.status(401).json({ error: keyFromDid ? DID_NOT_REGISTERED : DID_KEY_NOT_REGISTERED });
       return;
     }
     if (outcome.kind === 'returning') {

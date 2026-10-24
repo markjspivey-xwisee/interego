@@ -51,6 +51,12 @@ export interface FirstSignInInput<M extends AuthMethodsLike> {
   create: (methods: M, ifAbsent: boolean) => Promise<boolean>;
   /** Reads before giving up on a document that keeps appearing under the write. Default 3. */
   attempts?: number;
+  /**
+   * False when the credential may sign in to an account that holds it but cannot open one
+   * (nothing proves it belongs to its holder): a pod without credentials is then 'refused'
+   * and nothing is written. Default true.
+   */
+  mayCreate?: boolean;
 }
 
 export async function claimFirstSignIn<M extends AuthMethodsLike>(input: FirstSignInInput<M>): Promise<FirstSignInOutcome<M>> {
@@ -65,6 +71,7 @@ export async function claimFirstSignIn<M extends AuthMethodsLike>(input: FirstSi
     if (existing && hasAnyCredentialLike(existing)) {
       return input.holds(existing) ? { kind: 'returning', methods: existing } : { kind: 'refused' };
     }
+    if (input.mayCreate === false) return { kind: 'refused' };
     const methods = input.build(existing);
     let written: boolean;
     try {
