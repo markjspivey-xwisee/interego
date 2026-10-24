@@ -59,6 +59,11 @@ const returningDidKey = didKey();
 const freshDidKey = didKey();
 const adder = didKey();                                                              // signs in, then adds a did:web from there
 const added = { did: 'did:web:added.example', owner: ed25519() };
+const target = { did: 'did:web:squat-target.example', owner: ed25519() };          // on its pod, not listed: a bearer must not bind it
+const squatted = { did: 'did:web:squatted.example', owner: ed25519() };             // its owner unlisted, a listed squatter lists it too
+const squatter = didKey();
+const unreadable = { did: 'did:web:unreadable.example', owner: ed25519() };         // the owner's pod answers 500
+const unreadableSquatter = didKey();
 
 const user = (did: string) => deriveUserIdFromDid(did);
 const account = (did: string, keys: Array<ReturnType<typeof didKeyEntry>>) =>
@@ -71,9 +76,17 @@ const pods = new Map<string, Record<string, unknown>>([
   account(legacySent.did, [didKeyEntry(legacySent.did, legacySent.owner.multibase)]),
   account(unindexed.did, [didKeyEntry(unindexed.did, unindexed.owner.multibase)]),
   account(returningDidKey.did, [didKeyEntry(returningDidKey.did, returningDidKey.multibase)]),
+  account(target.did, [didKeyEntry(target.did, target.owner.multibase)]),
+  account(squatted.did, [didKeyEntry(squatted.did, squatted.owner.multibase)]),
+  // A squatter's account that lists the owner's did:web with the squatter's key (bound before keys were checked).
+  account(squatter.did, [didKeyEntry(squatter.did, squatter.multibase), didKeyEntry(squatted.did, attacker.multibase)]),
+  account(unreadable.did, [didKeyEntry(unreadable.did, unreadable.owner.multibase)]),
+  account(unreadableSquatter.did, [didKeyEntry(unreadableSquatter.did, unreadableSquatter.multibase), didKeyEntry(unreadable.did, attacker.multibase)]),
 ]);
 // Only these are in the root listing, so only these are in the DID index at startup.
-const listed = new Set([victim.did, legacyStored.did, legacySent.did, returningDidKey.did].map(user));
+const listed = new Set([victim.did, legacyStored.did, legacySent.did, returningDidKey.did, squatter.did, unreadableSquatter.did].map(user));
+// Pods that answer every read with 500.
+const broken = new Set([user(unreadable.did)]);
 const writes: string[] = [];
 const snapshot = (did: string) => JSON.stringify(pods.get(user(did)) ?? null);
 
@@ -85,6 +98,7 @@ function servePods(req: http.IncomingMessage, res: http.ServerResponse): void {
     return;
   }
   const m = /^\/([^/]+)\/auth-methods\.jsonld$/.exec(path);
+  if (m && req.method === 'GET' && broken.has(m[1]!)) { res.writeHead(500).end(); return; }
   if (m && req.method === 'GET') {
     const doc = pods.get(m[1]!);
     if (!doc) { res.writeHead(404).end(); return; }
@@ -259,4 +273,54 @@ test('did:key is unchanged: a returning did:key signs in, a new one opens its ac
   assert.deepEqual(writes, [user(freshDidKey.did)]);
   assert.equal((await signIn(freshDidKey.did, freshDidKey)).status, 200);
   assert.deepEqual(writes, [user(freshDidKey.did)]);
+});
+
+test('a bearer cannot bind a did:web another account lists, even one the index has not seen', async () => {
+  const tried = await post('/try', {});
+  assert.equal(tried.status, 200, JSON.stringify(tried.json));
+  const tryUser = String(tried.json['userId']);
+  const before = snapshot(target.did);
+  const r = await signIn(target.did, attacker, attacker.multibase, { Authorization: `Bearer ${String(tried.json['token'])}` });
+  assert.equal(r.status, 409, `${JSON.stringify(r.json)}\n${output}`);
+  assert.equal(r.json['token'], undefined);
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.deepEqual((pods.get(tryUser)?.['didKeys'] as unknown[] | undefined) ?? [], []);
+  assert.equal(snapshot(target.did), before);
+  // The owner still signs in to their own account.
+  const owner = await signIn(target.did, target.owner, target.owner.multibase);
+  assert.equal(owner.status, 200, `${JSON.stringify(owner.json)}\n${output}`);
+  assert.equal(owner.json['userId'], user(target.did));
+  writes.length = 0;
+});
+
+test('an index that points a did:web at another account does not lock its owner out', async () => {
+  // Only the squatter's account was listed, so the index names it for the owner's did:web.
+  const owner = await signIn(squatted.did, squatted.owner, squatted.owner.multibase);
+  assert.equal(owner.status, 200, `${JSON.stringify(owner.json)}\n${output}`);
+  assert.equal(owner.json['userId'], user(squatted.did));
+  assert.deepEqual(writes, []);
+});
+
+test('a pod that cannot be read signs nobody in to a did:web account', async () => {
+  // The index names the squatter's account, which does not list the owner's key, and the
+  // account derived from the DID cannot be read: no token, whoever asks.
+  for (const key of [unreadable.owner, ed25519()]) {
+    const r = await signIn(unreadable.did, key, key.multibase);
+    assert.equal(r.status, 503, `${JSON.stringify(r.json)}\n${output}`);
+    assert.equal(r.json['token'], undefined);
+    assert.equal(r.json['userId'], undefined);
+  }
+  assert.deepEqual(writes, []);
+});
+
+test('a body whose did, nonce or signature is not a string is refused and the server keeps running', async () => {
+  for (const field of ['did', 'nonce', 'signature'] as const) {
+    const { nonce } = (await post('/challenges', { purpose: 'did-sig' })).json as { nonce: string };
+    const body: Record<string, unknown> = { did: 'did:web:x.example', nonce, signature: 'AA', publicKeyMultibase: attacker.multibase };
+    body[field] = [body[field]];
+    const r = await post('/auth/did', body);
+    assert.equal(r.status, 400, `${field}: ${JSON.stringify(r.json)}`);
+  }
+  assert.equal((await fetch(`${base}/health`)).status, 200);
+  assert.equal(identity.exitCode, null);
 });

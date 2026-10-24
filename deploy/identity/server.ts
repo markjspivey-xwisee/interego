@@ -2977,8 +2977,11 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     bootstrapUserId, bootstrapInvite,
     surfaceAgent,
   } = req.body ?? {};
-  if (!did || !nonce || !signature) {
-    res.status(400).json({ error: 'did, nonce, and signature are required' });
+  // Strings only: a JSON array or object here threw in did.startsWith below, and an async
+  // handler's rejection is not caught, so one such body ended the process.
+  if (!did || !nonce || !signature
+    || typeof did !== 'string' || typeof nonce !== 'string' || typeof signature !== 'string') {
+    res.status(400).json({ error: 'did, nonce, and signature are required strings' });
     return;
   }
   const ch = consumeChallenge(nonce, 'did-sig');
@@ -3085,8 +3088,21 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   // only that the caller holds the key it sent. Sign in only if the account holds that key for
   // this DID. An unreadable pod gives no keys, so it refuses rather than trusting the DID.
   if (user && !keyFromDid && !accountHoldsDidKey(await readAuthMethods(user.id, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
-    res.status(401).json({ error: DID_KEY_NOT_REGISTERED });
-    return;
+    // The index names whichever account listing this DID was loaded last, which may not be its
+    // owner's (two accounts list it, or one bound it before keys were checked). Try the account
+    // derived from the DID before refusing; a pod that cannot be read signs nobody in.
+    const derivedId = deriveUserIdFromDid(did);
+    const derived = derivedId === user.id ? 'absent' : await ensureAccountLoaded(derivedId);
+    if (derived === 'unreadable') {
+      res.status(503).json({ error: 'Could not read this account just now', detail: 'Nothing was changed; try signing in again in a minute.' });
+      return;
+    }
+    if (derived !== 'loaded' || !accountHoldsDidKey(await readAuthMethods(derivedId, /* allowStale */ true), did, keyFromDid, publicKeyRaw)) {
+      res.status(401).json({ error: DID_KEY_NOT_REGISTERED });
+      return;
+    }
+    userId = derivedId;
+    user = identities.get(derivedId)!;
   }
 
   // Authenticated add-did: bearer token binds this DID to the caller.
@@ -3097,6 +3113,21 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       if (tr.valid) {
         userId = tr.record!.userId;
         user = identities.get(userId);
+      }
+    }
+    // A DID that is not a did:key is bound with a key the caller chose. Binding one another
+    // account lists would point the index at the binder and lock its owner out, so refuse it.
+    // The index may not have seen the owner's account yet: load the one derived from the DID.
+    if (user && !keyFromDid) {
+      const derivedId = deriveUserIdFromDid(did);
+      if (derivedId !== user.id && (await ensureAccountLoaded(derivedId)) === 'unreadable') {
+        res.status(503).json({ error: 'Could not check this DID just now', detail: 'Nothing was changed; try again in a minute.' });
+        return;
+      }
+      const holder = didIndex.get(did);
+      if (holder !== undefined && holder !== user.id) {
+        res.status(409).json({ error: 'This DID is registered to another account. Sign in to that account to manage it.' });
+        return;
       }
     }
   }
